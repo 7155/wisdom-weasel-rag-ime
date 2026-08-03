@@ -29,9 +29,13 @@ class RoomRuntime(Protocol):
     def cancel_room(
         self,
         *,
+        cancel_id: str,
         session_id: str,
         root_id: str,
+        dispatch_id: str,
         generation: int,
+        turn_id: str,
+        capability_epoch: int,
     ) -> dict[str, object]: ...
 
 
@@ -237,11 +241,22 @@ class RoomKernelWorker:
                         str(intent["dispatchId"]),
                         self.clock_ms(),
                     )
+                if (
+                    not str(intent.get("turnId") or "").strip()
+                    or int(intent.get("capabilityEpoch", -1)) < 0
+                ):
+                    raise RoomKernelFenceError(
+                        "cancel intent has no active runtime receipt lineage"
+                    )
                 runtime_receipt = dict(
                     self.runtime.cancel_room(
+                        cancel_id=str(intent["cancelId"]),
                         session_id=str(intent["sessionId"]),
                         root_id=str(intent["rootId"]),
+                        dispatch_id=str(intent["dispatchId"]),
                         generation=int(intent["generation"]),
+                        turn_id=str(intent["turnId"]),
+                        capability_epoch=int(intent["capabilityEpoch"]),
                     )
                 )
                 if approval_cancellation is not None:

@@ -79,6 +79,7 @@ describe('useRoomLiveSession snapshot recovery', () => {
     act(() => transport.disconnect(new Error('stream interrupted')));
     expect(onConnectionError).toHaveBeenCalledTimes(1);
     expect(onConnectionRestored).toHaveBeenCalledTimes(1);
+    expect(onRecoveryState).toHaveBeenLastCalledWith('room-1', 'failed');
 
     act(() => transport.reopen('room-1:0'));
     expect(onConnectionRestored).toHaveBeenCalledTimes(2);

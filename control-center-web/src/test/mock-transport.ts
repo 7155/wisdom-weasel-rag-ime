@@ -208,6 +208,16 @@ export class MockControlTransport implements ControlTransport {
     }
   }
 
+  fail(pathId: ControlSubscription['pathId'], error: Error): number {
+    let delivered = 0;
+    for (const subscription of this.subscriptions.values()) {
+      if (subscription.request.pathId !== pathId) continue;
+      subscription.observer.error?.(error);
+      delivered += 1;
+    }
+    return delivered;
+  }
+
   activeSubscriptionCount(): number {
     return this.subscriptions.size;
   }

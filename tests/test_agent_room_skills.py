@@ -138,6 +138,8 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertIn("Use the user's language", alignment)
         self.assertIn("Do not dump the packet into the public reply", alignment)
         self.assertIn("use native `ask`", alignment)
+        self.assertIn("without a\n  confirmation message", alignment)
+        self.assertIn("never substitute `room_commit deliver`", alignment)
         self.assertIn("Original User Request", alignment)
         self.assertIn("Original User Vision", alignment)
         self.assertIn("every AI explanation in a\n  separate", alignment)

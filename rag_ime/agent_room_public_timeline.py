@@ -66,6 +66,27 @@ _PUBLIC_ROOM_REPORT_VERIFICATION_CLAIM = re.compile(
     r"(?:通过|完成|满足)"
     r")"
 )
+_PUBLIC_ROOM_ALIGNMENT_PROTOCOL_MATERIAL = re.compile(
+    r"(?:"
+    r"(?i:(?<![A-Za-z0-9_])(?:schemaVersion|rootId|taskId|dispatchId|"
+    r"postId|receiptId|participantId|qualityGateReceipt|"
+    r"requirementCoverage|acceptanceAliases|resourceUsage|"
+    r"commandInvocationReceipt|continuation)(?![A-Za-z0-9_]))"
+    r"|(?i:(?:room-(?:root|work|task|dispatch|commit|post|receipt)|"
+    r"execution:invoke|invoke|participant|agent|session|root|task|dispatch|"
+    r"receipt|evidence|proof|criterion|requirement|commit):"
+    r"[^\s，。；、“”]+)"
+    r"|(?i:(?<![A-Za-z0-9_])AC-\d+(?![A-Za-z0-9_]))"
+    r"|(?i:(?<![A-Za-z0-9_])(?:root|task|dispatch|receipt|requirement|"
+    r"evidence|proof|criterion)-(?=[A-Za-z0-9_.-]*\d)"
+    r"[A-Za-z0-9_.-]+(?![A-Za-z0-9_]))"
+    r"|(?i:\b(?:wisdom-weasel|rag-ime)\.[A-Za-z0-9_.-]+)"
+    r"|(?:\{|\[)\s*[\"'][A-Za-z_][A-Za-z0-9_]*[\"']\s*:"
+    r"|\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
+    r"[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b"
+    r"|\b[0-9a-fA-F]{40,64}\b"
+    r")"
+)
 
 
 def public_room_report_content(value: object, *, field_name: str) -> str:
@@ -93,6 +114,51 @@ def public_room_report_content(value: object, *, field_name: str) -> str:
         raise ValueError(
             f"{field_name} must be rewritten for users without internal Room "
             "identifiers, raw receipts, hashes, or machine paths"
+        )
+    return content
+
+
+def canonical_room_alignment_content(
+    *,
+    objective: object,
+    expected_output: object,
+) -> str:
+    """Render the accepted goal and delivery boundary as one public summary."""
+
+    normalized_objective = _canonical_alignment_fragment(
+        objective,
+        field_name="objective",
+    )
+    normalized_output = _canonical_alignment_fragment(
+        expected_output,
+        field_name="expectedOutput",
+    )
+    content = (
+        f"已经对齐：目标是“{normalized_objective}”，"
+        f"交付边界是“{normalized_output}”。"
+    )
+    if len(content) > PUBLIC_ROOM_REPORT_MAX_CHARS:
+        raise ValueError(
+            "alignment summary must contain at most "
+            f"{PUBLIC_ROOM_REPORT_MAX_CHARS} characters"
+        )
+    return content
+
+
+def _canonical_alignment_fragment(
+    value: object,
+    *,
+    field_name: str,
+) -> str:
+    if not isinstance(value, str):
+        raise ValueError(
+            f"alignment {field_name} must be natural language"
+        )
+    content = " ".join(value.split()).strip().rstrip("。！？!?；;")
+    if not content or _PUBLIC_ROOM_ALIGNMENT_PROTOCOL_MATERIAL.search(content):
+        raise ValueError(
+            f"alignment {field_name} must be natural language without raw "
+            "Room protocol material"
         )
     return content
 
@@ -148,6 +214,18 @@ _ROOM_POST_PUBLIC_FIELDS = (
     "publicationSource",
     "createdAtMs",
 )
+
+
+def public_room_post_payload(
+    post: Mapping[str, object],
+) -> dict[str, object]:
+    """Strip private context enrichment from a public Room Post payload."""
+
+    return {
+        field: post[field]
+        for field in _ROOM_POST_PUBLIC_FIELDS
+        if field in post
+    }
 
 
 class RoomPublicTimelineProjector:
@@ -246,7 +324,7 @@ class RoomPublicTimelineProjector:
                     "status": "queued",
                     "reason": str(decision.get("reason") or "")[:160],
                     "summary": (
-                        f"{display_name} 等待确认需求"
+                        f"{display_name} 正在判断是否需要澄清"
                         if decision.get("phase") == "alignment"
                         else f"{display_name} 已进入执行队列"
                     ),
@@ -314,11 +392,7 @@ class RoomPublicTimelineProjector:
     ) -> dict[str, object] | None:
         if self._after_root_terminal(str(post["rootId"])):
             return None
-        public_post = {
-            field: post[field]
-            for field in _ROOM_POST_PUBLIC_FIELDS
-            if field in post
-        }
+        public_post = public_room_post_payload(post)
         return self.events.publish_projection(
             projection_key=f"room-post:{post['postId']}",
             room_id=str(post["roomId"]),

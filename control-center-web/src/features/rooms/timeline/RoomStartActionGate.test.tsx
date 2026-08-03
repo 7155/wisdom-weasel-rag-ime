@@ -66,9 +66,8 @@ describe('RoomStartActionGate', () => {
     const onStart = vi.fn();
     const { rerender } = render(<RoomStartActionGate onStart={onStart} starting={false} />);
 
-    expect(screen.getByRole('status', { name: '确认开始行动' })).toHaveTextContent(
-      '目标、交付和边界已经对齐',
-    );
+    expect(screen.getByRole('group', { name: '确认开始行动' })).toHaveTextContent('现在开始行动吗？');
+    expect(screen.queryByText('目标、交付和边界已经对齐')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '开始行动' }));
     expect(onStart).toHaveBeenCalledTimes(1);
     expect(document.body.textContent).not.toMatch(/Kernel|Root|Dispatch|Receipt|schemaVersion|root-|dispatch-/);
@@ -83,12 +82,28 @@ describe('RoomStartActionGate', () => {
       id: 'turn-a',
       rootId: 'root-a',
       status: 'running',
-      messageIds: [],
+      messageIds: ['alignment-a'],
       activityIds: [],
       participantIds: [],
       createdAtMs: 1,
       updatedAtMs: 2,
     };
+    projection.messagesById['alignment-a'] = {
+      id: 'alignment-a',
+      roomId: 'room-a',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      role: 'assistant',
+      status: 'completed',
+      text: '已经对齐：目标是“完成实现”，交付边界是“实现与验证记录”。',
+      projectionKind: 'post',
+      postKind: 'alignment',
+      rootId: 'root-a',
+      dispatchId: 'dispatch-align',
+      createdAtMs: 2,
+    };
+    projection.messageOrder.push('alignment-a');
     const onStart = vi.fn();
     const clarifiedReceipts = [
       receipt(1, { operation: 'room_define', requiresStartAction: true }),

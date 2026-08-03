@@ -6,11 +6,15 @@ import tempfile
 import unittest
 import sqlite3
 from pathlib import Path
+from unittest.mock import patch
 
 from rag_ime.agent_room_kernel import (
     RoomKernelFenceError,
     RoomKernelStore,
     kernel_owns_room_execution,
+)
+from rag_ime.agent_room_capabilities import (
+    canonical_review_finding_fingerprint,
 )
 from rag_ime.agent_room_context import RoomContextLedgerStore
 from rag_ime.agent_room_kernel_contracts import (
@@ -20,6 +24,7 @@ from rag_ime.agent_room_kernel_contracts import (
     ROOM_TASK_SCHEMA_VERSION,
     ROOT_EXECUTION_SCHEMA_VERSION,
 )
+from rag_ime.agent_room_workspace_ledger import RoomWorkspaceLedgerStore
 from rag_ime.db import latest_migration_version
 
 
@@ -82,11 +87,97 @@ class RoomKernelCoreTests(unittest.TestCase):
                 "status": "accepted",
                 "rootId": dispatch_payload["rootId"],
                 "dispatchId": dispatch_id,
+                "sessionId": dispatch_payload["targetSessionId"],
                 "generation": dispatch_payload["generation"],
+                "capabilityEpoch": dispatch_payload["capabilityEpoch"],
                 "turnId": turn_id,
             },
             now_ms=now_ms,
         )
+
+    def record_runtime_evidence(
+        self,
+        dispatch_id: str,
+        *,
+        evidence_ref: str,
+        now_ms: int,
+    ) -> None:
+        dispatch_payload = self.store.dispatch(dispatch_id)
+        manifest_id = f"manifest:{dispatch_id}:evidence"
+        manifest_hash = "c" * 64
+        invocation_id = f"invoke:{dispatch_id}:evidence"
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO room_v2_capability_manifests(
+                   manifest_id,binding_id,room_id,root_id,task_id,dispatch_id,
+                   generation,capability_revision,capability_epoch,manifest_hash,
+                   payload_json,created_at_ms
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?)""",
+                (
+                    manifest_id,
+                    f"binding:{dispatch_id}:evidence",
+                    "room:1",
+                    dispatch_payload["rootId"],
+                    dispatch_payload["taskId"],
+                    dispatch_id,
+                    dispatch_payload["generation"],
+                    "capability:test-v1",
+                    dispatch_payload["capabilityEpoch"],
+                    manifest_hash,
+                    now_ms - 2,
+                ),
+            )
+            conn.execute(
+                """INSERT INTO room_v2_capability_runtime_bindings(
+                   session_id,manifest_id,manifest_hash,prompt_compile_receipt_id,
+                   prompt_plan_hash,compiled_profile_id,compiled_profile_revision,
+                   compiled_profile_hash,room_binding_json,participant_binding_json,
+                   capability_epoch,state,created_at_ms,updated_at_ms
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', '{}', ?, 'active', ?, ?)""",
+                (
+                    dispatch_payload["targetSessionId"],
+                    manifest_id,
+                    manifest_hash,
+                    f"prompt:{dispatch_id}:evidence",
+                    "d" * 64,
+                    "compiled:test",
+                    "1",
+                    "e" * 64,
+                    dispatch_payload["capabilityEpoch"],
+                    now_ms - 2,
+                    now_ms - 2,
+                ),
+            )
+            conn.execute(
+                """INSERT INTO room_v2_tool_invocation_receipts(
+                   receipt_id,manifest_id,manifest_hash,load_receipt_id,
+                   invocation_key,canonical_tool_name,original_tool_name,
+                   command_hash,command_json,authorization_state,created_at_ms
+                   ) VALUES (?, ?, ?, ?, ?, 'room_state', 'room_state', ?, '{}',
+                             'authorized', ?)""",
+                (
+                    invocation_id,
+                    manifest_id,
+                    manifest_hash,
+                    f"load:{dispatch_id}:evidence",
+                    f"call:{dispatch_id}:evidence",
+                    "f" * 64,
+                    now_ms - 1,
+                ),
+            )
+            conn.execute(
+                """INSERT INTO room_v2_tool_execution_receipts(
+                   execution_receipt_id,invocation_receipt_id,kernel_receipt_id,
+                   session_id,tool_name,status,result_hash,payload_json,created_at_ms
+                   ) VALUES (?, ?, NULL, ?, 'room_state', 'applied', ?, '{}', ?)""",
+                (
+                    evidence_ref,
+                    invocation_id,
+                    dispatch_payload["targetSessionId"],
+                    "a" * 64,
+                    now_ms,
+                ),
+            )
 
     def test_all_legacy_entries_normalize_to_one_shadow_dispatch(self) -> None:
         shadow = RoomKernelStore(self.db_path, mode="shadow")
@@ -110,6 +201,22 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.assertEqual(shadow.counts("root:1")["dispatches"], 1)
         self.assertEqual(shadow.counts("root:1")["outbox"], 1)
         self.assertIsNone(shadow.lease_next(now_ms=100, ttl_ms=10))
+        self.assertEqual(shadow.root("root:1")["budgetReserved"], 0)
+        with sqlite3.connect(self.db_path) as conn:
+            reservation_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM room_kernel_dispatch_resource_reservations "
+                    "WHERE root_id='root:1'"
+                ).fetchone()[0]
+            )
+            limits = conn.execute(
+                """SELECT input_token_reserved,output_token_reserved,
+                          tool_call_reserved,tool_cost_reserved,
+                          concurrency_reserved
+                   FROM room_kernel_root_limits WHERE root_id='root:1'"""
+            ).fetchone()
+        self.assertEqual(reservation_count, 0)
+        self.assertEqual(tuple(limits or ()), (0, 0, 0, 0, 0))
 
     def test_product_root_and_initial_task_are_created_atomically(self) -> None:
         created = self.store.create_root_with_task(
@@ -437,7 +544,21 @@ class RoomKernelCoreTests(unittest.TestCase):
             "reviewOfTaskIds": ["task:1"],
             "reviewAuthorParticipantIds": ["participant:a"],
             "acceptanceCriterionIds": ["ac:1"],
+            "reviewRound": 1,
+            "reviewFindings": [],
+            "workspacePolicy": "read_only",
+            "workspaceRoot": "/tmp/room-review",
+            "workspaceBaseRoot": "/tmp/room-review",
+            "workspaceSnapshotSha256": "a" * 64,
+            "workspaceIntegrationRef": "",
         }
+        review_task["reviewTargetRevision"] = (
+            self.store.review_target_revision(
+                root_id="root:1",
+                task_ids=["task:1"],
+                review_snapshot=review_task,
+            )
+        )
         self.store.create_task(review_task, now_ms=3)
         self.store.enqueue_dispatch(
             dispatch(
@@ -1056,6 +1177,392 @@ class RoomKernelCoreTests(unittest.TestCase):
             "failed",
         )
 
+    def test_control_retry_consumes_only_its_exact_committed_failure_lineage(
+        self,
+    ) -> None:
+        self.seed()
+        failed_dispatch_id = "dispatch:control-retry-failed"
+        self.store.enqueue_dispatch(
+            dispatch(failed_dispatch_id, key="control-retry-failed"),
+            now_ms=10,
+        )
+        self.accept_runtime_attempt(
+            failed_dispatch_id,
+            turn_id="turn:control-retry-failed",
+            now_ms=11,
+        )
+        self.store.record_runtime_failure(
+            failed_dispatch_id,
+            generation=0,
+            source_event_id="event:control-retry-failed",
+            runtime_turn_id="turn:control-retry-failed",
+            dispatch_attempt=0,
+            now_ms=12,
+        )
+
+        retry_receipt = self.store.apply_control_command(
+            control_command(
+                "command:control-retry",
+                "retry_root",
+                now_ms=13,
+            )
+        )
+        retry_dispatch_id = str(
+            retry_receipt["details"]["retriedDispatchIds"][0]
+        )
+        self.assertEqual(
+            retry_receipt["details"]["retryLineage"],
+            [
+                {
+                    "failedDispatchId": failed_dispatch_id,
+                    "failedDispatchAttempt": 0,
+                    "retriedDispatchId": retry_dispatch_id,
+                    "retriedDispatchAttempt": 1,
+                    "taskId": "task:1",
+                    "rootGeneration": 0,
+                    "rootRetryOrdinal": 1,
+                }
+            ],
+        )
+
+        self.accept_runtime_attempt(
+            retry_dispatch_id,
+            turn_id="turn:control-retry-success",
+            now_ms=14,
+        )
+        self.store.apply_commit(
+            commit(
+                "commit:control-retry-success",
+                retry_dispatch_id,
+                coverage=("ac:1",),
+            ),
+            generation=0,
+            now_ms=15,
+        )
+
+        readiness = self.store.report_readiness("root:1")
+        self.assertEqual(readiness["unknownDispatches"], 0)
+        self.assertNotIn("root_not_quiescent", readiness["reasons"])
+
+        self.store.create_task(task("task:unrelated-failure"), now_ms=16)
+        unrelated_dispatch_id = "dispatch:unrelated-failure"
+        self.store.enqueue_dispatch(
+            dispatch(
+                unrelated_dispatch_id,
+                key="unrelated-failure",
+                task_id="task:unrelated-failure",
+            ),
+            now_ms=17,
+        )
+        self.accept_runtime_attempt(
+            unrelated_dispatch_id,
+            turn_id="turn:unrelated-failure",
+            now_ms=18,
+        )
+        self.store.record_runtime_failure(
+            unrelated_dispatch_id,
+            generation=0,
+            source_event_id="event:unrelated-failure",
+            runtime_turn_id="turn:unrelated-failure",
+            dispatch_attempt=0,
+            now_ms=19,
+        )
+        readiness = self.store.report_readiness("root:1")
+        self.assertEqual(
+            readiness["unresolvedDispatchFailures"],
+            [
+                {
+                    "dispatchId": unrelated_dispatch_id,
+                    "taskId": "task:unrelated-failure",
+                    "state": "failed",
+                }
+            ],
+        )
+
+    def test_control_retry_tampered_root_ordinal_cannot_resolve_failure(
+        self,
+    ) -> None:
+        self.seed()
+        failed_dispatch_id = "dispatch:retry-ordinal-tamper"
+        self.store.enqueue_dispatch(
+            dispatch(failed_dispatch_id, key="retry-ordinal-tamper"),
+            now_ms=10,
+        )
+        self.accept_runtime_attempt(
+            failed_dispatch_id,
+            turn_id="turn:retry-ordinal-tamper",
+            now_ms=11,
+        )
+        self.store.record_runtime_failure(
+            failed_dispatch_id,
+            generation=0,
+            source_event_id="event:retry-ordinal-tamper",
+            runtime_turn_id="turn:retry-ordinal-tamper",
+            dispatch_attempt=0,
+            now_ms=12,
+        )
+        retry_receipt = self.store.apply_control_command(
+            control_command(
+                "command:retry-ordinal-tamper",
+                "retry_root",
+                now_ms=13,
+            )
+        )
+        retry_dispatch_id = str(
+            retry_receipt["details"]["retriedDispatchIds"][0]
+        )
+        self.accept_runtime_attempt(
+            retry_dispatch_id,
+            turn_id="turn:retry-ordinal-tamper:success",
+            now_ms=14,
+        )
+        self.store.apply_commit(
+            commit(
+                "commit:retry-ordinal-tamper",
+                retry_dispatch_id,
+                coverage=("ac:1",),
+            ),
+            generation=0,
+            now_ms=15,
+        )
+        self.assertEqual(
+            self.store.report_readiness("root:1")["unknownDispatches"],
+            0,
+        )
+
+        tampered = dict(retry_receipt)
+        tampered_details = dict(tampered["details"])
+        tampered_lineage = [
+            dict(item) for item in tampered_details["retryLineage"]
+        ]
+        tampered_lineage[0]["rootRetryOrdinal"] = 999
+        tampered_details["retryLineage"] = tampered_lineage
+        tampered["details"] = tampered_details
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE room_kernel_receipts SET payload_json=? "
+                "WHERE receipt_id=?",
+                (
+                    json.dumps(tampered, ensure_ascii=False),
+                    retry_receipt["receiptId"],
+                ),
+            )
+
+        readiness = self.store.report_readiness("root:1")
+        self.assertEqual(readiness["unknownDispatches"], 1)
+        self.assertEqual(
+            readiness["unresolvedDispatchFailures"][0]["dispatchId"],
+            failed_dispatch_id,
+        )
+
+    def test_control_retry_duplicate_ordinal_breaks_multilevel_lineage(
+        self,
+    ) -> None:
+        self.seed()
+        first_failed_id = "dispatch:retry-chain:first"
+        self.store.enqueue_dispatch(
+            dispatch(first_failed_id, key="retry-chain:first"),
+            now_ms=10,
+        )
+        self.accept_runtime_attempt(
+            first_failed_id,
+            turn_id="turn:retry-chain:first",
+            now_ms=11,
+        )
+        self.store.record_runtime_failure(
+            first_failed_id,
+            generation=0,
+            source_event_id="event:retry-chain:first",
+            runtime_turn_id="turn:retry-chain:first",
+            dispatch_attempt=0,
+            now_ms=12,
+        )
+        first_retry = self.store.apply_control_command(
+            control_command(
+                "command:retry-chain:first",
+                "retry_root",
+                now_ms=13,
+            )
+        )
+        second_failed_id = str(
+            first_retry["details"]["retriedDispatchIds"][0]
+        )
+        self.accept_runtime_attempt(
+            second_failed_id,
+            turn_id="turn:retry-chain:second",
+            now_ms=14,
+        )
+        self.store.record_runtime_failure(
+            second_failed_id,
+            generation=0,
+            source_event_id="event:retry-chain:second",
+            runtime_turn_id="turn:retry-chain:second",
+            dispatch_attempt=1,
+            now_ms=15,
+        )
+        second_retry = self.store.apply_control_command(
+            control_command(
+                "command:retry-chain:second",
+                "retry_root",
+                now_ms=16,
+            )
+        )
+        successful_id = str(
+            second_retry["details"]["retriedDispatchIds"][0]
+        )
+        self.accept_runtime_attempt(
+            successful_id,
+            turn_id="turn:retry-chain:success",
+            now_ms=17,
+        )
+        self.store.apply_commit(
+            commit(
+                "commit:retry-chain:success",
+                successful_id,
+                coverage=("ac:1",),
+            ),
+            generation=0,
+            now_ms=18,
+        )
+        self.assertEqual(
+            self.store.report_readiness("root:1")["unknownDispatches"],
+            0,
+        )
+
+        tampered = dict(second_retry)
+        tampered_details = dict(tampered["details"])
+        tampered_lineage = [
+            dict(item) for item in tampered_details["retryLineage"]
+        ]
+        tampered_lineage[0]["rootRetryOrdinal"] = 1
+        tampered_details["retryLineage"] = tampered_lineage
+        tampered["details"] = tampered_details
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE room_kernel_receipts SET payload_json=? "
+                "WHERE receipt_id=?",
+                (
+                    json.dumps(tampered, ensure_ascii=False),
+                    second_retry["receiptId"],
+                ),
+            )
+
+        readiness = self.store.report_readiness("root:1")
+        self.assertEqual(readiness["unknownDispatches"], 2)
+        self.assertEqual(
+            {
+                item["dispatchId"]
+                for item in readiness["unresolvedDispatchFailures"]
+            },
+            {first_failed_id, second_failed_id},
+        )
+
+    def test_control_retry_skipped_ordinal_invalidates_whole_receipt(
+        self,
+    ) -> None:
+        self.seed()
+        self.store.create_task(
+            task("task:retry-gap", criteria=()),
+            now_ms=3,
+        )
+        failed_ids = (
+            "dispatch:retry-gap:first",
+            "dispatch:retry-gap:second",
+        )
+        task_ids = ("task:1", "task:retry-gap")
+        for ordinal, (failed_id, task_id) in enumerate(
+            zip(failed_ids, task_ids, strict=True),
+            start=10,
+        ):
+            self.store.enqueue_dispatch(
+                dispatch(
+                    failed_id,
+                    key=failed_id,
+                    task_id=task_id,
+                ),
+                now_ms=ordinal,
+            )
+            self.accept_runtime_attempt(
+                failed_id,
+                turn_id=f"turn:{failed_id}",
+                now_ms=ordinal + 10,
+            )
+            self.store.record_runtime_failure(
+                failed_id,
+                generation=0,
+                source_event_id=f"event:{failed_id}",
+                runtime_turn_id=f"turn:{failed_id}",
+                dispatch_attempt=0,
+                now_ms=ordinal + 20,
+            )
+        retry_receipt = self.store.apply_control_command(
+            control_command(
+                "command:retry-gap",
+                "retry_root",
+                now_ms=50,
+            )
+        )
+        retry_ids = [
+            str(value)
+            for value in retry_receipt["details"]["retriedDispatchIds"]
+        ]
+        for ordinal, retry_id in enumerate(retry_ids, start=60):
+            self.accept_runtime_attempt(
+                retry_id,
+                turn_id=f"turn:{retry_id}:success",
+                now_ms=ordinal,
+            )
+            retry_task_id = str(
+                self.store.dispatch(retry_id)["taskId"]
+            )
+            coverage = ("ac:1",) if retry_task_id == "task:1" else ()
+            self.store.apply_commit(
+                commit(
+                    f"commit:{retry_id}",
+                    retry_id,
+                    coverage=coverage,
+                    task_id=retry_task_id,
+                ),
+                generation=0,
+                now_ms=ordinal + 10,
+            )
+        self.assertEqual(
+            self.store.report_readiness("root:1")["unknownDispatches"],
+            0,
+        )
+
+        tampered = dict(retry_receipt)
+        tampered_details = dict(tampered["details"])
+        tampered_lineage = [
+            dict(item) for item in tampered_details["retryLineage"]
+        ]
+        self.assertEqual(
+            [item["rootRetryOrdinal"] for item in tampered_lineage],
+            [1, 2],
+        )
+        tampered_lineage[1]["rootRetryOrdinal"] = 3
+        tampered_details["retryLineage"] = tampered_lineage
+        tampered["details"] = tampered_details
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE room_kernel_receipts SET payload_json=? "
+                "WHERE receipt_id=?",
+                (
+                    json.dumps(tampered, ensure_ascii=False),
+                    retry_receipt["receiptId"],
+                ),
+            )
+
+        readiness = self.store.report_readiness("root:1")
+        self.assertEqual(readiness["unknownDispatches"], 2)
+        self.assertEqual(
+            {
+                item["dispatchId"]
+                for item in readiness["unresolvedDispatchFailures"]
+            },
+            set(failed_ids),
+        )
+
     def test_transient_runtime_failure_without_tools_uses_root_retry_budget(
         self,
     ) -> None:
@@ -1183,7 +1690,7 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.assertEqual(self.store.resource_limits("root:1")["retry_used"], 0)
         self.assertEqual(self.store.counts("root:1")["deadLetters"], 1)
 
-    def test_missing_commit_retries_despite_tool_activity_then_blocks(
+    def test_missing_commit_after_tool_activity_blocks_without_replay(
         self,
     ) -> None:
         self.seed(criteria=())
@@ -1198,7 +1705,7 @@ class RoomKernelCoreTests(unittest.TestCase):
             now_ms=11,
         )
 
-        retry = self.store.record_runtime_failure(
+        blocked = self.store.record_runtime_failure(
             dispatch_id,
             generation=0,
             source_event_id="event:missing-commit:1",
@@ -1209,36 +1716,11 @@ class RoomKernelCoreTests(unittest.TestCase):
             had_tool_activity=True,
             reason_code="room_commit_missing",
         )
-        self.assertEqual(retry["receiptKind"], "runtime_retry_scheduled")
-        self.assertEqual(retry["details"]["reasonCode"], "room_commit_missing")
-        self.assertTrue(retry["details"]["hadToolActivity"])
-
-        with sqlite3.connect(self.db_path) as connection:
-            connection.execute(
-                """UPDATE room_kernel_root_limits
-                   SET retry_limit=1 WHERE root_id='root:1'"""
-            )
-        self.accept_runtime_attempt(
-            dispatch_id,
-            turn_id="turn:missing-commit:2",
-            now_ms=1_012,
-        )
-        blocked = self.store.record_runtime_failure(
-            dispatch_id,
-            generation=0,
-            source_event_id="event:missing-commit:2",
-            runtime_turn_id="turn:missing-commit:2",
-            dispatch_attempt=1,
-            now_ms=1_013,
-            retryable=True,
-            had_tool_activity=True,
-            reason_code="room_commit_missing",
-        )
-
         self.assertEqual(blocked["receiptKind"], "runtime_failed")
         self.assertEqual(blocked["details"]["reasonCode"], "room_commit_missing")
         self.assertEqual(self.store.root("root:1")["state"], "blocked")
         self.assertEqual(self.store.dispatch(dispatch_id)["state"], "failed")
+        self.assertEqual(self.store.resource_limits("root:1")["retry_used"], 0)
         with sqlite3.connect(self.db_path) as connection:
             reason = connection.execute(
                 """SELECT reason_code FROM room_kernel_dead_letters
@@ -1246,6 +1728,215 @@ class RoomKernelCoreTests(unittest.TestCase):
                 (dispatch_id,),
             ).fetchone()[0]
         self.assertEqual(reason, "room_commit_missing")
+
+    def test_abandoning_one_workspace_does_not_clear_another_root_blocker(
+        self,
+    ) -> None:
+        self.seed(criteria=())
+
+        def blocked_workspace_task(task_id: str, binding_id: str) -> dict[str, object]:
+            payload = child_task(
+                task_id,
+                parent="task:1",
+                target=f"participant:{task_id}",
+            )
+            payload.update(
+                {
+                    "workspacePolicy": "isolated_writable",
+                    "workspaceRoot": f"/tmp/{task_id}",
+                    "workspaceBindingId": binding_id,
+                    "workspaceLifecycleState": "blocked",
+                    "workspaceCleanupState": "retained",
+                    "workspaceAttentionRequired": True,
+                    "workspaceIntegrationState": "pending",
+                    "workspaceIntegrationRef": None,
+                    "state": "blocked",
+                }
+            )
+            return payload
+
+        for index in (1, 2):
+            self.store.create_task(
+                blocked_workspace_task(
+                    f"task:workspace:{index}",
+                    f"binding:workspace:{index}",
+                ),
+                now_ms=2 + index,
+            )
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE room_kernel_roots SET state='blocked' WHERE root_id='root:1'"
+            )
+
+        def abandon(task_index: int, now_ms: int) -> None:
+            self.store.record_workspace_lifecycle(
+                f"task:workspace:{task_index}",
+                operation="abandon",
+                workspace_result={
+                    "workspaceBindingId": f"binding:workspace:{task_index}",
+                    "workspaceLifecycleState": "abandoned",
+                    "cleanupState": "authorized",
+                    "attentionRequired": False,
+                    "terminalReason": "receipted test abandonment",
+                    "abandonmentReceiptId": f"receipt:abandon:{task_index}",
+                    "abandonmentReceiptSha256": str(task_index) * 64,
+                    "abandonmentSnapshotSha256": str(task_index) * 64,
+                },
+                now_ms=now_ms,
+            )
+
+        abandon(1, 10)
+        self.assertEqual(self.store.root("root:1")["state"], "blocked")
+        self.assertEqual(
+            self.store.task("task:workspace:2")["state"],
+            "blocked",
+        )
+
+        abandon(2, 11)
+        self.assertEqual(self.store.root("root:1")["state"], "running")
+
+    def test_workspace_retry_rejects_an_unrelated_tool_invocation_receipt(
+        self,
+    ) -> None:
+        root_payload = root("root:1")
+        root_payload["facilitatorParticipantId"] = "participant:a"
+        self.store.create_root(
+            root_payload,
+            budget=10,
+            max_hops=3,
+            max_depth=2,
+            acceptance_criteria=(),
+            now_ms=1,
+        )
+        self.store.create_task(task("task:1", criteria=()), now_ms=2)
+        parent_dispatch_id = "dispatch:workspace:facilitator"
+        self.store.enqueue_dispatch(
+            dispatch(
+                parent_dispatch_id,
+                key="workspace:facilitator",
+                target="participant:a",
+            ),
+            now_ms=3,
+        )
+        self.store.set_dispatch_wait_state(
+            parent_dispatch_id,
+            "running",
+            now_ms=4,
+        )
+        task_id = "task:workspace:retry"
+        retry_task = child_task(
+            task_id,
+            parent="task:1",
+            target="participant:worker",
+        )
+        retry_task.update(
+            {
+                "workspacePolicy": "isolated_writable",
+                "workspaceRoot": "/tmp/task-workspace-retry",
+                "workspaceBindingId": "binding:workspace:retry",
+                "workspaceLifecycleState": "blocked",
+                "workspaceCleanupState": "retained",
+                "workspaceAttentionRequired": True,
+                "workspaceIntegrationState": "pending",
+                "workspaceIntegrationRef": None,
+                "state": "blocked",
+            }
+        )
+        self.store.create_task(retry_task, now_ms=5)
+
+        manifest_hash = "a" * 64
+        unrelated_material = {
+            "tool": "room_state",
+            "arguments": {},
+            "rootId": "root:1",
+            "taskId": "task:1",
+            "dispatchId": parent_dispatch_id,
+            "generation": 0,
+            "capabilityEpoch": 1,
+        }
+        command_hash = hashlib.sha256(
+            json.dumps(
+                unrelated_material,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        unrelated_command = {
+            **unrelated_material,
+            "commandHash": command_hash,
+        }
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                """INSERT INTO room_v2_capability_runtime_bindings(
+                   session_id,manifest_id,manifest_hash,prompt_compile_receipt_id,
+                   prompt_plan_hash,compiled_profile_id,compiled_profile_revision,
+                   compiled_profile_hash,room_binding_json,participant_binding_json,
+                   capability_epoch,state,created_at_ms,updated_at_ms)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,1,'active',6,6)""",
+                (
+                    "session:participant:a",
+                    "manifest:workspace:retry",
+                    manifest_hash,
+                    "compile:workspace:retry",
+                    "b" * 64,
+                    "profile:test",
+                    "profile:test-v1",
+                    "c" * 64,
+                    "{}",
+                    "{}",
+                ),
+            )
+            connection.execute(
+                """INSERT INTO room_v2_tool_invocation_receipts(
+                   receipt_id,manifest_id,manifest_hash,load_receipt_id,
+                   invocation_key,canonical_tool_name,original_tool_name,
+                   command_hash,command_json,authorization_state,created_at_ms)
+                   VALUES (?,?,?,?,?,'room_state','room_state',?,?,'authorized',6)""",
+                (
+                    "invoke:unrelated-room-state",
+                    "manifest:workspace:retry",
+                    manifest_hash,
+                    "load:unrelated-room-state",
+                    "call:unrelated-room-state",
+                    command_hash,
+                    json.dumps(
+                        unrelated_command,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                ),
+            )
+
+        retry_dispatch = dispatch(
+            "dispatch:workspace:retry",
+            key="workspace:retry",
+            target="participant:worker",
+            hop=1,
+            depth=1,
+            parent=parent_dispatch_id,
+            task_id=task_id,
+        )
+        retry_dispatch["intentKind"] = "retry"
+        retry_dispatch["triggerId"] = "invoke:unrelated-room-state"
+        with self.assertRaisesRegex(RoomKernelFenceError, "invocation"):
+            self.store.enqueue_workspace_retry(
+                parent_dispatch_id=parent_dispatch_id,
+                task_id=task_id,
+                retry_dispatch=retry_dispatch,
+                workspace_result={
+                    "workspaceBindingId": "binding:workspace:retry",
+                    "workspaceLifecycleState": "retry_bound",
+                    "attentionRequired": False,
+                },
+                invocation_receipt_id="invoke:unrelated-room-state",
+                now_ms=7,
+            )
+
+        self.assertEqual(self.store.task(task_id)["state"], "blocked")
+        with self.assertRaises(KeyError):
+            self.store.dispatch("dispatch:workspace:retry")
 
 
     def test_budget_is_reserved_at_enqueue_and_released_by_cancel(self) -> None:
@@ -1509,6 +2200,118 @@ class RoomKernelCoreTests(unittest.TestCase):
         final = self.store.finalize_root("root:1", now_ms=18)
         self.assertEqual(final["status"], "rejected")
         self.assertEqual(final["details"]["unknownDispatches"], 1)
+
+    def test_cancel_completion_requires_exact_intent_and_active_runtime_lineage(self) -> None:
+        self.seed(criteria=())
+        dispatch_id = "dispatch:cancel-lineage"
+        turn_id = "turn:cancel-lineage"
+        self.store.enqueue_dispatch(
+            dispatch(dispatch_id, key="cancel-lineage"),
+            now_ms=10,
+        )
+        self.accept_runtime_attempt(dispatch_id, turn_id=turn_id, now_ms=11)
+        self.store.cancel_root("root:1", now_ms=12)
+
+        intent = self.store.lease_cancel(now_ms=13)
+        self.assertIsNotNone(intent)
+        assert intent is not None
+        self.assertEqual(intent["turnId"], turn_id)
+        self.assertEqual(intent["capabilityEpoch"], 1)
+        receipt = {
+            **intent,
+            "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
+            "receiptKind": "cancel_applied",
+            "status": "applied",
+            "cancellationSurfaces": {
+                surface: {
+                    "schemaVersion": "wisdom-weasel.runtime-surface-termination-receipt.v1",
+                    "surface": surface,
+                    "state": "terminated",
+                    "targetIds": [],
+                }
+                for surface in (
+                    "provider",
+                    "tool",
+                    "exec",
+                    "retry",
+                    "compaction",
+                    "branch_summary",
+                    "timer",
+                    "continuation",
+                    "session",
+                )
+            },
+            "pendingTargets": [],
+        }
+        for field in (
+            "cancelId",
+            "rootId",
+            "dispatchId",
+            "sessionId",
+            "generation",
+            "turnId",
+            "capabilityEpoch",
+        ):
+            forged = dict(receipt)
+            forged[field] = (
+                int(receipt[field]) + 1
+                if field in {"generation", "capabilityEpoch"}
+                else f"forged:{field}"
+            )
+            with self.subTest(field=field), self.assertRaisesRegex(
+                RoomKernelFenceError,
+                "does not match",
+            ):
+                self.store.complete_cancel(
+                    str(intent["cancelId"]),
+                    forged,
+                    now_ms=14,
+                )
+
+        completed = self.store.complete_cancel(
+            str(intent["cancelId"]),
+            receipt,
+            now_ms=15,
+        )
+        self.assertEqual(completed["state"], "applied")
+
+    def test_apply_commit_completes_runtime_effect_and_excludes_it_from_cancel(self) -> None:
+        self.seed(criteria=())
+        dispatch_id = "dispatch:completed-effect"
+        self.store.enqueue_dispatch(
+            dispatch(dispatch_id, key="completed-effect"),
+            now_ms=10,
+        )
+        self.accept_runtime_attempt(
+            dispatch_id,
+            turn_id="turn:completed-effect",
+            now_ms=11,
+        )
+
+        applied = self.store.apply_commit(
+            commit("commit:completed-effect", dispatch_id),
+            generation=0,
+            now_ms=12,
+        )
+
+        self.assertEqual(applied["status"], "applied")
+        with sqlite3.connect(self.db_path) as connection:
+            runtime_state = connection.execute(
+                "SELECT state FROM room_kernel_runtime_effects WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()[0]
+        self.assertEqual(runtime_state, "completed")
+        self.assertEqual(self.store.abort_scope(dispatch_id)["state"], "completed")
+
+        cancelled = self.store.cancel_target(
+            root_id="root:1",
+            target_kind="dispatch",
+            target_id=dispatch_id,
+            now_ms=13,
+        )
+        self.assertEqual(cancelled["details"]["cancelIntents"], 0)
+        self.assertIsNone(self.store.lease_cancel(now_ms=14))
+        self.assertEqual(self.store.abort_scope(dispatch_id)["state"], "completed")
 
     def test_stop_covers_queued_running_retry_timer_and_targeted_cancel_is_typed(self) -> None:
         self.seed(criteria=())
@@ -1817,6 +2620,26 @@ class RoomKernelCoreTests(unittest.TestCase):
 
     def test_workspace_lifecycle_receipts_project_complete_task_audit_fields(self) -> None:
         self.seed()
+        workspace_ledger = RoomWorkspaceLedgerStore(self.db_path)
+        binding, _ = workspace_ledger.reserve_binding(
+            room_id="room:1",
+            root_id="root:1",
+            task_id="task:1",
+            work_item_id="work:test",
+            dispatch_id="dispatch:worker",
+            requirement_revision="requirement:test",
+            acceptance_aliases=["ac:1"],
+            participant_id="participant:worker",
+            session_id="session:worker",
+            repository_id="a" * 64,
+            base_root="/tmp/room-base",
+            base_commit="git:base",
+            workspace_root="/tmp/room-child",
+            workspace_policy="isolated_writable",
+            creation_reason="workspace receipt projection test",
+            now_ms=3,
+        )
+        binding_id = str(binding["workspaceBindingId"])
         payload = self.store.task("task:1")
         payload.update(
             {
@@ -1824,7 +2647,7 @@ class RoomKernelCoreTests(unittest.TestCase):
                 "workspaceRoot": "/tmp/room-child",
                 "workspaceBaseRoot": "/tmp/room-base",
                 "workspaceBaseCommit": "git:base",
-                "workspaceBindingId": "workspace-binding:test",
+                "workspaceBindingId": binding_id,
                 "workspaceRepositoryId": "a" * 64,
                 "workspaceLifecycleState": "materialized",
                 "workspaceCleanupState": "not_authorized",
@@ -1850,7 +2673,7 @@ class RoomKernelCoreTests(unittest.TestCase):
         started = self.store.record_workspace_work_started(
             "task:1",
             lifecycle={
-                "workspaceBindingId": "workspace-binding:test",
+                "workspaceBindingId": binding_id,
                 "workspaceLifecycleState": "work_started",
                 "workspaceAttentionRequired": False,
             },
@@ -1872,9 +2695,12 @@ class RoomKernelCoreTests(unittest.TestCase):
                     "workItemId": "work:test",
                     "taskId": "task:1",
                     "deliveryRevision": "sha256:" + "b" * 64,
+                    "baseCommit": "git:base",
+                    "workspaceSnapshotSha256": "c" * 64,
+                    "patchSha256": "d" * 64,
                     "deliveredAtMs": 5,
                     "resultSummary": "Scoped delivery",
-                    "manifestSha256": "d" * 64,
+                    "manifestSha256": "f" * 64,
                     "files": [
                         {
                             "path": "README.md",
@@ -1921,15 +2747,30 @@ class RoomKernelCoreTests(unittest.TestCase):
             delivered["workspaceDelivery"]["workItemId"],
             "work:test",
         )
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                "UPDATE room_kernel_tasks SET state='completed' WHERE task_id='task:1'"
-            )
-        conflict = self.store.record_workspace_integration(
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:worker", key="workspace-worker"),
+            now_ms=5,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:worker",
+            "running",
+            now_ms=5,
+        )
+        self.store.apply_commit(
+            commit(
+                "commit:workspace-worker",
+                "dispatch:worker",
+                coverage=("ac:1",),
+            ),
+            generation=0,
+            now_ms=6,
+        )
+        conflict = self.store.record_workspace_integration_failure(
             "task:1",
             integration_ref="integration:stable",
             workspace_result={
                 "integrated": False,
+                "workspaceBindingId": binding_id,
                 "workspaceLifecycleState": "conflict",
                 "cleanupState": "retained",
                 "reason": "patch conflict; child retained",
@@ -1945,17 +2786,253 @@ class RoomKernelCoreTests(unittest.TestCase):
             conflict["workspaceTerminalReason"],
             "patch conflict; child retained",
         )
+        workspace_ledger.mark_materialized(
+            binding_id,
+            workspace_snapshot_sha256="b" * 64,
+            actor_ref="participant:worker",
+            now_ms=6,
+        )
+        workspace_ledger.record_work_started(
+            binding_id,
+            dispatch_id="dispatch:worker",
+            actor_ref="participant:worker",
+            now_ms=6,
+        )
+        workspace_ledger.record_delivery(
+            binding_id,
+            delivery_revision="sha256:" + "b" * 64,
+            delivery_head="git:base",
+            workspace_snapshot_sha256="c" * 64,
+            patch_sha256="d" * 64,
+            manifest_sha256="f" * 64,
+            artifacts=["README.md"],
+            verification_refs=["test:focused"],
+            residual_risks=[],
+            actor_ref="participant:worker",
+            now_ms=6,
+        )
+        workspace_ledger.record_source_lease_revoked(
+            binding_id,
+            delivery_revision="sha256:" + "b" * 64,
+            workspace_snapshot_sha256="c" * 64,
+            patch_sha256="d" * 64,
+            patch_artifact_path="/tmp/sealed.patch",
+            patch_artifact_size=1,
+            owner_session_id="session:worker",
+            revoked_policy_sha256="9" * 64,
+            workspace_content_sha256="8" * 64,
+            changed_files=["README.md"],
+            actor_ref="system:test",
+            now_ms=6,
+        )
+        workspace_ledger.begin_integration(
+            binding_id,
+            integration_ref="integration:stable",
+            patch_sha256="d" * 64,
+            target_before_snapshot_sha256="7" * 64,
+            actor_ref="participant:facilitator",
+            now_ms=6,
+        )
+        workspace_ledger.record_target_applied(
+            binding_id,
+            integration_ref="integration:stable",
+            patch_sha256="d" * 64,
+            target_before_snapshot_sha256="7" * 64,
+            target_after_snapshot_sha256="e" * 64,
+            target_snapshot_provider=lambda: "e" * 64,
+            actor_ref="participant:facilitator",
+            now_ms=7,
+        )
+        workspace_ledger.record_integrated(
+            binding_id,
+            integration_ref="integration:stable",
+            patch_sha256="d" * 64,
+            integrated_revision="git:integrated",
+            integrated_snapshot_sha256="e" * 64,
+            changed_files=["README.md"],
+            target_snapshot_provider=lambda: "e" * 64,
+            actor_ref="participant:facilitator",
+            now_ms=7,
+        )
+        delivery_receipt = workspace_ledger.delivery_receipt(binding_id)
+        source_receipt = workspace_ledger.source_lease_receipt(binding_id)
+        integrated_receipt = workspace_ledger.integrated_receipt(binding_id)
+        assert source_receipt and integrated_receipt
+        workspace_ledger.record_writer_quiescence(
+            binding_id,
+            receipt={
+                "schemaVersion": "wisdom-weasel.room-workspace-writer-quiescence.v1",
+                "receiptRevision": "test:writer-quiescence",
+                "workspaceBindingId": binding_id,
+                "rootId": "root:1",
+                "taskId": "task:1",
+                "dispatchId": "dispatch:worker",
+                "deliveryRevision": "sha256:" + "b" * 64,
+                "ownerSessionId": "session:worker",
+                "sourceLeaseReceiptId": source_receipt["eventId"],
+                "sourceLeaseReceiptSha256": source_receipt["payloadSha256"],
+                "integratedReceiptId": integrated_receipt["eventId"],
+                "integratedReceiptSha256": integrated_receipt["payloadSha256"],
+                "foregroundMutatingInvocations": {
+                    "known": True,
+                    "activeCount": 0,
+                },
+                "backgroundWork": {"known": True, "activeCount": 0},
+                "managedPiTurn": {
+                    "known": True,
+                    "settled": True,
+                    "sessionId": "session:worker",
+                    "dispatchId": "dispatch:worker",
+                },
+            },
+            actor_ref="participant:facilitator",
+            now_ms=7,
+        )
+        workspace_ledger.record_quarantined(
+            binding_id,
+            quarantined_workspace_root="/tmp/room-quarantine",
+            workspace_content_sha256="8" * 64,
+            target_snapshot_sha256="e" * 64,
+            actor_ref="participant:facilitator",
+            now_ms=7,
+        )
+        workspace_ledger.authorize_cleanup_removal(
+            binding_id,
+            quarantined_workspace_root="/tmp/room-quarantine",
+            vault_workspace_root="/tmp/room-vault",
+            workspace_content_sha256="8" * 64,
+            target_snapshot_sha256="e" * 64,
+            actor_ref="participant:facilitator",
+            now_ms=7,
+        )
+        removal_receipt = (
+            workspace_ledger.cleanup_removal_authorization_receipt(binding_id)
+        )
+        assert removal_receipt is not None
+        workspace_ledger.record_vaulted(
+            binding_id,
+            removal_authorization_receipt_id=str(removal_receipt["eventId"]),
+            removal_authorization_receipt_sha256=str(
+                removal_receipt["payloadSha256"]
+            ),
+            quarantined_workspace_root="/tmp/room-quarantine",
+            vault_workspace_root="/tmp/room-vault",
+            authorized_workspace_content_sha256="8" * 64,
+            vault_content_sha256="7" * 64,
+            target_snapshot_sha256="e" * 64,
+            actor_ref="system:guarded-workspace-cleanup",
+            now_ms=7,
+        )
+        workspace_ledger.record_cleanup(
+            binding_id,
+            result="cleaned",
+            reason="test cleanup",
+            actor_ref="participant:facilitator",
+            now_ms=7,
+            retained_workspace_root="/tmp/room-vault",
+        )
+        source_receipt = workspace_ledger.source_lease_receipt(binding_id)
+        target_receipt = workspace_ledger.target_applied_receipt(binding_id)
+        integrated_receipt = workspace_ledger.integrated_receipt(binding_id)
+        writer_receipt = workspace_ledger.writer_quiescence_receipt(binding_id)
+        quarantine_receipt = workspace_ledger.quarantine_receipt(binding_id)
+        removal_receipt = (
+            workspace_ledger.cleanup_removal_authorization_receipt(binding_id)
+        )
+        vault_receipt = workspace_ledger.vault_receipt(binding_id)
+        cleanup_receipt = workspace_ledger.cleanup_receipt(binding_id)
+        assert (
+            delivery_receipt
+            and source_receipt
+            and target_receipt
+            and integrated_receipt
+            and writer_receipt
+            and quarantine_receipt
+            and removal_receipt
+            and vault_receipt
+            and cleanup_receipt
+        )
+        with self.assertRaisesRegex(
+            (RoomKernelFenceError, ValueError),
+            "workspaceWriterQuiescenceReceiptId",
+        ):
+            self.store.record_workspace_integration(
+                "task:1",
+                integration_ref="integration:stable",
+                workspace_result={
+                    "integrated": True,
+                    "workspaceBindingId": binding_id,
+                    "integrationRef": "integration:stable",
+                    "integrationPatchSha256": "d" * 64,
+                    "integratedRevision": "git:integrated",
+                    "integratedSnapshotSha256": "e" * 64,
+                    "workspaceLifecycleState": "cleaned",
+                    "cleanupState": "cleaned",
+                    "attentionRequired": False,
+                    "workspaceDeliveryReceiptId": delivery_receipt["eventId"],
+                    "workspaceDeliveryReceiptSha256": delivery_receipt[
+                        "payloadSha256"
+                    ],
+                    "workspaceSourceLeaseReceiptId": source_receipt["eventId"],
+                    "workspaceSourceLeaseReceiptSha256": source_receipt[
+                        "payloadSha256"
+                    ],
+                    "workspaceTargetAppliedReceiptId": target_receipt["eventId"],
+                    "workspaceTargetAppliedReceiptSha256": target_receipt[
+                        "payloadSha256"
+                    ],
+                    "workspaceIntegratedReceiptId": integrated_receipt["eventId"],
+                    "workspaceIntegratedReceiptSha256": integrated_receipt[
+                        "payloadSha256"
+                    ],
+                    "workspaceCleanupReceiptId": cleanup_receipt["eventId"],
+                    "workspaceCleanupReceiptSha256": cleanup_receipt[
+                        "payloadSha256"
+                    ],
+                },
+                now_ms=8,
+            )
         integrated = self.store.record_workspace_integration(
             "task:1",
             integration_ref="integration:stable",
             workspace_result={
                 "integrated": True,
+                "workspaceBindingId": binding_id,
+                "integrationRef": "integration:stable",
                 "integrationPatchSha256": "d" * 64,
                 "integratedRevision": "git:integrated",
                 "integratedSnapshotSha256": "e" * 64,
                 "workspaceLifecycleState": "cleaned",
                 "cleanupState": "cleaned",
                 "attentionRequired": False,
+                "workspaceDeliveryReceiptId": delivery_receipt["eventId"],
+                "workspaceDeliveryReceiptSha256": delivery_receipt[
+                    "payloadSha256"
+                ],
+                "workspaceSourceLeaseReceiptId": source_receipt["eventId"],
+                "workspaceSourceLeaseReceiptSha256": source_receipt["payloadSha256"],
+                "workspaceTargetAppliedReceiptId": target_receipt["eventId"],
+                "workspaceTargetAppliedReceiptSha256": target_receipt["payloadSha256"],
+                "workspaceIntegratedReceiptId": integrated_receipt["eventId"],
+                "workspaceIntegratedReceiptSha256": integrated_receipt["payloadSha256"],
+                "workspaceWriterQuiescenceReceiptId": writer_receipt["eventId"],
+                "workspaceWriterQuiescenceReceiptSha256": writer_receipt[
+                    "payloadSha256"
+                ],
+                "workspaceQuarantineReceiptId": quarantine_receipt["eventId"],
+                "workspaceQuarantineReceiptSha256": quarantine_receipt[
+                    "payloadSha256"
+                ],
+                "workspaceRemovalAuthorizationReceiptId": removal_receipt[
+                    "eventId"
+                ],
+                "workspaceRemovalAuthorizationReceiptSha256": removal_receipt[
+                    "payloadSha256"
+                ],
+                "workspaceVaultReceiptId": vault_receipt["eventId"],
+                "workspaceVaultReceiptSha256": vault_receipt["payloadSha256"],
+                "workspaceCleanupReceiptId": cleanup_receipt["eventId"],
+                "workspaceCleanupReceiptSha256": cleanup_receipt["payloadSha256"],
             },
             now_ms=7,
         )
@@ -1981,9 +3058,6 @@ class RoomKernelCoreTests(unittest.TestCase):
         integrated_payload = self.store.task("task:1")
         integrated_payload.update(
             {
-                "workspacePolicy": "isolated_writable",
-                "workspaceIntegrationState": "applied",
-                "workspaceIntegrationRef": "integration:task-1",
                 "revision": 1,
             }
         )
@@ -2004,6 +3078,7 @@ class RoomKernelCoreTests(unittest.TestCase):
         review_snapshot = {
             **task(review_task_id),
             "taskKind": "review",
+            "currentOwnerParticipantId": "participant:reviewer",
             "reviewState": "required",
             "reviewOfTaskIds": ["task:1"],
             "reviewAuthorParticipantIds": ["participant:a"],
@@ -2032,6 +3107,7 @@ class RoomKernelCoreTests(unittest.TestCase):
             review_dispatch_id,
             key="accepted-review",
             task_id=review_task_id,
+            target="participant:reviewer",
         )
         review_dispatch["intentKind"] = "review"
         self.store.enqueue_dispatch(review_dispatch, now_ms=5)
@@ -2039,6 +3115,11 @@ class RoomKernelCoreTests(unittest.TestCase):
             review_dispatch_id,
             "running",
             now_ms=5,
+        )
+        self.record_runtime_evidence(
+            review_dispatch_id,
+            evidence_ref="test:room-kernel",
+            now_ms=6,
         )
         review_commit = commit(
             "commit:accepted-review",
@@ -2068,6 +3149,46 @@ class RoomKernelCoreTests(unittest.TestCase):
             ),
             **binding_material,
         }
+        open_advisory_commit = {
+            **review_commit,
+            "reviewFindings": [
+                {
+                    "findingId": "finding:open-advisory",
+                    "fingerprint": canonical_review_finding_fingerprint(
+                        category="maintainability",
+                        scope={"criterionId": "ac:1"},
+                        observation="命名仍可改进",
+                        expected="明确处置后再结束复核",
+                        user_impact="当前功能不受影响",
+                    ),
+                    "gateEffect": "advisory",
+                    "impact": "normal",
+                    "category": "maintainability",
+                    "scope": {"criterionId": "ac:1"},
+                    "observation": "命名仍可改进",
+                    "expected": "明确处置后再结束复核",
+                    "userImpact": "当前功能不受影响",
+                    "evidenceRefs": ["test:room-kernel"],
+                    "reproduction": ["检查相关命名"],
+                    "state": "open",
+                    "dispositionRationale": None,
+                    "ownerParticipantId": None,
+                    "firstSeenRevision": target_revision,
+                    "lastCheckedRevision": target_revision,
+                    "failedRechecks": 0,
+                    "response": None,
+                }
+            ],
+        }
+        with self.assertRaisesRegex(
+            RoomKernelFenceError,
+            "unresolved Advisory Finding",
+        ):
+            self.store.apply_commit(
+                open_advisory_commit,
+                generation=0,
+                now_ms=6,
+            )
         applied = self.store.apply_commit(
             review_commit,
             generation=0,
@@ -2079,8 +3200,62 @@ class RoomKernelCoreTests(unittest.TestCase):
             accepted_review["reviewTargetRevision"],
             target_revision,
         )
-        terminal = self.store.finalize_root("root:1", now_ms=7)
-        replay = self.store.finalize_root("root:1", now_ms=8)
+        forged_authors = {
+            **accepted_review,
+            "reviewAuthorParticipantIds": ["participant:reviewer"],
+        }
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE room_kernel_tasks SET payload_json=? WHERE task_id=?",
+                (
+                    json.dumps(
+                        forged_authors,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    review_task_id,
+                ),
+            )
+        rejected = self.store.finalize_root("root:1", now_ms=7)
+        self.assertEqual(rejected["status"], "rejected")
+        self.assertEqual(
+            rejected["details"]["reason"],
+            "reviewer_not_independent",
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE room_kernel_tasks SET payload_json=? WHERE task_id=?",
+                (
+                    json.dumps(
+                        accepted_review,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    review_task_id,
+                ),
+            )
+        with patch.object(
+            self.store,
+            "_review_target_revision_locked",
+            wraps=self.store._review_target_revision_locked,
+        ) as revision_check:
+            terminal = self.store.finalize_root("root:1", now_ms=8)
+        terminal_revision_calls = [
+            call
+            for call in revision_check.call_args_list
+            if call.kwargs.get("root_id") == "root:1"
+        ]
+        self.assertTrue(terminal_revision_calls)
+        self.assertTrue(
+            all(
+                call.kwargs.get("commit_not_after_ms") is None
+                for call in terminal_revision_calls
+            ),
+            "terminal review validation must include every later target commit",
+        )
+        replay = self.store.finalize_root("root:1", now_ms=9)
         self.assertEqual(terminal["receiptKind"], "terminal")
         self.assertEqual(terminal["details"]["governance"]["reviewFences"], [])
         self.assertEqual(
@@ -2157,17 +3332,368 @@ class RoomKernelCoreTests(unittest.TestCase):
             ),
             pending_revision,
         )
-        self.store.record_workspace_integration(
-            "task:1",
-            integration_ref="integration:post-review-mutation",
-            now_ms=13,
-        )
-        self.assertNotEqual(
+        with self.assertRaisesRegex(
+            RoomKernelFenceError,
+            "exact coordinator result",
+        ):
+            self.store.record_workspace_integration(
+                "task:1",
+                integration_ref="integration:post-review-mutation",
+                now_ms=13,
+            )
+        self.assertEqual(
             self.store.review_target_revision(
                 root_id="root:1",
                 task_ids=["task:1"],
             ),
             pending_revision,
+        )
+
+    def test_latest_review_attempt_is_selected_per_reviewed_task_lineage(
+        self,
+    ) -> None:
+        self.seed()
+        self.store.create_task(task("task:2"), now_ms=2)
+
+        def create_review(
+            *,
+            review_task_id: str,
+            target_task_id: str,
+            review_round: int,
+            revision: int,
+            now_ms: int,
+        ) -> None:
+            snapshot = {
+                **task(review_task_id),
+                "taskKind": "review",
+                "currentOwnerParticipantId": (
+                    f"participant:reviewer:{review_task_id}"
+                ),
+                "reviewState": "required",
+                "reviewOfTaskIds": [target_task_id],
+                "reviewAuthorParticipantIds": ["participant:a"],
+                "reviewEvidenceNotBeforeMs": now_ms,
+                "reviewRound": review_round,
+                "reviewFindings": [],
+                "revision": revision,
+                "workspacePolicy": "read_only",
+                "workspaceRoot": f"/tmp/{review_task_id}",
+                "workspaceBaseRoot": f"/tmp/{review_task_id}",
+                "workspaceSnapshotSha256": (
+                    hashlib.sha256(review_task_id.encode("utf-8")).hexdigest()
+                ),
+                "workspaceIntegrationRef": "",
+            }
+            snapshot["reviewTargetRevision"] = (
+                self.store.review_target_revision(
+                    root_id="root:1",
+                    task_ids=[target_task_id],
+                    review_snapshot=snapshot,
+                )
+            )
+            self.store.create_task(snapshot, now_ms=now_ms)
+
+        create_review(
+            review_task_id="task:review:task-1:round-2",
+            target_task_id="task:1",
+            review_round=2,
+            revision=2,
+            now_ms=3,
+        )
+        create_review(
+            review_task_id="task:review:task-1:late-round-1",
+            target_task_id="task:1",
+            review_round=1,
+            revision=1,
+            now_ms=10,
+        )
+        create_review(
+            review_task_id="task:review:task-2",
+            target_task_id="task:2",
+            review_round=1,
+            revision=1,
+            now_ms=11,
+        )
+
+        attempts = self.store.latest_review_attempts("root:1")
+        selected = {
+            tuple(attempt["reviewOfTaskIds"]): attempt["taskId"]
+            for attempt in attempts
+        }
+        self.assertEqual(
+            selected,
+            {
+                ("task:1",): "task:review:task-1:round-2",
+                ("task:2",): "task:review:task-2",
+            },
+        )
+
+    def test_defined_lane_gate_uses_actual_split_graph_not_declared_worker(
+        self,
+    ) -> None:
+        self.seed()
+        with patch.object(
+            self.store,
+            "definition_fence",
+            return_value={
+                "implementationParticipantId": "participant:declared",
+                "executionDispatchId": "dispatch:declared",
+            },
+        ):
+            with self.store._connect() as conn:
+                lane = self.store._defined_lane_fences_locked(
+                    conn,
+                    root_id="root:1",
+                )
+
+        self.assertTrue(lane["definitionRequired"])
+        self.assertEqual(lane["lanePlanDispatchIds"], [])
+        self.assertEqual(lane["fences"], [])
+
+    def test_receipted_retry_supersedes_historical_failed_dispatch_readiness(
+        self,
+    ) -> None:
+        self.seed()
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:failed-attempt", key="failed-attempt"),
+            now_ms=3,
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE room_kernel_dispatches SET state='failed',updated_at_ms=4 "
+                "WHERE dispatch_id='dispatch:failed-attempt'"
+            )
+            conn.execute(
+                "UPDATE room_kernel_outbox SET state='dead_letter',updated_at_ms=4 "
+                "WHERE dispatch_id='dispatch:failed-attempt'"
+            )
+
+        retry = dispatch(
+            "dispatch:successful-retry",
+            key="successful-retry",
+        )
+        retry["intentKind"] = "retry"
+        self.store.enqueue_dispatch(retry, now_ms=5)
+        self.store.set_dispatch_wait_state(
+            "dispatch:successful-retry",
+            "running",
+            now_ms=6,
+        )
+        self.store.apply_commit(
+            commit(
+                "commit:successful-retry",
+                "dispatch:successful-retry",
+                coverage=("ac:1",),
+            ),
+            generation=0,
+            now_ms=7,
+        )
+        with self.store._connect(immediate=True) as conn:
+            self.store._receipt(
+                conn,
+                root_id="root:1",
+                command_id=None,
+                receipt_kind="accepted",
+                status="applied",
+                generation=0,
+                details={
+                    "purpose": "workspace_retry",
+                    "parentTaskId": "task:coordinator",
+                    "parentDispatchId": "dispatch:coordinator",
+                    "childTaskId": "task:1",
+                    "childDispatchId": "dispatch:successful-retry",
+                    "workspaceBindingId": "workspace:test",
+                    "invocationReceiptId": "invoke:retry",
+                },
+                now_ms=8,
+            )
+
+        readiness = self.store.report_readiness("root:1")
+        self.assertEqual(readiness["unknownDispatches"], 0)
+        self.assertNotIn("root_not_quiescent", readiness["reasons"])
+
+    def test_acceptance_evidence_uses_only_current_task_attempt(self) -> None:
+        self.seed()
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:evidence-pass", key="evidence-pass"),
+            now_ms=3,
+        )
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:evidence-newer", key="evidence-newer"),
+            now_ms=4,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:evidence-pass",
+            "running",
+            now_ms=5,
+        )
+        self.store.apply_commit(
+            commit(
+                "commit:evidence-pass",
+                "dispatch:evidence-pass",
+                coverage=("ac:1",),
+            ),
+            generation=0,
+            now_ms=6,
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE room_kernel_dispatches SET state='failed',updated_at_ms=7 "
+                "WHERE dispatch_id='dispatch:evidence-newer'"
+            )
+            conn.execute(
+                "UPDATE room_kernel_outbox SET state='dead_letter',updated_at_ms=7 "
+                "WHERE dispatch_id='dispatch:evidence-newer'"
+            )
+
+        self.assertEqual(
+            self.store.accepted_evidence_by_criterion("root:1"),
+            {},
+        )
+        readiness = self.store.report_readiness("root:1")
+        self.assertEqual(
+            readiness["unprovenAcceptanceCriteria"],
+            ["ac:1"],
+        )
+
+    def test_failed_report_dispatch_has_one_receipted_replacement(self) -> None:
+        self.seed()
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:work-for-report", key="work-for-report"),
+            now_ms=3,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:work-for-report",
+            "running",
+            now_ms=4,
+        )
+        self.store.apply_commit(
+            commit(
+                "commit:work-for-report",
+                "dispatch:work-for-report",
+                coverage=("ac:1",),
+            ),
+            generation=0,
+            now_ms=5,
+        )
+
+        def report_workspace(seed: str) -> dict[str, object]:
+            return {
+                "workspacePolicy": "read_only",
+                "workspaceRoot": f"/tmp/report-{seed}",
+                "workspaceBaseRoot": f"/tmp/report-{seed}",
+                "workspaceSnapshotSha256": hashlib.sha256(
+                    seed.encode("utf-8")
+                ).hexdigest(),
+                "workspaceIntegrationRef": "",
+            }
+
+        first = self.store.ensure_report_dispatch(
+            "root:1",
+            reporter_participant_id="kernel-v2",
+            reporter_session_id="session:reporter",
+            workspace=report_workspace("first"),
+            now_ms=6,
+        )
+        self.assertTrue(first["created"])
+        first_dispatch_id = str(first["dispatch"]["dispatchId"])
+        first_task_id = str(first["task"]["taskId"])
+        self.accept_runtime_attempt(
+            first_dispatch_id,
+            turn_id="turn:first-report-failed",
+            now_ms=7,
+        )
+        failed = self.store.record_runtime_failure(
+            first_dispatch_id,
+            generation=0,
+            source_event_id="event:first-report-failed",
+            runtime_turn_id="turn:first-report-failed",
+            dispatch_attempt=0,
+            now_ms=8,
+        )
+        self.assertEqual(failed["receiptKind"], "runtime_failed")
+        self.assertEqual(self.store.task(first_task_id)["state"], "failed")
+        failed_readiness = self.store.report_readiness("root:1")
+        self.assertEqual(failed_readiness["openTasks"], 0)
+        self.assertTrue(failed_readiness["ready"], failed_readiness)
+
+        replacement = self.store.ensure_report_dispatch(
+            "root:1",
+            reporter_participant_id="kernel-v2",
+            reporter_session_id="session:reporter",
+            workspace=report_workspace("replacement"),
+            now_ms=9,
+        )
+        self.assertTrue(replacement["created"])
+        self.assertNotEqual(
+            replacement["dispatch"]["dispatchId"],
+            first_dispatch_id,
+        )
+        self.assertEqual(
+            replacement["receipt"]["details"]["replacesReportTaskId"],
+            first_task_id,
+        )
+        self.assertEqual(
+            replacement["receipt"]["details"][
+                "replacesReportDispatchId"
+            ],
+            first_dispatch_id,
+        )
+        self.assertEqual(
+            replacement["receipt"]["details"]["reportAttempt"],
+            1,
+        )
+        self.assertFalse(self.store.is_report_dispatch(first_dispatch_id))
+        self.assertTrue(
+            self.store.is_report_dispatch(
+                str(replacement["dispatch"]["dispatchId"])
+            )
+        )
+
+        replacement_dispatch_id = str(
+            replacement["dispatch"]["dispatchId"]
+        )
+        replacement_task_id = str(replacement["task"]["taskId"])
+        self.accept_runtime_attempt(
+            replacement_dispatch_id,
+            turn_id="turn:replacement-report",
+            now_ms=10,
+        )
+        report_commit = commit(
+            "commit:replacement-report",
+            replacement_dispatch_id,
+            coverage=("ac:1",),
+            task_id=replacement_task_id,
+        )
+        report_commit["action"] = "post"
+        report_commit["postProposal"] = post_proposal(
+            "commit:replacement-report",
+            replacement_dispatch_id,
+            task_id=replacement_task_id,
+            author="kernel-v2",
+        )
+        report_commit["continuation"] = {"decision": "complete"}
+        self.store.apply_commit(
+            report_commit,
+            generation=0,
+            now_ms=11,
+            post_proposal=report_commit["postProposal"],
+        )
+        terminal = self.store.finalize_root("root:1", now_ms=12)
+        self.assertEqual(terminal["receiptKind"], "terminal")
+        self.assertEqual(terminal["status"], "applied")
+        with sqlite3.connect(self.db_path) as conn:
+            final_posts = conn.execute(
+                "SELECT payload_json FROM room_kernel_posts WHERE root_id=?",
+                ("root:1",),
+            ).fetchall()
+        self.assertEqual(
+            sum(
+                1
+                for row in final_posts
+                if json.loads(str(row[0])).get("kind") == "result"
+            ),
+            1,
         )
 
     def test_task_cannot_claim_acceptance_criteria_outside_root_or_parent(self) -> None:

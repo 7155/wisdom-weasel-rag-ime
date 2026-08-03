@@ -388,8 +388,12 @@ for line in sys.stdin:
         result(request, {
             "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
             "receiptKind": "cancel_applied", "status": "applied",
-            "rootId": params["rootId"], "generation": params["generation"],
-            "sessionId": session_id, "cancelledContinuationIds": [],
+            "cancelId": params["cancelId"],
+            "rootId": params["rootId"], "dispatchId": params["dispatchId"],
+            "generation": params["generation"], "sessionId": session_id,
+            "turnId": params["turnId"],
+            "capabilityEpoch": params["capabilityEpoch"],
+            "cancelledContinuationIds": [],
             "activeRunAborted": False,
             "cancellationSurfaces": {name: {
                 "schemaVersion": "wisdom-weasel.runtime-surface-termination-receipt.v1",
@@ -921,6 +925,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
             "rootId": "root:cross-process",
             "dispatchId": "dispatch:cross-process",
             "generation": 4,
+            "capabilityEpoch": 0,
             "attempt": 0,
             "idempotencyKey": "cross-process-key",
         }
@@ -936,9 +941,13 @@ class PiRuntimeV2Tests(unittest.TestCase):
             side_effect=AssertionError("Room cancellation must not rebind the active Session"),
         ):
             cancelled = self.runtime.cancel_room(
+                cancel_id="cancel:cross-process",
                 session_id=session_id,
                 root_id="root:cross-process",
+                dispatch_id="dispatch:cross-process",
                 generation=5,
+                turn_id="room-turn-dispatch:cross-process",
+                capability_epoch=0,
             )
 
         self.assertTrue(
@@ -958,6 +967,32 @@ class PiRuntimeV2Tests(unittest.TestCase):
         delivered = next(item for item in requests if item["method"] == "room.dispatch")
         self.assertEqual(delivered["params"]["leaseToken"], "lease-token:cross-process")
         self.assertEqual(delivered["params"]["dispatchAttempt"], 0)
+        delivered_cancel = next(
+            item for item in requests if item["method"] == "room.cancel"
+        )
+        self.assertEqual(
+            {
+                key: delivered_cancel["params"][key]
+                for key in (
+                    "cancelId",
+                    "sessionId",
+                    "rootId",
+                    "dispatchId",
+                    "generation",
+                    "turnId",
+                    "capabilityEpoch",
+                )
+            },
+            {
+                "cancelId": "cancel:cross-process",
+                "sessionId": session_id,
+                "rootId": "root:cross-process",
+                "dispatchId": "dispatch:cross-process",
+                "generation": 5,
+                "turnId": "room-turn-dispatch:cross-process",
+                "capabilityEpoch": 0,
+            },
+        )
 
         crashed_payload = dict(payload)
         crashed_payload.update(
@@ -970,6 +1005,77 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 lease_token="lease-token:crashed-host",
             )
         self.assertEqual(self.runtime.runtime_status()["status"], "faulted")
+
+    def test_room_cancel_rejects_forged_runtime_receipt_lineage(self) -> None:
+        self.runtime.stop()
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                provider_environment={"TEST_ROOM_TYPES": "1"},
+            ),
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=lambda _session: {
+                "sessionContext": "generic-agent-rag",
+                "providerContext": "governed-room-task",
+            },
+            tool_manifest_provider=lambda _session: [],
+        )
+        session_id = str(self.first["id"])
+        dispatch_id = "dispatch:cancel-response-lineage"
+        accepted = self.runtime.dispatch_room(
+            {
+                "targetSessionId": session_id,
+                "rootId": "root:cancel-response-lineage",
+                "dispatchId": dispatch_id,
+                "generation": 2,
+                "capabilityEpoch": 3,
+                "attempt": 0,
+                "idempotencyKey": "cancel-response-lineage",
+            },
+            message="Start a bounded cancellation lineage test.",
+            lease_token="lease:cancel-response-lineage",
+        )
+        forged = {
+            "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
+            "receiptKind": "cancel_applied",
+            "status": "applied",
+            "cancelId": "cancel:response-lineage",
+            "sessionId": session_id,
+            "rootId": "root:cancel-response-lineage",
+            "dispatchId": dispatch_id,
+            "generation": 3,
+            "turnId": "turn:forged",
+            "capabilityEpoch": 3,
+            "cancellationSurfaces": {
+                surface: {
+                    "schemaVersion": "wisdom-weasel.runtime-surface-termination-receipt.v1",
+                    "surface": surface,
+                    "state": "terminated",
+                    "targetIds": [],
+                }
+                for surface in (
+                    "provider", "tool", "exec", "retry", "compaction",
+                    "branch_summary", "timer", "continuation", "session",
+                )
+            },
+            "pendingTargets": [],
+        }
+        client = self.runtime._require_client()
+        with patch.object(client, "send", return_value=forged):
+            with self.assertRaisesRegex(
+                PiRuntimeError,
+                "invalid Room cancellation receipt",
+            ):
+                self.runtime.cancel_room(
+                    cancel_id="cancel:response-lineage",
+                    session_id=session_id,
+                    root_id="root:cancel-response-lineage",
+                    dispatch_id=dispatch_id,
+                    generation=3,
+                    turn_id=str(accepted["turnId"]),
+                    capability_epoch=3,
+                )
 
     def test_room_retry_attempt_uses_a_distinct_persisted_delivery_key(
         self,
@@ -2215,9 +2321,13 @@ class PiRuntimeV2Tests(unittest.TestCase):
         )
 
         cancelled = self.runtime.cancel_room(
+            cancel_id="cancel:agent-room-agent",
             session_id=session_id,
             root_id="root:agent-room-agent",
+            dispatch_id="dispatch:agent-room-agent",
             generation=1,
+            turn_id="room-turn-dispatch:agent-room-agent",
+            capability_epoch=5,
         )
         self.assertEqual(cancelled["receiptKind"], "cancel_applied")
         self.assertEqual(cancelled["pendingTargets"], [])

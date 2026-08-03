@@ -197,6 +197,11 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         )
 
     def _seed_running_dispatch(self) -> None:
+        # Settlement tests exercise the typed Kernel lifecycle directly, not
+        # product intake. Seed the explicit legacy shape without an
+        # authoritative intake receipt; product Roots must use room_define.
+        legacy_mode = patch.object(self.service.room_kernel, "mode", "test")
+        legacy_mode.start()
         self.service.room_kernel.create_root(
             {
                 "schemaVersion": ROOT_EXECUTION_SCHEMA_VERSION,
@@ -221,6 +226,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             acceptance_criteria=("criterion:settle",),
             now_ms=self.now_ms,
         )
+        legacy_mode.stop()
         self.service.room_kernel.create_task(
             {
                 "schemaVersion": ROOM_TASK_SCHEMA_VERSION,
@@ -243,7 +249,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 "revision": 0,
                 "state": "active",
             },
-            now_ms=self.now_ms + 1,
+            now_ms=self.now_ms,
         )
         self.service.room_kernel.enqueue_dispatch(
             {
@@ -596,8 +602,29 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             "independentReviewRequired": True,
             "createdAtMs": self.now_ms + 100,
         }
-        self.service.room_kernel.create_root(
+        self.service.room_kernel.create_root_with_task(
             policy_root,
+            {
+                "schemaVersion": ROOM_TASK_SCHEMA_VERSION,
+                "taskId": "task:review-policy",
+                "rootId": "root:review-policy",
+                "parentTaskId": None,
+                "taskKind": "work",
+                "currentOwnerParticipantId": str(self.owner["id"]),
+                "ownershipRevision": 0,
+                "ownershipReceiptId": None,
+                "invitationId": None,
+                "reviewState": "not_required",
+                "reviewOfTaskIds": [],
+                "reviewAuthorParticipantIds": [],
+                "contextEvidenceRefs": [],
+                "objective": "Exercise the independent review terminal fence.",
+                "expectedOutput": "A rejected terminal receipt.",
+                "requirementItemIds": ["requirement:review-policy"],
+                "acceptanceCriterionIds": [],
+                "revision": 0,
+                "state": "completed",
+            },
             budget=10,
             max_hops=3,
             max_depth=3,
@@ -872,7 +899,10 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                         "userImpact": "不影响当前用户结果",
                         "evidenceRefs": [reviewer_evidence],
                         "reproduction": ["读取相关实现并核对命名"],
-                        "state": "open",
+                        "state": "dismissed",
+                        "dispositionRationale": (
+                            "已确认不影响当前验收，明确转入后续维护 backlog"
+                        ),
                     }
                 ],
             },
@@ -1226,7 +1256,21 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                     "reproduction": ["运行边界输入检查并观察旧值"],
                     "state": "open",
                     "ownerParticipantRef": "P2",
-                }
+                },
+                {
+                    "findingId": "Regression-1",
+                    "gateEffect": "blocking",
+                    "impact": "high",
+                    "category": "regression",
+                    "scope": {"acceptance": "AC-1"},
+                    "observation": "修复后的边界行为在回归检查中仍需确认",
+                    "expected": "回归检查应保持修复后的边界行为",
+                    "userImpact": "未来回归可能重新暴露错误",
+                    "evidenceRefs": [first_review_evidence],
+                    "reproduction": ["运行回归检查并观察边界行为"],
+                    "state": "open",
+                    "ownerParticipantRef": "P2",
+                },
             ],
         )
         self.assertEqual(
@@ -1314,7 +1358,13 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                     "action": "fixed",
                     "rationale": "已修正边界分支并重新验证",
                     "evidenceRefs": [revision_evidence],
-                }
+                },
+                {
+                    "findingId": "Regression-1",
+                    "action": "fixed",
+                    "rationale": "已补充边界行为回归检查",
+                    "evidenceRefs": [revision_evidence],
+                },
             ],
         )
         self.assertEqual(
@@ -1377,6 +1427,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 },
             ],
         )
+        self.assertIn("settleResult", review_settled, review_settled)
         facilitator_resume_ids = review_settled["settleResult"]["receipt"][
             "details"
         ]["resumedDispatchIds"]
@@ -2299,6 +2350,148 @@ class RoomQualityGateDiagnosticTests(unittest.TestCase):
         self.assertEqual(gate.requirement_coverage, criteria)
 
 
+class ReviewFindingAdmissibilityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.service = RoomSettleLifecycleService.__new__(
+            RoomSettleLifecycleService
+        )
+        self.service.rooms = _ReviewFindingRooms()
+        self.task = {
+            "taskKind": "review",
+            "reviewTargetRevision": f"sha256:{'a' * 64}",
+            "reviewRound": 1,
+            "reviewFindings": [],
+        }
+
+    @staticmethod
+    def _finding(
+        *,
+        gate_effect: str = "blocking",
+        impact: str = "high",
+        category: str = "correctness",
+        scope: dict[str, object] | None = None,
+        state: str = "open",
+    ) -> dict[str, object]:
+        finding: dict[str, object] = {
+            "findingId": "Finding-1",
+            "gateEffect": gate_effect,
+            "impact": impact,
+            "category": category,
+            "scope": scope or {"acceptance": "AC-1"},
+            "observation": "复核发现一个可复现问题",
+            "expected": "当前验收条件与治理约束必须保持成立",
+            "userImpact": "可能导致用户收到错误结果",
+            "evidenceRefs": ["evidence:review"],
+            "reproduction": ["运行独立复核检查"],
+            "state": state,
+        }
+        if state in {"dismissed", "accepted_risk"}:
+            finding["dispositionRationale"] = "已明确处置并记录原因"
+        return finding
+
+    def _canonical(
+        self,
+        finding: dict[str, object],
+        *,
+        decision: str,
+    ) -> list[dict[str, object]]:
+        return self.service._canonical_review_findings(
+            value=[finding],
+            task=self.task,
+            root={"roomId": "room:admissibility"},
+            decision=decision,
+            acceptance_aliases={"AC-1": "criterion:one"},
+            evidence_refs=["evidence:review"],
+            runtime_evidence_refs={"evidence:review"},
+        )
+
+    def test_blocker_requires_high_impact_and_high_risk_category(self) -> None:
+        with self.assertRaisesRegex(
+            RoomCommitProposalError,
+            "Blocking Finding requires critical/high impact",
+        ):
+            self._canonical(
+                self._finding(impact="normal"),
+                decision="handoff",
+            )
+        with self.assertRaisesRegex(
+            RoomCommitProposalError,
+            "category is not admissible as blocking",
+        ):
+            self._canonical(
+                self._finding(category="maintainability"),
+                decision="handoff",
+            )
+
+    def test_blocker_invariant_scope_must_be_governed(self) -> None:
+        with self.assertRaisesRegex(
+            RoomCommitProposalError,
+            "invariantId is not a governed invariant",
+        ):
+            self._canonical(
+                self._finding(scope={"invariantId": "opinion:clean-code"}),
+                decision="handoff",
+            )
+
+        canonical = self._canonical(
+            self._finding(
+                category="security",
+                scope={"invariantId": "room-governance:security"},
+            ),
+            decision="handoff",
+        )
+        self.assertEqual(canonical[0]["gateEffect"], "blocking")
+        self.assertEqual(
+            canonical[0]["scope"],
+            {"invariantId": "room-governance:security"},
+        )
+
+    def test_open_advisory_cannot_be_delivered_as_terminal_review(self) -> None:
+        with self.assertRaisesRegex(
+            RoomCommitProposalError,
+            "open Advisory Finding",
+        ):
+            self._canonical(
+                self._finding(
+                    gate_effect="advisory",
+                    impact="normal",
+                    category="maintainability",
+                ),
+                decision="deliver",
+            )
+
+        canonical = self._canonical(
+            self._finding(
+                gate_effect="advisory",
+                impact="normal",
+                category="maintainability",
+                state="dismissed",
+            ),
+            decision="deliver",
+        )
+        self.assertEqual(canonical[0]["state"], "dismissed")
+
+    def test_blocking_terminal_state_requires_fix_or_arbiter_lineage(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            RoomCommitProposalError,
+            "verified fix lineage",
+        ):
+            self._canonical(
+                self._finding(state="resolved"),
+                decision="deliver",
+            )
+        with self.assertRaisesRegex(
+            RoomCommitProposalError,
+            "independent arbiter",
+        ):
+            self._canonical(
+                self._finding(state="dismissed"),
+                decision="deliver",
+            )
+
+
 class ReviewScopeLockTests(unittest.TestCase):
     def setUp(self) -> None:
         self.service = RoomSettleLifecycleService.__new__(
@@ -2367,12 +2560,22 @@ class ReviewScopeLockTests(unittest.TestCase):
     ) -> None:
         finding = self._finding(category="ux", acceptance="AC-2")
 
-        canonical = self._canonical(finding, decision="deliver")
+        with self.assertRaisesRegex(
+            RoomCommitProposalError,
+            "open Advisory Finding",
+        ):
+            self._canonical(finding, decision="deliver")
+        disposed = {
+            **finding,
+            "state": "dismissed",
+            "dispositionRationale": "不属于当前验收范围，明确转入 backlog",
+        }
+        canonical = self._canonical(disposed, decision="deliver")
 
         self.assertEqual(canonical[0]["gateEffect"], "advisory")
         self.assertEqual(canonical[0]["impact"], "normal")
         self.assertIn(
-            "Advisory/Backlog",
+            "明确转入 backlog",
             str(canonical[0]["dispositionRationale"]),
         )
         with self.assertRaisesRegex(

@@ -26,7 +26,11 @@ from .agent_room_kernel_contracts import (
 )
 from .agent_room_kernel_projection import RoomKernelProjection
 from .agent_room_kernel_worker import KernelCommandBus
-from .agent_room_public_timeline import RoomPublicTimelineProjector
+from .agent_room_public_timeline import (
+    RoomPublicTimelineProjector,
+    canonical_room_alignment_content,
+    public_room_post_payload,
+)
 from .agent_room_references import (
     ParticipantReferenceError,
     participant_ref_map,
@@ -317,24 +321,22 @@ class RoomApplicationService:
         implementation_ref = str(
             arguments.get("implementationParticipantRef") or ""
         ).strip()
-        try:
-            implementation_id = resolve_participant_ref(
-                implementation_ref,
-                participant_refs,
-            )
-        except ParticipantReferenceError:
-            implementation_id = implementation_ref
-            if not any(
-                isinstance(item, Mapping)
-                and str(item.get("id") or "") == implementation_id
-                and item.get("status") == "active"
-                for item in room.get("participants", [])
-            ):
-                raise
-        if implementation_id == str(root["facilitatorParticipantId"]):
-            raise RoomKernelFenceError(
-                "room_define implementation participant must differ from facilitator"
-            )
+        implementation_id = str(root["facilitatorParticipantId"])
+        if implementation_ref:
+            try:
+                implementation_id = resolve_participant_ref(
+                    implementation_ref,
+                    participant_refs,
+                )
+            except ParticipantReferenceError:
+                implementation_id = implementation_ref
+                if not any(
+                    isinstance(item, Mapping)
+                    and str(item.get("id") or "") == implementation_id
+                    and item.get("status") == "active"
+                    for item in room.get("participants", [])
+                ):
+                    raise
         target = self.rooms.participant(implementation_id)
         if (
             target.get("roomId") != room_id
@@ -433,9 +435,16 @@ class RoomApplicationService:
             )
 
         fence_id = f"room-definition-fence:{_stable_digest(invocation_receipt_id)}"
+        alignment_post_id = (
+            "room-post:alignment:"
+            f"{_stable_digest(str(root['rootId']), 'defined-alignment')}"
+        )
+        alignment_idempotency_key = (
+            f"room-define-alignment:{root['rootId']}"
+        )
         prior_fence = prior_definition
         if prior_fence is not None:
-            return {
+            replay = {
                 "schemaVersion": "rag-ime.room-define.v1",
                 "ok": True,
                 "created": False,
@@ -447,6 +456,15 @@ class RoomApplicationService:
                 "definitionReceipt": prior_fence["receipt"],
                 "idempotentReplay": True,
             }
+            alignment_post = self.context.post_by_idempotency(
+                room_id=room_id,
+                idempotency_key=alignment_idempotency_key,
+            )
+            if alignment_post is not None:
+                replay["alignmentPost"] = public_room_post_payload(
+                    alignment_post
+                )
+            return replay
         if self.kernel.definition_fence(
             root_id=str(root["rootId"]),
             dispatch_id=dispatch_id,
@@ -586,6 +604,7 @@ class RoomApplicationService:
             "attachmentIds": list(dispatch.get("attachmentIds") or []),
             "state": "pending",
         }
+        alignment_post: dict[str, object] | None = None
         transaction = sqlite3.connect(self.kernel.db_path, timeout=10)
         transaction.row_factory = sqlite3.Row
         try:
@@ -644,6 +663,43 @@ class RoomApplicationService:
                 "workItemId": work_item["id"],
                 "independentReviewRequired": independent_review_required,
             }
+            intake_before_definition = self.kernel.intake_state(
+                str(root["rootId"]),
+                conn=transaction,
+            )
+            if intake_before_definition.get("clarificationOccurred") is True:
+                alignment_post = {
+                    "schemaVersion": ROOM_POST_SCHEMA_VERSION,
+                    "postId": alignment_post_id,
+                    "roomId": room_id,
+                    "rootId": str(root["rootId"]),
+                    "generation": int(root["generation"]),
+                    "taskId": str(task_payload["taskId"]),
+                    "dispatchId": dispatch_id,
+                    "authorActorRef": str(
+                        root["facilitatorParticipantId"]
+                    ),
+                    "kind": "alignment",
+                    "visibility": "room",
+                    "content": canonical_room_alignment_content(
+                        objective=objective,
+                        expected_output=expected_output,
+                    ),
+                    "idempotencyKey": alignment_idempotency_key,
+                    "publicationSource": {
+                        "kind": "room_post",
+                        "ref": fence_id,
+                    },
+                    "createdAtMs": timestamp,
+                }
+                self.projection.publish_post_in_transaction(
+                    transaction,
+                    alignment_post,
+                )
+                self.context.publish_post_in_transaction(
+                    transaction,
+                    alignment_post,
+                )
             revised = self.kernel.revise_definition_in_transaction(
                 transaction,
                 root_id=str(root["rootId"]),
@@ -656,6 +712,12 @@ class RoomApplicationService:
                 details=details,
                 now_ms=timestamp,
             )
+            if bool(alignment_post) != bool(
+                revised["receipt"]["details"].get("requiresStartAction")
+            ):
+                raise RoomKernelFenceError(
+                    "room_define alignment publication disagrees with intake state"
+                )
             transaction.commit()
         except BaseException:
             transaction.rollback()
@@ -694,6 +756,8 @@ class RoomApplicationService:
                 else "room_collaborate_with_bounded_implementation_lanes"
             ),
         }
+        if alignment_post is not None:
+            response["alignmentPost"] = alignment_post
         self.projection.sync_room(room_id, now_ms=timestamp)
         return response
     def _replay_post_response(
@@ -802,6 +866,20 @@ class RoomApplicationService:
             if alignment_dispatches
             else self.rooms.participant(str(root["facilitatorParticipantId"]))
         )
+        timeline_dispatches = dispatch_results if resumed else alignment_results
+        timeline_events = self.public_timeline.publish_ingress(
+            room=room,
+            post=post,
+            client_message_id=client_message_id,
+            route_decisions=route_decisions,
+            dispatches=timeline_dispatches,
+        )
+        self.projection.sync_room(
+            room_id,
+            now_ms=int(post.get("createdAtMs") or self.clock_ms()),
+        )
+        if timeline_events and timeline_dispatches:
+            self.wake_worker()
         return {
             "schemaVersion": "rag-ime.agent-room-message.v1",
             "ok": True,
@@ -824,7 +902,7 @@ class RoomApplicationService:
             "topicId": str(room.get("activeTopicId") or ""),
             "sessionTurnId": "",
             "post": dict(post),
-            "timelineEvents": [],
+            "timelineEvents": timeline_events,
         }
 
     def _resume_pending_user_wait(
@@ -891,19 +969,12 @@ class RoomApplicationService:
         answer_item_id = (
             f"requirement:{_stable_digest(root_id, identity, 'answer')}"
         )
-        answer_anchor, _ = self.requirements.append_anchor(
-            anchor_id=anchor_id,
-            root_id=root_id,
-            original_content=message,
-            created_by="user:local",
-            provenance={
-                "surface": "room",
-                "roomId": room_id,
-                "clientMessageId": client_message_id,
-                "answerToContinuationId": str(pending["continuationId"]),
-            },
-            created_at_ms=timestamp,
-        )
+        answer_anchor_provenance = {
+            "surface": "room",
+            "roomId": room_id,
+            "clientMessageId": client_message_id,
+            "answerToContinuationId": str(pending["continuationId"]),
+        }
         answer_item = {
             "itemId": answer_item_id,
             "kind": "explicit_user_requirement",
@@ -919,40 +990,8 @@ class RoomApplicationService:
             ],
             "confirmation": "captured_from_user",
         }
-        requirement_catalog, _ = self.requirements.revise_catalog(
-            catalog_revision_id=(
-                f"requirement-catalog:{_stable_digest(root_id, identity, 'answer-catalog')}"
-            ),
-            root_id=root_id,
-            expected_current_revision=int(current_catalog["revision"]),
-            anchor_refs=[
-                *[
-                    str(value)
-                    for value in current_catalog.get("anchorRefs", [])
-                ],
-                anchor_id,
-            ],
-            items=[
-                *[
-                    dict(item)
-                    for item in current_catalog.get("items", [])
-                    if isinstance(item, Mapping)
-                ],
-                answer_item,
-            ],
-            acceptance_criteria=[
-                dict(item)
-                for item in current_catalog.get("acceptanceCriteria", [])
-                if isinstance(item, Mapping)
-            ],
-            change_reason="用户回答澄清问题并恢复原对齐任务",
-            provenance={
-                "surface": "room",
-                "answerAnchorId": anchor_id,
-                "continuationId": str(pending["continuationId"]),
-            },
-            created_by="room-ingress",
-            created_at_ms=timestamp,
+        answer_catalog_id = (
+            f"requirement-catalog:{_stable_digest(root_id, identity, 'answer-catalog')}"
         )
         user_post = {
             "schemaVersion": ROOM_POST_SCHEMA_VERSION,
@@ -994,27 +1033,94 @@ class RoomApplicationService:
                 "depth": int(pending.get("parentDepth") or 0),
             }
         )
-        resumed = self.kernel.resume_user_wait(
-            continuation_id=str(pending["continuationId"]),
-            dispatch_payload=resume_dispatch,
-            question_post_id=str(pending["questionPostId"]),
-            answer_root_id=root_id,
-            answer_post_id=post_id,
-            answer_anchor_id=anchor_id,
-            now_ms=timestamp,
-        )
-        self.projection.publish_post(user_post)
-        self.context.publish_post(user_post)
-        self.context.append_entry(
-            root_id=root_id,
-            room_id=room_id,
-            generation=int(pending["generation"]),
-            entry_kind="requirement_anchor",
-            source_ref=anchor_id,
-            dedupe_key=f"requirement-anchor:{anchor_id}",
-            content=message,
-            created_at_ms=timestamp,
-        )
+        transaction = sqlite3.connect(self.kernel.db_path, timeout=10)
+        transaction.row_factory = sqlite3.Row
+        try:
+            transaction.execute("PRAGMA foreign_keys = ON")
+            transaction.execute("BEGIN IMMEDIATE")
+            answer_anchor, _ = self.requirements.append_anchor_in_transaction(
+                transaction,
+                anchor_id=anchor_id,
+                root_id=root_id,
+                original_content=message,
+                created_by="user:local",
+                provenance=answer_anchor_provenance,
+                created_at_ms=timestamp,
+            )
+            requirement_catalog, _ = (
+                self.requirements.revise_catalog_in_transaction(
+                    transaction,
+                    catalog_revision_id=answer_catalog_id,
+                    root_id=root_id,
+                    expected_current_revision=int(current_catalog["revision"]),
+                    anchor_refs=[
+                        *[
+                            str(value)
+                            for value in current_catalog.get("anchorRefs", [])
+                        ],
+                        anchor_id,
+                    ],
+                    items=[
+                        *[
+                            dict(item)
+                            for item in current_catalog.get("items", [])
+                            if isinstance(item, Mapping)
+                        ],
+                        answer_item,
+                    ],
+                    acceptance_criteria=[
+                        dict(item)
+                        for item in current_catalog.get(
+                            "acceptanceCriteria",
+                            [],
+                        )
+                        if isinstance(item, Mapping)
+                    ],
+                    change_reason="用户回答澄清问题并恢复原对齐任务",
+                    provenance={
+                        "surface": "room",
+                        "answerAnchorId": anchor_id,
+                        "continuationId": str(pending["continuationId"]),
+                    },
+                    created_by="room-ingress",
+                    created_at_ms=timestamp,
+                )
+            )
+            self.projection.publish_post_in_transaction(
+                transaction,
+                user_post,
+            )
+            self.context.publish_post_in_transaction(
+                transaction,
+                user_post,
+            )
+            self.context.append_entry_in_transaction(
+                transaction,
+                root_id=root_id,
+                room_id=room_id,
+                generation=int(pending["generation"]),
+                entry_kind="requirement_anchor",
+                source_ref=anchor_id,
+                dedupe_key=f"requirement-anchor:{anchor_id}",
+                content=message,
+                created_at_ms=timestamp,
+            )
+            resumed = self.kernel.resume_user_wait_in_transaction(
+                transaction,
+                continuation_id=str(pending["continuationId"]),
+                dispatch_payload=resume_dispatch,
+                question_post_id=str(pending["questionPostId"]),
+                answer_root_id=root_id,
+                answer_post_id=post_id,
+                answer_anchor_id=anchor_id,
+                now_ms=timestamp,
+            )
+            transaction.commit()
+        except BaseException:
+            transaction.rollback()
+            raise
+        finally:
+            transaction.close()
         dispatch = resumed["dispatch"]
         dispatch_result = _queued_dispatch_result(
             target,
@@ -1303,6 +1409,20 @@ class RoomApplicationService:
         }
         if managed_work:
             base_task["workItemId"] = work_item_id
+        else:
+            # An ordinary user message uses this base Task as the alignment
+            # Task itself. Keep the same conditional define/wait contract as
+            # managed-work alignment children so the two ingress paths cannot
+            # drift into different product behavior.
+            base_task = _alignment_task(
+                base_task,
+                task_id=task_id,
+                target=alignment_targets[0],
+                message=message,
+                criterion_id=alignment_acceptance_criteria[0][0],
+                ordinal=0,
+                total=len(alignment_targets),
+            )
         task = base_task
         created = self.commands.create_root_task(
             root,
@@ -1964,8 +2084,9 @@ def _alignment_acceptance_criteria(
             or f"伙伴 {ordinal + 1}"
         )
         statement = (
-            f"{display_name} 已读取原始请求，并在 Room 公开确认目标、交付、"
-            "验收、禁区和需澄清点；确认前不得开始执行。"
+            f"{display_name} 已读取原始请求并判断是否存在会改变实现的实质歧义；"
+            "完整请求直接定义目标、交付、验收和禁区，有歧义时一次只询问一个"
+            "必要问题；完成定义前不得开始执行。"
         )
         criteria.append(
             (
@@ -1999,17 +2120,19 @@ def _alignment_task(
         "currentOwnerParticipantId": str(target["id"]),
         "objective": (
             f"需求对齐由 Root Facilitator {display_name} 先完成。"
-            "这是执行前门禁：只理解和确认，不搜索、不改文件、不运行任务。"
-            "先调用 room_state 读取原始请求和当前工作卡片，再用自己的话逐项"
-            "确认目标、交付物、验收条件、明确禁区与仍需澄清的歧义。"
-            "没有歧义时，以 room_state 成功回执作为 AC-1 证据并用 "
-            "room_commit deliver 发布确认；有实质歧义时用 room_commit wait "
-            "只提出一个最小必要问题。不得把计划或执行结果冒充需求确认。"
+            "当前只判断和收束需求，不搜索、不改文件、不运行实现任务。"
+            "先调用 room_state 读取原始请求和当前工作卡片，再判断是否存在会改变"
+            "实现的实质歧义。请求完整时不要索要确认，也不要发布单独的确认消息；"
+            "直接用 room_define 一次写入目标、交付物、需求、可观察验收条件和禁区。"
+            "有实质歧义时用 room_commit wait 一次只提出一个最小必要问题；每个"
+            "用户回答按时间进入对话，问题全部收束后再调用 room_define。只有这条"
+            "澄清路径会询问用户是否开始行动。不得把计划或执行结果冒充需求定义。"
             f" 原始请求：{message[:2_000]}"
         )[:4_000],
         "expectedOutput": (
-            "一条公开、具体的需求理解确认；确认后由 Facilitator 拆分可独立任务，"
-            "再通过 room_collaborate 启动隔离并行执行。"
+            "一个已定义的可执行目标；仅在确有歧义时出现按时间追加的问题、回答、"
+            "对齐摘要和开始行动。定义后由 Facilitator 先执行，并只把真正独立的"
+            "工作通过 room_collaborate 分配给伙伴。"
         ),
         "acceptanceCriterionIds": [criterion_id],
         "revision": 0,

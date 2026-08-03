@@ -2150,9 +2150,13 @@ class PiRuntimeHostManager:
     def cancel_room(
         self,
         *,
+        cancel_id: str,
         session_id: str,
         root_id: str,
+        dispatch_id: str,
         generation: int,
+        turn_id: str,
+        capability_epoch: int,
     ) -> dict[str, object]:
         # Cancellation must target the already-running host Session exactly as
         # it exists. Calling ensure() here can try to rebind a revoked Room
@@ -2163,14 +2167,37 @@ class PiRuntimeHostManager:
             )
         if not negotiated["roomTypes"]:
             raise PiRuntimeError("Pi Runtime Host did not negotiate typed Room RPC")
+        normalized_cancel_id = str(cancel_id or "").strip()
+        normalized_session_id = str(session_id or "").strip()
+        normalized_root_id = str(root_id or "").strip()
+        normalized_dispatch_id = str(dispatch_id or "").strip()
+        normalized_turn_id = str(turn_id or "").strip()
+        normalized_generation = _room_generation(generation)
+        normalized_capability_epoch = as_integer(capability_epoch)
+        if not all(
+            (
+                normalized_cancel_id,
+                normalized_session_id,
+                normalized_root_id,
+                normalized_dispatch_id,
+                normalized_turn_id,
+            )
+        ):
+            raise ValueError("Room cancellation requires exact runtime lineage")
+        if normalized_capability_epoch < 0:
+            raise ValueError("Room cancellation capabilityEpoch must be non-negative")
         client = self._require_client()
         try:
             result = client.send(
                 "room.cancel",
                 {
-                    "sessionId": session_id,
-                    "rootId": str(root_id).strip(),
-                    "generation": _room_generation(generation),
+                    "cancelId": normalized_cancel_id,
+                    "sessionId": normalized_session_id,
+                    "rootId": normalized_root_id,
+                    "dispatchId": normalized_dispatch_id,
+                    "generation": normalized_generation,
+                    "turnId": normalized_turn_id,
+                    "capabilityEpoch": normalized_capability_epoch,
                 },
             )
         except PiRuntimeError as exc:
@@ -2178,17 +2205,30 @@ class PiRuntimeHostManager:
                 receipt = self._kill_gate.request_kill(
                     client.host_identity,
                     request_kind="cancel_timeout",
-                    requested_by=f"session:{session_id}",
-                    reason=f"room.cancel timeout for {root_id}",
+                    requested_by=f"session:{normalized_session_id}",
+                    reason=f"room.cancel timeout for {normalized_root_id}",
                     now_ms=int(time.time() * 1000),
                 )
                 with self._lock:
                     self._last_kill_receipt = dict(receipt)
             raise
+        try:
+            receipt_generation = int(result.get("generation", -1))
+            receipt_capability_epoch = int(result.get("capabilityEpoch", -1))
+        except (TypeError, ValueError) as exc:
+            raise PiRuntimeError(
+                "Pi Runtime Host returned an invalid Room cancellation receipt"
+            ) from exc
         if (
             result.get("schemaVersion") != "wisdom-weasel.room-runtime-receipt.v1"
             or result.get("receiptKind") != "cancel_applied"
-            or result.get("rootId") != root_id
+            or result.get("cancelId") != normalized_cancel_id
+            or result.get("sessionId") != normalized_session_id
+            or result.get("rootId") != normalized_root_id
+            or result.get("dispatchId") != normalized_dispatch_id
+            or receipt_generation != normalized_generation
+            or str(result.get("turnId") or "").strip() != normalized_turn_id
+            or receipt_capability_epoch != normalized_capability_epoch
         ):
             raise PiRuntimeError("Pi Runtime Host returned an invalid Room cancellation receipt")
         surfaces = dict(as_mapping(result.get("cancellationSurfaces")))

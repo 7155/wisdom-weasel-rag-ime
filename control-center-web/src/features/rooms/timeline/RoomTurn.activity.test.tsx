@@ -253,6 +253,54 @@ describe('RoomTurn public activity detail', () => {
     expect(lane).toHaveTextContent(/最近更新 .* · 0 秒前/);
     expect(lane.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'thinking');
   });
+
+  it('stops motion immediately when only the Room timeline stream disconnects', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const projection = roomProjection();
+    projection.activitiesById['progress-fresh'] = {
+      id: 'progress-fresh',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'running',
+      summary: '正在核对最新实现',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'current_progress',
+      },
+      createdAtMs: 9_000,
+      updatedAtMs: 9_000,
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: [...projection.turnsById['turn-a']!.activityIds, 'progress-fresh'],
+      updatedAtMs: 9_000,
+    };
+    const syncedKernel = kernelSync('synced', 9_500);
+    const view = render(roomTurn(projection, {}, undefined, syncedKernel, 'synced'));
+    const lane = view.container.querySelector<HTMLElement>('.room-agent-lane')!;
+
+    expect(lane).toHaveAttribute('data-motion', 'fresh');
+    expect(lane.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'thinking');
+
+    view.rerender(roomTurn(projection, {}, undefined, syncedKernel, 'failed'));
+    expect(lane).toHaveAttribute('data-motion', 'disconnected');
+    expect(lane).toHaveTextContent('Room 对话实时更新暂时中断');
+    expect(lane.querySelector('.agent-persona-avatar')).not.toHaveAttribute('data-presence', 'thinking');
+    expect(lane.querySelector('.room-agent-lane__activity')).toHaveAttribute('data-motion', 'paused');
+
+    projection.activitiesById['progress-fresh'] = {
+      ...projection.activitiesById['progress-fresh']!,
+      summary: '重连后收到新的权威进展',
+      updatedAtMs: Date.now(),
+    };
+    view.rerender(roomTurn(projection, {}, undefined, syncedKernel, 'synced'));
+    expect(lane).toHaveAttribute('data-motion', 'fresh');
+    expect(lane.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'thinking');
+  });
 });
 
 function roomTurn(
@@ -260,6 +308,7 @@ function roomTurn(
   taskOverrides: Partial<RoomTaskV3> = {},
   taskUpdatedAtMs?: number,
   kernelSync?: RoomKernelSyncProjection,
+  roomSyncState?: 'recovering' | 'failed' | 'synced',
 ) {
   return <RoomTurn
     kernelDispatchesById={{
@@ -277,6 +326,7 @@ function roomTurn(
       ? {}
       : { 'task-a': taskUpdatedAtMs }}
     kernelSync={kernelSync}
+    roomSyncState={roomSyncState}
     personas={[]}
     projection={projection}
     room={{

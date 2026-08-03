@@ -98,8 +98,7 @@ export function RoomKernelControlPlane({
     const recency = roomRootRecency(right) - roomRootRecency(left);
     return recency || left.rootId.localeCompare(right.rootId);
   });
-  const tasks = Object.values(projection.tasksById);
-  const dispatches = Object.values(projection.dispatchesById);
+  const tasks = Object.values(projection.tasksById).filter(roomTaskIsVisibleWork);
   const completedTasks = tasks.filter((task) => task.state === 'completed').length;
   const activeTasks = tasks.filter((task) => ['active', 'review'].includes(task.state)).length;
   const waitingTasks = tasks.filter((task) => ['pending', 'waiting'].includes(task.state)).length;

@@ -16,9 +16,12 @@ from .agent_definitions import (
     collaboration_role,
 )
 from .agent_room_capabilities import (
+    REVIEW_FINDING_BLOCKING_CATEGORIES,
     REVIEW_FINDING_CATEGORY_SET,
+    REVIEW_FINDING_GOVERNANCE_INVARIANTS,
     REVIEW_FINDING_RE_REVIEW_EXCEPTION_CATEGORIES,
     RoomCapabilityManifestStore,
+    canonical_review_finding_fingerprint,
 )
 from .agent_room_continuations import (
     RoomContinuationFactory,
@@ -615,7 +618,7 @@ class RoomSettleLifecycleService:
             raise RoomCommitProposalError(
                 "仍有独立 worktree 尚未合入；先用 room_integrate 完成集成和验证"
             )
-        latest_attempt = self.kernel.latest_review_attempt(
+        latest_attempts = self.kernel.latest_review_attempts(
             str(root["rootId"])
         )
         independent_review_required = root.get("independentReviewRequired")
@@ -624,76 +627,90 @@ class RoomSettleLifecycleService:
                 "Root independent review policy is missing or invalid; "
                 "completion is blocked"
             )
-        if latest_attempt is None:
+        if not latest_attempts:
             if independent_review_required:
                 raise RoomCommitProposalError(
                     "集成后必须先用 room_commit handoff 把完整结果交给 Reviewer "
                     "独立复核，不能直接发布最终回复"
                 )
             return
-        latest_review = latest_attempt.get("dispatch")
-        review_task = latest_attempt.get("payload")
-        if not isinstance(latest_review, Mapping):
-            latest_review = {}
-        if not isinstance(review_task, Mapping):
-            review_task = {}
-        review_task = {
-            **dict(review_task),
-            "state": str(latest_attempt.get("taskState") or ""),
-        }
-        if (
-            latest_attempt.get("resultPublic") is not True
-            or review_task.get("state") != "completed"
-            or review_task.get("reviewState")
-            not in {"accepted", "accepted_with_notes"}
-        ):
-            raise RoomCommitProposalError(
-                "最新独立复核尚未通过；按复核意见修正并发起新的独立复核"
+        for latest_attempt in latest_attempts:
+            latest_review = latest_attempt.get("dispatch")
+            review_task = latest_attempt.get("payload")
+            if not isinstance(latest_review, Mapping):
+                latest_review = {}
+            if not isinstance(review_task, Mapping):
+                review_task = {}
+            review_task = {
+                **dict(review_task),
+                "state": str(latest_attempt.get("taskState") or ""),
+            }
+            if (
+                latest_attempt.get("resultPublic") is not True
+                or review_task.get("state") != "completed"
+                or review_task.get("reviewState")
+                not in {"accepted", "accepted_with_notes"}
+            ):
+                raise RoomCommitProposalError(
+                    "最新独立复核尚未通过；按复核意见修正并发起新的独立复核"
+                )
+            reviewer_id = str(
+                latest_review.get("targetParticipantId") or ""
             )
-        reviewer_id = str(
-            latest_review.get("targetParticipantId") or ""
-        )
-        authors = {
-            str(value)
-            for value in review_task.get(
-                "reviewAuthorParticipantIds",
-                (),
-            )
-            if str(value).strip()
-        }
-        if not authors or reviewer_id in authors:
-            raise RoomCommitProposalError(
-                "最新复核没有独立作者边界，不能作为最终交付依据"
-            )
-        self.application.assert_read_only_workspace_unchanged(review_task)
-        expected_revision = str(
-            review_task.get("reviewTargetRevision") or ""
-        )
-        current_revision = self.kernel.review_target_revision(
-            root_id=str(root["rootId"]),
-            task_ids=[
+            authors = {
                 str(value)
-                for value in review_task.get("reviewOfTaskIds", ())
-                if str(value or "").strip()
-            ],
-            review_snapshot=review_task,
-        )
-        if not expected_revision or current_revision != expected_revision:
-            raise RoomCommitProposalError(
-                "最新独立复核已过期；交付内容变更后必须重新复核"
+                for value in review_task.get(
+                    "reviewAuthorParticipantIds",
+                    (),
+                )
+                if str(value).strip()
+            }
+            if not authors or reviewer_id in authors:
+                raise RoomCommitProposalError(
+                    "最新复核没有独立作者边界，不能作为最终交付依据"
+                )
+            self.application.assert_read_only_workspace_unchanged(
+                review_task
             )
-        unresolved_blockers = [
-            finding
-            for finding in review_task.get("reviewFindings", ())
-            if isinstance(finding, Mapping)
-            and finding.get("gateEffect") == "blocking"
-            and finding.get("state")
-            in {"open", "contested", "escalated"}
-        ]
-        if unresolved_blockers:
-            raise RoomCommitProposalError(
-                "最新独立复核仍有未关闭的 Blocking Finding"
+            expected_revision = str(
+                review_task.get("reviewTargetRevision") or ""
             )
+            current_revision = self.kernel.review_target_revision(
+                root_id=str(root["rootId"]),
+                task_ids=[
+                    str(value)
+                    for value in review_task.get("reviewOfTaskIds", ())
+                    if str(value or "").strip()
+                ],
+                review_snapshot=review_task,
+            )
+            if (
+                not expected_revision
+                or current_revision != expected_revision
+            ):
+                raise RoomCommitProposalError(
+                    "最新独立复核已过期；交付内容变更后必须重新复核"
+                )
+            unresolved_findings = [
+                finding
+                for finding in review_task.get("reviewFindings", ())
+                if isinstance(finding, Mapping)
+                and (
+                    (
+                        finding.get("gateEffect") == "blocking"
+                        and finding.get("state")
+                        in {"open", "contested", "escalated"}
+                    )
+                    or (
+                        finding.get("gateEffect") == "advisory"
+                        and finding.get("state") == "open"
+                    )
+                )
+            ]
+            if unresolved_findings:
+                raise RoomCommitProposalError(
+                    "最新独立复核仍有未明确处置的 Review Finding"
+                )
 
     def _assert_review_evidence_ready(
         self,
@@ -945,17 +962,12 @@ class RoomSettleLifecycleService:
                 raw.get("reproduction"),
                 f"reviewFindings[{index}].reproduction",
             )
-            fingerprint = (
-                "sha256:"
-                + _sha256_json(
-                    {
-                        "category": category,
-                        "scope": scope,
-                        "observation": observation,
-                        "expected": expected,
-                        "userImpact": user_impact,
-                    }
-                )
+            fingerprint = canonical_review_finding_fingerprint(
+                category=category,
+                scope=scope,
+                observation=observation,
+                expected=expected,
+                user_impact=user_impact,
             )
             if fingerprint in seen_fingerprints:
                 raise RoomCommitProposalError(
@@ -1012,6 +1024,26 @@ class RoomSettleLifecycleService:
                 gate_effect = "advisory"
                 impact = "normal"
                 late_scope_downgraded = True
+            if gate_effect == "blocking":
+                if impact not in {"critical", "high"}:
+                    raise RoomCommitProposalError(
+                        "Blocking Finding requires critical/high impact"
+                    )
+                if category not in REVIEW_FINDING_BLOCKING_CATEGORIES:
+                    raise RoomCommitProposalError(
+                        f"reviewFindings[{index}].category is not admissible "
+                        "as blocking"
+                    )
+                invariant_id = str(scope.get("invariantId") or "").strip()
+                if (
+                    invariant_id
+                    and invariant_id
+                    not in REVIEW_FINDING_GOVERNANCE_INVARIANTS
+                ):
+                    raise RoomCommitProposalError(
+                        f"reviewFindings[{index}].scope.invariantId is not "
+                        "a governed invariant"
+                    )
             if gate_effect == "advisory" and impact != "normal":
                 raise RoomCommitProposalError(
                     "critical/high findings must be blocking"
@@ -1020,6 +1052,38 @@ class RoomSettleLifecycleService:
                 raise RoomCommitProposalError(
                     "a blocking finding cannot be accepted as risk by Reviewer"
                 )
+            if gate_effect == "blocking" and state == "resolved":
+                if (
+                    not same_finding
+                    or not isinstance(response, Mapping)
+                    or response.get("action") != "fixed"
+                    or first_seen_revision == target_revision
+                ):
+                    raise RoomCommitProposalError(
+                        "a resolved Blocking Finding requires verified fix "
+                        "lineage from an earlier review revision"
+                    )
+            if gate_effect == "blocking" and state == "dismissed":
+                resolver = getattr(
+                    getattr(self, "kernel", None),
+                    "independent_finding_resolution",
+                    None,
+                )
+                resolution = (
+                    resolver(
+                        root_id=str(root.get("rootId") or ""),
+                        review_target_revision=target_revision,
+                        finding_id=finding_id,
+                    )
+                    if callable(resolver)
+                    and str(root.get("rootId") or "").strip()
+                    else None
+                )
+                if not isinstance(resolution, Mapping):
+                    raise RoomCommitProposalError(
+                        "a dismissed Blocking Finding requires an exact "
+                        "independent arbiter resolution"
+                    )
             if (
                 same_finding
                 and prior_state in {"open", "contested"}
@@ -1100,9 +1164,20 @@ class RoomSettleLifecycleService:
         escalated = [
             finding for finding in blockers if finding["state"] == "escalated"
         ]
+        open_advisories = [
+            finding
+            for finding in findings
+            if finding["gateEffect"] == "advisory"
+            and finding["state"] == "open"
+        ]
         if decision == "deliver" and blockers:
             raise RoomCommitProposalError(
                 "Reviewer cannot deliver with an open Blocking Finding"
+            )
+        if decision == "deliver" and open_advisories:
+            raise RoomCommitProposalError(
+                "Reviewer cannot deliver with an open Advisory Finding; "
+                "record an explicit disposition first"
             )
         if decision == "handoff" and not blockers:
             raise RoomCommitProposalError(
@@ -1364,7 +1439,11 @@ class RoomSettleLifecycleService:
         )
         runtime_evidence_refs = self.capabilities.runtime_evidence_refs(
             session_id=str(dispatch["targetSessionId"]),
+            root_id=str(root["rootId"]),
+            task_id=str(dispatch["taskId"]),
             dispatch_id=str(dispatch["dispatchId"]),
+            generation=int(dispatch["generation"]),
+            capability_epoch=int(dispatch["capabilityEpoch"]),
             not_before_ms=runtime_evidence_not_before_ms,
         )
         definition_fence = self.kernel.definition_fence(

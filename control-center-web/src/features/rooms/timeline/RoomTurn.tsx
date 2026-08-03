@@ -93,6 +93,7 @@ interface RoomTurnProps {
   kernelTaskUpdatedAtMsById?: RoomKernelProjection['taskUpdatedAtMsById'];
   kernelReceiptsById?: RoomKernelProjection['receiptsById'];
   kernelSync?: RoomKernelSyncProjection;
+  roomSyncState?: 'recovering' | 'failed' | 'synced';
   subagentsByTaskId?: Record<string, RoomTaskSubagentRun[]>;
   startingRootIds?: ReadonlySet<string>;
   onStartExecution?: (rootId: string) => void;
@@ -168,6 +169,7 @@ export function RoomTurn({
   kernelTaskUpdatedAtMsById,
   kernelReceiptsById,
   kernelSync,
+  roomSyncState,
   subagentsByTaskId = {},
   startingRootIds = new Set(),
   onStartExecution,
@@ -310,9 +312,10 @@ export function RoomTurn({
             turn,
             nowMs,
             kernelSync,
+            roomSyncState,
             taskId ? kernelTaskUpdatedAtMsById?.[taskId] : undefined,
           )
-        : roomFallbackFreshness(message.createdAtMs, nowMs, kernelSync);
+        : roomFallbackFreshness(message.createdAtMs, nowMs, kernelSync, roomSyncState);
       return <Fragment key={message.id}>
         <RoomParticipantPost
           activeWait={
@@ -334,7 +337,6 @@ export function RoomTurn({
         {message.id === finalAlignmentId ? startActionGate : null}
       </Fragment>;
     })}
-    {!finalAlignmentId ? startActionGate : null}
     {rootBlocked ? <div className="room-turn__root-control" data-state="blocked" role="alert">
       <span><CircleAlert size={14} /><small>这轮协作因伙伴运行失败而暂停；继续会只重做失败的部分，并保留已完成的工作。</small></span>
       <div className="room-turn__root-actions">
@@ -413,6 +415,7 @@ export function RoomTurn({
         turn,
         nowMs,
         kernelSync,
+        roomSyncState,
         laneTaskId ? kernelTaskUpdatedAtMsById?.[laneTaskId] : undefined,
       );
       const laneMotionActive = laneActive
@@ -1730,6 +1733,7 @@ function roomLaneFreshness(
   turn: RoomTurnProjection,
   nowMs: number,
   kernelSync?: RoomKernelSyncProjection,
+  roomSyncState?: 'recovering' | 'failed' | 'synced',
   workspaceUpdatedAtMs?: number,
 ): RoomLaneFreshness {
   const updateTimes = [
@@ -1744,6 +1748,7 @@ function roomLaneFreshness(
     updateTimes.length ? Math.max(...updateTimes) : turn.updatedAtMs,
     nowMs,
     kernelSync,
+    roomSyncState,
   );
 }
 
@@ -1751,7 +1756,17 @@ function roomFallbackFreshness(
   updatedAtMs: number,
   nowMs: number,
   kernelSync?: RoomKernelSyncProjection,
+  roomSyncState?: 'recovering' | 'failed' | 'synced',
 ): RoomLaneFreshness {
+  if (roomSyncState && roomSyncState !== 'synced') {
+    return {
+      state: 'disconnected',
+      updatedAtMs,
+      detail: roomSyncState === 'recovering'
+        ? '正在恢复 Room 对话实时更新，状态暂时静止'
+        : 'Room 对话实时更新暂时中断，状态可能过期',
+    };
+  }
   if (kernelSync && kernelSync.state !== 'synced') {
     return {
       state: 'disconnected',

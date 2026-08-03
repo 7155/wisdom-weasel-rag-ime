@@ -58,6 +58,7 @@ class RequirementGovernanceStore:
         provenance: Mapping[str, object],
         created_at_ms: int,
         authenticity: str = "original_user_bytes",
+        _conn: sqlite3.Connection | None = None,
     ) -> tuple[dict[str, object], bool]:
         content = original_content if isinstance(original_content, bytes) else original_content.encode("utf-8")
         if not content:
@@ -67,7 +68,7 @@ class RequirementGovernanceStore:
         anchor = _required(anchor_id, "anchor_id")
         root = _required(root_id, "root_id")
         digest = _sha256(content)
-        with self._connect(immediate=True) as conn:
+        with self._write_connection(_conn) as conn:
             existing = conn.execute(
                 "SELECT * FROM room_v2_requirement_anchors WHERE anchor_id = ?",
                 (anchor,),
@@ -105,6 +106,31 @@ class RequirementGovernanceStore:
                 (anchor,),
             ).fetchone()
         return _anchor_payload(row), True
+
+    def append_anchor_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        anchor_id: str,
+        root_id: str,
+        original_content: bytes | str,
+        created_by: str,
+        provenance: Mapping[str, object],
+        created_at_ms: int,
+        authenticity: str = "original_user_bytes",
+    ) -> tuple[dict[str, object], bool]:
+        """Append an immutable Anchor inside a caller-owned transaction."""
+
+        return self.append_anchor(
+            anchor_id=anchor_id,
+            root_id=root_id,
+            original_content=original_content,
+            created_by=created_by,
+            provenance=provenance,
+            created_at_ms=created_at_ms,
+            authenticity=authenticity,
+            _conn=conn,
+        )
 
     def import_legacy_objective(
         self,
@@ -974,6 +1000,17 @@ class RequirementGovernanceStore:
         if row is None:
             raise KeyError(catalog_revision_id)
         return row
+
+    @contextmanager
+    def _write_connection(
+        self,
+        conn: sqlite3.Connection | None,
+    ) -> Iterator[sqlite3.Connection]:
+        if conn is not None:
+            yield conn
+            return
+        with self._connect(immediate=True) as owned:
+            yield owned
 
     @contextmanager
     def _connect(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:

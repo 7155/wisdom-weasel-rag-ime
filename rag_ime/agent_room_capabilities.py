@@ -48,6 +48,38 @@ REVIEW_FINDING_CATEGORIES = (
     "documentation",
 )
 REVIEW_FINDING_CATEGORY_SET = frozenset(REVIEW_FINDING_CATEGORIES)
+REVIEW_FINDING_BLOCKING_CATEGORIES = frozenset(
+    {
+        "authorization",
+        "core_runtime_unavailable",
+        "correctness",
+        "data_loss",
+        "destructive_behavior",
+        "permission",
+        "privacy",
+        "regression",
+        "review_target_identity",
+        "security",
+        "spec_mismatch",
+    }
+)
+REVIEW_FINDING_GOVERNANCE_INVARIANTS = frozenset(
+    {
+        "room-governance:acceptance-evidence",
+        "room-governance:authorization",
+        "room-governance:core-runtime-availability",
+        "room-governance:data-loss",
+        "room-governance:destructive-behavior",
+        "room-governance:independent-review",
+        "room-governance:permission",
+        "room-governance:privacy",
+        "room-governance:resource-budget",
+        "room-governance:review-target-identity",
+        "room-governance:runtime-authority",
+        "room-governance:security",
+        "room-governance:workspace-integration",
+    }
+)
 REVIEW_FINDING_RE_REVIEW_EXCEPTION_CATEGORIES = frozenset(
     {
         "authorization",
@@ -61,6 +93,29 @@ REVIEW_FINDING_RE_REVIEW_EXCEPTION_CATEGORIES = frozenset(
         "security",
     }
 )
+
+
+def canonical_review_finding_fingerprint(
+    *,
+    category: object,
+    scope: object,
+    observation: object,
+    expected: object,
+    user_impact: object,
+) -> str:
+    """Return the stable identity hash for canonical Review Finding content."""
+
+    if not isinstance(scope, Mapping):
+        raise ValueError("Review Finding scope must be an object")
+    return "sha256:" + _hash_json(
+        {
+            "category": category,
+            "scope": dict(scope),
+            "observation": observation,
+            "expected": expected,
+            "userImpact": user_impact,
+        }
+    )
 
 
 
@@ -433,7 +488,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
 "room_define": {
     "description": (
         "需求对齐完成后，把最终目标、推导出的需求、可观察验收条件和"
-        "首位建议实施伙伴一次性写入当前 Room Root；只允许当前对齐 Dispatch "
+        "可选的首位建议实施伙伴一次性写入当前 Room Root；只允许当前对齐 Dispatch "
         "调用。Reviewer 不能作为实现伙伴。"
     ),
     "when": (
@@ -444,7 +499,8 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
     ),
     "input": (
         "最终 objective、expectedOutput、1-8 条 requirements、1-16 条 "
-        "acceptanceCriteria，以及一位非 Reviewer 实现伙伴的 participantRef"
+        "acceptanceCriteria；确有独立工作时可附一位非 Reviewer 实现伙伴的 "
+        "participantRef"
     ),
     "output": (
         "新的不可变 RequirementCatalog、稳定 AC-1... 别名、一个由 Facilitator "
@@ -461,7 +517,6 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
             "expectedOutput",
             "requirements",
             "acceptanceCriteria",
-            "implementationParticipantRef",
         ],
         "properties": {
             "objective": {"type": "string", "minLength": 1, "maxLength": 8000},
@@ -521,7 +576,9 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                 "minLength": 1,
                 "maxLength": 320,
                 "description": (
-                    "首位建议实施伙伴；必须是活跃的非 Facilitator、非 Reviewer 成员"
+                    "可选的首位建议实施伙伴；必须是活跃的非 Reviewer 成员。"
+                    "省略或指向 Facilitator 时，由 Facilitator 先执行并按真实依赖决定"
+                    "是否再用 room_collaborate 分工"
                 ),
             },
         },
@@ -960,6 +1017,63 @@ class CapabilityManifestConflict(RuntimeError):
 
 class ToolAuthorizationError(PermissionError):
     """Disclosure exists, but current authorization does not permit invocation."""
+
+
+def runtime_evidence_refs_for_dispatch(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    root_id: str,
+    task_id: str,
+    dispatch_id: str,
+    generation: int,
+    capability_epoch: int,
+    not_before_ms: int = 0,
+) -> frozenset[str]:
+    """Read current, successful evidence receipts for one fenced Dispatch."""
+
+    rows = conn.execute(
+        """
+        SELECT execution.execution_receipt_id
+        FROM room_v2_tool_execution_receipts execution
+        JOIN room_v2_tool_invocation_receipts invocation
+          ON invocation.receipt_id = execution.invocation_receipt_id
+        JOIN room_v2_capability_manifests manifest
+          ON manifest.manifest_id = invocation.manifest_id
+         AND manifest.manifest_hash = invocation.manifest_hash
+        JOIN room_v2_capability_runtime_bindings binding
+          ON binding.manifest_id = manifest.manifest_id
+         AND binding.manifest_hash = manifest.manifest_hash
+         AND binding.session_id = execution.session_id
+        WHERE execution.session_id = ?
+          AND binding.state = 'active'
+          AND manifest.root_id = ?
+          AND manifest.task_id = ?
+          AND manifest.dispatch_id = ?
+          AND manifest.generation = ?
+          AND manifest.capability_epoch = ?
+          AND binding.capability_epoch = ?
+          AND execution.status = 'applied'
+          AND execution.created_at_ms >= ?
+          AND execution.tool_name NOT IN (
+            'room_post',
+            'room_collaborate',
+            'room_commit'
+          )
+        ORDER BY execution.execution_receipt_id
+        """,
+        (
+            _required(session_id, "session_id"),
+            _required(root_id, "root_id"),
+            _required(task_id, "task_id"),
+            _required(dispatch_id, "dispatch_id"),
+            _non_negative(generation, "generation"),
+            _non_negative(capability_epoch, "capability_epoch"),
+            _non_negative(capability_epoch, "capability_epoch"),
+            max(0, int(not_before_ms)),
+        ),
+    ).fetchall()
+    return frozenset(str(row["execution_receipt_id"]) for row in rows)
 
 
 class RoomCapabilityManifestStore:
@@ -1668,39 +1782,28 @@ class RoomCapabilityManifestStore:
         self,
         *,
         session_id: str,
+        root_id: str,
+        task_id: str,
         dispatch_id: str,
+        generation: int,
+        capability_epoch: int,
         not_before_ms: int = 0,
     ) -> set[str]:
         """Return successful evidence-producing Tool receipts for one Dispatch."""
 
         with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT execution.execution_receipt_id
-                FROM room_v2_tool_execution_receipts execution
-                JOIN room_v2_tool_invocation_receipts invocation
-                  ON invocation.receipt_id = execution.invocation_receipt_id
-                JOIN room_v2_capability_manifests manifest
-                  ON manifest.manifest_id = invocation.manifest_id
-                 AND manifest.manifest_hash = invocation.manifest_hash
-                WHERE execution.session_id = ?
-                  AND manifest.dispatch_id = ?
-                  AND execution.status = 'applied'
-                  AND execution.created_at_ms >= ?
-                  AND execution.tool_name NOT IN (
-                    'room_post',
-                    'room_collaborate',
-                    'room_commit'
-                  )
-                ORDER BY execution.execution_receipt_id
-                """,
-                (
-                    _required(session_id, "session_id"),
-                    _required(dispatch_id, "dispatch_id"),
-                    max(0, int(not_before_ms)),
-                ),
-            ).fetchall()
-        return {str(row["execution_receipt_id"]) for row in rows}
+            return set(
+                runtime_evidence_refs_for_dispatch(
+                    conn,
+                    session_id=session_id,
+                    root_id=root_id,
+                    task_id=task_id,
+                    dispatch_id=dispatch_id,
+                    generation=generation,
+                    capability_epoch=capability_epoch,
+                    not_before_ms=not_before_ms,
+                )
+            )
 
     def runtime_evidence_tools(
         self,

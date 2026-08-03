@@ -73,10 +73,15 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
     ))[0]
     : undefined;
   const currentRootTasks = currentRoot && kernelProjection
-    ? Object.values(kernelProjection.tasksById).filter((task) => task.rootId === currentRoot.rootId)
+    ? Object.values(kernelProjection.tasksById).filter((task) => (
+      task.rootId === currentRoot.rootId && task.taskKind !== 'report'
+    ))
     : [];
   const currentRootDispatches = currentRoot && kernelProjection
-    ? Object.values(kernelProjection.dispatchesById).filter((dispatch) => dispatch.rootId === currentRoot.rootId)
+    ? Object.values(kernelProjection.dispatchesById).filter((dispatch) => (
+      dispatch.rootId === currentRoot.rootId
+      && kernelProjection.tasksById[dispatch.taskId]?.taskKind !== 'report'
+    ))
     : [];
   const latestFinalPost = currentRoot && roomRootIsTerminal(currentRoot) && kernelProjection
     ? kernelProjection.postOrder

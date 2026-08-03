@@ -673,6 +673,28 @@ describe('RoomKernelControlPlane', () => {
     expect(overview).toHaveTextContent('当前任务');
     expect(overview).not.toHaveTextContent(/Dispatch|执行批次/);
   });
+
+  it('keeps the internal final report out of peer-visible work counts', () => {
+    const state = projection();
+    state.tasksById['task-report'] = {
+      ...state.tasksById['task-a']!,
+      taskId: 'task-report',
+      taskKind: 'report',
+      currentOwnerParticipantId: 'researcher',
+      objective: '整理最终答复',
+      expectedOutput: '唯一最终答复',
+      state: 'completed',
+    };
+
+    renderPlane(state);
+
+    const controlPlane = screen.getByRole('region', { name: '协作任务进展' });
+    const overview = within(controlPlane).getByRole('region', { name: '共同目标与工作总进度' });
+    expect(controlPlane).toHaveTextContent('2 个共同目标 · 1 项工作');
+    expect(overview).toHaveTextContent('0 / 1 已完成');
+    expect(overview).toHaveTextContent('1 项正在做 · 0 项等待');
+    expect(overview).not.toHaveTextContent('1 / 2 已完成');
+  });
 });
 
 

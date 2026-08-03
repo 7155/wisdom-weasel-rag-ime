@@ -1294,6 +1294,7 @@ export function RoomsFeature() {
               kernelTaskUpdatedAtMsById={kernelTaskUpdatedAtMsById}
               kernelReceiptsById={kernelReceiptsById}
               kernelSync={kernelSync}
+              roomSyncState={selectedRoomRecoveryState}
               subagentsByTaskId={subagentsByTaskId}
               onAbortTurn={(rootId) => void abortRootTurn(rootId)}
               retryingRootIds={retryingRootIds}
@@ -1322,7 +1323,7 @@ export function RoomsFeature() {
             />}
           /> : snapshotLoading
             ? <p className="room-empty">正在读取对话…</p>
-            : <EmptyState icon={MessagesSquare} title="还没有公开消息" description="先对话澄清目标、交付物、验收和禁区；确认后再开始任务。" />
+            : <EmptyState icon={MessagesSquare} title="还没有公开消息" description="说出你想完成的事；只有遇到会影响实现的歧义，伙伴才会继续提问。" />
             : catalogLoading
               ? <p className="room-empty">正在读取协作空间…</p>
               : <EmptyState icon={MessagesSquare} title="选择一个协作空间" description="从左侧选择，或新建一个协作空间。" />}

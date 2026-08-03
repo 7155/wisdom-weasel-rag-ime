@@ -42,18 +42,34 @@ class _AcceptedRuntime:
             "rootId": payload["rootId"],
             "dispatchId": payload["dispatchId"],
             "generation": payload["generation"],
+            "sessionId": payload["targetSessionId"],
+            "capabilityEpoch": payload["capabilityEpoch"],
             "turnId": f"turn:{payload['dispatchId']}",
         }
 
-    def cancel_room(self, *, session_id: str, root_id: str, generation: int):
+    def cancel_room(
+        self,
+        *,
+        cancel_id: str,
+        session_id: str,
+        root_id: str,
+        dispatch_id: str,
+        generation: int,
+        turn_id: str,
+        capability_epoch: int,
+    ):
         self.cancel_calls.append((session_id, root_id, generation))
         return {
             "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
             "receiptKind": "cancel_applied",
             "status": "applied",
+            "cancelId": cancel_id,
             "rootId": root_id,
+            "dispatchId": dispatch_id,
             "sessionId": session_id,
             "generation": generation,
+            "turnId": turn_id,
+            "capabilityEpoch": capability_epoch,
             "cancellationSurfaces": {surface: {
                 "schemaVersion": "wisdom-weasel.runtime-surface-termination-receipt.v1",
                 "surface": surface, "state": "terminated", "targetIds": [],
@@ -65,7 +81,10 @@ class _AcceptedRuntime:
 
 
 class _CancelUnavailableRuntime(_AcceptedRuntime):
-    def cancel_room(self, *, session_id: str, root_id: str, generation: int):
+    def cancel_room(self, **lineage: object):
+        session_id = str(lineage["session_id"])
+        root_id = str(lineage["root_id"])
+        generation = int(lineage["generation"])
         self.cancel_calls.append((session_id, root_id, generation))
         raise ConnectionError("Pi Host is unavailable")
 
@@ -91,7 +110,7 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_runtime_accept_then_kernel_ack_crash_is_reconciled_by_durable_cancel(self) -> None:
+    def test_runtime_ack_lost_before_persistence_stays_unknown_without_blind_cancel(self) -> None:
         original = self.store.accept_runtime_receipt
 
         def crash_after_runtime_effect(**_kwargs):
@@ -104,11 +123,11 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
 
         self.clock = 20
         self.worker.reconcile()
-        self.assertEqual(self.store.dispatch("dispatch:1")["state"], "cancelled")
-        self.assertEqual(self.runtime.cancel_calls, [("session:b", "root:1", 1)])
+        self.assertEqual(self.store.dispatch("dispatch:1")["state"], "unknown")
+        self.assertEqual(self.runtime.cancel_calls, [])
         self.assertEqual(self.revoked, ["session:b"])
-        self.assertEqual(self.store.root("root:1")["state"], "cancelled")
-        self.assertIsNotNone(self.store.root("root:1")["terminalReceiptId"])
+        self.assertEqual(self.store.root("root:1")["state"], "cancelling")
+        self.assertIsNone(self.store.root("root:1")["terminalReceiptId"])
 
     def test_direct_store_cancel_persists_runtime_effect_for_replay(self) -> None:
         self.worker.run_once()
@@ -305,7 +324,7 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
             ).fetchone()
         root = self.store.root("root:1")
         self.assertEqual((state, attempts), ("dead_letter", 5))
-        self.assertEqual(root["state"], "cancelled")
+        self.assertEqual(root["state"], "cancelled_with_unknowns")
         self.assertIsNotNone(root["terminalReceiptId"])
         terminal = self.store.receipt(str(root["terminalReceiptId"]))
         self.assertEqual(
@@ -344,7 +363,7 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         self.assertEqual(receipts[0]["receiptKind"], "terminal")
 
         root = self.store.root("root:1")
-        self.assertEqual(root["state"], "cancelled")
+        self.assertEqual(root["state"], "cancelled_with_unknowns")
         terminal = self.store.receipt(str(root["terminalReceiptId"]))
         self.assertEqual(
             terminal["details"],

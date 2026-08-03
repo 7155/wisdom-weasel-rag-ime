@@ -260,6 +260,7 @@ class AgentService:
                 / "room-workspaces"
             ),
             sessions=self.sessions,
+            writer_quiescence_provider=self._room_workspace_writer_quiescence,
         )
         self.room_work = AgentRoomWorkStore(db_path)
         self.room_work.initialize()
@@ -4060,6 +4061,162 @@ class AgentService:
             "errors": errors[:8],
         }
 
+    def _room_workspace_writer_quiescence(
+        self,
+        request: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        """Build one exact-lineage cleanup fence from existing runtime owners."""
+
+        root_id = str(request.get("rootId") or "")
+        task_id = str(request.get("taskId") or "")
+        dispatch_id = str(request.get("dispatchId") or "")
+        session_id = str(request.get("ownerSessionId") or "")
+        if not all((root_id, task_id, dispatch_id, session_id)):
+            raise RuntimeError(
+                "workspace writer quiescence requires root/task/dispatch/session lineage"
+            )
+        dispatch = self.room_kernel.dispatch(dispatch_id)
+        if any(
+            str(dispatch.get(key) or "") != expected
+            for key, expected in {
+                "rootId": root_id,
+                "taskId": task_id,
+                "targetSessionId": session_id,
+            }.items()
+        ):
+            raise RuntimeError(
+                "workspace writer quiescence does not match the canonical Dispatch"
+            )
+        generation = int(dispatch.get("generation", -1))
+        # Capability revocation is the admission fence.  Any invocation that was
+        # authorized before this point but cannot subsequently seal its execution
+        # receipt remains pending/unknown and blocks cleanup below.
+        self.room_kernel_runtime.revoke_session(
+            session_id,
+            int(time.time() * 1000),
+        )
+        children = self._room_root_child_quiescence(
+            root_id,
+            generation,
+            dispatch_id,
+        )
+        with sqlite_connection(self.db_path, row_factory=sqlite3.Row) as conn:
+            rows = conn.execute(
+                """
+                SELECT manifest.manifest_id, manifest.manifest_hash,
+                       manifest.generation, binding.session_id,
+                       invocation.receipt_id AS invocation_receipt_id,
+                       invocation.canonical_tool_name,
+                       invocation.command_hash,
+                       execution.execution_receipt_id,
+                       execution.session_id AS execution_session_id,
+                       execution.status, execution.result_hash
+                FROM room_v2_capability_manifests AS manifest
+                JOIN room_v2_capability_runtime_bindings AS binding
+                  ON binding.manifest_id = manifest.manifest_id
+                 AND binding.manifest_hash = manifest.manifest_hash
+                LEFT JOIN room_v2_tool_invocation_receipts AS invocation
+                  ON invocation.manifest_id = manifest.manifest_id
+                 AND invocation.manifest_hash = manifest.manifest_hash
+                LEFT JOIN room_v2_tool_execution_receipts AS execution
+                  ON execution.invocation_receipt_id = invocation.receipt_id
+                WHERE manifest.root_id=? AND manifest.task_id=?
+                  AND manifest.dispatch_id=? AND manifest.generation=?
+                  AND binding.session_id=?
+                ORDER BY manifest.manifest_id, invocation.receipt_id
+                """,
+                (root_id, task_id, dispatch_id, generation, session_id),
+            ).fetchall()
+        invalid_execution_sessions = [
+            str(row["execution_receipt_id"])
+            for row in rows
+            if row["execution_receipt_id"] is not None
+            and str(row["execution_session_id"] or "") != session_id
+        ]
+        registry_known = bool(rows) and not invalid_execution_sessions
+        pending = [
+            str(row["invocation_receipt_id"])
+            for row in rows
+            if row["invocation_receipt_id"] is not None
+            and row["execution_receipt_id"] is None
+        ]
+        registry_material = [
+            {
+                "manifestId": str(row["manifest_id"]),
+                "manifestHash": str(row["manifest_hash"]),
+                "generation": int(row["generation"]),
+                "invocationReceiptId": str(row["invocation_receipt_id"] or ""),
+                "toolName": str(row["canonical_tool_name"] or ""),
+                "commandHash": str(row["command_hash"] or ""),
+                "executionReceiptId": str(row["execution_receipt_id"] or ""),
+                "executionSessionId": str(row["execution_session_id"] or ""),
+                "status": str(row["status"] or ""),
+                "resultHash": str(row["result_hash"] or ""),
+            }
+            for row in rows
+        ]
+        registry_revision = hashlib.sha256(
+            json.dumps(
+                registry_material,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        background_known = (
+            children.get("quiescent") is True
+            and int(children.get("unknownCount") or 0) == 0
+        )
+        dispatch_settled = str(dispatch.get("state") or "") in {
+            "committed",
+            "failed",
+            "cancelled",
+            "dead_letter",
+        }
+        dispatch_revision = hashlib.sha256(
+            json.dumps(
+                dispatch,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        receipt = {
+            "schemaVersion": "wisdom-weasel.room-workspace-writer-quiescence.v1",
+            **dict(request),
+            "foregroundMutatingInvocations": {
+                "known": registry_known,
+                "activeCount": len(pending) + len(invalid_execution_sessions),
+                "registryRevision": registry_revision,
+                "pendingInvocationReceiptIds": pending[:32],
+                "invalidExecutionReceiptIds": invalid_execution_sessions[:32],
+            },
+            "backgroundWork": {
+                "known": background_known,
+                "activeCount": int(children.get("pendingCount") or 0),
+                "receiptRef": hashlib.sha256(
+                    json.dumps(
+                        children,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest(),
+            },
+            "managedPiTurn": {
+                "known": True,
+                "settled": dispatch_settled,
+                "sessionId": session_id,
+                "dispatchId": dispatch_id,
+                "receiptRef": dispatch_revision,
+            },
+        }
+        receipt["receiptRevision"] = hashlib.sha256(
+            json.dumps(
+                receipt,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        return receipt
+
     def _cancel_room_root_children(
         self,
         root_id: str,
@@ -4215,6 +4372,7 @@ class AgentService:
             capabilities=self.room_capabilities,
             application=self.room_kernel_application,
         )
+        self.room_workspaces.recover_integrated_cleanups()
         if start_worker:
             self.room_kernel_worker_loop.start()
 

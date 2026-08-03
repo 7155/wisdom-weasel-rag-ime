@@ -1,5 +1,5 @@
 import type { Key, ReactNode } from 'react';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
@@ -2045,7 +2045,7 @@ describe('Rooms experience', () => {
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     expect(await screen.findByText('还没有公开消息')).toBeInTheDocument();
-    expect(screen.getByText('先对话澄清目标、交付物、验收和禁区；确认后再开始任务。')).toBeInTheDocument();
+    expect(screen.getByText('说出你想完成的事；只有遇到会影响实现的歧义，伙伴才会继续提问。')).toBeInTheDocument();
     expect(screen.getByText('还没有公开消息').closest('.ui-empty-state')?.querySelector('img')).toBeNull();
     expect(screen.getByRole('textbox', { name: '协作消息' })).toBeEnabled();
   });
@@ -2215,6 +2215,50 @@ describe('Rooms experience', () => {
     expect(screen.queryByRole('button', { name: '重试同步' })).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(transport.activeSubscriptionCount()).toBe(1);
+  });
+
+  it('stops live Room motion when only the conversation stream disconnects', async () => {
+    const now = Date.now();
+    const progress = {
+      ...roomEvent('room-a', 1, 'participant_activity', {
+        rootId: 'room-a:turn-1',
+        dispatchId: 'room-a:dispatch-1',
+        sourceEventType: 'current_progress',
+        status: 'running',
+        summary: '正在核对最新界面实现',
+      }, {
+        turnId: 'room-a:turn-1',
+        participantId: 'room-a:p1',
+        sourceSessionId: 'room-a:s1',
+      }),
+      createdAtMs: now,
+    };
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '独立连接状态 Room')] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot('room-a', [progress]),
+      'agent.room.kernel.snapshot': roomKernelSnapshot('room-a'),
+    } });
+    useRoomLiveStore.getState().setKernelSync('room-a', {
+      state: 'synced',
+      detail: '任务内核实时更新已连接',
+      updatedAtMs: now,
+    });
+    const view = render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    expect((await screen.findAllByText('正在核对最新界面实现')).length).toBeGreaterThan(0);
+    const lane = view.container.querySelector<HTMLElement>('.room-agent-lane')!;
+    await waitFor(() => expect(lane).toHaveAttribute('data-motion', 'fresh'));
+    expect(useRoomLiveStore.getState().kernelSyncByRoomId['room-a']?.state).toBe('synced');
+
+    act(() => {
+      expect(transport.fail('agent.room.events', new Error('conversation stream interrupted'))).toBe(1);
+    });
+
+    await waitFor(() => expect(lane).toHaveAttribute('data-motion', 'disconnected'));
+    expect(lane).toHaveTextContent('Room 对话实时更新暂时中断');
+    expect(lane.querySelector('.room-agent-lane__activity')).toHaveAttribute('data-motion', 'paused');
+    expect(useRoomLiveStore.getState().kernelSyncByRoomId['room-a']?.state).toBe('synced');
   });
 
   it('refreshes Room metadata without tearing down the live timeline subscription', async () => {
@@ -3824,6 +3868,48 @@ describe('Rooms experience', () => {
     expect(review).toHaveTextContent('网关断线重连后仍显示旧结果');
     expect(review).toHaveTextContent('修正回应');
     expect(review).toHaveTextContent('已刷新重连后的投影并补充验证');
+  });
+
+  it('keeps the internal Report task and dispatch out of peer progress', () => {
+    const room = roomSummary('room-a', '报告统计 Room');
+    const kernel = createRoomKernelProjection(room.id);
+    kernel.rootsById['root-a'] = roomKernelRoot(room.id, 'running', false, 5);
+    kernel.tasksById['work-a'] = roomKernelTask('work-a', 'work', 'completed');
+    kernel.tasksById['report-a'] = roomKernelTask('report-a', 'report', 'active');
+    kernel.dispatchesById['dispatch-report-a'] = {
+      schemaVersion: 'wisdom-weasel.room-dispatch-envelope.v2',
+      dispatchId: 'dispatch-report-a',
+      rootId: 'root-a',
+      taskId: 'report-a',
+      parentDispatchId: null,
+      generation: 1,
+      hopCount: 0,
+      depth: 0,
+      budgetCost: 1,
+      targetSessionId: 'room-a:s1',
+      targetParticipantId: 'room-a:p1',
+      triggerId: 'trigger:report-a',
+      intentKind: 'close',
+      idempotencyKey: 'report-a',
+      attempt: 1,
+      capabilityEpoch: 1,
+      runtimeProfileRevision: 'profile:report-a',
+      state: 'running',
+    };
+    useRoomLiveStore.getState().setKernelProjection(room.id, kernel);
+
+    render(
+      <TooltipProvider>
+        <RoomStatusPanel room={room} projection={createRoomProjection(room.id)} open onClose={() => undefined} />
+      </TooltipProvider>,
+    );
+
+    const phase = screen.getByRole('region', { name: '当前协作阶段' });
+    const summary = within(phase).getByLabelText('整体任务与分工进度');
+    expect(phase).toHaveTextContent('1 / 1 项完成');
+    expect(summary).toHaveTextContent('分工完成1 / 1');
+    expect(summary).toHaveTextContent('伙伴执行等待开始');
+    expect(phase).not.toHaveTextContent('1 / 2');
   });
 
   it('labels active work after requested review changes as revision work', () => {

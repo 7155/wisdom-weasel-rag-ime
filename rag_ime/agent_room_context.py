@@ -52,6 +52,8 @@ class RoomContextLedgerStore:
     def publish_post(
         self,
         post: Mapping[str, object],
+        *,
+        _conn: sqlite3.Connection | None = None,
     ) -> tuple[dict[str, object], bool]:
         normalized = dict(post)
         source = normalized.get("publicationSource")
@@ -101,7 +103,7 @@ class RoomContextLedgerStore:
         )
         created_at_ms = _non_negative_int(normalized.get("createdAtMs"), "createdAtMs")
 
-        with self._connect(immediate=True) as conn:
+        with self._write_connection(_conn) as conn:
             existing_rows = conn.execute(
                 """
                 SELECT * FROM room_v2_posts
@@ -210,6 +212,15 @@ class RoomContextLedgerStore:
                 raise RuntimeError("Room Post write did not persist")
             return self._post_payload(conn, row), True
 
+    def publish_post_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        post: Mapping[str, object],
+    ) -> tuple[dict[str, object], bool]:
+        """Publish a public Room Post inside a caller-owned transaction."""
+
+        return self.publish_post(post, _conn=conn)
+
     def recent_posts(
         self,
         root_id: str,
@@ -277,6 +288,33 @@ class RoomContextLedgerStore:
                 content=content,
                 created_at_ms=created_at_ms,
             )
+
+    def append_entry_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        room_id: str,
+        generation: int,
+        entry_kind: str,
+        source_ref: str,
+        dedupe_key: str,
+        content: str,
+        created_at_ms: int,
+    ) -> tuple[dict[str, object], bool]:
+        """Append one context fact inside a caller-owned transaction."""
+
+        return self._append_entry_conn(
+            conn,
+            root_id=root_id,
+            room_id=room_id,
+            generation=generation,
+            entry_kind=entry_kind,
+            source_ref=source_ref,
+            dedupe_key=dedupe_key,
+            content=content,
+            created_at_ms=created_at_ms,
+        )
 
     def replay_root(self, root_id: str) -> list[dict[str, object]]:
         root_id = _required_text(root_id, "rootId")
@@ -394,6 +432,17 @@ class RoomContextLedgerStore:
             "contentHash": str(row["content_hash"]),
             "contextEntry": _context_entry_payload(entry),
         }
+
+    @contextmanager
+    def _write_connection(
+        self,
+        conn: sqlite3.Connection | None,
+    ) -> Iterator[sqlite3.Connection]:
+        if conn is not None:
+            yield conn
+            return
+        with self._connect(immediate=True) as owned:
+            yield owned
 
     @contextmanager
     def _connect(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:

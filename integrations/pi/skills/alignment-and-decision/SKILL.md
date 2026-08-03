@@ -75,8 +75,10 @@ weakens the requirements.
 - The next ordinary Room message answers the wait: append its source span to the
   RequirementAnchor and make one new resume Dispatch under the same Root; never
   reuse the alignment Dispatch.
-- Once settled, use `tool_search`, then one `tool_load` for `room_define`. It binds
-  one RequirementCatalog; re-read `room_state` before `room_commit`.
+- Once settled, re-read `room_state`, use `tool_search`, then one `tool_load` for
+  `room_define`. It binds one RequirementCatalog and is terminal for that model
+  turn. When no material clarification was needed, call it directly without a
+  confirmation message; never substitute `room_commit deliver` for definition.
 - The Facilitator owns decomposition. `room_collaborate` creates only bounded,
   non-overlapping implementation work, never intake or review.
 - `room_post` is not a second clarification channel; it carries material progress.
@@ -107,10 +109,10 @@ Open questions | confirmation evidence | documentation receipt
 Status | Next stage
 ```
 
-Status is `needs_user_answer`, `needs_confirmation`,
-`blocked_by_external_fact`, or `ready_for_planning`.
+Status is `needs_user_answer`, `blocked_by_external_fact`, or
+`ready_for_planning`.
 Do not dump the packet into the public reply; give context, a recommendation
-and one smallest question group, or a short confirmation.
+and one smallest question group, or proceed with the settled decision.
 
 ## Self-Check
 

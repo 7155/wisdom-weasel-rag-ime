@@ -61,7 +61,7 @@ export function RoomQuestionDialog({
             ? '问题已失效'
             : question.status === 'answered'
               ? '已收到回答'
-              : '需求确认'}</small>
+              : '需求澄清'}</small>
         <strong>{question.prompt}</strong>
       </span>
     </header>

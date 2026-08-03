@@ -393,6 +393,24 @@ class RoomCapabilityManifestTests(unittest.TestCase):
                 schema,
             )
 
+    def test_room_define_does_not_require_a_fake_implementation_peer(
+        self,
+    ) -> None:
+        schema = room_runtime_registry()["room_define"]["inputSchema"]
+        self.assertNotIn(
+            "implementationParticipantRef",
+            schema["required"],
+        )
+        validate_contract(
+            {
+                "objective": "完成小型单写任务",
+                "expectedOutput": "可验证结果",
+                "requirements": ["不虚构并行工作"],
+                "acceptanceCriteria": ["结果通过验证"],
+            },
+            schema,
+        )
+
     def test_room_commit_schema_keeps_decision_fields_mutually_exclusive(
         self,
     ) -> None:

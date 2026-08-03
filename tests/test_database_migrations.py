@@ -18,7 +18,7 @@ from rag_ime.db.migration_runner import (
     migration_status,
 )
 
-POST_0126_MIGRATIONS = tuple(range(127, 143))
+POST_0126_MIGRATIONS = tuple(range(127, 145))
 
 
 class DatabaseMigrationTests(unittest.TestCase):
@@ -41,7 +41,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 142)
+            self.assertEqual(status["currentVersion"], 144)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -256,6 +256,215 @@ class DatabaseMigrationTests(unittest.TestCase):
                     "tool_profile_version",
                 }.issubset(persona_columns)
             )
+
+    def test_0143_preserves_runtime_rows_and_adds_completed_terminal_state(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0142-") as temporary:
+            migrations_0142 = Path(temporary) / "migrations"
+            migrations_0143 = Path(temporary) / "migrations-0143"
+            migrations_0142.mkdir()
+            migrations_0143.mkdir()
+            for migration in load_migrations():
+                if migration.version <= 142:
+                    shutil.copy2(migration.path, migrations_0142 / migration.path.name)
+                if migration.version <= 143:
+                    shutil.copy2(migration.path, migrations_0143 / migration.path.name)
+
+            with closing(sqlite3.connect(":memory:")) as conn:
+                initial = apply_database_migrations(
+                    conn,
+                    migrations_dir=migrations_0142,
+                )
+                self.assertEqual(initial.current_version, 142)
+                conn.execute(
+                    """INSERT INTO room_kernel_runtime_effects(
+                       dispatch_id,root_id,session_id,dispatch_generation,
+                       state,runtime_receipt_json,updated_at_ms)
+                       VALUES ('dispatch:migration','root:migration',
+                               'session:migration',3,'accepted','{}',10)"""
+                )
+                conn.execute(
+                    """INSERT INTO room_kernel_abort_scopes(
+                       dispatch_id,root_id,session_id,generation,state,
+                       surfaces_json,cancel_receipt_json,updated_at_ms)
+                       VALUES ('dispatch:migration','root:migration',
+                               'session:migration',3,'registered','[]','{}',10)"""
+                )
+
+                upgraded = apply_database_migrations(
+                    conn,
+                    migrations_dir=migrations_0143,
+                )
+
+                self.assertEqual(upgraded.applied_versions, (143,))
+                self.assertEqual(
+                    conn.execute(
+                        """SELECT state,runtime_receipt_json
+                           FROM room_kernel_runtime_effects
+                           WHERE dispatch_id='dispatch:migration'"""
+                    ).fetchone(),
+                    ("accepted", "{}"),
+                )
+                self.assertEqual(
+                    conn.execute(
+                        """SELECT state,surfaces_json
+                           FROM room_kernel_abort_scopes
+                           WHERE dispatch_id='dispatch:migration'"""
+                    ).fetchone(),
+                    ("registered", "[]"),
+                )
+                conn.execute(
+                    """UPDATE room_kernel_runtime_effects SET state='completed'
+                       WHERE dispatch_id='dispatch:migration'"""
+                )
+                conn.execute(
+                    """UPDATE room_kernel_abort_scopes SET state='completed'
+                       WHERE dispatch_id='dispatch:migration'"""
+                )
+                self.assertEqual(
+                    conn.execute(
+                        """SELECT effects.state,scopes.state
+                           FROM room_kernel_runtime_effects effects
+                           JOIN room_kernel_abort_scopes scopes USING(dispatch_id)
+                           WHERE effects.dispatch_id='dispatch:migration'"""
+                    ).fetchone(),
+                    ("completed", "completed"),
+                )
+                self.assertIsNone(
+                    conn.execute(
+                        """SELECT 1 FROM sqlite_master
+                           WHERE type='table'
+                             AND name IN (
+                                 'room_kernel_runtime_effects_v142',
+                                 'room_kernel_abort_scopes_v142'
+                             )"""
+                    ).fetchone()
+                )
+
+    def test_0144_adds_resumed_and_only_backfills_proven_resume_identity(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="rag-ime-migrations-0143-"
+        ) as temporary:
+            migrations_0143 = Path(temporary) / "migrations-0143"
+            migrations_0144 = Path(temporary) / "migrations-0144"
+            migrations_0143.mkdir()
+            migrations_0144.mkdir()
+            for migration in load_migrations():
+                if migration.version <= 143:
+                    shutil.copy2(
+                        migration.path,
+                        migrations_0143 / migration.path.name,
+                    )
+                if migration.version <= 144:
+                    shutil.copy2(
+                        migration.path,
+                        migrations_0144 / migration.path.name,
+                    )
+
+            with closing(sqlite3.connect(":memory:")) as conn:
+                initial = apply_database_migrations(
+                    conn,
+                    migrations_dir=migrations_0143,
+                )
+                self.assertEqual(initial.current_version, 143)
+                conn.execute(
+                    """INSERT INTO room_kernel_roots(
+                       root_id,room_id,generation,state,
+                       facilitator_participant_id,requirement_anchor_ref,
+                       budget_remaining,max_hops,max_depth,payload_json,
+                       created_at_ms,updated_at_ms)
+                       VALUES ('root:resume','room:resume',0,'running',
+                               'participant:a','anchor:root',10,4,3,'{}',1,1)"""
+                )
+                conn.execute(
+                    """INSERT INTO room_kernel_tasks(
+                       task_id,root_id,state,payload_json,updated_at_ms,
+                       current_owner_participant_id)
+                       VALUES ('task:resume','root:resume','active','{}',1,
+                               'participant:a')"""
+                )
+                for dispatch_id, parent_dispatch_id in (
+                    ("dispatch:parent", None),
+                    ("dispatch:resume-valid", "dispatch:parent"),
+                    ("dispatch:resume-unproven", "dispatch:parent"),
+                ):
+                    conn.execute(
+                        """INSERT INTO room_kernel_dispatches(
+                           dispatch_id,root_id,task_id,parent_dispatch_id,
+                           generation,hop_count,depth,budget_cost,
+                           target_session_id,target_participant_id,trigger_id,
+                           intent_kind,idempotency_key,state,payload_json,
+                           created_at_ms,updated_at_ms)
+                           VALUES (?,?, 'task:resume',?,0,0,0,1,
+                                   'session:a','participant:a',?,'resume',?,
+                                   'pending','{}',1,1)""",
+                        (
+                            dispatch_id,
+                            "root:resume",
+                            parent_dispatch_id,
+                            f"trigger:{dispatch_id}",
+                            f"key:{dispatch_id}",
+                        ),
+                    )
+                conn.execute(
+                    """INSERT INTO room_v2_requirement_anchors(
+                       anchor_id,root_id,root_sequence,original_bytes,
+                       original_sha256,created_by,authenticity,
+                       provenance_json,created_at_ms)
+                       VALUES ('anchor:answer','root:resume',1,X'61',?,
+                               'user:test','original_user_bytes','{}',2)""",
+                    ("a" * 64,),
+                )
+                for continuation_id, commit_id, payload in (
+                    (
+                        "continuation:valid",
+                        "commit:valid",
+                        {
+                            "resumeDispatchId": "dispatch:resume-valid",
+                            "answerAnchorId": "anchor:answer",
+                        },
+                    ),
+                    (
+                        "continuation:unproven",
+                        "commit:unproven",
+                        {
+                            "resumeDispatchId": "dispatch:resume-unproven",
+                            "answerAnchorId": "anchor:missing",
+                        },
+                    ),
+                ):
+                    conn.execute(
+                        """INSERT INTO room_kernel_continuations(
+                           continuation_id,root_id,task_id,
+                           parent_dispatch_id,child_dispatch_id,commit_id,
+                           decision,state,payload_json,created_at_ms)
+                           VALUES (?,'root:resume','task:resume',
+                                   'dispatch:parent',NULL,?,'wait','blocked',?,2)""",
+                        (continuation_id, commit_id, json.dumps(payload)),
+                    )
+
+                upgraded = apply_database_migrations(
+                    conn,
+                    migrations_dir=migrations_0144,
+                )
+
+                self.assertEqual(upgraded.applied_versions, (144,))
+                self.assertEqual(
+                    conn.execute(
+                        """SELECT continuation_id,state
+                           FROM room_kernel_continuations
+                           ORDER BY continuation_id"""
+                    ).fetchall(),
+                    [
+                        ("continuation:unproven", "blocked"),
+                        ("continuation:valid", "resumed"),
+                    ],
+                )
+                conn.execute(
+                    """UPDATE room_kernel_continuations SET state='resumed'
+                       WHERE continuation_id='continuation:unproven'"""
+                )
 
     def test_0122_backfills_failed_command_for_explicit_retry_lineage(
         self,
@@ -736,7 +945,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 upgraded = apply_database_migrations(conn)
 
                 self.assertEqual(upgraded.applied_versions, (94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126) + POST_0126_MIGRATIONS)
-                self.assertEqual(upgraded.current_version, 142)
+                self.assertEqual(upgraded.current_version, 144)
                 self.assertEqual(
                     conn.execute(
                         "SELECT checksum FROM schema_migrations WHERE version=93"
@@ -873,7 +1082,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
                 status = migration_status(conn)
                 self.assertTrue(status["ok"])
-                self.assertEqual(status["currentVersion"], 142)
+                self.assertEqual(status["currentVersion"], 144)
 
     def test_legacy_atoms_preserve_supersession_lineage_and_require_evidence(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0058-") as temporary:
@@ -1612,7 +1821,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 self.assertEqual(
                     result.applied_versions,
-                    (135, 136, 137, 138, 139, 140, 141, 142),
+                    (135, 136, 137, 138, 139, 140, 141, 142, 143, 144),
                 )
                 todo = conn.execute(
                     """

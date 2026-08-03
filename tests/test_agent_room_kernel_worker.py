@@ -53,19 +53,34 @@ class FakeRoomRuntime:
             "dispatchId": payload["dispatchId"],
             "generation": payload["generation"],
             "sessionId": payload["targetSessionId"],
+            "capabilityEpoch": payload["capabilityEpoch"],
             "turnId": "turn:room-1",
         }
 
-    def cancel_room(self, *, session_id: str, root_id: str, generation: int):
+    def cancel_room(
+        self,
+        *,
+        cancel_id: str,
+        session_id: str,
+        root_id: str,
+        dispatch_id: str,
+        generation: int,
+        turn_id: str,
+        capability_epoch: int,
+    ):
         if self.fail_cancel:
             raise ConnectionError("runtime cancellation unavailable")
         receipt = {
             "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
             "receiptKind": "cancel_applied",
             "status": "applied",
+            "cancelId": cancel_id,
             "sessionId": session_id,
             "rootId": root_id,
+            "dispatchId": dispatch_id,
             "generation": generation,
+            "turnId": turn_id,
+            "capabilityEpoch": capability_epoch,
             "cancellationSurfaces": {surface: {
                 "schemaVersion": "wisdom-weasel.runtime-surface-termination-receipt.v1",
                 "surface": surface, "state": self.surface_state, "targetIds": [],
@@ -181,7 +196,7 @@ class RoomKernelWorkerTests(unittest.TestCase):
             ["generic_rag", "runtime"],
         )
 
-    def test_host_exit_after_lease_is_cancelled_via_durable_reconciliation(self) -> None:
+    def test_host_exit_without_runtime_ack_stays_unknown_and_is_not_blindly_cancelled(self) -> None:
         self.store.enqueue_dispatch(dispatch("dispatch:crash", key="worker:crash"), now_ms=3)
         runtime = FakeRoomRuntime(fail_dispatch=True)
         worker = RoomKernelWorker(self.store, runtime, clock_ms=self.clock)
@@ -193,8 +208,9 @@ class RoomKernelWorkerTests(unittest.TestCase):
         receipts = worker.reconcile()
 
         self.assertEqual(receipts[0]["receiptKind"], "dispatch_unknown")
-        self.assertEqual(self.store.dispatch("dispatch:crash")["state"], "cancelled")
-        self.assertEqual(self.store.root("root:1")["state"], "cancelled")
+        self.assertEqual(self.store.dispatch("dispatch:crash")["state"], "unknown")
+        self.assertEqual(self.store.root("root:1")["state"], "cancelling")
+        self.assertEqual(runtime.cancellations, [])
         self.assertIsNone(worker.run_once())
         self.assertEqual(len(runtime.dispatches), 1)
 
@@ -358,6 +374,30 @@ class RoomKernelWorkerTests(unittest.TestCase):
 
         self.assertEqual(len(runtime.cancellations), 1)
         self.assertEqual(self.store.dispatch("dispatch:target")["state"], "cancelled")
+        self.assertEqual(self.store.root("root:1")["state"], "running")
+        self.assertIsNone(self.store.root("root:1")["terminalReceiptId"])
+
+    def test_unknown_child_cancel_surface_does_not_terminalize_root(self) -> None:
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:target-unknown", key="worker:target-unknown"),
+            now_ms=3,
+        )
+        runtime = FakeRoomRuntime(surface_state="unknown")
+        worker = RoomKernelWorker(self.store, runtime, clock_ms=self.clock)
+        worker.run_once()
+
+        self.store.cancel_target(
+            root_id="root:1",
+            target_kind="dispatch",
+            target_id="dispatch:target-unknown",
+            now_ms=self.now_ms,
+        )
+        receipts = worker.drain_cancel_outbox()
+
+        self.assertEqual(receipts[0]["pendingTargets"], [
+            "provider", "tool", "exec", "retry", "compaction",
+            "branch_summary", "timer", "continuation", "session",
+        ])
         self.assertEqual(self.store.root("root:1")["state"], "running")
         self.assertIsNone(self.store.root("root:1")["terminalReceiptId"])
 

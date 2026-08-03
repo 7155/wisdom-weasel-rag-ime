@@ -5,6 +5,7 @@ from typing import Any
 
 from rag_ime.agent_room_public_timeline import (
     assert_public_room_report_claims,
+    canonical_room_alignment_content,
     RoomPublicTimelineProjector,
     public_room_report_content,
 )
@@ -218,6 +219,72 @@ class RoomPublicTimelineProjectorTests(unittest.TestCase):
                     report,
                     field_name="publicSummary",
                 )
+
+    def test_alignment_content_is_canonical_public_natural_language(self) -> None:
+        content = canonical_room_alignment_content(
+            objective="  完成终端原生 TUI 的可运行闭环  ",
+            expected_output=" 可运行实现与聚焦验证记录。 ",
+        )
+
+        self.assertEqual(
+            content,
+            "已经对齐：目标是“完成终端原生 TUI 的可运行闭环”，"
+            "交付边界是“可运行实现与聚焦验证记录”。",
+        )
+        self.assertNotRegex(
+            content,
+            r"rootId|dispatchId|schemaVersion|room-root:|room-dispatch:|\{",
+        )
+
+        for objective, expected_output in (
+            (
+                "完善 Task 列表的用户可读说明",
+                "说明 receipt 与 invoice 的业务差异",
+            ),
+            (
+                "完成 Root Cause 分析并修复公开页面",
+                "可运行实现与聚焦验证记录",
+            ),
+        ):
+            with self.subTest(objective=objective):
+                self.assertIn(
+                    objective,
+                    canonical_room_alignment_content(
+                        objective=objective,
+                        expected_output=expected_output,
+                    ),
+                )
+
+    def test_alignment_content_rejects_raw_protocol_material(self) -> None:
+        raw_protocol_fragments = (
+            '{"rootId":"room-root:private"}',
+            '{"objective":"完成实现"}',
+            "完成 room-dispatch:private",
+            "schemaVersion=wisdom-weasel.room-post.v2",
+            "按 AC-1 验收",
+            "读取 requirement:private",
+            "附上 receipt-12345",
+            "使用 rootId root-private",
+            "公开 qualityGateReceipt",
+        )
+        for fragment in raw_protocol_fragments:
+            for field_name in ("objective", "expectedOutput"):
+                with self.subTest(
+                    field_name=field_name,
+                    fragment=fragment,
+                ), self.assertRaisesRegex(ValueError, "natural language"):
+                    canonical_room_alignment_content(
+                        objective=(
+                            fragment
+                            if field_name == "objective"
+                            else "完成用户可见实现"
+                        ),
+                        expected_output=(
+                            fragment
+                            if field_name == "expectedOutput"
+                            else "可运行实现"
+                        ),
+                    )
 
     def test_non_delivery_report_cannot_overstate_kernel_evidence(self) -> None:
         cases = (

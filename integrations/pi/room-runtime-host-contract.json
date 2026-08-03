@@ -37,11 +37,16 @@
     "session": "packages/rag-ime-runtime-host/src/pi-session.ts"
   },
   "requiredSourceMarkers": {
-    "protocol": ["export const PROTOCOL_VERSION = \"2\" as const;"],
+    "protocol": [
+      "export const PROTOCOL_VERSION = \"2\" as const;",
+      "export function parseRoomCancelParams("
+    ],
     "runtimeHost": [
       "case \"session.control_state\"",
       "case \"room.dispatch\"",
       "case \"room.cancel\"",
+      "const lineage = parseRoomCancelParams(params);",
+      "cancelId: lineage.cancelId",
       "roomSkillPolicy: optionalRoomSkillPolicy(params)",
       "roomSkillLoad: opened.session.roomSkillLoadReceipt()"
     ],
@@ -176,7 +181,9 @@
       "requiredRoomSkill(options.roomSkillPolicy)",
       "RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS",
       "this.providerContextJournal.beginEpoch(\"session_memory_refresh\"",
-      "this.session.followUpWithSystemPrompt("
+      "this.session.followUpWithSystemPrompt(",
+      "cancelRoom(lineage: RoomCancelParams)",
+      "Room cancellation does not match the active Room runtime lineage"
     ]
   }
 }

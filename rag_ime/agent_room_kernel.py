@@ -8,11 +8,21 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
 
+from .agent_room_capabilities import (
+    REVIEW_FINDING_BLOCKING_CATEGORIES,
+    REVIEW_FINDING_GOVERNANCE_INVARIANTS,
+    REVIEW_FINDING_RE_REVIEW_EXCEPTION_CATEGORIES,
+    canonical_review_finding_fingerprint,
+    runtime_evidence_refs_for_dispatch,
+)
 from .agent_room_kernel_contracts import (
     DISPATCH_ENVELOPE_SCHEMA_VERSION,
     KERNEL_COMMAND_SCHEMA_VERSION,
     KERNEL_RECEIPT_SCHEMA_VERSION,
+    ROOM_COMMIT_SCHEMA_VERSION,
     ROOM_TASK_SCHEMA_VERSION,
+    upcast_room_commit,
+    upcast_room_root_execution,
     validate_kernel_contract,
 )
 from .agent_room_quality_gate import (
@@ -86,6 +96,26 @@ _RUNTIME_CANCEL_SURFACES = (
     "continuation",
     "session",
 )
+_WORKSPACE_INTEGRATION_RECEIPT_FIELDS = (
+    "workspaceDeliveryReceiptId",
+    "workspaceDeliveryReceiptSha256",
+    "workspaceSourceLeaseReceiptId",
+    "workspaceSourceLeaseReceiptSha256",
+    "workspaceTargetAppliedReceiptId",
+    "workspaceTargetAppliedReceiptSha256",
+    "workspaceIntegratedReceiptId",
+    "workspaceIntegratedReceiptSha256",
+    "workspaceWriterQuiescenceReceiptId",
+    "workspaceWriterQuiescenceReceiptSha256",
+    "workspaceQuarantineReceiptId",
+    "workspaceQuarantineReceiptSha256",
+    "workspaceRemovalAuthorizationReceiptId",
+    "workspaceRemovalAuthorizationReceiptSha256",
+    "workspaceVaultReceiptId",
+    "workspaceVaultReceiptSha256",
+    "workspaceCleanupReceiptId",
+    "workspaceCleanupReceiptSha256",
+)
 
 
 class RoomKernelFenceError(RuntimeError):
@@ -125,6 +155,16 @@ class RoomKernelStore:
         acceptance_criteria: tuple[str, ...] = (),
         now_ms: int,
     ) -> dict[str, object]:
+        """Create a non-atomic Root fixture in explicit test mode only.
+
+        Product callers must use ``create_root_with_task`` so a Root can never
+        become visible without its authoritative first Task.
+        """
+
+        if self.mode != "test":
+            raise RoomKernelFenceError(
+                "non-atomic create_root is test-only; use create_root_with_task"
+            )
         validate_kernel_contract("rootExecution", payload)
         budget = _non_negative(budget, "budget")
         max_hops = _non_negative(max_hops, "max_hops")
@@ -347,7 +387,8 @@ class RoomKernelStore:
         ):
             conn.execute(
                 "UPDATE room_kernel_abort_scopes "
-                "SET state='cancelled',updated_at_ms=? WHERE dispatch_id=?",
+                "SET state='cancelled',updated_at_ms=? WHERE dispatch_id=? "
+                "AND state IN ('registered','cancelling','unknown')",
                 (int(now_ms), stale_dispatch_id),
             )
             self._settle_dispatch_limits(
@@ -773,7 +814,38 @@ class RoomKernelStore:
         shadow_only: bool,
         now_ms: int,
     ) -> tuple[dict[str, object], bool]:
-        root = self._root_row(conn, str(payload["rootId"]))
+        root_id = str(payload["rootId"])
+        dispatch_id = str(payload["dispatchId"])
+        idempotency_key = str(payload["idempotencyKey"])
+        existing_by_key = conn.execute(
+            """SELECT * FROM room_kernel_dispatches
+               WHERE root_id = ? AND idempotency_key = ?""",
+            (root_id, idempotency_key),
+        ).fetchone()
+        existing_by_id = conn.execute(
+            "SELECT * FROM room_kernel_dispatches WHERE dispatch_id = ?",
+            (dispatch_id,),
+        ).fetchone()
+        if existing_by_key is not None or existing_by_id is not None:
+            if (
+                existing_by_key is None
+                or existing_by_id is None
+                or str(existing_by_key["dispatch_id"])
+                != str(existing_by_id["dispatch_id"])
+            ):
+                raise RoomKernelFenceError(
+                    "Dispatch idempotency identity was rebound"
+                )
+            stored_payload = json.loads(str(existing_by_key["payload_json"]))
+            if _dispatch_idempotency_identity(stored_payload) != (
+                _dispatch_idempotency_identity(payload)
+            ):
+                raise RoomKernelFenceError(
+                    "Dispatch idempotency payload was rebound"
+                )
+            return _dispatch_payload(existing_by_key), False
+
+        root = self._root_row(conn, root_id)
         generation = int(payload["generation"])
         if generation != int(root["generation"]):
             raise RoomKernelFenceError("dispatch generation is stale")
@@ -786,7 +858,11 @@ class RoomKernelStore:
             raise RoomKernelFenceError("dispatch hop limit exceeded")
         if depth > int(root["max_depth"]):
             raise RoomKernelFenceError("dispatch depth limit exceeded")
-        if cost > int(root["budget_remaining"]) - int(root["budget_reserved"]):
+        if (
+            not shadow_only
+            and cost
+            > int(root["budget_remaining"]) - int(root["budget_reserved"])
+        ):
             raise RoomKernelFenceError("dispatch budget exhausted")
         parent_id = payload.get("parentDispatchId")
         if parent_id is not None:
@@ -798,16 +874,9 @@ class RoomKernelStore:
             if depth < int(parent["depth"]):
                 raise RoomKernelFenceError("dispatch depth cannot move backwards")
 
-        existing = conn.execute(
-            """SELECT * FROM room_kernel_dispatches
-               WHERE root_id = ? AND idempotency_key = ?""",
-            (str(payload["rootId"]), str(payload["idempotencyKey"])),
-        ).fetchone()
-        if existing is not None:
-            return _dispatch_payload(existing), False
         task = conn.execute(
             """
-            SELECT root_id, state, current_owner_participant_id
+            SELECT root_id, state, current_owner_participant_id, payload_json
             FROM room_kernel_tasks
             WHERE task_id=?
             """,
@@ -852,21 +921,56 @@ class RoomKernelStore:
                 str(payload["idempotencyKey"]), _json(payload), int(now_ms), int(now_ms),
             ),
         )
-        # The reservation row is fenced by a foreign key to the dispatch. Keep
-        # both writes in the same transaction, but create the dispatch first.
-        self._reserve_dispatch_limits(
+        try:
+            task_authority = json.loads(str(task["payload_json"]))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RoomKernelFenceError(
+                "Dispatch Task authority payload is corrupt"
+            ) from exc
+        if not isinstance(task_authority, Mapping):
+            raise RoomKernelFenceError(
+                "Dispatch Task authority payload is corrupt"
+            )
+        self._receipt(
             conn,
             root_id=str(root["root_id"]),
-            dispatch_id=str(payload["dispatchId"]),
-            defer_concurrency=bool(direct_dependencies),
+            command_id=None,
+            receipt_kind="accepted",
+            status="applied",
+            generation=generation,
+            details={
+                "purpose": "dispatch_acceptance_scope",
+                "dispatchId": str(payload["dispatchId"]),
+                "taskId": str(payload["taskId"]),
+                "taskRevision": int(task_authority.get("revision") or 0),
+                "intentKind": str(payload["intentKind"]),
+                "attempt": int(payload.get("attempt") or 0),
+                "acceptanceCriterionIds": sorted(
+                    _criteria(
+                        task_authority.get("acceptanceCriterionIds")
+                    )
+                ),
+            },
             now_ms=now_ms,
         )
-        conn.execute(
-            """UPDATE room_kernel_roots
-               SET budget_reserved = budget_reserved + ?, updated_at_ms = ?
-               WHERE root_id = ?""",
-            (cost, int(now_ms), root["root_id"]),
-        )
+        if not shadow_only:
+            # Live Dispatches reserve both the compatibility budget and the
+            # typed resource limits. Shadow observations are never leaseable,
+            # so reserving production capacity for them would leak capacity
+            # without any execution path that could settle the reservation.
+            self._reserve_dispatch_limits(
+                conn,
+                root_id=str(root["root_id"]),
+                dispatch_id=str(payload["dispatchId"]),
+                defer_concurrency=bool(direct_dependencies),
+                now_ms=now_ms,
+            )
+            conn.execute(
+                """UPDATE room_kernel_roots
+                   SET budget_reserved = budget_reserved + ?, updated_at_ms = ?
+                   WHERE root_id = ?""",
+                (cost, int(now_ms), root["root_id"]),
+            )
         conn.execute(
             """INSERT INTO room_kernel_outbox(
                outbox_id, root_id, dispatch_id, generation, state, shadow_only,
@@ -910,7 +1014,24 @@ class RoomKernelStore:
     def pending_dispatch(self, *, now_ms: int) -> dict[str, object] | None:
         if self.mode not in {"cohort", "test", "kernel_only"}:
             return None
-        with self._connect() as conn:
+        with self._connect(immediate=True) as conn:
+            waiting_roots = conn.execute(
+                """SELECT DISTINCT root.root_id,root.generation
+                   FROM room_kernel_continuations continuation
+                   JOIN room_kernel_roots root
+                     ON root.root_id=continuation.root_id
+                   WHERE continuation.state='applied'
+                     AND continuation.decision IN ('wait','dispatch')
+                     AND root.state IN ('running','waiting','blocked')
+                   ORDER BY root.root_id"""
+            ).fetchall()
+            for waiting_root in waiting_roots:
+                self._resume_ready_participant_waits(
+                    conn,
+                    root_id=str(waiting_root["root_id"]),
+                    generation=int(waiting_root["generation"]),
+                    now_ms=now_ms,
+                )
             row = self._first_ready_outbox(
                 conn,
                 now_ms=now_ms,
@@ -1184,7 +1305,7 @@ class RoomKernelStore:
         dispatch_payload = json.loads(str(dispatch["payload_json"]))
         dependency_ids = _dispatch_dependency_ids(dispatch_payload)
         continuation = conn.execute(
-            """SELECT commit_id,payload_json
+            """SELECT *
                FROM room_kernel_continuations
                WHERE child_dispatch_id = ?
                  AND decision IN ('dispatch','wait')""",
@@ -1196,7 +1317,7 @@ class RoomKernelStore:
                 str(continuation["commit_id"]),
             ):
                 return False
-            payload = json.loads(str(continuation["payload_json"]))
+            payload = _room_continuation_payload(conn, continuation)
             raw_dependencies = payload.get("waitForDispatchIds")
             if raw_dependencies is None:
                 raw_dependencies = []
@@ -1207,6 +1328,23 @@ class RoomKernelStore:
             waiting_for_dispatch = str(
                 payload.get("waitingForDispatchId") or ""
             ).strip()
+            terminal_outcome_dispatch = str(
+                payload.get("dependencyOutcomeDispatchId") or ""
+            ).strip()
+            terminal_outcome_state = str(
+                payload.get("dependencyOutcomeState") or ""
+            ).strip()
+            if (
+                waiting_for_dispatch
+                and terminal_outcome_dispatch == waiting_for_dispatch
+                and terminal_outcome_state
+                in {"failed", "cancelled", "unknown", "blocked"}
+            ):
+                # The participant dependency cannot become committed/public
+                # after a terminal outcome.  The durable outcome receipt is
+                # the resume trigger, so do not retain the impossible Dispatch
+                # dependency on the Facilitator wake-up.
+                waiting_for_dispatch = ""
             dependency_ids = list(
                 dict.fromkeys(
                     [
@@ -1284,7 +1422,7 @@ class RoomKernelStore:
             raise RoomKernelFenceError(
                 "committed alignment Dispatch has no canonical RoomCommit"
             )
-        payload = json.loads(str(commit["payload_json"]))
+        payload = _room_commit_payload(conn, commit["payload_json"])
         continuation = payload.get("continuation")
         return (
             isinstance(continuation, Mapping)
@@ -1314,7 +1452,7 @@ class RoomKernelStore:
         return RoomKernelStore._commit_result_is_public(
             conn,
             str(commit["commit_id"]),
-            payload=json.loads(str(commit["payload_json"])),
+            payload=_room_commit_payload(conn, commit["payload_json"]),
         )
 
     @staticmethod
@@ -1355,7 +1493,7 @@ class RoomKernelStore:
                 raise RoomKernelFenceError(
                     "continuation has no canonical RoomCommit"
                 )
-            payload = json.loads(str(commit["payload_json"]))
+            payload = _room_commit_payload(conn, commit["payload_json"])
         if payload.get("action") != "post":
             return False
         published = conn.execute(
@@ -1378,8 +1516,8 @@ class RoomKernelStore:
                 dispatch_id = str(lease["dispatch_id"])
                 conn.execute("UPDATE room_kernel_leases SET state = 'expired', updated_at_ms = ? WHERE lease_id = ?", (int(now_ms), lease["lease_id"]))
                 conn.execute("UPDATE room_kernel_dispatches SET state = 'unknown', updated_at_ms = ? WHERE dispatch_id = ?", (int(now_ms), dispatch_id))
-                conn.execute("UPDATE room_kernel_runtime_effects SET state='unknown',updated_at_ms=? WHERE dispatch_id=?", (int(now_ms), dispatch_id))
-                conn.execute("UPDATE room_kernel_abort_scopes SET state='unknown',updated_at_ms=? WHERE dispatch_id=?", (int(now_ms), dispatch_id))
+                conn.execute("UPDATE room_kernel_runtime_effects SET state='unknown',updated_at_ms=? WHERE dispatch_id=? AND state IN ('intent','accepted','unknown')", (int(now_ms), dispatch_id))
+                conn.execute("UPDATE room_kernel_abort_scopes SET state='unknown',updated_at_ms=? WHERE dispatch_id=? AND state IN ('registered','cancelling','unknown')", (int(now_ms), dispatch_id))
                 conn.execute("UPDATE room_kernel_outbox SET state = 'dead_letter', updated_at_ms = ? WHERE dispatch_id = ?", (int(now_ms), dispatch_id))
                 dead_id = f"dead-letter:{dispatch_id}"
                 conn.execute(
@@ -1433,25 +1571,91 @@ class RoomKernelStore:
 
     def lease_cancel(self, *, now_ms: int, ttl_ms: int = 30_000) -> dict[str, object] | None:
         with self._connect(immediate=True) as conn:
-            row = conn.execute("""SELECT * FROM room_kernel_cancel_outbox
-                WHERE ((state IN ('pending','retry_wait') AND available_at_ms<=?) OR (state='leased' AND lease_until_ms<=?))
-                ORDER BY created_at_ms,cancel_id LIMIT 1""", (int(now_ms), int(now_ms))).fetchone()
+            row = conn.execute("""SELECT cancel.*,effect.state AS runtime_effect_state,
+                       effect.runtime_receipt_json AS active_runtime_receipt_json
+                FROM room_kernel_cancel_outbox cancel
+                JOIN room_kernel_runtime_effects effect
+                  ON effect.dispatch_id=cancel.dispatch_id
+                WHERE effect.state IN ('intent','accepted','unknown')
+                  AND ((cancel.state IN ('pending','retry_wait') AND cancel.available_at_ms<=?)
+                    OR (cancel.state='leased' AND cancel.lease_until_ms<=?))
+                ORDER BY cancel.created_at_ms,cancel.cancel_id LIMIT 1""", (int(now_ms), int(now_ms))).fetchone()
             if row is None:
                 return None
             conn.execute("UPDATE room_kernel_cancel_outbox SET state='leased',attempt_count=attempt_count+1,lease_until_ms=? WHERE cancel_id=?", (int(now_ms)+max(1,int(ttl_ms)), row["cancel_id"]))
-            return {"cancelId": str(row["cancel_id"]), "rootId": str(row["root_id"]), "dispatchId": str(row["dispatch_id"]), "sessionId": str(row["session_id"]), "generation": int(row["generation"])}
+            active_runtime_receipt = json.loads(
+                str(row["active_runtime_receipt_json"] or "{}")
+            )
+            return {
+                "cancelId": str(row["cancel_id"]),
+                "rootId": str(row["root_id"]),
+                "dispatchId": str(row["dispatch_id"]),
+                "sessionId": str(row["session_id"]),
+                "generation": int(row["generation"]),
+                "turnId": str(active_runtime_receipt.get("turnId") or ""),
+                "capabilityEpoch": int(
+                    active_runtime_receipt.get("capabilityEpoch", -1)
+                ),
+            }
 
     def complete_cancel(self, cancel_id: str, runtime_receipt: Mapping[str, object], *, now_ms: int) -> dict[str, object]:
         with self._connect(immediate=True) as conn:
             row = conn.execute("SELECT * FROM room_kernel_cancel_outbox WHERE cancel_id=? AND state='leased'", (cancel_id,)).fetchone()
             if row is None:
                 raise RoomKernelFenceError("cancel lease is missing or stale")
-            if (runtime_receipt.get("schemaVersion") != "wisdom-weasel.room-runtime-receipt.v1"
+            effect = conn.execute(
+                """SELECT state,root_id,session_id,dispatch_generation,
+                          runtime_receipt_json
+                   FROM room_kernel_runtime_effects WHERE dispatch_id=?""",
+                (row["dispatch_id"],),
+            ).fetchone()
+            active_runtime_receipt = (
+                json.loads(str(effect["runtime_receipt_json"] or "{}"))
+                if effect is not None
+                else {}
+            )
+            try:
+                receipt_generation = int(runtime_receipt.get("generation", -1))
+                receipt_capability_epoch = int(
+                    runtime_receipt.get("capabilityEpoch", -1)
+                )
+                active_generation = int(
+                    active_runtime_receipt.get("generation", -1)
+                )
+                active_capability_epoch = int(
+                    active_runtime_receipt.get("capabilityEpoch", -1)
+                )
+            except (TypeError, ValueError) as exc:
+                raise RoomKernelFenceError(
+                    "runtime cancel receipt does not match durable intent"
+                ) from exc
+            active_turn_id = str(
+                active_runtime_receipt.get("turnId") or ""
+            ).strip()
+            if (
+                effect is None
+                or str(effect["state"]) not in {"accepted", "unknown"}
+                or effect["root_id"] != row["root_id"]
+                or effect["session_id"] != row["session_id"]
+                or active_runtime_receipt.get("rootId") != row["root_id"]
+                or active_runtime_receipt.get("dispatchId") != row["dispatch_id"]
+                or active_runtime_receipt.get("sessionId") != row["session_id"]
+                or active_generation != int(effect["dispatch_generation"])
+                or not active_turn_id
+                or active_capability_epoch < 0
+                or runtime_receipt.get("schemaVersion")
+                != "wisdom-weasel.room-runtime-receipt.v1"
                 or runtime_receipt.get("receiptKind") != "cancel_applied"
                 or runtime_receipt.get("status") not in {"applied", "cancelled"}
+                or runtime_receipt.get("cancelId") != row["cancel_id"]
                 or runtime_receipt.get("rootId") != row["root_id"]
+                or runtime_receipt.get("dispatchId") != row["dispatch_id"]
                 or runtime_receipt.get("sessionId") != row["session_id"]
-                or int(runtime_receipt.get("generation", -1)) != int(row["generation"])):
+                or receipt_generation != int(row["generation"])
+                or str(runtime_receipt.get("turnId") or "").strip()
+                != active_turn_id
+                or receipt_capability_epoch != active_capability_epoch
+            ):
                 raise RoomKernelFenceError("runtime cancel receipt does not match durable intent")
             surfaces = runtime_receipt.get("cancellationSurfaces")
             required_surfaces = set(_RUNTIME_CANCEL_SURFACES)
@@ -1492,7 +1696,10 @@ class RoomKernelStore:
                     (cancel_id, surface, str(proof["state"]), _json(proof), int(now_ms)),
                 )
             if pending_targets:
-                if any(proof["state"] == "unknown" for proof in typed_surfaces.values()):
+                if bool(row["terminalize_root"]) and any(
+                    proof["state"] == "unknown"
+                    for proof in typed_surfaces.values()
+                ):
                     conn.execute(
                         "UPDATE room_kernel_roots SET state='cancelled_with_unknowns',updated_at_ms=? WHERE root_id=?",
                         (int(now_ms), row["root_id"]),
@@ -1509,8 +1716,8 @@ class RoomKernelStore:
                     "terminalReceipt": None,
                 }
             conn.execute("UPDATE room_kernel_cancel_outbox SET state='applied',lease_until_ms=0,runtime_receipt_json=? WHERE cancel_id=?", (_json(runtime_receipt), cancel_id))
-            conn.execute("UPDATE room_kernel_runtime_effects SET state='cancelled',runtime_receipt_json=?,updated_at_ms=? WHERE dispatch_id=?", (_json(runtime_receipt), int(now_ms), row["dispatch_id"]))
-            conn.execute("UPDATE room_kernel_abort_scopes SET state='cancelled',cancel_receipt_json=?,updated_at_ms=? WHERE dispatch_id=?", (_json(runtime_receipt), int(now_ms), row["dispatch_id"]))
+            conn.execute("UPDATE room_kernel_runtime_effects SET state='cancelled',runtime_receipt_json=?,updated_at_ms=? WHERE dispatch_id=? AND state IN ('intent','accepted','unknown')", (_json(runtime_receipt), int(now_ms), row["dispatch_id"]))
+            conn.execute("UPDATE room_kernel_abort_scopes SET state='cancelled',cancel_receipt_json=?,updated_at_ms=? WHERE dispatch_id=? AND state IN ('registered','cancelling','unknown')", (_json(runtime_receipt), int(now_ms), row["dispatch_id"]))
             conn.execute("UPDATE room_kernel_dispatches SET state='cancelled',updated_at_ms=? WHERE dispatch_id=? AND state IN ('unknown','leased','running')", (int(now_ms), row["dispatch_id"]))
             self._settle_dispatch_limits(
                 conn, str(row["dispatch_id"]), usage=None, consumed=False, now_ms=now_ms
@@ -1623,13 +1830,15 @@ class RoomKernelStore:
                 conn.execute(
                     """UPDATE room_kernel_runtime_effects
                        SET state='unknown',updated_at_ms=?
-                       WHERE dispatch_id=? AND state!='cancelled'""",
+                       WHERE dispatch_id=?
+                         AND state IN ('intent','accepted','unknown')""",
                     (int(now_ms), dispatch_id),
                 )
                 conn.execute(
                     """UPDATE room_kernel_abort_scopes
                        SET state='unknown',updated_at_ms=?
-                       WHERE dispatch_id=? AND state!='cancelled'""",
+                       WHERE dispatch_id=?
+                         AND state IN ('registered','cancelling','unknown')""",
                     (int(now_ms), dispatch_id),
                 )
                 self._settle_dispatch_limits(
@@ -1660,6 +1869,16 @@ class RoomKernelStore:
         terminalize_root: bool,
         now_ms: int,
     ) -> None:
+        effect = conn.execute(
+            "SELECT state FROM room_kernel_runtime_effects WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+        if effect is None or str(effect["state"]) not in {
+            "intent",
+            "accepted",
+            "unknown",
+        }:
+            return
         cancel_id = _stable_id("room-cancel", root_id, dispatch_id, str(generation))
         conn.execute("""INSERT OR IGNORE INTO room_kernel_cancel_outbox(
             cancel_id,root_id,dispatch_id,session_id,generation,terminalize_root,state,available_at_ms,created_at_ms)
@@ -1668,7 +1887,7 @@ class RoomKernelStore:
                 int(terminalize_root), int(now_ms), int(now_ms),
             ))
         conn.execute(
-            "UPDATE room_kernel_abort_scopes SET state='cancelling',updated_at_ms=? WHERE dispatch_id=? AND state!='cancelled'",
+            "UPDATE room_kernel_abort_scopes SET state='cancelling',updated_at_ms=? WHERE dispatch_id=? AND state IN ('registered','cancelling','unknown')",
             (int(now_ms), dispatch_id),
         )
         for surface in _RUNTIME_CANCEL_SURFACES:
@@ -1693,10 +1912,27 @@ class RoomKernelStore:
         now_ms: int,
         cancellation_outcome: str = "cancelled",
     ) -> dict[str, object]:
+        if cancellation_outcome not in {
+            "cancelled",
+            "cancelled_with_unknowns",
+        }:
+            raise RoomKernelFenceError(
+                "terminal cancellation outcome is invalid"
+            )
         root = self._root_row(conn, root_id)
         receipt = self._receipt(conn, root_id=root_id, command_id=None, receipt_kind="terminal", status="applied",
             generation=int(root["generation"]), details={"terminalState": cancellation_outcome, "quiescent": True}, now_ms=now_ms)
-        conn.execute("UPDATE room_kernel_roots SET state='cancelled',terminal_receipt_id=?,updated_at_ms=? WHERE root_id=?", (receipt["receiptId"], int(now_ms), root_id))
+        conn.execute(
+            """UPDATE room_kernel_roots
+               SET state=?,terminal_receipt_id=?,updated_at_ms=?
+               WHERE root_id=?""",
+            (
+                cancellation_outcome,
+                receipt["receiptId"],
+                int(now_ms),
+                root_id,
+            ),
+        )
         return receipt
 
     def accept_runtime_receipt(
@@ -1733,7 +1969,11 @@ class RoomKernelStore:
                 or runtime_receipt.get("status") != "accepted"
                 or runtime_receipt.get("rootId") != lease["root_id"]
                 or runtime_receipt.get("dispatchId") != lease["dispatch_id"]
+                or runtime_receipt.get("sessionId")
+                != dispatch["target_session_id"]
                 or int(runtime_receipt.get("generation", -1)) != generation
+                or int(runtime_receipt.get("capabilityEpoch", -1))
+                != int(dispatch_payload.get("capabilityEpoch", -1))
                 or not accepted_turn_id
             ):
                 raise RoomKernelFenceError("runtime receipt does not match the leased Dispatch")
@@ -2462,6 +2702,7 @@ class RoomKernelStore:
         invocation_receipt_id: str = "",
         resource_usage: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
+        payload = dict(payload)
         validate_kernel_contract("roomCommit", payload)
         quality_gate_receipt = payload.get("qualityGateReceipt")
         if not isinstance(quality_gate_receipt, Mapping):
@@ -2568,6 +2809,70 @@ class RoomKernelStore:
                     "RoomCommit Task is missing"
                 )
             task_payload = json.loads(str(task_row["payload_json"]))
+            existing = conn.execute(
+                "SELECT commit_id FROM room_kernel_commits WHERE dispatch_id = ?",
+                (payload["dispatchId"],),
+            ).fetchone()
+            intake = self._intake_phase_state_locked(
+                conn,
+                root_id=str(root["root_id"]),
+            )
+            if (
+                intake is not None
+                and self._is_active_alignment_dispatch_chain(
+                    conn,
+                    dispatch,
+                    root,
+                )
+                and decision != "wait"
+            ):
+                raise RoomKernelFenceError(
+                    "authoritative Room alignment may only wait for one "
+                    "clarification answer; use room_define to finish alignment"
+                )
+            if (
+                task_payload.get("taskKind") == "review"
+                and existing is None
+            ):
+                submitted_findings = payload.get("reviewFindings", ())
+                payload["reviewFindings"] = (
+                    self._canonical_review_finding_lineage_locked(
+                        conn,
+                        root_id=str(root["root_id"]),
+                        task_payload=task_payload,
+                        submitted_findings=submitted_findings,
+                    )
+                )
+                if submitted_findings:
+                    authoritative_evidence_refs = (
+                        self._review_finding_evidence_authority_locked(
+                            conn,
+                            task_payload=task_payload,
+                            dispatch=dispatch,
+                            commit_payload=payload,
+                        )
+                    )
+                    for finding in submitted_findings:
+                        if not isinstance(finding, Mapping):
+                            continue
+                        finding_evidence_refs = {
+                            str(value).strip()
+                            for value in finding.get("evidenceRefs", ())
+                            if str(value or "").strip()
+                        }
+                        if (
+                            not finding_evidence_refs
+                            or not finding_evidence_refs.issubset(
+                                authoritative_evidence_refs
+                            )
+                        ):
+                            raise RoomKernelFenceError(
+                                "Review Finding cites stale or foreign evidence"
+                            )
+                # The Kernel-derived lineage is the durable Commit authority,
+                # so validate the complete canonical payload again before any
+                # state or receipt is written.
+                validate_kernel_contract("roomCommit", payload)
             report = self._report_dispatch_locked(
                 conn,
                 root_id=str(root["root_id"]),
@@ -2646,6 +2951,54 @@ class RoomKernelStore:
                 )
             except RoomQualityGateError as exc:
                 raise RoomKernelFenceError(str(exc)) from exc
+            dispatch_authority = _dispatch_payload(dispatch)
+            if (
+                str(dispatch["intent_kind"]) in {"revise", "retry"}
+                or int(dispatch_authority.get("attempt") or 0) > 1
+            ):
+                prior_evidence = (
+                    self._prior_acceptance_evidence_refs_locked(
+                        conn,
+                        root_id=str(root["root_id"]),
+                        exclude_dispatch_id=str(dispatch["dispatch_id"]),
+                    )
+                )
+                reused: dict[str, list[str]] = {}
+                for item in quality_gate_receipt.get("items") or ():
+                    if (
+                        not isinstance(item, Mapping)
+                        or item.get("status") != "pass"
+                    ):
+                        continue
+                    criterion_id = str(
+                        item.get("criterionId") or ""
+                    ).strip()
+                    stale_refs = prior_evidence.get(criterion_id, set())
+                    overlap = sorted(
+                        {
+                            str(value).strip()
+                            for value in item.get("evidenceRefs") or ()
+                            if str(value or "").strip() in stale_refs
+                        }
+                    )
+                    if overlap:
+                        reused[criterion_id] = overlap
+                if reused:
+                    raise RoomKernelFenceError(
+                        "retry/revision quality evidence must come from the "
+                        "current attempt; prior accepted evidence was reused: "
+                        + ", ".join(sorted(reused))
+                    )
+            acceptance_evidence_authority = (
+                self._acceptance_evidence_authority_locked(
+                    conn,
+                    root=root,
+                    task_payload=task_payload,
+                    dispatch=dispatch,
+                    quality_gate_receipt=quality_gate_receipt,
+                    commit_payload=payload,
+                )
+            )
             invocation = None
             if invocation_receipt_id:
                 invocation = conn.execute(
@@ -2668,7 +3021,6 @@ class RoomKernelStore:
                     raise RoomKernelFenceError("RoomCommit invocation receipt does not match Dispatch fences")
             if generation != int(root["generation"]) or generation != int(dispatch["generation"]):
                 return self._receipt(conn, root_id=str(root["root_id"]), command_id=None, receipt_kind="rejected", status="rejected", generation=int(root["generation"]), details={"reason": "stale_generation", "dispatchId": payload["dispatchId"]}, now_ms=now_ms)
-            existing = conn.execute("SELECT commit_id FROM room_kernel_commits WHERE dispatch_id = ?", (payload["dispatchId"],)).fetchone()
             if existing is not None:
                 if invocation is not None:
                     execution = conn.execute(
@@ -2784,6 +3136,19 @@ class RoomKernelStore:
             conn.execute("UPDATE room_kernel_dispatches SET state = 'committed', updated_at_ms = ? WHERE dispatch_id = ?", (int(now_ms), payload["dispatchId"]))
             conn.execute("UPDATE room_kernel_outbox SET state = 'committed', updated_at_ms = ? WHERE dispatch_id = ?", (int(now_ms), payload["dispatchId"]))
             conn.execute("UPDATE room_kernel_leases SET state = 'completed', updated_at_ms = ? WHERE dispatch_id = ? AND state IN ('active','accepted')", (int(now_ms), payload["dispatchId"]))
+            conn.execute(
+                """UPDATE room_kernel_runtime_effects
+                   SET state='completed',updated_at_ms=?
+                   WHERE dispatch_id=? AND state IN ('intent','accepted','unknown')""",
+                (int(now_ms), payload["dispatchId"]),
+            )
+            conn.execute(
+                """UPDATE room_kernel_abort_scopes
+                   SET state='completed',updated_at_ms=?
+                   WHERE dispatch_id=?
+                     AND state IN ('registered','cancelling','unknown')""",
+                (int(now_ms), payload["dispatchId"]),
+            )
             self._settle_dispatch_limits(
                 conn, str(payload["dispatchId"]), usage=resource_usage,
                 consumed=True, now_ms=now_ms,
@@ -2842,15 +3207,24 @@ class RoomKernelStore:
                         and item.get("state") == "open"
                         for item in review_findings
                     )
+                    has_advisory = any(
+                        item.get("gateEffect") == "advisory"
+                        for item in review_findings
+                    )
                     if decision == "complete":
                         if unresolved_blocking:
                             raise RoomKernelFenceError(
                                 "Reviewer cannot accept with an unresolved "
                                 "Blocking Finding"
                             )
+                        if unresolved_advisory:
+                            raise RoomKernelFenceError(
+                                "Reviewer cannot accept with an unresolved "
+                                "Advisory Finding"
+                            )
                         review_state = (
                             "accepted_with_notes"
-                            if unresolved_advisory
+                            if has_advisory
                             else "accepted"
                         )
                     elif decision == "dispatch":
@@ -3020,6 +3394,9 @@ class RoomKernelStore:
                         "receiptId"
                     ],
                     "qualityGateVerdict": quality_gate_receipt["verdict"],
+                    "acceptanceEvidenceAuthority": (
+                        acceptance_evidence_authority
+                    ),
                 },
                 now_ms=now_ms,
             )
@@ -3105,7 +3482,7 @@ class RoomKernelStore:
         if (
             int(root["generation"]) != int(generation)
             or str(root["state"])
-            not in {"running", "waiting"}
+            not in {"running", "waiting", "blocked"}
         ):
             return [], []
         rows = conn.execute(
@@ -3118,7 +3495,25 @@ class RoomKernelStore:
         resumed: list[str] = []
         blocked: list[dict[str, str]] = []
         for continuation in rows:
-            payload = json.loads(str(continuation["payload_json"]))
+            try:
+                payload = _room_continuation_payload(conn, continuation)
+            except (RoomKernelFenceError, TypeError, ValueError) as exc:
+                reason = f"participant wait payload is invalid: {exc}"[:500]
+                self._block_wait_continuation(
+                    conn,
+                    continuation,
+                    reason=reason,
+                    now_ms=now_ms,
+                )
+                blocked.append(
+                    {
+                        "continuationId": str(
+                            continuation["continuation_id"]
+                        ),
+                        "reason": reason,
+                    }
+                )
+                continue
             if payload.get("resumeDispatchId"):
                 continue
             if (
@@ -3128,13 +3523,57 @@ class RoomKernelStore:
                 # Compatibility with waits resumed before resumeDispatchId was
                 # persisted in the continuation payload.
                 continue
+            if payload.get("waitingFor") != "participant":
+                continue
+            runtime_authorized = _participant_wait_runtime_authorized(
+                conn,
+                continuation,
+                payload,
+            )
+            historical_recovery_required = (
+                _historical_participant_wait_requires_recovery(
+                    conn,
+                    continuation,
+                    payload,
+                )
+            )
+            if not runtime_authorized and not historical_recovery_required:
+                # Historical projections without an exact persisted
+                # participant/dependency identity remain display-only.
+                continue
             dependency_id = str(
                 payload.get("waitingForDispatchId") or ""
             ).strip()
+            participant_id = str(
+                payload.get("waitingForParticipantId") or ""
+            ).strip()
+            unresolved_identity = any(
+                value.startswith("legacy-unresolved-")
+                for value in (participant_id, dependency_id)
+            )
             if (
-                payload.get("waitingFor") != "participant"
-                or not dependency_id
+                not dependency_id
+                or not participant_id
+                or unresolved_identity
             ):
+                reason = (
+                    "historical participant wait identity is unresolved; "
+                    "explicit recovery is required"
+                )
+                self._block_wait_continuation(
+                    conn,
+                    continuation,
+                    reason=reason,
+                    now_ms=now_ms,
+                )
+                blocked.append(
+                    {
+                        "continuationId": str(
+                            continuation["continuation_id"]
+                        ),
+                        "reason": reason,
+                    }
+                )
                 continue
             dependency = conn.execute(
                 """SELECT * FROM room_kernel_dispatches
@@ -3157,8 +3596,40 @@ class RoomKernelStore:
                         "reason": reason,
                     }
                 )
-                break
-            if str(dependency["state"]) != "committed":
+                continue
+            if str(dependency["target_participant_id"]) != participant_id:
+                reason = "participant wait dependency identity does not match"
+                self._block_wait_continuation(
+                    conn,
+                    continuation,
+                    reason=reason,
+                    now_ms=now_ms,
+                )
+                blocked.append(
+                    {
+                        "continuationId": str(
+                            continuation["continuation_id"]
+                        ),
+                        "reason": reason,
+                    }
+                )
+                continue
+            if str(dependency["task_id"]) == str(continuation["task_id"]):
+                reason = "participant wait dependency must belong to another Task"
+                self._block_wait_continuation(
+                    conn,
+                    continuation,
+                    reason=reason,
+                    now_ms=now_ms,
+                )
+                blocked.append(
+                    {
+                        "continuationId": str(
+                            continuation["continuation_id"]
+                        ),
+                        "reason": reason,
+                    }
+                )
                 continue
             dependency_task = conn.execute(
                 """SELECT state,payload_json FROM room_kernel_tasks
@@ -3181,12 +3652,52 @@ class RoomKernelStore:
                         "reason": reason,
                     }
                 )
-                break
-            if str(dependency_task["state"]) != "completed":
+                continue
+            dependency_dispatch_state = str(dependency["state"])
+            dependency_task_state = str(dependency_task["state"])
+            dependency_terminal = (
+                dependency_dispatch_state in {"failed", "cancelled", "unknown"}
+                or (
+                    dependency_dispatch_state == "committed"
+                    and dependency_task_state
+                    in {"blocked", "failed", "cancelled"}
+                )
+            )
+            dependency_completed = (
+                dependency_dispatch_state == "committed"
+                and dependency_task_state == "completed"
+            )
+            if not dependency_terminal and not dependency_completed:
                 # A public intermediate result (for example, Reviewer findings
                 # handed back for revision) does not settle the participant
                 # wait. Resume only after that child Task reaches its accepted
-                # terminal state.
+                # completion or a durable terminal outcome must be handled.
+                continue
+            if historical_recovery_required:
+                reason_code = (
+                    "historical_continuation_recovery_required"
+                )
+                reason = (
+                    "historical v3 participant wait reached its exact "
+                    "dependency outcome but lacks executable v4 authority; "
+                    "explicit recovery is required"
+                )
+                self._block_wait_continuation(
+                    conn,
+                    continuation,
+                    reason=reason,
+                    reason_code=reason_code,
+                    now_ms=now_ms,
+                )
+                blocked.append(
+                    {
+                        "continuationId": str(
+                            continuation["continuation_id"]
+                        ),
+                        "reasonCode": reason_code,
+                        "reason": reason,
+                    }
+                )
                 continue
             task_row = conn.execute(
                 """SELECT state,payload_json FROM room_kernel_tasks
@@ -3209,10 +3720,13 @@ class RoomKernelStore:
                         "reason": reason,
                     }
                 )
-                break
+                continue
             resumed_task_payload: dict[str, object] | None = None
             task_payload = json.loads(str(task_row["payload_json"]))
-            if task_payload.get("taskKind") == "review":
+            if (
+                task_payload.get("taskKind") == "review"
+                and not dependency_terminal
+            ):
                 dependency_commit_row = conn.execute(
                     """SELECT payload_json FROM room_kernel_commits
                        WHERE dispatch_id=?""",
@@ -3234,9 +3748,10 @@ class RoomKernelStore:
                             "reason": reason,
                         }
                     )
-                    break
-                dependency_commit = json.loads(
-                    str(dependency_commit_row["payload_json"])
+                    continue
+                dependency_commit = _room_commit_payload(
+                    conn,
+                    dependency_commit_row["payload_json"],
                 )
                 responses = {
                     str(item.get("findingId") or ""): item
@@ -3349,33 +3864,63 @@ class RoomKernelStore:
                 continuation_id,
                 dependency_id,
             )
-            resume_dispatch = {
-                "schemaVersion": parent_payload["schemaVersion"],
-                "dispatchId": resume_dispatch_id,
-                "rootId": root_id,
-                "taskId": str(continuation["task_id"]),
-                "parentDispatchId": str(parent["dispatch_id"]),
-                "generation": int(generation),
-                "hopCount": int(parent_payload["hopCount"]) + 1,
-                "depth": int(parent_payload["depth"]),
-                "budgetCost": 1,
-                "targetSessionId": str(parent["target_session_id"]),
-                "targetParticipantId": str(
-                    parent["target_participant_id"]
-                ),
-                "triggerId": continuation_id,
-                "intentKind": "resume",
-                "idempotencyKey": (
-                    f"room-resume:{continuation_id}:{dependency_id}"
-                ),
-                "attempt": int(parent_payload.get("attempt") or 0) + 1,
-                "capabilityEpoch": capability_epoch,
-                "runtimeProfileRevision": str(
-                    parent_payload["runtimeProfileRevision"]
-                ),
-                "state": "pending",
-            }
+            outcome_state = (
+                dependency_dispatch_state
+                if dependency_dispatch_state
+                in {"failed", "cancelled", "unknown"}
+                else dependency_task_state
+            )
+            conn.execute("SAVEPOINT room_participant_wait_resume")
             try:
+                outcome_receipt: dict[str, object] | None = None
+                if dependency_terminal:
+                    outcome_receipt = self._receipt(
+                        conn,
+                        root_id=root_id,
+                        command_id=None,
+                        receipt_kind="accepted",
+                        status="applied",
+                        generation=int(generation),
+                        details={
+                            "purpose": "participant_wait_dependency_terminal",
+                            "continuationId": continuation_id,
+                            "dependencyDispatchId": dependency_id,
+                            "dependencyDispatchState": dependency_dispatch_state,
+                            "dependencyTaskId": str(dependency["task_id"]),
+                            "dependencyTaskState": dependency_task_state,
+                        },
+                        now_ms=now_ms,
+                    )
+                resume_dispatch = {
+                    "schemaVersion": parent_payload["schemaVersion"],
+                    "dispatchId": resume_dispatch_id,
+                    "rootId": root_id,
+                    "taskId": str(continuation["task_id"]),
+                    "parentDispatchId": str(parent["dispatch_id"]),
+                    "generation": int(generation),
+                    "hopCount": int(parent_payload["hopCount"]) + 1,
+                    "depth": int(parent_payload["depth"]),
+                    "budgetCost": 1,
+                    "targetSessionId": str(parent["target_session_id"]),
+                    "targetParticipantId": str(
+                        parent["target_participant_id"]
+                    ),
+                    "triggerId": (
+                        str(outcome_receipt["receiptId"])
+                        if outcome_receipt is not None
+                        else continuation_id
+                    ),
+                    "intentKind": "resume",
+                    "idempotencyKey": (
+                        f"room-resume:{continuation_id}:{dependency_id}"
+                    ),
+                    "attempt": int(parent_payload.get("attempt") or 0) + 1,
+                    "capabilityEpoch": capability_epoch,
+                    "runtimeProfileRevision": str(
+                        parent_payload["runtimeProfileRevision"]
+                    ),
+                    "state": "pending",
+                }
                 child, _ = self._enqueue_dispatch(
                     conn,
                     resume_dispatch,
@@ -3383,7 +3928,78 @@ class RoomKernelStore:
                     not in {"cohort", "test", "kernel_only"},
                     now_ms=now_ms,
                 )
+                materialized_payload = _decode_room_continuation_payload(
+                    continuation["payload_json"]
+                )
+                materialized_payload["resumeDispatchId"] = str(
+                    child["dispatchId"]
+                )
+                if outcome_receipt is not None:
+                    materialized_payload.update(
+                        {
+                            "dependencyOutcomeDispatchId": dependency_id,
+                            "dependencyOutcomeState": outcome_state,
+                            "dependencyOutcomeReceiptId": str(
+                                outcome_receipt["receiptId"]
+                            ),
+                        }
+                    )
+                if str(continuation["decision"]) == "wait":
+                    updated = conn.execute(
+                        """UPDATE room_kernel_continuations
+                           SET state='resumed',child_dispatch_id=?,payload_json=?
+                           WHERE continuation_id=? AND child_dispatch_id IS NULL
+                             AND state='applied'""",
+                        (
+                            child["dispatchId"],
+                            _json(materialized_payload),
+                            continuation_id,
+                        ),
+                    )
+                else:
+                    updated = conn.execute(
+                        """UPDATE room_kernel_continuations
+                           SET state='resumed',payload_json=?
+                           WHERE continuation_id=? AND state='applied'""",
+                        (_json(materialized_payload), continuation_id),
+                    )
+                if updated.rowcount != 1:
+                    raise RoomKernelFenceError(
+                        "participant wait continuation is no longer resumable"
+                    )
+                if resumed_task_payload is not None:
+                    resumed_task = conn.execute(
+                        """UPDATE room_kernel_tasks
+                           SET state='active',payload_json=?,updated_at_ms=?
+                           WHERE task_id=? AND state='waiting'""",
+                        (
+                            _json(resumed_task_payload),
+                            int(now_ms),
+                            continuation["task_id"],
+                        ),
+                    )
+                else:
+                    resumed_task = conn.execute(
+                        """UPDATE room_kernel_tasks
+                           SET state='active',updated_at_ms=?
+                           WHERE task_id=? AND state='waiting'""",
+                        (int(now_ms), continuation["task_id"]),
+                    )
+                if resumed_task.rowcount != 1:
+                    raise RoomKernelFenceError(
+                        "participant wait Task is no longer resumable"
+                    )
+                conn.execute(
+                    """UPDATE room_kernel_roots
+                       SET state='running',updated_at_ms=?
+                       WHERE root_id=?
+                         AND state IN ('running','waiting','blocked')""",
+                    (int(now_ms), root_id),
+                )
+                conn.execute("RELEASE SAVEPOINT room_participant_wait_resume")
             except RoomKernelFenceError as exc:
+                conn.execute("ROLLBACK TO SAVEPOINT room_participant_wait_resume")
+                conn.execute("RELEASE SAVEPOINT room_participant_wait_resume")
                 reason = str(exc)[:500]
                 self._block_wait_continuation(
                     conn,
@@ -3397,49 +4013,7 @@ class RoomKernelStore:
                         "reason": reason,
                     }
                 )
-                break
-            payload["resumeDispatchId"] = str(child["dispatchId"])
-            if str(continuation["decision"]) == "wait":
-                conn.execute(
-                    """UPDATE room_kernel_continuations
-                       SET child_dispatch_id=?,payload_json=?
-                       WHERE continuation_id=? AND child_dispatch_id IS NULL""",
-                    (
-                        child["dispatchId"],
-                        _json(payload),
-                        continuation_id,
-                    ),
-                )
-            else:
-                conn.execute(
-                    """UPDATE room_kernel_continuations
-                       SET payload_json=? WHERE continuation_id=?""",
-                    (_json(payload), continuation_id),
-                )
-            if resumed_task_payload is not None:
-                conn.execute(
-                    """UPDATE room_kernel_tasks
-                       SET state='active',payload_json=?,updated_at_ms=?
-                       WHERE task_id=? AND state='waiting'""",
-                    (
-                        _json(resumed_task_payload),
-                        int(now_ms),
-                        continuation["task_id"],
-                    ),
-                )
-            else:
-                conn.execute(
-                    """UPDATE room_kernel_tasks
-                       SET state='active',updated_at_ms=?
-                       WHERE task_id=? AND state='waiting'""",
-                    (int(now_ms), continuation["task_id"]),
-                )
-            conn.execute(
-                """UPDATE room_kernel_roots
-                   SET state='running',updated_at_ms=?
-                   WHERE root_id=? AND state IN ('running','waiting')""",
-                (int(now_ms), root_id),
-            )
+                continue
             resumed.append(str(child["dispatchId"]))
         return resumed, blocked
 
@@ -3449,6 +4023,7 @@ class RoomKernelStore:
         continuation: sqlite3.Row,
         *,
         reason: str,
+        reason_code: str = "wait_resume_blocked",
         now_ms: int,
     ) -> None:
         conn.execute(
@@ -3463,25 +4038,32 @@ class RoomKernelStore:
         )
         conn.execute(
             """UPDATE room_kernel_roots
-               SET state='blocked',updated_at_ms=? WHERE root_id=?""",
+               SET state='blocked',updated_at_ms=?
+               WHERE root_id=? AND state IN ('running','waiting','blocked')""",
             (int(now_ms), continuation["root_id"]),
+        )
+        normalized_reason_code = _required(
+            reason_code,
+            "wait continuation reason_code",
         )
         conn.execute(
             """INSERT OR IGNORE INTO room_kernel_dead_letters(
                dead_letter_id,root_id,dispatch_id,reason_code,
                payload_json,created_at_ms)
-               VALUES (?,?,?,'wait_resume_blocked',?,?)""",
+               VALUES (?,?,?,?,?,?)""",
             (
                 _stable_id(
                     "room-dead-letter",
                     str(continuation["parent_dispatch_id"]),
-                    "wait_resume_blocked",
+                    normalized_reason_code,
                 ),
                 continuation["root_id"],
                 continuation["parent_dispatch_id"],
+                normalized_reason_code,
                 _json(
                     {
                         "continuationId": continuation["continuation_id"],
+                        "reasonCode": normalized_reason_code,
                         "reason": reason,
                     }
                 ),
@@ -3515,16 +4097,45 @@ class RoomKernelStore:
         if self.mode == "off":
             raise RoomKernelFenceError("Room Kernel feature flag is off")
         with self._connect(immediate=True) as conn:
-            existing = conn.execute(
-                "SELECT command_id FROM room_kernel_commands WHERE room_id = ? AND idempotency_key = ?",
+            existing_by_key = conn.execute(
+                """SELECT * FROM room_kernel_commands
+                   WHERE room_id = ? AND idempotency_key = ?""",
                 (command["roomId"], command["idempotencyKey"]),
             ).fetchone()
-            if existing is not None:
-                receipt = conn.execute(
-                    """SELECT payload_json FROM room_kernel_receipts
-                       WHERE command_id = ? ORDER BY created_at_ms, receipt_id LIMIT 1""",
-                    (existing["command_id"],),
-                ).fetchone()
+            existing_by_id = conn.execute(
+                "SELECT * FROM room_kernel_commands WHERE command_id = ?",
+                (command["commandId"],),
+            ).fetchone()
+            if existing_by_key is not None or existing_by_id is not None:
+                if (
+                    existing_by_key is None
+                    or existing_by_id is None
+                    or str(existing_by_key["command_id"])
+                    != str(existing_by_id["command_id"])
+                    or json.loads(str(existing_by_key["payload_json"]))
+                    != dict(command)
+                ):
+                    raise RoomKernelFenceError(
+                        "control command idempotency identity was rebound"
+                    )
+                if kind == "panic":
+                    receipt = conn.execute(
+                        """SELECT payload_json FROM room_kernel_receipts
+                           WHERE command_id = ? AND root_id IS NULL
+                             AND receipt_kind = 'panic'
+                           ORDER BY created_at_ms, receipt_id LIMIT 1""",
+                        (existing_by_key["command_id"],),
+                    ).fetchone()
+                else:
+                    receipt = conn.execute(
+                        """SELECT payload_json FROM room_kernel_receipts
+                           WHERE command_id = ? AND root_id = ?
+                           ORDER BY created_at_ms, receipt_id LIMIT 1""",
+                        (
+                            existing_by_key["command_id"],
+                            command.get("rootId"),
+                        ),
+                    ).fetchone()
                 if receipt is not None:
                     return json.loads(str(receipt["payload_json"]))
                 raise RoomKernelFenceError("duplicate command is missing its authoritative receipt")
@@ -3610,13 +4221,17 @@ class RoomKernelStore:
             (int(now_ms), root_id),
         )
         retried_dispatch_ids: list[str] = []
-        for failed in selected:
+        retry_lineage: list[dict[str, object]] = []
+        retry_used_before = int(limits["retry_used"])
+        for retry_index, failed in enumerate(selected, start=1):
             task_id = str(failed["task_id"])
             conn.execute(
                 "UPDATE room_kernel_tasks SET state='active',updated_at_ms=? WHERE task_id=?",
                 (int(now_ms), task_id),
             )
             payload = json.loads(str(failed["payload_json"]))
+            failed_attempt = int(payload.get("attempt") or 0)
+            retried_attempt = failed_attempt + 1
             dispatch_id = _stable_id(
                 "room-dispatch-retry",
                 command_id,
@@ -3631,7 +4246,7 @@ class RoomKernelStore:
                         str(failed["dispatch_id"]),
                     ),
                     "triggerId": command_id,
-                    "attempt": int(payload.get("attempt") or 0) + 1,
+                    "attempt": retried_attempt,
                     "capabilityEpoch": int(payload.get("capabilityEpoch") or 0) + 1,
                 }
             )
@@ -3643,6 +4258,17 @@ class RoomKernelStore:
                 now_ms=now_ms,
             )
             retried_dispatch_ids.append(dispatch_id)
+            retry_lineage.append(
+                {
+                    "failedDispatchId": str(failed["dispatch_id"]),
+                    "failedDispatchAttempt": failed_attempt,
+                    "retriedDispatchId": dispatch_id,
+                    "retriedDispatchAttempt": retried_attempt,
+                    "taskId": task_id,
+                    "rootGeneration": int(root["generation"]),
+                    "rootRetryOrdinal": retry_used_before + retry_index,
+                }
+            )
         conn.execute(
             """UPDATE room_kernel_root_limits
                SET retry_used=retry_used+?,updated_at_ms=? WHERE root_id=?""",
@@ -3658,6 +4284,7 @@ class RoomKernelStore:
             details={
                 "retriedDispatchIds": retried_dispatch_ids,
                 "retriedTaskIds": sorted(task_ids),
+                "retryLineage": retry_lineage,
             },
             now_ms=now_ms,
         )
@@ -3670,7 +4297,7 @@ class RoomKernelStore:
             predicate, value = "dispatch_id = ?", target_id
         else:
             predicate, value = "task_id = ?", target_id
-            conn.execute("UPDATE room_kernel_tasks SET state = 'cancelled', updated_at_ms = ? WHERE root_id = ? AND task_id = ?", (int(now_ms), root_id, target_id))
+            conn.execute("UPDATE room_kernel_tasks SET state = 'cancelled', updated_at_ms = ? WHERE root_id = ? AND task_id = ? AND state NOT IN ('completed','failed','cancelled')", (int(now_ms), root_id, target_id))
         ids = [str(row[0]) for row in conn.execute(f"SELECT dispatch_id FROM room_kernel_dispatches WHERE root_id = ? AND {predicate}", (root_id, value))]
         count = self._cancel_dispatch_ids(conn, ids, now_ms=now_ms)
         targets = conn.execute(
@@ -3692,7 +4319,7 @@ class RoomKernelStore:
         runtime_ids = {str(target["dispatch_id"]) for target in targets}
         for dispatch_id in set(ids) - runtime_ids:
             conn.execute(
-                "UPDATE room_kernel_abort_scopes SET state='cancelled',updated_at_ms=? WHERE dispatch_id=?",
+                "UPDATE room_kernel_abort_scopes SET state='cancelled',updated_at_ms=? WHERE dispatch_id=? AND state IN ('registered','cancelling','unknown')",
                 (int(now_ms), dispatch_id),
             )
             self._settle_dispatch_limits(
@@ -3701,14 +4328,16 @@ class RoomKernelStore:
         return self._receipt(conn, root_id=root_id, command_id=command_id, receipt_kind="target_cancelled", status="applied" if count else "noop", generation=int(root["generation"]), details={"targetKind": target_kind, "targetId": target_id, "cancelledDispatches": count, "cancelIntents": len(targets)}, now_ms=now_ms)
 
     def _panic(self, conn: sqlite3.Connection, *, room_id: str, command_id: str | None, now_ms: int) -> dict[str, object]:
-        roots = [str(row[0]) for row in conn.execute("SELECT root_id FROM room_kernel_roots WHERE room_id = ? AND state NOT IN ('completed','cancelled','failed')", (room_id,))]
+        roots = [str(row[0]) for row in conn.execute("SELECT root_id FROM room_kernel_roots WHERE room_id = ? AND state NOT IN ('completed','cancelled','failed') ORDER BY root_id", (room_id,))]
         cancelled = 0
         unknown = 0
+        root_receipt_ids: list[str] = []
         for root_id in roots:
-            receipt = self._cancel_root(conn, root_id, command_id=command_id, now_ms=now_ms, receipt_kind="panic")
+            receipt = self._cancel_root(conn, root_id, command_id=None, now_ms=now_ms, receipt_kind="panic")
+            root_receipt_ids.append(str(receipt["receiptId"]))
             cancelled += int(receipt["details"]["cancelledDispatches"])
             unknown += int(receipt["details"]["unknownDispatches"])
-        return self._receipt(conn, root_id=None, command_id=command_id, receipt_kind="panic", status="applied" if roots else "noop", generation=0, details={"roomId": room_id, "rootCount": len(roots), "cancelledDispatches": cancelled, "unknownDispatches": unknown}, now_ms=now_ms)
+        return self._receipt(conn, root_id=None, command_id=command_id, receipt_kind="panic", status="applied" if roots else "noop", generation=0, details={"roomId": room_id, "rootCount": len(roots), "rootReceiptIds": root_receipt_ids, "cancelledDispatches": cancelled, "unknownDispatches": unknown}, now_ms=now_ms)
 
     def _cancel_root(self, conn: sqlite3.Connection, root_id: str, *, command_id: str | None, now_ms: int, receipt_kind: str) -> dict[str, object]:
         root = self._root_row(conn, root_id)
@@ -3740,7 +4369,7 @@ class RoomKernelStore:
         runtime_ids = {str(target["dispatch_id"]) for target in targets}
         for dispatch_id in set(ids) - runtime_ids:
             conn.execute(
-                "UPDATE room_kernel_abort_scopes SET state='cancelled',updated_at_ms=? WHERE dispatch_id=?",
+                "UPDATE room_kernel_abort_scopes SET state='cancelled',updated_at_ms=? WHERE dispatch_id=? AND state IN ('registered','cancelling','unknown')",
                 (int(now_ms), dispatch_id),
             )
             self._settle_dispatch_limits(
@@ -3770,6 +4399,2461 @@ class RoomKernelStore:
                 (released, int(now_ms), root_id),
             )
         return len(ids)
+
+    def _acceptance_evidence_authority_locked(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        root: sqlite3.Row,
+        task_payload: Mapping[str, object],
+        dispatch: sqlite3.Row,
+        quality_gate_receipt: Mapping[str, object],
+        commit_payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Seal the exact Task/attempt/revision that admitted evidence."""
+
+        definition = self.definition_fence(
+            root_id=str(root["root_id"]),
+            conn=conn,
+        ) or {}
+        dispatch_payload = _dispatch_payload(dispatch)
+        criteria = [
+            {
+                "criterionId": str(item.get("criterionId") or ""),
+                "status": str(item.get("status") or ""),
+                "evidenceRefs": sorted(
+                    {
+                        str(value).strip()
+                        for value in item.get("evidenceRefs") or ()
+                        if str(value or "").strip()
+                    }
+                ),
+            }
+            for item in quality_gate_receipt.get("items") or ()
+            if isinstance(item, Mapping)
+        ]
+        root_payload = json.loads(str(root["payload_json"]))
+        workspace_delivery = task_payload.get("workspaceDelivery")
+        if not isinstance(workspace_delivery, Mapping):
+            workspace_delivery = {}
+        canonical_commit_content_hash = "sha256:" + hashlib.sha256(
+            _json(dict(commit_payload)).encode("utf-8")
+        ).hexdigest()
+        material: dict[str, object] = {
+            "schemaVersion": (
+                "wisdom-weasel.acceptance-evidence-authority.v1"
+            ),
+            "rootId": str(root["root_id"]),
+            "taskId": str(task_payload.get("taskId") or ""),
+            "taskRevision": int(task_payload.get("revision") or 0),
+            "dispatchId": str(dispatch["dispatch_id"]),
+            "dispatchAttempt": int(dispatch_payload.get("attempt") or 0),
+            "generation": int(dispatch["generation"]),
+            "requirementCatalogRevisionId": (
+                str(definition.get("catalogRevisionId") or "") or None
+            ),
+            "requirementAnchorRef": (
+                str(root_payload.get("requirementAnchorRef") or "") or None
+                if isinstance(root_payload, Mapping)
+                else None
+            ),
+            "workspacePolicy": task_payload.get("workspacePolicy"),
+            "workspaceBindingId": task_payload.get("workspaceBindingId"),
+            "workspaceDeliveryRevision": task_payload.get(
+                "workspaceDeliveryRevision"
+            ),
+            "workspaceDeliveryHead": task_payload.get(
+                "workspaceDeliveryHead"
+            ),
+            "workspaceDeliverySnapshotSha256": task_payload.get(
+                "workspaceDeliverySnapshotSha256"
+            ),
+            "workspaceIntegratedRevision": task_payload.get(
+                "workspaceIntegratedRevision"
+            ),
+            "workspaceIntegratedSnapshotSha256": task_payload.get(
+                "workspaceIntegratedSnapshotSha256"
+            ),
+            "workspaceIntegrationPatchSha256": task_payload.get(
+                "workspaceIntegrationPatchSha256"
+            ),
+            "workspaceIntegrationRef": task_payload.get(
+                "workspaceIntegrationRef"
+            ),
+            "workspaceSnapshotSha256": task_payload.get(
+                "workspaceSnapshotSha256"
+            ),
+            "qualityGateReceiptId": str(
+                quality_gate_receipt.get("receiptId") or ""
+            ),
+            "taskAcceptanceCriterionIds": sorted(
+                _criteria(task_payload.get("acceptanceCriterionIds"))
+            ),
+            "criteria": criteria,
+            "evidenceRefs": [
+                str(value)
+                for value in commit_payload.get("evidenceRefs") or ()
+                if str(value or "").strip()
+            ],
+            "requirementCoverage": [
+                str(value)
+                for value in commit_payload.get("requirementCoverage") or ()
+                if str(value or "").strip()
+            ],
+            "workspaceDeliveryManifestSha256": (
+                workspace_delivery.get("manifestSha256")
+            ),
+            "workspaceDeliveryPatchSha256": (
+                workspace_delivery.get("patchSha256")
+            ),
+            "commitId": str(commit_payload.get("commitId") or ""),
+            "commitDeclaredContentHash": str(
+                commit_payload.get("contentHash") or ""
+            ),
+            "commitCanonicalContentHash": (
+                canonical_commit_content_hash
+            ),
+        }
+        encoded = json.dumps(
+            material,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return {
+            **material,
+            "bindingId": "acceptance-evidence-authority:"
+            + hashlib.sha256(encoded).hexdigest(),
+        }
+
+    @staticmethod
+    def _kernel_receipt_row_is_canonical_locked(
+        row: sqlite3.Row,
+        payload: Mapping[str, object],
+    ) -> bool:
+        """Verify that mutable receipt JSON still matches its hashed row key."""
+
+        try:
+            validate_kernel_contract("kernelReceipt", payload)
+        except (TypeError, ValueError):
+            return False
+        details = payload.get("details")
+        if not isinstance(details, Mapping):
+            return False
+        expected_receipt_id = _stable_id(
+            "room-receipt",
+            str(payload.get("rootId") or "global"),
+            str(payload.get("receiptKind") or ""),
+            str(payload.get("status") or ""),
+            _json(dict(details)),
+            str(payload.get("createdAtMs")),
+        )
+        return bool(
+            str(row["receipt_id"]) == expected_receipt_id
+            and str(payload.get("receiptId") or "") == expected_receipt_id
+            and (payload.get("rootId") or None) == (row["root_id"] or None)
+            and (payload.get("commandId") or None)
+            == (row["command_id"] or None)
+            and str(payload.get("receiptKind") or "")
+            == str(row["receipt_kind"])
+            and str(payload.get("status") or "") == str(row["status"])
+            and int(payload.get("generation") or 0)
+            == int(row["generation"])
+            and int(payload.get("createdAtMs") or 0)
+            == int(row["created_at_ms"])
+        )
+
+    @classmethod
+    def _canonical_definition_catalog_revision_locked(
+        cls,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+    ) -> tuple[bool, str | None]:
+        rows = conn.execute(
+            """SELECT * FROM room_kernel_receipts
+               WHERE root_id=? AND receipt_kind='accepted'
+               ORDER BY created_at_ms,receipt_id""",
+            (root_id,),
+        ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, Mapping):
+                continue
+            details = payload.get("details")
+            if not isinstance(details, Mapping):
+                continue
+            if details.get("operation") != "room_define":
+                continue
+            if not cls._kernel_receipt_row_is_canonical_locked(row, payload):
+                return False, None
+            return True, str(details.get("catalogRevisionId") or "") or None
+        return True, None
+
+    @classmethod
+    def _canonical_acceptance_authority_receipt_locked(
+        cls,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        commit_id: str,
+    ) -> tuple[sqlite3.Row, Mapping[str, object], Mapping[str, object]] | None:
+        """Return the one canonical receipt that admitted one Commit."""
+
+        receipt_rows = conn.execute(
+            """SELECT * FROM room_kernel_receipts
+               WHERE root_id=? AND receipt_kind='accepted'
+               ORDER BY created_at_ms,receipt_id""",
+            (root_id,),
+        ).fetchall()
+        candidates: list[
+            tuple[sqlite3.Row, Mapping[str, object], Mapping[str, object]]
+        ] = []
+        for row in receipt_rows:
+            try:
+                receipt = json.loads(str(row["payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(receipt, Mapping):
+                continue
+            details = receipt.get("details")
+            if not isinstance(details, Mapping):
+                continue
+            authority = details.get("acceptanceEvidenceAuthority")
+            authority_commit_id = (
+                str(authority.get("commitId") or "")
+                if isinstance(authority, Mapping)
+                else ""
+            )
+            if (
+                str(details.get("commitId") or "") == commit_id
+                or authority_commit_id == commit_id
+            ) and isinstance(authority, Mapping):
+                candidates.append((row, receipt, authority))
+        if len(candidates) != 1:
+            return None
+        row, receipt, authority = candidates[0]
+        if not cls._kernel_receipt_row_is_canonical_locked(row, receipt):
+            return None
+        return row, receipt, authority
+
+    @classmethod
+    def _acceptance_commit_authority_valid_locked(
+        cls,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        task_payload: Mapping[str, object],
+        dispatch: sqlite3.Row,
+        commit_id: str,
+        raw_commit: Mapping[str, object],
+        require_integration: bool | None = True,
+    ) -> bool:
+        """Consume one exact authority receipt before projecting evidence."""
+
+        candidate = cls._canonical_acceptance_authority_receipt_locked(
+            conn,
+            root_id=root_id,
+            commit_id=commit_id,
+        )
+        if candidate is None:
+            return False
+        receipt_row, receipt, authority = candidate
+        details = receipt.get("details")
+        if not isinstance(details, Mapping):
+            return False
+        binding_id = str(authority.get("bindingId") or "")
+        material = {
+            key: value
+            for key, value in authority.items()
+            if key != "bindingId"
+        }
+        expected_binding_id = "acceptance-evidence-authority:" + hashlib.sha256(
+            _json(material).encode("utf-8")
+        ).hexdigest()
+        if binding_id != expected_binding_id:
+            return False
+        required_keys = {
+            "schemaVersion",
+            "rootId",
+            "taskId",
+            "taskRevision",
+            "dispatchId",
+            "dispatchAttempt",
+            "generation",
+            "requirementCatalogRevisionId",
+            "requirementAnchorRef",
+            "workspacePolicy",
+            "workspaceBindingId",
+            "workspaceDeliveryRevision",
+            "workspaceDeliveryHead",
+            "workspaceDeliverySnapshotSha256",
+            "workspaceIntegratedRevision",
+            "workspaceIntegratedSnapshotSha256",
+            "workspaceIntegrationPatchSha256",
+            "workspaceIntegrationRef",
+            "workspaceSnapshotSha256",
+            "qualityGateReceiptId",
+            "taskAcceptanceCriterionIds",
+            "criteria",
+            "evidenceRefs",
+            "requirementCoverage",
+            "workspaceDeliveryManifestSha256",
+            "workspaceDeliveryPatchSha256",
+            "commitId",
+            "commitDeclaredContentHash",
+            "commitCanonicalContentHash",
+            "bindingId",
+        }
+        if set(authority) != required_keys:
+            return False
+        dispatch_payload = _dispatch_payload(dispatch)
+        gate = raw_commit.get("qualityGateReceipt")
+        if not isinstance(gate, Mapping):
+            return False
+        gate_criteria = [
+            {
+                "criterionId": str(item.get("criterionId") or ""),
+                "status": str(item.get("status") or ""),
+                "evidenceRefs": sorted(
+                    {
+                        str(value).strip()
+                        for value in item.get("evidenceRefs") or ()
+                        if str(value or "").strip()
+                    }
+                ),
+            }
+            for item in gate.get("items") or ()
+            if isinstance(item, Mapping)
+        ]
+        definition_valid, catalog_revision_id = (
+            cls._canonical_definition_catalog_revision_locked(
+                conn,
+                root_id=root_id,
+            )
+        )
+        if not definition_valid:
+            return False
+        root_row = cls._root_row(conn, root_id)
+        try:
+            root_payload = json.loads(str(root_row["payload_json"]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return False
+        if not isinstance(root_payload, Mapping):
+            return False
+        canonical_commit_content_hash = "sha256:" + hashlib.sha256(
+            _json(dict(raw_commit)).encode("utf-8")
+        ).hexdigest()
+        immutable_expected = {
+            "schemaVersion": "wisdom-weasel.acceptance-evidence-authority.v1",
+            "rootId": root_id,
+            "taskId": str(dispatch["task_id"]),
+            "dispatchId": str(dispatch["dispatch_id"]),
+            "dispatchAttempt": int(dispatch_payload.get("attempt") or 0),
+            "generation": int(dispatch["generation"]),
+            "requirementCatalogRevisionId": catalog_revision_id,
+            "requirementAnchorRef": (
+                str(root_payload.get("requirementAnchorRef") or "") or None
+            ),
+            "qualityGateReceiptId": str(gate.get("receiptId") or ""),
+            "taskAcceptanceCriterionIds": sorted(
+                {
+                    str(item.get("criterionId") or "").strip()
+                    for item in gate.get("items") or ()
+                    if isinstance(item, Mapping)
+                    and str(item.get("criterionId") or "").strip()
+                }
+            ),
+            "criteria": gate_criteria,
+            "evidenceRefs": [
+                str(value)
+                for value in raw_commit.get("evidenceRefs") or ()
+                if str(value or "").strip()
+            ],
+            "requirementCoverage": [
+                str(value)
+                for value in raw_commit.get("requirementCoverage") or ()
+                if str(value or "").strip()
+            ],
+            "commitId": commit_id,
+            "commitDeclaredContentHash": str(
+                raw_commit.get("contentHash") or ""
+            ),
+            "commitCanonicalContentHash": canonical_commit_content_hash,
+        }
+        if any(
+            authority.get(key) != value
+            for key, value in immutable_expected.items()
+        ):
+            return False
+        if (
+            str(raw_commit.get("commitId") or "") != commit_id
+            or str(raw_commit.get("dispatchId") or "")
+            != str(dispatch["dispatch_id"])
+            or str(details.get("commitId") or "") != commit_id
+            or str(details.get("qualityGateReceiptId") or "")
+            != str(gate.get("receiptId") or "")
+        ):
+            return False
+        try:
+            authority_revision = int(authority.get("taskRevision"))
+            current_revision = int(task_payload.get("revision") or 0)
+        except (TypeError, ValueError):
+            return False
+        task_kind = str(task_payload.get("taskKind") or "work")
+        if not (
+            authority_revision >= 0
+            and authority_revision <= current_revision
+        ):
+            return False
+        if task_payload.get("workspacePolicy") != "isolated_writable":
+            maximum_revision_delta = 1 if task_kind == "review" else 0
+            if current_revision - authority_revision > maximum_revision_delta:
+                return False
+        workspace_delivery = task_payload.get("workspaceDelivery")
+        if not isinstance(workspace_delivery, Mapping):
+            workspace_delivery = {}
+        stable_workspace_fields = {
+            "workspacePolicy": task_payload.get("workspacePolicy"),
+            "workspaceBindingId": task_payload.get("workspaceBindingId"),
+            "workspaceDeliveryRevision": task_payload.get(
+                "workspaceDeliveryRevision"
+            ),
+            "workspaceDeliveryHead": task_payload.get(
+                "workspaceDeliveryHead"
+            ),
+            "workspaceDeliverySnapshotSha256": task_payload.get(
+                "workspaceDeliverySnapshotSha256"
+            ),
+            "workspaceSnapshotSha256": task_payload.get(
+                "workspaceSnapshotSha256"
+            ),
+            "workspaceDeliveryManifestSha256": workspace_delivery.get(
+                "manifestSha256"
+            ),
+            "workspaceDeliveryPatchSha256": workspace_delivery.get(
+                "patchSha256"
+            ),
+        }
+        if any(
+            authority.get(key) != value
+            for key, value in stable_workspace_fields.items()
+        ):
+            return False
+        integration_fields = (
+            "workspaceIntegratedRevision",
+            "workspaceIntegratedSnapshotSha256",
+            "workspaceIntegrationPatchSha256",
+            "workspaceIntegrationRef",
+        )
+        if task_payload.get("workspacePolicy") != "isolated_writable":
+            return all(
+                authority.get(key) == task_payload.get(key)
+                for key in integration_fields
+            )
+        # A Worker Commit is accepted before the Facilitator integrates it.
+        # Those four nulls describe that exact pre-integration state; they are
+        # never wildcard authority for a later mutable Task projection.
+        if any(authority.get(key) is not None for key in integration_fields):
+            return False
+        if require_integration is None:
+            return True
+        if not require_integration:
+            return bool(
+                task_payload.get("workspaceIntegrationState") == "pending"
+                and all(
+                    task_payload.get(key) is None
+                    for key in integration_fields
+                    if key != "workspaceIntegrationRef"
+                )
+            )
+        return cls._workspace_integration_authority_valid_locked(
+            conn,
+            root_id=root_id,
+            task_payload=task_payload,
+            dispatch=dispatch,
+            commit_id=commit_id,
+            raw_commit=raw_commit,
+            acceptance_receipt_row=receipt_row,
+            acceptance_receipt=receipt,
+            acceptance_authority=authority,
+        )
+
+    @staticmethod
+    def _current_committed_task_attempt_locked(
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        task_id: str,
+    ) -> sqlite3.Row | None:
+        rows = conn.execute(
+            """SELECT d.*,c.commit_id,c.payload_json AS commit_payload_json,
+                      c.created_at_ms AS commit_created_at_ms
+               FROM room_kernel_dispatches d
+               LEFT JOIN room_kernel_commits c ON c.dispatch_id=d.dispatch_id
+               WHERE d.root_id=? AND d.task_id=? AND d.intent_kind!='close'
+               ORDER BY d.updated_at_ms,d.created_at_ms,d.dispatch_id""",
+            (root_id, task_id),
+        ).fetchall()
+        if not rows:
+            return None
+
+        def rank(row: sqlite3.Row) -> tuple[int, int, int, str]:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = {}
+            return (
+                int(
+                    payload.get("attempt") or 0
+                    if isinstance(payload, Mapping)
+                    else 0
+                ),
+                int(row["updated_at_ms"] or 0),
+                int(row["created_at_ms"] or 0),
+                str(row["dispatch_id"]),
+            )
+
+        current = max(rows, key=rank)
+        if (
+            str(current["state"]) != "committed"
+            or current["commit_id"] is None
+            or current["commit_payload_json"] is None
+        ):
+            return None
+        return current
+
+    @staticmethod
+    def _workspace_integration_receipt_refs(
+        workspace_result: Mapping[str, object],
+    ) -> dict[str, str]:
+        return {
+            field: str(workspace_result.get(field) or "").strip()
+            for field in _WORKSPACE_INTEGRATION_RECEIPT_FIELDS
+            if str(workspace_result.get(field) or "").strip()
+        }
+
+    @staticmethod
+    def _workspace_integration_receipt_refs_valid(
+        refs: Mapping[str, object],
+        *,
+        cleanup_state: str,
+    ) -> bool:
+        keys = set(refs)
+        if keys - set(_WORKSPACE_INTEGRATION_RECEIPT_FIELDS):
+            return False
+        base_prefixes = (
+            "Delivery",
+            "SourceLease",
+            "TargetApplied",
+            "Integrated",
+            "Cleanup",
+        )
+        optional_prefixes = (
+            "WriterQuiescence",
+            "Quarantine",
+            "RemovalAuthorization",
+            "Vault",
+        )
+        for prefix in (*base_prefixes, *optional_prefixes):
+            pair = {
+                f"workspace{prefix}ReceiptId",
+                f"workspace{prefix}ReceiptSha256",
+            }
+            if bool(keys & pair) != bool(pair <= keys):
+                return False
+        if any(
+            not str(value or "").strip()
+            for value in refs.values()
+        ):
+            return False
+        required = {
+            f"workspace{prefix}Receipt{suffix}"
+            for prefix in base_prefixes
+            for suffix in ("Id", "Sha256")
+        }
+        if cleanup_state in {"cleaned", "missing"}:
+            required.update(
+                f"workspace{prefix}Receipt{suffix}"
+                for prefix in (
+                    "WriterQuiescence",
+                    "Quarantine",
+                    "RemovalAuthorization",
+                )
+                for suffix in ("Id", "Sha256")
+            )
+        if cleanup_state == "cleaned":
+            required.update(
+                {
+                    "workspaceVaultReceiptId",
+                    "workspaceVaultReceiptSha256",
+                }
+            )
+        return required <= keys
+
+    @classmethod
+    def _workspace_integration_authority_locked(
+        cls,
+        *,
+        task_payload: Mapping[str, object],
+        workspace_result: Mapping[str, object],
+        acceptance_receipt_row: sqlite3.Row,
+        acceptance_receipt: Mapping[str, object],
+        acceptance_authority: Mapping[str, object],
+    ) -> dict[str, object]:
+        delivery = task_payload.get("workspaceDelivery")
+        if not isinstance(delivery, Mapping):
+            raise RoomKernelFenceError(
+                "workspace integration authority requires delivered evidence"
+            )
+        refs = cls._workspace_integration_receipt_refs(workspace_result)
+        cleanup_state = _required(
+            workspace_result.get("cleanupState"),
+            "workspace cleanup state",
+        )
+        if not cls._workspace_integration_receipt_refs_valid(
+            refs,
+            cleanup_state=cleanup_state,
+        ):
+            raise RoomKernelFenceError(
+                "workspace integration authority has an incomplete receipt chain"
+            )
+        task_revision = int(task_payload.get("revision") or 0)
+        material: dict[str, object] = {
+            "schemaVersion": (
+                "wisdom-weasel.workspace-integration-authority.v1"
+            ),
+            "rootId": _required(task_payload.get("rootId"), "root_id"),
+            "taskId": _required(task_payload.get("taskId"), "task_id"),
+            "acceptanceTaskRevision": int(
+                acceptance_authority.get("taskRevision") or 0
+            ),
+            "taskRevisionBeforeIntegration": task_revision - 1,
+            "taskRevision": task_revision,
+            "workspaceBindingId": _required(
+                task_payload.get("workspaceBindingId"),
+                "workspace_binding_id",
+            ),
+            "workspaceDeliveryRevision": _required(
+                task_payload.get("workspaceDeliveryRevision"),
+                "workspace_delivery_revision",
+            ),
+            "workspaceDeliverySnapshotSha256": _required(
+                task_payload.get("workspaceDeliverySnapshotSha256"),
+                "workspace_delivery_snapshot_sha256",
+            ),
+            "workspaceDeliveryPatchSha256": _required(
+                delivery.get("patchSha256"),
+                "workspace_delivery_patch_sha256",
+            ),
+            "workspaceDeliveryManifestSha256": _required(
+                delivery.get("manifestSha256"),
+                "workspace_delivery_manifest_sha256",
+            ),
+            "workspaceIntegrationRef": _required(
+                workspace_result.get("integrationRef"),
+                "workspace_integration_ref",
+            ),
+            "workspaceIntegratedRevision": _required(
+                workspace_result.get("integratedRevision"),
+                "workspace_integrated_revision",
+            ),
+            "workspaceIntegratedSnapshotSha256": _required(
+                workspace_result.get("integratedSnapshotSha256"),
+                "workspace_integrated_snapshot_sha256",
+            ),
+            "workspaceIntegrationPatchSha256": _required(
+                workspace_result.get("integrationPatchSha256"),
+                "workspace_integration_patch_sha256",
+            ),
+            "workspaceLifecycleState": _required(
+                workspace_result.get("workspaceLifecycleState"),
+                "workspace_lifecycle_state",
+            ),
+            "workspaceCleanupState": cleanup_state,
+            "workspaceAttentionRequired": bool(
+                workspace_result.get("attentionRequired")
+            ),
+            "workspaceReceiptRefs": refs,
+            "acceptanceAuthorityBindingId": _required(
+                acceptance_authority.get("bindingId"),
+                "acceptance_authority_binding_id",
+            ),
+            "acceptanceAuthorityReceiptId": str(
+                acceptance_receipt_row["receipt_id"]
+            ),
+            "acceptanceAuthorityReceiptSha256": hashlib.sha256(
+                _json(dict(acceptance_receipt)).encode("utf-8")
+            ).hexdigest(),
+            "commitId": _required(
+                acceptance_authority.get("commitId"),
+                "commit_id",
+            ),
+            "commitCanonicalContentHash": _required(
+                acceptance_authority.get("commitCanonicalContentHash"),
+                "commit_canonical_content_hash",
+            ),
+            "qualityGateReceiptId": _required(
+                acceptance_authority.get("qualityGateReceiptId"),
+                "quality_gate_receipt_id",
+            ),
+            "criteria": acceptance_authority.get("criteria"),
+            "evidenceRefs": acceptance_authority.get("evidenceRefs"),
+            "requirementCoverage": acceptance_authority.get(
+                "requirementCoverage"
+            ),
+        }
+        if material["taskRevisionBeforeIntegration"] < 0:
+            raise RoomKernelFenceError(
+                "workspace integration authority has an invalid Task revision"
+            )
+        if (
+            material["workspaceDeliveryPatchSha256"]
+            != material["workspaceIntegrationPatchSha256"]
+        ):
+            raise RoomKernelFenceError(
+                "workspace integration patch does not match the delivered patch"
+            )
+        encoded = _json(material).encode("utf-8")
+        return {
+            **material,
+            "bindingId": "workspace-integration-authority:"
+            + hashlib.sha256(encoded).hexdigest(),
+        }
+
+    @classmethod
+    def _workspace_integration_authority_candidates_locked(
+        cls,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        task_id: str,
+        receipt_kind: str,
+        operation: str,
+    ) -> list[tuple[sqlite3.Row, Mapping[str, object], Mapping[str, object]]]:
+        rows = conn.execute(
+            """SELECT * FROM room_kernel_receipts
+               WHERE root_id=? AND receipt_kind=?
+               ORDER BY created_at_ms,receipt_id""",
+            (root_id, receipt_kind),
+        ).fetchall()
+        candidates: list[
+            tuple[sqlite3.Row, Mapping[str, object], Mapping[str, object]]
+        ] = []
+        for row in rows:
+            try:
+                receipt = json.loads(str(row["payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(receipt, Mapping):
+                continue
+            details = receipt.get("details")
+            if not isinstance(details, Mapping):
+                continue
+            authority = details.get("integrationAuthority")
+            if details.get("operation") != operation:
+                continue
+            authority_task_id = (
+                str(authority.get("taskId") or "")
+                if isinstance(authority, Mapping)
+                else ""
+            )
+            if (
+                str(details.get("taskId") or "") == task_id
+                or authority_task_id == task_id
+            ) and isinstance(authority, Mapping):
+                candidates.append((row, receipt, authority))
+        return candidates
+
+    @classmethod
+    def _workspace_integration_authority_candidate_valid_locked(
+        cls,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        task_payload: Mapping[str, object],
+        dispatch: sqlite3.Row,
+        commit_id: str,
+        raw_commit: Mapping[str, object],
+        acceptance_receipt_row: sqlite3.Row,
+        acceptance_receipt: Mapping[str, object],
+        acceptance_authority: Mapping[str, object],
+        candidate: tuple[
+            sqlite3.Row,
+            Mapping[str, object],
+            Mapping[str, object],
+        ],
+        operation: str,
+        receipt_kind: str,
+        status: str,
+        successful_cleanup: bool,
+    ) -> bool:
+        row, receipt, authority = candidate
+        if not cls._kernel_receipt_row_is_canonical_locked(row, receipt):
+            return False
+        details = receipt.get("details")
+        if not isinstance(details, Mapping) or set(details) != {
+            "operation",
+            "taskId",
+            "integrationRef",
+            "integrated",
+            "workspaceLifecycleState",
+            "workspaceCleanupState",
+            "integrationAuthority",
+        }:
+            return False
+        required_keys = {
+            "schemaVersion",
+            "rootId",
+            "taskId",
+            "acceptanceTaskRevision",
+            "taskRevisionBeforeIntegration",
+            "taskRevision",
+            "workspaceBindingId",
+            "workspaceDeliveryRevision",
+            "workspaceDeliverySnapshotSha256",
+            "workspaceDeliveryPatchSha256",
+            "workspaceDeliveryManifestSha256",
+            "workspaceIntegrationRef",
+            "workspaceIntegratedRevision",
+            "workspaceIntegratedSnapshotSha256",
+            "workspaceIntegrationPatchSha256",
+            "workspaceLifecycleState",
+            "workspaceCleanupState",
+            "workspaceAttentionRequired",
+            "workspaceReceiptRefs",
+            "acceptanceAuthorityBindingId",
+            "acceptanceAuthorityReceiptId",
+            "acceptanceAuthorityReceiptSha256",
+            "commitId",
+            "commitCanonicalContentHash",
+            "qualityGateReceiptId",
+            "criteria",
+            "evidenceRefs",
+            "requirementCoverage",
+            "bindingId",
+        }
+        if set(authority) != required_keys:
+            return False
+        cleanup_state = str(authority.get("workspaceCleanupState") or "")
+        authority_attention = authority.get("workspaceAttentionRequired")
+        cleanup_is_successful = cleanup_state in {"cleaned", "missing"}
+        if (
+            not isinstance(authority_attention, bool)
+            or cleanup_is_successful is not successful_cleanup
+            or authority_attention is successful_cleanup
+        ):
+            return False
+        task_expected = {
+            "rootId": task_payload.get("rootId"),
+            "taskId": task_payload.get("taskId"),
+            "taskRevision": int(task_payload.get("revision") or 0),
+            "workspaceBindingId": task_payload.get("workspaceBindingId"),
+            "workspaceDeliveryRevision": task_payload.get(
+                "workspaceDeliveryRevision"
+            ),
+            "workspaceDeliverySnapshotSha256": task_payload.get(
+                "workspaceDeliverySnapshotSha256"
+            ),
+            "workspaceIntegrationRef": task_payload.get(
+                "workspaceIntegrationRef"
+            ),
+            "workspaceIntegratedRevision": task_payload.get(
+                "workspaceIntegratedRevision"
+            ),
+            "workspaceIntegratedSnapshotSha256": task_payload.get(
+                "workspaceIntegratedSnapshotSha256"
+            ),
+            "workspaceIntegrationPatchSha256": task_payload.get(
+                "workspaceIntegrationPatchSha256"
+            ),
+            "workspaceLifecycleState": task_payload.get(
+                "workspaceLifecycleState"
+            ),
+            "workspaceCleanupState": task_payload.get(
+                "workspaceCleanupState"
+            ),
+            "workspaceAttentionRequired": task_payload.get(
+                "workspaceAttentionRequired"
+            ),
+        }
+        if any(
+            authority.get(key) != value
+            for key, value in task_expected.items()
+        ):
+            return False
+        refs = authority.get("workspaceReceiptRefs")
+        if not isinstance(refs, Mapping) or not cls._workspace_integration_receipt_refs_valid(
+            refs,
+            cleanup_state=str(authority.get("workspaceCleanupState") or ""),
+        ):
+            return False
+        workspace_result: dict[str, object] = {
+            "integrated": True,
+            "workspaceBindingId": authority.get("workspaceBindingId"),
+            "integrationRef": authority.get("workspaceIntegrationRef"),
+            "integrationPatchSha256": authority.get(
+                "workspaceIntegrationPatchSha256"
+            ),
+            "integratedRevision": authority.get("workspaceIntegratedRevision"),
+            "integratedSnapshotSha256": authority.get(
+                "workspaceIntegratedSnapshotSha256"
+            ),
+            "workspaceLifecycleState": authority.get(
+                "workspaceLifecycleState"
+            ),
+            "cleanupState": authority.get("workspaceCleanupState"),
+            "attentionRequired": authority.get("workspaceAttentionRequired"),
+            **dict(refs),
+        }
+        try:
+            cls._assert_workspace_integration_receipts(
+                conn,
+                task=task_payload,
+                result=workspace_result,
+                integration_ref=str(
+                    authority.get("workspaceIntegrationRef") or ""
+                ),
+                require_binding_projection=successful_cleanup,
+            )
+            expected = cls._workspace_integration_authority_locked(
+                task_payload=task_payload,
+                workspace_result=workspace_result,
+                acceptance_receipt_row=acceptance_receipt_row,
+                acceptance_receipt=acceptance_receipt,
+                acceptance_authority=acceptance_authority,
+            )
+        except (RoomKernelFenceError, TypeError, ValueError, KeyError):
+            return False
+        return bool(
+            dict(authority) == expected
+            and receipt.get("receiptKind") == receipt_kind
+            and receipt.get("status") == status
+            and details.get("operation") == operation
+            and details.get("taskId") == task_payload.get("taskId")
+            and details.get("integrationRef")
+            == authority.get("workspaceIntegrationRef")
+            and details.get("integrated") is True
+            and details.get("workspaceLifecycleState")
+            == authority.get("workspaceLifecycleState")
+            and details.get("workspaceCleanupState")
+            == authority.get("workspaceCleanupState")
+            and authority.get("rootId") == root_id
+            and authority.get("commitId") == commit_id
+            and str(raw_commit.get("commitId") or "") == commit_id
+            and str(dispatch["dispatch_id"])
+            == str(raw_commit.get("dispatchId") or "")
+        )
+
+    @classmethod
+    def _workspace_integration_authority_valid_locked(
+        cls,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        task_payload: Mapping[str, object],
+        dispatch: sqlite3.Row,
+        commit_id: str,
+        raw_commit: Mapping[str, object],
+        acceptance_receipt_row: sqlite3.Row,
+        acceptance_receipt: Mapping[str, object],
+        acceptance_authority: Mapping[str, object],
+    ) -> bool:
+        if (
+            task_payload.get("workspaceIntegrationState") != "applied"
+            or not str(task_payload.get("workspaceIntegrationRef") or "").strip()
+            or str(task_payload.get("workspaceCleanupState") or "")
+            not in {"cleaned", "missing"}
+            or task_payload.get("workspaceAttentionRequired") is not False
+        ):
+            return False
+        candidates = cls._workspace_integration_authority_candidates_locked(
+            conn,
+            root_id=root_id,
+            task_id=str(task_payload.get("taskId") or ""),
+            receipt_kind="accepted",
+            operation="room_integrate",
+        )
+        return bool(
+            len(candidates) == 1
+            and cls._workspace_integration_authority_candidate_valid_locked(
+                conn,
+                root_id=root_id,
+                task_payload=task_payload,
+                dispatch=dispatch,
+                commit_id=commit_id,
+                raw_commit=raw_commit,
+                acceptance_receipt_row=acceptance_receipt_row,
+                acceptance_receipt=acceptance_receipt,
+                acceptance_authority=acceptance_authority,
+                candidate=candidates[0],
+                operation="room_integrate",
+                receipt_kind="accepted",
+                status="applied",
+                successful_cleanup=True,
+            )
+        )
+
+    @classmethod
+    def _pending_workspace_integration_authority_locked(
+        cls,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        task_payload: Mapping[str, object],
+        dispatch: sqlite3.Row,
+        commit_id: str,
+        raw_commit: Mapping[str, object],
+        acceptance_receipt_row: sqlite3.Row,
+        acceptance_receipt: Mapping[str, object],
+        acceptance_authority: Mapping[str, object],
+    ) -> Mapping[str, object] | None:
+        if (
+            task_payload.get("workspaceIntegrationState") != "applied"
+            or not str(task_payload.get("workspaceIntegrationRef") or "").strip()
+            or str(task_payload.get("workspaceCleanupState") or "")
+            in {"cleaned", "missing"}
+            or task_payload.get("workspaceAttentionRequired") is not True
+        ):
+            return None
+        candidates = cls._workspace_integration_authority_candidates_locked(
+            conn,
+            root_id=root_id,
+            task_id=str(task_payload.get("taskId") or ""),
+            receipt_kind="rejected",
+            operation="room_integrate_pending_cleanup",
+        )
+        if len(candidates) != 1 or not (
+            cls._workspace_integration_authority_candidate_valid_locked(
+                conn,
+                root_id=root_id,
+                task_payload=task_payload,
+                dispatch=dispatch,
+                commit_id=commit_id,
+                raw_commit=raw_commit,
+                acceptance_receipt_row=acceptance_receipt_row,
+                acceptance_receipt=acceptance_receipt,
+                acceptance_authority=acceptance_authority,
+                candidate=candidates[0],
+                operation="room_integrate_pending_cleanup",
+                receipt_kind="rejected",
+                status="rejected",
+                successful_cleanup=False,
+            )
+        ):
+            return None
+        return candidates[0][2]
+
+    @classmethod
+    def _workspace_task_integration_authority_state_locked(
+        cls,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        task_payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Re-derive one isolated Task's exact integration authority state."""
+
+        integration_ref = str(
+            task_payload.get("workspaceIntegrationRef") or ""
+        ).strip()
+        state = {
+            "status": "invalid",
+            "integrationRef": integration_ref or None,
+            "taskRevision": int(task_payload.get("revision") or 0),
+        }
+        if (
+            task_payload.get("workspacePolicy") != "isolated_writable"
+            or str(task_payload.get("rootId") or "") != root_id
+        ):
+            return state
+        task_id = str(task_payload.get("taskId") or "").strip()
+        attempt = cls._current_committed_task_attempt_locked(
+            conn,
+            root_id=root_id,
+            task_id=task_id,
+        )
+        if attempt is None:
+            return state
+        try:
+            raw_commit = json.loads(str(attempt["commit_payload_json"]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return state
+        if not isinstance(raw_commit, Mapping):
+            return state
+        commit_id = str(attempt["commit_id"] or "")
+        acceptance_candidate = (
+            cls._canonical_acceptance_authority_receipt_locked(
+                conn,
+                root_id=root_id,
+                commit_id=commit_id,
+            )
+        )
+        if acceptance_candidate is None or not (
+            cls._acceptance_commit_authority_valid_locked(
+                conn,
+                root_id=root_id,
+                task_payload=task_payload,
+                dispatch=attempt,
+                commit_id=commit_id,
+                raw_commit=raw_commit,
+                require_integration=None,
+            )
+        ):
+            return state
+        if task_payload.get("workspaceIntegrationState") != "applied":
+            if cls._acceptance_commit_authority_valid_locked(
+                conn,
+                root_id=root_id,
+                task_payload=task_payload,
+                dispatch=attempt,
+                commit_id=commit_id,
+                raw_commit=raw_commit,
+                require_integration=False,
+            ):
+                state["status"] = "ready"
+            return state
+        (
+            acceptance_receipt_row,
+            acceptance_receipt,
+            acceptance_authority,
+        ) = acceptance_candidate
+        if cls._workspace_integration_authority_valid_locked(
+            conn,
+            root_id=root_id,
+            task_payload=task_payload,
+            dispatch=attempt,
+            commit_id=commit_id,
+            raw_commit=raw_commit,
+            acceptance_receipt_row=acceptance_receipt_row,
+            acceptance_receipt=acceptance_receipt,
+            acceptance_authority=acceptance_authority,
+        ):
+            state["status"] = "accepted"
+            return state
+        if cls._pending_workspace_integration_authority_locked(
+            conn,
+            root_id=root_id,
+            task_payload=task_payload,
+            dispatch=attempt,
+            commit_id=commit_id,
+            raw_commit=raw_commit,
+            acceptance_receipt_row=acceptance_receipt_row,
+            acceptance_receipt=acceptance_receipt,
+            acceptance_authority=acceptance_authority,
+        ) is not None:
+            state["status"] = "pending_cleanup"
+        return state
+
+    def workspace_integration_authority(
+        self,
+        task_id: str,
+    ) -> dict[str, object]:
+        """Read the canonical integration state consumed by application replay."""
+
+        normalized_task_id = _required(task_id, "task_id")
+        with self._connect() as conn:
+            task = self.task(normalized_task_id, conn=conn)
+            return self._workspace_task_integration_authority_state_locked(
+                conn,
+                root_id=str(task.get("rootId") or ""),
+                task_payload=task,
+            )
+
+    def _prior_review_findings_locked(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        task_payload: Mapping[str, object],
+    ) -> list[dict[str, object]]:
+        """Merge Finding history across Review Tasks for one target set.
+
+        A replacement Review Task is a new persistence identity, not a new
+        Finding universe.  Blocking identity and stable content therefore
+        remain sticky across every Review Task that names the exact same
+        reviewed-Task set.
+        """
+
+        target_ids = tuple(
+            sorted(
+                {
+                    str(value).strip()
+                    for value in task_payload.get("reviewOfTaskIds", ())
+                    if str(value or "").strip()
+                }
+            )
+        )
+        if not target_ids:
+            return [
+                dict(item)
+                for item in task_payload.get("reviewFindings", ())
+                if isinstance(item, Mapping)
+            ]
+        rows = conn.execute(
+            """SELECT task_id,payload_json,updated_at_ms
+               FROM room_kernel_tasks
+               WHERE root_id=?
+               ORDER BY updated_at_ms,task_id""",
+            (_required(root_id, "root_id"),),
+        ).fetchall()
+        history: list[
+            tuple[tuple[int, int, int, str], dict[str, object], dict[str, object]]
+        ] = []
+        for row in rows:
+            try:
+                candidate_task = json.loads(str(row["payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(candidate_task, Mapping):
+                continue
+            candidate_targets = tuple(
+                sorted(
+                    {
+                        str(value).strip()
+                        for value in candidate_task.get(
+                            "reviewOfTaskIds",
+                            (),
+                        )
+                        if str(value or "").strip()
+                    }
+                )
+            )
+            if (
+                candidate_targets != target_ids
+                or str(candidate_task.get("taskKind") or "") != "review"
+            ):
+                continue
+            review_round = max(
+                1,
+                int(candidate_task.get("reviewRound") or 1),
+            )
+            revision = int(candidate_task.get("revision") or 0)
+            commit_rows = conn.execute(
+                """SELECT c.commit_id,c.payload_json,c.created_at_ms
+                   FROM room_kernel_commits c
+                   JOIN room_kernel_dispatches d
+                     ON d.dispatch_id=c.dispatch_id
+                   WHERE c.root_id=? AND d.task_id=?
+                     AND d.intent_kind IN ('review','resume')
+                   ORDER BY c.created_at_ms,c.commit_id""",
+                (root_id, str(row["task_id"])),
+            ).fetchall()
+            for commit_row in commit_rows:
+                commit = _room_commit_payload(
+                    conn,
+                    commit_row["payload_json"],
+                )
+                commit_source = dict(candidate_task)
+                binding = commit.get("reviewEvidenceBinding")
+                if isinstance(binding, Mapping) and str(
+                    binding.get("reviewTargetRevision") or ""
+                ).strip():
+                    commit_source["reviewTargetRevision"] = str(
+                        binding["reviewTargetRevision"]
+                    )
+                commit_rank = (
+                    review_round,
+                    int(commit_row["created_at_ms"] or 0),
+                    revision,
+                    f"commit:{commit_row['commit_id']}",
+                )
+                for finding in commit.get("reviewFindings", ()):
+                    if isinstance(finding, Mapping):
+                        history.append(
+                            (
+                                commit_rank,
+                                dict(finding),
+                                commit_source,
+                            )
+                        )
+            rank = (
+                review_round,
+                int(row["updated_at_ms"] or 0),
+                revision,
+                f"task:{row['task_id']}",
+            )
+            for finding in candidate_task.get("reviewFindings", ()):
+                if isinstance(finding, Mapping):
+                    history.append((rank, dict(finding), dict(candidate_task)))
+        history.sort(key=lambda value: value[0])
+        by_id: dict[str, dict[str, object]] = {}
+        by_fingerprint: dict[str, str] = {}
+        stable_fields = (
+            "category",
+            "scope",
+            "observation",
+            "expected",
+            "userImpact",
+        )
+        for _rank, finding, source_task in history:
+            finding_id = str(finding.get("findingId") or "").strip()
+            fingerprint = str(finding.get("fingerprint") or "").strip()
+            if not finding_id or not fingerprint:
+                raise RoomKernelFenceError(
+                    "Review Finding history has no stable identity"
+                )
+            prior = by_id.get(finding_id)
+            prior_id_for_fingerprint = by_fingerprint.get(fingerprint)
+            if (
+                prior is not None
+                and str(prior.get("fingerprint") or "") != fingerprint
+            ) or (
+                prior_id_for_fingerprint is not None
+                and prior_id_for_fingerprint != finding_id
+            ):
+                raise RoomKernelFenceError(
+                    "Review Finding history changed findingId or fingerprint"
+                )
+            if prior is None:
+                by_id[finding_id] = finding
+                by_fingerprint[fingerprint] = finding_id
+                continue
+            if any(
+                finding.get(field) != prior.get(field)
+                for field in stable_fields
+            ):
+                raise RoomKernelFenceError(
+                    "Review Finding history changed stable scope or content"
+                )
+            if prior.get("gateEffect") == "blocking":
+                if finding.get("gateEffect") != "blocking":
+                    # Preserve the blocker so the next Commit is rejected and
+                    # a corrupt historical advisory cannot pop it in scanning.
+                    continue
+                state = str(finding.get("state") or "")
+                if state == "resolved":
+                    response = finding.get("response")
+                    target_revision = str(
+                        source_task.get("reviewTargetRevision") or ""
+                    )
+                    if (
+                        isinstance(response, Mapping)
+                        and response.get("findingId") == finding_id
+                        and response.get("action") == "fixed"
+                        and str(finding.get("firstSeenRevision") or "")
+                        != str(finding.get("lastCheckedRevision") or "")
+                        and str(finding.get("lastCheckedRevision") or "")
+                        == target_revision
+                    ):
+                        by_id[finding_id] = finding
+                    continue
+                if state == "dismissed":
+                    resolution = self._independent_finding_resolution_locked(
+                        conn,
+                        root_id=root_id,
+                        review_target_revision=str(
+                            finding.get("lastCheckedRevision")
+                            or source_task.get("reviewTargetRevision")
+                            or ""
+                        ),
+                        finding_id=finding_id,
+                    )
+                    if resolution is not None:
+                        by_id[finding_id] = finding
+                    continue
+                if state in {"open", "contested", "escalated"}:
+                    by_id[finding_id] = finding
+                continue
+            by_id[finding_id] = finding
+        return list(by_id.values())
+
+    def _review_finding_evidence_authority_locked(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        task_payload: Mapping[str, object],
+        dispatch: sqlite3.Row,
+        commit_payload: Mapping[str, object],
+    ) -> frozenset[str]:
+        """Bind one new Finding set to this ReviewDispatch's runtime receipts."""
+
+        dispatch_payload = _dispatch_payload(dispatch)
+        commit_refs = {
+            str(value).strip()
+            for value in commit_payload.get("evidenceRefs", ())
+            if str(value or "").strip()
+        }
+        binding = commit_payload.get("reviewEvidenceBinding")
+        gate = commit_payload.get("qualityGateReceipt")
+        if not isinstance(binding, Mapping) or not isinstance(gate, Mapping):
+            raise RoomKernelFenceError(
+                "Review Finding evidence lacks its canonical Commit binding"
+            )
+        raw_bound_refs = binding.get("evidenceRefs")
+        if not isinstance(raw_bound_refs, list):
+            raise RoomKernelFenceError(
+                "Review Finding evidence lacks its canonical Commit binding"
+            )
+        bound_refs = {
+            str(value).strip()
+            for value in raw_bound_refs
+            if str(value or "").strip()
+        }
+        gate_refs = {
+            str(value).strip()
+            for item in gate.get("items", ())
+            if isinstance(item, Mapping)
+            for value in item.get("evidenceRefs", ())
+            if str(value or "").strip()
+        }
+        review_target_revision = str(
+            task_payload.get("reviewTargetRevision") or ""
+        )
+        not_before_ms = int(
+            task_payload.get("reviewEvidenceNotBeforeMs") or 0
+        )
+        binding_material = {
+            "reviewTargetRevision": review_target_revision,
+            "taskId": str(dispatch["task_id"]),
+            "dispatchId": str(dispatch["dispatch_id"]),
+            "evidenceRefs": sorted(commit_refs),
+            "notBeforeMs": not_before_ms,
+        }
+        expected_binding_id = (
+            "review-evidence-binding:"
+            + hashlib.sha256(
+                _json(binding_material).encode("utf-8")
+            ).hexdigest()
+        )
+        try:
+            binding_not_before_ms = int(
+                binding.get("notBeforeMs") or -1
+            )
+        except (TypeError, ValueError):
+            binding_not_before_ms = -1
+        if (
+            binding.get("schemaVersion")
+            != "wisdom-weasel.review-evidence-binding.v1"
+            or binding.get("reviewTargetRevision")
+            != review_target_revision
+            or binding.get("taskId") != str(dispatch["task_id"])
+            or binding.get("dispatchId") != str(dispatch["dispatch_id"])
+            or binding_not_before_ms != not_before_ms
+            or list(raw_bound_refs) != sorted(commit_refs)
+            or bound_refs != commit_refs
+            or gate_refs != commit_refs
+            or binding.get("bindingId") != expected_binding_id
+        ):
+            raise RoomKernelFenceError(
+                "Review Finding evidence lacks its canonical Commit binding"
+            )
+        runtime_not_before_ms = max(
+            not_before_ms,
+            int(dispatch_payload.get("createdAtMs") or 0),
+        ) + 1
+        runtime_refs = runtime_evidence_refs_for_dispatch(
+            conn,
+            session_id=str(dispatch_payload["targetSessionId"]),
+            root_id=str(dispatch["root_id"]),
+            task_id=str(dispatch["task_id"]),
+            dispatch_id=str(dispatch["dispatch_id"]),
+            generation=int(dispatch["generation"]),
+            capability_epoch=int(dispatch_payload["capabilityEpoch"]),
+            not_before_ms=runtime_not_before_ms,
+        )
+        if not commit_refs.issubset(runtime_refs):
+            raise RoomKernelFenceError(
+                "Review Finding cites stale or foreign evidence"
+            )
+        return frozenset(commit_refs)
+
+    def _canonical_review_finding_lineage_locked(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        task_payload: Mapping[str, object],
+        submitted_findings: object,
+    ) -> list[dict[str, object]]:
+        """Merge one re-review with the Task's canonical Finding lineage.
+
+        Settlement normally constructs these fields, but the Kernel is the
+        authority that persists them.  A direct or replayed Commit must not be
+        able to erase a blocker, rebind its stable identity, reset its recheck
+        counter, or invent a fix/arbiter disposition.
+        """
+
+        if not isinstance(submitted_findings, Sequence) or isinstance(
+            submitted_findings,
+            (str, bytes),
+        ):
+            raise RoomKernelFenceError(
+                "Reviewer Commit reviewFindings must be an array"
+            )
+        target_revision = str(
+            task_payload.get("reviewTargetRevision") or ""
+        ).strip()
+        if not target_revision:
+            raise RoomKernelFenceError(
+                "Reviewer Task is missing reviewTargetRevision"
+            )
+        review_round = max(1, int(task_payload.get("reviewRound") or 1))
+        previous_findings = self._prior_review_findings_locked(
+            conn,
+            root_id=root_id,
+            task_payload=task_payload,
+        )
+        previous_by_id = {
+            str(item.get("findingId") or "").strip(): item
+            for item in previous_findings
+            if str(item.get("findingId") or "").strip()
+        }
+        previous_by_fingerprint = {
+            str(item.get("fingerprint") or "").strip(): item
+            for item in previous_findings
+            if str(item.get("fingerprint") or "").strip()
+        }
+        previous_blocking_scopes = {
+            _review_finding_scope_key(item.get("scope"))
+            for item in previous_findings
+            if item.get("gateEffect") == "blocking"
+        }
+        previous_blocking_scopes.discard(None)
+        unresolved_previous_ids = {
+            str(item.get("findingId") or "").strip()
+            for item in previous_findings
+            if (
+                item.get("gateEffect") == "blocking"
+                and item.get("state")
+                in {"open", "contested", "escalated"}
+            )
+            or (
+                item.get("gateEffect") == "advisory"
+                and item.get("state") == "open"
+            )
+        }
+        unresolved_previous_ids.discard("")
+        acceptance_criteria = {
+            str(value).strip()
+            for value in task_payload.get("acceptanceCriterionIds", ())
+            if str(value or "").strip()
+        }
+        canonical: list[dict[str, object]] = []
+        seen_ids: set[str] = set()
+        seen_fingerprints: set[str] = set()
+        matched_previous_ids: set[str] = set()
+        for index, item in enumerate(submitted_findings):
+            if not isinstance(item, Mapping):
+                raise RoomKernelFenceError(
+                    f"reviewFindings[{index}] must be an object"
+                )
+            incoming = dict(item)
+            finding_id = str(incoming.get("findingId") or "").strip()
+            fingerprint = str(incoming.get("fingerprint") or "").strip()
+            try:
+                canonical_fingerprint = canonical_review_finding_fingerprint(
+                    category=incoming.get("category"),
+                    scope=incoming.get("scope"),
+                    observation=incoming.get("observation"),
+                    expected=incoming.get("expected"),
+                    user_impact=incoming.get("userImpact"),
+                )
+            except ValueError as exc:
+                raise RoomKernelFenceError(str(exc)) from exc
+            if fingerprint != canonical_fingerprint:
+                raise RoomKernelFenceError(
+                    "Review Finding fingerprint does not match its canonical content"
+                )
+            if finding_id in seen_ids or fingerprint in seen_fingerprints:
+                raise RoomKernelFenceError(
+                    "Reviewer Commit contains duplicate Finding identity"
+                )
+            seen_ids.add(finding_id)
+            seen_fingerprints.add(fingerprint)
+            prior_by_id = previous_by_id.get(finding_id)
+            prior_by_fingerprint = previous_by_fingerprint.get(fingerprint)
+            if (
+                prior_by_id is not None
+                and str(prior_by_id.get("fingerprint") or "")
+                != fingerprint
+            ) or (
+                prior_by_fingerprint is not None
+                and str(prior_by_fingerprint.get("findingId") or "")
+                != finding_id
+            ):
+                raise RoomKernelFenceError(
+                    "re-review must preserve each Finding findingId and fingerprint"
+                )
+            prior = prior_by_id or prior_by_fingerprint
+            if prior is not None:
+                matched_previous_ids.add(finding_id)
+                for stable_field in (
+                    "category",
+                    "scope",
+                    "observation",
+                    "expected",
+                    "userImpact",
+                ):
+                    if incoming.get(stable_field) != prior.get(stable_field):
+                        raise RoomKernelFenceError(
+                            "re-review cannot rebind a Finding's stable scope or content"
+                        )
+                if incoming.get("response") != prior.get("response"):
+                    raise RoomKernelFenceError(
+                        "re-review Finding response lacks exact revision lineage"
+                    )
+                incoming["firstSeenRevision"] = str(
+                    prior.get("firstSeenRevision") or target_revision
+                )
+                incoming["lastCheckedRevision"] = target_revision
+                incoming["ownerParticipantId"] = (
+                    incoming.get("ownerParticipantId")
+                    or prior.get("ownerParticipantId")
+                )
+                prior_gate = str(prior.get("gateEffect") or "")
+                prior_state = str(prior.get("state") or "")
+                requested_state = str(incoming.get("state") or "")
+                if prior_gate == "blocking":
+                    if incoming.get("gateEffect") != "blocking":
+                        raise RoomKernelFenceError(
+                            "a prior Blocking Finding cannot be downgraded"
+                        )
+                    if requested_state == "accepted_risk":
+                        raise RoomKernelFenceError(
+                            "a Blocking Finding cannot be accepted as risk"
+                        )
+                    if requested_state == "resolved":
+                        response = prior.get("response")
+                        if (
+                            not isinstance(response, Mapping)
+                            or response.get("findingId") != finding_id
+                            or response.get("action") != "fixed"
+                            or incoming["firstSeenRevision"]
+                            == target_revision
+                        ):
+                            raise RoomKernelFenceError(
+                                "a resolved Blocking Finding requires exact fix lineage"
+                            )
+                    elif requested_state == "dismissed":
+                        resolution = (
+                            self._independent_finding_resolution_locked(
+                                conn,
+                                root_id=root_id,
+                                review_target_revision=target_revision,
+                                finding_id=finding_id,
+                            )
+                        )
+                        if resolution is None:
+                            raise RoomKernelFenceError(
+                                "a dismissed Blocking Finding requires an exact "
+                                "independent arbiter resolution"
+                            )
+                        if not str(
+                            incoming.get("dispositionRationale") or ""
+                        ).strip():
+                            raise RoomKernelFenceError(
+                                "a dismissed Finding requires disposition rationale"
+                            )
+                    else:
+                        failed_rechecks = min(
+                            2,
+                            int(prior.get("failedRechecks") or 0)
+                            + (
+                                1
+                                if prior_state in {"open", "contested"}
+                                and requested_state
+                                in {"open", "contested", "escalated"}
+                                else 0
+                            ),
+                        )
+                        response = prior.get("response")
+                        next_state = (
+                            "contested"
+                            if prior_state == "contested"
+                            or (
+                                isinstance(response, Mapping)
+                                and response.get("action") == "contest"
+                            )
+                            else "open"
+                        )
+                        if prior_state == "escalated" or failed_rechecks >= 2:
+                            next_state = "escalated"
+                            failed_rechecks = 2
+                        incoming["state"] = next_state
+                        incoming["failedRechecks"] = failed_rechecks
+                    if incoming.get("state") in {"resolved", "dismissed"}:
+                        incoming["failedRechecks"] = int(
+                            prior.get("failedRechecks") or 0
+                        )
+                else:
+                    incoming["failedRechecks"] = int(
+                        prior.get("failedRechecks") or 0
+                    )
+                    if (
+                        incoming.get("state")
+                        in {"dismissed", "accepted_risk"}
+                        and not str(
+                            incoming.get("dispositionRationale") or ""
+                        ).strip()
+                    ):
+                        raise RoomKernelFenceError(
+                            "an Advisory disposition requires rationale"
+                        )
+            else:
+                incoming["firstSeenRevision"] = target_revision
+                incoming["lastCheckedRevision"] = target_revision
+                incoming["failedRechecks"] = 0
+                incoming["response"] = None
+                if incoming.get("gateEffect") == "blocking":
+                    scope_key = _review_finding_scope_key(
+                        incoming.get("scope")
+                    )
+                    category = str(incoming.get("category") or "")
+                    if (
+                        review_round > 1
+                        and scope_key not in previous_blocking_scopes
+                        and category
+                        not in REVIEW_FINDING_RE_REVIEW_EXCEPTION_CATEGORIES
+                    ):
+                        incoming["gateEffect"] = "advisory"
+                        incoming["impact"] = "normal"
+                        incoming["dispositionRationale"] = (
+                            str(
+                                incoming.get("dispositionRationale") or ""
+                            ).strip()
+                            or "Late re-review scope is advisory for this Root."
+                        )
+                    else:
+                        scope = incoming.get("scope")
+                        criterion_id = (
+                            str(scope.get("criterionId") or "").strip()
+                            if isinstance(scope, Mapping)
+                            else ""
+                        )
+                        invariant_id = (
+                            str(scope.get("invariantId") or "").strip()
+                            if isinstance(scope, Mapping)
+                            else ""
+                        )
+                        if (
+                            incoming.get("impact")
+                            not in {"critical", "high"}
+                            or category
+                            not in REVIEW_FINDING_BLOCKING_CATEGORIES
+                            or (
+                                criterion_id not in acceptance_criteria
+                                and invariant_id
+                                not in REVIEW_FINDING_GOVERNANCE_INVARIANTS
+                            )
+                        ):
+                            raise RoomKernelFenceError(
+                                "Review Finding is not admissible as blocking"
+                            )
+                        if incoming.get("state") in {
+                            "resolved",
+                            "dismissed",
+                            "accepted_risk",
+                        }:
+                            raise RoomKernelFenceError(
+                                "a new Blocking Finding cannot start disposed"
+                            )
+            canonical.append(incoming)
+
+        missing_unresolved = unresolved_previous_ids - matched_previous_ids
+        if missing_unresolved:
+            kinds = {
+                str(previous_by_id[finding_id].get("gateEffect") or "")
+                for finding_id in missing_unresolved
+                if finding_id in previous_by_id
+            }
+            label = (
+                "Blocking Finding"
+                if kinds == {"blocking"}
+                else "Review Finding"
+            )
+            raise RoomKernelFenceError(
+                f"re-review cannot omit a prior unresolved {label}: "
+                + ", ".join(sorted(missing_unresolved))
+            )
+
+        # Keep already-disposed history even when the caller omits it.  Active
+        # findings fail closed above; historical findings are merged so a
+        # later Task projection cannot destroy the audit trail.
+        canonical.extend(
+            dict(prior)
+            for prior in previous_findings
+            if str(prior.get("findingId") or "")
+            not in matched_previous_ids
+        )
+        return canonical
+
+    @staticmethod
+    def _independent_finding_resolution_locked(
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        review_target_revision: str,
+        finding_id: str,
+    ) -> dict[str, object] | None:
+        """Find an immutable independent-arbiter receipt for one Finding.
+
+        The peer-review round is the lineage boundary: it must target the
+        exact review revision, belong to this Root, and its conflict matrix
+        must name the Finding code. A generic or unrelated pass receipt cannot
+        dismiss a blocking ReviewFinding.
+        """
+
+        rows = conn.execute(
+            """SELECT resolution.resolution_receipt_id,
+                      resolution.authority_kind,
+                      resolution.authority_ref,
+                      resolution.resolution_verdict,
+                      resolution.matrix_revision_id,
+                      resolution.created_at_ms,
+                      round.root_id,round.target_commit,
+                      matrix.entries_json
+               FROM room_v2_conflict_resolution_receipts resolution
+               JOIN room_v2_peer_judgment_rounds round
+                 ON round.round_id=resolution.round_id
+               JOIN room_v2_conflict_matrix_revisions matrix
+                 ON matrix.matrix_revision_id=resolution.matrix_revision_id
+               WHERE round.root_id=? AND round.target_commit=?
+                 AND resolution.authority_kind='independent_arbiter'
+                 AND resolution.resolution_verdict='pass'
+               ORDER BY resolution.created_at_ms DESC,
+                        resolution.resolution_receipt_id DESC""",
+            (
+                _required(root_id, "root_id"),
+                _required(
+                    review_target_revision,
+                    "review_target_revision",
+                ),
+            ),
+        ).fetchall()
+        for row in rows:
+            try:
+                matrix_payload = json.loads(str(row["entries_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            entries = (
+                matrix_payload.get("entries")
+                if isinstance(matrix_payload, Mapping)
+                else matrix_payload
+            )
+            if not isinstance(entries, list):
+                continue
+            finding_codes = {
+                str(code).strip()
+                for entry in entries
+                if isinstance(entry, Mapping)
+                for code in (
+                    entry.get("findingCodes")
+                    if isinstance(entry.get("findingCodes"), list)
+                    else ()
+                )
+                if str(code or "").strip()
+            }
+            if finding_id not in finding_codes:
+                continue
+            return {
+                "resolutionReceiptId": str(
+                    row["resolution_receipt_id"]
+                ),
+                "authorityKind": str(row["authority_kind"]),
+                "authorityRef": str(row["authority_ref"]),
+                "resolutionVerdict": str(
+                    row["resolution_verdict"]
+                ),
+                "matrixRevisionId": str(row["matrix_revision_id"]),
+                "createdAtMs": int(row["created_at_ms"]),
+            }
+        return None
+
+    def independent_finding_resolution(
+        self,
+        *,
+        root_id: str,
+        review_target_revision: str,
+        finding_id: str,
+    ) -> dict[str, object] | None:
+        """Return the exact arbiter lineage that may dismiss one blocker."""
+
+        with self._connect() as conn:
+            return self._independent_finding_resolution_locked(
+                conn,
+                root_id=root_id,
+                review_target_revision=review_target_revision,
+                finding_id=_required(finding_id, "finding_id"),
+            )
+
+    def _review_attempt_independence_fence_locked(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        lineage_id: str,
+        attempt: Mapping[str, object],
+    ) -> dict[str, object] | None:
+        """Recheck every accepted review, including superseded Task IDs."""
+
+        payload = attempt.get("payload")
+        dispatch = attempt.get("dispatch")
+        if not isinstance(payload, Mapping) or not isinstance(
+            dispatch,
+            Mapping,
+        ):
+            return None
+        if (
+            attempt.get("taskState") != "completed"
+            or payload.get("reviewState")
+            not in {"accepted", "accepted_with_notes"}
+            or dispatch.get("state") != "committed"
+        ):
+            return None
+        target_ids = {
+            str(value).strip()
+            for value in payload.get("reviewOfTaskIds", ())
+            if str(value or "").strip()
+        }
+        reviewer_id = str(
+            dispatch.get("targetParticipantId") or ""
+        ).strip()
+        authors = {
+            str(value).strip()
+            for value in payload.get("reviewAuthorParticipantIds", ())
+            if str(value or "").strip()
+        }
+        implementers: set[str] = set()
+        integration_seen = False
+        for reviewed_task_id in target_ids:
+            reviewed_task = conn.execute(
+                """SELECT payload_json FROM room_kernel_tasks
+                   WHERE root_id=? AND task_id=?""",
+                (root_id, reviewed_task_id),
+            ).fetchone()
+            if reviewed_task is not None:
+                try:
+                    reviewed_payload = json.loads(
+                        str(reviewed_task["payload_json"])
+                    )
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    reviewed_payload = {}
+                if isinstance(reviewed_payload, Mapping):
+                    owner_id = str(
+                        reviewed_payload.get("currentOwnerParticipantId")
+                        or ""
+                    ).strip()
+                    if owner_id:
+                        implementers.add(owner_id)
+            implementer_rows = conn.execute(
+                """SELECT target_participant_id
+                   FROM room_kernel_dispatches
+                   WHERE root_id=? AND task_id=?
+                     AND intent_kind IN ('execute','revise','retry')""",
+                (root_id, reviewed_task_id),
+            ).fetchall()
+            implementers.update(
+                str(row["target_participant_id"] or "").strip()
+                for row in implementer_rows
+                if str(row["target_participant_id"] or "").strip()
+            )
+            integration_rows = conn.execute(
+                """SELECT * FROM room_kernel_receipts
+                   WHERE root_id=? AND receipt_kind='accepted'
+                   ORDER BY created_at_ms,receipt_id""",
+                (root_id,),
+            ).fetchall()
+            for integration_row in integration_rows:
+                try:
+                    receipt = json.loads(
+                        str(integration_row["payload_json"])
+                    )
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                if not isinstance(receipt, Mapping):
+                    continue
+                details = receipt.get("details")
+                if (
+                    isinstance(details, Mapping)
+                    and details.get("operation") == "room_integrate"
+                    and details.get("integrated") is True
+                    and str(details.get("taskId") or "")
+                    == reviewed_task_id
+                    and self._kernel_receipt_row_is_canonical_locked(
+                        integration_row,
+                        receipt,
+                    )
+                ):
+                    integration_seen = True
+                    break
+        if integration_seen:
+            root = self._root_row(conn, root_id)
+            facilitator_id = str(
+                root["facilitator_participant_id"] or ""
+            ).strip()
+            if facilitator_id:
+                implementers.add(facilitator_id)
+        if (
+            reviewer_id
+            and authors
+            and reviewer_id not in authors
+            and reviewer_id not in implementers
+        ):
+            return None
+        return {
+            "reason": "reviewer_not_independent",
+            "reviewedTaskId": lineage_id,
+            "taskId": str(attempt.get("taskId") or ""),
+            "reviewerParticipantId": reviewer_id or None,
+            "reviewAuthorParticipantIds": sorted(authors),
+            "implementationParticipantIds": sorted(implementers),
+        }
+
+    def _review_lineage_fences_locked(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+    ) -> dict[str, list[dict[str, object]]]:
+        """Validate every reviewed-Task lineage, not one global newest Task."""
+
+        candidates = self._review_attempt_candidates_locked(
+            conn,
+            root_id=root_id,
+        )
+        histories: dict[str, list[dict[str, object]]] = {}
+        for candidate in candidates:
+            lineage_ids = candidate.get("reviewOfTaskIds")
+            if not isinstance(lineage_ids, list) or not lineage_ids:
+                lineage_ids = [f"review-task:{candidate['taskId']}"]
+            for lineage_id in lineage_ids:
+                histories.setdefault(str(lineage_id), []).append(candidate)
+        review_fences: list[dict[str, object]] = []
+        unresolved: list[dict[str, object]] = []
+        evidence_mismatches: list[dict[str, object]] = []
+        for lineage_id, history in sorted(histories.items()):
+            history.sort(key=lambda value: tuple(value["_authorityRank"]))
+            for historical_attempt in history:
+                independence_fence = (
+                    self._review_attempt_independence_fence_locked(
+                        conn,
+                        root_id=root_id,
+                        lineage_id=lineage_id,
+                        attempt=historical_attempt,
+                    )
+                )
+                if (
+                    independence_fence is not None
+                    and independence_fence not in review_fences
+                ):
+                    review_fences.append(independence_fence)
+            authoritative = history[-1]
+            payload = authoritative.get("payload")
+            dispatch = authoritative.get("dispatch")
+            if not isinstance(payload, Mapping):
+                payload = {}
+            if not isinstance(dispatch, Mapping):
+                dispatch = {}
+            task_id = str(authoritative.get("taskId") or "")
+            dispatch_id = str(dispatch.get("dispatchId") or "")
+            review_state = str(payload.get("reviewState") or "")
+            if (
+                authoritative.get("taskState") != "completed"
+                or review_state not in {"accepted", "accepted_with_notes"}
+                or dispatch.get("state") != "committed"
+            ):
+                review_fences.append(
+                    {
+                        "reason": "review_lineage_not_accepted",
+                        "reviewedTaskId": lineage_id,
+                        "taskId": task_id,
+                        "dispatchId": dispatch_id or None,
+                    }
+                )
+                continue
+            target_ids = [
+                str(value)
+                for value in payload.get("reviewOfTaskIds", ())
+                if str(value or "").strip()
+            ]
+            expected_revision = str(
+                payload.get("reviewTargetRevision") or ""
+            )
+            try:
+                current_revision = self._review_target_revision_locked(
+                    conn,
+                    root_id=root_id,
+                    task_ids=target_ids,
+                    review_snapshot=payload,
+                )
+            except (RoomKernelFenceError, KeyError, TypeError, ValueError):
+                current_revision = ""
+            if (
+                not expected_revision
+                or expected_revision != current_revision
+            ):
+                evidence_mismatches.append(
+                    {
+                        "reason": "review_revision_mismatch",
+                        "reviewedTaskId": lineage_id,
+                        "taskId": task_id,
+                        "expectedRevision": expected_revision or None,
+                        "currentRevision": current_revision or None,
+                    }
+                )
+
+            commit = authoritative.get("commit")
+            binding = (
+                commit.get("reviewEvidenceBinding")
+                if isinstance(commit, Mapping)
+                else None
+            )
+            gate = (
+                commit.get("qualityGateReceipt")
+                if isinstance(commit, Mapping)
+                else None
+            )
+            bound_refs = {
+                str(value).strip()
+                for value in (
+                    binding.get("evidenceRefs", ())
+                    if isinstance(binding, Mapping)
+                    else ()
+                )
+                if str(value or "").strip()
+            }
+            gate_refs = {
+                str(value).strip()
+                for item in (
+                    gate.get("items", ())
+                    if isinstance(gate, Mapping)
+                    else ()
+                )
+                if isinstance(item, Mapping)
+                and item.get("status") == "pass"
+                for value in (
+                    item.get("evidenceRefs")
+                    if isinstance(item.get("evidenceRefs"), list)
+                    else ()
+                )
+                if str(value or "").strip()
+            }
+            try:
+                not_before_ms = int(
+                    payload.get("reviewEvidenceNotBeforeMs") or 0
+                )
+            except (TypeError, ValueError):
+                not_before_ms = 0
+            binding_material = {
+                "reviewTargetRevision": expected_revision,
+                "taskId": task_id,
+                "dispatchId": dispatch_id,
+                "evidenceRefs": sorted(bound_refs),
+                "notBeforeMs": not_before_ms,
+            }
+            expected_binding_id = (
+                "review-evidence-binding:"
+                + hashlib.sha256(
+                    json.dumps(
+                        binding_material,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+            )
+            if (
+                not isinstance(binding, Mapping)
+                or not isinstance(gate, Mapping)
+                or binding.get("schemaVersion")
+                != "wisdom-weasel.review-evidence-binding.v1"
+                or binding.get("reviewTargetRevision")
+                != expected_revision
+                or binding.get("taskId") != task_id
+                or binding.get("dispatchId") != dispatch_id
+                or int(binding.get("notBeforeMs") or -1)
+                != not_before_ms
+                or not bound_refs
+                or bound_refs != gate_refs
+                or binding.get("bindingId") != expected_binding_id
+            ):
+                evidence_mismatches.append(
+                    {
+                        "reason": "review_evidence_binding_mismatch",
+                        "reviewedTaskId": lineage_id,
+                        "taskId": task_id,
+                        "dispatchId": dispatch_id or None,
+                    }
+                )
+
+            open_findings: dict[
+                tuple[str, str], dict[str, object]
+            ] = {}
+            finding_by_id: dict[str, dict[str, object]] = {}
+            finding_id_by_fingerprint: dict[str, str] = {}
+            stable_finding_fields = (
+                "category",
+                "scope",
+                "observation",
+                "expected",
+                "userImpact",
+            )
+            finding_history = list(history)
+            try:
+                merged_findings = self._prior_review_findings_locked(
+                    conn,
+                    root_id=root_id,
+                    task_payload=payload,
+                )
+            except RoomKernelFenceError as exc:
+                review_fences.append(
+                    {
+                        "reason": "review_finding_history_invalid",
+                        "reviewedTaskId": lineage_id,
+                        "taskId": task_id,
+                        "detail": str(exc)[:1000],
+                    }
+                )
+                merged_findings = []
+            if merged_findings:
+                # Task payloads are mutable projections.  Append the merged
+                # immutable Commit ledger as the final scanner authority so a
+                # corrupt/new advisory projection cannot erase an older
+                # blocker from the same exact reviewed-Task set.
+                finding_history.append(
+                    {
+                        "taskId": task_id,
+                        "payload": {
+                            **dict(payload),
+                            "reviewFindings": merged_findings,
+                        },
+                    }
+                )
+            for attempt in finding_history:
+                attempt_payload = attempt.get("payload")
+                if not isinstance(attempt_payload, Mapping):
+                    continue
+                findings = attempt_payload.get("reviewFindings")
+                if not isinstance(findings, list):
+                    continue
+                for finding in findings:
+                    if not isinstance(finding, Mapping):
+                        continue
+                    finding_id = str(
+                        finding.get("findingId") or ""
+                    ).strip()
+                    fingerprint = str(
+                        finding.get("fingerprint") or ""
+                    ).strip()
+                    if not finding_id or not fingerprint:
+                        continue
+                    key = (finding_id, fingerprint)
+                    gate_effect = str(
+                        finding.get("gateEffect") or ""
+                    )
+                    state = str(finding.get("state") or "")
+                    prior = finding_by_id.get(finding_id)
+                    prior_id_for_fingerprint = (
+                        finding_id_by_fingerprint.get(fingerprint)
+                    )
+                    if (
+                        prior is not None
+                        and str(prior.get("fingerprint") or "")
+                        != fingerprint
+                    ) or (
+                        prior_id_for_fingerprint is not None
+                        and prior_id_for_fingerprint != finding_id
+                    ):
+                        review_fences.append(
+                            {
+                                "reason": "review_finding_identity_changed",
+                                "reviewedTaskId": lineage_id,
+                                "taskId": str(attempt.get("taskId") or ""),
+                                "findingId": finding_id,
+                            }
+                        )
+                        continue
+                    if prior is not None and any(
+                        finding.get(field) != prior.get(field)
+                        for field in stable_finding_fields
+                    ):
+                        review_fences.append(
+                            {
+                                "reason": "review_finding_content_changed",
+                                "reviewedTaskId": lineage_id,
+                                "taskId": str(attempt.get("taskId") or ""),
+                                "findingId": finding_id,
+                            }
+                        )
+                        continue
+                    if (
+                        prior is not None
+                        and prior.get("gateEffect") == "blocking"
+                        and gate_effect != "blocking"
+                    ):
+                        review_fences.append(
+                            {
+                                "reason": "review_blocker_downgraded",
+                                "reviewedTaskId": lineage_id,
+                                "taskId": str(attempt.get("taskId") or ""),
+                                "findingId": finding_id,
+                            }
+                        )
+                        # The old blocker deliberately remains in
+                        # ``open_findings``.  An advisory disposition can
+                        # never pop a blocking lineage.
+                        continue
+                    finding_by_id[finding_id] = dict(finding)
+                    finding_id_by_fingerprint[fingerprint] = finding_id
+                    if gate_effect == "blocking":
+                        scope = finding.get("scope")
+                        criterion_id = (
+                            str(scope.get("criterionId") or "").strip()
+                            if isinstance(scope, Mapping)
+                            else ""
+                        )
+                        invariant_id = (
+                            str(scope.get("invariantId") or "").strip()
+                            if isinstance(scope, Mapping)
+                            else ""
+                        )
+                        admissible = (
+                            finding.get("impact") in {"critical", "high"}
+                            and finding.get("category")
+                            in REVIEW_FINDING_BLOCKING_CATEGORIES
+                            and (
+                                criterion_id
+                                in set(
+                                    str(value)
+                                    for value in payload.get(
+                                        "acceptanceCriterionIds",
+                                        (),
+                                    )
+                                )
+                                or invariant_id
+                                in REVIEW_FINDING_GOVERNANCE_INVARIANTS
+                            )
+                        )
+                        if not admissible:
+                            review_fences.append(
+                                {
+                                    "reason": "review_blocker_not_admissible",
+                                    "reviewedTaskId": lineage_id,
+                                    "taskId": str(
+                                        attempt.get("taskId") or ""
+                                    ),
+                                    "findingId": finding_id,
+                                }
+                            )
+                        if state in {"open", "contested", "escalated"}:
+                            open_findings[key] = dict(finding)
+                        elif state == "resolved":
+                            response = finding.get("response")
+                            has_internal_lineage = (
+                                str(
+                                    finding.get("firstSeenRevision") or ""
+                                )
+                                != str(
+                                    finding.get("lastCheckedRevision") or ""
+                                )
+                                and isinstance(response, Mapping)
+                                and response.get("findingId") == finding_id
+                                and response.get("action") == "fixed"
+                                and str(
+                                    finding.get("lastCheckedRevision") or ""
+                                )
+                                == str(
+                                    attempt_payload.get(
+                                        "reviewTargetRevision"
+                                    )
+                                    or ""
+                                )
+                            )
+                            if has_internal_lineage and (
+                                key in open_findings
+                                or str(
+                                    finding.get("firstSeenRevision") or ""
+                                )
+                                != str(
+                                    finding.get("lastCheckedRevision") or ""
+                                )
+                            ):
+                                open_findings.pop(key, None)
+                            else:
+                                review_fences.append(
+                                    {
+                                        "reason": (
+                                            "review_resolution_without_lineage"
+                                        ),
+                                        "reviewedTaskId": lineage_id,
+                                        "findingId": finding_id,
+                                    }
+                                )
+                        elif state == "dismissed":
+                            resolution = (
+                                self._independent_finding_resolution_locked(
+                                    conn,
+                                    root_id=root_id,
+                                    review_target_revision=str(
+                                        finding.get("lastCheckedRevision")
+                                        or expected_revision
+                                    ),
+                                    finding_id=finding_id,
+                                )
+                            )
+                            if resolution is None:
+                                review_fences.append(
+                                    {
+                                        "reason": (
+                                            "review_arbiter_resolution_missing"
+                                        ),
+                                        "reviewedTaskId": lineage_id,
+                                        "findingId": finding_id,
+                                    }
+                                )
+                            else:
+                                open_findings.pop(key, None)
+                        else:
+                            review_fences.append(
+                                {
+                                    "reason": "review_blocker_state_invalid",
+                                    "reviewedTaskId": lineage_id,
+                                    "findingId": finding_id,
+                                    "state": state,
+                                }
+                            )
+                    elif gate_effect == "advisory":
+                        if state == "open":
+                            open_findings[key] = dict(finding)
+                        elif state in {
+                            "resolved",
+                            "dismissed",
+                            "accepted_risk",
+                        }:
+                            open_findings.pop(key, None)
+            for finding in open_findings.values():
+                projected = {
+                    "taskId": task_id,
+                    "reviewedTaskId": lineage_id,
+                    "findingId": str(
+                        finding.get("findingId") or ""
+                    ),
+                    "state": str(finding.get("state") or ""),
+                    "category": str(
+                        finding.get("category") or ""
+                    ),
+                    "gateEffect": str(
+                        finding.get("gateEffect") or ""
+                    ),
+                }
+                if finding.get("gateEffect") == "advisory":
+                    review_fences.append(
+                        {
+                            "reason": "review_advisory_undisposed",
+                            **projected,
+                        }
+                    )
+                else:
+                    unresolved.append(projected)
+        return {
+            "reviewFences": review_fences,
+            "unresolvedFindings": unresolved,
+            "reviewEvidenceMismatches": evidence_mismatches,
+        }
 
     def _terminal_governance_fences(
         self,
@@ -3825,6 +6909,7 @@ class RoomKernelStore:
         ).fetchall()
         dispatch_rows = conn.execute(
             """SELECT dispatch_id,task_id,intent_kind,state,
+                      target_participant_id,
                       created_at_ms,updated_at_ms
                FROM room_kernel_dispatches
                WHERE root_id=?
@@ -3858,11 +6943,32 @@ class RoomKernelStore:
             workspace_lifecycle = str(
                 payload.get("workspaceLifecycleState") or ""
             )
+            workspace_cleanup = str(
+                payload.get("workspaceCleanupState") or ""
+            )
+            workspace_attention = payload.get("workspaceAttentionRequired")
+            integration_authority_status = "not_applicable"
+            if (
+                policy == "isolated_writable"
+                and workspace_lifecycle != "abandoned"
+            ):
+                integration_authority_status = str(
+                    self._workspace_task_integration_authority_state_locked(
+                        conn,
+                        root_id=root_id,
+                        task_payload=payload,
+                    ).get("status")
+                    or "invalid"
+                )
             if (
                 policy == "isolated_writable"
                 and workspace_lifecycle != "abandoned"
                 and (
-                integration_state != "applied" or not integration_ref
+                    integration_state != "applied"
+                    or not integration_ref
+                    or workspace_cleanup not in {"cleaned", "missing"}
+                    or workspace_attention is not False
+                    or integration_authority_status != "accepted"
                 )
             ):
                 pending_integrations.append(
@@ -3878,7 +6984,7 @@ class RoomKernelStore:
             review_dispatches = [
                 dispatch
                 for dispatch in task_dispatches
-                if str(dispatch["intent_kind"]) == "review"
+                if str(dispatch["intent_kind"]) in {"review", "resume"}
             ]
             review_state = str(payload.get("reviewState") or "not_required")
             is_review = (
@@ -3960,6 +7066,12 @@ class RoomKernelStore:
                             authoritative_dispatch["dispatchId"]
                         ),
                         "state": str(authoritative_dispatch["state"]),
+                        "target_participant_id": str(
+                            authoritative_dispatch.get(
+                                "targetParticipantId"
+                            )
+                            or ""
+                        ),
                     }
                     if isinstance(authoritative_dispatch, Mapping)
                     else None
@@ -3976,6 +7088,82 @@ class RoomKernelStore:
                 if latest_dispatch is not None
                 else ""
             )
+            if (
+                task_state == "completed"
+                and review_state in {"accepted", "accepted_with_notes"}
+                and dispatch_state == "committed"
+            ):
+                reviewer_id = str(
+                    latest_dispatch["target_participant_id"]
+                    if latest_dispatch is not None
+                    else ""
+                ).strip()
+                authors = {
+                    str(value).strip()
+                    for value in payload.get(
+                        "reviewAuthorParticipantIds",
+                        (),
+                    )
+                    if str(value or "").strip()
+                }
+                reviewed_task_ids = {
+                    str(value).strip()
+                    for value in payload.get("reviewOfTaskIds", ())
+                    if str(value or "").strip()
+                }
+                implementers: set[str] = set()
+                for candidate_task in task_rows:
+                    candidate_task_id = str(candidate_task["task_id"])
+                    if candidate_task_id not in reviewed_task_ids:
+                        continue
+                    try:
+                        candidate_payload = json.loads(
+                            str(candidate_task["payload_json"])
+                        )
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        candidate_payload = {}
+                    if isinstance(candidate_payload, Mapping):
+                        owner_id = str(
+                            candidate_payload.get(
+                                "currentOwnerParticipantId"
+                            )
+                            or ""
+                        ).strip()
+                        if owner_id:
+                            implementers.add(owner_id)
+                    for candidate_dispatch in dispatches_by_task.get(
+                        candidate_task_id,
+                        (),
+                    ):
+                        if str(candidate_dispatch["intent_kind"]) not in {
+                            "execute",
+                            "revise",
+                            "retry",
+                        }:
+                            continue
+                        implementer_id = str(
+                            candidate_dispatch["target_participant_id"]
+                            or ""
+                        ).strip()
+                        if implementer_id:
+                            implementers.add(implementer_id)
+                if (
+                    not reviewer_id
+                    or not authors
+                    or reviewer_id in authors
+                    or reviewer_id in implementers
+                ):
+                    review_fences.append(
+                        {
+                            "reason": "reviewer_not_independent",
+                            "taskId": task_id,
+                            "reviewerParticipantId": reviewer_id or None,
+                            "reviewAuthorParticipantIds": sorted(authors),
+                            "implementationParticipantIds": sorted(
+                                implementers
+                            ),
+                        }
+                    )
             cancelled = task_state == "cancelled" or dispatch_state in {
                 "cancelled",
                 "unknown",
@@ -4048,6 +7236,19 @@ class RoomKernelStore:
                                 ),
                             }
                         )
+                    elif (
+                        finding.get("gateEffect") == "advisory"
+                        and finding.get("state") == "open"
+                    ):
+                        review_fences.append(
+                            {
+                                "reason": "review_advisory_undisposed",
+                                "taskId": task_id,
+                                "findingId": str(
+                                    finding.get("findingId") or ""
+                                ),
+                            }
+                        )
             elif (
                 task_state == "completed"
                 and review_state in {"accepted", "accepted_with_notes"}
@@ -4086,10 +7287,6 @@ class RoomKernelStore:
                             root_id=root_id,
                             task_ids=target_ids,
                             review_snapshot=payload,
-                            commit_not_after_ms=(
-                                int(payload.get("reviewEvidenceNotBeforeMs") or 0)
-                                or None
-                            ),
                         )
                     except (RoomKernelFenceError, KeyError, TypeError, ValueError):
                         current_revision = ""
@@ -4111,8 +7308,9 @@ class RoomKernelStore:
                 commit_payload: Mapping[str, object] = {}
                 if commit_row is not None:
                     try:
-                        decoded_commit = json.loads(
-                            str(commit_row["payload_json"])
+                        decoded_commit = _room_commit_payload(
+                            conn,
+                            commit_row["payload_json"],
                         )
                     except (TypeError, ValueError, json.JSONDecodeError):
                         decoded_commit = {}
@@ -4210,6 +7408,20 @@ class RoomKernelStore:
                         "taskId": task_id,
                     }
                 )
+
+        lineage = self._review_lineage_fences_locked(
+            conn,
+            root_id=root_id,
+        )
+        for item in lineage["reviewFences"]:
+            if item not in review_fences:
+                review_fences.append(item)
+        for item in lineage["unresolvedFindings"]:
+            if item not in unresolved_blocking_findings:
+                unresolved_blocking_findings.append(item)
+        for item in lineage["reviewEvidenceMismatches"]:
+            if item not in review_evidence_mismatches:
+                review_evidence_mismatches.append(item)
 
         return {
             "pendingIntegrations": pending_integrations[:64],
@@ -4316,89 +7528,490 @@ class RoomKernelStore:
         *,
         root_id: str,
     ) -> dict[str, object]:
-        """Bind report readiness to the defined worker lane and real deliveries."""
+        """Bind report readiness to the work lanes actually split at runtime."""
 
         definition = self.definition_fence(root_id=root_id, conn=conn)
         if definition is None:
-            # Compatibility roots created directly through the typed Kernel API
-            # predate room_define. Authoritative intake always has this fence.
+            intake = self._intake_phase_state_locked(
+                conn,
+                root_id=root_id,
+            )
+            if intake is not None:
+                # A product Root is born with an authoritative intake receipt.
+                # Missing room_define state is therefore a broken gate, not a
+                # legacy compatibility Root that may proceed to Report.
+                return {
+                    "definitionRequired": True,
+                    "lanePlanDispatchIds": [],
+                    "workerDeliveryDispatchIds": [],
+                    "fences": [{"reason": "definition_required"}],
+                }
+            # Compatibility roots created directly through the old typed
+            # Kernel API predate authoritative intake and room_define. Only
+            # the proven absence of an intake receipt may use this path.
             return {
                 "definitionRequired": False,
                 "lanePlanDispatchIds": [],
                 "workerDeliveryDispatchIds": [],
                 "fences": [],
             }
-        planned = definition.get("plannedExecuteDispatch")
-        execution_dispatch_id = str(
-            definition.get("executionDispatchId")
-            or (
-                planned.get("dispatchId")
-                if isinstance(planned, Mapping)
-                else ""
-            )
-            or ""
-        )
-        implementation_id = str(
-            definition.get("implementationParticipantId") or ""
-        ).strip()
-        rows = conn.execute(
-            """SELECT d.*,t.parent_task_id,t.state AS task_state
-               FROM room_kernel_dispatches d
-               JOIN room_kernel_tasks t ON t.task_id=d.task_id
-               WHERE d.root_id=? AND t.parent_task_id IS NOT NULL
-                 AND d.intent_kind IN ('execute','revise')
-               ORDER BY d.created_at_ms,d.dispatch_id""",
+        task_rows = conn.execute(
+            """SELECT task_id,state,payload_json
+               FROM room_kernel_tasks
+               WHERE root_id=? AND parent_task_id IS NOT NULL
+               ORDER BY updated_at_ms,task_id""",
             (root_id,),
         ).fetchall()
         lane_ids: list[str] = []
         delivered_ids: list[str] = []
         fences: list[dict[str, object]] = []
-        required_lane_delivered = False
-        for row in rows:
+        for task_row in task_rows:
+            try:
+                task_payload = json.loads(str(task_row["payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                task_payload = {}
+            if (
+                not isinstance(task_payload, Mapping)
+                or task_payload.get("taskKind") != "work"
+            ):
+                continue
+            rows = conn.execute(
+                """SELECT * FROM room_kernel_dispatches
+                   WHERE root_id=? AND task_id=?
+                     AND intent_kind IN ('execute','revise','retry')
+                   ORDER BY updated_at_ms,created_at_ms,dispatch_id""",
+                (root_id, str(task_row["task_id"])),
+            ).fetchall()
+            if not rows:
+                fences.append(
+                    {
+                        "reason": "worker_lane_dispatch_missing",
+                        "taskId": str(task_row["task_id"]),
+                    }
+                )
+                continue
+            row = max(
+                rows,
+                key=lambda value: (
+                    int(value["updated_at_ms"] or 0),
+                    int(value["created_at_ms"] or 0),
+                    str(value["dispatch_id"]),
+                ),
+            )
             dispatch_id = str(row["dispatch_id"])
             lane_ids.append(dispatch_id)
-            is_public = (
-                str(row["state"]) == "committed"
-                and self._dispatch_result_is_public(conn, dispatch_id)
-            )
-            if is_public and str(row["task_state"]) == "completed":
+            try:
+                is_public = (
+                    str(row["state"]) == "committed"
+                    and self._dispatch_result_is_public(conn, dispatch_id)
+                )
+            except RoomKernelFenceError:
+                is_public = False
+            if is_public and str(task_row["state"]) == "completed":
                 delivered_ids.append(dispatch_id)
             else:
                 fences.append(
                     {
                         "reason": "worker_delivery_missing",
+                        "taskId": str(task_row["task_id"]),
                         "dispatchId": dispatch_id,
                         "dispatchState": str(row["state"]),
-                        "taskState": str(row["task_state"]),
+                        "taskState": str(task_row["state"]),
                     }
                 )
-            if (
-                implementation_id
-                and str(row["intent_kind"]) == "execute"
-                and str(row["target_participant_id"]) == implementation_id
-                and (
-                    not execution_dispatch_id
-                    or str(row["parent_dispatch_id"]) == execution_dispatch_id
-                )
-                and is_public
-                and str(row["task_state"]) == "completed"
-            ):
-                required_lane_delivered = True
-        if not implementation_id or not execution_dispatch_id:
-            fences.append({"reason": "defined_worker_lane_missing"})
-        elif not required_lane_delivered:
-            fences.append(
-                {
-                    "reason": "defined_worker_delivery_missing",
-                    "implementationParticipantId": implementation_id,
-                }
-            )
         return {
             "definitionRequired": True,
             "lanePlanDispatchIds": lane_ids[:64],
             "workerDeliveryDispatchIds": delivered_ids[:64],
             "fences": fences[:64],
         }
+
+    def _unresolved_dispatch_failures_locked(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+    ) -> list[dict[str, object]]:
+        """Return only failures still authoritative in their retry lineage."""
+
+        failed_rows = conn.execute(
+            """SELECT dispatch_id,task_id,state,created_at_ms,updated_at_ms
+               FROM room_kernel_dispatches
+               WHERE root_id=? AND state IN ('unknown','dead_letter','failed')
+               ORDER BY updated_at_ms,created_at_ms,dispatch_id""",
+            (root_id,),
+        ).fetchall()
+        if not failed_rows:
+            return []
+        receipt_rows = conn.execute(
+            """SELECT receipt_id,receipt_kind,command_id,generation,
+                      payload_json,created_at_ms
+               FROM room_kernel_receipts
+               WHERE root_id=? AND receipt_kind IN (
+                   'accepted','root_retried','runtime_retry_scheduled'
+               )
+               ORDER BY created_at_ms,rowid""",
+            (root_id,),
+        ).fetchall()
+        latest_retry_by_task: dict[
+            str, tuple[int, str]
+        ] = {}
+        replaced_report_dispatch_ids: set[str] = set()
+        control_retry_edges: dict[str, list[dict[str, object]]] = {}
+        retry_ordinals: list[int] = []
+        retry_ledger_valid = True
+        for receipt_row in receipt_rows:
+            receipt_kind = str(receipt_row["receipt_kind"])
+            try:
+                receipt = json.loads(str(receipt_row["payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                if receipt_kind in {
+                    "root_retried",
+                    "runtime_retry_scheduled",
+                }:
+                    retry_ledger_valid = False
+                continue
+            details = (
+                receipt.get("details")
+                if isinstance(receipt, Mapping)
+                else None
+            )
+            if not isinstance(details, Mapping):
+                if receipt_kind in {
+                    "root_retried",
+                    "runtime_retry_scheduled",
+                }:
+                    retry_ledger_valid = False
+                continue
+            if receipt_kind == "runtime_retry_scheduled":
+                if (
+                    receipt.get("receiptKind")
+                    != "runtime_retry_scheduled"
+                    or receipt.get("status") not in {"applied", "noop"}
+                ):
+                    retry_ledger_valid = False
+                    continue
+                if receipt.get("status") == "applied":
+                    try:
+                        retry_ordinal = int(details["retryBudgetUsed"])
+                    except (KeyError, TypeError, ValueError):
+                        retry_ledger_valid = False
+                        continue
+                    if retry_ordinal < 1:
+                        retry_ledger_valid = False
+                        continue
+                    retry_ordinals.append(retry_ordinal)
+                continue
+            if receipt_kind == "root_retried":
+                command_id = str(receipt_row["command_id"] or "").strip()
+                command_row = (
+                    conn.execute(
+                        """SELECT root_id,command_kind,payload_json
+                           FROM room_kernel_commands WHERE command_id=?""",
+                        (command_id,),
+                    ).fetchone()
+                    if command_id
+                    else None
+                )
+                if command_row is None:
+                    retry_ledger_valid = False
+                    continue
+                try:
+                    command_payload = json.loads(
+                        str(command_row["payload_json"])
+                    )
+                    if not isinstance(command_payload, Mapping):
+                        retry_ledger_valid = False
+                        continue
+                    receipt_generation = int(receipt_row["generation"])
+                    payload_generation = int(receipt.get("generation", -1))
+                    command_generation = int(
+                        command_payload.get("generation", -1)
+                    )
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    retry_ledger_valid = False
+                    continue
+                if (
+                    receipt.get("receiptKind") != "root_retried"
+                    or receipt.get("status") != "applied"
+                    or receipt.get("commandId") != command_id
+                    or payload_generation != receipt_generation
+                    or str(command_row["root_id"] or "") != root_id
+                    or str(command_row["command_kind"]) != "retry_root"
+                    or command_payload.get("commandId") != command_id
+                    or command_payload.get("rootId") != root_id
+                    or command_payload.get("targetKind") != "root"
+                    or command_payload.get("targetId") != root_id
+                    or command_generation != receipt_generation
+                ):
+                    retry_ledger_valid = False
+                    continue
+                lineage = details.get("retryLineage")
+                raw_retried_ids = details.get("retriedDispatchIds")
+                raw_retried_task_ids = details.get("retriedTaskIds")
+                if (
+                    not isinstance(lineage, list)
+                    or not isinstance(raw_retried_ids, list)
+                    or not isinstance(raw_retried_task_ids, list)
+                ):
+                    retry_ledger_valid = False
+                    continue
+                retried_ids = {
+                    str(value)
+                    for value in raw_retried_ids
+                    if str(value or "").strip()
+                }
+                retried_task_ids = {
+                    str(value)
+                    for value in raw_retried_task_ids
+                    if str(value or "").strip()
+                }
+                receipt_edges: list[tuple[str, dict[str, object]]] = []
+                receipt_ordinals: list[int] = []
+                failed_ids: set[str] = set()
+                lineage_valid = bool(lineage)
+                for item in lineage:
+                    if not isinstance(item, Mapping):
+                        lineage_valid = False
+                        continue
+                    failed_dispatch_id = str(
+                        item.get("failedDispatchId") or ""
+                    ).strip()
+                    retried_dispatch_id = str(
+                        item.get("retriedDispatchId") or ""
+                    ).strip()
+                    task_id = str(item.get("taskId") or "").strip()
+                    try:
+                        failed_attempt = int(
+                            item.get("failedDispatchAttempt", -1)
+                        )
+                        retried_attempt = int(
+                            item.get("retriedDispatchAttempt", -1)
+                        )
+                        root_generation = int(
+                            item.get("rootGeneration", -1)
+                        )
+                        retry_ordinal = int(
+                            item.get("rootRetryOrdinal", 0)
+                        )
+                    except (TypeError, ValueError):
+                        lineage_valid = False
+                        continue
+                    if (
+                        not failed_dispatch_id
+                        or not retried_dispatch_id
+                        or not task_id
+                        or failed_dispatch_id == retried_dispatch_id
+                        or retried_dispatch_id not in retried_ids
+                        or task_id not in retried_task_ids
+                        or failed_attempt < 0
+                        or retried_attempt != failed_attempt + 1
+                        or root_generation != receipt_generation
+                        or retry_ordinal < 1
+                    ):
+                        lineage_valid = False
+                        continue
+                    if (
+                        failed_dispatch_id in failed_ids
+                        or any(
+                            edge[1]["retriedDispatchId"]
+                            == retried_dispatch_id
+                            for edge in receipt_edges
+                        )
+                    ):
+                        lineage_valid = False
+                        continue
+                    failed_ids.add(failed_dispatch_id)
+                    receipt_ordinals.append(retry_ordinal)
+                    receipt_edges.append(
+                        (
+                            failed_dispatch_id,
+                            {
+                                "commandId": command_id,
+                                "failedAttempt": failed_attempt,
+                                "retriedDispatchId": retried_dispatch_id,
+                                "retriedAttempt": retried_attempt,
+                                "taskId": task_id,
+                                "generation": root_generation,
+                                "createdAtMs": int(
+                                    receipt_row["created_at_ms"] or 0
+                                ),
+                            },
+                        )
+                    )
+                if (
+                    len(receipt_edges) != len(lineage)
+                    or len(receipt_edges) != len(retried_ids)
+                    or len(receipt_edges) != len(retried_task_ids)
+                    or {
+                        str(edge[1]["retriedDispatchId"])
+                        for edge in receipt_edges
+                    }
+                    != retried_ids
+                    or {
+                        str(edge[1]["taskId"])
+                        for edge in receipt_edges
+                    }
+                    != retried_task_ids
+                ):
+                    lineage_valid = False
+                if not lineage_valid:
+                    retry_ledger_valid = False
+                    continue
+                retry_ordinals.extend(receipt_ordinals)
+                for failed_dispatch_id, edge in receipt_edges:
+                    control_retry_edges.setdefault(
+                        failed_dispatch_id,
+                        [],
+                    ).append(edge)
+                continue
+            purpose = str(details.get("purpose") or "")
+            if purpose == "workspace_retry":
+                task_id = str(
+                    details.get("childTaskId") or ""
+                ).strip()
+                dispatch_id = str(
+                    details.get("childDispatchId") or ""
+                ).strip()
+                if task_id and dispatch_id:
+                    latest_retry_by_task[task_id] = (
+                        int(receipt.get("createdAtMs") or 0),
+                        dispatch_id,
+                    )
+            elif purpose == "report_dispatch":
+                replaced = str(
+                    details.get("replacesReportDispatchId") or ""
+                ).strip()
+                if replaced:
+                    replaced_report_dispatch_ids.add(replaced)
+
+        limits = conn.execute(
+            "SELECT retry_used FROM room_kernel_root_limits WHERE root_id=?",
+            (root_id,),
+        ).fetchone()
+        retry_used = int(limits["retry_used"]) if limits is not None else -1
+        if (
+            not retry_ledger_valid
+            or retry_ordinals != list(range(1, retry_used + 1))
+        ):
+            # A retry Receipt can suppress an earlier durable failure only
+            # when every consumed retry-budget ordinal is accounted for in
+            # persisted order. Any tamper, duplicate, gap, or legacy partial
+            # lineage leaves all failures authoritative.
+            control_retry_edges.clear()
+
+        def control_retry_resolved(
+            failed_dispatch_id: str,
+            *,
+            visited: set[str],
+        ) -> bool:
+            if failed_dispatch_id in visited:
+                return False
+            source = conn.execute(
+                """SELECT d.*,t.state AS task_state
+                   FROM room_kernel_dispatches d
+                   JOIN room_kernel_tasks t ON t.task_id=d.task_id
+                   WHERE d.root_id=? AND d.dispatch_id=?""",
+                (root_id, failed_dispatch_id),
+            ).fetchone()
+            if source is None:
+                return False
+            try:
+                source_payload = json.loads(str(source["payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return False
+            if not isinstance(source_payload, Mapping):
+                return False
+            for edge in reversed(
+                control_retry_edges.get(failed_dispatch_id, ())
+            ):
+                retry_dispatch_id = str(edge["retriedDispatchId"])
+                retry = conn.execute(
+                    """SELECT d.*,t.state AS task_state
+                       FROM room_kernel_dispatches d
+                       JOIN room_kernel_tasks t ON t.task_id=d.task_id
+                       WHERE d.root_id=? AND d.dispatch_id=?""",
+                    (root_id, retry_dispatch_id),
+                ).fetchone()
+                if retry is None:
+                    continue
+                try:
+                    retry_payload = json.loads(str(retry["payload_json"]))
+                    if not isinstance(retry_payload, Mapping):
+                        continue
+                    source_attempt = int(source_payload.get("attempt") or 0)
+                    retry_attempt = int(retry_payload.get("attempt") or 0)
+                    source_generation = int(source["generation"])
+                    retry_generation = int(retry["generation"])
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                if (
+                    str(source["task_id"]) != str(edge["taskId"])
+                    or str(retry["task_id"]) != str(edge["taskId"])
+                    or source_generation != int(edge["generation"])
+                    or retry_generation != int(edge["generation"])
+                    or source_attempt != int(edge["failedAttempt"])
+                    or retry_attempt != int(edge["retriedAttempt"])
+                    or retry_payload.get("triggerId") != edge["commandId"]
+                    or int(edge["createdAtMs"])
+                    < int(source["updated_at_ms"] or 0)
+                    or int(retry["created_at_ms"] or 0)
+                    < int(source["updated_at_ms"] or 0)
+                ):
+                    continue
+                retry_state = str(retry["state"])
+                if (
+                    retry_state == "committed"
+                    and str(retry["task_state"]) == "completed"
+                ):
+                    return True
+                if retry_state in {"unknown", "dead_letter", "failed"} and (
+                    control_retry_resolved(
+                        retry_dispatch_id,
+                        visited={*visited, failed_dispatch_id},
+                    )
+                ):
+                    return True
+            return False
+
+        unresolved: list[dict[str, object]] = []
+        for failed in failed_rows:
+            dispatch_id = str(failed["dispatch_id"])
+            task_id = str(failed["task_id"])
+            if dispatch_id in replaced_report_dispatch_ids:
+                continue
+            if control_retry_resolved(dispatch_id, visited=set()):
+                continue
+            retry = latest_retry_by_task.get(task_id)
+            if retry is not None:
+                receipt_created_at, retry_dispatch_id = retry
+                retry_row = conn.execute(
+                    """SELECT d.state,d.created_at_ms,t.state AS task_state
+                       FROM room_kernel_dispatches d
+                       JOIN room_kernel_tasks t ON t.task_id=d.task_id
+                       WHERE d.root_id=? AND d.task_id=?
+                         AND d.dispatch_id=?""",
+                    (root_id, task_id, retry_dispatch_id),
+                ).fetchone()
+                if (
+                    retry_dispatch_id != dispatch_id
+                    and retry_row is not None
+                    and receipt_created_at
+                    >= int(failed["updated_at_ms"] or 0)
+                    and int(retry_row["created_at_ms"] or 0)
+                    >= int(failed["created_at_ms"] or 0)
+                    and str(retry_row["state"]) == "committed"
+                    and str(retry_row["task_state"]) == "completed"
+                ):
+                    continue
+            unresolved.append(
+                {
+                    "dispatchId": dispatch_id,
+                    "taskId": task_id,
+                    "state": str(failed["state"]),
+                }
+            )
+        return unresolved
 
     def _report_readiness_locked(
         self,
@@ -4408,8 +8021,29 @@ class RoomKernelStore:
     ) -> dict[str, object]:
         root = self._root_row(conn, root_id)
         existing = self._report_dispatch_locked(conn, root_id=root_id)
+        replaceable_report: dict[str, object] | None = None
         if existing is not None:
-            return {"ready": True, "existing": existing}
+            existing_dispatch = existing.get("dispatch")
+            existing_task = existing.get("task")
+            dispatch_state = (
+                str(existing_dispatch.get("state") or "")
+                if isinstance(existing_dispatch, Mapping)
+                else ""
+            )
+            task_state = (
+                str(existing_task.get("state") or "")
+                if isinstance(existing_task, Mapping)
+                else ""
+            )
+            if dispatch_state in {
+                "failed",
+                "unknown",
+                "dead_letter",
+                "cancelled",
+            } or task_state in {"failed", "cancelled"}:
+                replaceable_report = dict(existing)
+            else:
+                return {"ready": True, "existing": existing}
         active = int(
             conn.execute(
                 f"SELECT COUNT(*) FROM room_kernel_dispatches WHERE root_id=? "
@@ -4417,13 +8051,23 @@ class RoomKernelStore:
                 (root_id, *_ACTIVE_DISPATCH_STATES),
             ).fetchone()[0]
         )
-        unknown = int(
-            conn.execute(
-                "SELECT COUNT(*) FROM room_kernel_dispatches WHERE root_id=? "
-                "AND state IN ('unknown','dead_letter','failed')",
-                (root_id,),
-            ).fetchone()[0]
+        unresolved_failures = self._unresolved_dispatch_failures_locked(
+            conn,
+            root_id=root_id,
         )
+        if replaceable_report is not None:
+            replaced_dispatch = replaceable_report.get("dispatch")
+            replaced_dispatch_id = (
+                str(replaced_dispatch.get("dispatchId") or "")
+                if isinstance(replaced_dispatch, Mapping)
+                else ""
+            )
+            unresolved_failures = [
+                failure
+                for failure in unresolved_failures
+                if failure.get("dispatchId") != replaced_dispatch_id
+            ]
+        unknown = len(unresolved_failures)
         open_outbox = int(
             conn.execute(
                 "SELECT COUNT(*) FROM room_kernel_outbox WHERE root_id=? "
@@ -4438,11 +8082,24 @@ class RoomKernelStore:
                 (root_id,),
             ).fetchone()[0]
         )
+        replaceable_task_id = ""
+        if replaceable_report is not None:
+            replaced_task = replaceable_report.get("task")
+            if isinstance(replaced_task, Mapping):
+                replaceable_task_id = str(
+                    replaced_task.get("taskId") or ""
+                ).strip()
         open_tasks = int(
             conn.execute(
                 f"SELECT COUNT(*) FROM room_kernel_tasks WHERE root_id=? "
-                f"AND state NOT IN ({','.join('?' for _ in _TERMINAL_TASK_STATES)})",
-                (root_id, *_TERMINAL_TASK_STATES),
+                f"AND state NOT IN ({','.join('?' for _ in _TERMINAL_TASK_STATES)}) "
+                "AND (?='' OR task_id!=?)",
+                (
+                    root_id,
+                    *_TERMINAL_TASK_STATES,
+                    replaceable_task_id,
+                    replaceable_task_id,
+                ),
             ).fetchone()[0]
         )
         expected = set(json.loads(str(root["acceptance_criteria_json"])))
@@ -4453,7 +8110,10 @@ class RoomKernelStore:
         proven = self._acceptance_evidence(conn, root_id, expected)
         unproven = sorted(expected - set(proven))
         reasons: list[str] = []
-        if str(root["state"]) not in {"running", "waiting"}:
+        if str(root["state"]) not in {"running", "waiting"} and not (
+            replaceable_report is not None
+            and str(root["state"]) == "blocked"
+        ):
             reasons.append("root_not_reportable")
         if active or unknown or open_outbox or active_leases or open_tasks:
             reasons.append("root_not_quiescent")
@@ -4479,6 +8139,8 @@ class RoomKernelStore:
             "reasons": list(dict.fromkeys(reasons)),
             "activeDispatches": active,
             "unknownDispatches": unknown,
+            "unresolvedDispatchFailures": unresolved_failures[:64],
+            "replaceableReport": replaceable_report,
             "openOutbox": open_outbox,
             "activeLeases": active_leases,
             "openTasks": open_tasks,
@@ -4551,15 +8213,92 @@ class RoomKernelStore:
                 raise RoomKernelFenceError(
                     "ReportDispatch requires a fresh read_only workspace snapshot"
                 )
+            replaceable_report = readiness.get("replaceableReport")
+            replaced_dispatch_id = ""
+            replaced_task_id = ""
+            report_attempt = 0
+            if isinstance(replaceable_report, Mapping):
+                replaced_dispatch = replaceable_report.get("dispatch")
+                replaced_task = replaceable_report.get("task")
+                replaced_receipt = replaceable_report.get("receipt")
+                replaced_details = (
+                    replaced_receipt.get("details")
+                    if isinstance(replaced_receipt, Mapping)
+                    else None
+                )
+                replaced_dispatch_id = (
+                    str(replaced_dispatch.get("dispatchId") or "")
+                    if isinstance(replaced_dispatch, Mapping)
+                    else ""
+                )
+                replaced_task_id = (
+                    str(replaced_task.get("taskId") or "")
+                    if isinstance(replaced_task, Mapping)
+                    else ""
+                )
+                report_attempt = (
+                    int(replaced_details.get("reportAttempt") or 0) + 1
+                    if isinstance(replaced_details, Mapping)
+                    else 1
+                )
+                if not replaced_dispatch_id or not replaced_task_id:
+                    raise RoomKernelFenceError(
+                        "replaceable ReportDispatch lost its identity"
+                    )
+                exact_obsolete = conn.execute(
+                    """SELECT d.state AS dispatch_state,
+                              d.task_id,t.state AS task_state
+                       FROM room_kernel_dispatches d
+                       JOIN room_kernel_tasks t ON t.task_id=d.task_id
+                       WHERE d.root_id=? AND d.dispatch_id=?
+                         AND t.root_id=? AND t.task_id=?""",
+                    (
+                        root_id,
+                        replaced_dispatch_id,
+                        root_id,
+                        replaced_task_id,
+                    ),
+                ).fetchone()
+                if (
+                    exact_obsolete is None
+                    or str(exact_obsolete["task_id"]) != replaced_task_id
+                    or str(exact_obsolete["dispatch_state"])
+                    not in {
+                        "failed",
+                        "unknown",
+                        "dead_letter",
+                        "cancelled",
+                    }
+                ):
+                    raise RoomKernelFenceError(
+                        "replaceable ReportDispatch is no longer terminal"
+                    )
+                # Historical builds left a failed Report Task blocked.  Seal
+                # that exact obsolete Task in the same transaction that
+                # creates its replacement; no other blocked work is consumed.
+                conn.execute(
+                    """UPDATE room_kernel_tasks
+                       SET state='failed',updated_at_ms=?
+                       WHERE root_id=? AND task_id=?
+                         AND state NOT IN ('completed','failed','cancelled')""",
+                    (int(now_ms), root_id, replaced_task_id),
+                )
+            report_identity_parts = (
+                (root_id, str(root["generation"]))
+                if report_attempt == 0
+                else (
+                    root_id,
+                    str(root["generation"]),
+                    str(report_attempt),
+                )
+            )
             report_task_id = _stable_id(
                 "room-report-task",
-                root_id,
-                str(root["generation"]),
+                *report_identity_parts,
             )
             report_dispatch_id = _stable_id(
                 "room-report-dispatch",
-                root_id,
-                str(root["generation"]),
+                *report_identity_parts,
             )
             task_rows = conn.execute(
                 """SELECT payload_json FROM room_kernel_tasks
@@ -4664,10 +8403,16 @@ class RoomKernelStore:
                     "reporter session id",
                 ),
                 "targetParticipantId": reporter_id,
-                "triggerId": _stable_id("room-report-trigger", root_id),
+                "triggerId": _stable_id(
+                    "room-report-trigger",
+                    *report_identity_parts,
+                ),
                 "intentKind": "close",
-                "idempotencyKey": _stable_id("room-report", root_id),
-                "attempt": 0,
+                "idempotencyKey": _stable_id(
+                    "room-report",
+                    *report_identity_parts,
+                ),
+                "attempt": report_attempt,
                 "capabilityEpoch": max_epoch + 1,
                 "runtimeProfileRevision": _required(
                     latest_payload.get("runtimeProfileRevision"),
@@ -4687,6 +8432,12 @@ class RoomKernelStore:
                 raise RoomKernelFenceError(
                     "ReportDispatch identity existed without its semantic receipt"
                 )
+            if report_attempt:
+                conn.execute(
+                    "UPDATE room_kernel_roots SET state='running',updated_at_ms=? "
+                    "WHERE root_id=? AND state='blocked'",
+                    (int(now_ms), root_id),
+                )
             lane = readiness["lanePlan"]
             receipt = self._receipt(
                 conn,
@@ -4700,6 +8451,11 @@ class RoomKernelStore:
                     "reportTaskId": report_task_id,
                     "reportDispatchId": report_dispatch_id,
                     "reporterParticipantId": reporter_id,
+                    "reportAttempt": report_attempt,
+                    "replacesReportDispatchId": (
+                        replaced_dispatch_id or None
+                    ),
+                    "replacesReportTaskId": replaced_task_id or None,
                     "lanePlanDispatchIds": list(lane["lanePlanDispatchIds"]),
                     "workerDeliveryDispatchIds": list(
                         lane["workerDeliveryDispatchIds"]
@@ -4735,7 +8491,12 @@ class RoomKernelStore:
                 else None
             )
             active = int(conn.execute(f"SELECT COUNT(*) FROM room_kernel_dispatches WHERE root_id = ? AND state IN ({','.join('?' for _ in _ACTIVE_DISPATCH_STATES)})", (root_id, *_ACTIVE_DISPATCH_STATES)).fetchone()[0])
-            unknown = int(conn.execute("SELECT COUNT(*) FROM room_kernel_dispatches WHERE root_id = ? AND state IN ('unknown','dead_letter')", (root_id,)).fetchone()[0])
+            unknown = len(
+                self._unresolved_dispatch_failures_locked(
+                    conn,
+                    root_id=root_id,
+                )
+            )
             open_outbox = int(conn.execute("SELECT COUNT(*) FROM room_kernel_outbox WHERE root_id = ? AND state IN ('pending','leased','running','retry_wait','timer_wait')", (root_id,)).fetchone()[0])
             active_leases = int(conn.execute("SELECT COUNT(*) FROM room_kernel_leases WHERE root_id = ? AND state = 'active'", (root_id,)).fetchone()[0])
             open_tasks = int(conn.execute(f"SELECT COUNT(*) FROM room_kernel_tasks WHERE root_id = ? AND state NOT IN ({','.join('?' for _ in _TERMINAL_TASK_STATES)})", (root_id, *_TERMINAL_TASK_STATES)).fetchone()[0])
@@ -4942,6 +8703,37 @@ class RoomKernelStore:
                 return payload
         return None
 
+    @staticmethod
+    def _intake_phase_state_locked(
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+    ) -> dict[str, object] | None:
+        rows = conn.execute(
+            """SELECT payload_json FROM room_kernel_receipts
+               WHERE root_id=? AND receipt_kind='accepted'
+               ORDER BY created_at_ms DESC,rowid DESC""",
+            (_required(root_id, "root_id"),),
+        ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise RoomKernelFenceError(
+                    "Room Root accepted receipt payload is corrupt"
+                ) from exc
+            if not isinstance(payload, Mapping):
+                raise RoomKernelFenceError(
+                    "Room Root accepted receipt payload is corrupt"
+                )
+            details = payload.get("details")
+            if (
+                isinstance(details, Mapping)
+                and details.get("purpose") == "intake_phase"
+            ):
+                return {"receipt": payload, **dict(details)}
+        return None
+
     def _record_intake_phase_locked(
         self,
         conn: sqlite3.Connection,
@@ -4969,13 +8761,16 @@ class RoomKernelStore:
             receipt_kind="accepted",
             status="applied",
             generation=generation,
-            details={
-                "purpose": "intake_phase",
-                "phase": phase,
-                "clarificationOccurred": bool(clarification_occurred),
-                "source": _required(source, "intake phase source"),
-                **dict(details),
-            },
+            details=_authoritative_receipt_details(
+                {
+                    "purpose": "intake_phase",
+                    "phase": phase,
+                    "clarificationOccurred": bool(clarification_occurred),
+                    "source": _required(source, "intake phase source"),
+                },
+                details,
+                scope="intake phase",
+            ),
             now_ms=now_ms,
         )
 
@@ -4986,24 +8781,12 @@ class RoomKernelStore:
         conn: sqlite3.Connection | None = None,
     ) -> dict[str, object]:
         def read(active: sqlite3.Connection) -> dict[str, object]:
-            rows = active.execute(
-                """SELECT payload_json FROM room_kernel_receipts
-                   WHERE root_id=? AND receipt_kind='accepted'
-                   ORDER BY created_at_ms DESC,rowid DESC""",
-                (_required(root_id, "root_id"),),
-            ).fetchall()
-            for row in rows:
-                payload = json.loads(str(row["payload_json"]))
-                details = (
-                    payload.get("details")
-                    if isinstance(payload, Mapping)
-                    else None
-                )
-                if (
-                    isinstance(details, Mapping)
-                    and details.get("purpose") == "intake_phase"
-                ):
-                    return {"receipt": payload, **dict(details)}
+            state = self._intake_phase_state_locked(
+                active,
+                root_id=root_id,
+            )
+            if state is not None:
+                return state
             raise RoomKernelFenceError(
                 "Room Root has no authoritative intake phase receipt"
             )
@@ -5021,7 +8804,19 @@ class RoomKernelStore:
     ) -> dict[str, object]:
         def read(active: sqlite3.Connection) -> dict[str, object]:
             row = self._root_row(active, root_id)
-            payload = json.loads(str(row["payload_json"]))
+            decoded = json.loads(str(row["payload_json"]))
+            if not isinstance(decoded, Mapping):
+                raise RoomKernelFenceError("Room Root payload is corrupt")
+            payload = upcast_room_root_execution(
+                decoded,
+                facilitator_participant_id=(
+                    row["facilitator_participant_id"]
+                ),
+                reporter_participant_id=row["reporter_participant_id"],
+                reporter_selection_receipt_id=(
+                    row["reporter_selection_receipt_id"]
+                ),
+            )
             payload.update({
                 "generation": int(row["generation"]),
                 "state": str(row["state"]),
@@ -5052,6 +8847,7 @@ class RoomKernelStore:
         return row is not None and str(row["state"]) in {
             "completed",
             "cancelled",
+            "cancelled_with_unknowns",
             "failed",
         }
 
@@ -5100,6 +8896,45 @@ class RoomKernelStore:
             return read(conn)
         with self._connect() as active:
             return read(active)
+
+    @staticmethod
+    def _root_has_unresolved_blockers_locked(
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+    ) -> bool:
+        """Return whether a Root still has a concrete non-terminal blocker.
+
+        Workspace abandonment is scoped to one Task.  It may release the
+        Root only after every other blocked Task/continuation and every
+        unknown or failed Dispatch attached to non-terminal work is gone.
+        """
+
+        blocked_task = conn.execute(
+            "SELECT 1 FROM room_kernel_tasks "
+            "WHERE root_id=? AND state='blocked' LIMIT 1",
+            (root_id,),
+        ).fetchone()
+        if blocked_task is not None:
+            return True
+        blocked_continuation = conn.execute(
+            "SELECT 1 FROM room_kernel_continuations "
+            "WHERE root_id=? AND state='blocked' LIMIT 1",
+            (root_id,),
+        ).fetchone()
+        if blocked_continuation is not None:
+            return True
+        unresolved_dispatch = conn.execute(
+            """SELECT 1
+               FROM room_kernel_dispatches dispatch
+               JOIN room_kernel_tasks task ON task.task_id=dispatch.task_id
+               WHERE dispatch.root_id=?
+                 AND dispatch.state IN ('unknown','dead_letter','failed')
+                 AND task.state NOT IN ('completed','failed','cancelled')
+               LIMIT 1""",
+            (root_id,),
+        ).fetchone()
+        return unresolved_dispatch is not None
 
     def record_workspace_lifecycle(
         self,
@@ -5175,7 +9010,14 @@ class RoomKernelStore:
                 (task["state"], _json(task), int(now_ms), task_id),
             )
             root = self._root_row(conn, str(task["rootId"]))
-            if operation == "abandon" and str(root["state"]) == "blocked":
+            if (
+                operation == "abandon"
+                and str(root["state"]) == "blocked"
+                and not self._root_has_unresolved_blockers_locked(
+                    conn,
+                    root_id=str(task["rootId"]),
+                )
+            ):
                 conn.execute(
                     "UPDATE room_kernel_roots SET state='running',updated_at_ms=? "
                     "WHERE root_id=?",
@@ -5209,6 +9051,170 @@ class RoomKernelStore:
             )
             return task
 
+    def recover_workspace_retry(
+        self,
+        *,
+        parent_dispatch_id: str,
+        task_id: str,
+        retry_dispatch: Mapping[str, object] | None,
+        invocation_receipt_id: str,
+    ) -> dict[str, object] | None:
+        """Recover a committed retry when runtime execution receipt write crashed."""
+
+        if retry_dispatch is not None:
+            validate_kernel_contract("dispatchEnvelope", retry_dispatch)
+        with self._connect() as conn:
+            return self._workspace_retry_replay_locked(
+                conn,
+                parent_dispatch_id=parent_dispatch_id,
+                task_id=task_id,
+                retry_dispatch=retry_dispatch,
+                invocation_receipt_id=invocation_receipt_id,
+            )
+
+    def _workspace_retry_replay_locked(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        parent_dispatch_id: str,
+        task_id: str,
+        retry_dispatch: Mapping[str, object] | None,
+        invocation_receipt_id: str,
+    ) -> dict[str, object] | None:
+        parent = self._dispatch_row(conn, parent_dispatch_id)
+        root_id = str(parent["root_id"])
+        rows = conn.execute(
+            "SELECT payload_json FROM room_kernel_receipts WHERE root_id=?",
+            (root_id,),
+        ).fetchall()
+        matches: list[dict[str, object]] = []
+        for row in rows:
+            payload = json.loads(str(row["payload_json"]))
+            details = payload.get("details") if isinstance(payload, Mapping) else None
+            if not isinstance(details, Mapping):
+                continue
+            expected_details = {
+                "purpose": "workspace_retry",
+                "parentDispatchId": parent_dispatch_id,
+                "childTaskId": task_id,
+                "invocationReceiptId": invocation_receipt_id,
+            }
+            if retry_dispatch is not None:
+                expected_details["childDispatchId"] = str(
+                    retry_dispatch.get("dispatchId") or ""
+                )
+            if all(
+                str(details.get(key) or "") == str(expected)
+                for key, expected in expected_details.items()
+            ):
+                matches.append(dict(payload))
+        if not matches:
+            return None
+        if len(matches) != 1:
+            raise RoomKernelFenceError(
+                "workspace retry has multiple canonical Kernel receipts"
+            )
+        canonical = matches[0]
+        canonical_details = canonical.get("details")
+        canonical_outcome = (
+            canonical_details.get("retryOutcome")
+            if isinstance(canonical_details, Mapping)
+            else None
+        )
+        child_dispatch_id = str(
+            canonical_details.get("childDispatchId") or ""
+        )
+        if not child_dispatch_id:
+            raise RoomKernelFenceError(
+                "workspace retry canonical receipt lost its child Dispatch"
+            )
+        dispatch_row = self._dispatch_row(conn, child_dispatch_id)
+        stored_dispatch = json.loads(str(dispatch_row["payload_json"]))
+        if retry_dispatch is not None and _dispatch_idempotency_identity(
+            stored_dispatch
+        ) != _dispatch_idempotency_identity(retry_dispatch):
+            raise RoomKernelFenceError(
+                "workspace retry replay changed its Dispatch identity"
+            )
+        if (
+            canonical.get("schemaVersion") != KERNEL_RECEIPT_SCHEMA_VERSION
+            or canonical.get("rootId") != root_id
+            or stored_dispatch.get("rootId") != root_id
+            or stored_dispatch.get("taskId") != task_id
+            or stored_dispatch.get("parentDispatchId")
+            != parent_dispatch_id
+            or stored_dispatch.get("triggerId") != invocation_receipt_id
+            or stored_dispatch.get("intentKind") != "retry"
+            or int(canonical.get("generation", -1))
+            != int(stored_dispatch.get("generation", -2))
+            or (
+                canonical.get("receiptKind"),
+                canonical.get("status"),
+            )
+            not in {("accepted", "applied"), ("duplicate", "noop")}
+            or not isinstance(canonical_details, Mapping)
+            or canonical_details.get("targetParticipantId")
+            != stored_dispatch.get("targetParticipantId")
+            or canonical_details.get("targetSessionId")
+            != stored_dispatch.get("targetSessionId")
+            or not str(
+                canonical_details.get("targetParticipantRef") or ""
+            ).strip()
+            or not isinstance(canonical_outcome, Mapping)
+            or canonical_outcome.get("taskState") != "active"
+            or canonical_outcome.get("workspaceLifecycleState")
+            != "retry_bound"
+            or canonical_outcome.get("workspaceAttentionRequired") is not False
+            or canonical_outcome.get("dispatchState") != "pending"
+            or isinstance(canonical_outcome.get("taskRevision"), bool)
+            or not isinstance(canonical_outcome.get("taskRevision"), int)
+            or int(canonical_outcome["taskRevision"]) < 0
+            or isinstance(canonical_outcome.get("ownershipRevision"), bool)
+            or not isinstance(
+                canonical_outcome.get("ownershipRevision"), int
+            )
+            or int(canonical_outcome["ownershipRevision"]) < 0
+        ):
+            raise RoomKernelFenceError(
+                "workspace retry canonical receipt changed its exact outcome"
+            )
+        task_row = conn.execute(
+            "SELECT payload_json FROM room_kernel_tasks WHERE task_id=?",
+            (_required(task_id, "task_id"),),
+        ).fetchone()
+        if task_row is None:
+            raise RoomKernelFenceError("workspace retry replay lost its Task")
+        current_task = json.loads(str(task_row["payload_json"]))
+        if int(current_task.get("revision") or 0) < int(
+            canonical_outcome["taskRevision"]
+        ):
+            raise RoomKernelFenceError(
+                "workspace retry Task regressed behind its canonical receipt"
+            )
+        canonical_task = {
+            **current_task,
+            "state": canonical_outcome["taskState"],
+            "revision": int(canonical_outcome["taskRevision"]),
+            "ownershipRevision": int(
+                canonical_outcome["ownershipRevision"]
+            ),
+            "workspaceLifecycleState": canonical_outcome[
+                "workspaceLifecycleState"
+            ],
+            "workspaceAttentionRequired": canonical_outcome[
+                "workspaceAttentionRequired"
+            ],
+        }
+        canonical_dispatch = {
+            **_dispatch_payload(dispatch_row),
+            "state": canonical_outcome["dispatchState"],
+        }
+        return {
+            "receipt": canonical,
+            "task": canonical_task,
+            "dispatch": canonical_dispatch,
+        }
+
     def enqueue_workspace_retry(
         self,
         *,
@@ -5224,6 +9230,7 @@ class RoomKernelStore:
         validate_kernel_contract("dispatchEnvelope", retry_dispatch)
         with self._connect(immediate=True) as conn:
             parent = self._dispatch_row(conn, parent_dispatch_id)
+            parent_payload = json.loads(str(parent["payload_json"]))
             root = self._root_row(conn, str(parent["root_id"]))
             root_payload = json.loads(str(root["payload_json"]))
             if (
@@ -5233,6 +9240,69 @@ class RoomKernelStore:
             ):
                 raise RoomKernelFenceError(
                     "workspace retry requires the active Root Facilitator"
+                )
+            invocation = conn.execute(
+                """SELECT invocation.*,
+                          binding.session_id AS bound_session_id,
+                          binding.state AS bound_state,
+                          binding.capability_epoch AS bound_capability_epoch
+                   FROM room_v2_tool_invocation_receipts invocation
+                   JOIN room_v2_capability_runtime_bindings binding
+                     ON binding.manifest_id=invocation.manifest_id
+                    AND binding.manifest_hash=invocation.manifest_hash
+                   WHERE invocation.receipt_id=?""",
+                (_required(invocation_receipt_id, "invocation_receipt_id"),),
+            ).fetchone()
+            if invocation is None:
+                raise RoomKernelFenceError(
+                    "workspace retry invocation receipt is missing"
+                )
+            command = json.loads(str(invocation["command_json"]))
+            arguments = (
+                command.get("arguments")
+                if isinstance(command, Mapping)
+                else None
+            )
+            command_material = (
+                {
+                    key: value
+                    for key, value in command.items()
+                    if key != "commandHash"
+                }
+                if isinstance(command, Mapping)
+                else {}
+            )
+            command_hash = hashlib.sha256(
+                _json(command_material).encode("utf-8")
+            ).hexdigest()
+            if (
+                not isinstance(command, Mapping)
+                or not isinstance(arguments, Mapping)
+                or str(invocation["canonical_tool_name"])
+                != "room_integrate"
+                or command.get("tool") != "room_integrate"
+                or arguments.get("action", "integrate") != "retry"
+                or arguments.get("childTaskId") != task_id
+                or command.get("rootId") != root["root_id"]
+                or command.get("taskId") != parent["task_id"]
+                or command.get("dispatchId") != parent_dispatch_id
+                or int(command.get("generation", -1))
+                != int(root["generation"])
+                or int(command.get("capabilityEpoch", -1))
+                != int(parent_payload.get("capabilityEpoch", -1))
+                or int(invocation["bound_capability_epoch"])
+                != int(parent_payload.get("capabilityEpoch", -1))
+                or str(invocation["bound_session_id"])
+                != str(parent["target_session_id"])
+                or str(invocation["bound_state"]) != "active"
+                or str(invocation["authorization_state"])
+                != "authorized"
+                or command.get("commandHash") != command_hash
+                or str(invocation["command_hash"]) != command_hash
+            ):
+                raise RoomKernelFenceError(
+                    "workspace retry invocation does not match its exact "
+                    "Facilitator command fences"
                 )
             row = conn.execute(
                 "SELECT payload_json,state FROM room_kernel_tasks WHERE task_id=?",
@@ -5266,13 +9336,92 @@ class RoomKernelStore:
                 != int(parent["hop_count"]) + 1
                 or int(retry_dispatch.get("depth", -1))
                 < int(parent["depth"])
+                or retry_dispatch.get("triggerId")
+                != invocation_receipt_id
+                or int(retry_dispatch.get("capabilityEpoch", -1))
+                != int(command["capabilityEpoch"])
             ):
                 raise RoomKernelFenceError(
                     "workspace retry Dispatch does not match its parent fences"
                 )
+            replay = self._workspace_retry_replay_locked(
+                conn,
+                parent_dispatch_id=parent_dispatch_id,
+                task_id=task_id,
+                retry_dispatch=retry_dispatch,
+                invocation_receipt_id=invocation_receipt_id,
+            )
+            if replay is not None:
+                return replay
             target_participant_id = str(
                 retry_dispatch.get("targetParticipantId") or ""
             )
+            target_session_id = str(
+                retry_dispatch.get("targetSessionId") or ""
+            )
+            target_participant_ref = str(
+                arguments.get("targetParticipantRef") or ""
+            ).strip()
+            retry_receipt_id = str(
+                workspace_result.get("retryBoundReceiptId") or ""
+            )
+            retry_receipt_sha256 = str(
+                workspace_result.get("retryBoundReceiptSha256") or ""
+            )
+            retry_event = conn.execute(
+                """SELECT * FROM room_workspace_events
+                   WHERE event_id=? AND binding_id=? AND event_kind='retry_bound'""",
+                (retry_receipt_id, binding_id),
+            ).fetchone()
+            workspace_binding = conn.execute(
+                "SELECT * FROM room_workspace_bindings WHERE binding_id=?",
+                (binding_id,),
+            ).fetchone()
+            retry_payload = (
+                json.loads(str(retry_event["payload_json"]))
+                if retry_event is not None
+                else None
+            )
+            retry_token = str(workspace_result.get("retryLeaseToken") or "")
+            retry_token_sha256 = hashlib.sha256(
+                retry_token.encode("utf-8")
+            ).hexdigest()
+            if (
+                workspace_binding is None
+                or retry_event is None
+                or not isinstance(retry_payload, Mapping)
+                or str(retry_event["payload_sha256"]) != retry_receipt_sha256
+                or int(retry_event["sequence"])
+                != int(workspace_binding["last_event_sequence"])
+                or str(workspace_binding["root_id"]) != str(root["root_id"])
+                or str(workspace_binding["task_id"]) != task_id
+                or str(workspace_binding["state"]) != "retry_bound"
+                or bool(workspace_binding["attention_required"])
+                or str(workspace_binding["current_owner_participant_id"])
+                != target_participant_id
+                or str(workspace_binding["current_owner_session_id"])
+                != target_session_id
+                or str(retry_payload.get("participantId") or "")
+                != target_participant_id
+                or str(retry_payload.get("participantRef") or "")
+                != target_participant_ref
+                or str(retry_payload.get("sessionId") or "")
+                != target_session_id
+                or int(retry_payload.get("retryEpoch") or -1)
+                != int(workspace_result.get("retryEpoch") or -2)
+                or str(retry_payload.get("retryLeaseToken") or "")
+                != retry_token
+                or str(retry_payload.get("retryLeaseTokenSha256") or "")
+                != retry_token_sha256
+                or str(workspace_result.get("retryLeaseTokenSha256") or "")
+                != retry_token_sha256
+                or not target_participant_ref
+                or str(workspace_result.get("targetParticipantRef") or "")
+                != target_participant_ref
+            ):
+                raise RoomKernelFenceError(
+                    "workspace retry is not bound to its exact durable retry lease"
+                )
             owner_changed = (
                 target_participant_id
                 != str(task.get("currentOwnerParticipantId") or "")
@@ -5350,6 +9499,27 @@ class RoomKernelStore:
                     "childDispatchId": str(dispatch["dispatchId"]),
                     "workspaceBindingId": binding_id,
                     "invocationReceiptId": invocation_receipt_id,
+                    "retryBoundReceiptId": retry_receipt_id,
+                    "retryBoundReceiptSha256": retry_receipt_sha256,
+                    "retryEpoch": int(retry_payload["retryEpoch"]),
+                    "retryLeaseTokenSha256": retry_token_sha256,
+                    "targetParticipantId": target_participant_id,
+                    "targetSessionId": target_session_id,
+                    "targetParticipantRef": target_participant_ref,
+                    "retryOutcome": {
+                        "taskState": str(task["state"]),
+                        "taskRevision": int(task["revision"]),
+                        "ownershipRevision": int(
+                            task.get("ownershipRevision") or 0
+                        ),
+                        "workspaceLifecycleState": str(
+                            task["workspaceLifecycleState"]
+                        ),
+                        "workspaceAttentionRequired": bool(
+                            task["workspaceAttentionRequired"]
+                        ),
+                        "dispatchState": str(dispatch["state"]),
+                    },
                 },
                 now_ms=now_ms,
             )
@@ -5377,24 +9547,280 @@ class RoomKernelStore:
                 raise RoomKernelFenceError(
                     "workspace integration requires an isolated_writable Task"
                 )
-            result = dict(workspace_result or {})
-            integrated = result.get("integrated") is True
+            if not isinstance(workspace_result, Mapping):
+                raise RoomKernelFenceError(
+                    "workspace integration requires an exact coordinator result"
+                )
+            result = dict(workspace_result)
+            if result.get("integrated") is not True:
+                raise RoomKernelFenceError(
+                    "workspace integration cannot apply without integrated=true"
+                )
+            current_integration_ref = str(
+                task.get("workspaceIntegrationRef") or ""
+            ).strip()
             if (
-                task.get("workspaceIntegrationState") == "applied"
-                and integrated
+                current_integration_ref
+                and current_integration_ref != integration_ref
             ):
+                raise RoomKernelFenceError(
+                    "workspace integration retry changed its integrationRef"
+                )
+            self._assert_workspace_integration_receipts(
+                conn,
+                task=task,
+                result=result,
+                integration_ref=_required(integration_ref, "integration_ref"),
+            )
+            if task.get("workspaceIntegrationState") == "applied":
+                attempt = self._current_committed_task_attempt_locked(
+                    conn,
+                    root_id=str(task.get("rootId") or ""),
+                    task_id=task_id,
+                )
+                if attempt is None:
+                    raise RoomKernelFenceError(
+                        "applied workspace integration has no authoritative Worker Commit"
+                    )
+                try:
+                    raw_commit = json.loads(
+                        str(attempt["commit_payload_json"])
+                    )
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise RoomKernelFenceError(
+                        "workspace integration Worker Commit is corrupt"
+                    ) from exc
+                if not isinstance(raw_commit, Mapping):
+                    raise RoomKernelFenceError(
+                        "applied workspace integration lacks canonical authority"
+                    )
+                root_id = str(task.get("rootId") or "")
+                commit_id = str(attempt["commit_id"])
+                acceptance_candidate = (
+                    self._canonical_acceptance_authority_receipt_locked(
+                        conn,
+                        root_id=root_id,
+                        commit_id=commit_id,
+                    )
+                )
+                if acceptance_candidate is None or not (
+                    self._acceptance_commit_authority_valid_locked(
+                        conn,
+                        root_id=root_id,
+                        task_payload=task,
+                        dispatch=attempt,
+                        commit_id=commit_id,
+                        raw_commit=raw_commit,
+                        require_integration=None,
+                    )
+                ):
+                    raise RoomKernelFenceError(
+                        "applied workspace integration lost its Commit authority"
+                    )
+                (
+                    acceptance_receipt_row,
+                    acceptance_receipt,
+                    acceptance_authority,
+                ) = acceptance_candidate
+                successful_cleanup = str(
+                    result.get("cleanupState") or ""
+                ) in {"cleaned", "missing"}
+                exact_integration_projection = {
+                    "workspaceBindingId": task.get("workspaceBindingId"),
+                    "integrationRef": task.get("workspaceIntegrationRef"),
+                    "integrationPatchSha256": task.get(
+                        "workspaceIntegrationPatchSha256"
+                    ),
+                    "integratedRevision": task.get(
+                        "workspaceIntegratedRevision"
+                    ),
+                    "integratedSnapshotSha256": task.get(
+                        "workspaceIntegratedSnapshotSha256"
+                    ),
+                }
+                if any(
+                    result.get(key) != expected
+                    for key, expected in exact_integration_projection.items()
+                ):
+                    raise RoomKernelFenceError(
+                        "workspace cleanup retry changed its applied integration"
+                    )
+                if str(task.get("workspaceCleanupState") or "") in {
+                    "cleaned",
+                    "missing",
+                }:
+                    if not successful_cleanup or not (
+                        self._acceptance_commit_authority_valid_locked(
+                            conn,
+                            root_id=root_id,
+                            task_payload=task,
+                            dispatch=attempt,
+                            commit_id=commit_id,
+                            raw_commit=raw_commit,
+                        )
+                    ):
+                        raise RoomKernelFenceError(
+                            "applied workspace integration lacks canonical authority"
+                        )
+                    if any(
+                        result.get(source) != task.get(destination)
+                        for source, destination in {
+                            "workspaceLifecycleState": "workspaceLifecycleState",
+                            "cleanupState": "workspaceCleanupState",
+                            "attentionRequired": "workspaceAttentionRequired",
+                        }.items()
+                    ):
+                        raise RoomKernelFenceError(
+                            "workspace integration replay changed its cleanup outcome"
+                        )
+                    return task
+                pending_authority = (
+                    self._pending_workspace_integration_authority_locked(
+                        conn,
+                        root_id=root_id,
+                        task_payload=task,
+                        dispatch=attempt,
+                        commit_id=commit_id,
+                        raw_commit=raw_commit,
+                        acceptance_receipt_row=acceptance_receipt_row,
+                        acceptance_receipt=acceptance_receipt,
+                        acceptance_authority=acceptance_authority,
+                    )
+                )
+                if pending_authority is None:
+                    raise RoomKernelFenceError(
+                        "workspace cleanup retry lacks its pending integration authority"
+                    )
+                if not successful_cleanup:
+                    if any(
+                        result.get(source) != task.get(destination)
+                        for source, destination in {
+                            "workspaceLifecycleState": "workspaceLifecycleState",
+                            "cleanupState": "workspaceCleanupState",
+                            "attentionRequired": "workspaceAttentionRequired",
+                        }.items()
+                    ):
+                        raise RoomKernelFenceError(
+                            "workspace cleanup retry did not resolve attention"
+                        )
+                    return task
+                if self._workspace_integration_authority_candidates_locked(
+                    conn,
+                    root_id=root_id,
+                    task_id=task_id,
+                    receipt_kind="accepted",
+                    operation="room_integrate",
+                ):
+                    raise RoomKernelFenceError(
+                        "workspace cleanup retry found a duplicate success authority"
+                    )
+                task.update(
+                    {
+                        "workspaceLifecycleState": result.get(
+                            "workspaceLifecycleState"
+                        ),
+                        "workspaceCleanupState": result.get("cleanupState"),
+                        "workspaceAttentionRequired": result.get(
+                            "attentionRequired"
+                        ),
+                        "revision": int(task.get("revision") or 0) + 1,
+                    }
+                )
+                if result.get("reason") not in {None, ""}:
+                    task["workspaceTerminalReason"] = str(
+                        result.get("reason")
+                    )[:2_000]
+                validate_kernel_contract("roomTask", task)
+                integration_authority = (
+                    self._workspace_integration_authority_locked(
+                        task_payload=task,
+                        workspace_result=result,
+                        acceptance_receipt_row=acceptance_receipt_row,
+                        acceptance_receipt=acceptance_receipt,
+                        acceptance_authority=acceptance_authority,
+                    )
+                )
+                conn.execute(
+                    "UPDATE room_kernel_tasks SET payload_json=?,updated_at_ms=? "
+                    "WHERE task_id=?",
+                    (_json(task), int(now_ms), task_id),
+                )
+                root = self._root_row(conn, root_id)
+                self._receipt(
+                    conn,
+                    root_id=root_id,
+                    command_id=None,
+                    receipt_kind="accepted",
+                    status="applied",
+                    generation=int(root["generation"]),
+                    details={
+                        "operation": "room_integrate",
+                        "taskId": task_id,
+                        "integrationRef": integration_ref,
+                        "integrated": True,
+                        "workspaceLifecycleState": task.get(
+                            "workspaceLifecycleState"
+                        ),
+                        "workspaceCleanupState": task.get(
+                            "workspaceCleanupState"
+                        ),
+                        "integrationAuthority": integration_authority,
+                    },
+                    now_ms=now_ms,
+                )
                 return task
             if str(row["state"]) != "completed":
                 raise RoomKernelFenceError(
                     "workspace integration requires a completed child Task"
                 )
+            attempt = self._current_committed_task_attempt_locked(
+                conn,
+                root_id=str(task.get("rootId") or ""),
+                task_id=task_id,
+            )
+            if attempt is None:
+                raise RoomKernelFenceError(
+                    "workspace integration requires an authoritative Worker Commit"
+                )
+            try:
+                raw_commit = json.loads(str(attempt["commit_payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise RoomKernelFenceError(
+                    "workspace integration Worker Commit is corrupt"
+                ) from exc
+            if not isinstance(raw_commit, Mapping) or not (
+                self._acceptance_commit_authority_valid_locked(
+                    conn,
+                    root_id=str(task.get("rootId") or ""),
+                    task_payload=task,
+                    dispatch=attempt,
+                    commit_id=str(attempt["commit_id"]),
+                    raw_commit=raw_commit,
+                    require_integration=False,
+                )
+            ):
+                raise RoomKernelFenceError(
+                    "workspace integration requires canonical Worker Commit evidence"
+                )
+            acceptance_candidate = (
+                self._canonical_acceptance_authority_receipt_locked(
+                    conn,
+                    root_id=str(task.get("rootId") or ""),
+                    commit_id=str(attempt["commit_id"]),
+                )
+            )
+            if acceptance_candidate is None:
+                raise RoomKernelFenceError(
+                    "workspace integration lost its acceptance authority"
+                )
+            (
+                acceptance_receipt_row,
+                acceptance_receipt,
+                acceptance_authority,
+            ) = acceptance_candidate
             task.update(
                 {
-                    "workspaceIntegrationState": (
-                        "applied"
-                        if integrated or not workspace_result
-                        else "pending"
-                    ),
+                    "workspaceIntegrationState": "applied",
                     "workspaceIntegrationRef": _required(
                         integration_ref,
                         "integration_ref",
@@ -5415,10 +9841,508 @@ class RoomKernelStore:
                 value = result.get(source)
                 if value not in {None, ""}:
                     task[destination] = value
-            if result:
-                task["workspaceAttentionRequired"] = not integrated or str(
-                    result.get("cleanupState") or ""
-                ) not in {"cleaned", "missing"}
+            task["workspaceAttentionRequired"] = result.get(
+                "attentionRequired"
+            )
+            validate_kernel_contract("roomTask", task)
+            integration_authority = (
+                self._workspace_integration_authority_locked(
+                    task_payload=task,
+                    workspace_result=result,
+                    acceptance_receipt_row=acceptance_receipt_row,
+                    acceptance_receipt=acceptance_receipt,
+                    acceptance_authority=acceptance_authority,
+                )
+            )
+            conn.execute(
+                "UPDATE room_kernel_tasks SET payload_json=?,updated_at_ms=? "
+                "WHERE task_id=?",
+                (_json(task), int(now_ms), task_id),
+            )
+            root = self._root_row(conn, str(task["rootId"]))
+            successful_cleanup = str(
+                task.get("workspaceCleanupState") or ""
+            ) in {"cleaned", "missing"}
+            self._receipt(
+                conn,
+                root_id=str(task["rootId"]),
+                command_id=None,
+                receipt_kind=("accepted" if successful_cleanup else "rejected"),
+                status=("applied" if successful_cleanup else "rejected"),
+                generation=int(root["generation"]),
+                details={
+                    "operation": (
+                        "room_integrate"
+                        if successful_cleanup
+                        else "room_integrate_pending_cleanup"
+                    ),
+                    "taskId": task_id,
+                    "integrationRef": integration_ref,
+                    "integrated": True,
+                    "workspaceLifecycleState": task.get(
+                        "workspaceLifecycleState"
+                    ),
+                    "workspaceCleanupState": task.get(
+                        "workspaceCleanupState"
+                    ),
+                    "integrationAuthority": integration_authority,
+                },
+                now_ms=now_ms,
+            )
+            return task
+
+    @staticmethod
+    def _assert_workspace_integration_receipts(
+        conn: sqlite3.Connection,
+        *,
+        task: Mapping[str, object],
+        result: Mapping[str, object],
+        integration_ref: str,
+        require_binding_projection: bool = True,
+    ) -> None:
+        binding_id = _required(
+            result.get("workspaceBindingId"),
+            "workspace_binding_id",
+        )
+        if binding_id != str(task.get("workspaceBindingId") or ""):
+            raise RoomKernelFenceError(
+                "workspace integration result belongs to another binding"
+            )
+        if str(result.get("integrationRef") or "") != integration_ref:
+            raise RoomKernelFenceError(
+                "workspace integration result changed its integrationRef"
+            )
+        patch_sha256 = _required(
+            result.get("integrationPatchSha256"),
+            "integration_patch_sha256",
+        )
+        integrated_revision = _required(
+            result.get("integratedRevision"),
+            "integrated_revision",
+        )
+        integrated_snapshot = _required(
+            result.get("integratedSnapshotSha256"),
+            "integrated_snapshot_sha256",
+        )
+        for field, value in {
+            "integrationPatchSha256": patch_sha256,
+            "integratedSnapshotSha256": integrated_snapshot,
+        }.items():
+            if len(value) != 64 or any(
+                character not in "0123456789abcdef" for character in value
+            ):
+                raise RoomKernelFenceError(f"{field} is not a lowercase SHA-256")
+        cleanup_state = str(result.get("cleanupState") or "")
+        successful_cleanup = cleanup_state in {"cleaned", "missing"}
+        attention_required = result.get("attentionRequired")
+        if not isinstance(attention_required, bool) or (
+            attention_required is successful_cleanup
+        ):
+            raise RoomKernelFenceError(
+                "workspace cleanup state and attention flag are inconsistent"
+            )
+        receipt_fields = {
+            "delivery": (
+                "delivered",
+                "workspaceDeliveryReceiptId",
+                "workspaceDeliveryReceiptSha256",
+            ),
+            "source": (
+                "source_lease_revoked",
+                "workspaceSourceLeaseReceiptId",
+                "workspaceSourceLeaseReceiptSha256",
+            ),
+            "target": (
+                "target_applied",
+                "workspaceTargetAppliedReceiptId",
+                "workspaceTargetAppliedReceiptSha256",
+            ),
+            "integrated": (
+                "integrated",
+                "workspaceIntegratedReceiptId",
+                "workspaceIntegratedReceiptSha256",
+            ),
+            "cleanup": (
+                None,
+                "workspaceCleanupReceiptId",
+                "workspaceCleanupReceiptSha256",
+            ),
+        }
+        if successful_cleanup:
+            receipt_fields.update(
+                {
+                    "writer_quiescence": (
+                        "writer_quiescent",
+                        "workspaceWriterQuiescenceReceiptId",
+                        "workspaceWriterQuiescenceReceiptSha256",
+                    ),
+                    "quarantine": (
+                        "quarantined",
+                        "workspaceQuarantineReceiptId",
+                        "workspaceQuarantineReceiptSha256",
+                    ),
+                    "removal_authorization": (
+                        "cleanup_removal_authorized",
+                        "workspaceRemovalAuthorizationReceiptId",
+                        "workspaceRemovalAuthorizationReceiptSha256",
+                    ),
+                }
+            )
+        if cleanup_state == "cleaned":
+            receipt_fields["vault"] = (
+                "vaulted",
+                "workspaceVaultReceiptId",
+                "workspaceVaultReceiptSha256",
+            )
+        receipts: dict[str, tuple[sqlite3.Row, dict[str, object]]] = {}
+        for name, (expected_kind, id_field, sha_field) in receipt_fields.items():
+            receipt_id = _required(result.get(id_field), id_field)
+            receipt_sha256 = _required(result.get(sha_field), sha_field)
+            row = conn.execute(
+                """
+                SELECT * FROM room_workspace_events
+                WHERE event_id=? AND binding_id=?
+                """,
+                (receipt_id, binding_id),
+            ).fetchone()
+            if row is None:
+                raise RoomKernelFenceError(
+                    f"workspace {name} receipt is not in the durable ledger"
+                )
+            if (
+                expected_kind is not None
+                and str(row["event_kind"]) != expected_kind
+            ) or str(row["payload_sha256"]) != receipt_sha256:
+                raise RoomKernelFenceError(
+                    f"workspace {name} receipt kind or digest does not match"
+                )
+            payload = json.loads(str(row["payload_json"]))
+            if not isinstance(payload, dict):
+                raise RoomKernelFenceError(
+                    f"workspace {name} receipt payload is corrupt"
+                )
+            canonical_payload = _json(payload)
+            canonical_payload_sha256 = hashlib.sha256(
+                canonical_payload.encode("utf-8")
+            ).hexdigest()
+            workspace_event_material = "\0".join(
+                (
+                    "room-workspace-event",
+                    binding_id,
+                    str(row["sequence"]),
+                    str(row["event_kind"]),
+                    str(row["idempotency_key"]),
+                )
+            ).encode("utf-8")
+            canonical_event_id = "room-workspace-event:" + hashlib.sha256(
+                workspace_event_material
+            ).hexdigest()[:32]
+            if (
+                canonical_payload_sha256 != str(row["payload_sha256"])
+                or canonical_event_id != str(row["event_id"])
+            ):
+                raise RoomKernelFenceError(
+                    f"workspace {name} receipt is not canonical"
+                )
+            receipts[name] = (row, payload)
+        delivery_row, delivered_payload = receipts["delivery"]
+        source_row, source = receipts["source"]
+        target_row, target = receipts["target"]
+        integrated_row, integrated_payload = receipts["integrated"]
+        cleanup_row, cleanup = receipts["cleanup"]
+        expected_cleanup_kind = (
+            "cleaned" if cleanup_state in {"cleaned", "missing"} else "cleanup_failed"
+        )
+        if (
+            str(cleanup_row["event_kind"]) != expected_cleanup_kind
+            or str(cleanup.get("result") or "") != cleanup_state
+        ):
+            raise RoomKernelFenceError(
+                "workspace cleanup receipt does not match the projected cleanup state"
+            )
+        if any(
+            str(source.get(key) or "") != expected
+            for key, expected in {"patchSha256": patch_sha256}.items()
+        ):
+            raise RoomKernelFenceError(
+                "workspace source receipt does not match the integration patch"
+            )
+        if any(
+            str(target.get(key) or "") != str(expected)
+            for key, expected in {
+                "patchSha256": patch_sha256,
+                "sourceLeaseReceiptId": source_row["event_id"],
+                "sourceLeaseReceiptSha256": source_row["payload_sha256"],
+            }.items()
+        ):
+            raise RoomKernelFenceError(
+                "workspace target receipt is not bound to its source receipt"
+            )
+        if any(
+            str(integrated_payload.get(key) or "") != str(expected)
+            for key, expected in {
+                "integrationRef": integration_ref,
+                "patchSha256": patch_sha256,
+                "integratedRevision": integrated_revision,
+                "integratedSnapshotSha256": integrated_snapshot,
+                "sourceLeaseReceiptId": source_row["event_id"],
+                "sourceLeaseReceiptSha256": source_row["payload_sha256"],
+                "targetAppliedReceiptId": target_row["event_id"],
+                "targetAppliedReceiptSha256": target_row["payload_sha256"],
+            }.items()
+        ):
+            raise RoomKernelFenceError(
+                "workspace integrated receipt chain is incomplete or mismatched"
+            )
+        binding = conn.execute(
+            "SELECT * FROM room_workspace_bindings WHERE binding_id=?",
+            (binding_id,),
+        ).fetchone()
+        if binding is None:
+            raise RoomKernelFenceError(
+                "workspace integration binding is missing from the durable ledger"
+            )
+        delivery = task.get("workspaceDelivery")
+        if not isinstance(delivery, Mapping):
+            raise RoomKernelFenceError(
+                "workspace integration Task has no delivered evidence"
+            )
+        delivery_rows = conn.execute(
+            """SELECT * FROM room_workspace_events
+               WHERE binding_id=? AND event_kind='delivered'
+               ORDER BY sequence,event_id""",
+            (binding_id,),
+        ).fetchall()
+        matching_deliveries: list[sqlite3.Row] = []
+        expected_delivery = {
+            "deliveryRevision": task.get("workspaceDeliveryRevision"),
+            "deliveryHead": task.get("workspaceDeliveryHead"),
+            "workspaceSnapshotSha256": task.get(
+                "workspaceDeliverySnapshotSha256"
+            ),
+            "patchSha256": delivery.get("patchSha256"),
+            "manifestSha256": delivery.get("manifestSha256"),
+        }
+        for candidate in delivery_rows:
+            try:
+                candidate_payload = json.loads(
+                    str(candidate["payload_json"])
+                )
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise RoomKernelFenceError(
+                    "workspace delivered receipt payload is corrupt"
+                ) from exc
+            if not isinstance(candidate_payload, Mapping):
+                raise RoomKernelFenceError(
+                    "workspace delivered receipt payload is corrupt"
+                )
+            canonical_payload = _json(dict(candidate_payload))
+            event_material = "\0".join(
+                (
+                    "room-workspace-event",
+                    binding_id,
+                    str(candidate["sequence"]),
+                    str(candidate["event_kind"]),
+                    str(candidate["idempotency_key"]),
+                )
+            ).encode("utf-8")
+            if (
+                hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
+                != str(candidate["payload_sha256"])
+                or "room-workspace-event:"
+                + hashlib.sha256(event_material).hexdigest()[:32]
+                != str(candidate["event_id"])
+            ):
+                raise RoomKernelFenceError(
+                    "workspace delivery receipt is not canonical"
+                )
+            if all(
+                str(candidate_payload.get(key) or "")
+                == str(expected or "")
+                for key, expected in expected_delivery.items()
+            ):
+                matching_deliveries.append(candidate)
+        if (
+            len(matching_deliveries) != 1
+            or str(matching_deliveries[0]["event_id"])
+            != str(delivery_row["event_id"])
+            or any(
+            str(delivered_payload.get(key) or "") != str(expected or "")
+                for key, expected in expected_delivery.items()
+            )
+        ):
+            raise RoomKernelFenceError(
+                "workspace Task delivery does not have one exact durable receipt"
+            )
+        if successful_cleanup:
+            writer_row, writer = receipts["writer_quiescence"]
+            quarantine_row, quarantine = receipts["quarantine"]
+            removal_row, removal = receipts["removal_authorization"]
+            if any(
+                str(writer.get(key) or "") != str(expected)
+                for key, expected in {
+                    "workspaceBindingId": binding_id,
+                    "rootId": task.get("rootId"),
+                    "taskId": task.get("taskId"),
+                    "dispatchId": binding["dispatch_id"],
+                    "sourceLeaseReceiptId": source_row["event_id"],
+                    "sourceLeaseReceiptSha256": source_row["payload_sha256"],
+                    "integratedReceiptId": integrated_row["event_id"],
+                    "integratedReceiptSha256": integrated_row["payload_sha256"],
+                }.items()
+            ):
+                raise RoomKernelFenceError(
+                    "workspace writer-quiescence receipt is outside the exact integration lineage"
+                )
+            source_content = str(source.get("workspaceContentSha256") or "")
+            if any(
+                str(quarantine.get(key) or "") != str(expected)
+                for key, expected in {
+                    "authorityKind": "integration",
+                    "workspaceContentSha256": source_content,
+                    "targetSnapshotSha256": integrated_snapshot,
+                    "sourceLeaseReceiptId": source_row["event_id"],
+                    "sourceLeaseReceiptSha256": source_row["payload_sha256"],
+                    "integratedReceiptId": integrated_row["event_id"],
+                    "integratedReceiptSha256": integrated_row["payload_sha256"],
+                    "writerQuiescenceReceiptId": writer_row["event_id"],
+                    "writerQuiescenceReceiptSha256": writer_row["payload_sha256"],
+                }.items()
+            ):
+                raise RoomKernelFenceError(
+                    "workspace quarantine receipt is outside the exact integration lineage"
+                )
+            if any(
+                str(removal.get(key) or "") != str(expected)
+                for key, expected in {
+                    "workspaceContentSha256": source_content,
+                    "targetSnapshotSha256": integrated_snapshot,
+                    "quarantineReceiptId": quarantine_row["event_id"],
+                    "quarantineReceiptSha256": quarantine_row["payload_sha256"],
+                    "writerQuiescenceReceiptId": writer_row["event_id"],
+                    "writerQuiescenceReceiptSha256": writer_row["payload_sha256"],
+                }.items()
+            ):
+                raise RoomKernelFenceError(
+                    "workspace removal authorization is outside the exact integration lineage"
+                )
+            if any(
+                str(cleanup.get(key) or "") != str(expected)
+                for key, expected in {
+                    "removalAuthorizationReceiptId": removal_row["event_id"],
+                    "removalAuthorizationReceiptSha256": removal_row["payload_sha256"],
+                    "quarantineReceiptId": quarantine_row["event_id"],
+                    "quarantineReceiptSha256": quarantine_row["payload_sha256"],
+                    "writerQuiescenceReceiptId": writer_row["event_id"],
+                    "writerQuiescenceReceiptSha256": writer_row["payload_sha256"],
+                }.items()
+            ):
+                raise RoomKernelFenceError(
+                    "workspace cleanup receipt is outside the exact removal lineage"
+                )
+        if cleanup_state == "cleaned":
+            vault_row, vault = receipts["vault"]
+            removal_row, removal = receipts["removal_authorization"]
+            if any(
+                str(vault.get(key) or "") != str(expected)
+                for key, expected in {
+                    "removalAuthorizationReceiptId": removal_row["event_id"],
+                    "removalAuthorizationReceiptSha256": removal_row[
+                        "payload_sha256"
+                    ],
+                    "rootId": task.get("rootId"),
+                    "taskId": task.get("taskId"),
+                }.items()
+            ):
+                raise RoomKernelFenceError(
+                    "workspace vault receipt is outside the exact removal lineage"
+                )
+            if any(
+                str(cleanup.get(key) or "") != str(expected)
+                for key, expected in {
+                    "vaultReceiptId": vault_row["event_id"],
+                    "vaultReceiptSha256": vault_row["payload_sha256"],
+                    "vaultWorkspaceRoot": vault.get("vaultWorkspaceRoot"),
+                    "vaultContentSha256": vault.get("vaultContentSha256"),
+                }.items()
+            ):
+                raise RoomKernelFenceError(
+                    "workspace cleanup receipt is outside the exact vault lineage"
+                )
+        if require_binding_projection and any(
+            str(binding[column]) != expected
+            for column, expected in {
+                "integration_ref": integration_ref,
+                "integration_patch_sha256": patch_sha256,
+                "integrated_revision": integrated_revision,
+                "integrated_snapshot_sha256": integrated_snapshot,
+                "state": str(result.get("workspaceLifecycleState") or ""),
+                "cleanup_state": cleanup_state,
+            }.items()
+        ):
+            raise RoomKernelFenceError(
+                "workspace binding projection does not match its receipt chain"
+            )
+
+    def record_workspace_integration_failure(
+        self,
+        task_id: str,
+        *,
+        integration_ref: str,
+        workspace_result: Mapping[str, object],
+        now_ms: int,
+    ) -> dict[str, object]:
+        """Project retained/conflict evidence without granting applied authority."""
+
+        if workspace_result.get("integrated") is not False:
+            raise RoomKernelFenceError(
+                "workspace integration failure requires integrated=false"
+            )
+        with self._connect(immediate=True) as conn:
+            row = conn.execute(
+                "SELECT payload_json,state FROM room_kernel_tasks WHERE task_id=?",
+                (_required(task_id, "task_id"),),
+            ).fetchone()
+            if row is None:
+                raise KeyError(task_id)
+            task = json.loads(str(row["payload_json"]))
+            if (
+                task.get("workspacePolicy") != "isolated_writable"
+                or str(row["state"]) != "completed"
+            ):
+                raise RoomKernelFenceError(
+                    "workspace integration failure requires a completed isolated Task"
+                )
+            binding_id = _required(
+                workspace_result.get("workspaceBindingId"),
+                "workspace_binding_id",
+            )
+            if binding_id != str(task.get("workspaceBindingId") or ""):
+                raise RoomKernelFenceError(
+                    "workspace integration failure belongs to another binding"
+                )
+            task.update(
+                {
+                    "workspaceIntegrationState": "pending",
+                    "workspaceIntegrationRef": _required(
+                        integration_ref,
+                        "integration_ref",
+                    ),
+                    "workspaceLifecycleState": str(
+                        workspace_result.get("workspaceLifecycleState")
+                        or "retained"
+                    ),
+                    "workspaceCleanupState": str(
+                        workspace_result.get("cleanupState") or "retained"
+                    ),
+                    "workspaceTerminalReason": str(
+                        workspace_result.get("reason") or ""
+                    )[:2000],
+                    "workspaceAttentionRequired": True,
+                    "revision": int(task.get("revision") or 0) + 1,
+                    "state": "completed",
+                }
+            )
             validate_kernel_contract("roomTask", task)
             conn.execute(
                 "UPDATE room_kernel_tasks SET payload_json=?,updated_at_ms=? "
@@ -5430,20 +10354,15 @@ class RoomKernelStore:
                 conn,
                 root_id=str(task["rootId"]),
                 command_id=None,
-                receipt_kind="accepted",
-                status="applied",
+                receipt_kind="rejected",
+                status="rejected",
                 generation=int(root["generation"]),
                 details={
                     "operation": "room_integrate",
                     "taskId": task_id,
                     "integrationRef": integration_ref,
-                    "integrated": integrated or not workspace_result,
-                    "workspaceLifecycleState": task.get(
-                        "workspaceLifecycleState"
-                    ),
-                    "workspaceCleanupState": task.get(
-                        "workspaceCleanupState"
-                    ),
+                    "integrated": False,
+                    "workspaceBindingId": binding_id,
                 },
                 now_ms=now_ms,
             )
@@ -5773,7 +10692,7 @@ class RoomKernelStore:
             row = conn.execute("SELECT payload_json FROM room_kernel_commits WHERE commit_id = ?", (commit_id,)).fetchone()
             if row is None:
                 raise KeyError(commit_id)
-            return json.loads(str(row["payload_json"]))
+            return _room_commit_payload(conn, row["payload_json"])
 
     @staticmethod
     def _review_target_revision_locked(
@@ -5845,6 +10764,7 @@ class RoomKernelStore:
                     JOIN room_kernel_dispatches dispatch
                       ON dispatch.dispatch_id = c.dispatch_id
                     WHERE dispatch.task_id = ?
+                      AND dispatch.intent_kind IN ('execute','revise','retry')
                       AND (? IS NULL OR c.created_at_ms <= ?)
                     ORDER BY c.created_at_ms DESC, c.commit_id DESC
                     LIMIT 1
@@ -5937,12 +10857,12 @@ class RoomKernelStore:
             )
 
     @staticmethod
-    def _latest_review_attempt_locked(
+    def _review_attempt_candidates_locked(
         conn: sqlite3.Connection,
         *,
         root_id: str,
-    ) -> dict[str, object] | None:
-        """Resolve the newest durable attempt for the authoritative review Task.
+    ) -> list[dict[str, object]]:
+        """Load each Review Task's exact newest review/resume attempt.
 
         A resumed review keeps the same Task identity but is dispatched with
         ``intentKind=resume``.  The attempt, its public-result bit, and its
@@ -5999,69 +10919,141 @@ class RoomKernelStore:
                     "payload": dict(payload),
                     "updatedAtMs": int(task_row["updated_at_ms"] or 0),
                     "dispatchRow": dispatch_row,
+                    "reviewOfTaskIds": sorted(
+                        {
+                            str(value).strip()
+                            for value in payload.get(
+                                "reviewOfTaskIds",
+                                (),
+                            )
+                            if str(value or "").strip()
+                        }
+                    ),
                 }
             )
-        if not candidates:
-            return None
-        candidate = max(
-            candidates,
-            key=lambda value: (
+        attempts: list[dict[str, object]] = []
+        for candidate in candidates:
+            dispatch_row = candidate["dispatchRow"]
+            dispatch_payload = (
+                _dispatch_payload(dispatch_row)
+                if isinstance(dispatch_row, sqlite3.Row)
+                else None
+            )
+            commit_payload: dict[str, object] | None = None
+            commit_id: str | None = None
+            result_public = False
+            if dispatch_row is not None:
+                commit_row = conn.execute(
+                    """SELECT commit_id,payload_json
+                       FROM room_kernel_commits
+                       WHERE root_id=? AND dispatch_id=?""",
+                    (root_id, str(dispatch_row["dispatch_id"])),
+                ).fetchone()
+                if commit_row is not None:
+                    decoded_commit = _room_commit_payload(
+                        conn,
+                        commit_row["payload_json"],
+                    )
+                    if not isinstance(decoded_commit, dict):
+                        raise RoomKernelFenceError(
+                            "review Dispatch Commit payload is corrupt"
+                        )
+                    commit_payload = decoded_commit
+                    commit_id = str(commit_row["commit_id"])
+                    if str(dispatch_row["state"]) == "committed":
+                        result_public = (
+                            RoomKernelStore._commit_result_is_public(
+                                conn,
+                                commit_id,
+                                payload=decoded_commit,
+                            )
+                        )
+            payload = dict(candidate["payload"])
+            authority_rank = (
+                max(1, int(payload.get("reviewRound") or 1)),
+                int(payload.get("revision") or 0),
                 max(
-                    int(value["updatedAtMs"]),
+                    int(candidate["updatedAtMs"]),
                     (
-                        int(value["dispatchRow"]["updated_at_ms"] or 0)
-                        if value["dispatchRow"] is not None
+                        int(dispatch_row["updated_at_ms"] or 0)
+                        if dispatch_row is not None
                         else 0
                     ),
                     (
-                        int(value["dispatchRow"]["created_at_ms"] or 0)
-                        if value["dispatchRow"] is not None
+                        int(dispatch_row["created_at_ms"] or 0)
+                        if dispatch_row is not None
                         else 0
                     ),
                 ),
-                str(value["taskId"]),
-            ),
+                str(candidate["taskId"]),
+            )
+            attempts.append(
+                {
+                    "taskId": str(candidate["taskId"]),
+                    "taskState": str(candidate["taskState"]),
+                    "payload": payload,
+                    "updatedAtMs": int(candidate["updatedAtMs"]),
+                    "dispatch": dispatch_payload,
+                    "commit": commit_payload,
+                    "commitId": commit_id,
+                    "resultPublic": result_public,
+                    "reviewOfTaskIds": list(
+                        candidate["reviewOfTaskIds"]
+                    ),
+                    "_authorityRank": authority_rank,
+                }
+            )
+        return attempts
+
+    @staticmethod
+    def _latest_review_attempts_locked(
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+    ) -> list[dict[str, object]]:
+        """Resolve one latest Review attempt per reviewed Task lineage."""
+
+        candidates = RoomKernelStore._review_attempt_candidates_locked(
+            conn,
+            root_id=root_id,
         )
-        dispatch_row = candidate["dispatchRow"]
-        dispatch_payload = (
-            _dispatch_payload(dispatch_row)
-            if isinstance(dispatch_row, sqlite3.Row)
-            else None
+        latest_by_reviewed_task: dict[str, dict[str, object]] = {}
+        for candidate in candidates:
+            lineage_ids = candidate.get("reviewOfTaskIds")
+            if not isinstance(lineage_ids, list) or not lineage_ids:
+                lineage_ids = [f"review-task:{candidate['taskId']}"]
+            for reviewed_task_id in lineage_ids:
+                key = str(reviewed_task_id)
+                current = latest_by_reviewed_task.get(key)
+                if current is None or tuple(
+                    candidate["_authorityRank"]
+                ) > tuple(current["_authorityRank"]):
+                    latest_by_reviewed_task[key] = candidate
+        selected: dict[tuple[str, str], dict[str, object]] = {}
+        for candidate in latest_by_reviewed_task.values():
+            dispatch = candidate.get("dispatch")
+            dispatch_id = (
+                str(dispatch.get("dispatchId") or "")
+                if isinstance(dispatch, Mapping)
+                else ""
+            )
+            selected[(str(candidate["taskId"]), dispatch_id)] = candidate
+        return sorted(
+            selected.values(),
+            key=lambda value: tuple(value["_authorityRank"]),
         )
-        commit_payload: dict[str, object] | None = None
-        commit_id: str | None = None
-        result_public = False
-        if dispatch_row is not None:
-            commit_row = conn.execute(
-                """SELECT commit_id,payload_json
-                   FROM room_kernel_commits
-                   WHERE root_id=? AND dispatch_id=?""",
-                (root_id, str(dispatch_row["dispatch_id"])),
-            ).fetchone()
-            if commit_row is not None:
-                decoded_commit = json.loads(str(commit_row["payload_json"]))
-                if not isinstance(decoded_commit, dict):
-                    raise RoomKernelFenceError(
-                        "review Dispatch Commit payload is corrupt"
-                    )
-                commit_payload = decoded_commit
-                commit_id = str(commit_row["commit_id"])
-                if str(dispatch_row["state"]) == "committed":
-                    result_public = RoomKernelStore._commit_result_is_public(
-                        conn,
-                        commit_id,
-                        payload=decoded_commit,
-                    )
-        return {
-            "taskId": str(candidate["taskId"]),
-            "taskState": str(candidate["taskState"]),
-            "payload": dict(candidate["payload"]),
-            "updatedAtMs": int(candidate["updatedAtMs"]),
-            "dispatch": dispatch_payload,
-            "commit": commit_payload,
-            "commitId": commit_id,
-            "resultPublic": result_public,
-        }
+
+    @staticmethod
+    def _latest_review_attempt_locked(
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+    ) -> dict[str, object] | None:
+        attempts = RoomKernelStore._latest_review_attempts_locked(
+            conn,
+            root_id=root_id,
+        )
+        return attempts[-1] if attempts else None
 
     def latest_review_attempt(
         self,
@@ -6070,10 +11062,37 @@ class RoomKernelStore:
         """Return the newest review/resume Dispatch and its exact Commit."""
 
         with self._connect() as conn:
-            return self._latest_review_attempt_locked(
+            attempt = self._latest_review_attempt_locked(
                 conn,
                 root_id=root_id,
             )
+        if attempt is None:
+            return None
+        return {
+            key: value
+            for key, value in attempt.items()
+            if not key.startswith("_")
+        }
+
+    def latest_review_attempts(
+        self,
+        root_id: str,
+    ) -> list[dict[str, object]]:
+        """Return one authoritative Review attempt per reviewed Task."""
+
+        with self._connect() as conn:
+            attempts = self._latest_review_attempts_locked(
+                conn,
+                root_id=root_id,
+            )
+        return [
+            {
+                key: value
+                for key, value in attempt.items()
+                if not key.startswith("_")
+            }
+            for attempt in attempts
+        ]
 
     def latest_task_commit(self, task_id: str) -> dict[str, object] | None:
         """Return the newest durable Commit produced for one Task."""
@@ -6091,12 +11110,9 @@ class RoomKernelStore:
                 """,
                 (_required(task_id, "task_id"),),
             ).fetchone()
-        if row is None:
-            return None
-        payload = json.loads(str(row["payload_json"]))
-        if not isinstance(payload, dict):
-            raise RoomKernelFenceError("Room Task Commit payload is corrupt")
-        return payload
+            if row is None:
+                return None
+            return _room_commit_payload(conn, row["payload_json"])
 
     def post_for_dispatch(
         self,
@@ -6119,6 +11135,388 @@ class RoomKernelStore:
                 return payload
         return None
 
+    @classmethod
+    def _dispatch_acceptance_scope_locked(
+        cls,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        dispatch: sqlite3.Row,
+        dispatch_payload: Mapping[str, object],
+    ) -> tuple[bool, set[str]]:
+        rows = conn.execute(
+            """SELECT * FROM room_kernel_receipts
+               WHERE root_id=? AND receipt_kind='accepted'
+               ORDER BY created_at_ms,receipt_id""",
+            (root_id,),
+        ).fetchall()
+        candidates: list[tuple[sqlite3.Row, Mapping[str, object]]] = []
+        for row in rows:
+            try:
+                receipt = json.loads(str(row["payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(receipt, Mapping):
+                continue
+            details = receipt.get("details")
+            if (
+                isinstance(details, Mapping)
+                and details.get("purpose")
+                == "dispatch_acceptance_scope"
+                and str(details.get("dispatchId") or "")
+                == str(dispatch["dispatch_id"])
+            ):
+                candidates.append((row, receipt))
+        if len(candidates) != 1:
+            return False, set()
+        row, receipt = candidates[0]
+        if not cls._kernel_receipt_row_is_canonical_locked(row, receipt):
+            return False, set()
+        details = receipt.get("details")
+        if not isinstance(details, Mapping):
+            return False, set()
+        criteria = _criteria(details.get("acceptanceCriterionIds"))
+        valid = bool(
+            str(receipt.get("rootId") or "") == root_id
+            and str(details.get("taskId") or "")
+            == str(dispatch["task_id"])
+            and str(details.get("intentKind") or "")
+            == str(dispatch["intent_kind"])
+            and int(details.get("attempt") or 0)
+            == int(dispatch_payload.get("attempt") or 0)
+            and int(receipt.get("generation") or 0)
+            == int(dispatch["generation"])
+            and criteria
+        )
+        return valid, criteria if valid else set()
+
+    @classmethod
+    def _acceptance_evidence_owner_tasks_locked(
+        cls,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+    ) -> dict[str, str]:
+        """Return the Task that owns fresh evidence after a retry/revision.
+
+        A ``revise`` handoff creates a new Task instead of another attempt on
+        the original Task.  Selecting the latest attempt *per Task* therefore
+        is not enough: without this criterion-level supersession, the parent
+        Task's accepted evidence remains usable while the revision is pending
+        or even after it fails.  The newest explicit retry/revision wave owns
+        every criterion it covers until that exact Task produces a current
+        Commit (and, when applicable, an integrated workspace revision).
+        """
+
+        rows = conn.execute(
+            """SELECT d.rowid AS dispatch_sequence,d.*
+               FROM room_kernel_dispatches d
+               WHERE d.root_id=?
+               ORDER BY d.created_at_ms,d.updated_at_ms,d.dispatch_id""",
+            (_required(root_id, "root_id"),),
+        ).fetchall()
+        owners: dict[
+            str,
+            tuple[tuple[int, int, int, int, int, str], str],
+        ] = {}
+        root = cls._root_row(conn, _required(root_id, "root_id"))
+        root_criteria = _criteria(
+            json.loads(str(root["acceptance_criteria_json"]))
+        )
+        for row in rows:
+            try:
+                dispatch_payload = json.loads(str(row["payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(dispatch_payload, Mapping):
+                continue
+            attempt = int(dispatch_payload.get("attempt") or 0)
+            intent = str(row["intent_kind"] or "")
+            if intent not in {"revise", "retry"} and attempt <= 1:
+                continue
+            scope_valid, scope_criteria = (
+                cls._dispatch_acceptance_scope_locked(
+                    conn,
+                    root_id=root_id,
+                    dispatch=row,
+                    dispatch_payload=dispatch_payload,
+                )
+            )
+            # A missing/corrupt immutable scope must invalidate more evidence,
+            # never less.  Conservatively take ownership of every Root AC.
+            effective_criteria = (
+                scope_criteria if scope_valid else root_criteria
+            )
+            rank = (
+                # Task revisions are local to one Task identity.  A newly
+                # created revise child can legitimately start at revision 0
+                # after an older sibling reached revision 9, so durable
+                # insertion chronology must decide cross-Task supersession.
+                int(row["dispatch_sequence"] or 0),
+                int(row["created_at_ms"] or 0),
+                int(dispatch_payload.get("capabilityEpoch") or 0),
+                attempt,
+                int(row["updated_at_ms"] or 0),
+                str(row["dispatch_id"]),
+            )
+            for criterion_id in effective_criteria:
+                current = owners.get(criterion_id)
+                if current is None or rank > current[0]:
+                    owners[criterion_id] = (
+                        rank,
+                        str(row["task_id"]),
+                    )
+        return {
+            criterion_id: owner_task_id
+            for criterion_id, (_rank, owner_task_id) in owners.items()
+        }
+
+    @staticmethod
+    def _prior_acceptance_evidence_refs_locked(
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        exclude_dispatch_id: str,
+    ) -> dict[str, set[str]]:
+        """Collect evidence already spent before a new evidence wave."""
+
+        rows = conn.execute(
+            """SELECT c.payload_json
+               FROM room_kernel_commits c
+               JOIN room_kernel_dispatches d ON d.dispatch_id=c.dispatch_id
+               WHERE c.root_id=? AND d.dispatch_id!=?
+               ORDER BY c.created_at_ms,c.commit_id""",
+            (
+                _required(root_id, "root_id"),
+                _required(exclude_dispatch_id, "exclude_dispatch_id"),
+            ),
+        ).fetchall()
+        stale: dict[str, set[str]] = {}
+        for row in rows:
+            try:
+                payload = _room_commit_payload(conn, row["payload_json"])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            gate = payload.get("qualityGateReceipt")
+            if not isinstance(gate, Mapping):
+                continue
+            for item in gate.get("items") or ():
+                if not isinstance(item, Mapping) or item.get("status") != "pass":
+                    continue
+                criterion_id = str(item.get("criterionId") or "").strip()
+                if not criterion_id:
+                    continue
+                stale.setdefault(criterion_id, set()).update(
+                    str(value).strip()
+                    for value in item.get("evidenceRefs") or ()
+                    if str(value or "").strip()
+                )
+        return stale
+
+    @classmethod
+    def _authoritative_acceptance_commit_payloads_locked(
+        cls,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+    ) -> list[dict[str, object]]:
+        """Select current-attempt evidence under criterion supersession."""
+
+        evidence_owners = (
+            cls._acceptance_evidence_owner_tasks_locked(
+                conn,
+                root_id=root_id,
+            )
+        )
+        task_rows = conn.execute(
+            """SELECT task_id,state,payload_json
+               FROM room_kernel_tasks WHERE root_id=?
+               ORDER BY task_id""",
+            (root_id,),
+        ).fetchall()
+        selected: list[
+            tuple[int, str, str, dict[str, object], dict[str, object]]
+        ] = []
+        for task_row in task_rows:
+            try:
+                task_payload = json.loads(str(task_row["payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(task_payload, Mapping):
+                continue
+            task_kind = str(task_payload.get("taskKind") or "work")
+            if task_kind == "report" or str(task_row["state"]) != "completed":
+                continue
+            if (
+                task_payload.get("workspacePolicy") == "isolated_writable"
+                and (
+                    task_payload.get("workspaceIntegrationState") != "applied"
+                    or not str(
+                        task_payload.get("workspaceIntegrationRef") or ""
+                    ).strip()
+                )
+            ):
+                continue
+            if task_kind == "review":
+                if task_payload.get("reviewState") not in {
+                    "accepted",
+                    "accepted_with_notes",
+                }:
+                    continue
+                target_ids = [
+                    str(value)
+                    for value in task_payload.get("reviewOfTaskIds", ())
+                    if str(value or "").strip()
+                ]
+                try:
+                    current_revision = (
+                        RoomKernelStore._review_target_revision_locked(
+                            conn,
+                            root_id=root_id,
+                            task_ids=target_ids,
+                            review_snapshot=task_payload,
+                        )
+                    )
+                except (
+                    RoomKernelFenceError,
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                ):
+                    continue
+                if current_revision != str(
+                    task_payload.get("reviewTargetRevision") or ""
+                ):
+                    continue
+            dispatch_rows = conn.execute(
+                """SELECT d.*,c.commit_id,c.payload_json AS commit_payload_json,
+                          c.created_at_ms AS commit_created_at_ms
+                   FROM room_kernel_dispatches d
+                   LEFT JOIN room_kernel_commits c
+                     ON c.dispatch_id=d.dispatch_id
+                   WHERE d.root_id=? AND d.task_id=?
+                     AND d.intent_kind!='close'
+                   ORDER BY d.updated_at_ms,d.created_at_ms,d.dispatch_id""",
+                (root_id, str(task_row["task_id"])),
+            ).fetchall()
+            if not dispatch_rows:
+                continue
+
+            def authority_rank(row: sqlite3.Row) -> tuple[int, int, int, str]:
+                try:
+                    dispatch_payload = json.loads(str(row["payload_json"]))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    dispatch_payload = {}
+                return (
+                    int(
+                        dispatch_payload.get("attempt") or 0
+                        if isinstance(dispatch_payload, Mapping)
+                        else 0
+                    ),
+                    int(row["updated_at_ms"] or 0),
+                    int(row["created_at_ms"] or 0),
+                    str(row["dispatch_id"]),
+                )
+
+            dispatch = max(dispatch_rows, key=authority_rank)
+            if (
+                str(dispatch["state"]) != "committed"
+                or dispatch["commit_id"] is None
+                or dispatch["commit_payload_json"] is None
+            ):
+                continue
+            try:
+                raw_commit = json.loads(
+                    str(dispatch["commit_payload_json"])
+                )
+                if not isinstance(raw_commit, Mapping):
+                    continue
+                commit_payload = _room_commit_payload(
+                    conn,
+                    dispatch["commit_payload_json"],
+                )
+            except (
+                TypeError,
+                ValueError,
+                json.JSONDecodeError,
+                RoomKernelFenceError,
+            ):
+                continue
+            if not cls._acceptance_commit_authority_valid_locked(
+                conn,
+                root_id=root_id,
+                task_payload=task_payload,
+                dispatch=dispatch,
+                commit_id=str(dispatch["commit_id"]),
+                raw_commit=raw_commit,
+            ):
+                continue
+            selected.append(
+                (
+                    int(dispatch["commit_created_at_ms"] or 0),
+                    str(dispatch["commit_id"]),
+                    str(task_row["task_id"]),
+                    dict(task_payload),
+                    commit_payload,
+                )
+            )
+        authoritative: list[dict[str, object]] = []
+        for (
+            _created_at_ms,
+            _commit_id,
+            task_id,
+            task_payload,
+            payload,
+        ) in sorted(selected):
+            gate = payload.get("qualityGateReceipt")
+            if not isinstance(gate, Mapping):
+                authoritative.append(payload)
+                continue
+            task_kind = str(task_payload.get("taskKind") or "work")
+            review_targets = {
+                str(value).strip()
+                for value in task_payload.get("reviewOfTaskIds", ())
+                if str(value or "").strip()
+            }
+            items: list[dict[str, object]] = []
+            allowed_refs: list[str] = []
+            allowed_criteria: list[str] = []
+            for item in gate.get("items") or ():
+                if not isinstance(item, Mapping):
+                    continue
+                criterion_id = str(item.get("criterionId") or "").strip()
+                owner_task_id = evidence_owners.get(criterion_id)
+                allowed = (
+                    owner_task_id is None
+                    or task_id == owner_task_id
+                    or (
+                        task_kind == "review"
+                        and owner_task_id in review_targets
+                    )
+                )
+                if not allowed:
+                    continue
+                copied = dict(item)
+                items.append(copied)
+                if copied.get("status") == "pass":
+                    allowed_criteria.append(criterion_id)
+                    allowed_refs.extend(
+                        str(value).strip()
+                        for value in copied.get("evidenceRefs") or ()
+                        if str(value or "").strip()
+                    )
+            authoritative.append(
+                {
+                    **payload,
+                    "qualityGateReceipt": {**dict(gate), "items": items},
+                    "evidenceRefs": list(dict.fromkeys(allowed_refs)),
+                    "requirementCoverage": list(
+                        dict.fromkeys(allowed_criteria)
+                    ),
+                }
+            )
+        return authoritative
+
     @staticmethod
     def _acceptance_evidence(
         conn: sqlite3.Connection,
@@ -6135,12 +11533,14 @@ class RoomKernelStore:
         proven: dict[str, set[str]] = {}
         if not criteria:
             return proven
-        rows = conn.execute(
-            "SELECT payload_json FROM room_kernel_commits WHERE root_id = ?",
-            (root_id,),
-        ).fetchall()
-        for row in rows:
-            gate = json.loads(str(row["payload_json"])).get("qualityGateReceipt")
+        payloads = (
+            RoomKernelStore._authoritative_acceptance_commit_payloads_locked(
+                conn,
+                root_id=root_id,
+            )
+        )
+        for payload in payloads:
+            gate = payload.get("qualityGateReceipt")
             if not isinstance(gate, Mapping):
                 continue
             for item in gate.get("items") or []:
@@ -6174,35 +11574,31 @@ class RoomKernelStore:
                 if str(value).strip()
             ]
             accepted_criteria = set(criterion_order)
-            rows = conn.execute(
-                """SELECT payload_json
-                   FROM room_kernel_commits
-                   WHERE root_id = ?
-                   ORDER BY created_at_ms, commit_id""",
-                (root_id,),
-            ).fetchall()
-        collected: dict[str, list[str]] = {}
-        for row in rows:
-            payload = json.loads(str(row["payload_json"]))
-            gate = payload.get("qualityGateReceipt")
-            if not isinstance(gate, Mapping):
-                continue
-            for item in gate.get("items") or []:
-                if (
-                    not isinstance(item, Mapping)
-                    or item.get("status") != "pass"
-                ):
+            payloads = self._authoritative_acceptance_commit_payloads_locked(
+                conn,
+                root_id=root_id,
+            )
+            collected: dict[str, list[str]] = {}
+            for payload in payloads:
+                gate = payload.get("qualityGateReceipt")
+                if not isinstance(gate, Mapping):
                     continue
-                criterion_id = str(item.get("criterionId") or "").strip()
-                if criterion_id not in accepted_criteria:
-                    continue
-                target = collected.setdefault(criterion_id, [])
-                for raw_ref in item.get("evidenceRefs") or []:
-                    evidence_ref = str(raw_ref or "").strip()
-                    if evidence_ref and evidence_ref not in target:
-                        target.append(evidence_ref)
-                        if len(target) > 64:
-                            del target[0]
+                for item in gate.get("items") or []:
+                    if (
+                        not isinstance(item, Mapping)
+                        or item.get("status") != "pass"
+                    ):
+                        continue
+                    criterion_id = str(item.get("criterionId") or "").strip()
+                    if criterion_id not in accepted_criteria:
+                        continue
+                    target = collected.setdefault(criterion_id, [])
+                    for raw_ref in item.get("evidenceRefs") or []:
+                        evidence_ref = str(raw_ref or "").strip()
+                        if evidence_ref and evidence_ref not in target:
+                            target.append(evidence_ref)
+                            if len(target) > 64:
+                                del target[0]
         projected: dict[str, list[str]] = {}
         remaining = 32
         for ref_index in range(4):
@@ -6221,9 +11617,9 @@ class RoomKernelStore:
             row = conn.execute(
                 "SELECT * FROM room_kernel_continuations WHERE commit_id=?", (commit_id,)
             ).fetchone()
-        if row is None:
-            raise KeyError(commit_id)
-        payload = json.loads(str(row["payload_json"]))
+            if row is None:
+                raise KeyError(commit_id)
+            payload = _room_continuation_payload(conn, row)
         task_transfer = (
             payload.get("taskTransfer")
             if isinstance(payload, Mapping)
@@ -6290,8 +11686,20 @@ class RoomKernelStore:
             )
 
         with self._connect() as conn:
+            if expected_root_id:
+                state_fence = (
+                    "r.state IN ('waiting','running') "
+                    "AND c.state IN ('applied','resumed') AND c.root_id = ?"
+                )
+                parameters: tuple[object, ...] = (
+                    _required(room_id, "room_id"),
+                    expected_root_id,
+                )
+            else:
+                state_fence = "r.state = 'waiting' AND c.state = 'applied'"
+                parameters = (_required(room_id, "room_id"),)
             rows = conn.execute(
-                """
+                f"""
                 SELECT c.*, r.generation AS root_generation,
                        d.target_participant_id, d.target_session_id,
                        d.generation AS dispatch_generation,
@@ -6300,18 +11708,16 @@ class RoomKernelStore:
                 FROM room_kernel_continuations c
                 JOIN room_kernel_roots r ON r.root_id = c.root_id
                 JOIN room_kernel_dispatches d ON d.dispatch_id = c.parent_dispatch_id
-                WHERE r.room_id = ? AND r.state = 'waiting'
-                  AND c.decision = 'wait' AND c.state = 'applied'
+                WHERE r.room_id = ? AND c.decision = 'wait'
+                  AND {state_fence}
                 ORDER BY c.created_at_ms DESC, c.continuation_id DESC
                 """,
-                (_required(room_id, "room_id"),),
+                parameters,
             ).fetchall()
-        for row in rows:
-            payload = json.loads(str(row["payload_json"]))
-            if (
-                isinstance(payload, Mapping)
-                and payload.get("waitingFor") == "user"
-            ):
+            for row in rows:
+                payload = _room_continuation_payload(conn, row)
+                if payload.get("waitingFor") != "user":
+                    continue
                 candidate_root_id = str(row["root_id"])
                 candidate_question_post_id = _stable_id(
                     "room-post",
@@ -6334,6 +11740,7 @@ class RoomKernelStore:
                     "parentDepth": int(row["parent_depth"]),
                     "targetParticipantId": str(row["target_participant_id"]),
                     "targetSessionId": str(row["target_session_id"]),
+                    "state": str(row["state"]),
                     "payload": payload,
                 }
         return None
@@ -6347,11 +11754,12 @@ class RoomKernelStore:
         answer_post_id: str,
         answer_anchor_id: str,
         now_ms: int,
+        _conn: sqlite3.Connection | None = None,
     ) -> dict[str, object]:
         """Atomically consume a user wait and enqueue its one resume Dispatch."""
 
         validate_kernel_contract("dispatchEnvelope", dispatch_payload)
-        with self._connect(immediate=True) as conn:
+        with self._write_connection(_conn) as conn:
             continuation = conn.execute(
                 "SELECT * FROM room_kernel_continuations "
                 "WHERE continuation_id = ?",
@@ -6359,10 +11767,12 @@ class RoomKernelStore:
             ).fetchone()
             if continuation is None:
                 raise RoomKernelFenceError("user wait continuation is missing")
-            if str(continuation["state"]) != "applied":
+            continuation_state = str(continuation["state"])
+            if continuation_state not in {"applied", "resumed"}:
                 raise RoomKernelFenceError("user wait continuation was already resumed")
-            continuation_payload = json.loads(
-                str(continuation["payload_json"])
+            continuation_payload = _room_continuation_payload(
+                conn,
+                continuation,
             )
             if (
                 not isinstance(continuation_payload, Mapping)
@@ -6402,12 +11812,26 @@ class RoomKernelStore:
                 raise RoomKernelFenceError(
                     "user wait resume Dispatch does not match its parent"
                 )
-            existing = conn.execute(
-                "SELECT * FROM room_kernel_dispatches "
-                "WHERE idempotency_key = ?",
-                (str(dispatch_payload["idempotencyKey"]),),
-            ).fetchone()
-            if existing is None:
+            normalized_answer_post_id = _required(
+                answer_post_id,
+                "answer_post_id",
+            )
+            normalized_answer_anchor_id = _required(
+                answer_anchor_id,
+                "answer_anchor_id",
+            )
+            if continuation_state == "resumed":
+                if (
+                    continuation_payload.get("answerPostId")
+                    != normalized_answer_post_id
+                    or continuation_payload.get("answerAnchorId")
+                    != normalized_answer_anchor_id
+                    or continuation_payload.get("resumeDispatchId")
+                    != dispatch_payload.get("dispatchId")
+                ):
+                    raise RoomKernelFenceError(
+                        "user wait resume identity was rebound"
+                    )
                 resumed, _ = self._enqueue_dispatch(
                     conn,
                     dispatch_payload,
@@ -6415,26 +11839,67 @@ class RoomKernelStore:
                     not in {"cohort", "test", "kernel_only"},
                     now_ms=now_ms,
                 )
-            else:
-                resumed = _dispatch_payload(existing)
-            updated_payload = dict(continuation_payload)
+                receipt_row = None
+                resume_receipt_id = str(
+                    continuation_payload.get("resumeReceiptId") or ""
+                ).strip()
+                if resume_receipt_id:
+                    receipt_row = conn.execute(
+                        "SELECT payload_json FROM room_kernel_receipts "
+                        "WHERE receipt_id=?",
+                        (resume_receipt_id,),
+                    ).fetchone()
+                if receipt_row is None:
+                    candidates = conn.execute(
+                        """SELECT payload_json FROM room_kernel_receipts
+                           WHERE root_id=? AND receipt_kind='accepted'
+                           ORDER BY created_at_ms,receipt_id""",
+                        (root["root_id"],),
+                    ).fetchall()
+                    for candidate in candidates:
+                        candidate_payload = json.loads(
+                            str(candidate["payload_json"])
+                        )
+                        candidate_details = candidate_payload.get("details")
+                        if (
+                            isinstance(candidate_details, Mapping)
+                            and candidate_details.get("continuationId")
+                            == continuation_id
+                            and candidate_details.get("resumedDispatchId")
+                            == resumed["dispatchId"]
+                            and candidate_details.get("answerPostId")
+                            == normalized_answer_post_id
+                            and candidate_details.get("answerAnchorId")
+                            == normalized_answer_anchor_id
+                        ):
+                            receipt_row = candidate
+                            break
+                if receipt_row is None:
+                    raise RoomKernelFenceError(
+                        "resumed user wait is missing its authoritative receipt"
+                    )
+                return {
+                    "receipt": json.loads(str(receipt_row["payload_json"])),
+                    "dispatch": dict(resumed),
+                    "continuationId": continuation_id,
+                }
+
+            resumed, _ = self._enqueue_dispatch(
+                conn,
+                dispatch_payload,
+                shadow_only=self.mode
+                not in {"cohort", "test", "kernel_only"},
+                now_ms=now_ms,
+            )
+            updated_payload = _decode_room_continuation_payload(
+                continuation["payload_json"]
+            )
             updated_payload.update(
                 {
-                    "answerPostId": _required(answer_post_id, "answer_post_id"),
-                    "answerAnchorId": _required(
-                        answer_anchor_id,
-                        "answer_anchor_id",
-                    ),
+                    "answerPostId": normalized_answer_post_id,
+                    "answerAnchorId": normalized_answer_anchor_id,
                     "resumeDispatchId": str(resumed["dispatchId"]),
                 }
-            )
-            conn.execute(
-                "UPDATE room_kernel_continuations SET state='blocked', "
-                "payload_json=? WHERE continuation_id=?",
-                (
-                    _json(updated_payload),
-                    continuation_id,
-                ),
             )
             conn.execute(
                 "UPDATE room_kernel_tasks SET state='active',updated_at_ms=? "
@@ -6456,7 +11921,7 @@ class RoomKernelStore:
                 details={
                     "continuationId": continuation_id,
                     "questionPostId": expected_question_post_id,
-                    "answerPostId": answer_post_id,
+                    "answerPostId": normalized_answer_post_id,
                     "resumeDispatchId": str(resumed["dispatchId"]),
                 },
                 now_ms=now_ms,
@@ -6473,16 +11938,51 @@ class RoomKernelStore:
                     "parentDispatchId": str(parent["dispatch_id"]),
                     "questionPostId": expected_question_post_id,
                     "resumedDispatchId": str(resumed["dispatchId"]),
-                    "answerPostId": answer_post_id,
-                    "answerAnchorId": answer_anchor_id,
+                    "answerPostId": normalized_answer_post_id,
+                    "answerAnchorId": normalized_answer_anchor_id,
                 },
                 now_ms=now_ms,
+            )
+            updated_payload["resumeReceiptId"] = str(receipt["receiptId"])
+            conn.execute(
+                """UPDATE room_kernel_continuations
+                   SET state='resumed',payload_json=?
+                   WHERE continuation_id=? AND state='applied'""",
+                (
+                    _json(updated_payload),
+                    continuation_id,
+                ),
             )
             return {
                 "receipt": receipt,
                 "dispatch": dict(resumed),
                 "continuationId": continuation_id,
             }
+
+    def resume_user_wait_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        continuation_id: str,
+        dispatch_payload: Mapping[str, object],
+        question_post_id: str,
+        answer_root_id: str,
+        answer_post_id: str,
+        answer_anchor_id: str,
+        now_ms: int,
+    ) -> dict[str, object]:
+        """Consume a user wait inside a caller-owned Room transaction."""
+
+        return self.resume_user_wait(
+            continuation_id=continuation_id,
+            dispatch_payload=dispatch_payload,
+            question_post_id=question_post_id,
+            answer_root_id=answer_root_id,
+            answer_post_id=answer_post_id,
+            answer_anchor_id=answer_anchor_id,
+            now_ms=now_ms,
+            _conn=conn,
+        )
 
     def definition_fence(
         self,
@@ -6582,11 +12082,10 @@ class RoomKernelStore:
         if not criteria:
             raise RoomKernelFenceError("room_define requires acceptance criteria")
         validate_kernel_contract("roomTask", task_payload)
-        _assert_criteria_within(
-            set(criteria),
-            set(criteria),
-            scope="definition Root",
-        )
+        if _criteria(task_payload.get("acceptanceCriterionIds")) != set(criteria):
+            raise RoomKernelFenceError(
+                "room_define Task criteria must exactly match definition Root criteria"
+            )
         current_task = conn.execute(
             "SELECT payload_json FROM room_kernel_tasks WHERE task_id=?",
             (str(dispatch["task_id"]),),
@@ -6675,6 +12174,20 @@ class RoomKernelStore:
             "WHERE dispatch_id=? AND state IN ('active','accepted')",
             (int(now_ms), dispatch["dispatch_id"]),
         )
+        conn.execute(
+            """UPDATE room_kernel_runtime_effects
+               SET state='completed',updated_at_ms=?
+               WHERE dispatch_id=?
+                 AND state IN ('intent','accepted','unknown')""",
+            (int(now_ms), dispatch["dispatch_id"]),
+        )
+        conn.execute(
+            """UPDATE room_kernel_abort_scopes
+               SET state='completed',updated_at_ms=?
+               WHERE dispatch_id=?
+                 AND state IN ('registered','cancelling','unknown')""",
+            (int(now_ms), dispatch["dispatch_id"]),
+        )
         self._settle_dispatch_limits(
             conn,
             str(dispatch["dispatch_id"]),
@@ -6757,23 +12270,26 @@ class RoomKernelStore:
             receipt_kind="accepted",
             status="applied",
             generation=int(root["generation"]),
-            details={
-                "operation": "room_define",
-                "dispatchId": str(dispatch["dispatch_id"]),
-                "taskId": str(dispatch["task_id"]),
-                "invocationReceiptId": _required(
-                    invocation_receipt_id,
-                    "invocation_receipt_id",
-                ),
-                "plannedExecuteDispatch": planned_execute,
-                "executionDispatchId": (
-                    str(execute_dispatch["dispatchId"])
-                    if execute_dispatch is not None
-                    else ""
-                ),
-                "requiresStartAction": not execution_authorized,
-                **dict(details),
-            },
+            details=_authoritative_receipt_details(
+                {
+                    "operation": "room_define",
+                    "dispatchId": str(dispatch["dispatch_id"]),
+                    "taskId": str(dispatch["task_id"]),
+                    "invocationReceiptId": _required(
+                        invocation_receipt_id,
+                        "invocation_receipt_id",
+                    ),
+                    "plannedExecuteDispatch": planned_execute,
+                    "executionDispatchId": (
+                        str(execute_dispatch["dispatchId"])
+                        if execute_dispatch is not None
+                        else ""
+                    ),
+                    "requiresStartAction": not execution_authorized,
+                },
+                details,
+                scope="room_define",
+            ),
             now_ms=now_ms,
         )
         return {
@@ -7036,6 +12552,7 @@ class RoomKernelStore:
 
     def initial_peer_dispatches(
         self,
+        root_id: str,
     ) -> list[dict[str, object]]:
         """Project the direct wave plus proven first-level peer work."""
 
@@ -7184,10 +12701,11 @@ class RoomKernelStore:
                 )
             can_retry = (
                 bool(retryable)
-                and (
-                    not bool(had_tool_activity)
-                    or normalized_reason == "room_commit_missing"
-                )
+                # Once a managed turn has invoked a Tool, a missing
+                # RoomCommit cannot prove that replay is side-effect free.
+                # Fail closed and require recovery instead of running the
+                # same turn a second time.
+                and not bool(had_tool_activity)
                 and str(root["state"]) == "running"
                 and retry_limits is not None
                 and int(retry_limits["retry_used"])
@@ -7759,8 +13277,8 @@ class RoomKernelStore:
         )
         return True
 
-    @staticmethod
     def _block_failed_dispatch(
+        self,
         conn: sqlite3.Connection,
         *,
         dispatch: sqlite3.Row,
@@ -7772,10 +13290,23 @@ class RoomKernelStore:
         """Apply the one durable transition shared by failed settle paths."""
 
         dispatch_id = str(dispatch["dispatch_id"])
+        report = self._report_dispatch_locked(
+            conn,
+            root_id=str(root["root_id"]),
+        )
+        is_report_dispatch = bool(
+            report is not None
+            and str(report["dispatch"]["dispatchId"]) == dispatch_id
+            and str(report["task"]["taskId"]) == str(dispatch["task_id"])
+        )
         conn.execute(
             """UPDATE room_kernel_tasks
-               SET state='blocked',updated_at_ms=? WHERE task_id=?""",
-            (int(now_ms), dispatch["task_id"]),
+               SET state=?,updated_at_ms=? WHERE task_id=?""",
+            (
+                "failed" if is_report_dispatch else "blocked",
+                int(now_ms),
+                dispatch["task_id"],
+            ),
         )
         conn.execute(
             """UPDATE room_kernel_roots
@@ -7956,6 +13487,17 @@ class RoomKernelStore:
         return row
 
     @contextmanager
+    def _write_connection(
+        self,
+        conn: sqlite3.Connection | None,
+    ):
+        if conn is not None:
+            yield conn
+            return
+        with self._connect(immediate=True) as owned:
+            yield owned
+
+    @contextmanager
     def _connect(self, *, immediate: bool = False):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
@@ -8022,10 +13564,237 @@ def _dispatch_payload(row: sqlite3.Row) -> dict[str, object]:
     return payload
 
 
+def _room_commit_payload(
+    conn: sqlite3.Connection,
+    encoded: object,
+) -> dict[str, object]:
+    """Decode one immutable Commit row through the current read contract."""
+
+    decoded = json.loads(str(encoded))
+    if not isinstance(decoded, Mapping):
+        raise RoomKernelFenceError("Room Commit payload is corrupt")
+    dispatch_id = str(decoded.get("dispatchId") or "").strip()
+    if not dispatch_id:
+        raise RoomKernelFenceError("Room Commit Dispatch identity is missing")
+    dispatch = RoomKernelStore._dispatch_row(conn, dispatch_id)
+    return upcast_room_commit(
+        decoded,
+        root_id=dispatch["root_id"],
+        task_id=dispatch["task_id"],
+        generation=int(dispatch["generation"]),
+    )
+
+
+def _decode_room_continuation_payload(encoded: object) -> dict[str, object]:
+    decoded = json.loads(str(encoded))
+    if not isinstance(decoded, Mapping):
+        raise RoomKernelFenceError("Room continuation payload is corrupt")
+    return dict(decoded)
+
+
+def _room_continuation_payload(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+) -> dict[str, object]:
+    """Project a materialized continuation through its immutable Commit.
+
+    Historical continuation rows store only the continuation fragment and do
+    not carry a schema version.  The immutable Commit is the version authority;
+    its existing read upcaster supplies current semantic fields.  Materialized
+    runtime state (for example a resume Dispatch or user-answer identity) is
+    retained without rewriting the stored historical fragment.
+
+    The table has no foreign key to Commits, so an orphan row is possible.  It
+    is rejected instead of being guessed into a current-looking, auto-resumable
+    wait.
+    """
+
+    materialized = _decode_room_continuation_payload(row["payload_json"])
+    commit_id = str(row["commit_id"] or "").strip()
+    if not commit_id:
+        raise RoomKernelFenceError("Room continuation Commit identity is missing")
+    commit_row = conn.execute(
+        "SELECT payload_json FROM room_kernel_commits WHERE commit_id=?",
+        (commit_id,),
+    ).fetchone()
+    if commit_row is None:
+        raise RoomKernelFenceError(
+            "Room continuation has no authoritative Commit"
+        )
+    commit = _room_commit_payload(conn, commit_row["payload_json"])
+    canonical = commit.get("continuation")
+    if canonical is None:
+        if materialized:
+            raise RoomKernelFenceError(
+                "Room continuation has no authoritative Commit continuation"
+            )
+        return materialized
+    if not isinstance(canonical, Mapping):
+        raise RoomKernelFenceError("Room Commit continuation is corrupt")
+    result = {**materialized, **dict(canonical)}
+    table_decision = str(row["decision"] or "").strip()
+    canonical_decision = str(result.get("decision") or "").strip()
+    if not canonical_decision or canonical_decision != table_decision:
+        raise RoomKernelFenceError(
+            "Room continuation decision does not match its Commit"
+        )
+    return result
+
+
+def _participant_wait_runtime_authorized(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    payload: Mapping[str, object],
+) -> bool:
+    """True only for an explicit participant wait written by current v4.
+
+    Historical Commit upcasters intentionally make older data readable.  That
+    projection is not authority to execute a synthesized continuation.  The
+    immutable raw Commit must itself contain the current participant and
+    Dispatch identities before the Kernel may auto-resume it.
+    """
+
+    commit_id = str(row["commit_id"] or "").strip()
+    if not commit_id:
+        return False
+    commit_row = conn.execute(
+        "SELECT payload_json FROM room_kernel_commits WHERE commit_id=?",
+        (commit_id,),
+    ).fetchone()
+    if commit_row is None:
+        return False
+    try:
+        raw_commit = json.loads(str(commit_row["payload_json"]))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    if not isinstance(raw_commit, Mapping):
+        return False
+    if raw_commit.get("schemaVersion") != ROOM_COMMIT_SCHEMA_VERSION:
+        return False
+    raw_continuation = raw_commit.get("continuation")
+    if not isinstance(raw_continuation, Mapping):
+        return False
+    return (
+        str(raw_continuation.get("decision") or "").strip()
+        == str(row["decision"] or "").strip()
+        and raw_continuation.get("waitingFor") == "participant"
+        and str(
+            raw_continuation.get("waitingForParticipantId") or ""
+        ).strip()
+        == str(payload.get("waitingForParticipantId") or "").strip()
+        and str(
+            raw_continuation.get("waitingForDispatchId") or ""
+        ).strip()
+        == str(payload.get("waitingForDispatchId") or "").strip()
+        and bool(
+            str(
+                raw_continuation.get("waitingForParticipantId") or ""
+            ).strip()
+        )
+        and bool(
+            str(raw_continuation.get("waitingForDispatchId") or "").strip()
+        )
+    )
+
+
+def _historical_participant_wait_requires_recovery(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    payload: Mapping[str, object],
+) -> bool:
+    """Recognize exact late-v3 identity without granting execute authority."""
+
+    commit_id = str(row["commit_id"] or "").strip()
+    if not commit_id:
+        return False
+    commit_row = conn.execute(
+        "SELECT payload_json FROM room_kernel_commits WHERE commit_id=?",
+        (commit_id,),
+    ).fetchone()
+    if commit_row is None:
+        return False
+    try:
+        raw_commit = json.loads(str(commit_row["payload_json"]))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    if (
+        not isinstance(raw_commit, Mapping)
+        or raw_commit.get("schemaVersion")
+        != "wisdom-weasel.room-commit.v3"
+    ):
+        return False
+    continuation = raw_commit.get("continuation")
+    if not isinstance(continuation, Mapping):
+        return False
+    participant_id = str(
+        continuation.get("waitingForParticipantId") or ""
+    ).strip()
+    dispatch_id = str(
+        continuation.get("waitingForDispatchId") or ""
+    ).strip()
+    return bool(
+        continuation.get("waitingFor") == "participant"
+        and participant_id
+        and dispatch_id
+        and str(continuation.get("decision") or "").strip()
+        == str(row["decision"] or "").strip()
+        and participant_id
+        == str(payload.get("waitingForParticipantId") or "").strip()
+        and dispatch_id
+        == str(payload.get("waitingForDispatchId") or "").strip()
+    )
+
+
+def _review_finding_scope_key(value: object) -> tuple[str, str] | None:
+    if not isinstance(value, Mapping):
+        return None
+    criterion_id = str(value.get("criterionId") or "").strip()
+    if criterion_id:
+        return ("criterion", criterion_id)
+    invariant_id = str(value.get("invariantId") or "").strip()
+    if invariant_id:
+        return ("invariant", invariant_id)
+    return None
+
+
 def _criteria(value: object) -> set[str]:
     if not isinstance(value, (list, tuple, set, frozenset)):
         return set()
     return {str(item).strip() for item in value if str(item or "").strip()}
+
+
+def _authoritative_receipt_details(
+    authoritative: Mapping[str, object],
+    additional: Mapping[str, object],
+    *,
+    scope: str,
+) -> dict[str, object]:
+    """Merge receipt metadata without allowing reserved fields to drift."""
+
+    extra = dict(additional)
+    conflicts = sorted(
+        key
+        for key, value in authoritative.items()
+        if key in extra and extra[key] != value
+    )
+    if conflicts:
+        raise RoomKernelFenceError(
+            f"{scope} reserved receipt detail fields cannot be overridden: "
+            + ", ".join(conflicts)
+        )
+    return {**extra, **dict(authoritative)}
+
+
+def _dispatch_idempotency_identity(
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    """Return the immutable Dispatch identity, excluding retry runtime fields."""
+
+    return {
+        key: value
+        for key, value in dict(payload).items()
+        if key not in {"attempt", "state"}
+    }
 
 def _unique_text(values: Sequence[object]) -> list[str]:
     result: list[str] = []

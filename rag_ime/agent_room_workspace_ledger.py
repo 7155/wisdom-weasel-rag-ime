@@ -4,7 +4,7 @@ import hashlib
 import json
 import sqlite3
 import uuid
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -34,6 +34,14 @@ _BINDING_COLUMNS = {
     "terminal_reason",
     "cleanup_state",
 }
+
+_EXACT_AUTHORITY_EVENT_KINDS = frozenset(
+    {
+        "cleanup_removal_authorized",
+        "vaulted",
+        "cleaned",
+    }
+)
 
 
 class RoomWorkspaceLedgerStore:
@@ -290,7 +298,6 @@ class RoomWorkspaceLedgerStore:
             allowed_states={
                 "materialized",
                 "work_started",
-                "delivered",
                 "retry_bound",
             },
             now_ms=now_ms,
@@ -329,23 +336,306 @@ class RoomWorkspaceLedgerStore:
         }
         if delivery_payload is not None:
             payload["workspaceDelivery"] = dict(delivery_payload)
-        return self._transition(
-            binding_id,
-            event_kind="delivered",
-            idempotency_key=f"delivered:{delivery_revision}:{snapshot}",
-            actor_ref=actor_ref,
-            payload=payload,
-            updates={
-                "state": "delivered",
-                "attention_required": 0,
-                "delivery_revision": delivery_revision,
-                "delivery_head": delivery_head,
-                "delivery_snapshot_sha256": snapshot,
-                "cleanup_state": "not_authorized",
-            },
-            allowed_states={"materialized", "work_started", "delivered", "retry_bound"},
-            now_ms=now_ms,
+        now_ms = _non_negative_int(now_ms, "now_ms")
+        with self._connect(immediate=True) as conn:
+            row = self._binding_row(conn, binding_id)
+            state = str(row["state"])
+            if state == "delivered":
+                prior = self._latest_event_payload_conn(
+                    conn,
+                    binding_id=binding_id,
+                    event_kind="delivered",
+                )
+                if prior == payload:
+                    return _binding_payload(row)
+                raise RoomWorkspaceLedgerConflict(
+                    "delivered workspace is sealed; a new delivery requires an "
+                    "explicit retry lease"
+                )
+            if state not in {"materialized", "work_started", "retry_bound"}:
+                raise RoomWorkspaceLedgerError(
+                    f"workspace transition delivered is invalid from {state}"
+                )
+            self._append_event_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="delivered",
+                idempotency_key=f"delivered:{delivery_revision}:{snapshot}",
+                actor_ref=actor_ref,
+                payload=payload,
+                updates={
+                    "state": "delivered",
+                    "attention_required": 0,
+                    "delivery_revision": delivery_revision,
+                    "delivery_head": delivery_head,
+                    "delivery_snapshot_sha256": snapshot,
+                    "cleanup_state": "not_authorized",
+                },
+                now_ms=now_ms,
+            )
+            return _binding_payload(self._binding_row(conn, binding_id))
+
+    def mark_delivery_seal_uncertain(
+        self,
+        binding_id: str,
+        *,
+        reason: str,
+        actor_ref: str,
+        now_ms: int,
+    ) -> dict[str, object]:
+        """Persist the fail-closed state for a delivered but unsealed child.
+
+        This is intentionally distinct from generic retention: the delivered
+        generation stays sealed and can only be completed by the explicit
+        delivery-seal resume CAS below.
+        """
+
+        reason = _required_text(reason, "reason")
+        now_ms = _non_negative_int(now_ms, "now_ms")
+        with self._connect(immediate=True) as conn:
+            row = self._binding_row(conn, binding_id)
+            if self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="source_lease_revoked",
+            ) is not None:
+                return _binding_payload(row)
+            if str(row["state"]) not in {
+                "delivered",
+                "delivery_seal_uncertain",
+                "delivery_seal_resuming",
+            }:
+                raise RoomWorkspaceLedgerError(
+                    "delivery-seal uncertainty requires a delivered binding"
+                )
+            self._append_event_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="delivery_seal_uncertain",
+                idempotency_key=(
+                    "delivery-seal-uncertain:"
+                    + hashlib.sha256(reason.encode("utf-8")).hexdigest()
+                ),
+                actor_ref=actor_ref,
+                payload={
+                    "deliveryRevision": str(row["delivery_revision"]),
+                    "ownerSessionId": str(row["current_owner_session_id"]),
+                    "reason": reason[:2000],
+                },
+                updates={
+                    "state": "delivery_seal_uncertain",
+                    "attention_required": 1,
+                    "terminal_reason": reason[:2000],
+                    "cleanup_state": "retained",
+                },
+                now_ms=now_ms,
+            )
+            return _binding_payload(self._binding_row(conn, binding_id))
+
+    def claim_delivery_seal_resume(
+        self,
+        binding_id: str,
+        *,
+        resume_ref: str,
+        actor_ref: str,
+        now_ms: int,
+    ) -> dict[str, object]:
+        """Acquire the one durable CAS lease allowed to finish a sealed delivery."""
+
+        resume_ref = _required_text(resume_ref, "resume_ref")
+        now_ms = _non_negative_int(now_ms, "now_ms")
+        with self._connect(immediate=True) as conn:
+            row = self._binding_row(conn, binding_id)
+            if self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="source_lease_revoked",
+            ) is not None:
+                raise RoomWorkspaceLedgerConflict(
+                    "delivery source lease is already durably revoked"
+                )
+            state = str(row["state"])
+            prior = self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="delivery_seal_resume_started",
+            )
+            if state == "delivery_seal_resuming":
+                if prior is None:
+                    raise RoomWorkspaceLedgerConflict(
+                        "delivery-seal resume projection lacks its CAS receipt"
+                    )
+                prior_payload = self._event_payload_json(prior)
+                if str(prior_payload.get("resumeRef") or "") != resume_ref:
+                    raise RoomWorkspaceLedgerConflict(
+                        "delivery-seal resume already has a different owner"
+                    )
+                result = _binding_payload(row)
+                result["deliverySealResumeToken"] = str(
+                    prior_payload.get("resumeToken") or ""
+                )
+                return result
+            if state not in {"delivered", "delivery_seal_uncertain"}:
+                raise RoomWorkspaceLedgerError(
+                    "delivery-seal resume requires sealed uncertainty"
+                )
+            token = str(uuid.uuid4())
+            self._append_event_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="delivery_seal_resume_started",
+                idempotency_key=(
+                    f"delivery-seal-resume:{resume_ref}:"
+                    f"{int(row['last_event_sequence']) + 1}"
+                ),
+                actor_ref=actor_ref,
+                payload={
+                    "deliveryRevision": str(row["delivery_revision"]),
+                    "ownerSessionId": str(row["current_owner_session_id"]),
+                    "resumeRef": resume_ref,
+                    "resumeToken": token,
+                    "resumeTokenSha256": hashlib.sha256(
+                        token.encode("utf-8")
+                    ).hexdigest(),
+                },
+                updates={
+                    "state": "delivery_seal_resuming",
+                    "attention_required": 1,
+                    "cleanup_state": "retained",
+                },
+                now_ms=now_ms,
+            )
+            result = _binding_payload(self._binding_row(conn, binding_id))
+            result["deliverySealResumeToken"] = token
+            return result
+
+    def record_source_lease_revoked(
+        self,
+        binding_id: str,
+        *,
+        delivery_revision: str,
+        workspace_snapshot_sha256: str,
+        patch_sha256: str,
+        patch_artifact_path: str,
+        patch_artifact_size: int,
+        owner_session_id: str,
+        revoked_policy_sha256: str,
+        workspace_content_sha256: str,
+        changed_files: Sequence[str],
+        actor_ref: str,
+        now_ms: int,
+        delivery_seal_resume_token: str = "",
+    ) -> dict[str, object]:
+        """Receipt the coordinator's durable withdrawal of worker write access.
+
+        The sealed patch belongs to the coordinator, not to the still-present
+        child worktree.  Integration and cleanup both require this receipt so a
+        delivered-but-not-quiesced worker can never authorize target mutation or
+        destructive cleanup.
+        """
+
+        delivery_revision = _required_text(
+            delivery_revision,
+            "delivery_revision",
         )
+        workspace_snapshot = _sha256_text(
+            workspace_snapshot_sha256,
+            "workspace_snapshot_sha256",
+        )
+        patch_sha256 = _sha256_text(patch_sha256, "patch_sha256")
+        patch_artifact_path = _required_text(
+            patch_artifact_path,
+            "patch_artifact_path",
+        )
+        patch_artifact_size = _non_negative_int(
+            patch_artifact_size,
+            "patch_artifact_size",
+        )
+        owner_session_id = _required_text(owner_session_id, "owner_session_id")
+        revoked_policy_sha256 = _sha256_text(
+            revoked_policy_sha256,
+            "revoked_policy_sha256",
+        )
+        workspace_content_sha256 = _sha256_text(
+            workspace_content_sha256,
+            "workspace_content_sha256",
+        )
+        now_ms = _non_negative_int(now_ms, "now_ms")
+        with self._connect(immediate=True) as conn:
+            row = self._binding_row(conn, binding_id)
+            state = str(row["state"])
+            if state not in {"delivered", "delivery_seal_resuming"}:
+                raise RoomWorkspaceLedgerError(
+                    "source write-lease revocation requires a delivered binding"
+                )
+            resume_receipt_id = ""
+            resume_receipt_sha256 = ""
+            if state == "delivery_seal_resuming":
+                resume = self._latest_event_row_conn(
+                    conn,
+                    binding_id=binding_id,
+                    event_kind="delivery_seal_resume_started",
+                )
+                if resume is None:
+                    raise RoomWorkspaceLedgerConflict(
+                        "delivery-seal resume receipt is missing"
+                    )
+                resume_payload = self._event_payload_json(resume)
+                if (
+                    not delivery_seal_resume_token
+                    or str(resume_payload.get("resumeToken") or "")
+                    != delivery_seal_resume_token
+                ):
+                    raise RoomWorkspaceLedgerConflict(
+                        "delivery-seal resume lost its CAS token"
+                    )
+                resume_receipt_id = str(resume["event_id"])
+                resume_receipt_sha256 = str(resume["payload_sha256"])
+            delivery = self._delivery_evidence_conn(conn, row)
+            expected = {
+                "deliveryRevision": delivery["deliveryRevision"],
+                "workspaceSnapshotSha256": delivery["workspaceSnapshotSha256"],
+                "patchSha256": delivery["patchSha256"],
+            }
+            supplied = {
+                "deliveryRevision": delivery_revision,
+                "workspaceSnapshotSha256": workspace_snapshot,
+                "patchSha256": patch_sha256,
+            }
+            if supplied != expected:
+                raise RoomWorkspaceLedgerConflict(
+                    "source write-lease receipt does not match delivered evidence"
+                )
+            if owner_session_id != str(row["current_owner_session_id"]):
+                raise RoomWorkspaceLedgerConflict(
+                    "source write-lease receipt does not match the current owner Session"
+                )
+            self._append_event_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="source_lease_revoked",
+                idempotency_key=f"source-lease-revoked:{delivery_revision}",
+                actor_ref=actor_ref,
+                payload={
+                    **supplied,
+                    "patchArtifactPath": patch_artifact_path,
+                    "patchArtifactSize": patch_artifact_size,
+                    "ownerSessionId": owner_session_id,
+                    "revokedPolicySha256": revoked_policy_sha256,
+                    "workspaceContentSha256": workspace_content_sha256,
+                    "changedFiles": _normalized_text_list(changed_files),
+                    "deliverySealResumeReceiptId": resume_receipt_id,
+                    "deliverySealResumeReceiptSha256": resume_receipt_sha256,
+                },
+                updates={
+                    "state": "delivered",
+                    "attention_required": 0,
+                    "terminal_reason": "",
+                    "cleanup_state": "not_authorized",
+                },
+                now_ms=now_ms,
+            )
+            return _binding_payload(self._binding_row(conn, binding_id))
 
     def begin_integration(
         self,
@@ -367,9 +657,32 @@ class RoomWorkspaceLedgerStore:
         with self._connect(immediate=True) as conn:
             row = self._binding_row(conn, binding_id)
             delivery = self._delivery_evidence_conn(conn, row)
+            source_lease = self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="source_lease_revoked",
+            )
+            if source_lease is None:
+                raise RoomWorkspaceLedgerError(
+                    "integration requires a durable source write-lease revocation receipt"
+                )
+            source_lease_payload = self._event_payload_json(source_lease)
             if patch_sha256 != str(delivery["patchSha256"]):
                 raise RoomWorkspaceLedgerConflict(
                     "integration patch does not match the delivered patch receipt"
+                )
+            if any(
+                str(source_lease_payload.get(key) or "") != str(expected)
+                for key, expected in {
+                    "deliveryRevision": delivery["deliveryRevision"],
+                    "workspaceSnapshotSha256": delivery[
+                        "workspaceSnapshotSha256"
+                    ],
+                    "patchSha256": delivery["patchSha256"],
+                }.items()
+            ):
+                raise RoomWorkspaceLedgerConflict(
+                    "integration source lease is not bound to delivered evidence"
                 )
             state = str(row["state"])
             if state in {"integrated", "cleaned"}:
@@ -457,6 +770,16 @@ class RoomWorkspaceLedgerStore:
                     ],
                     "deliveryManifestSha256": delivery["manifestSha256"],
                     "targetBeforeSnapshotSha256": target_before,
+                    "sourceLeaseReceiptId": str(source_lease["event_id"]),
+                    "sourceLeaseReceiptSha256": str(
+                        source_lease["payload_sha256"]
+                    ),
+                    "patchArtifactPath": source_lease_payload[
+                        "patchArtifactPath"
+                    ],
+                    "patchArtifactSize": source_lease_payload[
+                        "patchArtifactSize"
+                    ],
                     "leaseTokenSha256": hashlib.sha256(
                         lease_token.encode("utf-8")
                     ).hexdigest(),
@@ -471,6 +794,107 @@ class RoomWorkspaceLedgerStore:
             )
             return _binding_payload(self._binding_row(conn, binding_id))
 
+    def record_target_applied(
+        self,
+        binding_id: str,
+        *,
+        integration_ref: str,
+        patch_sha256: str,
+        target_before_snapshot_sha256: str,
+        target_after_snapshot_sha256: str,
+        target_snapshot_provider: Callable[[], str],
+        actor_ref: str,
+        now_ms: int,
+    ) -> dict[str, object]:
+        """Persist the exact target transition while rechecking it in-transaction."""
+
+        integration_ref = _required_text(integration_ref, "integration_ref")
+        patch_sha256 = _sha256_text(patch_sha256, "patch_sha256")
+        target_before = _sha256_text(
+            target_before_snapshot_sha256,
+            "target_before_snapshot_sha256",
+        )
+        target_after = _sha256_text(
+            target_after_snapshot_sha256,
+            "target_after_snapshot_sha256",
+        )
+        now_ms = _non_negative_int(now_ms, "now_ms")
+        with self._connect(immediate=True) as conn:
+            row = self._binding_row(conn, binding_id)
+            if str(row["state"]) != "integration_started":
+                raise RoomWorkspaceLedgerError(
+                    "target-applied receipt requires an active integration lease"
+                )
+            if (
+                str(row["integration_ref"]) != integration_ref
+                or str(row["integration_patch_sha256"]) != patch_sha256
+            ):
+                raise RoomWorkspaceLedgerConflict(
+                    "target-applied receipt does not match its integration lease"
+                )
+            start = self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="integration_started",
+            )
+            source_lease = self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="source_lease_revoked",
+            )
+            if start is None or source_lease is None:
+                raise RoomWorkspaceLedgerError(
+                    "target-applied receipt requires source and integration receipts"
+                )
+            start_payload = self._event_payload_json(start)
+            source_payload = self._event_payload_json(source_lease)
+            if target_before != str(
+                start_payload.get("targetBeforeSnapshotSha256") or ""
+            ):
+                raise RoomWorkspaceLedgerConflict(
+                    "target-applied receipt changed the receipted target-before snapshot"
+                )
+            if (
+                str(start_payload.get("sourceLeaseReceiptId") or "")
+                != str(source_lease["event_id"])
+                or str(start_payload.get("sourceLeaseReceiptSha256") or "")
+                != str(source_lease["payload_sha256"])
+                or str(source_payload.get("patchSha256") or "") != patch_sha256
+            ):
+                raise RoomWorkspaceLedgerConflict(
+                    "target-applied receipt is not bound to the source lease"
+                )
+            observed = _sha256_text(
+                target_snapshot_provider(),
+                "observed_target_snapshot_sha256",
+            )
+            if observed != target_after:
+                raise RoomWorkspaceLedgerConflict(
+                    "integration target changed before target-applied receipt"
+                )
+            self._append_event_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="target_applied",
+                idempotency_key=f"target-applied:{integration_ref}:{target_after}",
+                actor_ref=actor_ref,
+                payload={
+                    "integrationRef": integration_ref,
+                    "patchSha256": patch_sha256,
+                    "targetBeforeSnapshotSha256": target_before,
+                    "targetAfterSnapshotSha256": target_after,
+                    "sourceLeaseReceiptId": str(source_lease["event_id"]),
+                    "sourceLeaseReceiptSha256": str(
+                        source_lease["payload_sha256"]
+                    ),
+                    "patchArtifactPath": source_payload["patchArtifactPath"],
+                    "patchArtifactSize": source_payload["patchArtifactSize"],
+                },
+                updates={},
+                now_ms=now_ms,
+            )
+            return _binding_payload(self._binding_row(conn, binding_id))
+
     def record_integrated(
         self,
         binding_id: str,
@@ -480,6 +904,7 @@ class RoomWorkspaceLedgerStore:
         integrated_revision: str,
         integrated_snapshot_sha256: str,
         changed_files: Sequence[str],
+        target_snapshot_provider: Callable[[], str],
         actor_ref: str,
         now_ms: int,
     ) -> dict[str, object]:
@@ -539,6 +964,42 @@ class RoomWorkspaceLedgerStore:
                 raise RoomWorkspaceLedgerConflict(
                     "integration receipt is not bound to the delivered evidence"
                 )
+            target_applied = self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="target_applied",
+            )
+            source_lease = self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="source_lease_revoked",
+            )
+            if target_applied is None or source_lease is None:
+                raise RoomWorkspaceLedgerError(
+                    "integration receipt requires target-applied and source-lease receipts"
+                )
+            target_payload = self._event_payload_json(target_applied)
+            if any(
+                str(target_payload.get(key) or "") != str(expected)
+                for key, expected in {
+                    "integrationRef": integration_ref,
+                    "patchSha256": patch_sha256,
+                    "targetAfterSnapshotSha256": integrated_snapshot,
+                    "sourceLeaseReceiptId": source_lease["event_id"],
+                    "sourceLeaseReceiptSha256": source_lease["payload_sha256"],
+                }.items()
+            ):
+                raise RoomWorkspaceLedgerConflict(
+                    "integration receipt is not bound to the exact target transition"
+                )
+            observed = _sha256_text(
+                target_snapshot_provider(),
+                "observed_target_snapshot_sha256",
+            )
+            if observed != integrated_snapshot:
+                raise RoomWorkspaceLedgerConflict(
+                    "integration target changed before its durable receipt"
+                )
             self._append_event_conn(
                 conn,
                 binding_id=binding_id,
@@ -551,6 +1012,14 @@ class RoomWorkspaceLedgerStore:
                     "integratedRevision": integrated_revision,
                     "integratedSnapshotSha256": integrated_snapshot,
                     "changedFiles": _normalized_text_list(changed_files),
+                    "targetAppliedReceiptId": str(target_applied["event_id"]),
+                    "targetAppliedReceiptSha256": str(
+                        target_applied["payload_sha256"]
+                    ),
+                    "sourceLeaseReceiptId": str(source_lease["event_id"]),
+                    "sourceLeaseReceiptSha256": str(
+                        source_lease["payload_sha256"]
+                    ),
                 },
                 updates={
                     "state": "integrated",
@@ -562,6 +1031,154 @@ class RoomWorkspaceLedgerStore:
                 now_ms=now_ms,
             )
             self._release_integration_lease_conn(conn, binding_id, "integrated", now_ms)
+            return _binding_payload(self._binding_row(conn, binding_id))
+
+    def record_writer_quiescence(
+        self,
+        binding_id: str,
+        *,
+        receipt: Mapping[str, object],
+        actor_ref: str,
+        now_ms: int,
+    ) -> dict[str, object]:
+        """Receipt exact-lineage proof that no child writer can survive cleanup."""
+
+        now_ms = _non_negative_int(now_ms, "now_ms")
+        payload = dict(receipt)
+        foreground, background, managed = _writer_quiescence_evidence(payload)
+        with self._connect(immediate=True) as conn:
+            row = self._binding_row(conn, binding_id)
+            if str(row["state"]) not in {
+                "integrated",
+                "cleanup_failed",
+            }:
+                raise RoomWorkspaceLedgerError(
+                    "writer quiescence requires integrated cleanup authority"
+                )
+            source = self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="source_lease_revoked",
+            )
+            integrated = self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="integrated",
+            )
+            if source is None or integrated is None:
+                raise RoomWorkspaceLedgerError(
+                    "writer quiescence requires source and integration receipts"
+                )
+            expected = {
+                "workspaceBindingId": binding_id,
+                "rootId": str(row["root_id"]),
+                "taskId": str(row["task_id"]),
+                "dispatchId": str(row["dispatch_id"]),
+                "deliveryRevision": str(row["delivery_revision"]),
+                "ownerSessionId": str(row["current_owner_session_id"]),
+                "sourceLeaseReceiptId": str(source["event_id"]),
+                "sourceLeaseReceiptSha256": str(source["payload_sha256"]),
+                "integratedReceiptId": str(integrated["event_id"]),
+                "integratedReceiptSha256": str(integrated["payload_sha256"]),
+            }
+            if any(
+                str(payload.get(key) or "") != value
+                for key, value in expected.items()
+            ):
+                raise RoomWorkspaceLedgerConflict(
+                    "writer-quiescence receipt does not match exact workspace lineage"
+                )
+            if str(managed.get("sessionId") or "") != expected[
+                "ownerSessionId"
+            ] or str(managed.get("dispatchId") or "") != expected[
+                "dispatchId"
+            ]:
+                raise RoomWorkspaceLedgerConflict(
+                    "managed Pi settlement does not match the workspace owner lineage"
+                )
+            encoded = _json(payload)
+            receipt_sha256 = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+            self._append_event_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="writer_quiescent",
+                idempotency_key=f"writer-quiescent:{receipt_sha256}",
+                actor_ref=actor_ref,
+                payload=payload,
+                updates={},
+                now_ms=now_ms,
+            )
+            return _binding_payload(self._binding_row(conn, binding_id))
+
+    def record_abandonment_quiescence(
+        self,
+        binding_id: str,
+        *,
+        workspace_content_sha256: str,
+        revoked_policy_sha256: str,
+        receipt: Mapping[str, object],
+        actor_ref: str,
+        now_ms: int,
+    ) -> dict[str, object]:
+        """Receipt lease revocation and exact writer settlement before abandon."""
+
+        workspace_content = _sha256_text(
+            workspace_content_sha256,
+            "workspace_content_sha256",
+        )
+        revoked_policy = _sha256_text(
+            revoked_policy_sha256,
+            "revoked_policy_sha256",
+        )
+        now_ms = _non_negative_int(now_ms, "now_ms")
+        payload = dict(receipt)
+        _foreground, _background, managed = _writer_quiescence_evidence(payload)
+        with self._connect(immediate=True) as conn:
+            row = self._binding_row(conn, binding_id)
+            if not bool(row["attention_required"]) or str(row["state"]) in {
+                "integrated",
+                "cleaned",
+                "abandoned",
+                "cleanup_failed",
+            }:
+                raise RoomWorkspaceLedgerError(
+                    "abandonment quiescence requires a retained attention-state binding"
+                )
+            expected = {
+                "workspaceBindingId": binding_id,
+                "rootId": str(row["root_id"]),
+                "taskId": str(row["task_id"]),
+                "dispatchId": str(row["dispatch_id"]),
+                "ownerSessionId": str(row["current_owner_session_id"]),
+                "workspaceContentSha256": workspace_content,
+                "revokedPolicySha256": revoked_policy,
+            }
+            if any(
+                str(payload.get(key) or "") != value
+                for key, value in expected.items()
+            ):
+                raise RoomWorkspaceLedgerConflict(
+                    "abandonment writer-quiescence receipt does not match exact workspace lineage"
+                )
+            if (
+                str(managed.get("sessionId") or "") != expected["ownerSessionId"]
+                or str(managed.get("dispatchId") or "") != expected["dispatchId"]
+            ):
+                raise RoomWorkspaceLedgerConflict(
+                    "abandonment managed Pi settlement does not match the owner lineage"
+                )
+            encoded = _json(payload)
+            receipt_sha256 = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+            self._append_event_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="abandonment_writer_quiescent",
+                idempotency_key=f"abandonment-writer-quiescent:{receipt_sha256}",
+                actor_ref=actor_ref,
+                payload=payload,
+                updates={},
+                now_ms=now_ms,
+            )
             return _binding_payload(self._binding_row(conn, binding_id))
 
     def record_conflict(
@@ -609,6 +1226,363 @@ class RoomWorkspaceLedgerStore:
             self._release_integration_lease_conn(conn, binding_id, "conflict", now_ms)
             return _binding_payload(self._binding_row(conn, binding_id))
 
+    def record_quarantined(
+        self,
+        binding_id: str,
+        *,
+        quarantined_workspace_root: str,
+        workspace_content_sha256: str,
+        target_snapshot_sha256: str,
+        actor_ref: str,
+        now_ms: int,
+    ) -> dict[str, object]:
+        quarantined_workspace_root = _required_text(
+            quarantined_workspace_root,
+            "quarantined_workspace_root",
+        )
+        workspace_content_sha256 = _sha256_text(
+            workspace_content_sha256,
+            "workspace_content_sha256",
+        )
+        target_snapshot_sha256 = _sha256_text(
+            target_snapshot_sha256,
+            "target_snapshot_sha256",
+        )
+        now_ms = _non_negative_int(now_ms, "now_ms")
+        with self._connect(immediate=True) as conn:
+            row = self._binding_row(conn, binding_id)
+            if str(row["state"]) not in {
+                "integrated",
+                "cleanup_failed",
+                "abandoned",
+            }:
+                raise RoomWorkspaceLedgerError(
+                    "workspace quarantine requires integration or abandonment authority"
+                )
+            source = self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="source_lease_revoked",
+            )
+            quiescence = self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="writer_quiescent",
+            )
+            integrated = self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="integrated",
+            )
+            payload: dict[str, object] = {
+                "originalWorkspaceRoot": str(row["workspace_root"]),
+                "quarantinedWorkspaceRoot": quarantined_workspace_root,
+                "workspaceContentSha256": workspace_content_sha256,
+                "targetSnapshotSha256": target_snapshot_sha256,
+            }
+            if str(row["state"]) in {"integrated", "cleanup_failed"} and integrated is not None:
+                if source is None or quiescence is None:
+                    raise RoomWorkspaceLedgerError(
+                        "workspace quarantine requires source, integration, and "
+                        "writer-quiescence receipts"
+                    )
+                source_payload = self._event_payload_json(source)
+                if str(source_payload.get("workspaceContentSha256") or "") != (
+                    workspace_content_sha256
+                ):
+                    raise RoomWorkspaceLedgerConflict(
+                        "workspace quarantine content does not match source authority"
+                    )
+                if target_snapshot_sha256 != str(row["integrated_snapshot_sha256"]):
+                    raise RoomWorkspaceLedgerConflict(
+                        "workspace quarantine target does not match integrated authority"
+                    )
+                payload.update(
+                    {
+                        "authorityKind": "integration",
+                        "sourceLeaseReceiptId": str(source["event_id"]),
+                        "sourceLeaseReceiptSha256": str(source["payload_sha256"]),
+                        "integratedReceiptId": str(integrated["event_id"]),
+                        "integratedReceiptSha256": str(integrated["payload_sha256"]),
+                        "writerQuiescenceReceiptId": str(quiescence["event_id"]),
+                        "writerQuiescenceReceiptSha256": str(
+                            quiescence["payload_sha256"]
+                        ),
+                    }
+                )
+            else:
+                abandonment_quiescence = self._latest_event_row_conn(
+                    conn,
+                    binding_id=binding_id,
+                    event_kind="abandonment_writer_quiescent",
+                )
+                abandonment = self._latest_event_row_conn(
+                    conn,
+                    binding_id=binding_id,
+                    event_kind="abandoned",
+                )
+                if abandonment_quiescence is None or abandonment is None:
+                    raise RoomWorkspaceLedgerError(
+                        "workspace quarantine requires abandonment and writer-quiescence receipts"
+                    )
+                abandonment_quiescence_payload = self._event_payload_json(
+                    abandonment_quiescence
+                )
+                if str(
+                    abandonment_quiescence_payload.get("workspaceContentSha256") or ""
+                ) != workspace_content_sha256:
+                    raise RoomWorkspaceLedgerConflict(
+                        "workspace quarantine content does not match abandonment authority"
+                    )
+                payload.update(
+                    {
+                        "authorityKind": "abandonment",
+                        "abandonmentReceiptId": str(abandonment["event_id"]),
+                        "abandonmentReceiptSha256": str(abandonment["payload_sha256"]),
+                        "writerQuiescenceReceiptId": str(
+                            abandonment_quiescence["event_id"]
+                        ),
+                        "writerQuiescenceReceiptSha256": str(
+                            abandonment_quiescence["payload_sha256"]
+                        ),
+                    }
+                )
+            self._append_event_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="quarantined",
+                idempotency_key=(
+                    f"quarantined:{workspace_content_sha256}:"
+                    f"{target_snapshot_sha256}"
+                ),
+                actor_ref=actor_ref,
+                payload=payload,
+                updates={},
+                now_ms=now_ms,
+            )
+            return _binding_payload(self._binding_row(conn, binding_id))
+
+    def authorize_cleanup_removal(
+        self,
+        binding_id: str,
+        *,
+        quarantined_workspace_root: str,
+        vault_workspace_root: str,
+        workspace_content_sha256: str,
+        target_snapshot_sha256: str,
+        actor_ref: str,
+        now_ms: int,
+    ) -> dict[str, object]:
+        """CAS exact cleanup lineage and its recoverable vault destination."""
+
+        quarantined_root = _required_text(
+            quarantined_workspace_root,
+            "quarantined_workspace_root",
+        )
+        vault_root = _required_text(vault_workspace_root, "vault_workspace_root")
+        workspace_content = _sha256_text(
+            workspace_content_sha256,
+            "workspace_content_sha256",
+        )
+        target_snapshot = _sha256_text(
+            target_snapshot_sha256,
+            "target_snapshot_sha256",
+        )
+        now_ms = _non_negative_int(now_ms, "now_ms")
+        with self._connect(immediate=True) as conn:
+            row = self._binding_row(conn, binding_id)
+            if str(row["state"]) not in {
+                "integrated",
+                "cleanup_failed",
+                "abandoned",
+            }:
+                raise RoomWorkspaceLedgerError(
+                    "cleanup removal authorization requires terminal workspace authority"
+                )
+            quarantine = self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="quarantined",
+            )
+            if quarantine is None:
+                raise RoomWorkspaceLedgerError(
+                    "cleanup removal authorization requires a quarantine receipt"
+                )
+            quarantine_payload = self._event_payload_json(quarantine)
+            if any(
+                str(quarantine_payload.get(key) or "") != expected
+                for key, expected in {
+                    "quarantinedWorkspaceRoot": quarantined_root,
+                    "workspaceContentSha256": workspace_content,
+                    "targetSnapshotSha256": target_snapshot,
+                }.items()
+            ):
+                raise RoomWorkspaceLedgerConflict(
+                    "cleanup removal authorization changed quarantined evidence"
+                )
+            writer_id = str(
+                quarantine_payload.get("writerQuiescenceReceiptId") or ""
+            )
+            writer_sha = str(
+                quarantine_payload.get("writerQuiescenceReceiptSha256") or ""
+            )
+            writer = conn.execute(
+                "SELECT * FROM room_workspace_events WHERE event_id=? AND binding_id=?",
+                (writer_id, binding_id),
+            ).fetchone()
+            if (
+                writer is None
+                or str(writer["payload_sha256"]) != writer_sha
+                or str(writer["event_kind"])
+                not in {"writer_quiescent", "abandonment_writer_quiescent"}
+            ):
+                raise RoomWorkspaceLedgerConflict(
+                    "cleanup removal authorization lost writer-quiescence lineage"
+                )
+            payload = {
+                "quarantinedWorkspaceRoot": quarantined_root,
+                "vaultWorkspaceRoot": vault_root,
+                "workspaceContentSha256": workspace_content,
+                "targetSnapshotSha256": target_snapshot,
+                "quarantineReceiptId": str(quarantine["event_id"]),
+                "quarantineReceiptSha256": str(quarantine["payload_sha256"]),
+                "writerQuiescenceReceiptId": writer_id,
+                "writerQuiescenceReceiptSha256": writer_sha,
+            }
+            self._append_event_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="cleanup_removal_authorized",
+                idempotency_key=(
+                    f"cleanup-removal-authorized:{quarantine['event_id']}:"
+                    f"{workspace_content}:{target_snapshot}"
+                ),
+                actor_ref=actor_ref,
+                payload=payload,
+                updates={},
+                now_ms=now_ms,
+            )
+            return _binding_payload(self._binding_row(conn, binding_id))
+
+    def record_vaulted(
+        self,
+        binding_id: str,
+        *,
+        removal_authorization_receipt_id: str,
+        removal_authorization_receipt_sha256: str,
+        quarantined_workspace_root: str,
+        vault_workspace_root: str,
+        authorized_workspace_content_sha256: str,
+        vault_content_sha256: str,
+        target_snapshot_sha256: str,
+        actor_ref: str,
+        now_ms: int,
+    ) -> dict[str, object]:
+        """Receipt bytes after the atomic active-path-to-vault rename."""
+
+        authorization_id = _required_text(
+            removal_authorization_receipt_id,
+            "removal_authorization_receipt_id",
+        )
+        authorization_sha256 = _sha256_text(
+            removal_authorization_receipt_sha256,
+            "removal_authorization_receipt_sha256",
+        )
+        quarantined_root = _required_text(
+            quarantined_workspace_root,
+            "quarantined_workspace_root",
+        )
+        vault_root = _required_text(vault_workspace_root, "vault_workspace_root")
+        authorized_content = _sha256_text(
+            authorized_workspace_content_sha256,
+            "authorized_workspace_content_sha256",
+        )
+        vaulted_content = _sha256_text(
+            vault_content_sha256,
+            "vault_content_sha256",
+        )
+        target_snapshot = _sha256_text(
+            target_snapshot_sha256,
+            "target_snapshot_sha256",
+        )
+        now_ms = _non_negative_int(now_ms, "now_ms")
+        with self._connect(immediate=True) as conn:
+            row = self._binding_row(conn, binding_id)
+            if str(row["state"]) not in {
+                "integrated",
+                "cleanup_failed",
+                "abandoned",
+            }:
+                raise RoomWorkspaceLedgerError(
+                    "workspace vault receipt requires terminal workspace authority"
+                )
+            authorization = self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="cleanup_removal_authorized",
+            )
+            if authorization is None or any(
+                str(actual) != str(expected)
+                for actual, expected in (
+                    (authorization["event_id"], authorization_id),
+                    (authorization["payload_sha256"], authorization_sha256),
+                )
+            ):
+                raise RoomWorkspaceLedgerConflict(
+                    "workspace vault receipt lost its cleanup CAS authority"
+                )
+            authorization_payload = self._event_payload_json(authorization)
+            if any(
+                str(authorization_payload.get(key) or "") != str(expected)
+                for key, expected in {
+                    "quarantinedWorkspaceRoot": quarantined_root,
+                    "vaultWorkspaceRoot": vault_root,
+                    "workspaceContentSha256": authorized_content,
+                    "targetSnapshotSha256": target_snapshot,
+                }.items()
+            ):
+                raise RoomWorkspaceLedgerConflict(
+                    "workspace vault receipt changed its authorized source, target, or destination"
+                )
+            payload = {
+                "quarantinedWorkspaceRoot": quarantined_root,
+                "vaultWorkspaceRoot": vault_root,
+                "authorizedWorkspaceContentSha256": authorized_content,
+                "vaultContentSha256": vaulted_content,
+                "targetSnapshotSha256": target_snapshot,
+                "removalAuthorizationReceiptId": authorization_id,
+                "removalAuthorizationReceiptSha256": authorization_sha256,
+                "quarantineReceiptId": str(
+                    authorization_payload.get("quarantineReceiptId") or ""
+                ),
+                "quarantineReceiptSha256": str(
+                    authorization_payload.get("quarantineReceiptSha256") or ""
+                ),
+                "writerQuiescenceReceiptId": str(
+                    authorization_payload.get("writerQuiescenceReceiptId") or ""
+                ),
+                "writerQuiescenceReceiptSha256": str(
+                    authorization_payload.get("writerQuiescenceReceiptSha256") or ""
+                ),
+                "rootId": str(row["root_id"]),
+                "taskId": str(row["task_id"]),
+                "dispatchId": str(row["dispatch_id"]),
+                "ownerParticipantId": str(row["current_owner_participant_id"]),
+                "ownerSessionId": str(row["current_owner_session_id"]),
+                "authoritySequence": int(authorization["sequence"]),
+            }
+            self._append_event_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="vaulted",
+                idempotency_key=f"vaulted:{authorization_id}",
+                actor_ref=actor_ref,
+                payload=payload,
+                updates={},
+                now_ms=now_ms,
+            )
+            return _binding_payload(self._binding_row(conn, binding_id))
+
     def record_cleanup(
         self,
         binding_id: str,
@@ -617,35 +1591,134 @@ class RoomWorkspaceLedgerStore:
         reason: str,
         actor_ref: str,
         now_ms: int,
+        retained_workspace_root: str = "",
     ) -> dict[str, object]:
         if result not in {"cleaned", "missing", "failed"}:
             raise RoomWorkspaceLedgerError("workspace cleanup result is invalid")
-        row = self.binding(binding_id)
-        if str(row["workspaceLifecycleState"]) not in {
-            "integrated",
-            "cleaned",
-            "abandoned",
-            "cleanup_failed",
-        }:
-            raise RoomWorkspaceLedgerError(
-                "workspace cleanup requires integrated or abandoned authority"
-            )
         successful = result in {"cleaned", "missing"}
-        return self._transition(
-            binding_id,
-            event_kind="cleaned" if successful else "cleanup_failed",
-            idempotency_key=f"cleanup:{result}:{hashlib.sha256(str(reason).encode()).hexdigest()}",
-            actor_ref=actor_ref,
-            payload={"result": result, "reason": str(reason or "")[:2000]},
-            updates={
-                "state": "cleaned" if successful else "cleanup_failed",
-                "attention_required": 0 if successful else 1,
-                "cleanup_state": result,
-                "terminal_reason": "" if successful else str(reason or "")[:2000],
-            },
-            allowed_states={"integrated", "cleaned", "abandoned", "cleanup_failed"},
-            now_ms=now_ms,
-        )
+        now_ms = _non_negative_int(now_ms, "now_ms")
+        with self._connect(immediate=True) as conn:
+            row = self._binding_row(conn, binding_id)
+            if str(row["state"]) not in {
+                "integrated",
+                "cleaned",
+                "abandoned",
+                "cleanup_failed",
+            }:
+                raise RoomWorkspaceLedgerError(
+                    "workspace cleanup requires integrated or abandoned authority"
+                )
+            payload: dict[str, object] = {
+                "result": result,
+                "reason": str(reason or "")[:2000],
+                "retainedWorkspaceRoot": str(
+                    retained_workspace_root or ""
+                ).strip(),
+            }
+            if successful:
+                authorization = self._latest_event_row_conn(
+                    conn,
+                    binding_id=binding_id,
+                    event_kind="cleanup_removal_authorized",
+                )
+                if authorization is None:
+                    raise RoomWorkspaceLedgerError(
+                        "successful cleanup requires exact removal authorization"
+                    )
+                authorization_payload = self._event_payload_json(authorization)
+                payload.update(
+                    {
+                        "removalAuthorizationReceiptId": str(
+                            authorization["event_id"]
+                        ),
+                        "removalAuthorizationReceiptSha256": str(
+                            authorization["payload_sha256"]
+                        ),
+                        "quarantineReceiptId": str(
+                            authorization_payload.get("quarantineReceiptId") or ""
+                        ),
+                        "quarantineReceiptSha256": str(
+                            authorization_payload.get("quarantineReceiptSha256") or ""
+                        ),
+                        "writerQuiescenceReceiptId": str(
+                            authorization_payload.get(
+                                "writerQuiescenceReceiptId"
+                            )
+                            or ""
+                        ),
+                        "writerQuiescenceReceiptSha256": str(
+                            authorization_payload.get(
+                                "writerQuiescenceReceiptSha256"
+                            )
+                            or ""
+                        ),
+                    }
+                )
+                if result == "cleaned":
+                    vault = self._latest_event_row_conn(
+                        conn,
+                        binding_id=binding_id,
+                        event_kind="vaulted",
+                    )
+                    if vault is None:
+                        raise RoomWorkspaceLedgerError(
+                            "cleaned workspace requires a recoverable vault receipt"
+                        )
+                    vault_payload = self._event_payload_json(vault)
+                    if any(
+                        str(vault_payload.get(key) or "") != str(expected)
+                        for key, expected in {
+                            "removalAuthorizationReceiptId": authorization[
+                                "event_id"
+                            ],
+                            "removalAuthorizationReceiptSha256": authorization[
+                                "payload_sha256"
+                            ],
+                        }.items()
+                    ):
+                        raise RoomWorkspaceLedgerConflict(
+                            "cleaned workspace vault is outside its removal authority"
+                        )
+                    vault_root = str(vault_payload.get("vaultWorkspaceRoot") or "")
+                    if (
+                        not vault_root
+                        or str(retained_workspace_root or "").strip() != vault_root
+                    ):
+                        raise RoomWorkspaceLedgerConflict(
+                            "cleaned workspace must retain its exact recoverable vault path"
+                        )
+                    payload.update(
+                        {
+                            "retainedWorkspaceRoot": vault_root,
+                            "vaultWorkspaceRoot": vault_root,
+                            "vaultContentSha256": str(
+                                vault_payload.get("vaultContentSha256") or ""
+                            ),
+                            "vaultReceiptId": str(vault["event_id"]),
+                            "vaultReceiptSha256": str(vault["payload_sha256"]),
+                        }
+                    )
+            self._append_event_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="cleaned" if successful else "cleanup_failed",
+                idempotency_key=(
+                    f"cleanup:{result}:"
+                    f"{hashlib.sha256(str(reason).encode()).hexdigest()}"
+                ),
+                actor_ref=actor_ref,
+                payload=payload,
+                updates={
+                    "state": "cleaned" if successful else "cleanup_failed",
+                    "attention_required": 0 if successful else 1,
+                    "cleanup_state": result,
+                    "terminal_reason": (
+                        "" if successful else str(reason or "")[:2000]
+                    ),
+                },
+                now_ms=now_ms,
+            )
+            return _binding_payload(self._binding_row(conn, binding_id))
 
     def retain(
         self,
@@ -707,42 +1780,135 @@ class RoomWorkspaceLedgerStore:
         binding_id: str,
         *,
         participant_id: str,
+        participant_ref: str,
         session_id: str,
         workspace_snapshot_sha256: str,
         reason: str,
         actor_ref: str,
         now_ms: int,
     ) -> dict[str, object]:
+        participant_id = _required_text(participant_id, "participant_id")
+        participant_ref = _required_text(participant_ref, "participant_ref")
         session_id = _required_text(session_id, "session_id")
         snapshot = _sha256_text(workspace_snapshot_sha256, "workspace_snapshot_sha256")
         reason = _required_text(reason, "reason")
-        row = self.binding(binding_id)
-        if not bool(row["attentionRequired"]):
-            raise RoomWorkspaceLedgerError(
-                "workspace retry requires an attention-state binding"
-            )
-        return self._transition(
-            binding_id,
-            event_kind="retry_bound",
-            idempotency_key=f"retry:{session_id}:{snapshot}:{hashlib.sha256(reason.encode()).hexdigest()}",
-            actor_ref=actor_ref,
-            payload={
-                "participantId": str(participant_id or "").strip(),
+        now_ms = _non_negative_int(now_ms, "now_ms")
+        with self._connect(immediate=True) as conn:
+            row = self._binding_row(conn, binding_id)
+            if self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="integrated",
+            ) is not None or str(row["state"]) in {
+                "integrated",
+                "cleaned",
+                "abandoned",
+                "cleanup_failed",
+            }:
+                raise RoomWorkspaceLedgerError(
+                    "integrated or cleanup-terminal workspace can never receive a "
+                    "new write lease"
+                )
+            if not bool(row["attention_required"]):
+                raise RoomWorkspaceLedgerConflict(
+                    "workspace retry lost its attention-state compare-and-swap"
+                )
+            retry_token = str(uuid.uuid4())
+            retry_epoch = int(row["last_event_sequence"]) + 1
+            payload = {
+                "participantId": participant_id,
+                "participantRef": participant_ref,
                 "sessionId": session_id,
                 "workspaceSnapshotSha256": snapshot,
                 "reason": reason[:2000],
-            },
-            updates={
-                "state": "retry_bound",
-                "attention_required": 0,
-                "current_owner_participant_id": str(participant_id or "").strip(),
-                "current_owner_session_id": session_id,
-                "terminal_reason": "",
-                "cleanup_state": "not_authorized",
-            },
-            allowed_states=None,
-            now_ms=now_ms,
+                "retryEpoch": retry_epoch,
+                "retryLeaseToken": retry_token,
+                "retryLeaseTokenSha256": hashlib.sha256(
+                    retry_token.encode("utf-8")
+                ).hexdigest(),
+            }
+            self._append_event_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="retry_bound",
+                idempotency_key=(
+                    f"retry:{retry_epoch}:{session_id}:{snapshot}:"
+                    f"{hashlib.sha256(reason.encode()).hexdigest()}"
+                ),
+                actor_ref=actor_ref,
+                payload=payload,
+                updates={
+                    "state": "retry_bound",
+                    "attention_required": 0,
+                    "current_owner_participant_id": participant_id,
+                    "current_owner_session_id": session_id,
+                    "terminal_reason": "",
+                    "cleanup_state": "not_authorized",
+                },
+                now_ms=now_ms,
+            )
+            result = _binding_payload(self._binding_row(conn, binding_id))
+            result["retryEpoch"] = retry_epoch
+            result["retryLeaseToken"] = retry_token
+            result["retryLeaseTokenSha256"] = payload[
+                "retryLeaseTokenSha256"
+            ]
+            retry_receipt = self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="retry_bound",
+            )
+            assert retry_receipt is not None
+            result["retryBoundReceiptId"] = str(retry_receipt["event_id"])
+            result["retryBoundReceiptSha256"] = str(
+                retry_receipt["payload_sha256"]
+            )
+            result["targetParticipantRef"] = participant_ref
+            return result
+
+    def assert_retry_lease(
+        self,
+        binding_id: str,
+        *,
+        participant_id: str,
+        participant_ref: str,
+        session_id: str,
+        retry_lease_token: str,
+    ) -> dict[str, object]:
+        participant_id = _required_text(participant_id, "participant_id")
+        participant_ref = _required_text(participant_ref, "participant_ref")
+        session_id = _required_text(session_id, "session_id")
+        retry_lease_token = _required_text(
+            retry_lease_token,
+            "retry_lease_token",
         )
+        with self._connect(immediate=True) as conn:
+            row = self._binding_row(conn, binding_id)
+            event = self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="retry_bound",
+            )
+            if event is None:
+                raise RoomWorkspaceLedgerConflict(
+                    "workspace retry lease receipt is missing"
+                )
+            payload = self._event_payload_json(event)
+            if (
+                str(row["state"]) != "retry_bound"
+                or bool(row["attention_required"])
+                or str(row["current_owner_participant_id"]) != participant_id
+                or str(row["current_owner_session_id"]) != session_id
+                or str(payload.get("participantId") or "") != participant_id
+                or str(payload.get("participantRef") or "") != participant_ref
+                or str(payload.get("sessionId") or "") != session_id
+                or str(payload.get("retryLeaseToken") or "")
+                != retry_lease_token
+            ):
+                raise RoomWorkspaceLedgerConflict(
+                    "workspace retry lease lost its owner or epoch fence"
+                )
+            return _binding_payload(row)
 
     def abandon(
         self,
@@ -756,30 +1922,59 @@ class RoomWorkspaceLedgerStore:
     ) -> dict[str, object]:
         reason = _required_text(reason, "reason")
         snapshot = _sha256_text(workspace_snapshot_sha256, "workspace_snapshot_sha256")
-        row = self.binding(binding_id)
-        if not bool(row["attentionRequired"]):
-            raise RoomWorkspaceLedgerError(
-                "workspace abandonment requires an attention-state binding"
+        now_ms = _non_negative_int(now_ms, "now_ms")
+        with self._connect(immediate=True) as conn:
+            row = self._binding_row(conn, binding_id)
+            if not bool(row["attention_required"]):
+                raise RoomWorkspaceLedgerError(
+                    "workspace abandonment requires an attention-state binding"
+                )
+            quiescence = self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="abandonment_writer_quiescent",
             )
-        return self._transition(
-            binding_id,
-            event_kind="abandoned",
-            idempotency_key=f"abandon:{snapshot}:{hashlib.sha256(reason.encode()).hexdigest()}",
-            actor_ref=actor_ref,
-            payload={
-                "reason": reason[:2000],
-                "workspaceSnapshotSha256": snapshot,
-                "acceptanceAliases": _normalized_text_list(acceptance_aliases),
-            },
-            updates={
-                "state": "abandoned",
-                "attention_required": 0,
-                "terminal_reason": reason[:2000],
-                "cleanup_state": "authorized",
-            },
-            allowed_states=None,
-            now_ms=now_ms,
-        )
+            if quiescence is None:
+                raise RoomWorkspaceLedgerError(
+                    "workspace abandonment requires durable writer quiescence"
+                )
+            quiescence_payload = self._event_payload_json(quiescence)
+            if str(quiescence_payload.get("workspaceContentSha256") or "") != snapshot:
+                raise RoomWorkspaceLedgerConflict(
+                    "workspace abandonment snapshot changed after writer quiescence"
+                )
+            self._append_event_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="abandoned",
+                idempotency_key=(
+                    f"abandon:{snapshot}:"
+                    f"{hashlib.sha256(reason.encode()).hexdigest()}"
+                ),
+                actor_ref=actor_ref,
+                payload={
+                    "reason": reason[:2000],
+                    "workspaceSnapshotSha256": snapshot,
+                    "acceptanceAliases": _normalized_text_list(
+                        acceptance_aliases
+                    ),
+                    "writerQuiescenceReceiptId": str(quiescence["event_id"]),
+                    "writerQuiescenceReceiptSha256": str(
+                        quiescence["payload_sha256"]
+                    ),
+                    "revokedPolicySha256": str(
+                        quiescence_payload.get("revokedPolicySha256") or ""
+                    ),
+                },
+                updates={
+                    "state": "abandoned",
+                    "attention_required": 0,
+                    "terminal_reason": reason[:2000],
+                    "cleanup_state": "authorized",
+                },
+                now_ms=now_ms,
+            )
+            return _binding_payload(self._binding_row(conn, binding_id))
 
     def record_unclaimed_orphan(
         self,
@@ -868,6 +2063,7 @@ class RoomWorkspaceLedgerStore:
                 """,
                 (binding_id,),
             ).fetchall()
+        _assert_event_rows_integrity(rows)
         return [_event_payload(row) for row in rows]
 
     def recovery_candidates(self) -> list[dict[str, object]]:
@@ -897,7 +2093,7 @@ class RoomWorkspaceLedgerStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT payload_json FROM room_workspace_events
+                SELECT * FROM room_workspace_events
                 WHERE binding_id=? AND event_kind='integration_started'
                 ORDER BY sequence DESC LIMIT 1
                 """,
@@ -905,8 +2101,7 @@ class RoomWorkspaceLedgerStore:
             ).fetchone()
         if row is None:
             return None
-        payload = json.loads(str(row["payload_json"]))
-        return dict(payload) if isinstance(payload, Mapping) else None
+        return self._event_payload_json(row)
 
     def delivery_payload(self, binding_id: str) -> dict[str, object] | None:
         with self._connect() as conn:
@@ -916,6 +2111,183 @@ class RoomWorkspaceLedgerStore:
                 event_kind="delivered",
             )
 
+    def delivery_receipt(self, binding_id: str) -> dict[str, object] | None:
+        return self._latest_event_receipt(binding_id, "delivered")
+
+    def source_lease_receipt(self, binding_id: str) -> dict[str, object] | None:
+        return self._latest_event_receipt(binding_id, "source_lease_revoked")
+
+    def target_applied_receipt(self, binding_id: str) -> dict[str, object] | None:
+        return self._latest_event_receipt(binding_id, "target_applied")
+
+    def integrated_receipt(self, binding_id: str) -> dict[str, object] | None:
+        return self._latest_event_receipt(binding_id, "integrated")
+
+    def writer_quiescence_receipt(
+        self,
+        binding_id: str,
+    ) -> dict[str, object] | None:
+        return self._latest_event_receipt(binding_id, "writer_quiescent")
+
+    def abandonment_quiescence_receipt(
+        self,
+        binding_id: str,
+    ) -> dict[str, object] | None:
+        return self._latest_event_receipt(
+            binding_id,
+            "abandonment_writer_quiescent",
+        )
+
+    def retry_bound_receipt(self, binding_id: str) -> dict[str, object] | None:
+        return self._latest_event_receipt(binding_id, "retry_bound")
+
+    def quarantine_receipt(self, binding_id: str) -> dict[str, object] | None:
+        return self._latest_event_receipt(binding_id, "quarantined")
+
+    def cleanup_removal_authorization_receipt(
+        self,
+        binding_id: str,
+    ) -> dict[str, object] | None:
+        return self._latest_event_receipt(
+            binding_id,
+            "cleanup_removal_authorized",
+        )
+
+    def vault_receipt(self, binding_id: str) -> dict[str, object] | None:
+        return self._latest_event_receipt(binding_id, "vaulted")
+
+    def vaulted_workspace_roots(self) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM room_workspace_events
+                WHERE event_kind='vaulted' ORDER BY created_at_ms, event_id
+                """
+            ).fetchall()
+        _assert_event_rows_integrity(rows)
+        roots: list[str] = []
+        for row in rows:
+            payload = self._event_payload_json(row)
+            root = str(payload.get("vaultWorkspaceRoot") or "").strip()
+            if root and root not in roots:
+                roots.append(root)
+        return roots
+
+    def assert_cleanup_removal_authority(
+        self,
+        binding_id: str,
+        *,
+        receipt_id: str,
+        receipt_sha256: str,
+        quarantined_workspace_root: str,
+        vault_workspace_root: str,
+        workspace_content_sha256: str,
+        target_snapshot_sha256: str,
+    ) -> dict[str, object]:
+        """Fail closed unless the latest removal CAS still owns exact evidence."""
+
+        with self._connect() as conn:
+            row = self._binding_row(conn, binding_id)
+            if str(row["state"]) not in {
+                "integrated",
+                "cleanup_failed",
+                "abandoned",
+            }:
+                raise RoomWorkspaceLedgerConflict(
+                    "cleanup removal authority is no longer active"
+                )
+            event = self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind="cleanup_removal_authorized",
+            )
+            if event is None or any(
+                str(actual) != str(expected)
+                for actual, expected in (
+                    (event["event_id"], _required_text(receipt_id, "receipt_id")),
+                    (
+                        event["payload_sha256"],
+                        _sha256_text(receipt_sha256, "receipt_sha256"),
+                    ),
+                )
+            ):
+                raise RoomWorkspaceLedgerConflict(
+                    "cleanup removal receipt is stale or mismatched"
+                )
+            payload = self._event_payload_json(event)
+            if any(
+                str(payload.get(key) or "") != str(expected)
+                for key, expected in {
+                    "quarantinedWorkspaceRoot": _required_text(
+                        quarantined_workspace_root,
+                        "quarantined_workspace_root",
+                    ),
+                    "vaultWorkspaceRoot": _required_text(
+                        vault_workspace_root,
+                        "vault_workspace_root",
+                    ),
+                    "workspaceContentSha256": _sha256_text(
+                        workspace_content_sha256,
+                        "workspace_content_sha256",
+                    ),
+                    "targetSnapshotSha256": _sha256_text(
+                        target_snapshot_sha256,
+                        "target_snapshot_sha256",
+                    ),
+                }.items()
+            ):
+                raise RoomWorkspaceLedgerConflict(
+                    "cleanup removal receipt changed exact source or target evidence"
+                )
+            return _event_payload(event)
+
+    def cleanup_receipt(self, binding_id: str) -> dict[str, object] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM room_workspace_events
+                WHERE binding_id=? AND event_kind IN ('cleaned','cleanup_failed')
+                ORDER BY sequence DESC LIMIT 1
+                """,
+                (binding_id,),
+            ).fetchone()
+        return _event_payload(row) if row is not None else None
+
+    def _latest_event_receipt(
+        self,
+        binding_id: str,
+        event_kind: str,
+    ) -> dict[str, object] | None:
+        with self._connect() as conn:
+            row = self._latest_event_row_conn(
+                conn,
+                binding_id=binding_id,
+                event_kind=event_kind,
+            )
+            return _event_payload(row) if row is not None else None
+
+    @staticmethod
+    def _latest_event_row_conn(
+        conn: sqlite3.Connection,
+        *,
+        binding_id: str,
+        event_kind: str,
+    ) -> sqlite3.Row | None:
+        rows = conn.execute(
+            """
+            SELECT * FROM room_workspace_events
+            WHERE binding_id=? AND event_kind=?
+            ORDER BY sequence DESC
+            """,
+            (binding_id, event_kind),
+        ).fetchall()
+        _assert_event_rows_integrity(rows)
+        return rows[0] if rows else None
+
+    @staticmethod
+    def _event_payload_json(row: sqlite3.Row) -> dict[str, object]:
+        return _validated_event_payload_json(row)
+
     @staticmethod
     def _latest_event_payload_conn(
         conn: sqlite3.Connection,
@@ -923,18 +2295,14 @@ class RoomWorkspaceLedgerStore:
         binding_id: str,
         event_kind: str,
     ) -> dict[str, object] | None:
-        row = conn.execute(
-            """
-            SELECT payload_json FROM room_workspace_events
-            WHERE binding_id=? AND event_kind=?
-            ORDER BY sequence DESC LIMIT 1
-            """,
-            (binding_id, event_kind),
-        ).fetchone()
+        row = RoomWorkspaceLedgerStore._latest_event_row_conn(
+            conn,
+            binding_id=binding_id,
+            event_kind=event_kind,
+        )
         if row is None:
             return None
-        payload = json.loads(str(row["payload_json"]))
-        return dict(payload) if isinstance(payload, Mapping) else None
+        return RoomWorkspaceLedgerStore._event_payload_json(row)
 
     def _delivery_evidence_conn(
         self,
@@ -1040,6 +2408,7 @@ class RoomWorkspaceLedgerStore:
             (binding_id, idempotency_key),
         ).fetchone()
         if existing is not None:
+            self._event_payload_json(existing)
             if (
                 str(existing["event_kind"]) != event_kind
                 or str(existing["payload_sha256"]) != payload_sha256
@@ -1048,6 +2417,19 @@ class RoomWorkspaceLedgerStore:
                     "workspace event idempotency key was reused with different content"
                 )
             return False
+        if event_kind in _EXACT_AUTHORITY_EVENT_KINDS:
+            exact_rows = conn.execute(
+                """
+                SELECT * FROM room_workspace_events
+                WHERE binding_id=? AND event_kind=? AND payload_sha256=?
+                """,
+                (binding_id, event_kind, payload_sha256),
+            ).fetchall()
+            _assert_event_rows_integrity(exact_rows)
+            if exact_rows:
+                raise RoomWorkspaceLedgerConflict(
+                    "workspace ledger contains duplicate exact authority"
+                )
         unknown = set(updates) - _BINDING_COLUMNS
         if unknown:
             raise RoomWorkspaceLedgerError(
@@ -1175,7 +2557,7 @@ def _binding_payload(row: sqlite3.Row) -> dict[str, object]:
 
 
 def _event_payload(row: sqlite3.Row) -> dict[str, object]:
-    payload = json.loads(str(row["payload_json"]))
+    payload = _validated_event_payload_json(row)
     return {
         "eventId": str(row["event_id"]),
         "workspaceBindingId": str(row["binding_id"]),
@@ -1184,9 +2566,89 @@ def _event_payload(row: sqlite3.Row) -> dict[str, object]:
         "idempotencyKey": str(row["idempotency_key"]),
         "actorRef": str(row["actor_ref"]),
         "payloadSha256": str(row["payload_sha256"]),
-        "payload": dict(payload) if isinstance(payload, Mapping) else {},
+        "payload": payload,
         "createdAtMs": int(row["created_at_ms"]),
     }
+
+
+def _validated_event_payload_json(row: sqlite3.Row) -> dict[str, object]:
+    try:
+        binding_id = _required_text(row["binding_id"], "event binding_id")
+        event_kind = _required_text(row["event_kind"], "event kind")
+        idempotency_key = _required_text(
+            row["idempotency_key"],
+            "event idempotency_key",
+        )
+        event_id = _required_text(row["event_id"], "event id")
+        sequence = int(row["sequence"])
+        if sequence < 1:
+            raise RoomWorkspaceLedgerError(
+                "workspace event sequence must be positive"
+            )
+        raw_payload_json = str(row["payload_json"])
+        payload = json.loads(raw_payload_json)
+        if not isinstance(payload, Mapping):
+            raise RoomWorkspaceLedgerError(
+                "workspace event payload is not an object"
+            )
+        canonical_payload_json = _json(dict(payload))
+        payload_sha256 = _sha256_text(
+            row["payload_sha256"],
+            "event payload_sha256",
+        )
+    except (
+        IndexError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        RoomWorkspaceLedgerError,
+    ) as exc:
+        raise RoomWorkspaceLedgerConflict(
+            "workspace event integrity check failed"
+        ) from exc
+
+    expected_event_id = _stable_id(
+        "room-workspace-event",
+        binding_id,
+        str(sequence),
+        event_kind,
+        idempotency_key,
+    )
+    canonical_sha256 = hashlib.sha256(
+        canonical_payload_json.encode("utf-8")
+    ).hexdigest()
+    if (
+        str(row["binding_id"]) != binding_id
+        or str(row["event_kind"]) != event_kind
+        or str(row["idempotency_key"]) != idempotency_key
+        or raw_payload_json != canonical_payload_json
+        or payload_sha256 != canonical_sha256
+        or event_id != expected_event_id
+    ):
+        raise RoomWorkspaceLedgerConflict(
+            "workspace event integrity check failed"
+        )
+    return dict(payload)
+
+
+def _assert_event_rows_integrity(rows: Sequence[sqlite3.Row]) -> None:
+    exact_authorities: set[tuple[str, str, str]] = set()
+    for row in rows:
+        _validated_event_payload_json(row)
+        event_kind = str(row["event_kind"])
+        if event_kind not in _EXACT_AUTHORITY_EVENT_KINDS:
+            continue
+        identity = (
+            str(row["binding_id"]),
+            event_kind,
+            str(row["payload_sha256"]),
+        )
+        if identity in exact_authorities:
+            raise RoomWorkspaceLedgerConflict(
+                "workspace ledger contains duplicate exact authority"
+            )
+        exact_authorities.add(identity)
 
 
 def _stable_id(namespace: str, *values: str) -> str:
@@ -1232,3 +2694,43 @@ def _normalized_text_list(values: Sequence[str]) -> list[str]:
         if normalized and normalized not in result:
             result.append(normalized)
     return result[:128]
+
+
+def _writer_quiescence_evidence(
+    payload: Mapping[str, object],
+) -> tuple[Mapping[str, object], Mapping[str, object], Mapping[str, object]]:
+    if payload.get("schemaVersion") != (
+        "wisdom-weasel.room-workspace-writer-quiescence.v1"
+    ):
+        raise RoomWorkspaceLedgerError(
+            "writer-quiescence receipt schema is invalid"
+        )
+    _required_text(payload.get("receiptRevision"), "receipt_revision")
+    evidence_items: list[Mapping[str, object]] = []
+    for field in (
+        "foregroundMutatingInvocations",
+        "backgroundWork",
+        "managedPiTurn",
+    ):
+        evidence = payload.get(field)
+        if not isinstance(evidence, Mapping):
+            raise RoomWorkspaceLedgerError(
+                f"writer-quiescence {field} evidence is missing"
+            )
+        if evidence.get("known") is not True:
+            raise RoomWorkspaceLedgerConflict(
+                f"writer-quiescence {field} evidence is unknown"
+            )
+        evidence_items.append(evidence)
+    foreground, background, managed = evidence_items
+    if foreground.get("activeCount") != 0:
+        raise RoomWorkspaceLedgerConflict(
+            "foreground mutating invocation registry is not quiescent"
+        )
+    if background.get("activeCount") != 0:
+        raise RoomWorkspaceLedgerConflict(
+            "background child registry is not quiescent"
+        )
+    if managed.get("settled") is not True:
+        raise RoomWorkspaceLedgerConflict("managed Pi turn is not settled")
+    return foreground, background, managed

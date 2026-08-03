@@ -158,6 +158,7 @@ export function useRoomLiveSession({
             },
             error: (error) => {
               if (active && subscriptionGeneration === generation) {
+                callbacksRef.current.onRecoveryState(roomId, 'failed');
                 callbacksRef.current.onConnectionError(
                   roomId,
                   error,

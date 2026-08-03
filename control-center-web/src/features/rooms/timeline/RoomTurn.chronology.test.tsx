@@ -123,9 +123,30 @@ describe('RoomTurn canonical conversation chronology', () => {
       view.container,
       '已经对齐：先完成终端原生 TUI 的可运行闭环。',
     );
-    const gate = screen.getByRole('status', { name: '确认开始行动' });
+    const gate = screen.getByRole('group', { name: '确认开始行动' });
 
     expect(alignment.compareDocumentPosition(gate) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(gate).toHaveTextContent('现在开始行动吗？');
+  });
+
+  it('does not render an unanchored start action before the canonical alignment post arrives', () => {
+    const projection = liveProjection([
+      userEvent(1, 'opening', '请先澄清交付边界'),
+    ]);
+    render(roomTurn(projection, {
+      kernelRootsById: { 'root-a': root('waiting') },
+      kernelReceiptsById: Object.fromEntries([
+        receipt(1, { operation: 'room_define', requiresStartAction: true }),
+        receipt(2, {
+          purpose: 'intake_phase',
+          phase: 'awaiting_start',
+          clarificationOccurred: true,
+        }),
+      ].map((item) => [item.receiptId, item])),
+      onStartExecution: () => undefined,
+    }));
+
+    expect(screen.queryByRole('group', { name: '确认开始行动' })).not.toBeInTheDocument();
   });
 
   it('keeps a clear request on the direct path without a confirmation gate', () => {

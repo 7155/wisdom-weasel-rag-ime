@@ -1387,7 +1387,7 @@ function taskStateLabel(state: RoomTaskV3['state']): string {
 
 function dispatchIntentLabel(intent: RoomDispatchEnvelopeV2['intentKind']): string {
   return ({
-    align: '确认需求',
+    align: '理解需求',
     execute: '执行当前任务',
     review: '复核交付结果',
     revise: '按意见修改',
