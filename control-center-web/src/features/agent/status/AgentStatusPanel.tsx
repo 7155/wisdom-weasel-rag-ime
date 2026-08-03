@@ -29,7 +29,7 @@ import {
   Button,
   IconButton,
 } from '@/components/primitives';
-import type { AgentActivityProjection, AgentPlanProjection, AgentProjectionState, AgentTurnStatus } from '@/contracts/agent-reducer';
+import type { AgentActivityProjection, AgentProjectionState, AgentTodoProjection, AgentTurnStatus } from '@/contracts/agent-reducer';
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
 import type { AgentWorkflowStateV1 } from '@/contracts/generated/agent-workflow-state.v1';
 import type {
@@ -94,10 +94,10 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
   const projection = useAgentLiveStore((state) => state.projections[sessionId]);
   const view = useMemo(() => projectStatusPanel(projection), [projection]);
   const [resolvedWorkflow, setResolvedWorkflow] = useState<AgentWorkflowStateV1>();
-  const resolvedPlan = resolvedWorkflow?.sessionId === sessionId
-    ? resolvedWorkflow.plan
+  const resolvedTodo = resolvedWorkflow?.sessionId === sessionId
+    ? resolvedWorkflow.todo
     : undefined;
-  const panelStatus = statusPanelLabel(projection, view, resolvedPlan);
+  const panelStatus = statusPanelLabel(projection, view, resolvedTodo);
   const backgroundJobs = useMemo(
     () => (projection?.backgroundJobOrder ?? [])
       .map((jobId) => projection?.backgroundJobsById[jobId])
@@ -132,23 +132,22 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
       className="agent-status-panel"
       data-open={open}
       aria-hidden={!open}
-      aria-label="当前对话状态"
+      aria-label="当前对话任务中心"
       aria-modal={modal || undefined}
       inert={open ? undefined : true}
       role={modal ? 'dialog' : undefined}
       tabIndex={-1}
     >
       <header>
-        <span><strong>状态</strong><small>{panelStatus}</small></span>
-        <IconButton icon={<PanelRightClose size={17} />} label="收起状态面板" onClick={onClose} tooltip />
+        <span><strong>任务中心</strong><small>{panelStatus}</small></span>
+        <IconButton icon={<PanelRightClose size={17} />} label="收起任务中心" onClick={onClose} tooltip />
       </header>
       {contentReady ? <div className="agent-status-panel__body">
         <AgentWorkflowPanel
           sessionId={sessionId}
-          fallbackPlan={projection?.plan}
+          fallbackTodo={projection?.todo}
           fallbackGoal={projection?.goal}
           fallbackActGate={projection?.actGate}
-          currentTurnStartedAtMs={view.turn?.createdAtMs}
           onWorkflowResolved={setResolvedWorkflow}
         />
         {lifecycleCancellationAudits.length ? (
@@ -157,7 +156,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
           </StatusSection>
         ) : null}
         {view.turn ? (
-          <div className="agent-status-turn agent-plan-turn-summary" data-state={view.turn.status}>
+          <div className="agent-status-turn agent-todo-turn-summary" data-state={view.turn.status}>
             <TurnStateIcon status={view.turn.status} />
             <span><strong>当前回合 · {turnStatusLabel(view.turn.status)}</strong><small>{turnProgressLabel(view)}</small></span>
           </div>
@@ -207,6 +206,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
           <WorkspaceLspStatusView
             capabilityCatalog={capabilityCatalog}
             catalogStatus={toolCatalogStatus}
+            onRefresh={onCapabilityCatalogRetry}
             projection={projection}
             tools={tools}
           />
@@ -392,7 +392,7 @@ function LifecycleCancellationView({ audits }: { audits: LifecycleCancellationAu
         <li key={audit.requestId} data-state={audit.state}>
           <header>
             <span>
-              <strong>{audit.scopeKind === 'plan' ? '计划' : '目标'}{audit.action === 'pause' ? '暂停' : '取消'}</strong>
+              <strong>目标{audit.action === 'pause' ? '暂停' : '取消'}</strong>
               <small>版本 {audit.sourceRevision} → {audit.transitionRevision} · {formatLifecycleTime(audit.updatedAtMs)}</small>
             </span>
             <i>{lifecycleStateLabel(audit.state)}</i>
@@ -555,9 +555,9 @@ function SubagentRow({ run, sessionId }: { run: AgentSubagentRunV1; sessionId: s
       <span>
         <strong>{templateLabel(run.templateId)}</strong>
         <small>{publicText(run.task, '协作任务')}</small>
-        {run.planItemId ? (
-          <small className="agent-status-subagent__plan">
-            关联计划：{publicText(run.planItemTitle || run.planItemId, '未知计划项')}
+        {run.todoTask ? (
+          <small className="agent-status-subagent__todo">
+            关联 Todo：{run.todoPhase ? `${publicText(run.todoPhase, '当前阶段')} · ` : ''}{publicText(run.todoTask, '未知任务')}
           </small>
         ) : null}
       </span>
@@ -629,9 +629,9 @@ export function projectStatusPanel(projection?: AgentProjectionState): StatusPan
   const turn = [...projection.turnOrder].reverse()
     .map((id) => projection.turnsById[id])
     .find((item) => item && (item.messageIds.length > 0 || item.activityIds.length > 0));
-  // The durable Session plan has its own governed workflow panel above. Do
-  // not copy it into the current-turn progress projection: an approved plan
-  // from an earlier goal otherwise masquerades as this turn's 0/N checklist.
+  // The durable Session Todo has its own workflow panel above. Do not copy it
+  // into the current-turn progress projection: tasks from an earlier goal
+  // would otherwise masquerade as this turn's 0/N checklist.
   if (!turn) return { tasks: [], tools: [], files: [], artifacts: [], attachmentCount: 0 };
   const messages = turn.messageIds.map((id) => projection.messagesById[id]).filter(Boolean);
   const tasks: StatusPanelProjection['tasks'] = [];
@@ -668,7 +668,7 @@ export function projectStatusPanel(projection?: AgentProjectionState): StatusPan
     .filter((activity): activity is AgentActivityProjection => Boolean(
       activity
       && activity.kind.startsWith('tool_')
-      && text(activity.payload.toolId ?? activity.payload.toolName) !== 'agent_plan',
+      && text(activity.payload.toolId ?? activity.payload.toolName) !== 'todo',
     ));
   return {
     turn,
@@ -711,7 +711,7 @@ function isSubagentRun(value: unknown): value is AgentSubagentRunV1 {
 function statusPanelLabel(
   projection: AgentProjectionState | undefined,
   view: StatusPanelProjection,
-  resolvedPlan?: AgentPlanProjection,
+  resolvedTodo?: AgentTodoProjection,
 ): string {
   if (
     view.turn
@@ -719,12 +719,15 @@ function statusPanelLabel(
   ) {
     return `当前回合 · ${turnStatusLabel(view.turn.status)}`;
   }
-  const plan = resolvedPlan ?? projection?.plan;
-  if (plan?.items.length) {
-    if (plan.status === 'completed') return '计划已完成';
-    if (plan.counts.completed === plan.counts.total) return '步骤已完成 · 待验收';
-    if (plan.counts.inProgress > 0) return `执行中 · ${plan.counts.completed}/${plan.counts.total}`;
-    return `待执行 · ${plan.counts.completed}/${plan.counts.total}`;
+  const todo = resolvedTodo ?? projection?.todo;
+  if (todo?.counts.total) {
+    if (todo.counts.completed + todo.counts.abandoned === todo.counts.total) {
+      return todo.counts.abandoned ? 'Todo 已收束' : 'Todo 已完成';
+    }
+    if (todo.counts.inProgress > 0) {
+      return `执行中 · ${todo.counts.completed}/${todo.counts.total}`;
+    }
+    return `待执行 · ${todo.counts.completed}/${todo.counts.total}`;
   }
   return view.turn ? turnStatusLabel(view.turn.status) : '等待新回合';
 }

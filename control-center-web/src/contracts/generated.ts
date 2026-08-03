@@ -35,10 +35,10 @@ import type { AgentModelCatalogV1 } from './generated/agent-model-catalog.v1';
 import type { AgentModelSelectionV1 } from './generated/agent-model-selection.v1';
 import type { AgentParticipantV1 } from './generated/agent-participant.v1';
 import type { AgentPersonaV1 } from './generated/agent-persona.v1';
-import type { AgentPlanMutationV1 } from './generated/agent-plan-mutation.v1';
 import type { AgentRoleBookToolResultV1 } from './generated/agent-role-book-tool-result.v1';
 import type { AgentRoleBookV1 } from './generated/agent-role-book.v1';
 import type { AgentRoleRoutingProfileV1 } from './generated/agent-role-routing-profile.v1';
+import type { AgentRoomEventPageV1 } from './generated/agent-room-event-page.v1';
 import type { AgentRoomEventV1 } from './generated/agent-room-event.v1';
 import type { AgentRoomIntercomV1 } from './generated/agent-room-intercom.v1';
 import type { AgentRoomSnapshotV1 } from './generated/agent-room-snapshot.v1';
@@ -129,13 +129,9 @@ import type { RoomDispatchEnvelopeV2 } from './generated/room-dispatch-envelope.
 import type { RoomEventEnvelopeV2 } from './generated/room-event-envelope.v2';
 import type { RoomKernelCommandV1 } from './generated/room-kernel-command.v1';
 import type { RoomKernelReceiptV1 } from './generated/room-kernel-receipt.v1';
-import type { RoomLegacyRefV1 } from './generated/room-legacy-ref.v1';
 import type { RoomParticipantBindingV2 } from './generated/room-participant-binding.v2';
-import type { RoomPeerInvitationV1 } from './generated/room-peer-invitation.v1';
 import type { RoomPostV2 } from './generated/room-post.v2';
 import type { RoomQualityGateReceiptV1 } from './generated/room-quality-gate-receipt.v1';
-import type { RoomRolloutPolicyV1 } from './generated/room-rollout-policy.v1';
-import type { RoomRolloutReceiptV1 } from './generated/room-rollout-receipt.v1';
 import type { RoomRootExecutionV2 } from './generated/room-root-execution.v2';
 import type { RoomRootExecutionV3 } from './generated/room-root-execution.v3';
 import type { RoomSettleReceiptV1 } from './generated/room-settle-receipt.v1';
@@ -145,7 +141,6 @@ import type { RoomSkillLoadReceiptV1 } from './generated/room-skill-load-receipt
 import type { RoomSkillPolicyV1 } from './generated/room-skill-policy.v1';
 import type { RoomSkillRecoveryV1 } from './generated/room-skill-recovery.v1';
 import type { RoomSkillSelectionV1 } from './generated/room-skill-selection.v1';
-import type { RoomTaskV2 } from './generated/room-task.v2';
 import type { RoomTaskV3 } from './generated/room-task.v3';
 import type { RoomToolDisclosureReceiptV1 } from './generated/room-tool-disclosure-receipt.v1';
 import type { RoomToolInvocationReceiptV1 } from './generated/room-tool-invocation-receipt.v1';
@@ -194,10 +189,10 @@ export type {
   AgentModelSelectionV1,
   AgentParticipantV1,
   AgentPersonaV1,
-  AgentPlanMutationV1,
   AgentRoleBookToolResultV1,
   AgentRoleBookV1,
   AgentRoleRoutingProfileV1,
+  AgentRoomEventPageV1,
   AgentRoomEventV1,
   AgentRoomIntercomV1,
   AgentRoomSnapshotV1,
@@ -288,13 +283,9 @@ export type {
   RoomEventEnvelopeV2,
   RoomKernelCommandV1,
   RoomKernelReceiptV1,
-  RoomLegacyRefV1,
   RoomParticipantBindingV2,
-  RoomPeerInvitationV1,
   RoomPostV2,
   RoomQualityGateReceiptV1,
-  RoomRolloutPolicyV1,
-  RoomRolloutReceiptV1,
   RoomRootExecutionV2,
   RoomRootExecutionV3,
   RoomSettleReceiptV1,
@@ -304,7 +295,6 @@ export type {
   RoomSkillPolicyV1,
   RoomSkillRecoveryV1,
   RoomSkillSelectionV1,
-  RoomTaskV2,
   RoomTaskV3,
   RoomToolDisclosureReceiptV1,
   RoomToolInvocationReceiptV1,
@@ -354,10 +344,10 @@ export interface ContractTypeMap {
   'agent-model-selection.v1': AgentModelSelectionV1;
   'agent-participant.v1': AgentParticipantV1;
   'agent-persona.v1': AgentPersonaV1;
-  'agent-plan-mutation.v1': AgentPlanMutationV1;
   'agent-role-book-tool-result.v1': AgentRoleBookToolResultV1;
   'agent-role-book.v1': AgentRoleBookV1;
   'agent-role-routing-profile.v1': AgentRoleRoutingProfileV1;
+  'agent-room-event-page.v1': AgentRoomEventPageV1;
   'agent-room-event.v1': AgentRoomEventV1;
   'agent-room-intercom.v1': AgentRoomIntercomV1;
   'agent-room-snapshot.v1': AgentRoomSnapshotV1;
@@ -448,13 +438,9 @@ export interface ContractTypeMap {
   'room-event-envelope.v2': RoomEventEnvelopeV2;
   'room-kernel-command.v1': RoomKernelCommandV1;
   'room-kernel-receipt.v1': RoomKernelReceiptV1;
-  'room-legacy-ref.v1': RoomLegacyRefV1;
   'room-participant-binding.v2': RoomParticipantBindingV2;
-  'room-peer-invitation.v1': RoomPeerInvitationV1;
   'room-post.v2': RoomPostV2;
   'room-quality-gate-receipt.v1': RoomQualityGateReceiptV1;
-  'room-rollout-policy.v1': RoomRolloutPolicyV1;
-  'room-rollout-receipt.v1': RoomRolloutReceiptV1;
   'room-root-execution.v2': RoomRootExecutionV2;
   'room-root-execution.v3': RoomRootExecutionV3;
   'room-settle-receipt.v1': RoomSettleReceiptV1;
@@ -464,7 +450,6 @@ export interface ContractTypeMap {
   'room-skill-policy.v1': RoomSkillPolicyV1;
   'room-skill-recovery.v1': RoomSkillRecoveryV1;
   'room-skill-selection.v1': RoomSkillSelectionV1;
-  'room-task.v2': RoomTaskV2;
   'room-task.v3': RoomTaskV3;
   'room-tool-disclosure-receipt.v1': RoomToolDisclosureReceiptV1;
   'room-tool-invocation-receipt.v1': RoomToolInvocationReceiptV1;

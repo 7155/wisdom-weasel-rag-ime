@@ -121,10 +121,18 @@ class AgentDelegationStore:
                 """
                 INSERT INTO agent_subagent_batches(
                     id, parent_session_id, parent_run_id, context_mode, state,
-                    result_delivery_mode, depth, max_depth, causal_plan_id,
-                    causal_plan_revision, causal_goal_id, causal_goal_revision,
-                    room_bound, created_at_ms, updated_at_ms
-                ) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    result_delivery_mode, depth, max_depth, causal_todo_id,
+                    causal_todo_revision, causal_goal_id, causal_goal_revision,
+                    room_bound, causal_room_id, causal_root_id, causal_task_id,
+                    causal_dispatch_id, causal_generation, created_at_ms, updated_at_ms
+                ) VALUES (
+                    ?, ?, ?, ?,
+                    'queued',
+                    ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?,
+                    ?, ?
+                )
                 """,
                 (
                     batch_id,
@@ -134,11 +142,16 @@ class AgentDelegationStore:
                     result_delivery_mode,
                     depth,
                     max_depth,
-                    causal["planId"],
-                    causal["planRevision"],
+                    causal["todoId"],
+                    causal["todoRevision"],
                     causal["goalId"],
                     causal["goalRevision"],
                     int(bool(causal["roomBound"])),
+                    causal["roomId"],
+                    causal["rootId"],
+                    causal["taskId"],
+                    causal["dispatchId"],
+                    causal["generation"],
                     now,
                     now,
                 ),
@@ -162,7 +175,7 @@ class AgentDelegationStore:
                     INSERT INTO agent_subagent_runs(
                         id, batch_id, child_session_id, template_id, template_version,
                         ordinal, task_text, expected_output, acceptance_criteria_json,
-                        output_schema_json, plan_item_id, plan_item_title, state,
+                        output_schema_json, todo_task, todo_phase, state,
                         max_turns, max_tool_calls, max_total_tokens, max_duration_ms,
                         max_output_chars, created_at_ms, updated_at_ms
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)
@@ -188,8 +201,8 @@ class AgentDelegationStore:
                             sort_keys=True,
                             separators=(",", ":"),
                         ),
-                        _bounded_text(value.get("planItemId"), maximum=160),
-                        _bounded_text(value.get("planItemTitle"), maximum=240),
+                        _bounded_text(value.get("todoTask"), maximum=240),
+                        _bounded_text(value.get("todoPhase"), maximum=80),
                         _bounded_int(value.get("maxTurns"), minimum=0, maximum=32),
                         _bounded_int(value.get("maxToolCalls"), minimum=0, maximum=64),
                         _bounded_int(value.get("maxTotalTokens"), minimum=256, maximum=262_144),
@@ -206,10 +219,10 @@ class AgentDelegationStore:
                     payload={
                         "batchId": batch_id,
                         "ordinal": ordinal,
-                        "planItemId": _bounded_text(value.get("planItemId"), maximum=160),
-                        "planItemTitle": _bounded_text(
-                            value.get("planItemTitle"),
-                            maximum=240,
+                        "todoTask": _bounded_text(value.get("todoTask"), maximum=240),
+                        "todoPhase": _bounded_text(
+                            value.get("todoPhase"),
+                            maximum=80,
                         ),
                     },
                     created_at_ms=now,
@@ -302,6 +315,285 @@ class AgentDelegationStore:
                 "SELECT COUNT(*) FROM agent_subagent_runs WHERE state IN ('queued', 'running')"
             ).fetchone()
         return int(row[0] if row else 0)
+    def root_child_quiescence(
+        self,
+        *,
+        root_id: str,
+        generation: int,
+        dispatch_id: str = "",
+    ) -> dict[str, object]:
+        normalized_root = _bounded_text(root_id, maximum=240, required=True)
+        normalized_generation = max(0, int(generation))
+        normalized_dispatch = _bounded_text(dispatch_id, maximum=240)
+        dispatch_clause = " AND b.causal_dispatch_id = ?" if normalized_dispatch else ""
+        values: tuple[object, ...] = (
+            normalized_root,
+            normalized_dispatch,
+        ) if normalized_dispatch else (
+            normalized_root,
+        )
+        try:
+            with self._connect() as conn:
+                root = conn.execute(
+                    "SELECT generation, state FROM room_kernel_roots WHERE root_id = ?",
+                    (normalized_root,),
+                ).fetchone()
+                rows = conn.execute(
+                    f"""
+                    SELECT r.id, r.batch_id, r.state, b.abort_requested,
+                           b.causal_room_id, b.causal_root_id,
+                           b.causal_task_id, b.causal_dispatch_id,
+                           b.causal_generation
+                    FROM agent_subagent_runs AS r
+                    JOIN agent_subagent_batches AS b ON b.id = r.batch_id
+                    WHERE b.room_bound = 1
+                      AND b.causal_root_id = ?
+                      {dispatch_clause}
+                      AND r.state IN ('queued', 'running')
+                    ORDER BY r.created_at_ms, r.id
+                    """,
+                    values,
+                ).fetchall()
+        except Exception as exc:
+            return _root_child_quiescence_unknown(
+                root_id=normalized_root,
+                generation=normalized_generation,
+                dispatch_id=normalized_dispatch,
+                error=exc,
+                target_kind="delegationRun",
+            )
+        errors: list[str] = []
+        if root is None:
+            errors.append("room root lineage is unavailable")
+        elif int(root["generation"]) != normalized_generation:
+            errors.append("room root generation is stale")
+        targets: list[dict[str, object]] = []
+        counts = {"queued": 0, "running": 0, "cancelling": 0}
+        for row in rows:
+            row_generation = int(row["causal_generation"] or 0)
+            row_dispatch = str(row["causal_dispatch_id"] or "")
+            exact = (
+                row_generation == normalized_generation
+                and (not normalized_dispatch or row_dispatch == normalized_dispatch)
+            )
+            persisted_state = str(row["state"])
+            effective_state = (
+                "queued"
+                if persisted_state == "queued"
+                else "cancelling"
+                if bool(row["abort_requested"])
+                else "running"
+            )
+            if not exact:
+                targets.append(
+                    {
+                        "targetKind": "delegationRun",
+                        "targetId": str(row["id"]),
+                        "batchId": str(row["batch_id"]),
+                        "state": "unknown",
+                        "roomId": str(row["causal_room_id"] or ""),
+                        "rootId": str(row["causal_root_id"] or ""),
+                        "generation": row_generation,
+                        "taskId": str(row["causal_task_id"] or ""),
+                        "dispatchId": row_dispatch,
+                    }
+                )
+                continue
+            counts[effective_state] += 1
+            targets.append(
+                {
+                    "targetKind": "delegationRun",
+                    "targetId": str(row["id"]),
+                    "batchId": str(row["batch_id"]),
+                    "state": effective_state,
+                    "roomId": str(row["causal_room_id"] or ""),
+                    "rootId": str(row["causal_root_id"] or ""),
+                    "generation": row_generation,
+                    "taskId": str(row["causal_task_id"] or ""),
+                    "dispatchId": row_dispatch,
+                }
+            )
+        unknown_count = len(errors) + sum(
+            1 for target in targets if target["state"] == "unknown"
+        )
+        return {
+            "schemaVersion": "rag-ime.root-child-quiescence.v1",
+            "owner": "delegation",
+            "rootId": normalized_root,
+            "generation": normalized_generation,
+            "dispatchId": normalized_dispatch,
+            "state": (
+                "unknown"
+                if unknown_count
+                else "pending"
+                if targets
+                else "quiescent"
+            ),
+            "quiescent": not targets and not errors,
+            "pendingCount": len(targets) + len(errors),
+            "unknownCount": unknown_count,
+            "counts": {**counts, "total": sum(counts.values())},
+            "pendingTargets": targets,
+            "errors": errors[:8],
+        }
+
+    def request_root_abort(
+        self,
+        *,
+        request_id: str,
+        root_id: str,
+        generation: int,
+        dispatch_id: str = "",
+        reason: str = "Room Root cancelled",
+        requested_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        normalized_request_id = _bounded_text(request_id, maximum=240, required=True)
+        normalized_root = _bounded_text(root_id, maximum=240, required=True)
+        normalized_generation = max(0, int(generation))
+        normalized_dispatch = _bounded_text(dispatch_id, maximum=240)
+        normalized_reason = _bounded_text(reason, maximum=240) or "Room Root cancelled"
+        dispatch_clause = " AND b.causal_dispatch_id = ?" if normalized_dispatch else ""
+        values: tuple[object, ...] = (
+            normalized_root,
+            normalized_generation,
+            normalized_dispatch,
+        ) if normalized_dispatch else (
+            normalized_root,
+            normalized_generation,
+        )
+        now = _timestamp(requested_at_ms)
+        affected_run_ids: list[str] = []
+        active_run_ids: list[str] = []
+        blocked_run_ids: list[str] = []
+        batch_ids: list[str] = []
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            batches = conn.execute(
+                f"""
+                SELECT b.id, b.lifecycle_cancel_request_id
+                FROM agent_subagent_batches AS b
+                WHERE b.room_bound = 1
+                  AND b.causal_root_id = ?
+                  AND b.causal_generation = ?
+                  {dispatch_clause}
+                  AND b.state IN ('queued', 'running')
+                ORDER BY b.created_at_ms, b.id
+                """,
+                values,
+            ).fetchall()
+            for batch in batches:
+                batch_id = str(batch["id"])
+                owner = str(batch["lifecycle_cancel_request_id"] or "")
+                if owner not in {"", normalized_request_id}:
+                    blocked = conn.execute(
+                        """
+                        SELECT id FROM agent_subagent_runs
+                        WHERE batch_id = ? AND state IN ('queued', 'running')
+                        ORDER BY ordinal, id
+                        """,
+                        (batch_id,),
+                    ).fetchall()
+                    blocked_run_ids.extend(str(run["id"]) for run in blocked)
+                    continue
+                batch_ids.append(batch_id)
+                conn.execute(
+                    """
+                    UPDATE agent_subagent_batches
+                    SET abort_requested = 1,
+                        lifecycle_cancel_request_id = ?,
+                        updated_at_ms = ?
+                    WHERE id = ? AND lifecycle_cancel_request_id IN ('', ?)
+                    """,
+                    (normalized_request_id, now, batch_id, normalized_request_id),
+                )
+                runs = conn.execute(
+                    """
+                    SELECT id, state FROM agent_subagent_runs
+                    WHERE batch_id = ? ORDER BY ordinal, id
+                    """,
+                    (batch_id,),
+                ).fetchall()
+                for run in runs:
+                    run_id = str(run["id"])
+                    state = str(run["state"])
+                    if state not in {"queued", "running"}:
+                        continue
+                    affected_run_ids.append(run_id)
+                    if state == "queued":
+                        conn.execute(
+                            """
+                            UPDATE agent_subagent_runs
+                            SET state = 'aborted', error = ?,
+                                updated_at_ms = ?, completed_at_ms = ?
+                            WHERE id = ? AND state = 'queued'
+                            """,
+                            (normalized_reason, now, now, run_id),
+                        )
+                        self._append_event_conn(
+                            conn,
+                            run_id=run_id,
+                            event_type="aborted",
+                            payload={
+                                "reason": "room_root_cancelled",
+                                "requestId": normalized_request_id,
+                                "rootId": normalized_root,
+                                "generation": normalized_generation,
+                                "dispatchId": normalized_dispatch,
+                            },
+                            created_at_ms=now,
+                        )
+                    else:
+                        active_run_ids.append(run_id)
+                self._refresh_batch_conn(conn, batch_id, updated_at_ms=now)
+        return {
+            "schemaVersion": "rag-ime.root-child-cancellation.v1",
+            "owner": "delegation",
+            "requestId": normalized_request_id,
+            "rootId": normalized_root,
+            "generation": normalized_generation,
+            "dispatchId": normalized_dispatch,
+            "batchIds": batch_ids,
+            "affectedRunIds": affected_run_ids,
+            "activeRunIds": active_run_ids,
+            "pendingRunIds": [*active_run_ids, *blocked_run_ids],
+        }
+
+    def room_delivery_allowed(self, run_id: str) -> bool:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT b.room_bound, b.causal_root_id, b.causal_dispatch_id,
+                           b.causal_generation, root.generation AS root_generation,
+                           root.state AS root_state, dispatch.state AS dispatch_state,
+                           dispatch.generation AS dispatch_generation
+                    FROM agent_subagent_runs AS r
+                    JOIN agent_subagent_batches AS b ON b.id = r.batch_id
+                    LEFT JOIN room_kernel_roots AS root
+                      ON root.root_id = b.causal_root_id
+                    LEFT JOIN room_kernel_dispatches AS dispatch
+                      ON dispatch.dispatch_id = b.causal_dispatch_id
+                    WHERE r.id = ?
+                    """,
+                    (run_id,),
+                ).fetchone()
+        except Exception:
+            return False
+        if row is None:
+            return False
+        if not bool(row["room_bound"]):
+            return True
+        return bool(
+            row["causal_root_id"]
+            and row["causal_dispatch_id"]
+            and row["root_generation"] is not None
+            and int(row["root_generation"]) == int(row["causal_generation"])
+            and str(row["root_state"]) in {"running", "waiting"}
+            and row["dispatch_generation"] is not None
+            and int(row["dispatch_generation"]) == int(row["causal_generation"])
+            and str(row["dispatch_state"])
+            in {"pending", "leased", "running", "retry_wait", "timer_wait"}
+        )
 
     def terminal_child_sessions(
         self,
@@ -571,7 +863,7 @@ class AgentDelegationStore:
         reason: str,
         requested_at_ms: int | None = None,
     ) -> dict[str, object]:
-        if scope_kind not in {"plan", "goal"}:
+        if scope_kind != "goal":
             raise ValueError("unsupported delegation cancellation scope")
         normalized_request_id = _bounded_text(
             request_id,
@@ -582,16 +874,8 @@ class AgentDelegationStore:
             _bounded_text(reason, maximum=240)
             or "Parent lifecycle cancelled"
         )
-        causal_clause = (
-            "causal_plan_id = ? AND causal_plan_revision = ?"
-            if scope_kind == "plan"
-            else "causal_goal_id = ?"
-        )
-        causal_values: tuple[object, ...] = (
-            (scope_id, int(source_revision))
-            if scope_kind == "plan"
-            else (scope_id,)
-        )
+        causal_clause = "causal_goal_id = ?"
+        causal_values: tuple[object, ...] = (scope_id,)
         now = _timestamp(requested_at_ms)
         active_run_ids: list[str] = []
         affected_run_ids: list[str] = []
@@ -1442,7 +1726,9 @@ class AgentDelegationCoordinator:
         cancellation_grace_ms: int = _DEFAULT_CANCELLATION_GRACE_MS,
         subagent_session_retention_ms: int | None = None,
         subagent_session_gc_interval_ms: int | None = None,
-        room_bound_provider: Callable[[str], bool] | None = None,
+        room_context_provider: Callable[
+            [str], Mapping[str, object] | None
+        ] | None = None,
     ) -> None:
         self.artifacts = AgentArtifactStore(db_path, root=artifact_root)
         self.store = AgentDelegationStore(db_path, artifacts=self.artifacts)
@@ -1460,7 +1746,7 @@ class AgentDelegationCoordinator:
             tool_gateway_token or runtime_config.tool_gateway_token
         )
         self._compaction_observer = compaction_observer
-        self._room_bound_provider = room_bound_provider
+        self._room_context_provider = room_context_provider
         self._cancellation_grace_ms = max(10, min(int(cancellation_grace_ms), 30_000))
         self._subagent_session_retention_ms = max(
             0,
@@ -1514,7 +1800,7 @@ class AgentDelegationCoordinator:
             raise ValueError("archived sessions cannot delegate tasks")
         wait = payload.get("wait") is not False
         tasks = _delegation_tasks(payload)
-        plan_item_id, plan_item_title = self._plan_item_link(
+        todo_task, todo_phase = self._todo_task_link(
             parent_session_id,
             payload,
             parent_run=parent_run,
@@ -1540,19 +1826,11 @@ class AgentDelegationCoordinator:
             parent_batch = self.store.get_batch(str(parent_run["batchId"]))
             causal_metadata = dict(parent_batch["causalMetadata"])
         else:
-            plan = self.sessions.agent_plan(parent_session_id)
+            todo = self.sessions.agent_todo(parent_session_id)
             goal = self.sessions.agent_goal(parent_session_id)
             causal_metadata = {
-                "planId": (
-                    str(plan["id"])
-                    if str(plan["status"]) in {"approved", "executing"}
-                    else ""
-                ),
-                "planRevision": (
-                    int(plan["revision"])
-                    if str(plan["status"]) in {"approved", "executing"}
-                    else 0
-                ),
+                "todoId": str(todo["id"]),
+                "todoRevision": int(todo["revision"]),
                 "goalId": (
                     str(goal["goalId"])
                     if bool(goal["configured"])
@@ -1566,12 +1844,17 @@ class AgentDelegationCoordinator:
                     else 0
                 ),
                 "roomBound": False,
+                "roomId": "",
+                "rootId": "",
+                "taskId": "",
+                "dispatchId": "",
             }
-        if (
-            self._room_bound_provider is not None
-            and self._room_bound_provider(parent_session_id)
-        ):
-            causal_metadata["roomBound"] = True
+        if self._room_context_provider is not None:
+            room_context = self._room_context_provider(parent_session_id)
+            if isinstance(room_context, Mapping):
+                causal_metadata = _delegation_causal_metadata(
+                    {**causal_metadata, **room_context}
+                )
         if depth > 2:
             raise ValueError("subagent maximum depth is 2")
 
@@ -1594,9 +1877,11 @@ class AgentDelegationCoordinator:
             try:
                 for ordinal, (task, template) in enumerate(zip(tasks, templates, strict=True)):
                     parent_profile = str(parent.get("toolProfileVersion") or "control-center-v1")
+                    parent_execution_mode = str(parent.get("executionMode") or "").strip()
                     child_profile = (
                         "subagent-readonly-v1"
                         if parent_profile == "subagent-readonly-v1"
+                        or parent_execution_mode == "read_only"
                         else template.tool_profile_version
                     )
                     child = self.sessions.create(
@@ -1647,8 +1932,8 @@ class AgentDelegationCoordinator:
                             "outputSchema": task.get("outputSchema", {}),
                             "templateVersion": template.version,
                             "task": task["task"],
-                            "planItemId": plan_item_id,
-                            "planItemTitle": plan_item_title,
+                            "todoTask": todo_task,
+                            "todoPhase": todo_phase,
                             "maxTurns": budget.max_turns,
                             "maxToolCalls": budget.max_tool_calls,
                             "maxTotalTokens": budget.max_total_tokens,
@@ -1688,7 +1973,7 @@ class AgentDelegationCoordinator:
             "ok": True,
             "accepted": True,
             # This acknowledges only that the bounded delegation request was
-            # accepted for execution.  It is not evidence that any child
+            # accepted for execution. It is not evidence that any child
             # result has satisfied the parent task's acceptance criteria.
             "acceptanceScope": "delegation_request",
             "waited": wait,
@@ -1924,7 +2209,7 @@ class AgentDelegationCoordinator:
                         "acceptanceCriteria": current["acceptanceCriteria"],
                         "outputSchema": current.get("outputSchema", {}),
                         "task": current["task"],
-                        "planItemId": current["planItemId"],
+                        "todoTask": current["todoTask"],
                         "contextMode": "fresh",
                         "wait": False,
                     },
@@ -1932,7 +2217,6 @@ class AgentDelegationCoordinator:
             elif action == "resume":
                 if not message:
                     message = "继续之前中断的任务。先核对已有进度，再完成剩余工作。"
-                    command_payload["message"] = message
                 with self._lock:
                     previous_thread = self._threads.get(run_id)
                 if (
@@ -2031,6 +2315,100 @@ class AgentDelegationCoordinator:
                 "pendingRunIds": pending_run_ids,
                 "graceMs": self._cancellation_grace_ms,
             },
+        }
+
+    def root_child_quiescence(
+        self,
+        *,
+        root_id: str,
+        generation: int,
+        dispatch_id: str = "",
+    ) -> dict[str, object]:
+        return self.store.root_child_quiescence(
+            root_id=root_id,
+            generation=generation,
+            dispatch_id=dispatch_id,
+        )
+
+    def cancel_root_children(
+        self,
+        *,
+        request_id: str,
+        root_id: str,
+        generation: int,
+        dispatch_id: str = "",
+        reason: str = "Room Root cancelled",
+    ) -> dict[str, object]:
+        selection = self.store.request_root_abort(
+            request_id=request_id,
+            root_id=root_id,
+            generation=generation,
+            dispatch_id=dispatch_id,
+            reason=reason,
+        )
+        for run_id in selection["activeRunIds"]:
+            self._request_cancel(
+                str(run_id),
+                state="aborted",
+                reason=reason,
+            )
+        deadline = (
+            time.monotonic()
+            + self._cancellation_grace_ms / 1000.0
+            + 1.0
+        )
+        pending_targets: list[dict[str, object]] = []
+        while True:
+            pending_targets = []
+            for run_id in selection["affectedRunIds"]:
+                try:
+                    run = self.store.get_run(str(run_id))
+                except Exception as exc:
+                    pending_targets.append(
+                        {
+                            "targetKind": "delegationRun",
+                            "targetId": str(run_id),
+                            "state": "unknown",
+                            "errorType": type(exc).__name__,
+                        }
+                    )
+                    continue
+                if str(run.get("state") or "") in _ACTIVE_STATES:
+                    batch = self.store.get_batch(str(run["batchId"]))
+                    causal = batch.get("causalMetadata")
+                    causal = causal if isinstance(causal, Mapping) else {}
+                    pending_targets.append(
+                        {
+                            "targetKind": "delegationRun",
+                            "targetId": str(run_id),
+                            "state": (
+                                "cancelling"
+                                if bool(batch.get("abortRequested"))
+                                else str(run.get("state") or "unknown")
+                            ),
+                            "rootId": str(causal.get("rootId") or root_id),
+                            "generation": int(generation),
+                            "dispatchId": str(causal.get("dispatchId") or dispatch_id),
+                        }
+                    )
+            if not pending_targets or time.monotonic() >= deadline:
+                break
+            time.sleep(0.01)
+        self._schedule_pending_result_contexts()
+        return {
+            "schemaVersion": "rag-ime.root-child-cancellation.v1",
+            "owner": "delegation",
+            "requestId": str(request_id),
+            "rootId": str(root_id),
+            "generation": int(generation),
+            "dispatchId": str(dispatch_id),
+            "state": "requested" if pending_targets else "terminated",
+            "batchIds": list(selection["batchIds"]),
+            "targetIds": [
+                str(run_id) for run_id in selection["affectedRunIds"]
+            ],
+            "pendingTargets": pending_targets,
+            "terminatedCount": len(selection["affectedRunIds"]) - len(pending_targets),
         }
 
     def cancel_causal(
@@ -2473,8 +2851,8 @@ class AgentDelegationCoordinator:
             "agentTemplateId": run["templateId"],
             "agentTemplateVersion": run["templateVersion"],
             "delegationDepth": batch["depth"],
-            "planItemId": run["planItemId"],
-            "planItemTitle": run["planItemTitle"],
+            "todoTask": run["todoTask"],
+            "todoPhase": run["todoPhase"],
             "toolProfileVersion": self.sessions.get(child_session_id)["toolProfileVersion"],
         }
         if self._legacy_runtime_factory is not None:
@@ -2809,6 +3187,13 @@ class AgentDelegationCoordinator:
             or str(current.get("state") or "") not in _TERMINAL_STATES
         ):
             return current
+        causal = batch.get("causalMetadata")
+        if isinstance(causal, Mapping) and bool(causal.get("roomBound")):
+            if not self.store.room_delivery_allowed(str(current["id"])):
+                # The child may finish after its Root generation was revoked.
+                # Persist a consumed delivery marker, but never enqueue a late
+                # result into the fenced parent Session.
+                return self.store.mark_result_context_scheduled(str(current["id"]))
         self.context_runtime.enqueue_delegated_result(
             parent_session_id=parent_session_id,
             batch=batch,
@@ -2823,6 +3208,10 @@ class AgentDelegationCoordinator:
         run: Mapping[str, object],
         summary: str,
     ) -> None:
+        causal = batch.get("causalMetadata")
+        if isinstance(causal, Mapping) and bool(causal.get("roomBound")):
+            if not self.store.room_delivery_allowed(str(run["id"])):
+                return
         self.events.publish(
             parent_session_id,
             "tool_progress",
@@ -2834,50 +3223,59 @@ class AgentDelegationCoordinator:
                 "runId": run["id"],
                 "agent": run["templateId"],
                 "state": run["state"],
-                "planItemId": run["planItemId"],
-                "planItemTitle": run["planItemTitle"],
-                "requiresParentPlanUpdate": run["state"] not in {"queued", "running"},
+                "todoTask": run["todoTask"],
+                "todoPhase": run["todoPhase"],
+                "requiresParentTodoUpdate": run["state"] not in {"queued", "running"},
             },
         )
 
-    def _plan_item_link(
+    def _todo_task_link(
         self,
         parent_session_id: str,
         payload: Mapping[str, object],
         *,
         parent_run: Mapping[str, object] | None,
     ) -> tuple[str, str]:
-        requested = _bounded_text(payload.get("planItemId"), maximum=160)
+        requested = _bounded_text(payload.get("todoTask"), maximum=240)
         if parent_run is not None:
-            inherited = _bounded_text(parent_run.get("planItemId"), maximum=160)
+            inherited = _bounded_text(parent_run.get("todoTask"), maximum=240)
             if requested and requested != inherited:
-                raise ValueError("nested delegation must keep the parent run planItemId")
+                raise ValueError("nested delegation must keep the parent run todoTask")
             return (
                 inherited,
-                _bounded_text(parent_run.get("planItemTitle"), maximum=240),
+                _bounded_text(parent_run.get("todoPhase"), maximum=80),
             )
 
-        plan = self.sessions.agent_plan(parent_session_id, limit=100)
-        items = [
-            item
-            for item in plan.get("items", [])
+        todo = self.sessions.agent_todo(parent_session_id)
+        linked_tasks = [
+            (str(phase.get("name") or ""), item)
+            for phase in todo.get("phases", [])
+            if isinstance(phase, Mapping)
+            for item in phase.get("tasks", [])
             if isinstance(item, Mapping)
         ]
-        if not items:
+        if not linked_tasks:
             if requested:
-                raise ValueError("planItemId does not belong to the parent Session Plan")
+                raise ValueError("todoTask does not belong to the parent Session Todo")
             return "", ""
         if not requested:
             raise ValueError(
-                "planItemId is required when delegating from a Session with a Plan"
+                "todoTask is required when delegating from a Session with Todo tasks"
             )
         linked = next(
-            (item for item in items if str(item.get("id") or "") == requested),
+            (
+                (phase_name, item)
+                for phase_name, item in linked_tasks
+                if str(item.get("content") or "") == requested
+            ),
             None,
         )
         if linked is None:
-            raise ValueError("planItemId does not belong to the parent Session Plan")
-        return requested, _bounded_text(linked.get("title"), maximum=240, required=True)
+            raise ValueError("todoTask does not belong to the parent Session Todo")
+        phase_name, item = linked
+        if str(item.get("status") or "") != "in_progress":
+            raise ValueError("todoTask must be the current in_progress Todo task")
+        return requested, _bounded_text(phase_name, maximum=80, required=True)
 
 
 def _delegation_tasks(payload: Mapping[str, object]) -> list[dict[str, object]]:
@@ -3051,18 +3449,21 @@ def _validated_native_fork_sessions(
             }
         )
     return resolved
-
-
 def _delegation_causal_metadata(
     value: Mapping[str, object] | None,
 ) -> dict[str, object]:
     source = value if isinstance(value, Mapping) else {}
     return {
-        "planId": _bounded_text(source.get("planId"), maximum=240),
-        "planRevision": max(0, int(source.get("planRevision") or 0)),
+        "todoId": _bounded_text(source.get("todoId"), maximum=240),
+        "todoRevision": max(0, int(source.get("todoRevision") or 0)),
         "goalId": _bounded_text(source.get("goalId"), maximum=240),
         "goalRevision": max(0, int(source.get("goalRevision") or 0)),
         "roomBound": bool(source.get("roomBound")),
+        "roomId": _bounded_text(source.get("roomId"), maximum=240),
+        "rootId": _bounded_text(source.get("rootId"), maximum=240),
+        "taskId": _bounded_text(source.get("taskId"), maximum=240),
+        "dispatchId": _bounded_text(source.get("dispatchId"), maximum=240),
+        "generation": max(0, int(source.get("generation") or 0)),
     }
 
 
@@ -3137,6 +3538,33 @@ def _subagent_prompt(run: Mapping[str, object], batch: Mapping[str, object]) -> 
         if isinstance(output_schema, Mapping) and output_schema
         else ""
     )
+    room_handoff = ""
+    causal_metadata = batch.get("causalMetadata")
+    if isinstance(causal_metadata, Mapping) and bool(
+        causal_metadata.get("roomBound")
+    ):
+        context_mode = str(batch.get("contextMode") or "fresh")
+        context_guidance = (
+            "fork 已验证 exact managed Pi transcript prefix；只在其后追加本有界 brief，"
+            "不得重写或重排 system/model/tool 顺序，也不承诺 provider cache hit。"
+            if context_mode == "fork"
+            else (
+                "fresh 表示独立上下文；独立复核保持 fresh、只读，不引入父会话私有 transcript。"
+            )
+        )
+        room_handoff = (
+            "\n\nRoom nested handoff：你是 parent 的私有、有界助手，不得 settle Room、"
+            "room_post 或直接打开原生 Ask。缺少用户决定时把结构化 blocker 交回 parent；"
+            "Room participant 使用 room_commit(wait)，且只带一个最小问题和恢复条件。\n"
+            f"{context_guidance}\n"
+            "workspace_lsp 仅按当前 tool profile：readonly 只用 status/symbols/hover/definition/"
+            "references/diagnostics；worker 的 rename/code_action_apply 仍需现有 hash-bound "
+            "approval，导出符号变更先用 references。"
+        )
+    room_suffix = f"{room_handoff}\n\n"
+    if not room_handoff:
+        room_suffix = "\n\n"
+
     return (
         "请完成下面这一项有界委派任务。只返回可交给主持会话使用的结果；"
         "不要把自己描述成长期群聊成员，也不要扩大工具或权限。"
@@ -3146,7 +3574,7 @@ def _subagent_prompt(run: Mapping[str, object], batch: Mapping[str, object]) -> 
         f"任务：\n{run['task']}\n\n"
         f"预期交付：\n{run['expectedOutput']}\n\n"
         f"验收条件：\n{criteria}"
-        f"{schema_section}\n\n"
+        f"{schema_section}{room_suffix}"
         f"上下文模式：{batch['contextMode']}\n"
         f"委派深度：{batch['depth']}/{batch['maxDepth']}"
     )
@@ -3290,14 +3718,23 @@ def _batch_payload(row: sqlite3.Row, runs: Sequence[sqlite3.Row]) -> dict[str, o
         "abortRequested": bool(row["abort_requested"]),
         "createdAtMs": int(row["created_at_ms"]),
         "updatedAtMs": int(row["updated_at_ms"]),
-        "completedAtMs": int(row["completed_at_ms"]) if row["completed_at_ms"] is not None else None,
+        "completedAtMs": (
+            int(row["completed_at_ms"])
+            if row["completed_at_ms"] is not None
+            else None
+        ),
         "runs": run_payloads,
         "causalMetadata": {
-            "planId": str(row["causal_plan_id"] or ""),
-            "planRevision": int(row["causal_plan_revision"] or 0),
+            "todoId": str(row["causal_todo_id"] or ""),
+            "todoRevision": int(row["causal_todo_revision"] or 0),
             "goalId": str(row["causal_goal_id"] or ""),
             "goalRevision": int(row["causal_goal_revision"] or 0),
             "roomBound": bool(row["room_bound"]),
+            "roomId": str(row["causal_room_id"] or ""),
+            "rootId": str(row["causal_root_id"] or ""),
+            "taskId": str(row["causal_task_id"] or ""),
+            "dispatchId": str(row["causal_dispatch_id"] or ""),
+            "generation": int(row["causal_generation"] or 0),
         },
     }
     for run in run_payloads:
@@ -3313,8 +3750,8 @@ def _run_payload(row: sqlite3.Row) -> dict[str, object]:
         "id": str(row["id"]),
         "batchId": str(row["batch_id"]),
         "childSessionId": str(row["child_session_id"]),
-        "planItemId": str(row["plan_item_id"] or ""),
-        "planItemTitle": str(row["plan_item_title"] or ""),
+        "todoTask": str(row["todo_task"] or ""),
+        "todoPhase": str(row["todo_phase"] or ""),
         "templateId": str(row["template_id"]),
         "templateVersion": str(row["template_version"]),
         "ordinal": int(row["ordinal"]),
@@ -3346,16 +3783,23 @@ def _run_payload(row: sqlite3.Row) -> dict[str, object]:
             else None
         ),
         "createdAtMs": int(row["created_at_ms"]),
-        "startedAtMs": int(row["started_at_ms"]) if row["started_at_ms"] is not None else None,
+        "startedAtMs": (
+            int(row["started_at_ms"])
+            if row["started_at_ms"] is not None
+            else None
+        ),
         "updatedAtMs": int(row["updated_at_ms"]),
-        "completedAtMs": int(row["completed_at_ms"]) if row["completed_at_ms"] is not None else None,
+        "completedAtMs": (
+            int(row["completed_at_ms"])
+            if row["completed_at_ms"] is not None
+            else None
+        ),
     }
     output_schema = _json_mapping(row["output_schema_json"])
     if output_schema:
         payload["outputSchema"] = output_schema
     validate_contract(payload, "agent-subagent-run.v1.json")
     return payload
-
 
 def _required_text(value: Mapping[str, object], key: str) -> str:
     return _bounded_text(value.get(key), maximum=240, required=True)
@@ -3366,6 +3810,35 @@ def _bounded_text(value: object, *, maximum: int, required: bool = False) -> str
     if required and not text:
         raise ValueError("required delegation text is missing")
     return text[:maximum]
+
+def _root_child_quiescence_unknown(
+    *,
+    root_id: str,
+    generation: int,
+    dispatch_id: str,
+    error: BaseException,
+    target_kind: str,
+) -> dict[str, object]:
+    return {
+        "schemaVersion": "rag-ime.root-child-quiescence.v1",
+        "owner": "delegation",
+        "rootId": root_id,
+        "generation": int(generation),
+        "dispatchId": dispatch_id,
+        "state": "unknown",
+        "quiescent": False,
+        "pendingCount": 1,
+        "unknownCount": 1,
+        "counts": {"queued": 0, "running": 0, "cancelling": 0, "total": 0},
+        "pendingTargets": [
+            {
+                "targetKind": target_kind,
+                "targetId": f"{target_kind}:{root_id}:{generation}",
+                "state": "unknown",
+            }
+        ],
+        "errors": [type(error).__name__],
+    }
 
 
 def _bounded_task(value: object) -> str:

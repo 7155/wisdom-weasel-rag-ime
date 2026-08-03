@@ -6,17 +6,12 @@ from .contracts.json_schema import validate_contract
 
 
 _PROGRESSIVE_CAPABILITY_POLICY = """<capability-policy>
-routing card 是 catalog revision 元数据；仅本轮 tools/<loaded_skill> 激活。nextCandidates 仅建议；notFor 命中不加载。
-
-skill_load 加载精确正文一次；<loaded_skill> 同 revision 不重载。禁止重构、注入无关正文、另建/取代 Runtime owner。
-
-通常一主 Skill，最多两个；代码切片用 test-driven-implementation，故障先 systematic-debugging。项目连续性归 implementation-execution，个人事实归 memory-curation，禁止重复或争夺同一持久化事实。
-
-tools 有 schema 即调用；否则 tool_load 精确 1 至 4 个，禁盘点/预热/猜测。点名协议工具缺失时，不按语义改搜其他能力；tool_search/tool_load 同名后调用。Runtime 实际能力/审批/取消/工作区/生命周期/owner 高于 Skill prose。
-
-无实质歧义且授权内可逆即执行；仅实质取舍才提 AI 生成的简短选择题。禁索取裸“确认”，禁把 Goal/In scope/Readiness 内部模板原样作最终聊天。只提交计划不算完成。
-
-完成须逐项将 deliverable 映射至新鲜、权威 evidence receipt；缺失即未完成。
+routing card 是 catalog revision 元数据；nextCandidates 仅建议，notFor 命中不加载。
+skill_load 加载精确正文一次；<loaded_skill> 同 revision 不重载；禁止重构、注入无关正文、另建/取代 Runtime owner。
+通常一主 Skill，最多两个；代码切片用 test-driven-implementation，故障先 systematic-debugging；项目连续性归 implementation-execution，个人事实归 memory-curation；禁止重复、争夺同一持久化事实。
+有 schema 直调；否则 tool_load 1-4 个，禁预热、猜测、协议改搜。拒绝指定工具：tool_search 后单独 tool_load。Runtime 实际能力/审批/取消/工作区/生命周期/owner 优先。
+先查可验证事实；授权内可逆默认直接执行；外部事实不可得则阻塞。调查后仅剩实质取舍或明确要求 Grill/挑战/压力测试，才用 alignment-and-decision/ask。普通模式合并 1-4 个独立项、分开依赖项。禁裸“确认”；禁将 Goal/In scope/Readiness 内部模板原样作最终聊天。计划不算完成。
+每个 deliverable 对应新鲜、权威 evidence receipt；缺失即未完成。
 </capability-policy>"""
 
 

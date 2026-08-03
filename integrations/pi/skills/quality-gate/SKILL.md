@@ -12,119 +12,116 @@ notFor:
 
 # Quality Gate
 
-This Skill prepares evidence. It does not approve delivery and it does not
-compute the authoritative final status.
+This Skill prepares evidence; it neither approves delivery nor computes the
+authoritative result.
 
 ## Core Principle
 
 No completion claim without fresh, claim-shaped evidence. Tests, diffs, UI
 inspection, Provider payloads, installed-runtime receipts, and external results
-prove different things; one green command cannot stand in for all of them.
-The Kernel binds aliases and decides settlement. For code changes, a complete
-matrix is evidence-ready; `independent-review` still owns review clearance.
+prove different things. The Kernel binds aliases and derives coverage and readiness.
+For code, a complete matrix is evidence-ready. Review is optional:
+the Facilitator decides whether risk warrants `independent-review` after
+integration; review is not mandatory for every task.
 
 ## Workflow
 
-1. Re-read the verbatim user text supplied by the Runtime, later append-only
-   corrections, and the current confirmed requirement directory. The directory
-   is navigation; it never replaces the user's words.
-2. List every current acceptance check using the short human-readable aliases
-   supplied in task context. Do not invent backend IDs or omit an inconvenient
-   item.
-3. For each check, collect fresh evidence appropriate to the claim: focused
-   diff, test output, installed-runtime receipt, Provider payload, artifact,
-   inspected UI state, or an explicit external result.
-4. Classify the evidence proposal as `pass`, `fail`, or `not_verified`.
-   A `pass` needs at least one inspectable reference. An unavailable check is
-   `not_verified`, never a pass.
-5. Test negative paths proportional to risk: cancellation, retry, idempotency,
-   permission boundary, recovery, compatibility, stale state, migration, and
-   rollback where relevant.
-6. Separate product defects from test/canary defects and external Provider
+1. Re-read verbatim user text, append-only corrections, and confirmed
+   requirements. A directory is navigation, never a replacement for the words.
+2. List every acceptance check by its short human-readable aliases. Do not
+   invent backend IDs or omit an inconvenient item.
+3. Collect fresh evidence shaped for each claim: focused diff, test output,
+   installed-runtime receipt, Provider payload, artifact, inspected UI state,
+   or explicit external result.
+4. Propose `pass`, `fail`, or `not_verified`. A pass needs an inspectable
+   successful ref. Unavailable, stale, or failed evidence remains not verified.
+5. Probe negative paths proportional to risk: cancellation, retry,
+   idempotency, permission, recovery, compatibility, stale state, migration,
+   and rollback.
+6. Separate product defects, test/canary defects, and external Provider
    instability. Record residual risk and its owner.
-7. Translate the proposal into the active lifecycle Tool's exact private schema.
-   For `room_commit`, include only verified items as
-   `{"acceptance":"AC-1","refs":["<evidenceRef>"]}` inside `evidence`.
-   Put failed or unverified observations in the private summary and residual
-   risks, then continue, hand off, wait, or report blocked. The required
-   `publicSummary` translates relevant outcome, behavioral verification,
-   uncertainty, and next step into natural language without exposing aliases
-   or reference IDs. The Kernel binds aliases to authoritative criteria,
-   verifies eligible receipts and freshness, derives coverage and readiness,
-   then accepts settlement or returns the exact missing item.
-   For `decision=deliver`, send `decision`, private `summary`, user-facing
-   `publicSummary`, `evidence`, and `residualRisks`, plus optional `blocks`.
-   Do not send `acceptanceAliases`: that field is only for `decision=handoff`;
-   current Task AC coverage always belongs in `evidence`.
+7. Translate the result into the active lifecycle Tool's exact private
+   schema. For `room_commit`, put only verified items in `evidence` as
+   `{"acceptance":"AC-1","refs":["<evidenceRef>"]}`. Put failures and unknowns
+   in private summary and risk fields. The user-facing
+   `publicSummary` states outcome, behavioral verification, uncertainty, and
+   next step without internal aliases or refs.
+8. For `decision=deliver`, send only loaded-schema fields. Do not send
+   `acceptanceAliases`; it belongs to `decision=handoff`, while current-task
+   coverage belongs in `evidence`.
 
 ## Evidence Matrix
 
-For each acceptance alias, record:
-
-| Field | Required meaning |
+| Field | Meaning |
 |---|---|
-| Claim | The observable behavior being asserted |
-| Evidence | Fresh successful `evidenceRef` or inspectable artifact |
-| Scope | Environment, revision, model, data, viewport, or runtime tested |
+| Claim | Observable behavior asserted |
+| Evidence | Fresh successful ref or inspectable artifact |
+| Scope | Revision, runtime, data, model, environment, or viewport |
 | Result | `pass`, `fail`, or `not_verified` |
-| Gap | What remains unknown or failed |
+| Gap | Remaining unknown or failure |
 
-For user-facing acceptance, also record this concise visibility delta:
-| Surface | Confirmed target | Observed behavior | Missing/degraded behavior | Evidence refs | Disposition |
+For a user-facing result, also record the visibility delta:
+
+| Surface | Target | Observed | Missing/degraded behavior | Evidence | Disposition |
 |---|---|---|---|---|---|
 
-A missing named surface remains `not_verified` unless a confirmed requirement revision removes it;
-author-only deferral is not evidence. Internal-only work may state a visibility exemption.
-The table cites existing criteria/receipts and has no authority to set a result or Kernel verdict.
+This table cites existing criteria and has no authority to set a result or Kernel verdict.
+A missing named surface remains unverified unless a confirmed requirement
+revision removes it; an internal-only item may state a visibility exemption.
 
-Use evidence that matches the claim:
+Match evidence to the claim:
 
-- source or contract claim -> focused diff plus contract test;
-- runtime claim -> real request, state transition, and returned effect;
-- UI claim -> actual interaction plus visible and accessibility state;
-- Provider-context claim -> final `systemPrompt + messages + tools` payload;
-- installed-product claim -> clean commit, install provenance, health, and
-  launch evidence.
+- source/contract: focused diff plus contract test;
+- runtime: real request, transition, and returned effect;
+- UI: actual interaction plus visible and accessibility state;
+- Provider context: final prompt, messages, and Tools payload;
+- installed product: clean revision, install provenance, health, launch, and
+  foreground behavior where required.
+
+## Managed Room Boundary
+
+- Work only on the current participant's bounded responsibility. The Kernel
+  owns WorkItem settlement and any review handoff; the Facilitator owns
+  integration and decides whether review is warranted. This Skill cannot
+  complete the Root or choose the Reviewer.
+- When review is chosen, implementation evidence hands off after integration
+  to a distinct Reviewer. Do not self-review or use `room_collaborate` as the
+  review route. When review is not chosen, integrated evidence proceeds to the
+  same Kernel gates without manufacturing a review stage.
+- Use `room_state` for current authority and `room_commit` for evidence, wait,
+  block, or handoff. Rejected/stale authority cannot be replaced by model state.
+- Keep private summaries, refs, workspace paths, and participant details
+  private. Only the Facilitator/reporter owns the final public Room summary.
+- Only the Facilitator/reporter emits the final public summary.
 
 ## Gate Outcomes
 
-- **deliver recommendation**: every required alias has fresh evidence and no
-  blocker; code changes advance to review and are not review-cleared;
-- **continue**: an authorized action can still produce missing evidence;
-- **handoff**: another participant or model capability is needed;
-- **wait**: one user, permission, credential, or external signal is required;
-- **blocked**: bounded alternatives are exhausted or the requirement is
-  unreachable.
+- `deliver recommendation`: all required evidence is fresh and unblocked; if
+  the Facilitator chose review, advance to the distinct post-integration
+  Reviewer, otherwise advance to Kernel settlement with integration evidence;
+- `continue`: a legal action can produce missing evidence;
+- `handoff`: another capability or owner is needed;
+- `wait`: a user, permission, credential, or external signal is needed;
+- `blocked`: bounded alternatives are exhausted.
 
-These are proposals. Do not write the Kernel's verdict yourself.
+These are proposals, never the Kernel's verdict.
 
 ## Output Contract
 
-Return:
-
-- `original_request_checked`;
-- one item per acceptance alias with `status` and `evidence_refs`;
-- failed and unverified observations;
-- residual risks and owners;
-- a recommendation: deliver, continue, handoff, wait, or blocked.
-
-The recommendation is advisory. The matrix is a working result, not a Tool
-payload. When calling `room_commit`, never send `status`, `evidence_refs`,
-`criterionId`, `pass`, `verdict`, a coverage set, Root status, or frontend
-completion state. Use only the exact fields in the loaded `room_commit` schema.
+Return `original_request_checked`, one status and evidence refs per alias,
+failed/unverified observations, residual risks/owners, and one gate
+recommendation. The matrix is a working result, not a Tool payload; use only
+the exact loaded schema when calling a lifecycle Tool.
 
 ## Self-Check
 
-- Did I verify the user's original words, not only a derived checklist?
-- Is every `pass` backed by a fresh successful reference from this revision?
-- Did I distinguish product failure, canary failure, and Provider instability?
-- Did I preserve failures and unverified items instead of lowering a threshold?
-- Would an independent reviewer be able to reproduce the claim?
+- Did I verify original words and every named surface?
+- Does each pass have fresh, reproducible evidence for this revision?
+- Did I preserve failures and unknowns rather than lower a threshold?
+- Can an independent reviewer reproduce each material claim?
 
 ## Boundaries
 
-Do not waive requirements, self-approve sensitive work, manufacture evidence,
-reuse stale evidence without proving it still applies, rewrite screenshots or
-fixtures to match a defect, call a missing check "not relevant" without a
-confirmed requirement change, or claim that the Skill itself completed the
-task.
+Do not waive requirements, self-approve, manufacture evidence, reuse stale
+evidence without applicability proof, rewrite fixtures to match a defect,
+hide a missing check, choose the reviewer, or claim this Skill completed work.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
 import time
@@ -848,11 +849,15 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
         self.assertEqual(parameters["properties"]["futureUse"]["maxLength"], 300)
         self.assertIn(
-            "至少两条独立用户证据",
+            "至少两条独立用户表达",
             parameters["properties"]["basis"]["description"],
         )
         self.assertIn(
-            "不要复述 claim",
+            "已应用工具回执",
+            parameters["properties"]["basis"]["description"],
+        )
+        self.assertIn(
+            "若只影响当前任务或当前会话",
             parameters["properties"]["futureUse"]["description"],
         )
         self.assertIn("一轮最多三条", parameters["description"])
@@ -933,7 +938,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         ):
             self.assertIn(field, parameters["properties"])
         self.assertEqual(memory["description"], "个人上下文记忆")
-        self.assertIn("失败回执", memory["notFor"][0])
+        self.assertIn("工具回执", memory["notFor"][0])
         self.assertNotIn("changes", str(parameters))
 
         role_book = next(
@@ -1064,6 +1069,65 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "agent-tool-result.v1.json",
             )
 
+    def test_room_define_contract_routes_through_the_room_gateway(self) -> None:
+        calls = []
+
+        def execute_room_capability_tool(
+            session_id,
+            tool_name,
+            args,
+            *,
+            tool_call_id,
+            load_receipt_id,
+        ):
+            calls.append(
+                {
+                    "sessionId": session_id,
+                    "tool": tool_name,
+                    "args": args,
+                    "toolCallId": tool_call_id,
+                    "loadReceiptId": load_receipt_id,
+                }
+            )
+            return {"ok": True, "result": {"created": True}}
+
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=self.facade,
+            knowledge_client=self.knowledge,
+            collaboration=SimpleNamespace(
+                execute_room_capability_tool=execute_room_capability_tool
+            ),
+        )
+        request = {
+            "schemaVersion": "rag-ime.agent-tool-call.v1",
+            "sessionId": str(self.session["id"]),
+            "tool": "room_define",
+            "toolCallId": "tool:room-define",
+            "loadReceiptId": "load:room-define",
+            "args": {
+                "objective": "完成实现",
+                "expectedOutput": "可验证结果",
+            },
+        }
+
+        self.assertEqual(gateway.execute(request)["result"], {"created": True})
+        self.assertEqual(
+            calls,
+            [
+                {
+                    "sessionId": str(self.session["id"]),
+                    "tool": "room_define",
+                    "args": request["args"],
+                    "toolCallId": "tool:room-define",
+                    "loadReceiptId": "load:room-define",
+                }
+            ],
+        )
+
     def test_memory_capture_is_r0_and_does_not_create_an_approval(self) -> None:
         AgentMemorySourceStore(
             self.store.db_path,
@@ -1109,11 +1173,14 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertFalse(result["retryable"])
         self.assertFalse(result["createsDurableMemory"])
 
-    def test_runtime_knowledge_and_plan_tools_keep_static_and_backend_schemas_aligned(self) -> None:
+    def test_runtime_knowledge_and_todo_tools_keep_static_and_backend_schemas_aligned(self) -> None:
         manifests = self.gateway.runtime_manifests(self.session)
         knowledge = next(item for item in manifests if item["name"] == "knowledge")
-        plan = next(item for item in manifests if item["name"] == "agent_plan")
+        todo = next(item for item in manifests if item["name"] == "todo")
         goal = next(item for item in manifests if item["name"] == "agent_goal")
+
+        self.assertTrue(todo["alwaysAvailable"])
+        self.assertNotIn("ask", {item["name"] for item in manifests})
 
         knowledge_branches = {
             branch["properties"]["op"]["const"]: branch
@@ -1129,15 +1196,43 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
         self.assertFalse(knowledge_branches["open"]["additionalProperties"])
 
-        plan_branches = {
+        todo_branches = {
             branch["properties"]["op"]["const"]: branch
-            for branch in plan["parameters"]["oneOf"]
+            for branch in todo["parameters"]["oneOf"]
         }
         self.assertCountEqual(
-            plan_branches["update"]["anyOf"],
-            [{"required": ["itemId"]}, {"required": ["title"]}],
+            todo_branches,
+            {
+                "init",
+                "start",
+                "done",
+                "drop",
+                "block",
+                "unblock",
+                "append",
+                "view",
+                "rm",
+            },
         )
-        self.assertFalse(plan_branches["update"]["additionalProperties"])
+        self.assertCountEqual(
+            todo_branches["init"]["oneOf"],
+            [{"required": ["list"]}, {"required": ["items"]}],
+        )
+        self.assertEqual(todo_branches["start"]["required"], ["op", "task"])
+        self.assertCountEqual(
+            todo_branches["block"]["oneOf"],
+            [{"required": ["task"]}, {"required": ["phase"]}],
+        )
+        self.assertEqual(
+            todo["parameters"]["properties"]["reason"]["maxLength"],
+            500,
+        )
+        self.assertEqual(
+            todo_branches["append"]["required"],
+            ["op", "phase", "items"],
+        )
+        self.assertFalse(todo_branches["append"]["additionalProperties"])
+
         goal_branches = {
             branch["properties"]["op"]["const"]: branch
             for branch in goal["parameters"]["oneOf"]
@@ -1207,7 +1302,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "configuration",
                 "agents",
                 "browser",
-                "agent_plan",
+                "todo",
                 "agent_goal",
                 "plugins",
                 "work_documents",
@@ -1221,6 +1316,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "workspace_write",
                 "workspace_job",
                 "workspace_shell",
+                "ask",
             ],
         )
         planning = next(manifest for manifest in manifests if manifest["id"] == "planning")
@@ -1446,86 +1542,61 @@ class ControlToolGatewayTests(unittest.TestCase):
                 )
             )
 
-    def test_agent_plan_is_session_local_and_read_only_blocks_mutations(self) -> None:
-        created = self.gateway.execute(
+    def test_todo_is_session_local_and_never_grants_work_authority(self) -> None:
+        initialized = self.gateway.execute(
             self._tool_call(
-                "agent_plan",
-                "update",
-                title="验证权限模式",
-                status="pending",
+                "todo",
+                "init",
+                phase="执行",
+                items=["验证权限模式"],
             )
         )["result"]
-        item_id = created["event"]["itemId"]
 
-        self.assertEqual(created["presentationKind"], "task_plan")
-        self.assertEqual(created["items"][0]["title"], "验证权限模式")
+        self.assertEqual(initialized["presentationKind"], "todo")
+        self.assertEqual(
+            initialized["todo"]["phases"][0]["tasks"],
+            [{"content": "验证权限模式", "status": "in_progress"}],
+        )
+        self.assertEqual(
+            self.store.workflow_state(str(self.session["id"]))["actGate"]["reason"],
+            "user_execution_request",
+        )
+
         self.session = self.store.set_runtime_policy(
             str(self.session["id"]),
             mode="assistant",
             tool_profile_version="subagent-readonly-v1",
-            allowed_tools=["agent_plan"],
+            allowed_tools=["todo"],
         )
         readable = self.gateway.execute(
-            self._tool_call("agent_plan", "list")
+            self._tool_call("todo", "view")
         )["result"]
-        self.assertEqual(readable["items"][0]["id"], item_id)
-        with self.assertRaisesRegex(ValueError, "not enabled"):
-            self.gateway.execute(
-                self._tool_call(
-                    "agent_plan",
-                    "update",
-                    itemId=item_id,
-                    status="in_progress",
-                )
-            )
-        with self.assertRaisesRegex(ValueError, "not enabled"):
-            self.gateway.execute(
-                self._tool_call(
-                    "agent_plan",
-                    "submit_review",
-                    note="只读模式不得推进计划状态",
-                )
-            )
+        self.assertEqual(readable["todo"], initialized["todo"])
+
+        started = self.gateway.execute(
+            self._tool_call("todo", "start", task="验证权限模式")
+        )["result"]
+        self.assertEqual(started["todo"]["counts"]["inProgress"], 1)
+        completed = self.gateway.execute(
+            self._tool_call("todo", "done", task="验证权限模式")
+        )["result"]
+        self.assertEqual(completed["todo"]["counts"]["completed"], 1)
+        workflow = self.store.workflow_state(str(self.session["id"]))
+        self.assertTrue(workflow["actGate"]["allowed"])
+        self.assertEqual(workflow["actGate"]["reason"], "user_execution_request")
+        self.assertEqual(
+            workflow["actGate"]["todoRevision"],
+            completed["todo"]["revision"],
+        )
 
         other = self.store.create(title="other session", created_at_ms=2)
-        other_plan = self.gateway.execute(
+        other_todo = self.gateway.execute(
             {
-                **self._tool_call("agent_plan", "list"),
+                **self._tool_call("todo", "view"),
                 "sessionId": other["id"],
             }
         )["result"]
-        self.assertEqual(other_plan["items"], [])
-
-    def test_agent_plan_submit_review_keeps_user_execution_request_open(self) -> None:
-        self.gateway.execute(
-            self._tool_call(
-                "agent_plan",
-                "update",
-                title="建立失败基线",
-                status="pending",
-            )
-        )
-
-        reviewed = self.gateway.execute(
-            self._tool_call(
-                "agent_plan",
-                "submit_review",
-                note="记录审阅意见但不阻断执行",
-            )
-        )
-
-        self.assertEqual(reviewed["operation"], "submit_review")
-        self.assertEqual(reviewed["result"]["plan"]["status"], "review")
-        self.assertEqual(
-            reviewed["result"]["presentationKind"],
-            "task_plan",
-        )
-        self.assertTrue(reviewed["result"]["mutationAllowed"])
-        self.assertEqual(
-            reviewed["result"]["nextAction"],
-            "continue_in_scope_execution",
-        )
-        self.assertIn("可继续处理", reviewed["result"]["summary"])
+        self.assertEqual(other_todo["todo"]["phases"], [])
 
     def test_coordinator_workspace_read_and_shell_use_hash_bound_native_approval(self) -> None:
         workspace = Path(self.tmp.name) / "workspace"
@@ -1537,7 +1608,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             workspace_roots=[str(workspace)],
             created_at_ms=2,
         )
-        self._approve_plan(str(coordinator["id"]))
+        self._start_todo(str(coordinator["id"]))
         executed = []
 
         def fake_execute(prepared):
@@ -1587,7 +1658,10 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn("README.md", str(listed))
         self.assertEqual(read["content"], "coordinator proof\n")
         self.assertTrue(prepared["approvalRequired"])
-        self.assertEqual(self.store.agent_plan(str(coordinator["id"]))["status"], "approved")
+        self.assertEqual(
+            self.store.agent_todo(str(coordinator["id"]))["counts"]["inProgress"],
+            1,
+        )
         self.assertEqual(executed, [])
         approval = prepared["approval"]
         decided = self.store.decide_approval(
@@ -1600,7 +1674,10 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(receipt["exitCode"], 0)
         self.assertEqual(receipt["auditId"], approval["approvalId"])
         self.assertEqual(len(executed), 1)
-        self.assertEqual(self.store.agent_plan(str(coordinator["id"]))["status"], "executing")
+        self.assertEqual(
+            self.store.agent_todo(str(coordinator["id"]))["counts"]["inProgress"],
+            1,
+        )
 
     def test_workspace_read_routes_managed_resource_refs_to_authoritative_owners(self) -> None:
         coordinator = self.store.create(
@@ -1694,7 +1771,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             workspace_roots=[str(workspace)],
             created_at_ms=3,
         )
-        self._approve_plan(str(coordinator["id"]))
+        self._start_todo(str(coordinator["id"]))
         events = []
         background_jobs = AgentBackgroundJobService(
             Path(self.tmp.name) / "rag-ime.sqlite",
@@ -1728,6 +1805,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             self.assertEqual(background_jobs.list(str(coordinator["id"]))["items"], [])
 
             approval = pending["approval"]
+            self.assertEqual(approval["toolCallId"], "tool:1")
             decided = self.store.decide_approval(
                 approval["approvalId"],
                 approved=True,
@@ -1810,7 +1888,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             [],
         )
 
-    def test_workspace_managed_user_request_auto_applies_in_scope_without_plan_approval(self) -> None:
+    def test_workspace_managed_user_request_auto_applies_in_scope_without_todo_authority(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-managed"
         outside = Path(self.tmp.name) / "workspace-outside"
         workspace.mkdir()
@@ -1939,7 +2017,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             workspace_roots=[str(workspace)],
             created_at_ms=22,
         )
-        self._approve_plan(str(session["id"]))
+        self._start_todo(str(session["id"]))
         auto_approvals = []
 
         def auto_approve(approval):
@@ -2347,7 +2425,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             root=Path(self.tmp.name) / "tool-media",
         )
         self.gateway.artifact_projector = AgentToolArtifactProjector(media)
-        self._approve_plan(str(coordinator["id"]))
+        self._start_todo(str(coordinator["id"]))
         found = self.gateway.execute(
             {
                 **self._tool_call("workspace_search", "search", query="before"),
@@ -2383,7 +2461,10 @@ class ControlToolGatewayTests(unittest.TestCase):
             ["text/plain", "text/x-diff"],
         )
         self.assertEqual(target.read_text(encoding="utf-8"), "print('after')\n")
-        self.assertEqual(self.store.agent_plan(str(coordinator["id"]))["status"], "executing")
+        self.assertEqual(
+            self.store.agent_todo(str(coordinator["id"]))["counts"]["inProgress"],
+            1,
+        )
 
     def test_workspace_patch_fails_closed_if_file_changes_after_native_approval(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-stale"
@@ -2396,7 +2477,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             workspace_roots=[str(workspace)],
             created_at_ms=4,
         )
-        self._approve_plan(str(coordinator["id"]))
+        self._start_todo(str(coordinator["id"]))
         prepared = self.gateway.execute(
             {
                 **self._tool_call(
@@ -2420,9 +2501,12 @@ class ControlToolGatewayTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkspaceHarnessError, "changed"):
             self.gateway.apply_approval(decided)
         self.assertEqual(target.read_text(encoding="utf-8"), "changed\n")
-        self.assertEqual(self.store.agent_plan(str(coordinator["id"]))["status"], "approved")
+        self.assertEqual(
+            self.store.agent_todo(str(coordinator["id"]))["counts"]["inProgress"],
+            1,
+        )
 
-    def test_unplanned_user_request_reaches_existing_action_approval_policy(self) -> None:
+    def test_user_request_reaches_existing_action_approval_policy_without_todo(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-gated"
         workspace.mkdir()
         (workspace / "README.md").write_text("readable\n", encoding="utf-8")
@@ -2452,9 +2536,10 @@ class ControlToolGatewayTests(unittest.TestCase):
         )["result"]
         self.assertTrue(prepared["approvalRequired"])
         self.assertEqual(prepared["approval"]["riskLevel"], "R2")
-        self.assertEqual(
-            self.store.agent_plan(str(coordinator["id"]))["status"],
-            "draft",
+        todo = self.store.agent_todo(str(coordinator["id"]))
+        self.assertEqual(todo["revision"], 0)
+        self.assertTrue(
+            self.store.workflow_state(str(coordinator["id"]))["actGate"]["allowed"]
         )
 
     def test_workspace_write_receipt_registers_hash_bound_work_document(self) -> None:
@@ -2467,8 +2552,8 @@ class ControlToolGatewayTests(unittest.TestCase):
             created_at_ms=6,
         )
         session_id = str(coordinator["id"])
-        self._approve_plan(session_id)
-        plan = self.store.agent_plan(session_id)
+        self._start_todo(session_id)
+        todo = self.store.agent_todo(session_id)
         documents = WorkDocumentService(
             self.store.db_path,
             sessions=self.store,
@@ -2492,9 +2577,9 @@ class ControlToolGatewayTests(unittest.TestCase):
                     resourceRevision="missing",
                     content="# Canonical work\n",
                     workDocument={
-                        "authorityKind": "session_plan",
+                        "authorityKind": "session_todo",
                         "authorityId": session_id,
-                        "authorityRevision": plan["revision"],
+                        "authorityRevision": todo["revision"],
                         "title": "Canonical work",
                     },
                 ),
@@ -2511,7 +2596,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         tampered_preview = dict(tampered["preview"])
         tampered_action = dict(tampered_preview["actionPayload"])
         tampered_binding = dict(tampered_action["workDocument"])
-        tampered_binding["authorityRevision"] = int(plan["revision"]) + 1
+        tampered_binding["authorityRevision"] = int(todo["revision"]) + 1
         tampered_action["workDocument"] = tampered_binding
         tampered_preview["actionPayload"] = tampered_action
         tampered["preview"] = tampered_preview
@@ -2545,7 +2630,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             registration["document"]["documentId"],
         )
 
-    def test_workspace_harness_failure_keeps_approved_plan_out_of_execution(self) -> None:
+    def test_workspace_harness_failure_keeps_native_approval_out_of_execution(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-failing"
         workspace.mkdir()
         coordinator = self.store.create(
@@ -2554,7 +2639,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             workspace_roots=[str(workspace)],
             created_at_ms=6,
         )
-        self._approve_plan(str(coordinator["id"]))
+        self._start_todo(str(coordinator["id"]))
 
         def fail_execute(_prepared):
             raise WorkspaceHarnessError("runner unavailable")
@@ -2587,9 +2672,12 @@ class ControlToolGatewayTests(unittest.TestCase):
 
         with self.assertRaisesRegex(WorkspaceHarnessError, "runner unavailable"):
             gateway.apply_approval(decided)
-        self.assertEqual(self.store.agent_plan(str(coordinator["id"]))["status"], "approved")
+        self.assertEqual(
+            self.store.agent_todo(str(coordinator["id"]))["counts"]["inProgress"],
+            1,
+        )
 
-    def test_failed_timeout_or_limited_shell_receipt_does_not_start_plan_execution(self) -> None:
+    def test_failed_timeout_or_limited_shell_receipt_does_not_change_todo_authority(self) -> None:
         cases = (
             {"mutationApplied": False, "exitCode": 1, "timedOut": False, "outputLimited": False},
             {"mutationApplied": False, "exitCode": -15, "timedOut": True, "outputLimited": False},
@@ -2605,7 +2693,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                     workspace_roots=[str(workspace)],
                     created_at_ms=10 + index,
                 )
-                self._approve_plan(str(coordinator["id"]))
+                self._start_todo(str(coordinator["id"]))
 
                 def execute(_prepared, fields=receipt_fields):
                     return {
@@ -2645,8 +2733,8 @@ class ControlToolGatewayTests(unittest.TestCase):
                 result = gateway.apply_approval(decided)
                 self.assertFalse(result["mutationApplied"])
                 self.assertEqual(
-                    self.store.agent_plan(str(coordinator["id"]))["status"],
-                    "approved",
+                    self.store.agent_todo(str(coordinator["id"]))["counts"]["inProgress"],
+                    1,
                 )
 
     def test_task_action_requires_native_approval_then_returns_rollback_receipt(self) -> None:
@@ -3457,7 +3545,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             "runtime",
             "configuration",
             "agents",
-            "agent_plan",
+            "todo",
             "agent_goal",
             "ls",
             "read",
@@ -3472,6 +3560,8 @@ class ControlToolGatewayTests(unittest.TestCase):
             self.assertEqual(extension.count(f'name: "{tool}"'), 1)
         self.assertIn("RAG_IME_AGENT_TOOL_TOKEN", extension)
         self.assertIn("RAG_IME_AGENT_SESSION_MODE", extension)
+        self.assertIn("RAG_IME_AGENT_ROOM_BOUND", extension)
+        self.assertIn('if (roomBound) return selectedSpecs.filter((spec) => spec.name !== "ask")', extension)
         self.assertIn('sessionMode === "coordinator"', extension)
         self.assertIn("/tool/approval-result", extension)
         self.assertIn('const reviewTitlePrefix = "RAG-IME-REVIEW:"', extension)
@@ -3512,6 +3602,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             self.assertIn('executionMode: "parallel"', tool_block)
         for stateful_tool in (
             "memory",
+            "todo",
             "workspace_patch",
             "agent_goal",
             "workspace_lsp",
@@ -3529,11 +3620,17 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn("class GatewayToolError extends Error", extension)
         self.assertIn("recentNonRetryableFailures", extension)
         self.assertIn("同一工具与参数刚刚已被判定为不可重试", extension)
-        self.assertIn('operations: ["list", "update", "submit_review", "complete", "cancel"]', extension)
+        self.assertIn(
+            'operations: ["init", "start", "done", "drop", "block", "unblock", "append", "view", "rm"]',
+            extension,
+        )
         self.assertIn('operations: ["list", "confirm_setup", "update", "pause", "resume", "complete", "cancel"]', extension)
         self.assertIn('error.errorCode === "workflow_gate_closed"', extension)
         self.assertIn('requiredAction: "review_workflow_state"', extension)
-        self.assertIn("Plan 用于进度与审阅，不是普通执行请求的第二道启动许可", extension)
+        self.assertIn(
+            "这是当前 Session 唯一的任务状态，不是用户的长期记忆或每日规划，也不构成额外执行许可。",
+            extension,
+        )
         self.assertNotIn("wait for user approval before calling edit", extension)
         for gateway_name in (
             "workspace_list",
@@ -3560,8 +3657,8 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn('required: ["path", "resourceRevision", "edits"]', extension)
         self.assertIn('required: ["path", "resourceRevision", "content"]', extension)
         self.assertIn("resourceRevision: params.resourceRevision", extension)
-        self.assertIn('planItemId: { type: "string", minLength: 1, maxLength: 160 }', extension)
-        self.assertIn("主持 Agent 必须按验收条件核对结果", extension)
+        self.assertIn('todoTask: { type: "string", minLength: 1, maxLength: 240 }', extension)
+        self.assertIn("主持伙伴必须按验收条件核对结果", extension)
 
     def test_retired_room_operations_cannot_reenter_through_ime_agents(self) -> None:
         calls: list[tuple[str, dict[str, object]]] = []
@@ -3800,10 +3897,13 @@ class ControlToolGatewayTests(unittest.TestCase):
                 base_state,
             ):
                 self.apply_calls.append((operation, dict(action_payload), dict(base_state)))
+                preimage = target.read_bytes()
+                preimage_sha256 = hashlib.sha256(preimage).hexdigest()
                 target.write_text(
                     str(action_payload["files"][0]["content"]),
                     encoding="utf-8",
                 )
+                postimage_sha256 = hashlib.sha256(target.read_bytes()).hexdigest()
                 return {
                     "schemaVersion": "rag-ime.workspace-lsp-mutation-receipt.v1",
                     "mutationApplied": True,
@@ -3811,7 +3911,32 @@ class ControlToolGatewayTests(unittest.TestCase):
                     "operation": operation,
                     "root": str(workspace),
                     "server": "fake",
-                    "changedFiles": [{"path": str(target)}],
+                    "changedFiles": [
+                        {
+                            "path": str(target),
+                            "preimageSha256": preimage_sha256,
+                            "postimageSha256": postimage_sha256,
+                        }
+                    ],
+                    **(
+                        {
+                            "referencesEvidence": {
+                                "root": str(workspace),
+                                "path": str(target),
+                                "relativePath": "main.py",
+                                "line": 1,
+                                "column": 1,
+                                "server": "fake",
+                                "resourceRevision": "sha256:" + preimage_sha256,
+                                "preimageSha256": preimage_sha256,
+                                "count": 0,
+                                "truncated": False,
+                                "items": [],
+                            }
+                        }
+                        if operation == "rename"
+                        else {}
+                    ),
                     "undoAvailable": False,
                 }
 
@@ -3889,7 +4014,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             workspace_roots=[str(workspace)],
             created_at_ms=31,
         )
-        self._approve_plan(str(governed["id"]))
+        self._start_todo(str(governed["id"]))
         pending = gateway.execute(
             {
                 **self._tool_call(
@@ -3930,21 +4055,22 @@ class ControlToolGatewayTests(unittest.TestCase):
             "args": {"op": operation, **args},
         }
 
-    def _approve_plan(self, session_id: str) -> dict[str, object]:
-        review = self.store.mutate_agent_plan(
+    def _start_todo(self, session_id: str) -> dict[str, object]:
+        task = "执行工作区变更"
+        self.store.mutate_agent_todo(
             session_id,
             {
-                "action": "submit_review",
-                "title": "受控工作区执行",
-                "items": [{"title": "执行已审阅的工作区变更", "status": "pending"}],
+                "op": "init",
+                "phase": "受控工作区执行",
+                "items": [task],
             },
             actor="test-user",
-        )["plan"]
-        return self.store.mutate_agent_plan(
+        )
+        return self.store.mutate_agent_todo(
             session_id,
-            {"action": "approve", "expectedRevision": review["revision"]},
+            {"op": "start", "task": task},
             actor="test-user",
-        )["plan"]
+        )["todo"]
 
 
 if __name__ == "__main__":

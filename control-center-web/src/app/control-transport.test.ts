@@ -34,31 +34,21 @@ describe('preview control transport', () => {
     ]));
     expect(tools.items).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'overview', enabled: true }),
+      expect.objectContaining({ id: 'ask', enabled: true, alwaysAvailable: true }),
+      expect.objectContaining({ id: 'todo', enabled: true, alwaysAvailable: true }),
       expect.objectContaining({ id: 'workspace_read', enabled: true }),
       expect.objectContaining({ id: 'workspace_shell', enabled: true }),
     ]));
     expect(tools.items.some((tool) => tool.id === 'control.overview')).toBe(false);
   });
 
-  it('demonstrates owner-scoped evidence and reversible forgetting', async () => {
+  it('exposes only unified input-method, voice, and Agent-captured memory evidence', async () => {
     const transport = createConfiguredControlTransport();
 
     const summary = await transport.request<Record<string, unknown>>({
       pathId: 'memory.summary',
     });
-    const before = await transport.request<{ items: Record<string, unknown>[] }>({
-      pathId: 'memory.pages',
-      params: { kind: 'evidence' },
-      query: { limit: 50, cursor: '' },
-    });
-    await transport.request({
-      pathId: 'memory.source.disposition',
-      body: {
-        sourceId: 'event:10001',
-        disposition: 'pending',
-      },
-    });
-    const after = await transport.request<{ items: Record<string, unknown>[] }>({
+    const page = await transport.request<{ items: Record<string, unknown>[] }>({
       pathId: 'memory.pages',
       params: { kind: 'evidence' },
       query: { limit: 50, cursor: '' },
@@ -68,14 +58,14 @@ describe('preview control transport', () => {
       expect.objectContaining({ ownerKind: 'user', ownerId: 'default' }),
       expect.objectContaining({ ownerKind: 'agent', ownerId: 'companion-present-v1' }),
     ]));
-    expect(before.items.find((item) => item.id === 'event:10001')).toMatchObject({
-      id: 'event:10001',
-      disposition: 'not_for_memory',
-    });
-    expect(after.items.find((item) => item.id === 'event:10001')).toMatchObject({
-      id: 'event:10001',
-      disposition: 'pending',
-    });
+    expect(summary.memoryEvidenceCount).toBe(3);
+    expect(page.items.map((item) => item.sourceChannel)).toEqual([
+      'input_method',
+      'voice',
+      'agent_capture',
+    ]);
+    expect(JSON.stringify(page)).not.toContain('reviewed_non_durable_source');
+    expect(JSON.stringify(page)).not.toContain('命令执行完成');
   });
 
   it('keeps preview model and reasoning selections consistent with the next catalog read', async () => {

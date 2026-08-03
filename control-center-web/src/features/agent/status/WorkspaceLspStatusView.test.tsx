@@ -1,5 +1,5 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { applyAgentSnapshot, createAgentProjection, type AgentSnapshot } from '@/contracts/agent-reducer';
 import type { AgentEventV1 } from '@/contracts/generated/agent-event.v1';
 import type { WorkspaceLspStatusV1 } from '@/contracts/generated/workspace-lsp-status.v1';
@@ -198,6 +198,31 @@ describe('WorkspaceLspStatusView', () => {
     );
     expect(expired.label).toBe('状态已过期');
     expect(expired.roots).toEqual([]);
+  });
+
+  it('refreshes the capability catalog once when the Runtime heartbeat expires', () => {
+    const onRefresh = vi.fn();
+    const catalog = capabilityCatalog(runtimeStatus({ heartbeatExpiresAtMs: nowMs }));
+    const { rerender } = render(
+      <WorkspaceLspStatusView
+        capabilityCatalog={catalog}
+        tools={[onlineManifest]}
+        catalogStatus="ready"
+        onRefresh={onRefresh}
+      />,
+    );
+
+    expect(screen.getByRole('status')).toHaveTextContent('状态已过期');
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    rerender(
+      <WorkspaceLspStatusView
+        capabilityCatalog={catalog}
+        tools={[onlineManifest]}
+        catalogStatus="ready"
+        onRefresh={onRefresh}
+      />,
+    );
+    expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
   it('reconnects from the replacement catalog instance and epoch, never an older mismatched receipt', () => {

@@ -320,11 +320,14 @@ class AgentSurfaceRuntime:
         with self._lock:
             active_completion = request_id in self._active_completions
             session_id = self._active_requests.get(request_id, "")
-        cancelled = False
         if active_completion:
             cancelled = bool(self.agent.runtime.cancel_completion(request_id))
         elif session_id:
-            self.agent.runtime.abort(session_id)
+            abort_service = getattr(self.agent, "abort", None)
+            if callable(abort_service):
+                abort_service(session_id)
+            else:
+                self.agent.runtime.abort(session_id)
             cancelled = True
         return {
             "schemaVersion": "rag-ime.agent-surface-cancel.v1",

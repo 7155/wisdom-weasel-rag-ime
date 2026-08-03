@@ -37,15 +37,26 @@ class WorkDocumentTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def _plan_document(self, name: str = "plan") -> tuple[dict[str, object], dict[str, object], str]:
-        plan = self.sessions.mutate_agent_plan(
+    def _todo_authority(
+        self, task: str = "deliver", phase: str = "Delivery"
+    ) -> dict[str, object]:
+        todo = self.sessions.mutate_agent_todo(
             self.session_id,
             {
-                "action": "save",
-                "title": f"{name} authority",
-                "items": [{"title": "deliver", "status": "pending"}],
+                "op": "init",
+                "list": [{"phase": phase, "items": [task]}],
             },
-        )["plan"]
+        )["todo"]
+        todo = self.sessions.mutate_agent_todo(
+            self.session_id,
+            {"op": "start", "task": task},
+        )["todo"]
+        return todo
+
+    def _todo_document(
+        self, name: str = "todo"
+    ) -> tuple[dict[str, object], dict[str, object], str]:
+        todo = self._todo_authority()
         relative = f"docs/drafts/{name}.md"
         source = self.root / relative
         source.parent.mkdir(parents=True, exist_ok=True)
@@ -53,28 +64,60 @@ class WorkDocumentTests(unittest.TestCase):
         source.write_text(content, encoding="utf-8")
         command = self.service.register(
             {
-                "authorityKind": "session_plan",
+                "authorityKind": "session_todo",
                 "authorityId": self.session_id,
-                "authorityRevision": plan["revision"],
+                "authorityRevision": todo["revision"],
                 "workspaceRoot": str(self.root),
                 "sourcePath": relative,
                 "title": name,
             }
         )
-        return plan, command["document"], content
+        return todo, command["document"], content
 
-    def _cancel_plan(self, plan: dict[str, object]) -> tuple[dict[str, object], str]:
-        cancelled = self.sessions.mutate_agent_plan(
+    def _abandon_todo(self, _todo: dict[str, object]) -> tuple[dict[str, object], str]:
+        abandoned = self.sessions.mutate_agent_todo(
             self.session_id,
-            {"action": "cancel", "expectedRevision": plan["revision"]},
-        )["plan"]
-        return cancelled, self._latest_event_id("agent_plan_state_events", "session_id", self.session_id)
+            {"op": "drop", "task": "deliver"},
+        )["todo"]
+        self.assertEqual(abandoned["counts"]["abandoned"], 1)
+        return abandoned, self._latest_todo_event_id()
 
-    def _latest_event_id(self, table: str, column: str, value: str) -> str:
+    def _complete_todo(self, _todo: dict[str, object]) -> tuple[dict[str, object], str]:
+        completed = self.sessions.mutate_agent_todo(
+            self.session_id,
+            {"op": "done", "task": "deliver"},
+        )["todo"]
+        self.assertEqual(completed["counts"]["completed"], 1)
+        return completed, self._latest_todo_event_id()
+
+    def _clear_todo(self, _todo: dict[str, object]) -> tuple[dict[str, object], str]:
+        cleared = self.sessions.mutate_agent_todo(
+            self.session_id,
+            {"op": "rm", "task": "deliver"},
+        )["todo"]
+        self.assertEqual(cleared["counts"]["total"], 0)
+        return cleared, self._latest_todo_event_id()
+
+    def _advance_todo(
+        self, terminal_todo: dict[str, object]
+    ) -> tuple[dict[str, object], str]:
+        self.sessions.mutate_agent_todo(
+            self.session_id,
+            {"op": "append", "phase": "Delivery", "items": ["reopen"]},
+        )
+        advanced = self.sessions.mutate_agent_todo(
+            self.session_id,
+            {"op": "start", "task": "reopen"},
+        )["todo"]
+        self.assertGreater(advanced["revision"], terminal_todo["revision"])
+        return advanced, self._latest_todo_event_id()
+
+    def _latest_todo_event_id(self) -> str:
         with sqlite3.connect(self.db_path) as conn:
             row = conn.execute(
-                f"SELECT event_id FROM {table} WHERE {column}=? ORDER BY sequence DESC LIMIT 1",
-                (value,),
+                "SELECT event_id FROM agent_todo_events "
+                "WHERE session_id=? ORDER BY revision DESC LIMIT 1",
+                (self.session_id,),
             ).fetchone()
         assert row is not None
         return str(row[0])
@@ -129,16 +172,17 @@ class WorkDocumentTests(unittest.TestCase):
 
 
     def test_deterministic_active_archive_history_context_and_duplicate_receipt(self) -> None:
-        plan, document, _content = self._plan_document("deterministic")
+        todo, document, _content = self._todo_document("deterministic")
         document_id = str(document["documentId"])
-        expected_active = f"docs/agent/work/active/session_plan/{document_id}.md"
-        expected_archive = f"docs/agent/work/archive/session_plan/{document_id}.md"
+        expected_active = f"docs/agent/work/active/session_todo/{document_id}.md"
+        expected_archive = f"docs/agent/work/archive/session_todo/{document_id}.md"
         self.assertEqual(document["path"], expected_active)
         self.assertTrue((self.root / expected_active).is_file())
         self.assertEqual(self.service.list()["total"], 1)
         self.assertEqual(len(self.service.context_discovery()["items"]), 1)
 
-        _cancelled, receipt_id = self._cancel_plan(plan)
+        completed, receipt_id = self._complete_todo(todo)
+        self.assertEqual(completed["counts"]["completed"], 1)
         first = self.service.request_archive(
             document_id, {"terminalReceiptId": receipt_id}
         )
@@ -169,8 +213,8 @@ class WorkDocumentTests(unittest.TestCase):
         self.assertEqual((terminal_count, archive_count), (1, 1))
 
     def test_detail_projects_only_the_current_legal_reopen_transition(self) -> None:
-        plan, document, _content = self._plan_document("reopen-context")
-        cancelled, terminal_receipt_id = self._cancel_plan(plan)
+        todo, document, _content = self._todo_document("reopen-context")
+        abandoned, terminal_receipt_id = self._abandon_todo(todo)
         archived = self.service.request_archive(
             str(document["documentId"]),
             {"terminalReceiptId": terminal_receipt_id},
@@ -181,27 +225,19 @@ class WorkDocumentTests(unittest.TestCase):
             terminal_detail["reopen"],
             {
                 "eligible": False,
-                "authorityRevision": cancelled["revision"],
+                "authorityRevision": abandoned["revision"],
                 "transitionReceiptId": terminal_receipt_id,
                 "reasonCode": "authority_terminal",
             },
         )
 
-        reset = self.sessions.mutate_agent_plan(
-            self.session_id,
-            {"action": "reset", "expectedRevision": cancelled["revision"]},
-        )["plan"]
-        transition_receipt_id = self._latest_event_id(
-            "agent_plan_state_events",
-            "session_id",
-            self.session_id,
-        )
+        advanced, transition_receipt_id = self._advance_todo(abandoned)
         ready_detail = self.service.detail(str(document["documentId"]))
         self.assertEqual(
             ready_detail["reopen"],
             {
                 "eligible": True,
-                "authorityRevision": reset["revision"],
+                "authorityRevision": advanced["revision"],
                 "transitionReceiptId": transition_receipt_id,
                 "reasonCode": "ready",
             },
@@ -214,11 +250,11 @@ class WorkDocumentTests(unittest.TestCase):
         self.assertEqual(reopened["document"]["state"], "active")
 
     def test_register_idempotency_is_bound_to_authority_content_and_title(self) -> None:
-        plan, document, _content = self._plan_document("idempotency")
+        todo, document, _content = self._todo_document("idempotency")
         payload = {
-            "authorityKind": "session_plan",
+            "authorityKind": "session_todo",
             "authorityId": self.session_id,
-            "authorityRevision": plan["revision"],
+            "authorityRevision": todo["revision"],
             "workspaceRoot": str(self.root),
             "sourcePath": document["path"],
             "title": "idempotency",
@@ -256,11 +292,9 @@ class WorkDocumentTests(unittest.TestCase):
         self.assertEqual(receipts, [("applied",), ("applied",)])
 
     def test_terminal_revision_fence_rejects_stale_receipt_then_advances(self) -> None:
-        plan, document, _content = self._plan_document("revision-fence")
-        initial_receipt = self._latest_event_id(
-            "agent_plan_state_events", "session_id", self.session_id
-        )
-        cancelled, terminal_receipt = self._cancel_plan(plan)
+        todo, document, _content = self._todo_document("revision-fence")
+        initial_receipt = self._latest_todo_event_id()
+        abandoned, terminal_receipt = self._abandon_todo(todo)
         with self.assertRaisesRegex(WorkDocumentError, "canonical"):
             self.service.request_archive(
                 str(document["documentId"]),
@@ -270,12 +304,12 @@ class WorkDocumentTests(unittest.TestCase):
             str(document["documentId"]),
             {"terminalReceiptId": terminal_receipt},
         )["document"]
-        self.assertEqual(archived["authorityRevision"], cancelled["revision"])
-        self.assertGreater(archived["authorityRevision"], plan["revision"])
+        self.assertEqual(archived["authorityRevision"], abandoned["revision"])
+        self.assertGreater(archived["authorityRevision"], todo["revision"])
 
     def test_restart_recovers_move_completed_before_outbox_commit(self) -> None:
-        plan, document, _content = self._plan_document("restart")
-        _cancelled, receipt_id = self._cancel_plan(plan)
+        todo, document, _content = self._todo_document("restart")
+        _abandoned, receipt_id = self._abandon_todo(todo)
         pending = self.service.request_archive(
             str(document["documentId"]),
             {"terminalReceiptId": receipt_id},
@@ -303,21 +337,14 @@ class WorkDocumentTests(unittest.TestCase):
         self.assertTrue(target.is_file())
 
     def test_activate_failure_receipt_is_durable_and_replays_failed(self) -> None:
-        plan = self.sessions.mutate_agent_plan(
-            self.session_id,
-            {
-                "action": "save",
-                "title": "activate failure authority",
-                "items": [{"title": "deliver", "status": "pending"}],
-            },
-        )["plan"]
+        todo = self._todo_authority()
         source = self.root / "docs/drafts/activate-failure.md"
         source.parent.mkdir(parents=True, exist_ok=True)
         source.write_text("# activate failure\n", encoding="utf-8")
         payload = {
-            "authorityKind": "session_plan",
+            "authorityKind": "session_todo",
             "authorityId": self.session_id,
-            "authorityRevision": plan["revision"],
+            "authorityRevision": todo["revision"],
             "workspaceRoot": str(self.root),
             "sourcePath": "docs/drafts/activate-failure.md",
             "title": "activate failure",
@@ -345,8 +372,8 @@ class WorkDocumentTests(unittest.TestCase):
         self.assertEqual(replay["receipt"]["receiptId"], first["receipt"]["receiptId"])
 
     def test_archive_failure_receipt_is_durable_and_replays_failed(self) -> None:
-        plan, document, _content = self._plan_document("archive-failure")
-        _cancelled, terminal_receipt_id = self._cancel_plan(plan)
+        todo, document, _content = self._todo_document("archive-failure")
+        _abandoned, terminal_receipt_id = self._abandon_todo(todo)
         payload = {"terminalReceiptId": terminal_receipt_id}
 
         with patch(
@@ -377,24 +404,16 @@ class WorkDocumentTests(unittest.TestCase):
         self.assertEqual(replay["receipt"]["receiptId"], first["receipt"]["receiptId"])
 
     def test_reopen_failure_receipt_is_durable_and_replays_failed(self) -> None:
-        plan, document, _content = self._plan_document("reopen-failure")
-        cancelled, terminal_receipt_id = self._cancel_plan(plan)
+        todo, document, _content = self._todo_document("reopen-failure")
+        abandoned, terminal_receipt_id = self._abandon_todo(todo)
         archived = self.service.request_archive(
             str(document["documentId"]),
             {"terminalReceiptId": terminal_receipt_id},
         )
         self.assertEqual(archived["receipt"]["status"], "applied")
-        reset = self.sessions.mutate_agent_plan(
-            self.session_id,
-            {"action": "reset", "expectedRevision": cancelled["revision"]},
-        )["plan"]
-        transition_receipt_id = self._latest_event_id(
-            "agent_plan_state_events",
-            "session_id",
-            self.session_id,
-        )
+        advanced, transition_receipt_id = self._advance_todo(abandoned)
         payload = {
-            "authorityRevision": reset["revision"],
+            "authorityRevision": advanced["revision"],
             "transitionReceiptId": transition_receipt_id,
         }
 
@@ -420,17 +439,17 @@ class WorkDocumentTests(unittest.TestCase):
         self.assertEqual(replay["receipt"]["receiptId"], first["receipt"]["receiptId"])
 
     def test_observer_failure_is_durable_without_outbox_and_restart_retries(self) -> None:
-        plan, document, content = self._plan_document("observer-failure")
-        _cancelled, _receipt_id = self._cancel_plan(plan)
+        todo, document, content = self._todo_document("observer-failure")
+        _abandoned, _receipt_id = self._abandon_todo(todo)
         active_path = self.root / str(document["path"])
         active_path.unlink()
 
         with self.assertRaises(FileNotFoundError):
-            self.service.observe_authority("session_plan", self.session_id)
+            self.service.observe_authority("session_todo", self.session_id)
         with sqlite3.connect(self.db_path) as conn:
             failure = conn.execute(
                 "SELECT state,attempt_count,error FROM work_document_observer_failures WHERE authority_key=?",
-                (f"session_plan:{self.session_id}",),
+                (f"session_todo:{self.session_id}",),
             ).fetchone()
             archive_count = conn.execute(
                 "SELECT COUNT(*) FROM work_document_outbox WHERE document_id=? AND operation='archive'",
@@ -440,7 +459,10 @@ class WorkDocumentTests(unittest.TestCase):
         self.assertEqual(failure[1], 1)
         self.assertTrue(failure[2])
         self.assertEqual(archive_count, 0)
-        self.assertEqual(self.service.detail(str(document["documentId"]))["document"]["state"], "error")
+        self.assertEqual(
+            self.service.detail(str(document["documentId"]))["document"]["state"],
+            "error",
+        )
 
         active_path.parent.mkdir(parents=True, exist_ok=True)
         active_path.write_text(content, encoding="utf-8")
@@ -458,14 +480,14 @@ class WorkDocumentTests(unittest.TestCase):
             self.assertEqual(
                 conn.execute(
                     "SELECT state FROM work_document_observer_failures WHERE authority_key=?",
-                    (f"session_plan:{self.session_id}",),
+                    (f"session_todo:{self.session_id}",),
                 ).fetchone()[0],
                 "applied",
             )
 
     def test_failed_outbox_repairs_then_history_reopens_idempotently(self) -> None:
-        plan, document, content = self._plan_document("repair-reopen")
-        cancelled, receipt_id = self._cancel_plan(plan)
+        todo, document, content = self._todo_document("repair-reopen")
+        abandoned, receipt_id = self._abandon_todo(todo)
         pending = self.service.request_archive(
             str(document["documentId"]),
             {"terminalReceiptId": receipt_id},
@@ -482,24 +504,18 @@ class WorkDocumentTests(unittest.TestCase):
         repaired = self.service.repair(str(document["documentId"]))
         self.assertEqual(repaired["document"]["state"], "archived")
 
-        reset = self.sessions.mutate_agent_plan(
-            self.session_id,
-            {"action": "reset", "expectedRevision": cancelled["revision"]},
-        )["plan"]
-        transition_id = self._latest_event_id(
-            "agent_plan_state_events", "session_id", self.session_id
-        )
+        advanced, transition_id = self._advance_todo(abandoned)
         reopened = self.service.reopen(
             str(document["documentId"]),
             {
-                "authorityRevision": reset["revision"],
+                "authorityRevision": advanced["revision"],
                 "transitionReceiptId": transition_id,
             },
         )
         duplicate = self.service.reopen(
             str(document["documentId"]),
             {
-                "authorityRevision": reset["revision"],
+                "authorityRevision": advanced["revision"],
                 "transitionReceiptId": transition_id,
             },
         )
@@ -509,6 +525,24 @@ class WorkDocumentTests(unittest.TestCase):
         self.assertEqual(duplicate["receipt"]["status"], "applied")
         self.assertEqual(self.service.history_search()["total"], 0)
         self.assertEqual(self.service.list()["total"], 1)
+
+    def test_cleared_todo_terminal_observation_archives_exactly_once(self) -> None:
+        todo, document, _content = self._todo_document("cleared")
+        cleared, terminal_receipt_id = self._clear_todo(todo)
+        self.assertEqual(cleared["counts"]["total"], 0)
+        self.service.observe_authority("session_todo", self.session_id)
+        self.service.observe_authority("session_todo", self.session_id)
+        archived = self.service.detail(str(document["documentId"]))["document"]
+        self.assertEqual(archived["state"], "archived")
+        self.assertEqual(archived["authorityRevision"], cleared["revision"])
+        self.assertEqual(archived["terminalReceiptId"], terminal_receipt_id)
+        with sqlite3.connect(self.db_path) as conn:
+            archive_count = conn.execute(
+                "SELECT COUNT(*) FROM work_document_outbox "
+                "WHERE document_id=? AND operation='archive'",
+                (document["documentId"],),
+            ).fetchone()[0]
+        self.assertEqual(archive_count, 1)
 
     def test_goal_and_room_terminal_observation_archive_exactly_once(self) -> None:
         goal = self.sessions.mutate_agent_goal(
@@ -654,7 +688,7 @@ class WorkDocumentTests(unittest.TestCase):
         )
 
     def test_erase_requires_current_hash_bound_approval(self) -> None:
-        _plan, document, content = self._plan_document("erase")
+        _todo, document, content = self._todo_document("erase")
         document_id = str(document["documentId"])
         preview = self.service.erase_preview(
             document_id, {"sessionId": self.session_id}

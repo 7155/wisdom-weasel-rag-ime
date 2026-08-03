@@ -8,6 +8,7 @@ export interface AgentApprovalV1 {
   schemaVersion: 'rag-ime.agent-approval.v1';
   approvalId: string;
   sessionId: string;
+  toolCallId?: string;
   toolId: string;
   operation: string;
   payloadSha256: string;
@@ -32,8 +33,8 @@ export interface AgentApprovalV1 {
     [k: string]: unknown;
   } | null;
   causalMetadata: {
-    planId: string;
-    planRevision: number;
+    todoId: string;
+    todoRevision: number;
     goalId: string;
     goalRevision: number;
     turnId: string;

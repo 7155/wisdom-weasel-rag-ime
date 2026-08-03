@@ -73,7 +73,7 @@ from .control_api import (
 )
 from .control_api.gateway_access import GatewayAccessDecision, resolve_gateway_access
 from .control_api.route_table import build_arguments, find_route
-from .models import InputSuggestion
+from .models import InputEvent, InputSuggestion
 from .model_profiles import canonical_runtime_profile_id, profile_by_id
 from .model_registry import ModelDeployment, ModelRegistry, default_model_registry_path
 from .predictor_configuration import (
@@ -87,7 +87,11 @@ from .deepseek_completion import DeepSeekCompletionRequest, DeepSeekV4FlashCompl
 from .deepseek_config import load_deepseek_config
 from .deepseek_memory_organizer import ManagedPiMemoryOrganizer
 from .memory_maintenance_settings import MemoryMaintenanceSettings
-from .memory_model_executor import build_governed_memory_model_executor
+from .memory_model_executor import (
+    MINIMUM_MEMORY_CONTEXT_TOKENS,
+    build_governed_memory_model_executor,
+    memory_curation_model_status,
+)
 from .deployment_status import audit_installed_product
 from .embeddings import embed_query, embedding_provider_from_env
 from .foreground_app_semantics import enrich_window_context_with_app_semantics
@@ -96,6 +100,10 @@ from .frontend_gateway import FrontendGateway
 from .history_context import build_prediction_context
 from .hybrid_rag_models import HybridRagQuery
 from .hybrid_rag_retriever import retrieve_hybrid_rag_candidates
+from .input_capture_contract import (
+    capture_contract_from_metadata,
+    sanitize_input_capture_metadata,
+)
 from .local_sqlite_core import LocalSqliteCoreClient
 from .knowledge_workbench import (
     DeepSeekKnowledgeProvider,
@@ -105,6 +113,7 @@ from .knowledge_workbench import (
 from .knowledge_control import KnowledgeControlFacade
 from .knowledge_library import AssetBlob
 from .knowledge_worker_supervisor import KnowledgeWorkerSupervisor
+from .lexicon_organization import run_due_lexicon_organization
 from .management_service import ManagementService, page_request
 from .management_work_contract import (
     ManagementWorkError,
@@ -140,10 +149,21 @@ from .memory_generator import (
 from .memory_projection import MemoryProjectionWorker
 from .models import MemoryAction
 from .notion_knowledge import NotionAsyncKnowledgeClient, load_notion_knowledge_config
-from .memory_maintenance_settings import MemoryMaintenanceSettings
 from .memory_ownership import normalize_memory_owner, resolve_visible_memory_owners
-from .owner_memory_curation import OwnerMemoryCurator, owner_memory_curation_status
+from .owner_memory_curation import (
+    DEFAULT_MAX_SOURCES,
+    MAX_PERSONAL_V2_INPUT_TOKENS,
+    MAX_PERSONAL_V2_SOURCES,
+    OwnerMemoryCurator,
+    owner_memory_curation_status,
+)
+from .owner_memory_maintenance import GatewayMemoryMaintenanceJobs
 from .payloads import action_response_payload, suggestions_response_payload
+from .personal_memory_books import personal_memory_book_projection_status
+from .personal_context_maintenance import (
+    PersonalContextMaintenanceConfig,
+    PersonalContextMaintenanceRunner,
+)
 from .pi_provider_auth import PiProviderAuthError, PiProviderAuthService
 from .pi_runtime import PiRuntimeConfig
 from .personal_context_observability import PersonalContextObservability
@@ -577,6 +597,9 @@ class DebugImeService:
         self.agent_tools.bind_auto_approval_executor(self.agent.auto_approve_pending)
         self.agent.bind_memory_maintenance_probe(self.agent_memory_maintenance_status)
         self.agent.bind_tool_manifest_provider(self.agent_tools.runtime_manifests)
+        self.memory_maintenance_jobs = GatewayMemoryMaintenanceJobs(
+            self._execute_gateway_memory_maintenance,
+        )
         self.frontend_gateway = FrontendGateway(
             suggest_handler=self.rime_suggest,
             selection_handler=self.rime_select,
@@ -623,6 +646,7 @@ class DebugImeService:
                 # remaining executors and provider clients.
                 pass
         resources = (
+            self.memory_maintenance_jobs,
             self.active_rag,
             self.knowledge_worker,
             self.management,
@@ -3295,6 +3319,188 @@ class DebugImeService:
         )
         return response
 
+    def agent_memory_maintenance_trigger(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        if (
+            self.config.server_name != "agent gateway"
+            or not self._agent_runtime_execution_owner
+        ):
+            raise ValueError(
+                "Memory model maintenance must be triggered on the Agent Gateway"
+            )
+        return self.memory_maintenance_jobs.trigger(payload)
+
+    def agent_memory_maintenance_trigger_status(
+        self,
+        job_id: object,
+    ) -> dict[str, object]:
+        return self.memory_maintenance_jobs.status(job_id)
+
+    def _execute_gateway_memory_maintenance(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        if not isinstance(self.core, LocalSqliteCoreClient):
+            return {
+                "schemaVersion": "rag-ime.owner-memory-curation-run.v1",
+                "ok": False,
+                "error": "local SQLite core required",
+                "results": [],
+            }
+        project = _string(payload.get("project")) or self.config.project
+        manual = bool(payload.get("manual"))
+        managed = MemoryMaintenanceSettings.load(self.core.db_path)
+        lexicon = (
+            run_due_lexicon_organization(
+                self.core.db_path,
+                project=project,
+                force=manual,
+            )
+            if managed.automatic_organization_enabled
+            else {
+                "ok": True,
+                "skipped": True,
+                "reason": "automatic_organization_disabled",
+            }
+        )
+        if managed.automatic_organization_enabled:
+            executor = build_governed_memory_model_executor(
+                self.agent.runtime,
+                managed.automatic_organization_model,
+                managed.automatic_organization_thinking_level,
+                db_path=self.core.db_path,
+            )
+            organizer = ManagedPiMemoryOrganizer(executor)
+            try:
+                curator = OwnerMemoryCurator(
+                    self.core.db_path,
+                    organizer=organizer,
+                    project=project,
+                    max_sources=_bounded_int(
+                        payload.get("maxSources"),
+                        default=DEFAULT_MAX_SOURCES,
+                        minimum=1,
+                        maximum=MAX_PERSONAL_V2_SOURCES,
+                    ),
+                    auto_apply=not manual,
+                    include_agent_dialogue=managed.include_agent_dialogue,
+                    daily_interval_ms=max(
+                        60,
+                        managed.automatic_organization_interval_seconds,
+                    )
+                    * 1_000,
+                    embedding_provider=self.core.embedding_provider,
+                )
+                curator.initialize()
+                report = curator.run_due(
+                    manual=manual,
+                    owner_kind=_string(payload.get("ownerKind")),
+                    owner_id=_string(payload.get("ownerId")),
+                    instruction=compact_whitespace(
+                        _string(payload.get("instruction"))
+                    )[:800],
+                )
+                report["effectiveModel"] = executor.reference
+                report["effectiveThinkingLevel"] = executor.thinking_level
+                report["effectiveContextWindow"] = int(
+                    executor.selected_model.get("contextWindow") or 0
+                )
+                report["curationProtocol"] = organizer.curation_protocol_version
+            finally:
+                organizer.close()
+        else:
+            report = {
+                "schemaVersion": "rag-ime.owner-memory-curation-run.v1",
+                "ok": True,
+                "skipped": True,
+                "reason": "automatic_organization_disabled",
+                "results": [],
+            }
+        dreaming = self._execute_gateway_memory_dreaming(
+            project=project,
+            manual=manual,
+            managed=managed,
+            max_sources=payload.get("maxSources"),
+        )
+        report["lexiconOrganization"] = lexicon
+        report["dreaming"] = dreaming
+        report["ok"] = (
+            report.get("ok") is True
+            and lexicon.get("ok") is not False
+            and dreaming.get("ok") is True
+        )
+        report["managedSettings"] = managed.as_dict()
+        report["executionOwner"] = "agent_gateway"
+        report["transport"] = "gateway_internal_session"
+        return report
+
+    def _execute_gateway_memory_dreaming(
+        self,
+        *,
+        project: str,
+        manual: bool,
+        managed: MemoryMaintenanceSettings,
+        max_sources: object,
+    ) -> dict[str, object]:
+        if not managed.dreaming_enabled and not managed.automatic_organization_enabled:
+            return {
+                "schemaVersion": "rag-ime.personal-context-maintenance-run.v1",
+                "ok": True,
+                "skipped": True,
+                "reason": "memory_maintenance_disabled",
+                "targets": [],
+            }
+        role_book_organizer: ManagedPiMemoryOrganizer | None = None
+        try:
+            if managed.dreaming_enabled:
+                executor = build_governed_memory_model_executor(
+                    self.agent.runtime,
+                    managed.dreaming_model,
+                    managed.dreaming_thinking_level,
+                    db_path=self.core.db_path,  # type: ignore[union-attr]
+                )
+                role_book_organizer = ManagedPiMemoryOrganizer(executor)
+            runner = PersonalContextMaintenanceRunner(
+                self.core.db_path,  # type: ignore[union-attr]
+                config=PersonalContextMaintenanceConfig(
+                    enabled=True,
+                    consolidate_roles=managed.dreaming_enabled,
+                    build_timelines=managed.automatic_organization_enabled,
+                    project=project,
+                    min_interval_ms=managed.dreaming_interval_seconds * 1_000,
+                    apply_safe_recent_work=managed.dreaming_enabled,
+                    auto_publish_timelines=managed.automatic_organization_enabled,
+                    batch_limit=_bounded_int(
+                        max_sources,
+                        default=500,
+                        minimum=1,
+                        maximum=1_000,
+                    ),
+                    model=managed.dreaming_model,
+                    thinking_level=managed.dreaming_thinking_level,
+                ),
+                role_book_organizer=role_book_organizer,
+            )
+            result = runner.run_once(force=manual)
+            result["executionOwner"] = "agent_gateway"
+            result["transport"] = "gateway_internal_session"
+            return result
+        except Exception as exc:
+            return {
+                "schemaVersion": "rag-ime.personal-context-maintenance-run.v1",
+                "ok": False,
+                "error": compact_whitespace(str(exc))[:800]
+                or exc.__class__.__name__,
+                "targets": [],
+                "executionOwner": "agent_gateway",
+                "transport": "gateway_internal_session",
+            }
+        finally:
+            if role_book_organizer is not None:
+                role_book_organizer.close()
+
     def agent_memory_maintenance_prepare(self, payload: dict[str, Any]) -> dict[str, object]:
         instruction = compact_whitespace(_string(payload.get("instruction")))[:800] or (
             "根据新增最终消息和已验证工具回执增量整理长期记忆；只生成可审阅草案，不自动应用。"
@@ -3318,11 +3524,18 @@ class DebugImeService:
                 self.agent.runtime,
                 managed.automatic_organization_model,
                 managed.automatic_organization_thinking_level,
+                db_path=self.core.db_path,
             )
             curator = OwnerMemoryCurator(
                 self.core.db_path,
                 organizer=ManagedPiMemoryOrganizer(executor),
                 project=project,
+                max_sources=_bounded_int(
+                    payload.get("maxSources"),
+                    default=DEFAULT_MAX_SOURCES,
+                    minimum=1,
+                    maximum=MAX_PERSONAL_V2_SOURCES,
+                ),
                 embedding_provider=self.core.embedding_provider,
             )
             curator.initialize()
@@ -3654,7 +3867,14 @@ class DebugImeService:
                 owner_kind="" if owner_filter is None else owner_filter[0],
                 owner_id="" if owner_filter is None else owner_filter[1],
                 auto_apply=automatic_enabled,
+                include_agent_dialogue=managed.include_agent_dialogue,
+                canonical_personal=True,
             )
+            model_curation = memory_curation_model_status(
+                conn,
+                limit=min(limit, 8),
+            )
+            book_projection = personal_memory_book_projection_status(conn)
             rows = conn.execute(
                 """
                 SELECT r.run_id, r.created_at_ms, r.status, r.summary, r.metadata_json,
@@ -3753,10 +3973,20 @@ class DebugImeService:
                 "thinkingLevel": managed.automatic_organization_thinking_level,
                 "runsPerDay": managed.automatic_organization_runs_per_day,
                 "autoApply": automatic_enabled,
+                "curationProtocol": MEMORY_CURATION_ARCHITECTURE,
+                "targetSourceCount": DEFAULT_MAX_SOURCES,
+                "maximumSourceCount": MAX_PERSONAL_V2_SOURCES,
+                "maximumInputTokens": MAX_PERSONAL_V2_INPUT_TOKENS,
+                "reservedContextTokens": (
+                    MINIMUM_MEMORY_CONTEXT_TOKENS
+                    - MAX_PERSONAL_V2_INPUT_TOKENS
+                ),
             },
             "pendingDraftCount": sum(1 for item in runs if item["status"] == "draft"),
             "runs": runs,
             "ownerCuration": owner_curation,
+            "modelCuration": model_curation,
+            "bookProjection": book_projection,
             "projection": self.memory_projection_status(),
         }
         validate_contract(response, "agent-memory-maintenance-status.v1.json")
@@ -5385,8 +5615,40 @@ class DebugImeService:
         text = _string(payload.get("text")).strip()
         if not text:
             raise ValueError("text must not be empty")
+        source = _string(payload.get("source")) or "debug_page_commit"
+        app = _string(
+            payload.get("app")
+            or payload.get("frontAppBundleId")
+            or payload.get("frontmostApp")
+            or payload.get("bundleId")
+        ) or "squirrel"
+        capture_metadata = _input_capture_metadata(
+            payload.get("captureMetadata"),
+            text=text,
+            source=source,
+            app=app,
+        )
+        capture_contract = capture_contract_from_metadata(
+            capture_metadata,
+            text=text,
+            source=source,
+            app=app,
+        )
         privacy_assessment = assess_foreground_write(payload)
         if privacy_assessment["storeAllowed"] is not True:
+            if capture_contract is not None:
+                capture_receipt = self._record_capture_outcome(
+                    text=text,
+                    source=source,
+                    app=app,
+                    capture_metadata=capture_metadata,
+                    outcome="no_store",
+                    reason_code=str(privacy_assessment["reason"]),
+                )
+                return _capture_commit_response(
+                    privacy_assessment,
+                    capture_receipt=capture_receipt,
+                )
             return {
                 "schemaVersion": "rag-ime.foreground-commit.v1",
                 "ok": True,
@@ -5396,30 +5658,63 @@ class DebugImeService:
                 "privacyAssessment": privacy_assessment,
                 "storageReceipt": storage_receipt(privacy_assessment, stored=False),
             }
-        event_id = self.adapter.commit_text(
-            text,
-            recent_context=_string(payload.get("recentContext")),
-            preedit=_string(payload.get("preedit")),
-            project=_string(payload.get("project")) or self.config.project,
-            app=_string(
-                payload.get("app")
-                or payload.get("frontAppBundleId")
-                or payload.get("frontmostApp")
-                or payload.get("bundleId")
+        if capture_contract is not None and not capture_contract.is_strong_final:
+            capture_receipt = self._record_capture_outcome(
+                text=text,
+                source=source,
+                app=app,
+                capture_metadata=capture_metadata,
+                outcome="quarantined",
+                reason_code="weak_boundary_not_final",
             )
-            or "squirrel",
-            privacy_disposition=str(privacy_assessment["disposition"]),
-            candidate_rank=_optional_int(payload.get("candidateRank")),
-            provider_name=_string(payload.get("providerName")) or "debug-page",
-            tags=tuple(_string_list(payload.get("tags"))),
-            source=_string(payload.get("source")) or "debug_page_commit",
-            context_group_id=_string(payload.get("contextGroupId")),
-            context_group_level=_string(payload.get("contextGroupLevel")) or "app",
-            capture_metadata=_input_capture_metadata(payload.get("captureMetadata")),
-        )
+            return _capture_commit_response(
+                privacy_assessment,
+                capture_receipt=capture_receipt,
+            )
+        capture_receipt: dict[str, object] | None = None
+        if capture_contract is not None:
+            recorder = getattr(self.core, "record_event_with_capture_receipt", None)
+            if not callable(recorder):
+                raise RuntimeError("v2 input capture requires an atomic receipt store")
+            event_id, capture_receipt = recorder(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=now_ms(),
+                    source=source,
+                    committed_text=text,
+                    privacy_disposition=str(privacy_assessment["disposition"]),
+                    recent_context=_string(payload.get("recentContext")),
+                    preedit=_string(payload.get("preedit")),
+                    schema_id="luna_pinyin",
+                    app=app,
+                    project=_string(payload.get("project")) or self.config.project,
+                    candidate_rank=_optional_int(payload.get("candidateRank")),
+                    provider_name=_string(payload.get("providerName")) or "debug-page",
+                    tags=tuple(_string_list(payload.get("tags"))),
+                    context_group_id=_string(payload.get("contextGroupId")),
+                    context_group_level=_string(payload.get("contextGroupLevel")) or "app",
+                    capture_metadata=capture_metadata,
+                )
+            )
+        else:
+            event_id = self.adapter.commit_text(
+                text,
+                recent_context=_string(payload.get("recentContext")),
+                preedit=_string(payload.get("preedit")),
+                project=_string(payload.get("project")) or self.config.project,
+                app=app,
+                privacy_disposition=str(privacy_assessment["disposition"]),
+                candidate_rank=_optional_int(payload.get("candidateRank")),
+                provider_name=_string(payload.get("providerName")) or "debug-page",
+                tags=tuple(_string_list(payload.get("tags"))),
+                source=source,
+                context_group_id=_string(payload.get("contextGroupId")),
+                context_group_level=_string(payload.get("contextGroupLevel")) or "app",
+                capture_metadata=capture_metadata,
+            )
         self._clear_rime_cache()
         stored = bool(event_id) and not event_id.startswith("skipped:")
-        return {
+        response: dict[str, object] = {
             "schemaVersion": "rag-ime.foreground-commit.v1",
             "ok": True,
             "stored": stored,
@@ -5433,6 +5728,40 @@ class DebugImeService:
                 event_id=event_id,
             ),
         }
+        if capture_contract is not None:
+            if not isinstance(capture_receipt, dict):
+                raise RuntimeError("v2 input capture stored without a durable receipt")
+            return _capture_commit_response(
+                privacy_assessment,
+                capture_receipt=capture_receipt,
+                event_count=int(response["eventCount"]),
+            )
+        return response
+
+    def _record_capture_outcome(
+        self,
+        *,
+        text: str,
+        source: str,
+        app: str,
+        capture_metadata: dict[str, object],
+        outcome: str,
+        reason_code: str,
+    ) -> dict[str, object]:
+        recorder = getattr(self.core, "record_capture_outcome", None)
+        if not callable(recorder):
+            raise RuntimeError("v2 input capture requires a durable receipt store")
+        receipt = recorder(
+            text=text,
+            source=source,
+            app=app,
+            capture_metadata=capture_metadata,
+            outcome=outcome,
+            reason_code=reason_code,
+        )
+        if not isinstance(receipt, dict):
+            raise RuntimeError("v2 input capture receipt store returned an invalid receipt")
+        return receipt
 
     def action(self, payload: dict[str, Any]) -> dict[str, object]:
         action_type = _canonical_action(_string(payload.get("actionType")))
@@ -6628,6 +6957,18 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self.service.agent.room_snapshot(agent_room_id),
             )
             return
+        if agent_room_id and room_action == "history":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.room_history(
+                    agent_room_id,
+                    {
+                        "beforeSequence": _query_first(query, "beforeSequence"),
+                        "limit": _query_first(query, "limit"),
+                    },
+                ),
+            )
+            return
         if agent_room_id and room_action == "topics":
             self._write_json(
                 HTTPStatus.OK,
@@ -6795,9 +7136,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/agent/memory-maintenance":
             run_id = _query_first(query, "runId")
+            job_id = _query_first(query, "jobId")
             self._write_json(
                 HTTPStatus.OK,
-                self.service.agent_memory_maintenance_run(
+                self.service.agent_memory_maintenance_trigger_status(job_id)
+                if job_id
+                else self.service.agent_memory_maintenance_run(
                     {
                         "runId": run_id,
                         "project": _query_first(query, "project"),
@@ -7508,6 +7852,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.agent_surface_refine_voice(payload))
             elif path == "/api/agent/surface/cancel":
                 self._write_json(HTTPStatus.OK, self.service.agent_surface_cancel(payload))
+            elif path == "/api/agent/memory-maintenance":
+                self._write_json(
+                    HTTPStatus.ACCEPTED,
+                    self.service.agent_memory_maintenance_trigger(payload),
+                )
             elif work_document_id:
                 handlers = {
                     "archive": self.service.agent.work_documents.request_archive,
@@ -7674,6 +8023,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.ACCEPTED,
                     self.service.agent.post_room_message(agent_room_id, payload),
                 )
+            elif agent_room_id and room_action == "start-execution":
+                self._write_json(
+                    HTTPStatus.ACCEPTED,
+                    self.service.agent.start_room_execution(agent_room_id, payload),
+                )
             elif agent_room_id and room_action == "abort":
                 self._write_json(
                     HTTPStatus.OK,
@@ -7720,11 +8074,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 )
             elif agent_session_id and agent_action == "compact":
                 self._write_json(HTTPStatus.OK, self.service.agent.compact(agent_session_id, payload))
-            elif agent_session_id and agent_action == "plan":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.agent.mutate_plan(agent_session_id, payload),
-                )
             elif agent_session_id and agent_action == "goal":
                 self._write_json(
                     HTTPStatus.OK,
@@ -9107,45 +9456,51 @@ def _string_list(value: object) -> list[str]:
     return [item for item in value if isinstance(item, str)]
 
 
-def _input_capture_metadata(value: object) -> dict[str, object]:
+def _input_capture_metadata(
+    value: object,
+    *,
+    text: str,
+    source: str,
+    app: str,
+) -> dict[str, object]:
     """Keep only bounded, text-free provenance for a finalized input."""
 
-    if not isinstance(value, Mapping):
-        return {}
-    source = compact_whitespace(_string(value.get("captureSource")))
-    if source not in {"text_input_client", "accessibility", "ime_active_buffer"}:
-        source = "unknown"
-    fallback_reason = compact_whitespace(
-        _string(value.get("fallbackReason"))
-    )[:120]
-    selection_rule = compact_whitespace(
-        _string(value.get("selectionRule"))
-    )[:120]
-    digest = compact_whitespace(
-        _string(value.get("selectedTextSha256"))
-    ).lower()
-    if digest.startswith("sha256:"):
-        digest = digest.removeprefix("sha256:")
-    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
-        digest = ""
-    return {
-        "captureSource": source,
-        "fallbackReason": fallback_reason,
-        "fieldContextChars": _bounded_int(
-            value.get("fieldContextChars"),
-            default=0,
-            minimum=0,
-            maximum=100_000,
+    return sanitize_input_capture_metadata(
+        value,
+        text=text,
+        source=source,
+        app=app,
+    )
+
+
+def _capture_commit_response(
+    privacy_assessment: Mapping[str, object],
+    *,
+    capture_receipt: Mapping[str, object],
+    event_count: int | None = None,
+) -> dict[str, object]:
+    outcome = compact_whitespace(str(capture_receipt.get("outcome") or "no_store"))
+    event_id = compact_whitespace(str(capture_receipt.get("eventId") or ""))
+    stored = outcome == "stored" and bool(event_id)
+    response: dict[str, object] = {
+        "schemaVersion": "rag-ime.foreground-commit.v1",
+        "ok": True,
+        "stored": stored,
+        "noStore": not stored,
+        "eventId": event_id,
+        "privacyAssessment": dict(privacy_assessment),
+        "storageReceipt": storage_receipt(
+            privacy_assessment,
+            stored=stored,
+            event_id=event_id,
+            outcome=outcome,
+            reason=str(capture_receipt.get("reason") or "capture_outcome"),
         ),
-        "imeBufferChars": _bounded_int(
-            value.get("imeBufferChars"),
-            default=0,
-            minimum=0,
-            maximum=100_000,
-        ),
-        "selectedTextSha256": digest,
-        "selectionRule": selection_rule,
+        "captureReceipt": dict(capture_receipt),
     }
+    if event_count is not None:
+        response["eventCount"] = max(0, int(event_count))
+    return response
 
 
 def _int_list(value: object) -> list[int]:

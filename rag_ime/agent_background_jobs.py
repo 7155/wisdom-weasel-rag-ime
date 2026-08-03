@@ -223,15 +223,20 @@ class AgentBackgroundJobService:
                         max_run_seconds,
                         log_path,
                         approval_id,
-                        causal_plan_id,
-                        causal_plan_revision,
+                        causal_todo_id,
+                        causal_todo_revision,
                         causal_goal_id,
                         causal_goal_revision,
                         causal_turn_id,
                         room_bound,
+                        causal_room_id,
+                        causal_root_id,
+                        causal_generation,
+                        causal_task_id,
+                        causal_dispatch_id,
                         created_at_ms,
                         updated_at_ms
-                    ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         job_id,
@@ -244,12 +249,17 @@ class AgentBackgroundJobService:
                         prepared.timeout_seconds,
                         str(log_path),
                         str(approval_id or "")[:240],
-                        causal["planId"],
-                        causal["planRevision"],
+                        causal["todoId"],
+                        causal["todoRevision"],
                         causal["goalId"],
                         causal["goalRevision"],
                         causal["turnId"],
                         int(bool(causal["roomBound"])),
+                        causal["roomId"],
+                        causal["rootId"],
+                        causal["generation"],
+                        causal["taskId"],
+                        causal["dispatchId"],
                         now_ms,
                         now_ms,
                     ),
@@ -605,6 +615,222 @@ class AgentBackgroundJobService:
             for row in rows
         ]
 
+    def root_child_quiescence(
+        self,
+        *,
+        root_id: str,
+        generation: int,
+        dispatch_id: str = "",
+    ) -> dict[str, object]:
+        normalized_root = _required_text(root_id, field="rootId", maximum=240)
+        normalized_generation = max(0, int(generation))
+        normalized_dispatch = _bounded_text(dispatch_id, maximum=240)
+        try:
+            with sqlite_connection(
+                self.db_path,
+                row_factory=sqlite3.Row,
+                foreign_keys=True,
+            ) as conn:
+                root = conn.execute(
+                    "SELECT generation FROM room_kernel_roots WHERE root_id = ?",
+                    (normalized_root,),
+                ).fetchone()
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM agent_background_jobs
+                    WHERE room_bound = 1
+                      AND (
+                        causal_root_id = ?
+                        OR (causal_root_id = '' AND causal_turn_id = ?)
+                      )
+                      AND status IN ('queued', 'running', 'cancelling')
+                    ORDER BY created_at_ms, job_id
+                    """,
+                    (normalized_root, normalized_root),
+                ).fetchall()
+        except Exception as exc:
+            return _root_child_quiescence_unknown(
+                root_id=normalized_root,
+                generation=normalized_generation,
+                dispatch_id=normalized_dispatch,
+                error=exc,
+                target_kind="backgroundJob",
+            )
+        errors: list[str] = []
+        if root is None:
+            errors.append("room root lineage is unavailable")
+        elif int(root["generation"]) != normalized_generation:
+            errors.append("room root generation is stale")
+        targets: list[dict[str, object]] = []
+        counts = {"queued": 0, "running": 0, "cancelling": 0}
+        for row in rows:
+            row_root = str(row["causal_root_id"] or "")
+            row_generation = int(row["causal_generation"] or 0)
+            row_dispatch = str(row["causal_dispatch_id"] or "")
+            exact = (
+                row_root == normalized_root
+                and row_generation == normalized_generation
+                and (not normalized_dispatch or row_dispatch == normalized_dispatch)
+            )
+            if not exact:
+                # A room-bound record with an absent or stale generation is
+                # deliberately unknown rather than silently ignored.
+                targets.append(
+                    {
+                        "targetKind": "backgroundJob",
+                        "targetId": str(row["job_id"]),
+                        "state": "unknown",
+                        "rootId": row_root or normalized_root,
+                        "generation": row_generation,
+                        "dispatchId": row_dispatch,
+                    }
+                )
+                continue
+            status = str(row["status"])
+            counts[status] += 1
+            targets.append(
+                {
+                    "targetKind": "backgroundJob",
+                    "targetId": str(row["job_id"]),
+                    "state": status,
+                    "roomId": str(row["causal_room_id"] or ""),
+                    "rootId": row_root,
+                    "generation": row_generation,
+                    "taskId": str(row["causal_task_id"] or ""),
+                    "dispatchId": row_dispatch,
+                }
+            )
+        unknown_count = len(errors) + sum(
+            1 for target in targets if target["state"] == "unknown"
+        )
+        pending_count = len(targets) + len(errors)
+        return {
+            "schemaVersion": "rag-ime.root-child-quiescence.v1",
+            "owner": "backgroundJob",
+            "rootId": normalized_root,
+            "generation": normalized_generation,
+            "dispatchId": normalized_dispatch,
+            "state": (
+                "unknown"
+                if unknown_count
+                else "pending"
+                if targets
+                else "quiescent"
+            ),
+            "quiescent": not targets and not errors,
+            "pendingCount": pending_count,
+            "unknownCount": unknown_count,
+            "counts": {**counts, "total": sum(counts.values())},
+            "pendingTargets": targets,
+            "errors": errors[:8],
+        }
+
+    def cancel_root_children(
+        self,
+        *,
+        request_id: str,
+        root_id: str,
+        generation: int,
+        dispatch_id: str = "",
+        reason: object = "room_root_cancelled",
+    ) -> dict[str, object]:
+        normalized_root = _required_text(root_id, field="rootId", maximum=240)
+        normalized_generation = max(0, int(generation))
+        normalized_dispatch = _bounded_text(dispatch_id, maximum=240)
+        normalized_request = _required_text(request_id, field="requestId", maximum=240)
+        with sqlite_connection(
+            self.db_path,
+            row_factory=sqlite3.Row,
+            foreign_keys=True,
+        ) as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM agent_background_jobs
+                WHERE room_bound = 1
+                  AND (
+                    causal_root_id = ?
+                    OR (causal_root_id = '' AND causal_turn_id = ?)
+                  )
+                  AND status IN ('queued', 'running', 'cancelling')
+                ORDER BY created_at_ms, job_id
+                """,
+                (normalized_root, normalized_root),
+            ).fetchall()
+        pending_targets: list[dict[str, object]] = []
+        receipts: list[dict[str, object]] = []
+        for row in rows:
+            job_id = str(row["job_id"])
+            exact = (
+                str(row["causal_root_id"] or "") == normalized_root
+                and int(row["causal_generation"] or 0) == normalized_generation
+                and (
+                    not normalized_dispatch
+                    or str(row["causal_dispatch_id"] or "") == normalized_dispatch
+                )
+            )
+            if not exact:
+                pending_targets.append(
+                    {
+                        "targetKind": "backgroundJob",
+                        "targetId": job_id,
+                        "state": "unknown",
+                        "rootId": str(row["causal_root_id"] or normalized_root),
+                        "generation": int(row["causal_generation"] or 0),
+                        "dispatchId": str(row["causal_dispatch_id"] or ""),
+                    }
+                )
+                continue
+            try:
+                receipts.append(
+                    self.cancel_room_owned(
+                        str(row["session_id"]),
+                        job_id,
+                        room_turn_id=normalized_root,
+                        reason=reason,
+                    )
+                )
+            except Exception as exc:
+                pending_targets.append(
+                    {
+                        "targetKind": "backgroundJob",
+                        "targetId": job_id,
+                        "state": "unknown",
+                        "errorType": type(exc).__name__,
+                    }
+                )
+        for receipt in receipts:
+            job = receipt.get("job")
+            if not isinstance(job, Mapping):
+                continue
+            if str(job.get("status") or "") in _ACTIVE_STATUSES:
+                pending_targets.append(
+                    {
+                        "targetKind": "backgroundJob",
+                        "targetId": str(job.get("jobId") or ""),
+                        "state": str(job.get("status") or "unknown"),
+                        "rootId": normalized_root,
+                        "generation": normalized_generation,
+                        "dispatchId": normalized_dispatch,
+                    }
+                )
+        return {
+            "schemaVersion": "rag-ime.root-child-cancellation.v1",
+            "owner": "backgroundJob",
+            "requestId": normalized_request,
+            "rootId": normalized_root,
+            "generation": normalized_generation,
+            "dispatchId": normalized_dispatch,
+            "targetIds": [
+                str(row["job_id"]) for row in rows
+            ],
+            "receipts": receipts,
+            "pendingTargets": pending_targets,
+            "state": "requested" if pending_targets else "terminated",
+            "terminatedCount": len(rows) - len(pending_targets),
+        }
+
     def _cancel_owned(
         self,
         session_id: str,
@@ -702,20 +928,12 @@ class AgentBackgroundJobService:
             field="requestId",
             maximum=240,
         )
-        if scope_kind not in {"plan", "goal"}:
+        if scope_kind != "goal":
             raise AgentBackgroundJobError(
                 "unsupported lifecycle cancellation scope"
             )
-        causal_clause = (
-            "causal_plan_id = ? AND causal_plan_revision = ?"
-            if scope_kind == "plan"
-            else "causal_goal_id = ?"
-        )
-        causal_values: tuple[object, ...] = (
-            (scope_id, int(source_revision))
-            if scope_kind == "plan"
-            else (scope_id,)
-        )
+        causal_clause = "causal_goal_id = ?"
+        causal_values: tuple[object, ...] = (scope_id,)
         with sqlite_connection(
             self.db_path,
             row_factory=sqlite3.Row,
@@ -1151,17 +1369,10 @@ class AgentBackgroundJobService:
     ) -> None:
         if bool(causal["roomBound"]):
             return
-        plan_id = str(causal["planId"] or "")
-        plan_revision = int(causal["planRevision"] or 0)
         goal_id = str(causal["goalId"] or "")
         goal_revision = int(causal["goalRevision"] or 0)
         clauses: list[str] = []
         values: list[object] = [session_id]
-        if plan_id and plan_revision > 0:
-            clauses.append(
-                "(scope_kind = 'plan' AND scope_id = ? AND source_revision = ?)"
-            )
-            values.extend((plan_id, plan_revision))
         if goal_id and goal_revision > 0:
             clauses.append(
                 "(scope_kind = 'goal' AND scope_id = ? AND source_revision = ?)"
@@ -1246,12 +1457,19 @@ class AgentBackgroundJobService:
             "error": str(row["error"] or "")[:500],
             "approvalId": str(row["approval_id"] or "")[:240],
             "causalMetadata": {
-                "planId": str(row["causal_plan_id"] or ""),
-                "planRevision": int(row["causal_plan_revision"] or 0),
+                "todoId": str(row["causal_todo_id"] or ""),
+                "todoRevision": int(row["causal_todo_revision"] or 0),
                 "goalId": str(row["causal_goal_id"] or ""),
                 "goalRevision": int(row["causal_goal_revision"] or 0),
                 "turnId": str(row["causal_turn_id"] or ""),
                 "roomBound": bool(row["room_bound"]),
+            },
+            "roomLineage": {
+                "roomId": str(row["causal_room_id"] or ""),
+                "rootId": str(row["causal_root_id"] or ""),
+                "generation": int(row["causal_generation"] or 0),
+                "taskId": str(row["causal_task_id"] or ""),
+                "dispatchId": str(row["causal_dispatch_id"] or ""),
             },
         }
         validate_contract(payload, "agent-background-job.v1.json")
@@ -1314,12 +1532,17 @@ def _job_causal_metadata(
     supplied: Mapping[str, object] | None,
 ) -> dict[str, object]:
     causal: dict[str, object] = {
-        "planId": "",
-        "planRevision": 0,
+        "todoId": "",
+        "todoRevision": 0,
         "goalId": "",
         "goalRevision": 0,
         "turnId": "",
         "roomBound": False,
+        "roomId": "",
+        "rootId": "",
+        "generation": 0,
+        "taskId": "",
+        "dispatchId": "",
     }
     normalized_approval_id = str(approval_id or "").strip()
     inherited_room_bound = False
@@ -1327,7 +1550,7 @@ def _job_causal_metadata(
         row = conn.execute(
             """
             SELECT session_id, tool_name, operation, state,
-                   causal_plan_id, causal_plan_revision, causal_goal_id,
+                   causal_todo_id, causal_todo_revision, causal_goal_id,
                    causal_goal_revision, causal_turn_id, room_bound
             FROM agent_approvals
             WHERE approval_id = ?
@@ -1349,23 +1572,37 @@ def _job_causal_metadata(
                 "background job approval is no longer approved"
             )
         causal = {
-            "planId": str(row[4] or ""),
-            "planRevision": int(row[5] or 0),
+            "todoId": str(row[4] or ""),
+            "todoRevision": int(row[5] or 0),
             "goalId": str(row[6] or ""),
             "goalRevision": int(row[7] or 0),
             "turnId": str(row[8] or ""),
             "roomBound": bool(row[9]),
+            "roomId": "",
+            "rootId": "",
+            "generation": 0,
+            "taskId": "",
+            "dispatchId": "",
         }
         inherited_room_bound = bool(causal["roomBound"])
+        if supplied is not None:
+            for key in ("roomId", "rootId", "generation", "taskId", "dispatchId"):
+                if key in supplied:
+                    causal[key] = supplied[key]
     elif supplied is not None:
         for key in causal:
             if key in supplied:
                 causal[key] = supplied[key]
-    causal["planId"] = str(causal["planId"] or "").strip()[:240]
-    causal["planRevision"] = max(0, int(causal["planRevision"] or 0))
+    causal["todoId"] = str(causal["todoId"] or "").strip()[:240]
+    causal["todoRevision"] = max(0, int(causal["todoRevision"] or 0))
     causal["goalId"] = str(causal["goalId"] or "").strip()[:240]
     causal["goalRevision"] = max(0, int(causal["goalRevision"] or 0))
     causal["turnId"] = str(causal["turnId"] or "").strip()[:240]
+    causal["roomId"] = str(causal["roomId"] or "").strip()[:240]
+    causal["rootId"] = str(causal["rootId"] or "").strip()[:240]
+    causal["generation"] = max(0, int(causal["generation"] or 0))
+    causal["taskId"] = str(causal["taskId"] or "").strip()[:240]
+    causal["dispatchId"] = str(causal["dispatchId"] or "").strip()[:240]
     causal["roomBound"] = inherited_room_bound or (
         bool(supplied.get("roomBound"))
         if supplied is not None and not normalized_approval_id
@@ -1430,6 +1667,36 @@ def _valid_utf8_tail(value: bytes) -> bytes:
     while tail and 0x80 <= tail[0] <= 0xBF:
         tail = tail[1:]
     return tail
+
+
+def _root_child_quiescence_unknown(
+    *,
+    root_id: str,
+    generation: int,
+    dispatch_id: str,
+    error: BaseException,
+    target_kind: str,
+) -> dict[str, object]:
+    return {
+        "schemaVersion": "rag-ime.root-child-quiescence.v1",
+        "owner": "backgroundJob",
+        "rootId": root_id,
+        "generation": int(generation),
+        "dispatchId": dispatch_id,
+        "state": "unknown",
+        "quiescent": False,
+        "pendingCount": 1,
+        "unknownCount": 1,
+        "counts": {"queued": 0, "running": 0, "cancelling": 0, "total": 0},
+        "pendingTargets": [
+            {
+                "targetKind": target_kind,
+                "targetId": f"{target_kind}:{root_id}:{generation}",
+                "state": "unknown",
+            }
+        ],
+        "errors": [type(error).__name__],
+    }
 
 
 def _public_error(exc: BaseException) -> str:

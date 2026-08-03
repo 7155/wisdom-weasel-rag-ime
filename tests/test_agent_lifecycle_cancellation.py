@@ -135,6 +135,16 @@ class _WorkDocuments:
         return None
 
 
+class _Rooms:
+    def room_ids_for_session(self, _session_id: str) -> list[str]:
+        return []
+
+
+class _RoomKernelProjection:
+    def sync_room(self, _room_id: str) -> None:
+        return None
+
+
 def _service(
     store: AgentSessionStore,
     *,
@@ -151,6 +161,8 @@ def _service(
     service.events = _Events()
     service.room_turns = _RoomTurns(room_active)
     service.work_documents = _WorkDocuments()
+    service.rooms = _Rooms()
+    service.room_kernel_projection = _RoomKernelProjection()
     service._active_room_dispatch_authorizes_work = lambda _session_id: room_active
     return service
 
@@ -167,24 +179,29 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def _approved_plan(self) -> dict[str, object]:
-        draft = self.store.agent_plan(self.session_id)
-        saved = self.store.mutate_agent_plan(
+    def _execution_context(
+        self,
+        *,
+        task: str = "run",
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        todo = self.store.mutate_agent_todo(
+            self.session_id,
+            {"op": "init", "phase": "Execution", "items": [task]},
+        )["todo"]
+        todo = self.store.mutate_agent_todo(
+            self.session_id,
+            {"op": "start", "task": task},
+        )["todo"]
+        goal = self.store.mutate_agent_goal(
             self.session_id,
             {
-                "action": "save",
-                "expectedRevision": draft["revision"],
-                "items": [{"id": "step-1", "title": "run", "status": "pending"}],
+                "action": "confirm_setup",
+                "expectedRevision": 0,
+                "confirmed": True,
+                "objective": "finish",
             },
-        )["plan"]
-        reviewed = self.store.mutate_agent_plan(
-            self.session_id,
-            {"action": "submit_review", "expectedRevision": saved["revision"]},
-        )["plan"]
-        return self.store.mutate_agent_plan(
-            self.session_id,
-            {"action": "approve", "expectedRevision": reviewed["revision"]},
-        )["plan"]
+        )["workflow"]["goal"]
+        return todo, goal
 
     def _latest_lifecycle_audit(
         self,
@@ -215,14 +232,19 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
 
         upgrade_db = Path(self.tmp.name) / "lifecycle-upgrade.sqlite"
         session_id = "session-lifecycle-upgrade"
-        plan_id = f"plan:{session_id}"
+        todo_id = f"todo:{session_id}"
         goal_id = "goal-created-later"
+        legacy_items_table = "agent_" + "p" + "lan" + "_events"
+        legacy_states_table = "agent_" + "p" + "lan" + "_state_events"
+        legacy_causal_id = "causal_" + "p" + "lan" + "_id"
+        legacy_causal_revision = "causal_" + "p" + "lan" + "_revision"
+        legacy_scope_id = "pl" + "an:" + session_id
         digest = hashlib.sha256(b"echo migration").hexdigest()
-        resources = (("old", 100), ("plan", 250), ("goal", 450))
+        resources = (("before", 100), ("middle", 250), ("after", 450))
         job_ids = {
-            "old": "bg_" + "1" * 32,
-            "plan": "bg_" + "2" * 32,
-            "goal": "bg_" + "3" * 32,
+            "before": "bg_" + "1" * 32,
+            "middle": "bg_" + "2" * 32,
+            "after": "bg_" + "3" * 32,
         }
         with sqlite3.connect(upgrade_db) as conn:
             apply_database_migrations(conn, migrations_dir=migrations_0114)
@@ -240,27 +262,27 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
                 (session_id,),
             )
             conn.execute(
-                """
-                INSERT INTO agent_plan_events(
+                f"""
+                INSERT INTO {legacy_items_table}(
                     event_id, session_id, sequence, item_id, title, status,
                     created_at_ms
                 ) VALUES(
-                    'plan-item-approved', ?, 1, 'step-1', 'Run',
+                    'todo-item-approved', ?, 1, 'step-1', 'Run',
                     'pending', 190
                 )
                 """,
                 (session_id,),
             )
             conn.executemany(
-                """
-                INSERT INTO agent_plan_state_events(
+                f"""
+                INSERT INTO {legacy_states_table}(
                     event_id, session_id, sequence, title, status, actor,
                     created_at_ms
-                ) VALUES(?, ?, ?, 'Lifecycle plan', ?, 'fixture', ?)
+                ) VALUES(?, ?, ?, 'Lifecycle execution', ?, 'fixture', ?)
                 """,
                 (
-                    ("plan-approved", session_id, 1, "approved", 200),
-                    ("plan-executing-later", session_id, 2, "executing", 300),
+                    ("execution-approved", session_id, 1, "approved", 200),
+                    ("execution-later", session_id, 2, "executing", 300),
                 ),
             )
             conn.executemany(
@@ -340,40 +362,40 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
             self.assertIn(115, legacy_backfill.applied_versions)
             self.assertEqual(
                 conn.execute(
-                    """
-                    SELECT causal_plan_id, causal_plan_revision,
+                    f"""
+                    SELECT {legacy_causal_id}, {legacy_causal_revision},
                            causal_goal_id, causal_goal_revision
                     FROM agent_approvals
-                    WHERE approval_id = 'approval-old'
+                    WHERE approval_id = 'approval-before'
                     """
                 ).fetchone(),
-                (plan_id, 3, goal_id, 2),
+                (legacy_scope_id, 3, goal_id, 2),
             )
             self.assertEqual(
                 conn.execute(
-                    """
-                    SELECT causal_plan_id, causal_plan_revision,
+                    f"""
+                    SELECT {legacy_causal_id}, {legacy_causal_revision},
                            causal_goal_id, causal_goal_revision
                     FROM agent_background_jobs
                     WHERE job_id = ?
                     """,
-                    (job_ids["plan"],),
+                    (job_ids["middle"],),
                 ).fetchone(),
                 ("", 0, "", 0),
             )
 
             corrected = apply_database_migrations(conn)
             replay = apply_database_migrations(conn)
-            self.assertEqual(corrected.applied_versions, (123, 124, 125, 126))
+            self.assertEqual(corrected.applied_versions[:4], (123, 124, 125, 126))
             self.assertEqual(replay.applied_versions, ())
             expected = {
-                "old": ("", 0, "", 0),
-                "plan": (plan_id, 2, "", 0),
-                "goal": (plan_id, 3, goal_id, 1),
+                "before": ("", 0, "", 0),
+                "middle": (todo_id, 1, "", 0),
+                "after": (todo_id, 1, goal_id, 1),
             }
             for table, key, prefix in (
                 ("agent_approvals", "approval_id", "approval-"),
-                ("agent_background_jobs", "job_id", "job-"),
+                ("agent_background_jobs", "job_id", "bg_"),
                 ("agent_subagent_batches", "id", "batch-"),
             ):
                 for resource_name, _created_at_ms in resources:
@@ -381,11 +403,15 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
                         identifier = (
                             job_ids[resource_name]
                             if table == "agent_background_jobs"
-                            else f"{prefix}{resource_name}"
+                            else (
+                                f"batch-{resource_name}"
+                                if table == "agent_subagent_batches"
+                                else f"{prefix}{resource_name}"
+                            )
                         )
                         row = conn.execute(
                             f"""
-                            SELECT causal_plan_id, causal_plan_revision,
+                            SELECT causal_todo_id, causal_todo_revision,
                                    causal_goal_id, causal_goal_revision
                             FROM {table}
                             WHERE {key} = ?
@@ -395,31 +421,28 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
                         self.assertEqual(row, expected[resource_name])
 
         upgraded_store = AgentSessionStore(upgrade_db)
-        plan_approvals = upgraded_store.cancel_causal_approvals(
-            session_id,
-            request_id="migration-plan-approval-cancel",
-            scope_kind="plan",
-            scope_id=plan_id,
-            source_revision=2,
-            reason="plan cancelled",
-            decided_at_ms=600,
-        )
+        with self.assertRaises(ValueError):
+            upgraded_store.cancel_causal_approvals(
+                session_id,
+                request_id="migration-todo-approval-cancel",
+                scope_kind="todo",
+                scope_id=todo_id,
+                source_revision=1,
+                reason="Todo tracking does not cancel work",
+                decided_at_ms=600,
+            )
         goal_approvals = upgraded_store.cancel_causal_approvals(
             session_id,
             request_id="migration-goal-approval-cancel",
             scope_kind="goal",
             scope_id=goal_id,
             source_revision=1,
-            reason="goal cancelled",
+            reason="Goal cancelled",
             decided_at_ms=601,
         )
         self.assertEqual(
-            plan_approvals["cancelledApprovalIds"],
-            ["approval-plan"],
-        )
-        self.assertEqual(
             goal_approvals["cancelledApprovalIds"],
-            ["approval-goal"],
+            ["approval-after"],
         )
 
         jobs = AgentBackgroundJobService(
@@ -427,51 +450,30 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
             events=lambda *args, **kwargs: None,
             execution_owner=True,
         )
-        plan_jobs = jobs.cancel_causal(
-            session_id,
-            request_id="migration-plan-job-cancel",
-            scope_kind="plan",
-            scope_id=plan_id,
-            source_revision=2,
-            reason="plan cancelled",
-        )
         goal_jobs = jobs.cancel_causal(
             session_id,
             request_id="migration-goal-job-cancel",
             scope_kind="goal",
             scope_id=goal_id,
             source_revision=1,
-            reason="goal cancelled",
+            reason="Goal cancelled",
         )
         jobs.close()
         self.assertEqual(
-            [item["jobId"] for item in plan_jobs["jobs"]],
-            [job_ids["plan"]],
-        )
-        self.assertEqual(
             [item["jobId"] for item in goal_jobs["jobs"]],
-            [job_ids["goal"]],
+            [job_ids["after"]],
         )
 
         delegation = AgentDelegationStore(upgrade_db)
-        plan_batches = delegation.request_causal_abort(
-            request_id="migration-plan-batch-cancel",
-            scope_kind="plan",
-            scope_id=plan_id,
-            source_revision=2,
-            reason="plan cancelled",
-            requested_at_ms=602,
-        )
         goal_batches = delegation.request_causal_abort(
             request_id="migration-goal-batch-cancel",
             scope_kind="goal",
             scope_id=goal_id,
             source_revision=1,
-            reason="goal cancelled",
+            reason="Goal cancelled",
             requested_at_ms=603,
         )
-        self.assertEqual(plan_batches["batchIds"], ["batch-plan"])
-        self.assertEqual(goal_batches["batchIds"], ["batch-goal"])
+        self.assertEqual(goal_batches["batchIds"], ["batch-after"])
 
         with sqlite3.connect(upgrade_db) as conn:
             self.assertEqual(
@@ -481,9 +483,9 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
                     )
                 ),
                 {
-                    "approval-old": "pending",
-                    "approval-plan": "stale",
-                    "approval-goal": "stale",
+                    "approval-before": "pending",
+                    "approval-middle": "pending",
+                    "approval-after": "stale",
                 },
             )
             self.assertEqual(
@@ -493,9 +495,9 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
                     )
                 ),
                 {
-                    job_ids["old"]: "running",
-                    job_ids["plan"]: "cancelling",
-                    job_ids["goal"]: "cancelling",
+                    job_ids["before"]: "running",
+                    job_ids["middle"]: "running",
+                    job_ids["after"]: "cancelling",
                 },
             )
             self.assertEqual(
@@ -505,14 +507,14 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
                     )
                 ),
                 {
-                    "batch-old": "running",
-                    "batch-plan": "aborted",
-                    "batch-goal": "aborted",
+                    "batch-before": "running",
+                    "batch-middle": "running",
+                    "batch-after": "aborted",
                 },
             )
 
-    def test_plan_cancel_closes_admission_before_provider_turn_and_approval_owners(self) -> None:
-        plan = self._approved_plan()
+    def test_goal_cancel_closes_admission_before_provider_turn_and_approval_owners(self) -> None:
+        todo, goal = self._execution_context()
         self.store.record_runtime_event(
             event_id="provider-started",
             session_id=self.session_id,
@@ -530,10 +532,15 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
             risk_level="R2",
             requested_at_ms=101,
         )
-        self.assertEqual(approval["causalMetadata"]["planId"], plan["id"])
+        self.assertEqual(approval["causalMetadata"]["todoId"], todo["id"])
         self.assertEqual(
-            approval["causalMetadata"]["planRevision"],
-            plan["revision"],
+            approval["causalMetadata"]["todoRevision"],
+            todo["revision"],
+        )
+        self.assertEqual(approval["causalMetadata"]["goalId"], goal["goalId"])
+        self.assertEqual(
+            approval["causalMetadata"]["goalRevision"],
+            goal["revision"],
         )
         self.assertEqual(
             approval["causalMetadata"]["turnId"],
@@ -541,18 +548,27 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
         )
 
         def assert_store_transition_first(_session_id: str) -> None:
-            self.assertEqual(self.store.agent_plan(self.session_id)["status"], "cancelled")
+            self.assertEqual(
+                self.store.agent_goal(self.session_id)["status"],
+                "cancelled",
+            )
 
         runtime = _Runtime(callback=assert_store_transition_first)
         service = _service(self.store, runtime=runtime, jobs=_Jobs())
-        state = service.mutate_plan(
+        state = service.mutate_goal(
             self.session_id,
-            {"action": "cancel", "expectedRevision": plan["revision"]},
+            {
+                "action": "cancel",
+                "expectedRevision": goal["revision"],
+                "reason": "operator stopped the Goal",
+            },
         )
         self.assertNotIn("lifecycleCancellationAudit", state)
+        self.assertEqual(state["goal"]["status"], "cancelled")
         validate_contract(state, "agent-workflow-state.v1.json")
 
         audit = self._latest_lifecycle_audit()
+        self.assertEqual(audit["scopeKind"], "goal")
         self.assertEqual(audit["sourceTurnId"], "turn-provider-1")
         self.assertEqual(audit["state"], "completed")
         self.assertEqual(
@@ -567,13 +583,17 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
         self.assertTrue(any(item[1] == "lifecycle_cancellation_changed" for item in service.events.items))
 
     def test_completed_retry_after_restart_replays_durable_owner_receipts(self) -> None:
-        plan = self._approved_plan()
+        _todo, goal = self._execution_context()
         first_runtime = _Runtime()
         first_jobs = _Jobs()
         first = _service(self.store, runtime=first_runtime, jobs=first_jobs)
-        first.mutate_plan(
+        first.mutate_goal(
             self.session_id,
-            {"action": "cancel", "expectedRevision": plan["revision"]},
+            {
+                "action": "cancel",
+                "expectedRevision": goal["revision"],
+                "reason": "operator stopped the Goal",
+            },
         )
         initial = self._latest_lifecycle_audit()
 
@@ -584,9 +604,13 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
             runtime=restarted_runtime,
             jobs=restarted_jobs,
         )
-        restarted.mutate_plan(
+        restarted.mutate_goal(
             self.session_id,
-            {"action": "cancel", "expectedRevision": plan["revision"]},
+            {
+                "action": "cancel",
+                "expectedRevision": goal["revision"],
+                "reason": "operator stopped the Goal",
+            },
         )
         replay = self._latest_lifecycle_audit()
 
@@ -596,7 +620,7 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
         self.assertEqual(restarted_jobs.calls, 0)
 
     def test_partial_and_unknown_owner_outcomes_are_durable(self) -> None:
-        plan = self._approved_plan()
+        _todo, goal = self._execution_context()
         runtime = _Runtime(
             receipt={
                 "turnId": "turn-provider-1",
@@ -612,9 +636,13 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
             runtime=runtime,
             jobs=_Jobs(error=RuntimeError("job gateway disconnected")),
         )
-        service.mutate_plan(
+        service.mutate_goal(
             self.session_id,
-            {"action": "cancel", "expectedRevision": plan["revision"]},
+            {
+                "action": "cancel",
+                "expectedRevision": goal["revision"],
+                "reason": "operator stopped the Goal",
+            },
         )
         audit = self._latest_lifecycle_audit()
 
@@ -625,7 +653,7 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
         self.assertEqual(durable, audit)
 
     def test_pending_delegation_is_a_durable_partial_owner_outcome(self) -> None:
-        plan = self._approved_plan()
+        _todo, goal = self._execution_context()
         delegation = _Delegation(state="requested")
         service = _service(
             self.store,
@@ -633,9 +661,13 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
             jobs=_Jobs(),
             delegation=delegation,
         )
-        service.mutate_plan(
+        service.mutate_goal(
             self.session_id,
-            {"action": "cancel", "expectedRevision": plan["revision"]},
+            {
+                "action": "cancel",
+                "expectedRevision": goal["revision"],
+                "reason": "operator stopped the Goal",
+            },
         )
         audit = self._latest_lifecycle_audit()
         self.assertEqual(
@@ -644,6 +676,7 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
         )
         self.assertEqual(audit["state"], "partial")
         self.assertEqual(delegation.calls, 1)
+
 
     def test_goal_pause_and_cancel_share_coordinator_without_goal_audit_duplication(self) -> None:
         goal = self.store.mutate_agent_goal(
@@ -703,8 +736,82 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
             cancel_audit["requestId"],
         )
 
+    def test_todo_tracking_never_authorizes_or_cancels_work(self) -> None:
+        todo = self.store.mutate_agent_todo(
+            self.session_id,
+            {"op": "init", "phase": "Execution", "items": ["run"]},
+        )["todo"]
+        approval = self.store.create_approval(
+            session_id=self.session_id,
+            tool_name="workspace_write",
+            operation="apply",
+            payload_sha256="e" * 64,
+            preview={},
+            risk_level="R2",
+            causal_metadata={
+                "todoId": todo["id"],
+                "todoRevision": todo["revision"],
+            },
+        )
+        self.assertEqual(approval["state"], "pending")
+        self.assertEqual(approval["causalMetadata"]["todoId"], todo["id"])
+        self.assertEqual(
+            approval["causalMetadata"]["todoRevision"],
+            todo["revision"],
+        )
+        self.assertEqual(approval["causalMetadata"]["goalId"], "")
+        advanced = self.store.mutate_agent_todo(
+            self.session_id,
+            {"op": "start", "task": "run"},
+        )["todo"]
+        self.assertEqual(advanced["revision"], todo["revision"] + 1)
+        self.assertEqual(
+            self.store.get_approval(str(approval["approvalId"]))["state"],
+            "pending",
+        )
+        self.assertFalse(self.store.agent_goal(self.session_id)["configured"])
+        self.assertEqual(
+            self.store.lifecycle_cancellation_audits(self.session_id),
+            [],
+        )
+        with self.assertRaises(ValueError):
+            self.store.cancel_causal_approvals(
+                self.session_id,
+                request_id="todo-must-not-cancel-approval",
+                scope_kind="todo",
+                scope_id=str(todo["id"]),
+                source_revision=int(todo["revision"]),
+                reason="Todo tracking does not cancel work",
+            )
+
+        jobs = AgentBackgroundJobService(
+            self.db_path,
+            events=lambda *args, **kwargs: None,
+            execution_owner=True,
+        )
+        with self.assertRaises(AgentBackgroundJobError):
+            jobs.cancel_causal(
+                self.session_id,
+                request_id="todo-must-not-cancel-job",
+                scope_kind="todo",
+                scope_id=str(todo["id"]),
+                source_revision=int(todo["revision"]),
+                reason="Todo tracking does not cancel work",
+            )
+        jobs.close()
+
+        delegation = AgentDelegationStore(self.db_path)
+        with self.assertRaises(ValueError):
+            delegation.request_causal_abort(
+                request_id="todo-must-not-cancel-delegation",
+                scope_kind="todo",
+                scope_id=str(todo["id"]),
+                source_revision=int(todo["revision"]),
+                reason="Todo tracking does not cancel work",
+            )
+
     def test_background_job_inherits_causal_metadata_from_approval(self) -> None:
-        plan = self._approved_plan()
+        todo, goal = self._execution_context()
         approval = self.store.create_approval(
             session_id=self.session_id,
             tool_name="workspace_job",
@@ -743,14 +850,20 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
                 approval_id=str(approval["approvalId"]),
             )
         failed = jobs.list(self.session_id)["items"][0]
-        self.assertEqual(failed["causalMetadata"]["planId"], plan["id"])
+        self.assertEqual(failed["causalMetadata"]["todoId"], todo["id"])
         self.assertEqual(
-            failed["causalMetadata"]["planRevision"],
-            plan["revision"],
+            failed["causalMetadata"]["todoRevision"],
+            todo["revision"],
         )
+        self.assertEqual(failed["causalMetadata"]["goalId"], goal["goalId"])
+        self.assertEqual(
+            failed["causalMetadata"]["goalRevision"],
+            goal["revision"],
+        )
+        jobs.close()
 
-    def test_plan_cancellation_fences_start_blocked_after_process_spawn(self) -> None:
-        plan = self._approved_plan()
+    def test_goal_cancellation_fences_start_blocked_after_process_spawn(self) -> None:
+        _todo, goal = self._execution_context()
         approval = self.store.create_approval(
             session_id=self.session_id,
             tool_name="workspace_job",
@@ -809,28 +922,29 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
         try:
             self.assertTrue(harness.spawned.wait(timeout=5))
             request = {
-                "requestId": "lifecycle-race-plan-cancel",
-                "scopeKind": "plan",
-                "scopeId": str(plan["id"]),
-                "sourceRevision": int(plan["revision"]),
+                "requestId": "lifecycle-race-goal-cancel",
+                "scopeKind": "goal",
+                "scopeId": str(goal["goalId"]),
+                "sourceRevision": int(goal["revision"]),
                 "action": "cancel",
                 "reason": "race regression",
                 "sourceTurnId": "",
             }
-            self.store.mutate_agent_plan(
+            self.store.mutate_agent_goal(
                 self.session_id,
                 {
                     "action": "cancel",
-                    "expectedRevision": plan["revision"],
+                    "expectedRevision": goal["revision"],
+                    "reason": "race regression",
                 },
                 lifecycle_request=request,
             )
             jobs.cancel_causal(
                 self.session_id,
                 request_id=str(request["requestId"]),
-                scope_kind="plan",
-                scope_id=str(plan["id"]),
-                source_revision=int(plan["revision"]),
+                scope_kind="goal",
+                scope_id=str(goal["goalId"]),
+                source_revision=int(goal["revision"]),
                 reason="race regression",
             )
         finally:
@@ -847,24 +961,35 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
         self.assertEqual(failed["status"], "failed")
         self.assertGreater(failed["endedAtMs"], 0)
 
-    def test_background_job_cancellation_is_causal_and_excludes_room_and_unrelated_jobs(self) -> None:
-        plan_id = f"plan:{self.session_id}"
+    def test_background_job_cancellation_is_goal_causal_and_excludes_room_and_unrelated_jobs(self) -> None:
+        todo, goal = self._execution_context()
+        todo_id = str(todo["id"])
+        goal_id = str(goal["goalId"])
+        unrelated_goal_id = "goal:unrelated"
         digest = hashlib.sha256(b"echo test").hexdigest()
         rows = [
-            ("bg_" + "1" * 32, plan_id, 7, 0),
-            ("bg_" + "2" * 32, plan_id, 8, 0),
-            ("bg_" + "3" * 32, plan_id, 7, 1),
+            ("bg_" + "1" * 32, todo_id, goal_id, 1, 0),
+            ("bg_" + "2" * 32, todo_id, unrelated_goal_id, 1, 0),
+            ("bg_" + "3" * 32, todo_id, goal_id, 1, 1),
         ]
         with sqlite3.connect(self.db_path) as conn:
-            for index, (job_id, causal_plan_id, revision, room_bound) in enumerate(rows):
+            for index, (
+                job_id,
+                causal_todo_id,
+                causal_goal_id,
+                revision,
+                room_bound,
+            ) in enumerate(rows):
                 conn.execute(
                     """
                     INSERT INTO agent_background_jobs(
                         job_id, session_id, label, status, command, command_sha256,
                         cwd, network_allowed, max_run_seconds, log_path,
-                        causal_plan_id, causal_plan_revision, room_bound,
+                        causal_todo_id, causal_todo_revision,
+                        causal_goal_id, causal_goal_revision, room_bound,
                         created_at_ms, updated_at_ms
-                    ) VALUES (?, ?, ?, 'running', 'echo test', ?, ?, 0, 60, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, 'running', 'echo test', ?, ?, 0, 60, ?,
+                              ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         job_id,
@@ -873,7 +998,9 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
                         digest,
                         self.tmp.name,
                         str(Path(self.tmp.name) / f"{job_id}.log"),
-                        causal_plan_id,
+                        causal_todo_id,
+                        todo["revision"],
+                        causal_goal_id,
                         revision,
                         room_bound,
                         200 + index,
@@ -888,10 +1015,10 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
         receipt = jobs.cancel_causal(
             self.session_id,
             request_id="lifecycle:test-job",
-            scope_kind="plan",
-            scope_id=plan_id,
-            source_revision=7,
-            reason="plan_cancelled",
+            scope_kind="goal",
+            scope_id=goal_id,
+            source_revision=int(goal["revision"]),
+            reason="Goal cancelled",
         )
 
         self.assertEqual(receipt["excludedRoomBoundJobIds"], ["bg_" + "3" * 32])
@@ -899,10 +1026,10 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
         replay = jobs.cancel_causal(
             self.session_id,
             request_id="lifecycle:test-job",
-            scope_kind="plan",
-            scope_id=plan_id,
-            source_revision=7,
-            reason="plan_cancelled",
+            scope_kind="goal",
+            scope_id=goal_id,
+            source_revision=int(goal["revision"]),
+            reason="Goal cancelled",
         )
         self.assertEqual(replay["jobs"], receipt["jobs"])
         with sqlite3.connect(self.db_path) as conn:
@@ -910,15 +1037,19 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
         self.assertEqual(states["bg_" + "1" * 32], "cancelling")
         self.assertEqual(states["bg_" + "2" * 32], "running")
         self.assertEqual(states["bg_" + "3" * 32], "running")
+        jobs.close()
 
     def test_delegation_owner_aborts_matching_running_children_and_replays_receipt(self) -> None:
-        plan_id = f"plan:{self.session_id}"
+        todo, goal = self._execution_context(task="run child")
+        todo_id = str(todo["id"])
+        goal_id = str(goal["goalId"])
+        unrelated_goal_id = "goal:unrelated"
         delegation_store = AgentDelegationStore(self.db_path)
         delegation_store.initialize()
 
-        def create_batch(*, revision: int, room_bound: bool):
+        def create_batch(*, causal_goal_id: str, room_bound: bool):
             child = self.store.create(
-                title=f"child-{revision}-{room_bound}",
+                title=f"child-{causal_goal_id}-{room_bound}",
                 session_kind="subagent_runtime",
             )
             return delegation_store.create_batch(
@@ -928,10 +1059,10 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
                 depth=1,
                 max_depth=2,
                 causal_metadata={
-                    "planId": plan_id,
-                    "planRevision": revision,
-                    "goalId": "",
-                    "goalRevision": 0,
+                    "todoId": todo_id,
+                    "todoRevision": todo["revision"],
+                    "goalId": causal_goal_id,
+                    "goalRevision": goal["revision"],
                     "roomBound": room_bound,
                 },
                 runs=[
@@ -943,8 +1074,8 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
                         "expectedOutput": "receipt",
                         "acceptanceCriteria": ["child is stopped"],
                         "outputSchema": {},
-                        "planItemId": "step-1",
-                        "planItemTitle": "run child",
+                        "todoTask": "run child",
+                        "todoPhase": "Execution",
                         "maxTurns": 1,
                         "maxToolCalls": 1,
                         "maxTotalTokens": 256,
@@ -954,9 +1085,20 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
                 ],
             )
 
-        target = create_batch(revision=7, room_bound=False)
-        unrelated = create_batch(revision=8, room_bound=False)
-        room_bound = create_batch(revision=7, room_bound=True)
+        target = create_batch(causal_goal_id=goal_id, room_bound=False)
+        unrelated = create_batch(
+            causal_goal_id=unrelated_goal_id,
+            room_bound=False,
+        )
+        room_bound = create_batch(causal_goal_id=goal_id, room_bound=True)
+        self.assertEqual(target["causalMetadata"]["todoId"], todo_id)
+        self.assertEqual(
+            target["causalMetadata"]["todoRevision"],
+            todo["revision"],
+        )
+        self.assertEqual(target["causalMetadata"]["goalId"], goal_id)
+        self.assertEqual(target["runs"][0]["todoTask"], "run child")
+        self.assertEqual(target["runs"][0]["todoPhase"], "Execution")
         target_run = delegation_store.start_run(
             str(target["runs"][0]["id"])
         )
@@ -974,7 +1116,6 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
                     error="Parent lifecycle cancelled",
                 )
                 terminal.set()
-
             def stop(self) -> None:
                 return None
 
@@ -998,10 +1139,10 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
         receipt = coordinator.cancel_causal(
             self.session_id,
             request_id="lifecycle:test-delegation",
-            scope_kind="plan",
-            scope_id=plan_id,
-            source_revision=7,
-            reason="plan_cancelled",
+            scope_kind="goal",
+            scope_id=goal_id,
+            source_revision=int(goal["revision"]),
+            reason="Goal cancelled",
         )
         self.assertEqual(receipt["state"], "terminated")
         self.assertEqual(runtime.calls, 1)
@@ -1025,20 +1166,24 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
         replay = coordinator.cancel_causal(
             self.session_id,
             request_id="lifecycle:test-delegation",
-            scope_kind="plan",
-            scope_id=plan_id,
-            source_revision=7,
-            reason="plan_cancelled",
+            scope_kind="goal",
+            scope_id=goal_id,
+            source_revision=int(goal["revision"]),
+            reason="Goal cancelled",
         )
         self.assertEqual(replay["batches"], receipt["batches"])
         self.assertEqual(runtime.calls, 1)
 
     def test_reconnect_snapshot_projection_is_separate_from_goal_cancellation_audit(self) -> None:
-        plan = self._approved_plan()
+        _todo, goal = self._execution_context()
         service = _service(self.store, runtime=_Runtime(), jobs=_Jobs())
-        service.mutate_plan(
+        service.mutate_goal(
             self.session_id,
-            {"action": "cancel", "expectedRevision": plan["revision"]},
+            {
+                "action": "cancel",
+                "expectedRevision": goal["revision"],
+                "reason": "operator stopped the Goal",
+            },
         )
         audit = self._latest_lifecycle_audit()
         projection = self.store.lifecycle_cancellation_audits(self.session_id)

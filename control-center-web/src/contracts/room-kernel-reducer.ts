@@ -4,6 +4,8 @@ import type { RoomKernelReceiptV1 } from './generated/room-kernel-receipt.v1';
 import type { RoomPostV2 } from './generated/room-post.v2';
 import type { RoomRootExecutionV3 } from './generated/room-root-execution.v3';
 import type { RoomTaskV3 } from './generated/room-task.v3';
+import type { AgentTodoProjection } from './agent-reducer';
+import { parseAgentTodo } from './agent-reducer';
 import { parseContract } from './validators';
 
 export type SessionState = 'idle' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -11,10 +13,16 @@ export type SessionState = 'idle' | 'queued' | 'running' | 'completed' | 'failed
 /** Session is a private inspector read model. It is never promoted to a RoomPost. */
 export type PrivateSessionProjection = {
   sessionId: string;
+  participantId?: string;
   rootId: string | null;
+  taskId: string | null;
+  taskKind: RoomTaskV3['taskKind'] | null;
+  workItemId: string | null;
+  dispatchId: string | null;
   generation: number;
   state: SessionState;
   updatedAtMs: number;
+  todo?: AgentTodoProjection;
   capabilityManifest?: {
     manifestId: string;
     manifestHash: string;
@@ -69,6 +77,7 @@ export type RoomKernelProjection = {
   gap: { expectedSequence: number; receivedSequence: number } | null;
   rootsById: Record<string, RootProjection>;
   tasksById: Record<string, RoomTaskV3>;
+  taskUpdatedAtMsById: Record<string, number>;
   dispatchesById: Record<string, RoomDispatchEnvelopeV2>;
   postsById: Record<string, RoomPostV2>;
   postOrder: string[];
@@ -86,6 +95,7 @@ export type RoomKernelSnapshot = {
   snapshotHash: string;
   roots: RoomRootExecutionV3[];
   tasks: RoomTaskV3[];
+  taskUpdatedAtMsById: Record<string, number>;
   dispatches: RoomDispatchEnvelopeV2[];
   posts: RoomPostV2[];
   sessions: PrivateSessionProjection[];
@@ -107,6 +117,7 @@ export function createRoomKernelProjection(roomId: string): RoomKernelProjection
     gap: null,
     rootsById: {},
     tasksById: {},
+    taskUpdatedAtMsById: {},
     dispatchesById: {},
     postsById: {},
     postOrder: [],
@@ -153,7 +164,9 @@ export function applyRoomKernelSnapshot(
   next.lastSequence = nonNegativeInteger(snapshot.lastSequence, 'lastSequence');
   next.snapshotHash = requiredText(snapshot.snapshotHash, 'snapshotHash');
   for (const root of snapshot.roots) applyRoot(next, root, 0, 'snapshot');
-  for (const task of snapshot.tasks) applyTask(next, task, 'snapshot');
+  for (const task of snapshot.tasks) {
+    applyTask(next, task, snapshot.taskUpdatedAtMsById[task.taskId], 'snapshot');
+  }
   for (const dispatch of snapshot.dispatches) applyDispatch(next, dispatch, 'snapshot');
   for (const post of snapshot.posts) applyPost(next, post);
   for (const session of snapshot.sessions) applySession(next, session, 'snapshot');
@@ -181,7 +194,7 @@ function applyCanonicalEvent(state: RoomKernelProjection, event: RoomEventEnvelo
       return;
     case 'task:upserted':
     case 'task:state_changed':
-      applyTask(state, event.payload.task, eventId);
+      applyTask(state, event.payload.task, event.occurredAtMs, eventId);
       return;
     case 'dispatch:upserted':
     case 'dispatch:state_changed':
@@ -218,7 +231,12 @@ function applyRoot(state: RoomKernelProjection, value: unknown, updatedAtMs: num
   reconcileFinal(state, root.rootId);
 }
 
-function applyTask(state: RoomKernelProjection, value: unknown, eventId: string): void {
+function applyTask(
+  state: RoomKernelProjection,
+  value: unknown,
+  updatedAtMs: number | undefined,
+  eventId: string,
+): void {
   const task = parseContract('room-task.v3', value);
   const root = state.rootsById[task.rootId];
   if (!root) throw new TypeError('Task has no projected Root');
@@ -228,6 +246,12 @@ function applyTask(state: RoomKernelProjection, value: unknown, eventId: string)
     return;
   }
   state.tasksById[task.taskId] = task;
+  if (updatedAtMs !== undefined) {
+    state.taskUpdatedAtMsById[task.taskId] = nonNegativeInteger(
+      updatedAtMs,
+      'taskUpdatedAtMs',
+    );
+  }
 }
 
 function applyDispatch(state: RoomKernelProjection, value: unknown, eventId: string): void {
@@ -296,6 +320,8 @@ function reconcileFinal(state: RoomKernelProjection, rootId: string): void {
 
 function privateSession(value: unknown): PrivateSessionProjection {
   const item = record(value);
+  const sessionId = requiredText(item.sessionId, 'sessionId');
+  const participantId = optionalText(item.participantId);
   const sessionState = item.state;
   if (!isSessionState(sessionState)) throw new TypeError('Session state is invalid');
   const capabilityManifest = item.capabilityManifest === undefined
@@ -304,12 +330,21 @@ function privateSession(value: unknown): PrivateSessionProjection {
   const requirementObservation = item.requirementObservation === undefined
     ? undefined
     : privateRequirementObservation(item.requirementObservation);
+  const todo = item.todo === undefined ? undefined : parseAgentTodo(item.todo);
+  if (item.todo !== undefined && !todo) throw new TypeError('Session Todo is invalid');
+  if (todo && todo.sessionId !== sessionId) throw new TypeError('Session Todo belongs to another Session');
   return {
-    sessionId: requiredText(item.sessionId, 'sessionId'),
+    sessionId,
+    ...(participantId ? { participantId } : {}),
     rootId: optionalText(item.rootId),
+    taskId: optionalText(item.taskId),
+    taskKind: optionalRoomTaskKind(item.taskKind),
+    workItemId: optionalText(item.workItemId),
+    dispatchId: optionalText(item.dispatchId),
     generation: nonNegativeInteger(item.generation, 'generation'),
     state: sessionState,
     updatedAtMs: nonNegativeInteger(item.updatedAtMs, 'updatedAtMs'),
+    ...(todo ? { todo } : {}),
     ...(capabilityManifest ? { capabilityManifest } : {}),
     ...(requirementObservation ? { requirementObservation } : {}),
   };
@@ -366,6 +401,7 @@ function cloneProjection(state: RoomKernelProjection): RoomKernelProjection {
     gap: state.gap ? { ...state.gap } : null,
     rootsById: { ...state.rootsById },
     tasksById: { ...state.tasksById },
+    taskUpdatedAtMsById: { ...state.taskUpdatedAtMsById },
     dispatchesById: { ...state.dispatchesById },
     postsById: { ...state.postsById },
     postOrder: [...state.postOrder],
@@ -396,6 +432,15 @@ function requiredText(value: unknown, field: string): string {
 function optionalText(value: unknown): string | null {
   const normalized = typeof value === 'string' ? value.trim() : '';
   return normalized || null;
+}
+
+function optionalRoomTaskKind(value: unknown): RoomTaskV3['taskKind'] | null {
+  const normalized = optionalText(value);
+  if (normalized === null) return null;
+  if (!['work', 'invitation', 'review', 'report'].includes(normalized)) {
+    throw new TypeError('Session Task kind is invalid');
+  }
+  return normalized as RoomTaskV3['taskKind'];
 }
 
 function textArray(value: unknown): string[] {

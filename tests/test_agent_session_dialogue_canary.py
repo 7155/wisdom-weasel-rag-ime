@@ -93,9 +93,9 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
         ) -> dict[str, object]:
             del timeout
             paths.append(path)
-            prompt = (
-                "<agent-profile>伙伴定义</agent-profile>\n"
-                '<rag-ime-context type="session_memory">'
+            prompt = "<agent-profile>伙伴定义</agent-profile>"
+            memory_context = (
+                '<rag-ime-context type="memory_recall">'
                 "## Session 记忆\n代码任务使用真实测试和证据化交付"
                 "</rag-ime-context>"
             )
@@ -106,7 +106,13 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
                         {
                             "providerContext": {
                                 "systemPrompt": prompt,
-                                "messages": [],
+                                "messages": [
+                                    {
+                                        "role": "custom",
+                                        "customType": "rag-ime-memory-recall",
+                                        "content": memory_context,
+                                    }
+                                ],
                                 "tools": [],
                             },
                             "contextDelta": {
@@ -352,7 +358,7 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
             *boundary_read_executions(workspace),
             {
                 "toolName": "tool_load",
-                "args": {"name": CANARY.EXPECTED_DEFERRED_TOOL},
+                "args": {"name": CANARY.EXPECTED_TODO_TOOL},
                 "isError": False,
             },
             {"toolName": "bash", "args": {}, "isError": True},

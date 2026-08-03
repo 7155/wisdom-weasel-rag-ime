@@ -9,11 +9,9 @@ LOG_DIR="$HOME/Library/Logs/RagIme"
 APP_SUPPORT_DIR="${RAG_IME_APP_SUPPORT_DIR:-$HOME/Library/Application Support/RagIme}"
 APP_CODE_DIR="$APP_SUPPORT_DIR/components/memory-book-maintenance"
 LAUNCH_WRAPPER="$APP_CODE_DIR/memory_book_maintenance_launch.py"
-INSTALLED_SCRIPT_DIR="$APP_CODE_DIR/scripts"
-INSTALLED_SCRIPT="$INSTALLED_SCRIPT_DIR/run_memory_book_maintenance_once.sh"
 INSTALL_MARKER="$APP_CODE_DIR/rag-ime-install-marker.json"
-# Poll hourly; each lane reads its own runsPerDay setting and only calls a
-# model when due. This lets the UI change cadence without reinstalling the job.
+# Poll hourly; the Gateway reads the current managed cadence and returns a
+# no-op when no owner scope is due.
 INTERVAL_SECONDS="${RAG_IME_MEMORY_BOOK_MAINTENANCE_INTERVAL_SECONDS:-3600}"
 DRY_RUN="${RAG_IME_LAUNCH_AGENT_DRY_RUN:-0}"
 PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(command -v python3)}"
@@ -27,29 +25,17 @@ if [[ -z "$PYTHON_EXECUTABLE" || ! -x "$PYTHON_EXECUTABLE" ]]; then
   echo "python executable not found or not executable: $PYTHON_EXECUTABLE" >&2
   exit 1
 fi
-mkdir -p "$PLIST_DIR" "$LOG_DIR" "$APP_CODE_DIR" "$INSTALLED_SCRIPT_DIR"
-rm -rf "$APP_CODE_DIR/rag_ime"
-cp -R "$ROOT/rag_ime" "$APP_CODE_DIR/rag_ime"
+if [[ "$APP_CODE_DIR" != "$APP_SUPPORT_DIR/components/memory-book-maintenance" ]]; then
+  echo "unsafe memory maintenance component path: $APP_CODE_DIR" >&2
+  exit 1
+fi
+
+mkdir -p "$PLIST_DIR" "$LOG_DIR" "$APP_CODE_DIR"
+# Remove only obsolete payloads previously owned by this component. The
+# scheduler must not ship a second rag_ime package or a database-reading runner.
+rm -rf "$APP_CODE_DIR/rag_ime" "$APP_CODE_DIR/scripts"
 cp "$ROOT/scripts/memory_book_maintenance_launch.py" "$LAUNCH_WRAPPER"
-cp "$ROOT/scripts/run_memory_book_maintenance_once.sh" "$INSTALLED_SCRIPT"
-chmod 755 "$LAUNCH_WRAPPER" "$INSTALLED_SCRIPT"
-MODEL_ENV_SOURCE="${RAG_IME_DEEPSEEK_ENV:-${RAG_IME_MODEL_ENV:-}}"
-if [[ -z "$MODEL_ENV_SOURCE" ]]; then
-  for candidate in "$APP_SUPPORT_DIR/deepseek.env" "$ROOT/.rag-ime-data/deepseek.env"; do
-    if [[ -f "$candidate" ]]; then
-      MODEL_ENV_SOURCE="$candidate"
-      break
-    fi
-  done
-fi
-if [[ -n "$MODEL_ENV_SOURCE" && -f "$MODEL_ENV_SOURCE" ]]; then
-  INSTALLED_MODEL_ENV="$APP_SUPPORT_DIR/deepseek.env"
-  if [[ "$MODEL_ENV_SOURCE" != "$INSTALLED_MODEL_ENV" ]]; then
-    cp "$MODEL_ENV_SOURCE" "$INSTALLED_MODEL_ENV"
-  fi
-  chmod 600 "$INSTALLED_MODEL_ENV"
-  export RAG_IME_DEEPSEEK_ENV="$INSTALLED_MODEL_ENV"
-fi
+chmod 755 "$LAUNCH_WRAPPER"
 
 "$PYTHON_EXECUTABLE" - "$PLIST_PATH" "$LABEL" "$ROOT" "$APP_CODE_DIR" "$LAUNCH_WRAPPER" "$LOG_DIR" "$INTERVAL_SECONDS" "$PYTHON_EXECUTABLE" "$SOURCE_COMMIT" "$SOURCE_DIRTY" "$INSTALL_MARKER" <<'PY'
 import json
@@ -71,16 +57,22 @@ source_commit = sys.argv[9]
 source_dirty = sys.argv[10] == "true"
 install_marker = Path(sys.argv[11])
 
+gateway_url = os.environ.get(
+    "RAG_IME_AGENT_GATEWAY_URL",
+    "http://127.0.0.1:8768",
+).strip()
 install_marker.write_text(
     json.dumps(
         {
             "schemaVersion": "rag-ime.component-install-marker.v1",
-            "component": "memory-book-maintenance",
+            "component": "memory-maintenance-trigger",
+            "transport": "gateway-loopback-http",
             "sourceRoot": root,
             "sourceCommit": source_commit,
             "sourceDirty": source_dirty,
             "installedAt": datetime.now(timezone.utc).isoformat(),
             "pythonExecutable": python_executable,
+            "gatewayUrl": gateway_url,
         },
         ensure_ascii=False,
         indent=2,
@@ -89,48 +81,21 @@ install_marker.write_text(
     encoding="utf-8",
 )
 
-env_keys = [
-    "RAG_IME_APP_SUPPORT_DIR",
-    "RAG_IME_DB_PATH",
-    "RAG_IME_PROJECT",
-    "RAG_IME_DEEPSEEK_ENV",
-    "RAG_IME_MODEL_ENV",
-    "RAG_IME_DEEPSEEK_THINKING",
-    "RAG_IME_DEEPSEEK_REASONING_EFFORT",
-    "RAG_IME_DEEPSEEK_MAX_TOKENS",
-    "RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS",
-    "RAG_IME_MEMORY_BOOK_MAINTENANCE_DIR",
-    "RAG_IME_MEMORY_BOOK_MAINTENANCE_STALE_LOCK_SECONDS",
-    "RAG_IME_MEMORY_BOOK_MAINTENANCE_SINCE_DAYS",
-    "RAG_IME_MEMORY_BOOK_MAINTENANCE_RECENT_LIMIT",
-    "RAG_IME_LEGACY_MEMORY_BOOK_MAINTENANCE",
-    "RAG_IME_PERSONAL_CONTEXT_BATCH_LIMIT",
-    "RAG_IME_PYTHON",
-    "SSL_CERT_FILE",
-]
 environment = {
     "PYTHONUNBUFFERED": "1",
     "PYTHONDONTWRITEBYTECODE": "1",
-    "RAG_IME_ROOT": app_code_dir,
-    "RAG_IME_SOURCE_ROOT": root,
-    "RAG_IME_INSTALL_MARKER": str(install_marker),
-    "RAG_IME_DEEPSEEK_THINKING": os.environ.get("RAG_IME_DEEPSEEK_THINKING", "disabled"),
-    "RAG_IME_DEEPSEEK_REASONING_EFFORT": os.environ.get("RAG_IME_DEEPSEEK_REASONING_EFFORT", "low"),
-    "RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS": os.environ.get("RAG_IME_DEEPSEEK_MEMORY_BOOK_MAX_TOKENS", "2048"),
-    # The retired global compiler remains non-applying. Owner-scoped curation
-    # below is the authoritative, governed, reversible auto-apply lane.
-    "RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY": "0",
-    # The owner-scoped evidence curator supersedes the old global organizer.
-    "RAG_IME_LEGACY_MEMORY_BOOK_MAINTENANCE": "0",
-    "RAG_IME_PERSONAL_CONTEXT_BATCH_LIMIT": os.environ.get(
-        "RAG_IME_PERSONAL_CONTEXT_BATCH_LIMIT", "500"
+    "RAG_IME_AGENT_GATEWAY_URL": gateway_url,
+    "RAG_IME_MEMORY_BOOK_MAINTENANCE_TRIGGER": "scheduled",
+    "RAG_IME_MEMORY_MAINTENANCE_TIMEOUT_SECONDS": os.environ.get(
+        "RAG_IME_MEMORY_MAINTENANCE_TIMEOUT_SECONDS", "3600"
+    ),
+    "RAG_IME_MEMORY_MAINTENANCE_POLL_SECONDS": os.environ.get(
+        "RAG_IME_MEMORY_MAINTENANCE_POLL_SECONDS", "0.5"
     ),
 }
-environment["RAG_IME_MEMORY_BOOK_MAINTENANCE_TRIGGER"] = "scheduled"
-for key in env_keys:
-    value = os.environ.get(key)
-    if value:
-        environment[key] = value
+project = os.environ.get("RAG_IME_PROJECT", "").strip()
+if project:
+    environment["RAG_IME_PROJECT"] = project
 
 payload = {
     "Label": label,

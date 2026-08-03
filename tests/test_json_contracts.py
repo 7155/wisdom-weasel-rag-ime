@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import unittest
 
 from rag_ime.assistant_overlay import build_assistant_overlay_payload
@@ -90,6 +91,43 @@ class JsonContractTests(unittest.TestCase):
                     "imeBufferChars": 8,
                     "selectedTextSha256": "",
                     "selectionRule": "field_context_if_not_shorter_else_ime_buffer",
+                },
+            },
+            "foreground-commit.v1.json",
+        )
+        v2_text = "宿主 Return 已确认提交"
+        validate_contract(
+            {
+                "text": v2_text,
+                "source": "squirrel_input_segment",
+                "app": "com.apple.TextEdit",
+                "privacyDisposition": "allowed",
+                "captureMetadata": {
+                    "schemaVersion": "rag-ime.input-capture.v2",
+                    "captureId": "capture:json:1",
+                    "transactionId": "transaction:json",
+                    "sequence": 1,
+                    "channel": "input_method",
+                    "boundaryKind": "host_return",
+                    "boundaryConfidence": "strong",
+                    "nativeCompositionBefore": False,
+                    "rimeHandled": False,
+                    "hostForwarded": True,
+                    "modifiedReturn": False,
+                    "finalCommitted": True,
+                    "controllerEpoch": 1,
+                    "focusEpoch": 2,
+                    "appBundleId": "com.apple.TextEdit",
+                    "fieldIdentitySha256": hashlib.sha256(b"field").hexdigest(),
+                    "privacyRevision": "foreground-privacy.v1",
+                    "occurredStartMs": 100,
+                    "occurredEndMs": 120,
+                    "contentSha256": hashlib.sha256(v2_text.encode()).hexdigest(),
+                    "captureSource": "text_input_client",
+                    "fallbackReason": "",
+                    "fieldContextChars": len(v2_text),
+                    "imeBufferChars": len(v2_text),
+                    "selectionRule": "final_committed_segment",
                 },
             },
             "foreground-commit.v1.json",

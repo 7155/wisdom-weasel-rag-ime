@@ -20,7 +20,7 @@ export type WorkDocumentCommandV1 = {
 
 export interface Document {
   documentId: string;
-  authorityKind: 'session_plan' | 'session_goal' | 'room_work_item';
+  authorityKind: 'session_todo' | 'session_goal' | 'room_work_item';
   authorityId: string;
   authorityRevision: number;
   authorityKey: string;

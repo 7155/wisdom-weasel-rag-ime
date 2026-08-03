@@ -120,6 +120,7 @@ class DailyActivityTimelineStore:
         timezone_name: str = "",
         segment_gap_ms: int = DEFAULT_SEGMENT_GAP_MS,
         observability: PersonalContextObservability | None = None,
+        preverified_schema: bool = False,
     ) -> None:
         self.db_path = Path(db_path)
         self.project = compact_whitespace(project)
@@ -127,11 +128,24 @@ class DailyActivityTimelineStore:
         self.timezone_name = _timezone_name(self.timezone)
         self.segment_gap_ms = max(60_000, int(segment_gap_ms))
         self.observability = observability
+        self.preverified_schema = bool(preverified_schema)
 
     def initialize(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
-            apply_database_migrations(conn)
+            if self.preverified_schema:
+                exists = conn.execute(
+                    """
+                    SELECT 1 FROM sqlite_master
+                    WHERE type = 'table' AND name = 'daily_activity_timelines'
+                    """
+                ).fetchone()
+                if exists is None:
+                    raise RuntimeError(
+                        "preverified activity timeline schema is incomplete"
+                    )
+            else:
+                apply_database_migrations(conn)
 
     def projects_for_date(self, timeline_date: str) -> tuple[str, ...]:
         day = _validated_date(timeline_date)

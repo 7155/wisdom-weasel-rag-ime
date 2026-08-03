@@ -9,8 +9,8 @@ export interface AgentSubagentRunV1 {
   id: string;
   batchId: string;
   childSessionId: string;
-  planItemId: string;
-  planItemTitle: string;
+  todoTask: string;
+  todoPhase: string;
   templateId: 'researcher' | 'planner' | 'worker' | 'reviewer' | 'delegate';
   templateVersion: '1';
   ordinal: number;

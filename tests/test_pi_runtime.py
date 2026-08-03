@@ -173,17 +173,24 @@ for line in sys.stdin:
                 "method": "editor",
                 "title": "RAG-IME-QUESTIONS:call-grouped-1",
                 "prefill": json.dumps({
-                    "schemaVersion": "rag-ime.grouped-questions.v1",
+                    "schemaVersion": "rag-ime.grouped-questions.v2",
                     "questions": [
                         {
                             "id": "deploy_target",
                             "question": "这次部署到哪里？",
-                            "options": ["预发布环境", "生产环境"],
+                            "options": [
+                                {"label": "预发布环境", "description": "先验证变更。"},
+                                {"label": "生产环境", "description": "直接面向用户发布。"},
+                            ],
+                            "recommended": 0,
                         },
                         {
                             "id": "release_window",
                             "question": "什么时候发布？",
-                            "options": ["现在", "今晚"],
+                            "options": [
+                                {"label": "现在"},
+                                {"label": "今晚"},
+                            ],
                         },
                     ],
                 }, ensure_ascii=False, separators=(",", ":")),
@@ -261,7 +268,7 @@ class PiRuntimePermissionSelectionTests(unittest.TestCase):
             "overview",
             "memory",
             "input",
-            "agent_plan",
+            "todo",
             "workspace_search",
             "workspace_lsp",
             "workspace_patch",
@@ -281,14 +288,14 @@ class PiRuntimePermissionSelectionTests(unittest.TestCase):
                 "mode": "assistant",
                 "toolProfileVersion": "subagent-readonly-v1",
                 "toolAllowlistMode": "explicit",
-                "allowedTools": ["memory", "input", "agent_plan", "workspace_lsp"],
+                "allowedTools": ["memory", "input", "todo", "workspace_lsp"],
             },
         )
 
-        self.assertEqual(assistant, ("overview",))
+        self.assertEqual(assistant, ("overview", "todo"))
         self.assertEqual(
             readonly_child,
-            ("memory", "agent_plan", "workspace_lsp"),
+            ("memory", "todo", "workspace_lsp"),
         )
 
 
@@ -346,9 +353,11 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertIn("--system-prompt", command)
         prompt = command[command.index("--system-prompt") + 1]
         self.assertIn('<persona name="澄·远">', prompt)
-        self.assertIn("你是长期与用户一起思考和做事", prompt)
-        self.assertEqual(prompt.count('<execution-mode mode="per_action">'), 1)
-        self.assertIn("取消、审计和迟到写入保护", prompt)
+        self.assertIn("你是长期与用户一起思考和做事的伙伴", prompt)
+        self.assertNotIn("Agent 伙伴", prompt)
+        self.assertNotIn("<execution-mode", prompt)
+        self.assertIn("<todo-policy>", prompt)
+        self.assertLess(prompt.index("</work-policy>"), prompt.index("<todo-policy>"))
 
         environment = self.config.child_environment()
         self.assertEqual(environment["PI_CODING_AGENT_DIR"], str(self.root / "agent-config"))
@@ -359,6 +368,11 @@ class PiRuntimeTests(unittest.TestCase):
             session_environment["RAG_IME_AGENT_EXECUTION_MODE"],
             "per_action",
         )
+        self.assertNotIn("RAG_IME_AGENT_ROOM_BOUND", session_environment)
+        room_environment = self.config.child_environment(
+            session={**self.session, "roomParticipant": {"roomId": "room:1", "participantId": "participant:1"}}
+        )
+        self.assertEqual(room_environment["RAG_IME_AGENT_ROOM_BOUND"], "1")
 
     def test_launch_resolves_persistent_user_persona_prompt_server_side(self) -> None:
         personas = AgentPersonaStore(self.root / "rag-ime.sqlite")
@@ -431,6 +445,22 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertNotIn("revision_not_pinned", prompt)
         self.assertNotIn("尚未安全固定", prompt)
         self.assertEqual(prompt.count("<durable-memory-policy>"), 1)
+
+    def test_memory_curation_profile_uses_a_dedicated_data_only_prompt(self) -> None:
+        prompt = self.config.system_prompt_for_session(
+            {
+                **self.session,
+                "toolProfileVersion": "memory-curation-v1",
+                "roleId": "companion-present-v1",
+            }
+        )
+
+        self.assertIn("governed personal-memory curation engine", prompt)
+        self.assertIn("Return exactly one JSON object", prompt)
+        self.assertIn("Never call tools", prompt)
+        self.assertNotIn("<agent-profile>", prompt)
+        self.assertNotIn("<durable-memory-policy>", prompt)
+        self.assertNotIn("<persona", prompt)
 
     def test_ordinary_agent_template_never_injects_room_lifecycle_contract(self) -> None:
         prompt = replace(
@@ -1227,7 +1257,7 @@ class PiRuntimeTests(unittest.TestCase):
                 "message": {
                     "role": "assistant",
                     "timestamp": 101,
-                    "content": [{"type": "toolCall", "id": "call-next", "name": "agent_plan"}],
+                    "content": [{"type": "toolCall", "id": "call-next", "name": "todo"}],
                 },
             },
         )
@@ -1613,6 +1643,10 @@ class PiRuntimeTests(unittest.TestCase):
             preview={"summary": "重启运行组件"},
             risk_level="R2",
         )
+        approval = self.store.bind_approval_tool_call(
+            str(approval["approvalId"]),
+            tool_call_id="tool:runtime-restart",
+        )
         approval_id = str(approval["approvalId"])
 
         self.runtime.prompt(session_id, approval_id)
@@ -1621,6 +1655,7 @@ class PiRuntimeTests(unittest.TestCase):
         required = next(event for event in events if event.event_type == "approval_required")
         self.assertEqual(required.payload["approvalId"], approval_id)
         self.assertEqual(required.payload["payloadSha256"], "a" * 64)
+        self.assertEqual(required.payload["toolCallId"], "tool:runtime-restart")
 
         self.store.decide_approval(
             approval_id,
@@ -1637,6 +1672,7 @@ class PiRuntimeTests(unittest.TestCase):
         events, _ = self.events.replay(session_id)
         resolved = next(event for event in events if event.event_type == "approval_resolved")
         self.assertEqual(resolved.payload["state"], "external_pending")
+        self.assertEqual(resolved.payload["toolCallId"], "tool:runtime-restart")
         completed = next(event for event in events if event.event_type == "turn_completed")
         self.assertEqual({required.turn_id, resolved.turn_id, completed.turn_id}, {required.turn_id})
 
@@ -1656,12 +1692,16 @@ class PiRuntimeTests(unittest.TestCase):
                 {
                     "id": "deploy_target",
                     "question": "这次部署到哪里？",
-                    "options": ["预发布环境", "生产环境"],
+                    "options": [
+                        {"label": "预发布环境", "description": "先验证变更。"},
+                        {"label": "生产环境", "description": "直接面向用户发布。"},
+                    ],
+                    "recommended": 0,
                 },
                 {
                     "id": "release_window",
                     "question": "什么时候发布？",
-                    "options": ["现在", "今晚"],
+                    "options": [{"label": "现在"}, {"label": "今晚"}],
                 },
             ],
         )
@@ -1676,8 +1716,8 @@ class PiRuntimeTests(unittest.TestCase):
                     "value": json.dumps(
                         {
                             "answers": {
-                                "deploy_target": "不存在的环境",
-                                "release_window": "今晚",
+                                "deploy_target": {"selected": ["不存在的环境"]},
+                                "release_window": {"selected": ["今晚"]},
                             }
                         },
                         ensure_ascii=False,
@@ -1686,6 +1726,18 @@ class PiRuntimeTests(unittest.TestCase):
                 },
             )
         self.assertEqual(len(self.runtime.pending_ui_requests(session_id)), 1)
+        with self.assertRaisesRegex(PiRuntimeError, "当前问题或可选项不一致"):
+            self.runtime.resolve_ui_request(
+                session_id,
+                str(request["requestId"]),
+                response={
+                    "value": json.dumps(
+                        {"answers": {"deploy_target": {"selected": ["预发布环境"]}}},
+                        ensure_ascii=False,
+                    ),
+                    "resolutionSource": "direct_user",
+                },
+            )
 
         self.runtime.resolve_ui_request(
             session_id,
@@ -1694,8 +1746,8 @@ class PiRuntimeTests(unittest.TestCase):
                 "value": json.dumps(
                     {
                         "answers": {
-                            "deploy_target": "预发布环境",
-                            "release_window": "今晚",
+                            "deploy_target": {"selected": ["预发布环境"]},
+                            "release_window": {"selected": ["今晚"]},
                         }
                     },
                     ensure_ascii=False,
@@ -1723,6 +1775,30 @@ class PiRuntimeTests(unittest.TestCase):
             for event in events
             if event.event_type == "user_input_required"
             and event.payload.get("resolutionState") == "resolved"
+        )
+        with self.assertRaisesRegex(PiRuntimeError, "no longer pending"):
+            self.runtime.resolve_ui_request(
+                session_id,
+                str(request["requestId"]),
+                response={
+                    "value": json.dumps(
+                        {
+                            "answers": {
+                                "deploy_target": {"selected": ["预发布环境"]},
+                                "release_window": {"selected": ["今晚"]},
+                            }
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "resolutionSource": "direct_user",
+                },
+            )
+        completed_message = next(
+            event for event in events if event.event_type == "message_completed"
+        )
+        self.assertEqual(
+            completed_message.payload["message"]["blocks"][0]["data"]["text"],
+            '{"answers":{"deploy_target":{"selected":["预发布环境"]},"release_window":{"selected":["今晚"]}}}',
         )
         completed = next(event for event in events if event.event_type == "turn_completed")
         self.assertEqual(

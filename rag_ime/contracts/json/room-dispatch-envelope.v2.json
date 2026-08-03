@@ -17,11 +17,18 @@
     "targetSessionId": {"type": "string", "minLength": 1},
     "targetParticipantId": {"type": "string", "minLength": 1},
     "triggerId": {"type": "string", "minLength": 1},
-    "intentKind": {"type": "string", "enum": ["execute", "review", "revise", "resume", "retry", "wake", "callback", "close"]},
+    "intentKind": {"type": "string", "enum": ["align", "execute", "review", "revise", "resume", "retry", "wake", "callback", "close"]},
     "idempotencyKey": {"type": "string", "minLength": 1},
     "attempt": {"type": "integer", "minimum": 0},
     "capabilityEpoch": {"type": "integer", "minimum": 0},
     "runtimeProfileRevision": {"type": "string", "minLength": 1},
+    "alignmentOrdinal": {"type": "integer", "minimum": 0},
+    "dependsOnDispatchIds": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
     "attachmentIds": {
       "type": "array",
       "maxItems": 8,

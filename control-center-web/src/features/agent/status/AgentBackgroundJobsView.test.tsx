@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
@@ -49,7 +49,7 @@ describe('AgentBackgroundJobsView', () => {
       },
     });
     const user = userEvent.setup();
-    renderJobs(transport);
+    renderJobs(transport, []);
 
     expect(await screen.findByText('7 个任务 · 最多显示 100 个')).toBeVisible();
     expect(screen.getByText(/等待启动 ·/)).toBeVisible();
@@ -69,6 +69,36 @@ describe('AgentBackgroundJobsView', () => {
         call.request.pathId === 'agent.session.backgroundJobs.list'
       )).length).toBeGreaterThan(requestsBeforeRefresh);
     });
+  });
+
+  it('projects a newly started live job before the next list poll', async () => {
+    useAgentLiveStore.setState({ projections: {} });
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [],
+      liveEvents: [],
+      lastSequence: 4,
+      resumeToken: `${sessionId}:4`,
+      backgroundJobs: [],
+    });
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.backgroundJobs.list': jobList([]),
+      },
+    });
+    renderJobs(transport);
+    expect(await screen.findByText(/后台运行命令后会显示在这里/)).toBeVisible();
+
+    act(() => {
+      useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+        messages: [],
+        liveEvents: [],
+        lastSequence: 5,
+        resumeToken: `${sessionId}:5`,
+        backgroundJobs: [runningJob],
+      });
+    });
+
+    expect(await screen.findByRole('button', { name: /构建项目/ })).toBeVisible();
   });
 
   it('requests only the bounded log tail and discloses Runtime truncation', async () => {
@@ -348,8 +378,8 @@ function backgroundJob(
     error: status === 'failed' ? '命令退出码为 1' : '',
     approvalId: 'approval-1',
     causalMetadata: {
-      planId: 'plan-1',
-      planRevision: 1,
+      todoId: 'todo-1',
+      todoRevision: 1,
       goalId: 'goal-1',
       goalRevision: 1,
       turnId: 'turn-1',

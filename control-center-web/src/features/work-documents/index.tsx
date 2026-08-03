@@ -55,6 +55,7 @@ import {
   useWorkDocumentWorkspace,
   workDocumentQueryKeys,
   type WorkDocumentCommandInput,
+  type WorkDocumentAccess,
   type WorkDocumentWorkspace,
   type WorkDocumentScope,
 } from './api';
@@ -75,6 +76,14 @@ export function WorkDocumentsFeature() {
   const items = scope === 'history' ? historyItems : activeItems;
   const listPending = scope === 'history' ? workspace.history.isPending : workspace.active.isPending;
   const listError = scope === 'history' ? workspace.history.error : workspace.active.error;
+
+  useEffect(() => {
+    if (scope !== 'history' || !workspace.capabilityKnown || workspace.access.history) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('scope');
+    next.delete('document');
+    setSearchParams(next, { replace: true });
+  }, [scope, searchParams, setSearchParams, workspace.access.history, workspace.capabilityKnown]);
 
   useEffect(() => {
     if (listPending || listError) return;
@@ -136,7 +145,7 @@ export function WorkDocumentsFeature() {
         {workspace.capabilityKnown && !workspace.supported ? (
           <EmptyState
             action={<Button onClick={() => void workspace.capabilities.refetch()}>重新检查</Button>}
-            description="当前版本还没有提供完整的工作文档能力。控制中心不会猜测文档状态，也不会替你执行操作。"
+            description="当前宿主没有声明读取工作文档所需的列表与详情路由。控制中心不会猜测文档状态；升级或重启宿主后可重新检查。"
             icon={ShieldAlert}
             title="工作文档暂不可用"
           />
@@ -144,8 +153,13 @@ export function WorkDocumentsFeature() {
           <Tabs onValueChange={switchScope} value={scope}>
             <TabsList aria-label="工作文档范围">
               <TabsTrigger value="active">活跃文档</TabsTrigger>
-              <TabsTrigger value="history">历史归档</TabsTrigger>
+              <TabsTrigger disabled={!workspace.access.history} value="history">历史归档</TabsTrigger>
             </TabsList>
+            {!workspace.access.archive || !workspace.access.repair || !workspace.access.reopen || !workspace.access.erase ? (
+              <InlineNotice title="当前宿主以阅读为主" tone="info">
+                文档与状态可以正常查看；未由当前宿主声明的归档、修复、恢复或永久清除操作会保持禁用。
+              </InlineNotice>
+            ) : null}
             <TabsContent value="active">
               <DocumentWorkspace
                 detail={workspace.detail}
@@ -157,6 +171,7 @@ export function WorkDocumentsFeature() {
                 scope="active"
                 selectedId={requestedDocumentId}
                 transport={workspace.transport}
+                access={workspace.access}
               />
             </TabsContent>
             <TabsContent value="history">
@@ -182,6 +197,7 @@ export function WorkDocumentsFeature() {
                 scope="history"
                 selectedId={requestedDocumentId}
                 transport={workspace.transport}
+                access={workspace.access}
               />
             </TabsContent>
           </Tabs>
@@ -200,6 +216,7 @@ type PreviewMutationResult = { input: PreviewMutationInput; result: WorkDocument
 type PreviewMutation = UseMutationResult<PreviewMutationResult, Error, PreviewMutationInput>;
 
 function DocumentWorkspace({
+  access,
   detail,
   items,
   listError,
@@ -210,6 +227,7 @@ function DocumentWorkspace({
   selectedId,
   transport,
 }: {
+  access: WorkDocumentAccess;
   detail: WorkspaceQuery;
   items: readonly WorkDocumentV1[];
   listError: Error | null;
@@ -257,6 +275,7 @@ function DocumentWorkspace({
           />
         </ManagementSection>
         <WorkDocumentDetail
+          access={access}
           key={selectedId || 'empty'}
           detail={detail}
           selectedId={selectedId}
@@ -268,10 +287,12 @@ function DocumentWorkspace({
 }
 
 function WorkDocumentDetail({
+  access,
   detail,
   selectedId,
   transport,
 }: {
+  access: WorkDocumentAccess;
   detail: WorkspaceQuery;
   selectedId: string;
   transport: WorkspaceTransport;
@@ -419,7 +440,7 @@ function WorkDocumentDetail({
                     />
                   </Field>
                   <Button
-                    disabled={!terminalReceiptId.trim()}
+                    disabled={!access.archive || !terminalReceiptId.trim()}
                     leadingIcon={<Archive size={16} />}
                     loading={command.isPending && command.variables?.command.operation === 'archive'}
                     onClick={() => command.mutate({
@@ -431,7 +452,7 @@ function WorkDocumentDetail({
                       fence,
                     })}
                   >
-                    归档到历史
+                    {access.archive ? '归档到历史' : '当前宿主不支持归档'}
                   </Button>
                 </div>
               ) : null}
@@ -439,6 +460,7 @@ function WorkDocumentDetail({
                 <div className="work-documents__action-row work-documents__action-row--compact">
                   <p>让后端重新对账文件移动与索引；失败文档会继续留在可发现范围。</p>
                   <Button
+                    disabled={!access.repair}
                     leadingIcon={<Wrench size={16} />}
                     loading={command.isPending && command.variables?.command.operation === 'repair'}
                     onClick={() => command.mutate({
@@ -446,7 +468,7 @@ function WorkDocumentDetail({
                       fence,
                     })}
                   >
-                    修复移动或索引
+                    {access.repair ? '修复移动或索引' : '当前宿主不支持修复'}
                   </Button>
                 </div>
               ) : null}
@@ -454,7 +476,7 @@ function WorkDocumentDetail({
                 <div className="work-documents__action-row work-documents__action-row--compact">
                   <p>{reopenGuidance(reopen)}</p>
                   <Button
-                    disabled={!reopen?.eligible}
+                    disabled={!access.reopen || !reopen?.eligible}
                     leadingIcon={<RotateCcw size={16} />}
                     loading={command.isPending && command.variables?.command.operation === 'reopen'}
                     onClick={() => {
@@ -470,13 +492,13 @@ function WorkDocumentDetail({
                       });
                     }}
                   >
-                    重新打开到活跃区
+                    {access.reopen ? '重新打开到活跃区' : '当前宿主不支持重新打开'}
                   </Button>
                 </div>
               ) : null}
             </section>
 
-            <section className="work-documents__danger" aria-labelledby="work-document-danger-heading">
+            {access.erase ? <section className="work-documents__danger" aria-labelledby="work-document-danger-heading">
               <div>
                 <h3 id="work-document-danger-heading">永久清除</h3>
                 <p>永久清除与归档是两个独立操作。永久清除需要当前对话、明确审批和内容校验，不能用“归档”替代。</p>
@@ -490,9 +512,9 @@ function WorkDocumentDetail({
               >
                 永久清除…
               </Button>
-            </section>
+            </section> : null}
 
-            <EraseDialog
+            {access.erase ? <EraseDialog
               command={command}
               confirmation={eraseConfirmation}
               document={document}
@@ -511,7 +533,7 @@ function WorkDocumentDetail({
               receipt={receipt}
               returnFocusRef={eraseTriggerRef}
               sessionId={eraseSessionId}
-            />
+            /> : null}
           </>
         ) : null}
       </QueryState>
@@ -683,7 +705,7 @@ function CommandReceipt({ receipt }: { receipt: WorkDocumentReceiptV1 }) {
 
 function authorityLabel(value: string): string {
   return {
-    session_plan: '对话计划',
+    session_todo: '对话 Todo',
     session_goal: '对话目标',
     room_work_item: '协作任务',
   }[value] ?? `未知来源 · ${value || '未提供'}`;

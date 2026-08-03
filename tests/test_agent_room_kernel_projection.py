@@ -30,11 +30,12 @@ class RoomKernelProjectionTests(unittest.TestCase):
     def test_snapshot_and_event_sequence_are_stable_and_gap_requires_snapshot(self) -> None:
         first = self.projection.sync_room("room:1", now_ms=10)
         again = self.projection.sync_room("room:1", now_ms=11)
-        self.assertEqual([item["sequence"] for item in first], [1, 2])
+        self.assertEqual([item["sequence"] for item in first], [1, 2, 3])
         self.assertEqual(again, [])
         snapshot = self.projection.snapshot("room:1")
-        self.assertEqual(snapshot["lastSequence"], 2)
+        self.assertEqual(snapshot["lastSequence"], 3)
         self.assertEqual(snapshot["roots"][0]["rootId"], "root:1")
+        self.assertEqual(snapshot["taskUpdatedAtMsById"], {"task:1": 2})
         self.assertTrue(str(snapshot["snapshotHash"]).startswith("sha256:"))
 
         gap = self.projection.subscribe(

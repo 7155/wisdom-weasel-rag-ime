@@ -231,6 +231,27 @@ class RoomContextLedgerStore:
                 self._post_payload(conn, row)
                 for row in reversed(rows)
             ]
+    def post_by_idempotency(
+        self,
+        *,
+        room_id: str,
+        idempotency_key: str,
+    ) -> dict[str, object] | None:
+        """Return one immutable Room Post for a client replay."""
+
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM room_v2_posts
+                WHERE room_id = ? AND idempotency_key = ?
+                """,
+                (
+                    _required_text(room_id, "roomId"),
+                    _required_text(idempotency_key, "idempotencyKey"),
+                ),
+            ).fetchone()
+            return self._post_payload(conn, row) if row is not None else None
+
 
     def append_entry(
         self,

@@ -244,7 +244,9 @@ class AgentApprovalApplicationService:
                     "state": str(
                         final.get("state") or "rejected"
                     ),
+                    **_approval_event_identity(final),
                 },
+                turn_id=_approval_turn_id(final),
             )
         return {
             "schemaVersion": "rag-ime.agent-approval-decision.v1",
@@ -268,13 +270,15 @@ class AgentApprovalApplicationService:
             session,
             tool=str(current.get("toolId") or ""),
             operation=str(current.get("operation") or ""),
+            preview=(
+                current.get("preview")
+                if isinstance(current.get("preview"), Mapping)
+                else None
+            ),
+            risk_level=current.get("riskLevel"),
         )
-        if strategy not in {APPROVAL_AUTO, APPROVAL_MODEL}:
-            raise ValueError(
-                "unattended approval is not enabled for this session"
-            )
         if current.get("state") != "pending":
-            raise ValueError("unattended approval is no longer pending")
+            return self._automatic_terminal_result(current)
         if str(approval.get("payloadSha256") or "") != str(
             current.get("payloadSha256") or ""
         ):
@@ -324,12 +328,14 @@ class AgentApprovalApplicationService:
                 else "policy"
             ),
         }
+        event_payload.update(_approval_event_identity(final))
         if model_decision is not None:
             event_payload["approvalModelDecision"] = dict(model_decision)
         self.host.events.publish(
             session_id,
             "approval_resolved",
             event_payload,
+            turn_id=_approval_turn_id(final),
         )
         receipt = (
             final.get("receipt")
@@ -366,7 +372,89 @@ class AgentApprovalApplicationService:
         if model_decision is not None:
             result["modelDecided"] = True
             result["approvalModelDecision"] = dict(model_decision)
+            if model_decision.get("status") == "failed_closed":
+                result["failureCode"] = str(
+                    model_decision.get("failureCode") or ""
+                )
+        result["terminal"] = True
+        result["retryable"] = False
+        result["terminalReason"] = summary
         return result
+
+    @staticmethod
+    def _automatic_terminal_result(
+        approval: Mapping[str, object],
+    ) -> dict[str, object]:
+        state = str(approval.get("state") or "stale")
+        receipt = (
+            approval.get("receipt")
+            if isinstance(approval.get("receipt"), Mapping)
+            else {}
+        )
+        summary = str(receipt.get("summary") or "").strip()
+        if not summary:
+            summary = {
+                "rejected": "这次操作已被审批终止，未执行。",
+                "stale": "这次审批已取消，未执行。",
+                "expired": "这次审批已过期，未执行。",
+                "failed": "这次操作已失败，未执行。",
+                "applied": "这次操作已完成。",
+                "external_pending": "这次操作已批准，等待外部监督器完成。",
+            }.get(state, "这次审批已结束，未执行。")
+        model_owned = str(approval.get("decidedBy") or "").startswith(
+            "approval-model:"
+        )
+        result: dict[str, object] = {
+            "summary": summary,
+            "approvalRequired": False,
+            "autoApproved": state in {"applied", "external_pending"},
+            "approvalId": str(approval.get("approvalId") or ""),
+            "approval": dict(approval),
+            "receipt": dict(receipt),
+            "decisionMode": "model" if model_owned else "policy",
+            "terminal": state not in {"pending", "approved"},
+            "retryable": False,
+            "terminalReason": summary,
+        }
+        if model_owned:
+            result["modelDecided"] = True
+        return result
+
+    def cancel_pending_for_session(
+        self,
+        session_id: str,
+        *,
+        reason: str = "user_abort",
+        turn_id: str = "",
+    ) -> dict[str, object]:
+        summary = self.host.sessions.cancel_pending_approvals(
+            session_id,
+            reason=reason,
+            turn_id=turn_id,
+        )
+        cancelled_ids = [
+            str(value)
+            for value in summary.get("cancelledApprovalIds") or []
+            if str(value).strip()
+        ]
+        for approval_id in cancelled_ids:
+            final = self.host.sessions.get_approval(approval_id)
+            self.host.events.publish(
+                session_id,
+                "approval_resolved",
+                {
+                    "approvalId": approval_id,
+                    "state": str(final.get("state") or "stale"),
+                    "cancelled": True,
+                    "reason": reason,
+                    **_approval_event_identity(final),
+                },
+                turn_id=_approval_turn_id(final) or str(turn_id or ""),
+            )
+        return {
+            **dict(summary),
+            "cancelledApprovalCount": len(cancelled_ids),
+        }
 
     def execute_approved(
         self,
@@ -538,7 +626,12 @@ class AgentApprovalApplicationService:
             self.host.events.publish(
                 session_id,
                 "approval_resolved",
-                {"approvalId": approval_id, "state": state},
+                {
+                    "approvalId": approval_id,
+                    "state": state,
+                    **_approval_event_identity(approval),
+                },
+                turn_id=_approval_turn_id(approval),
             )
         return {
             "schemaVersion": "rag-ime.agent-approval-decision.v1",
@@ -622,6 +715,20 @@ class AgentApprovalApplicationService:
                 + _public_error(exc)
             )
         return ""
+
+def _approval_event_identity(
+    approval: Mapping[str, object],
+) -> dict[str, object]:
+    tool_call_id = str(approval.get("toolCallId") or "").strip()
+    return {"toolCallId": tool_call_id} if tool_call_id else {}
+
+
+def _approval_turn_id(approval: Mapping[str, object]) -> str:
+    causal = approval.get("causalMetadata")
+    if not isinstance(causal, Mapping):
+        return ""
+    return str(causal.get("turnId") or "").strip()
+
 
 def _failed_receipt(
     approval: Mapping[str, object],

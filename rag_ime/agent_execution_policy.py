@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 from .agent_tool_ids import (
     CONTROL_CENTER_TOOL_PROFILE,
@@ -42,8 +44,34 @@ _WORKSPACE_EFFECTS = frozenset(
         ("workspace_job", "start"),
         ("workspace_job", "cancel"),
         ("workspace_write", "apply"),
+        # These are the native Pi names projected by the coordinator adapter.
+        # They remain hard-fenced if a stale or alternate adapter reaches the
+        # policy helper before translating to a product Tool.
+        ("edit", "apply"),
+        ("write", "apply"),
+        ("apply_patch", "apply"),
+        ("bash", "run"),
     }
 )
+
+# Room read-only work may inspect an authorized workspace, but it must never
+# mutate it, start or cancel a background job, run a command, or apply an LSP
+# edit. Keep this predicate shared by manifest disclosure and both execution
+# paths so a stale workspace-managed grant cannot widen the live policy.
+READ_ONLY_BLOCKED_EFFECTS = _WORKSPACE_EFFECTS
+
+
+def read_only_blocks_effect(tool: object, operation: object) -> bool:
+    return (str(tool), str(operation)) in READ_ONLY_BLOCKED_EFFECTS
+
+
+def read_only_policy_active(session: Mapping[str, object]) -> bool:
+    return (
+        str(session.get("executionMode") or "").strip().lower()
+        == READ_ONLY_EXECUTION_MODE
+        or str(session.get("toolProfileVersion") or "").strip()
+        == READONLY_TOOL_PROFILE
+    )
 
 # Full automation is model-arbitrated, never policy auto-approval. Product
 # runtime replacement and whole-product restore stay human-gated in other
@@ -56,6 +84,26 @@ _ALWAYS_MANUAL_EFFECTS = frozenset(
         ("runtime", "redeploy_rime"),
         ("configuration", "restore_apply"),
     }
+)
+
+# Full automation may skip the model only for a command whose concrete
+# hash-bound preview proves that it remains an ordinary, in-scope command.
+# The workspace harness remains the authoritative executor-side hard fence.
+_SAFE_FULL_AUTO_EFFECT = ("workspace_shell", "run")
+_DESTRUCTIVE_PREVIEW = re.compile(
+    r"(?i)(?:\brm\s+[^\n]*(?:-[^\n]*r|--recursive)|"
+    r"\bgit\s+(?:reset\s+--hard|clean\s+-[^\n]*f)|"
+    r"\b(?:drop|truncate)\s+(?:table|database)\b|"
+    r"\bdelete\s+from\b|\b(?:dd|mkfs|shred)\b)"
+)
+_SENSITIVE_PREVIEW = re.compile(
+    r"(?i)(?:\.env(?:\.[^/\s]*)?|\.git-credentials|\.netrc|"
+    r"auth\.json|credentials\.json|id_(?:rsa|ed25519)|"
+    r"[^/\s]+\.(?:pem|key|p12|pfx|sqlite3?|db))"
+)
+_NETWORK_PREVIEW = re.compile(
+    r"(?i)(?:\b(?:curl|wget|ssh|scp|sftp|rsync|ftp|telnet|ncat|nc)\b|"
+    r"https?://)"
 )
 
 
@@ -117,6 +165,92 @@ def workspace_scope_is_granted(session: Mapping[str, object]) -> bool:
         == str(session.get("workspaceScopeSha256") or "")
         and int(session.get("workspaceScopeGrantedAtMs") or 0) > 0
     )
+def _preview_mapping(
+    preview: Mapping[str, object] | None,
+    key: str,
+) -> Mapping[str, object]:
+    if not isinstance(preview, Mapping):
+        return {}
+    value = preview.get(key)
+    return value if isinstance(value, Mapping) else {}
+
+
+def _strict_preview_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes"}
+
+def _path_is_within_workspace_scope(
+    path_value: object,
+    workspace_roots: Sequence[object],
+) -> bool:
+    candidate_text = str(path_value or "").strip()
+    if not candidate_text:
+        return False
+    try:
+        candidate = Path(candidate_text).expanduser().resolve(strict=False)
+        roots = tuple(
+            Path(str(root).strip()).expanduser().resolve(strict=False)
+            for root in workspace_roots
+            if str(root).strip()
+        )
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return any(candidate == root or root in candidate.parents for root in roots)
+
+
+def _safe_full_auto_command(
+    session: Mapping[str, object],
+    preview: Mapping[str, object] | None,
+    *,
+    risk_level: object,
+) -> bool:
+    """Return whether a prepared command can bypass redundant model review."""
+
+    if str(risk_level or "").strip().upper() == "R3":
+        return False
+    action = _preview_mapping(preview, "actionPayload")
+    base_state = _preview_mapping(preview, "baseState")
+    command = " ".join(str(action.get("command") or "").split())
+    if not command or not base_state:
+        return False
+    workspace_roots = list(session.get("workspaceRoots") or [])
+    expected_scope = workspace_scope_sha256(workspace_roots)
+    cwd = str(action.get("cwd") or "").strip()
+    preview_scope = str(
+        base_state.get("workspaceRootsSha256")
+        or base_state.get("workspaceRootSha256")
+        or ""
+    ).strip().lower()
+    if (
+        not expected_scope
+        or preview_scope != expected_scope
+        or not _path_is_within_workspace_scope(cwd, workspace_roots)
+        or _strict_preview_bool(action.get("allowNetwork"))
+        or _DESTRUCTIVE_PREVIEW.search(command)
+        or _SENSITIVE_PREVIEW.search(command)
+        or _NETWORK_PREVIEW.search(command)
+    ):
+        return False
+    return True
+
+
+def safe_full_auto_command(
+    session: Mapping[str, object],
+    preview: Mapping[str, object] | None,
+    *,
+    risk_level: object = "",
+) -> bool:
+    """Public policy predicate shared by runtime approval owners."""
+
+    return _safe_full_auto_command(
+        session,
+        preview,
+        risk_level=risk_level,
+    )
+
+
+
 
 
 def approval_strategy(
@@ -124,6 +258,8 @@ def approval_strategy(
     *,
     tool: str,
     operation: str,
+    preview: Mapping[str, object] | None = None,
+    risk_level: object = "",
 ) -> str:
     mode = normalize_execution_mode(
         session.get("executionMode"),
@@ -137,6 +273,15 @@ def approval_strategy(
     if mode == FULL_TRUST_EXECUTION_MODE:
         if effect in _WORKSPACE_EFFECTS and not workspace_scope_is_granted(session):
             return APPROVAL_DENY
+        if (
+            effect == _SAFE_FULL_AUTO_EFFECT
+            and safe_full_auto_command(
+                session,
+                preview,
+                risk_level=risk_level,
+            )
+        ):
+            return APPROVAL_AUTO
         return APPROVAL_MODEL
     if effect in _ALWAYS_MANUAL_EFFECTS:
         return APPROVAL_ASK
@@ -189,6 +334,8 @@ def execution_policy_prompt(session: Mapping[str, object]) -> str:
                 "本轮是全自动模式。无需审批的查看和检索可以直接进行；\n"
                 "所有原本需要审批的操作都由独立的 Luna Max 模型判定。它只接收明确用户请求、"
                 "当前任务、结构化操作预览和既有裁决，不接收本 Agent 的输出或推理。\n"
+                "已授权工作区内不含破坏性、敏感或网络效果的普通受控命令不会重复请求裁决；"
+                "其余操作仍由 Luna 判定。\n"
                 "Luna 拒绝或判定失败时原操作不执行；读取回执后改用范围更小、只读或可逆方案，"
                 "不要原样重试，也不要转为人工审批。"
             )

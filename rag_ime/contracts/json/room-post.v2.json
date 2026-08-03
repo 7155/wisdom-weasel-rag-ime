@@ -36,8 +36,10 @@
         "prompt": {"type": "string", "minLength": 1},
         "options": {
           "type": "array",
-          "minItems": 2,
-          "maxItems": 5,
+          "anyOf": [
+            {"maxItems": 0},
+            {"minItems": 2, "maxItems": 5}
+          ],
           "items": {"$ref": "#/$defs/questionOption"}
         }
       },
@@ -107,9 +109,23 @@
       },
       "additionalProperties": false
     },
+    "chronology": {"$ref": "#/$defs/chronology"},
     "createdAtMs": {"type": "integer", "minimum": 0}
   },
   "$defs": {
+    "chronology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "roomEventId", "roomEventSequence", "createdAtMs", "afterPostId", "orderKey"],
+      "properties": {
+        "schemaVersion": {"const": "wisdom-weasel.room-post-chronology.v1"},
+        "roomEventId": {"type": "string", "minLength": 1, "maxLength": 320},
+        "roomEventSequence": {"type": "integer", "minimum": 1},
+        "createdAtMs": {"type": "integer", "minimum": 0},
+        "afterPostId": {"type": ["string", "null"], "maxLength": 320},
+        "orderKey": {"type": "string", "pattern": "^room-event:[0-9]{20}$"}
+      }
+    },
     "questionOption": {
       "type": "object",
       "required": ["value", "label"],

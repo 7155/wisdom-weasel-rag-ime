@@ -50,6 +50,29 @@ describe('PluginsFeature', () => {
     expect(list.parentElement).toHaveAttribute('data-detail-open', 'false');
   });
 
+  it('shows fixed base tools without persistent disclosure controls', async () => {
+    const user = userEvent.setup();
+    const fixedAsk = tool({
+      id: 'ask',
+      displayName: 'Ask',
+      description: '向用户提出仍需其决定的结构化选择',
+      domain: 'planning',
+      riskLevel: 'R0',
+      operations: ['ask'],
+      sessionModes: ['assistant', 'coordinator'],
+      alwaysAvailable: true,
+    });
+    const transport = renderPlugins({
+      'agent.tools.list': capabilityCatalog([fixedAsk]),
+    });
+
+    await user.click(await screen.findByRole('button', { name: /Ask/ }));
+    const detail = screen.getByRole('complementary', { name: '能力详情' });
+    expect(within(detail).getByRole('region', { name: '固定能力策略' })).toHaveTextContent('固定加载');
+    expect(within(detail).queryByRole('combobox', { name: 'Ask的所有对话默认披露' })).not.toBeInTheDocument();
+    expect(transport.requests.some((call) => call.request.pathId === 'agent.configuration.update')).toBe(false);
+  });
+
   it('reports an installed backend catalog version mismatch and never renders legacy items as controls', async () => {
     const user = userEvent.setup();
     const transport = renderPlugins({

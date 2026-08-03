@@ -15,13 +15,11 @@ ROOM_QUALITY_GATE_RECEIPT_SCHEMA_VERSION = (
 EVENT_ENVELOPE_SCHEMA_VERSION = "wisdom-weasel.room-event-envelope.v2"
 ROOM_BINDING_SCHEMA_VERSION = "wisdom-weasel.room-binding.v2"
 PARTICIPANT_BINDING_SCHEMA_VERSION = "wisdom-weasel.room-participant-binding.v2"
-LEGACY_REF_SCHEMA_VERSION = "wisdom-weasel.room-legacy-ref.v1"
 KERNEL_COMMAND_SCHEMA_VERSION = "wisdom-weasel.room-kernel-command.v1"
 KERNEL_RECEIPT_SCHEMA_VERSION = "wisdom-weasel.room-kernel-receipt.v1"
 ROOM_POST_SCHEMA_VERSION = "wisdom-weasel.room-post.v2"
 ROOM_SETTLE_RECEIPT_SCHEMA_VERSION = "wisdom-weasel.room-settle-receipt.v1"
 ROOM_SETTLE_RESULT_SCHEMA_VERSION = "wisdom-weasel.room-settle-result.v1"
-ROOM_PEER_INVITATION_SCHEMA_VERSION = "wisdom-weasel.room-peer-invitation.v1"
 AGENT_APPROVAL_MODEL_DECISION_SCHEMA_VERSION = (
     "rag-ime.agent-approval-model-decision.v1"
 )
@@ -41,13 +39,11 @@ CONTRACT_FILES = {
     "eventEnvelope": "room-event-envelope.v2.json",
     "roomBinding": "room-binding.v2.json",
     "participantBinding": "room-participant-binding.v2.json",
-    "legacyRef": "room-legacy-ref.v1.json",
     "kernelCommand": "room-kernel-command.v1.json",
     "kernelReceipt": "room-kernel-receipt.v1.json",
     "roomPost": "room-post.v2.json",
     "roomSettleReceipt": "room-settle-receipt.v1.json",
     "roomSettleResult": "room-settle-result.v1.json",
-    "peerInvitation": "room-peer-invitation.v1.json",
     "agentApprovalModelDecision": "agent-approval-model-decision.v1.json",
 }
 

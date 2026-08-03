@@ -149,6 +149,38 @@ describe('Pi provider credential UI', () => {
       .toBeInTheDocument();
     expect(screen.queryByText(/codex login --device-auth/)).not.toBeInTheDocument();
   });
+  it('keeps a configured custom x1top provider and its governed model visible without exposing credentials', async () => {
+    const catalog = providerCatalog();
+    const transport = new MockControlTransport({
+      capabilities: { features: { piProviderCredentials: true } },
+      routes: {
+        'agent.providers.get': {
+          ...catalog,
+          providers: [{
+            ...catalog.providers[0],
+            id: 'x1top',
+            name: 'x1top',
+            auth: { ...catalog.providers[0].auth, configured: true, type: 'api_key' },
+            availableModelCount: 1,
+            availableModels: [{
+              id: 'x1top-luna',
+              name: 'Luna Max',
+              reasoning: true,
+              imageInput: true,
+            }],
+          }],
+        },
+      },
+    });
+
+    renderProvider(transport);
+
+    expect(await screen.findByRole('combobox', { name: '模型服务' })).toHaveTextContent('x1top');
+    expect(screen.getByText('Luna Max')).toBeInTheDocument();
+    expect(screen.getByLabelText('API Key')).toHaveValue('');
+    expect(screen.queryByText(/secret|token/i)).not.toBeInTheDocument();
+  });
+
 });
 
 function renderProvider(transport: MockControlTransport): void {

@@ -29,8 +29,32 @@ export interface AgentMemoryMaintenanceStatusV1 {
     lastBundleHash: string;
     [k: string]: unknown;
   };
+  draftCoverage: {
+    coveredThroughEventId: number;
+    undraftedEventCount: number;
+    coversAllPending: boolean;
+    lastDraftRunId: string;
+    [k: string]: unknown;
+  };
+  automation: {
+    minimumNewEvents: number;
+    idleThresholdMs: number;
+    dailyIntervalMs: number;
+    schedulerPollIntervalMs: number;
+    enabled: boolean;
+    model: string;
+    thinkingLevel: string;
+    runsPerDay: number;
+    autoApply: boolean;
+    curationProtocol: 'atom-first-v1';
+    targetSourceCount: number;
+    maximumSourceCount: number;
+    maximumInputTokens: number;
+    reservedContextTokens: number;
+    [k: string]: unknown;
+  };
   pendingDraftCount: number;
-  ownerCuration?: {
+  ownerCuration: {
     schemaVersion: 'rag-ime.owner-memory-curation-status.v1';
     ok: true;
     project: string;
@@ -45,7 +69,38 @@ export interface AgentMemoryMaintenanceStatusV1 {
     }[];
     [k: string]: unknown;
   };
-  projection?: {
+  modelCuration: {
+    schemaVersion: 'rag-ime.memory-curation-model-status.v1';
+    ok: true;
+    profile: 'MEMORY_CURATION';
+    requiredModel: 'openai-codex/gpt-5.6-luna';
+    requiredThinkingLevel: 'max';
+    minimumContextTokens: number;
+    stateCounts: {
+      [k: string]: number;
+    };
+    runs: {
+      [k: string]: unknown;
+    }[];
+    [k: string]: unknown;
+  };
+  bookProjection: {
+    schemaVersion: 'rag-ime.personal-memory-book-projection-status.v1';
+    ok: boolean;
+    projectionOwner: string;
+    currentAtomCount: number;
+    desiredBookCount: number;
+    activeBookCount: number;
+    historicalBookCount: number;
+    unbookedAtomCount: number;
+    missingBookCount: number;
+    staleBookCount: number;
+    membershipMismatchCount: number;
+    guardedBookCount: number;
+    inSync: boolean;
+    [k: string]: unknown;
+  };
+  projection: {
     schemaVersion: 'rag-ime.memory-projection-runtime.v1';
     ok: boolean;
     configured: boolean;

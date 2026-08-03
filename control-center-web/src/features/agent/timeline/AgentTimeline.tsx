@@ -14,7 +14,11 @@ import type {
   AgentProjectionState,
 } from '@/contracts/agent-reducer';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
-import { ActivitySummary, ReasoningActivitySummary } from './ActivitySummary';
+import {
+  ActivitySummary,
+  PublicActivityFeed,
+  ReasoningActivitySummary,
+} from './ActivitySummary';
 import { AgentBlocks } from './BlockRenderer';
 import { PersonaAvatar, type PersonaPresence } from './PersonaAvatar';
 import { conversationMarkerIndexes } from './conversation-markers';
@@ -496,6 +500,7 @@ export function AgentTurn({
           <div className="agent-assistant-turn__body">
             <header><strong>{persona?.displayName ?? assistantName}</strong><span>{showWorking ? '正在处理' : turnStatusLabel(turn.status)}</span></header>
             {showWorking ? <AssistantWorkingState activities={activities} startedAtMs={turn.createdAtMs} /> : null}
+            <PublicActivityFeed activities={activities} />
             <div className="agent-turn-sequence" aria-label="本轮响应过程">
               {timelineEntries.map((entry) => entry.kind === 'message' ? (
                 <div data-timeline-kind="message" key={entry.message.id}>
@@ -802,7 +807,7 @@ function ActivityGroupView({
   const ordinary = activities.filter((activity) => (
     activity.kind !== 'context_compaction'
     && activity.kind !== 'reasoning_summary'
-    && (!isAgentPlanActivity(activity) || activity.status === 'failed')
+    && (!isAgentTodoActivity(activity) || activity.status === 'failed')
   ));
   return (
     <>
@@ -821,8 +826,8 @@ function ActivityGroupView({
   );
 }
 
-function isAgentPlanActivity(activity: AgentActivityProjection): boolean {
-  return text(activity.payload.toolId ?? activity.payload.toolName) === 'agent_plan';
+function isAgentTodoActivity(activity: AgentActivityProjection): boolean {
+  return text(activity.payload.toolId ?? activity.payload.toolName) === 'todo';
 }
 
 function ContextCompactionNotice({ activity }: { activity: AgentActivityProjection }) {

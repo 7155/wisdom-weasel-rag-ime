@@ -110,7 +110,7 @@ class SessionMemoryRecallBuilder:
         vector_context_text: str = "",
         vector_context_weight: float = 0.0,
         recent_messages: Sequence[Mapping[str, object]] = (),
-        planning_context: Mapping[str, object] | None = None,
+        todo_context: Mapping[str, object] | None = None,
         task_context: Mapping[str, object] | None = None,
         compaction_recovery: Mapping[str, object] | None = None,
         max_items: int = 12,
@@ -249,7 +249,7 @@ class SessionMemoryRecallBuilder:
         query_sha256 = hashlib.sha256(query.encode("utf-8")).hexdigest()
         vector_context = _tail_text(vector_context_text, 6_000)
         conversation = _normalized_recent_messages(recent_messages)
-        plan = _normalized_plan(planning_context)
+        todo = _normalized_todo(todo_context)
         task = _normalized_task(task_context)
         recovery = (
             dict(compaction_recovery)
@@ -330,7 +330,7 @@ class SessionMemoryRecallBuilder:
             },
             "items": selected,
             "recentConversation": conversation,
-            "plan": plan,
+            "todo": todo,
             "task": task,
             "sourceIds": source_ids,
             "budget": {
@@ -410,6 +410,7 @@ def _select_hits(
     selected: list[dict[str, object]] = []
     seen_sources: set[str] = set()
     selected_book_text_by_atom: dict[str, list[str]] = {}
+    inlined_book_atom_ids: set[str] = set()
     type_counts = {"book": 0, "atom": 0, "timeline": 0}
     used_chars = 0
     eligible_count = 0
@@ -470,15 +471,22 @@ def _select_hits(
             "timeline": profile["timelineChars"],
             "atom": profile["atomChars"],
         }[doc_type]
-        text = (
-            _focused_activity_excerpt(
+        inlined_atom_ids: set[str] = set()
+        if is_activity_timeline:
+            text = _focused_activity_excerpt(
                 str(item.get("text") or ""),
                 query_text=query_text,
                 max_chars=per_item_chars,
             )
-            if is_activity_timeline
-            else truncate_text(str(item.get("text") or ""), per_item_chars)
-        )
+        elif doc_type == "book":
+            text, inlined_atom_ids = _book_recall_text(
+                str(item.get("text") or ""),
+                metadata,
+                max_chars=per_item_chars,
+                already_inlined=inlined_book_atom_ids,
+            )
+        else:
+            text = truncate_text(str(item.get("text") or ""), per_item_chars)
         if not source_id or not text or source_id in seen_sources:
             continue
         type_limit = {
@@ -523,6 +531,7 @@ def _select_hits(
         if doc_type == "book":
             for atom_id in _string_list(metadata.get("memoryAtomIds"), 256):
                 selected_book_text_by_atom.setdefault(atom_id, []).append(text)
+            inlined_book_atom_ids.update(inlined_atom_ids)
         seen_sources.add(source_id)
         type_counts[doc_type] += 1
         used_chars += len(text)
@@ -543,6 +552,50 @@ def _select_hits(
         for rank, item in enumerate(selected, start=1):
             item["rank"] = rank
     return selected, max(0, eligible_count - len(selected))
+
+
+def _book_recall_text(
+    summary_text: str,
+    metadata: Mapping[str, object],
+    *,
+    max_chars: int,
+    already_inlined: set[str],
+) -> tuple[str, set[str]]:
+    """Expand a Book only when every member fits this consumer's budget."""
+
+    summary = truncate_text(summary_text, max_chars)
+    atom_ids = _string_list(metadata.get("memoryAtomIds"), 256)
+    if not atom_ids or metadata.get("inlineAtomsComplete") is not True:
+        return summary, set()
+    inline_rows = [
+        dict(item)
+        for item in metadata.get("inlineAtoms") or []
+        if isinstance(item, Mapping)
+    ]
+    inline_by_id = {
+        compact_whitespace(str(item.get("atomId") or "")): compact_whitespace(
+            str(item.get("text") or "")
+        )
+        for item in inline_rows
+        if compact_whitespace(str(item.get("atomId") or ""))
+        and compact_whitespace(str(item.get("text") or ""))
+    }
+    if any(atom_id not in inline_by_id for atom_id in atom_ids):
+        return summary, set()
+
+    expanded = compact_whitespace(summary_text)
+    newly_inlined: set[str] = set()
+    for atom_id in atom_ids:
+        if atom_id in already_inlined:
+            continue
+        atom_text = inline_by_id[atom_id]
+        newly_inlined.add(atom_id)
+        if _coverage_text(atom_text) in _coverage_text(expanded):
+            continue
+        expanded = compact_whitespace(f"{expanded} 主题事实：{atom_text}")
+    if len(expanded) > max_chars:
+        return summary, set()
+    return expanded, newly_inlined
 
 
 def _atom_text_is_covered_by_selected_book(
@@ -572,6 +625,10 @@ def _human_memory_title(doc_type: str, metadata: Mapping[str, object]) -> str:
     kind = compact_whitespace(str(metadata.get("kind") or "")).casefold()
     labels = {
         "preference": "用户偏好",
+        "durable_preference": "用户偏好",
+        "personal_fact": "个人信息",
+        "personal_habit": "个人习惯",
+        "personal_principle": "个人原则",
         "project_fact": "项目事实",
         "project_requirement": "项目要求",
         "decision": "已确认决定",
@@ -837,7 +894,7 @@ def _message_text(value: Mapping[str, object]) -> str:
     return compact_whitespace("\n".join(parts))
 
 
-def _normalized_plan(value: Mapping[str, object] | None) -> list[dict[str, str]]:
+def _normalized_todo(value: Mapping[str, object] | None) -> list[dict[str, str]]:
     if not isinstance(value, Mapping):
         return []
     items = value.get("items")
@@ -848,11 +905,14 @@ def _normalized_plan(value: Mapping[str, object] | None) -> list[dict[str, str]]
         if not isinstance(item, Mapping):
             continue
         status = compact_whitespace(str(item.get("status") or "pending")).lower()
-        if status not in {"pending", "in_progress"}:
+        if status not in {"pending", "in_progress", "blocked"}:
             continue
-        title = truncate_text(str(item.get("title") or ""), 240)
-        if title:
-            result.append({"status": status, "title": title})
+        content = truncate_text(
+            str(item.get("content") or item.get("title") or ""),
+            240,
+        )
+        if content:
+            result.append({"status": status, "content": content})
         if len(result) >= 8:
             break
     return result

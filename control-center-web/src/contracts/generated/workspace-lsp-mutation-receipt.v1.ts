@@ -11,6 +11,29 @@ export interface WorkspaceLspMutationReceiptV1 {
   operation: 'rename' | 'code_action_apply';
   root: string;
   server: string;
+  referencesEvidence?: {
+    root: string;
+    path: string;
+    relativePath: string;
+    line: number;
+    column: number;
+    server: string;
+    resourceRevision: string;
+    preimageSha256: string;
+    count: number;
+    truncated: boolean;
+    /**
+     * @maxItems 64
+     */
+    items: {
+      path: string;
+      relativePath: string;
+      line: number;
+      column: number;
+      endLine: number;
+      endColumn: number;
+    }[];
+  };
   /**
    * @minItems 1
    * @maxItems 16

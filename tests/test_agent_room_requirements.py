@@ -234,6 +234,21 @@ class RequirementGovernanceTests(unittest.TestCase):
                 "acceptanceCriterionIds": ["criterion:req"],
                 "revision": 0,
                 "state": "active",
+                "workspacePolicy": "isolated_writable",
+                "workspaceRoot": "/private/room-worktrees/task-1",
+                "workspaceBaseRoot": "/private/project",
+                "workspaceBaseCommit": "base-commit-1",
+                "workspaceSnapshotSha256": "a" * 64,
+                "workspaceBindingId": "workspace-binding:task-1",
+                "workspaceRepositoryId": "b" * 64,
+                "workspaceLifecycleState": "delivered",
+                "workspaceCleanupState": "not_authorized",
+                "workspaceAttentionRequired": False,
+                "workspaceDeliveryRevision": f"sha256:{'c' * 64}",
+                "workspaceDeliveryHead": "worker-head-1",
+                "workspaceDeliverySnapshotSha256": "d" * 64,
+                "workspaceIntegrationState": "pending",
+                "workspaceIntegrationRef": None,
             },
             {
                 "dispatchId": "dispatch:1",
@@ -247,6 +262,7 @@ class RequirementGovernanceTests(unittest.TestCase):
                 "hopCount": 1,
                 "depth": 1,
             },
+            room_id="room:1",
         )
         packet = json.loads(rendered)
         self.assertEqual(
@@ -266,6 +282,42 @@ class RequirementGovernanceTests(unittest.TestCase):
             packet["blockers"]["obstacles"][0]["statement"],
             "等待正式安装环境",
         )
+        handoff = packet["handoff"]
+        self.assertEqual(
+            handoff["contextModeRule"],
+            "fork_if_parent_context_materially_helps_else_fresh",
+        )
+        self.assertEqual(handoff["independentReview"], "fresh_read_only")
+        self.assertEqual(handoff["questionOwner"], "facilitator_reporter")
+        self.assertEqual(
+            handoff["participantQuestionPath"],
+            "structured_blocker_or_room_commit_wait",
+        )
+        self.assertEqual(
+            handoff["lspReadonlyOperations"],
+            ["status", "symbols", "hover", "definition", "references", "diagnostics"],
+        )
+        self.assertEqual(
+            handoff["lspWriteOperations"],
+            ["rename", "code_action_apply"],
+        )
+        self.assertEqual(
+            handoff["lspWriteApproval"],
+            "existing_hash_bound_approval",
+        )
+        self.assertEqual(handoff["exportedSymbolRule"], "references_before_apply")
+        workspace = packet["workspace"]
+        self.assertTrue(workspace["bound"])
+        self.assertEqual(workspace["roomId"], "room:1")
+        self.assertEqual(workspace["rootId"], "root:1")
+        self.assertEqual(
+            workspace["bindingId"], "workspace-binding:task-1"
+        )
+        self.assertEqual(workspace["lifecycleState"], "delivered")
+        self.assertEqual(workspace["delivery"]["head"], "worker-head-1")
+        self.assertEqual(workspace["integration"]["state"], "pending")
+        self.assertEqual(workspace["cleanupState"], "not_authorized")
+        self.assertFalse(workspace["attentionRequired"])
 
     def test_dispatch_packet_references_identical_original_instead_of_copying_it(self) -> None:
         original_text = self.original.decode("utf-8")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import tempfile
 import unittest
 import sqlite3
@@ -31,9 +33,17 @@ class RoomKernelCoreTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def seed(self, *, budget: int = 10, max_hops: int = 3, max_depth: int = 2, criteria: tuple[str, ...] = ("ac:1",)) -> None:
+    def seed(
+        self,
+        *,
+        budget: int = 10,
+        max_hops: int = 3,
+        max_depth: int = 2,
+        criteria: tuple[str, ...] = ("ac:1",),
+        independent_review_required: bool = False,
+    ) -> None:
         self.store.create_root(
-            root("root:1"),
+            root("root:1", independent_review_required=independent_review_required),
             budget=budget,
             max_hops=max_hops,
             max_depth=max_depth,
@@ -410,6 +420,84 @@ class RoomKernelCoreTests(unittest.TestCase):
         )
         self.assertEqual(transferred_back["ownershipRevision"], 2)
         self.assertEqual(transferred_back["state"], "active")
+
+    def test_reviewer_revision_dispatch_marks_review_changes_requested(
+        self,
+    ) -> None:
+        self.seed(max_hops=3, max_depth=2)
+        review_task = {
+            **child_task(
+                "task:review",
+                parent="task:1",
+                target="participant:b",
+                criteria=("ac:1",),
+            ),
+            "taskKind": "review",
+            "reviewState": "required",
+            "reviewOfTaskIds": ["task:1"],
+            "reviewAuthorParticipantIds": ["participant:a"],
+            "acceptanceCriterionIds": ["ac:1"],
+        }
+        self.store.create_task(review_task, now_ms=3)
+        self.store.enqueue_dispatch(
+            dispatch(
+                "dispatch:review",
+                key="review",
+                target="participant:b",
+                depth=1,
+                task_id="task:review",
+            ),
+            now_ms=10,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:review",
+            "running",
+            now_ms=11,
+        )
+        revision_task = child_task(
+            "task:revision",
+            parent="task:review",
+            target="participant:a",
+            criteria=(),
+        )
+        revision_dispatch = {
+            **dispatch(
+                "dispatch:revision",
+                key="revision",
+                target="participant:a",
+                hop=1,
+                depth=2,
+                parent="dispatch:review",
+                task_id="task:revision",
+            ),
+            "intentKind": "revise",
+        }
+        self.store.apply_commit(
+            {
+                **commit(
+                    "commit:review-revision",
+                    "dispatch:review",
+                    coverage=("ac:1",),
+                    task_id="task:review",
+                ),
+                "action": "dispatch",
+                "continuation": {
+                    "decision": "dispatch",
+                    "childTask": revision_task,
+                    "childDispatch": revision_dispatch,
+                    "waitingFor": "participant",
+                    "waitingForParticipantId": "participant:a",
+                    "waitingForDispatchId": "dispatch:revision",
+                    "resumeCondition": "Facilitator completes the requested revision.",
+                },
+            },
+            generation=0,
+            now_ms=12,
+        )
+
+        review = self.store.task("task:review")
+        self.assertEqual(review["reviewState"], "changes_requested")
+        self.assertEqual(review["state"], "waiting")
 
     def test_task_transfer_cancels_racing_old_owner_dispatch(self) -> None:
         self.seed(max_hops=3)
@@ -1217,6 +1305,83 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.assertEqual(limits["concurrency_reserved"], 4)
         self.assertEqual(limits["dispatch_reserved"], 4)
 
+    def test_dependency_blocked_dispatch_defers_concurrency_until_ready(self) -> None:
+        self.seed(budget=100, criteria=())
+        for index in range(4):
+            alignment = dispatch(
+                f"dispatch:alignment-{index}",
+                key=f"alignment-{index}",
+                target="participant:a",
+                session_id=f"session:alignment:{index}",
+            )
+            alignment["intentKind"] = "align"
+            self.store.enqueue_dispatch(
+                alignment,
+                now_ms=10 + index,
+            )
+        execution = dispatch(
+            "dispatch:execution",
+            key="execution",
+            target="participant:a",
+            session_id="session:execution",
+        )
+        execution["dependsOnDispatchIds"] = ["dispatch:alignment-0"]
+
+        queued, created = self.store.enqueue_dispatch(execution, now_ms=20)
+
+        self.assertTrue(created)
+        self.assertEqual(queued["dispatchId"], "dispatch:execution")
+        limits = self.store.resource_limits("root:1")
+        self.assertEqual(limits["concurrency_reserved"], 4)
+        self.assertEqual(limits["dispatch_reserved"], 5)
+        self.assertIsNone(
+            self.store.lease_next(
+                now_ms=21,
+                ttl_ms=30_000,
+                dispatch_id="dispatch:execution",
+            )
+        )
+
+        self.accept_runtime_attempt(
+            "dispatch:alignment-0",
+            turn_id="turn:alignment-0",
+            now_ms=22,
+        )
+        alignment_commit = {
+            **commit("commit:alignment-0", "dispatch:alignment-0"),
+            "action": "post",
+            "postProposal": post_proposal(
+                "commit:alignment-0",
+                "dispatch:alignment-0",
+                task_id="task:1",
+                author="participant:a",
+            ),
+            "continuation": {"decision": "complete"},
+        }
+        self.store.apply_commit(
+            alignment_commit,
+            generation=0,
+            now_ms=23,
+            post_proposal=alignment_commit["postProposal"],
+        )
+        RoomContextLedgerStore(self.db_path).publish_post(
+            alignment_commit["postProposal"]
+        )
+        self.assertEqual(
+            self.store.resource_limits("root:1")["concurrency_reserved"],
+            3,
+        )
+        lease = self.store.lease_next(
+            now_ms=24,
+            ttl_ms=30_000,
+            dispatch_id="dispatch:execution",
+        )
+        self.assertIsNotNone(lease)
+        self.assertEqual(
+            self.store.resource_limits("root:1")["concurrency_reserved"],
+            4,
+        )
+
     def test_resource_usage_consumes_actuals_without_overselling_other_reservations(self) -> None:
         self.seed(budget=20, criteria=())
         self.store.enqueue_dispatch(dispatch("dispatch:usage", key="usage"), now_ms=10)
@@ -1405,12 +1570,96 @@ class RoomKernelCoreTests(unittest.TestCase):
         )
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(self.store.commit("commit:done")["dispatchId"], "dispatch:done")
+        task_after_commit = self.store.task("task:1")
+        self.assertEqual(task_after_commit["resultKind"], "complete")
+        self.assertEqual(task_after_commit["resultAtMs"], 12)
+        self.assertEqual(task_after_commit["verificationCount"], 1)
+        self.assertEqual(
+            task_after_commit["verifications"],
+            [
+                {
+                    "label": "验收项 1",
+                    "result": "pass",
+                    "source": "quality_gate",
+                }
+            ],
+        )
+        self.assertNotIn("AC-", json.dumps(task_after_commit, ensure_ascii=False))
+        self.assertNotIn("ac:1", json.dumps(task_after_commit["verifications"]))
         terminal = self.store.finalize_root("root:1", now_ms=13)
         root_after = self.store.root("root:1")
         self.assertEqual(terminal["receiptKind"], "terminal")
         self.assertTrue(terminal["details"]["quiescent"])
         self.assertEqual(root_after["state"], "completed")
         self.assertEqual(root_after["terminalReceiptId"], terminal["receiptId"])
+
+    def test_review_required_root_rejects_quiescent_completion_without_review(self) -> None:
+        self.seed(independent_review_required=True)
+        self.store.enqueue_dispatch(dispatch("dispatch:review-required", key="review-required"), now_ms=10)
+        self.store.set_dispatch_wait_state(
+            "dispatch:review-required",
+            "running",
+            now_ms=11,
+        )
+        self.store.apply_commit(
+            commit(
+                "commit:review-required",
+                "dispatch:review-required",
+                coverage=("ac:1",),
+            ),
+            generation=0,
+            now_ms=12,
+        )
+
+        rejected = self.store.finalize_root("root:1", now_ms=13)
+
+        self.assertEqual(rejected["status"], "rejected")
+        self.assertEqual(
+            rejected["details"]["reason"],
+            "independent_review_required",
+        )
+        self.assertEqual(self.store.root("root:1")["state"], "running")
+
+    def test_missing_root_review_policy_fails_closed_at_terminal_fence(self) -> None:
+        self.seed()
+        self.store.enqueue_dispatch(dispatch("dispatch:missing-policy", key="missing-policy"), now_ms=10)
+        self.store.set_dispatch_wait_state(
+            "dispatch:missing-policy",
+            "running",
+            now_ms=11,
+        )
+        self.store.apply_commit(
+            commit(
+                "commit:missing-policy",
+                "dispatch:missing-policy",
+                coverage=("ac:1",),
+            ),
+            generation=0,
+            now_ms=12,
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            payload = json.loads(
+                str(
+                    conn.execute(
+                        "SELECT payload_json FROM room_kernel_roots WHERE root_id=?",
+                        ("root:1",),
+                    ).fetchone()[0]
+                )
+            )
+            payload.pop("independentReviewRequired", None)
+            conn.execute(
+                "UPDATE room_kernel_roots SET payload_json=? WHERE root_id=?",
+                (json.dumps(payload, sort_keys=True), "root:1"),
+            )
+
+        rejected = self.store.finalize_root("root:1", now_ms=13)
+
+        self.assertEqual(rejected["status"], "rejected")
+        self.assertEqual(
+            rejected["details"]["reason"],
+            "independent_review_policy_missing_or_invalid",
+        )
+        self.assertEqual(self.store.root("root:1")["state"], "running")
 
     def test_root_without_acceptance_criteria_cannot_be_delivered(self) -> None:
         self.seed(criteria=())
@@ -1453,6 +1702,473 @@ class RoomKernelCoreTests(unittest.TestCase):
 
         self.assertEqual(terminal["receiptKind"], "terminal")
         self.assertEqual(terminal["details"]["acceptanceEvidenceRefCounts"], {"ac:1": 1})
+
+    def test_cancelled_room_obligations_still_fence_terminal_completion(self) -> None:
+        cases = (
+            (
+                "pending_review",
+                {
+                    "taskKind": "review",
+                    "reviewState": "required",
+                    "reviewFindings": [],
+                },
+                "review_cancelled",
+                "reviewFences",
+            ),
+            (
+                "unresolved_blocker",
+                {
+                    "taskKind": "review",
+                    "reviewState": "accepted",
+                    "reviewFindings": [
+                        {
+                            "findingId": "finding:blocker",
+                            "gateEffect": "blocking",
+                            "state": "open",
+                            "category": "correctness",
+                        }
+                    ],
+                },
+                "review_cancelled",
+                "unresolvedBlockingFindings",
+            ),
+            (
+                "stale_review",
+                {
+                    "taskKind": "review",
+                    "reviewState": "stale",
+                    "reviewFindings": [],
+                },
+                "review_cancelled",
+                "reviewFences",
+            ),
+            (
+                "pending_integration",
+                {
+                    "workspacePolicy": "isolated_writable",
+                    "workspaceIntegrationState": "pending",
+                    "workspaceIntegrationRef": None,
+                },
+                "workspace_integration_pending",
+                "pendingIntegrations",
+            ),
+        )
+        for index, (name, updates, expected_reason, evidence_key) in enumerate(
+            cases,
+            start=1,
+        ):
+            with self.subTest(name=name):
+                root_id = f"root:governance:{name}"
+                task_id = f"task:governance:{name}"
+                self.store.create_root(
+                    root(root_id),
+                    budget=10,
+                    max_hops=3,
+                    max_depth=2,
+                    acceptance_criteria=("ac:1",),
+                    now_ms=index,
+                )
+                self.store.create_task(
+                    task(task_id, root_id=root_id),
+                    now_ms=index + 1,
+                )
+                with sqlite3.connect(self.db_path) as conn:
+                    row = conn.execute(
+                        "SELECT payload_json FROM room_kernel_tasks WHERE task_id=?",
+                        (task_id,),
+                    ).fetchone()
+                    payload = json.loads(str(row[0]))
+                    payload.update(updates)
+                    conn.execute(
+                        "UPDATE room_kernel_tasks SET state=?,payload_json=?,updated_at_ms=? WHERE task_id=?",
+                        (
+                            "completed"
+                            if name == "pending_integration"
+                            else "active",
+                            json.dumps(
+                                payload,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            index + 2,
+                            task_id,
+                        ),
+                    )
+                cancelled = self.store.apply_control_command(
+                    control_command(
+                        f"command:governance:{name}",
+                        "cancel_target",
+                        target_kind="task",
+                        target_id=task_id,
+                        root_id=root_id,
+                        now_ms=index + 3,
+                    )
+                )
+                self.assertEqual(cancelled["receiptKind"], "target_cancelled")
+                rejected = self.store.finalize_root(
+                    root_id,
+                    now_ms=index + 4,
+                )
+                self.assertEqual(rejected["status"], "rejected")
+                self.assertEqual(rejected["details"]["reason"], expected_reason)
+                self.assertTrue(rejected["details"]["governance"][evidence_key])
+                self.assertNotEqual(self.store.root(root_id)["state"], "completed")
+
+    def test_workspace_lifecycle_receipts_project_complete_task_audit_fields(self) -> None:
+        self.seed()
+        payload = self.store.task("task:1")
+        payload.update(
+            {
+                "workspacePolicy": "isolated_writable",
+                "workspaceRoot": "/tmp/room-child",
+                "workspaceBaseRoot": "/tmp/room-base",
+                "workspaceBaseCommit": "git:base",
+                "workspaceBindingId": "workspace-binding:test",
+                "workspaceRepositoryId": "a" * 64,
+                "workspaceLifecycleState": "materialized",
+                "workspaceCleanupState": "not_authorized",
+                "workspaceAttentionRequired": False,
+                "workspaceIntegrationState": "pending",
+                "workspaceIntegrationRef": None,
+                "workItemId": "work:test",
+            }
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE room_kernel_tasks SET payload_json=? WHERE task_id='task:1'",
+                (
+                    json.dumps(
+                        payload,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                ),
+            )
+
+        started = self.store.record_workspace_work_started(
+            "task:1",
+            lifecycle={
+                "workspaceBindingId": "workspace-binding:test",
+                "workspaceLifecycleState": "work_started",
+                "workspaceAttentionRequired": False,
+            },
+            dispatch_id="dispatch:worker",
+            now_ms=4,
+        )
+        self.assertEqual(started["workspaceLifecycleState"], "work_started")
+        delivered = self.store.record_workspace_delivery(
+            "task:1",
+            delivery={
+                "deliveryRevision": "sha256:" + "b" * 64,
+                "deliveryHead": "git:base",
+                "deliverySnapshotSha256": "c" * 64,
+                "workspaceLifecycleState": "delivered",
+                "workspaceDelivery": {
+                    "schemaVersion": "wisdom-weasel.room-workspace-delivery.v1",
+                    "ownerParticipantId": "participant:a",
+                    "ownerSessionId": "session:a",
+                    "workItemId": "work:test",
+                    "taskId": "task:1",
+                    "deliveryRevision": "sha256:" + "b" * 64,
+                    "deliveredAtMs": 5,
+                    "resultSummary": "Scoped delivery",
+                    "manifestSha256": "d" * 64,
+                    "files": [
+                        {
+                            "path": "README.md",
+                            "additions": 1,
+                            "deletions": 1,
+                            "binary": False,
+                            "generated": False,
+                            "redacted": False,
+                        }
+                    ],
+                    "totals": {
+                        "fileCount": 1,
+                        "additions": 1,
+                        "deletions": 1,
+                        "binaryFiles": 0,
+                        "generatedFiles": 0,
+                        "redactedFiles": 0,
+                    },
+                    "artifactRefs": [],
+                    "verificationCount": 1,
+                    "verifications": [
+                        {
+                            "label": "验收项 1",
+                            "result": "pass",
+                            "source": "quality_gate",
+                        }
+                    ],
+                    "verificationRefs": ["test:focused"],
+                    "residualRisks": [],
+                },
+            },
+            now_ms=5,
+        )
+        self.assertEqual(
+            delivered["workspaceDeliveryRevision"],
+            "sha256:" + "b" * 64,
+        )
+        self.assertEqual(delivered["workspaceDeliveryHead"], "git:base")
+        self.assertEqual(
+            delivered["workspaceDeliverySnapshotSha256"],
+            "c" * 64,
+        )
+        self.assertEqual(
+            delivered["workspaceDelivery"]["workItemId"],
+            "work:test",
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE room_kernel_tasks SET state='completed' WHERE task_id='task:1'"
+            )
+        conflict = self.store.record_workspace_integration(
+            "task:1",
+            integration_ref="integration:stable",
+            workspace_result={
+                "integrated": False,
+                "workspaceLifecycleState": "conflict",
+                "cleanupState": "retained",
+                "reason": "patch conflict; child retained",
+                "attentionRequired": True,
+            },
+            now_ms=6,
+        )
+        self.assertEqual(conflict["workspaceIntegrationState"], "pending")
+        self.assertEqual(conflict["workspaceLifecycleState"], "conflict")
+        self.assertEqual(conflict["workspaceCleanupState"], "retained")
+        self.assertTrue(conflict["workspaceAttentionRequired"])
+        self.assertEqual(
+            conflict["workspaceTerminalReason"],
+            "patch conflict; child retained",
+        )
+        integrated = self.store.record_workspace_integration(
+            "task:1",
+            integration_ref="integration:stable",
+            workspace_result={
+                "integrated": True,
+                "integrationPatchSha256": "d" * 64,
+                "integratedRevision": "git:integrated",
+                "integratedSnapshotSha256": "e" * 64,
+                "workspaceLifecycleState": "cleaned",
+                "cleanupState": "cleaned",
+                "attentionRequired": False,
+            },
+            now_ms=7,
+        )
+        self.assertEqual(integrated["workspaceIntegrationState"], "applied")
+        self.assertEqual(
+            integrated["workspaceIntegrationPatchSha256"],
+            "d" * 64,
+        )
+        self.assertEqual(
+            integrated["workspaceIntegratedRevision"],
+            "git:integrated",
+        )
+        self.assertEqual(
+            integrated["workspaceIntegratedSnapshotSha256"],
+            "e" * 64,
+        )
+        self.assertEqual(integrated["workspaceLifecycleState"], "cleaned")
+        self.assertEqual(integrated["workspaceCleanupState"], "cleaned")
+        self.assertFalse(integrated["workspaceAttentionRequired"])
+
+    def test_revision_bound_accepted_review_and_integration_finalize_once(self) -> None:
+        self.seed()
+        integrated_payload = self.store.task("task:1")
+        integrated_payload.update(
+            {
+                "workspacePolicy": "isolated_writable",
+                "workspaceIntegrationState": "applied",
+                "workspaceIntegrationRef": "integration:task-1",
+                "revision": 1,
+            }
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE room_kernel_tasks SET state='completed',payload_json=?,updated_at_ms=? WHERE task_id='task:1'",
+                (
+                    json.dumps(
+                        integrated_payload,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    3,
+                ),
+            )
+        review_task_id = "task:accepted-review"
+        review_snapshot = {
+            **task(review_task_id),
+            "taskKind": "review",
+            "reviewState": "required",
+            "reviewOfTaskIds": ["task:1"],
+            "reviewAuthorParticipantIds": ["participant:a"],
+            "reviewEvidenceNotBeforeMs": 5,
+            "reviewFindings": [],
+            "workspacePolicy": "read_only",
+            "workspaceRoot": "/tmp/room-review",
+            "workspaceBaseRoot": "/tmp/room-review",
+            "workspaceSnapshotSha256": "a" * 64,
+            "workspaceIntegrationRef": "",
+        }
+        target_revision = self.store.review_target_revision(
+            root_id="root:1",
+            task_ids=["task:1"],
+            review_snapshot=review_snapshot,
+        )
+        self.store.create_task(
+            {
+                **review_snapshot,
+                "reviewTargetRevision": target_revision,
+            },
+            now_ms=4,
+        )
+        review_dispatch_id = "dispatch:accepted-review"
+        review_dispatch = dispatch(
+            review_dispatch_id,
+            key="accepted-review",
+            task_id=review_task_id,
+        )
+        review_dispatch["intentKind"] = "review"
+        self.store.enqueue_dispatch(review_dispatch, now_ms=5)
+        self.store.set_dispatch_wait_state(
+            review_dispatch_id,
+            "running",
+            now_ms=5,
+        )
+        review_commit = commit(
+            "commit:accepted-review",
+            review_dispatch_id,
+            coverage=("ac:1",),
+            task_id=review_task_id,
+        )
+        binding_material = {
+            "reviewTargetRevision": target_revision,
+            "taskId": review_task_id,
+            "dispatchId": review_dispatch_id,
+            "evidenceRefs": ["test:room-kernel"],
+            "notBeforeMs": 5,
+        }
+        review_commit["reviewEvidenceBinding"] = {
+            "schemaVersion": "wisdom-weasel.review-evidence-binding.v1",
+            "bindingId": (
+                "review-evidence-binding:"
+                + hashlib.sha256(
+                    json.dumps(
+                        binding_material,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+            ),
+            **binding_material,
+        }
+        applied = self.store.apply_commit(
+            review_commit,
+            generation=0,
+            now_ms=6,
+        )
+        self.assertEqual(applied["status"], "applied")
+        accepted_review = self.store.task(review_task_id)
+        self.assertEqual(
+            accepted_review["reviewTargetRevision"],
+            target_revision,
+        )
+        terminal = self.store.finalize_root("root:1", now_ms=7)
+        replay = self.store.finalize_root("root:1", now_ms=8)
+        self.assertEqual(terminal["receiptKind"], "terminal")
+        self.assertEqual(terminal["details"]["governance"]["reviewFences"], [])
+        self.assertEqual(
+            terminal["details"]["governance"]["pendingIntegrations"],
+            [],
+        )
+        self.assertEqual(replay, terminal)
+        self.assertEqual(self.store.root("root:1")["state"], "completed")
+
+    def test_pending_review_snapshot_matches_commit_then_real_mutation_stales_it(
+        self,
+    ) -> None:
+        self.seed()
+        target_task = {
+            **self.store.task("task:1"),
+            "workspacePolicy": "isolated_writable",
+            "workspaceIntegrationState": "pending",
+            "workspaceIntegrationRef": "",
+        }
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE room_kernel_tasks SET payload_json=? WHERE task_id=?",
+                (
+                    json.dumps(
+                        target_task,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    "task:1",
+                ),
+            )
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:pending-review", key="pending-review"),
+            now_ms=10,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:pending-review",
+            "running",
+            now_ms=11,
+        )
+        pending_commit = commit(
+            "commit:pending-review",
+            "dispatch:pending-review",
+            coverage=("ac:1",),
+        )
+        pending_task = self.store.project_task_result_payload(
+            target_task,
+            result_kind="complete",
+            post_proposal=None,
+            quality_gate_receipt=pending_commit["qualityGateReceipt"],
+            evidence_refs=pending_commit["evidenceRefs"],
+            now_ms=12,
+        )
+        pending_task["state"] = "completed"
+        pending_revision = self.store.review_target_revision(
+            root_id="root:1",
+            task_ids=["task:1"],
+            pending_commit_ids={"task:1": "commit:pending-review"},
+            pending_task_snapshots={"task:1": pending_task},
+        )
+
+        self.store.apply_commit(
+            pending_commit,
+            generation=0,
+            now_ms=12,
+        )
+
+        self.assertEqual(self.store.task("task:1"), pending_task)
+        self.assertEqual(
+            self.store.review_target_revision(
+                root_id="root:1",
+                task_ids=["task:1"],
+            ),
+            pending_revision,
+        )
+        self.store.record_workspace_integration(
+            "task:1",
+            integration_ref="integration:post-review-mutation",
+            now_ms=13,
+        )
+        self.assertNotEqual(
+            self.store.review_target_revision(
+                root_id="root:1",
+                task_ids=["task:1"],
+            ),
+            pending_revision,
+        )
 
     def test_task_cannot_claim_acceptance_criteria_outside_root_or_parent(self) -> None:
         self.seed()
@@ -1499,7 +2215,6 @@ class RoomKernelCoreTests(unittest.TestCase):
 
 class KernelModeAuthorityTests(unittest.TestCase):
     def test_only_cohort_and_kernel_only_claim_room_execution_authority(self) -> None:
-        # `test` runs the same machinery inside unit tests but must never be
         # collapsed into production authority; `shadow` observes; `off` disables.
         for mode in ("cohort", "kernel_only"):
             self.assertTrue(kernel_owns_room_execution(mode), mode)
@@ -1507,7 +2222,11 @@ class KernelModeAuthorityTests(unittest.TestCase):
             self.assertFalse(kernel_owns_room_execution(mode), repr(mode))
 
 
-def root(root_id: str) -> dict[str, object]:
+def root(
+    root_id: str,
+    *,
+    independent_review_required: bool = False,
+) -> dict[str, object]:
     return {
         "schemaVersion": ROOT_EXECUTION_SCHEMA_VERSION,
         "rootId": root_id,
@@ -1522,6 +2241,7 @@ def root(root_id: str) -> dict[str, object]:
         "terminalReceiptId": None,
         "activeProfileRef": None,
         "budgetPolicyRef": "room-budget:test-v1",
+        "independentReviewRequired": independent_review_required,
         "createdAtMs": 1,
     }
 

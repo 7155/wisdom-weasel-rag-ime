@@ -52,6 +52,19 @@ class DailyActivityTimelineTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
+    def test_preverified_store_does_not_reapply_migrations(self) -> None:
+        store = DailyActivityTimelineStore(
+            self.db_path,
+            project=self.project,
+            timezone_name="Asia/Shanghai",
+            preverified_schema=True,
+        )
+        with patch(
+            "rag_ime.activity_timeline.apply_database_migrations",
+            side_effect=AssertionError("migration replayed"),
+        ):
+            store.initialize()
+
     def test_maintenance_draft_review_approve_and_bootstrap_form_closed_loop(
         self,
     ) -> None:

@@ -96,14 +96,25 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertNotIn("enforceRagImeSensitiveFieldGuard()", handle_text)
         self.assertIn("ragImeNativeCompositionActive()", handle_text)
         self.assertIn('"assistant_overlay_tab_passed_through"', handle_text)
-        self.assertIn('finalizeRagImeActiveInputBuffer(reason: "return_key"', handle_text)
+        self.assertIn("let nativeCompositionBeforeKey = ragImeNativeCompositionActive()", handle_text)
+        self.assertIn("let modifiedReturn = !modifiers.intersection", handle_text)
+        self.assertIn("finalizeRagImeActiveInputBuffer(", handle_text)
+        self.assertIn('reason: "return_key"', handle_text)
+        self.assertIn('kind: "host_return"', handle_text)
+        self.assertIn('confidence: "strong"', handle_text)
+        self.assertIn("hostForwarded: true", handle_text)
+        self.assertIn("finalCommitted: true", handle_text)
+        self.assertIn("&& !nativeCompositionBeforeKey", handle_text)
+        self.assertIn("&& !handled", handle_text)
         self.assertIn("private var ragImeActiveInputBuffer: String = \"\"", patch_text)
         self.assertIn("rememberRagImeActiveInputFragment(string)", patch_text)
         self.assertIn("removeLastRagImeActiveInputCharacter()", patch_text)
         self.assertIn('source: "squirrel_input_segment"', patch_text)
         self.assertIn('"input-segment",', patch_text)
         self.assertIn('"finalized",', patch_text)
-        self.assertIn('"complete-input",', patch_text)
+        self.assertIn('captureTags.append(contentsOf: ["finalized", "complete-input"])', patch_text)
+        self.assertIn('"input_segment_capture_failed"', patch_text)
+        self.assertIn("RagImeInputCaptureOutbox.shared.contains(", patch_text)
         self.assertIn('"capture:\\(captureMetadata.captureSource)"', patch_text)
         self.assertIn('"ime_input_transaction_empty"', patch_text)
         self.assertIn('"field_context_not_bound_to_ime_transaction"', patch_text)
@@ -129,7 +140,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("showRagImeImmediatePostCommitPending(committedText: committedText, generation: generation)", schedule_text)
         self.assertIn('traceEvent: "assistant_overlay_post_commit_immediate"', patch_text)
         self.assertIn("func dismissRagImePostCommitAssistForSubmission(keyCode: UInt16)", patch_text)
-        self.assertIn("[36, 76].contains(keyCode) && !ragImeNativeCompositionActive()", handle_text)
+        self.assertIn("[36, 76].contains(keyCode) && !nativeCompositionBeforeKey", handle_text)
         self.assertIn('dismissRagImeAssistantOverlay(reason: "user_submit")', patch_text)
         self.assertIn('traceRagImeFrontendEvent("assistant_overlay_submit_dismissed"', patch_text)
         self.assertNotIn("\n+    self.client ?= sender as? IMKTextInput", patch_text)
@@ -186,8 +197,27 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         row_text = (overlay_sources / "RagImeSuggestionRowView.swift").read_text(encoding="utf-8")
         state_text = (overlay_sources / "RagImeAssistantSurfaceState.swift").read_text(encoding="utf-8")
         panel_text = (overlay_sources / "RagImeNonActivatingPanel.swift").read_text(encoding="utf-8")
+        outbox_text = (overlay_sources / "RagImeInputCaptureOutbox.swift").read_text(encoding="utf-8")
+        prepare_script = (root / "scripts" / "prepare_squirrel_workspace.sh").read_text(encoding="utf-8")
+        build_script = (root / "scripts" / "build_patched_squirrel.sh").read_text(encoding="utf-8")
         shared_motion_text = (root / "macos" / "Shared" / "RagImeMotion.swift").read_text(encoding="utf-8")
         combined_overlay_text = "\n".join([controller_text, card_text, row_text, state_text, panel_text])
+        self.assertIn("RagImeInputCaptureOutbox.swift", prepare_script)
+        self.assertIn("RagImeInputCaptureOutbox.swift", build_script)
+        self.assertIn("maximumEntries = 64", outbox_text)
+        self.assertIn("maximumBytes = 2 * 1024 * 1024", outbox_text)
+        self.assertIn("guard entries.count <= maximumEntries", outbox_text)
+        self.assertNotIn("entries.suffix(maximumEntries)", outbox_text)
+        self.assertNotIn("nowMs - $0.queuedAtMs", outbox_text)
+        self.assertIn("func contains(captureId: String) -> Bool", outbox_text)
+        self.assertIn("func retryPending(using client: RagImeSidecarClient) throws -> Int", outbox_text)
+        self.assertIn("observingCaptureId: nil", outbox_text)
+        self.assertIn('"input_capture_outbox_replayed"', patch_text)
+        self.assertIn('"input_capture_outbox_retry_deferred"', patch_text)
+        self.assertIn("let captureDeliveryEvents: Set<String>", patch_text)
+        self.assertIn("ragImeSidecarClient?.frontendTrace == true || isCaptureDeliveryEvent", patch_text)
+        self.assertIn("let includeText = !isCaptureDeliveryEvent", patch_text)
+        self.assertLess(outbox_text.index("try persist(entries)"), outbox_text.index("client.sidecarURL"))
         self.assertIn(
             "if currentState.isExplicit && currentState != .explicitGenerating {",
             controller_text,
@@ -485,7 +515,11 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertNotIn('"one-time", "one time", "otp"', patch_text)
         self.assertIn("func enforceRagImeFastPrivacyGuard() -> Bool", patch_text)
         self.assertIn("func ragImeFullTextSHA256(_ text: String) -> String", patch_text)
-        self.assertIn("selectedTextSha256: ragImeFullTextSHA256(selectedText)", patch_text)
+        self.assertIn("contentSha256: ragImeFullTextSHA256(selectedText)", patch_text)
+        self.assertIn('schemaVersion: "rag-ime.input-capture.v2"', patch_text)
+        self.assertIn('boundaryKind: boundary.kind', patch_text)
+        self.assertIn('boundaryConfidence: boundary.confidence', patch_text)
+        self.assertIn("finalCommitted: boundary.finalCommitted", patch_text)
         self.assertIn("let documentLength = client.length()", patch_text)
         self.assertIn(
             "let length = min(documentLength, ragImeFinalizedFieldContextLimit)",
@@ -704,7 +738,10 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("let frontendTrace: Bool", patch_text)
         self.assertIn("rag_ime/frontend_trace", patch_text)
         self.assertIn("func traceRagImeFrontendEvent(_ event: String, fields: [String: Any])", patch_text)
-        self.assertIn("guard ragImeSidecarClient?.frontendTrace == true else { return }", patch_text)
+        self.assertIn(
+            "guard ragImeSidecarClient?.frontendTrace == true || isCaptureDeliveryEvent else { return }",
+            patch_text,
+        )
         self.assertIn("ragImePrepareFrontendTraceLog", patch_text)
         self.assertIn(".posixPermissions: 0o600", patch_text)
         self.assertIn('appendingPathExtension("1")', patch_text)
@@ -2048,7 +2085,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
             'func ragImePanelUsesSideDisplay() -> Bool { false }; '
             '// ragImePrivacyDisposition == "allowed"; privacyDisposition: ragImePrivacyDisposition; '
             'func traceRagImeFrontendEvent() {}; '
-            '// guard ragImeSidecarClient?.frontendTrace == true else { return }; '
+            '// guard ragImeSidecarClient?.frontendTrace == true || isCaptureDeliveryEvent else { return }; '
             '// guard !ragImeSensitiveFieldActive || sensitiveSafeEvents.contains(event) else { return }; '
             '// ragImePrepareFrontendTraceLog .posixPermissions: 0o600 appendingPathExtension("1"); '
             '// let contextAnchor = ragImeStableTextHash(context); '

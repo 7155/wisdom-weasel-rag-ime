@@ -145,7 +145,7 @@ struct NativeRoutePolicyTests {
             parameters: [:],
             query: [:],
             body: [
-                "authorityKind": "session_plan",
+                "authorityKind": "session_todo",
                 "authorityId": "session:alpha",
                 "authorityRevision": 2,
                 "workspaceRoot": "/tmp/workspace",
@@ -271,6 +271,30 @@ struct NativeRoutePolicyTests {
             ]
         )
         expect(roomUpdate.request.url?.absoluteString.contains("room:alpha") == true, "room update accepts governed execution fields")
+
+        let roomStart = try policy.resolveRequest(
+            pathId: "agent.room.startExecution",
+            parameters: ["roomId": "room:alpha"],
+            query: [:],
+            body: [
+                "action": "start_execution",
+                "rootId": "room-root:alpha",
+                "clientActionId": "room-start:alpha",
+            ]
+        )
+        expect(roomStart.request.url?.path == "/api/agent/rooms/room:alpha/start-execution", "Room typed-start route")
+        expect(roomStart.request.httpMethod == "POST", "Room typed-start method")
+        expectThrows("Room typed-start requires a durable client action") {
+            _ = try policy.resolveRequest(
+                pathId: "agent.room.startExecution",
+                parameters: ["roomId": "room:alpha"],
+                query: [:],
+                body: [
+                    "action": "start_execution",
+                    "rootId": "room-root:alpha",
+                ]
+            )
+        }
 
         let personaCreate = try policy.resolveRequest(
             pathId: "agent.roles.create",

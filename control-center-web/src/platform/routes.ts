@@ -242,14 +242,6 @@ export const CONTROL_ROUTES = {
     params: { sessionId: null },
     responseContract: 'agent-workflow-state.v1',
   },
-  'agent.session.plan.mutate': {
-    method: 'POST',
-    path: '/api/agent/sessions/:sessionId/plan',
-    params: { sessionId: null },
-    body: ['action', 'expectedRevision', 'title', 'items', 'note'],
-    requiredBody: ['action'],
-    responseContract: 'agent-workflow-state.v1',
-  },
   'agent.session.goal.mutate': {
     method: 'POST',
     path: '/api/agent/sessions/:sessionId/goal',
@@ -419,6 +411,13 @@ export const CONTROL_ROUTES = {
     params: { roomId: null },
     responseContract: 'agent-room-snapshot.v1',
   },
+  'agent.room.history': {
+    method: 'GET',
+    path: '/api/agent/rooms/:roomId/history',
+    params: { roomId: null },
+    query: ['beforeSequence', 'limit'],
+    responseContract: 'agent-room-event-page.v1',
+  },
   'agent.room.archive': {
     method: 'PATCH',
     path: '/api/agent/rooms/:roomId',
@@ -470,8 +469,23 @@ export const CONTROL_ROUTES = {
     method: 'POST',
     path: '/api/agent/rooms/:roomId/messages',
     params: { roomId: null },
-    body: ['message', 'clientMessageId', 'participantIds', 'workItemId', 'attachmentIds'],
+    body: [
+      'message',
+      'clientMessageId',
+      'participantIds',
+      'workItemId',
+      'attachmentIds',
+      'answerToPostId',
+      'answerToRootId',
+    ],
     requiredBody: ['message'],
+  },
+  'agent.room.startExecution': {
+    method: 'POST',
+    path: '/api/agent/rooms/:roomId/start-execution',
+    params: { roomId: null },
+    body: ['action', 'rootId', 'clientActionId'],
+    requiredBody: ['action', 'rootId', 'clientActionId'],
   },
   'agent.room.abort': {
     method: 'POST',
@@ -755,7 +769,12 @@ export const CONTROL_ROUTES = {
   'agent.memoryMaintenance.run': {
     method: 'GET',
     path: '/api/agent/memory-maintenance',
-    query: ['runId', 'project', 'limit'],
+    query: ['runId', 'jobId', 'project', 'limit'],
+  },
+  'agent.memoryMaintenance.trigger': {
+    method: 'POST',
+    path: '/api/agent/memory-maintenance',
+    body: ['project', 'ownerKind', 'ownerId', 'instruction', 'manual', 'maxSources'],
   },
   'agent.subagents.templates': {
     method: 'GET',
@@ -1044,8 +1063,8 @@ export const CONTROL_ROUTES = {
   'memory.source.disposition': {
     method: 'POST',
     path: '/api/memory/source/disposition',
-    body: ['sourceId', 'disposition'],
-    requiredBody: ['sourceId', 'disposition'],
+    body: ['sourceId', 'evidenceId', 'disposition'],
+    requiredBody: ['disposition'],
   },
   'memory.book.archive.preview': {
     method: 'POST',

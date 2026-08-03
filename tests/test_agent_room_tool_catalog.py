@@ -61,6 +61,10 @@ class RoomToolCatalogTests(unittest.TestCase):
             "product-tool",
         )
         self.assertEqual(
+            plan.runtime_registry["workspace_read"]["operation"],
+            "product.workspace_read",
+        )
+        self.assertEqual(
             plan.runtime_registry["workspace_read"]["inputSchema"],
             workspace_read["parameters"],
         )

@@ -8,16 +8,15 @@ import {
   Database,
   Download,
   FileJson2,
-  GitCompareArrows,
   Layers3,
-  ListTree,
+  MessageSquareText,
   Play,
   RefreshCw,
-  Server,
+  Search,
   ShieldCheck,
-  Wrench,
+  Sparkles,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
 import {
@@ -32,8 +31,10 @@ import {
   Switch,
 } from '@/components/primitives';
 import { sessionItems, type SessionSummary } from '@/features/agent/types';
+import { MarkdownBody } from '@/features/agent/timeline/MarkdownRenderer';
 import {
   formatJson,
+  describeDebugTurn,
   messagePreview,
   normalizeDebugContextResponse,
   record,
@@ -41,32 +42,10 @@ import {
   type DebugModelCall,
   type DebugToolBatch,
   type DebugToolExecution,
+  type DebugTurnSummary,
 } from './model';
 import { buildContextDebugHtml } from './html-export';
 import './context-debug.css';
-
-type PayloadTab =
-  | 'delta'
-  | 'context'
-  | 'provider-request'
-  | 'provider-response'
-  | 'assistant'
-  | 'runtime-input'
-  | 'system-prompt'
-  | 'tool-schemas'
-  | 'raw';
-
-const PAYLOAD_TABS: ReadonlyArray<{ id: PayloadTab; label: string }> = [
-  { id: 'delta', label: '本次增量' },
-  { id: 'context', label: '完整上下文' },
-  { id: 'provider-request', label: '模型服务请求' },
-  { id: 'provider-response', label: '模型服务响应' },
-  { id: 'assistant', label: '助手回复' },
-  { id: 'runtime-input', label: '本轮输入' },
-  { id: 'system-prompt', label: '系统指令' },
-  { id: 'tool-schemas', label: '工具定义' },
-  { id: 'raw', label: '原始记录' },
-];
 
 export function ContextDebugFeature() {
   const transport = useControlTransport();
@@ -74,8 +53,6 @@ export function ContextDebugFeature() {
   const requestedSessionId = searchParams.get('sessionId') ?? '';
   const requestedTurnId = searchParams.get('turnId') ?? '';
   const [live, setLive] = useState(true);
-  const [selectedCallIndex, setSelectedCallIndex] = useState(0);
-  const [payloadTab, setPayloadTab] = useState<PayloadTab>('delta');
   const [htmlPreviewUrls, setHtmlPreviewUrls] = useState<{ download: string; preview: string } | null>(null);
   const [refreshState, setRefreshState] = useState<'idle' | 'pending' | 'succeeded' | 'failed'>('idle');
   const sessionsQuery = useQuery({
@@ -119,17 +96,6 @@ export function ContextDebugFeature() {
     [contextQuery.data],
   );
   const context = response.context;
-  const calls = context?.modelCalls ?? [];
-
-  useEffect(() => {
-    if (!calls.length) {
-      setSelectedCallIndex(0);
-      return;
-    }
-    if (!calls.some((call) => call.index === selectedCallIndex)) {
-      setSelectedCallIndex(calls.at(-1)?.index ?? calls[0]?.index ?? 0);
-    }
-  }, [calls, selectedCallIndex]);
 
   useEffect(() => () => {
     if (!htmlPreviewUrls) return;
@@ -137,22 +103,13 @@ export function ContextDebugFeature() {
     URL.revokeObjectURL(htmlPreviewUrls.download);
   }, [htmlPreviewUrls]);
 
-  const selectedCall = calls.find((call) => call.index === selectedCallIndex) ?? calls.at(-1);
   const selectedSessionTitle = sessions.find((session) => session.id === sessionId)?.title ?? '';
-  const turnOptions = [
-    { value: '', label: '最新回合（自动跟随）' },
-    ...response.availableTurns.map((turn) => ({
-      value: turn.turnId,
-      label: `${formatTimestamp(turn.capturedAtMs)} · ${turn.modelCallCount} 次调用 · ${turn.toolCallCount} 个工具`,
-    })),
-  ];
 
   function selectSession(nextSessionId: string): void {
     const next = new URLSearchParams(searchParams);
     next.set('sessionId', nextSessionId);
     next.delete('turnId');
     setSearchParams(next, { replace: true });
-    setSelectedCallIndex(0);
   }
 
   function selectTurn(nextTurnId: string): void {
@@ -160,7 +117,6 @@ export function ContextDebugFeature() {
     if (nextTurnId) next.set('turnId', nextTurnId);
     else next.delete('turnId');
     setSearchParams(next, { replace: true });
-    setSelectedCallIndex(0);
   }
 
   async function refreshContext(): Promise<void> {
@@ -199,7 +155,7 @@ export function ContextDebugFeature() {
           <span className="context-debug-heading__icon"><Braces size={18} /></span>
           <span>
             <h1>上下文检查</h1>
-            <small><ShieldCheck size={12} />看看每次模型真正收到了什么；正文只在你主动展开时显示</small>
+            <small><ShieldCheck size={12} />逐轮还原模型真正收到的上下文；原始载荷按需展开</small>
           </span>
         </div>
         <div className="context-debug-controls">
@@ -211,14 +167,6 @@ export function ContextDebugFeature() {
             options={sessionOptions}
             placeholder="选择会话"
             value={sessionId}
-          />
-          <Select
-            aria-label="选择上下文回合"
-            className="context-debug-select context-debug-select--turn"
-            disabled={!sessionId}
-            onValueChange={selectTurn}
-            options={turnOptions}
-            value={requestedTurnId}
           />
           <Switch
             checked={live}
@@ -243,7 +191,7 @@ export function ContextDebugFeature() {
             size="small"
             variant="quiet"
           >
-            逐次上下文
+            HTML 报告
           </Button>
           <a className="context-debug-back" href={sessionId ? `#/agent?sessionId=${encodeURIComponent(sessionId)}` : '#/agent'}>
             <ArrowLeft size={14} />对话
@@ -263,100 +211,14 @@ export function ContextDebugFeature() {
         </DebugNotice>
       ) : null}
 
-      <ContextXraySummary call={selectedCall} context={context} telemetry={response.telemetry} />
-
-      <details className="context-debug-audit">
-        <summary><Braces size={15} /><span><strong>展开原始审计区</strong><small>按需显示消息正文、模型服务载荷、系统指令、工具定义与原始记录</small></span></summary>
-      <div className="context-debug-workspace">
-        <aside className="context-debug-call-rail" aria-label="模型调用列表">
-          <DebugSummary context={context} />
-          <div className="context-debug-call-rail__heading">
-            <span><Layers3 size={14} />模型调用</span>
-            <b>{calls.length}</b>
-          </div>
-          {calls.length ? (
-            <ol>
-              {calls.map((call) => (
-                <li key={call.index}>
-                  <button
-                    aria-current={selectedCall?.index === call.index ? 'true' : undefined}
-                    onClick={() => setSelectedCallIndex(call.index)}
-                    type="button"
-                  >
-                    <span className="context-debug-call__index">{call.index}</span>
-                    <span className="context-debug-call__copy">
-                      <strong>模型调用 {call.index}</strong>
-                      <small>{call.contextMessages.length} 条消息 · {call.providerExchanges.length} 次模型服务尝试</small>
-                      <span>
-                        <em data-tone="added">+{call.contextDelta.addedMessageCount}</em>
-                        <em data-tone="removed">-{call.contextDelta.removedMessageCount}</em>
-                        <time>{formatTimestamp(call.capturedAtMs)}</time>
-                      </span>
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p className="context-debug-call-rail__empty">
-              {contextQuery.isPending ? '正在读取运行上下文' : '这轮还没有模型调用'}
-            </p>
-          )}
-        </aside>
-
-        <section className="context-debug-main">
-          <section className="context-debug-payload" aria-label="原始上下文载荷">
-            <header>
-              <div>
-                <GitCompareArrows size={15} />
-                <span>
-                  <strong>{selectedCall ? `模型调用 ${selectedCall.index}` : '等待模型调用'}</strong>
-                  <small>{selectedCall ? callCaption(selectedCall) : '选择有可用临时上下文的回合'}</small>
-                </span>
-              </div>
-              {selectedCall?.completedAtMs ? <span className="context-debug-state" data-tone="success">已完成</span> : null}
-              {selectedCall && !selectedCall.completedAtMs ? <span className="context-debug-state" data-tone="warning">进行中</span> : null}
-            </header>
-            <nav className="context-debug-tabs" aria-label="上下文载荷类型" role="tablist">
-              {PAYLOAD_TABS.map((tab) => (
-                <button
-                  aria-selected={payloadTab === tab.id}
-                  key={tab.id}
-                  onClick={() => setPayloadTab(tab.id)}
-                  role="tab"
-                  type="button"
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </nav>
-            <div className="context-debug-payload__body">
-              {selectedCall && !hasExactProviderContext(selectedCall) ? (
-                <DebugNotice tone="warning">
-                  这条历史记录没有逐次模型服务快照；系统指令与工具定义
-                  仅为整轮记录，不能作为当次实际请求的精确证据。
-                </DebugNotice>
-              ) : null}
-              {context && selectedCall ? (
-                <PayloadView call={selectedCall} context={context} tab={payloadTab} />
-              ) : (
-                <EmptyState
-                  description="发送一条消息后，这里会按模型调用逐次展示真实请求。"
-                  icon={Database}
-                  title="暂无原始上下文"
-                />
-              )}
-            </div>
-          </section>
-
-          <ToolExecutionTimeline
-            batches={context?.toolBatches ?? []}
-            selectedCallIndex={selectedCall?.index}
-            tools={context?.toolExecutions ?? []}
-          />
-        </section>
-      </div>
-      </details>
+      <ContextDebugDocument
+        availableTurns={response.availableTurns}
+        context={context}
+        loading={contextQuery.isPending}
+        onSelectTurn={selectTurn}
+        selectedTurnId={requestedTurnId || response.turnId || context?.turnId || ''}
+        telemetry={response.telemetry}
+      />
     </main>
     <Dialog
       onOpenChange={(open) => {
@@ -393,6 +255,659 @@ export function ContextDebugFeature() {
   );
 }
 
+type ContextTreeFilter = 'all' | 'default' | 'no-tools' | 'user-only';
+
+interface ContextTreeEntry {
+  depth: 0 | 1;
+  id: string;
+  kind: 'assistant' | 'call' | 'context' | 'tool' | 'user';
+  label: string;
+  preview: string;
+}
+
+function ContextDebugDocument({
+  availableTurns,
+  context,
+  loading,
+  onSelectTurn,
+  selectedTurnId,
+  telemetry,
+}: {
+  availableTurns: DebugTurnSummary[];
+  context?: DebugContextRecord;
+  loading: boolean;
+  onSelectTurn: (turnId: string) => void;
+  selectedTurnId: string;
+  telemetry: Record<string, unknown>;
+}) {
+  const [activeEntryId, setActiveEntryId] = useState('');
+  const [treeFilter, setTreeFilter] = useState<ContextTreeFilter>('default');
+  const [treeQuery, setTreeQuery] = useState('');
+  const treeEntries = useMemo(() => context ? buildContextTree(context) : [], [context]);
+  const visibleTreeEntries = useMemo(
+    () => treeEntries.filter((entry) => contextTreeEntryVisible(entry, treeFilter, treeQuery)),
+    [treeEntries, treeFilter, treeQuery],
+  );
+  const orderedTurns = useMemo(
+    () => [...availableTurns].sort((left, right) => left.capturedAtMs - right.capturedAtMs),
+    [availableTurns],
+  );
+
+  useEffect(() => {
+    setActiveEntryId('');
+    setTreeQuery('');
+  }, [context?.turnId]);
+
+  if (!context?.modelCalls.length) {
+    return (
+      <div className="context-debug-reader__empty">
+        <EmptyState
+          description={loading ? '正在读取运行上下文。' : '发送一条消息后，这里会按模型调用恢复实际上下文。'}
+          icon={Database}
+          title={loading ? '正在读取' : '暂无模型调用'}
+        />
+      </div>
+    );
+  }
+
+  function revealEntry(id: string): void {
+    setActiveEntryId(id);
+    const target = document.getElementById(id);
+    if (!target) return;
+    const reduceMotion = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    target.scrollIntoView?.({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+    target.focus({ preventScroll: true });
+  }
+
+  return (
+    <section className="context-debug-session-viewer" aria-label="逐次上下文阅读">
+      <aside className="context-debug-session-tree" aria-label="上下文目录">
+        <TurnJourney
+          currentContext={context}
+          onSelectTurn={onSelectTurn}
+          selectedTurnId={selectedTurnId || context.turnId}
+          turns={orderedTurns}
+        />
+        <header>
+          <label>
+            <Search aria-hidden="true" size={13} />
+            <input
+              aria-label="搜索上下文条目"
+              onChange={(event) => setTreeQuery(event.target.value)}
+              placeholder="搜索消息或工具…"
+              spellCheck={false}
+              type="search"
+              value={treeQuery}
+            />
+          </label>
+          <div aria-label="上下文目录筛选">
+            {([
+              ['default', '默认'],
+              ['no-tools', '无工具'],
+              ['user-only', '用户'],
+              ['all', '全部'],
+            ] as const).map(([value, label]) => (
+              <button
+                aria-pressed={treeFilter === value}
+                key={value}
+                onClick={() => setTreeFilter(value)}
+                type="button"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </header>
+        <ol>
+          {visibleTreeEntries.map((entry) => (
+            <li data-depth={entry.depth} data-kind={entry.kind} key={entry.id}>
+              <button
+                aria-current={activeEntryId === entry.id ? 'location' : undefined}
+                onClick={() => revealEntry(entry.id)}
+                type="button"
+              >
+                <span aria-hidden="true">{treeMarker(entry)}</span>
+                <strong>{entry.label}</strong>
+                <small>{entry.preview}</small>
+              </button>
+            </li>
+          ))}
+        </ol>
+        <footer>{visibleTreeEntries.length} / {treeEntries.length} 条 · {context.modelCalls.length} 次调用</footer>
+      </aside>
+
+      <article className="context-debug-session-content">
+        <ContextAssemblyOverview context={context} telemetry={telemetry} turns={orderedTurns} />
+
+        <div className="context-debug-session-preamble">
+          <ContextDisclosure
+            label="System prompt"
+            meta={`${context.systemPrompt.length.toLocaleString('zh-CN')} 字符`}
+            tone="system"
+          >
+            <pre className="context-debug-reader__code context-debug-reader__code--text">
+              {context.systemPrompt || '没有捕获 System prompt'}
+            </pre>
+          </ContextDisclosure>
+          <ContextDisclosure
+            label={`Available tools (${context.activeTools.length})`}
+            meta={context.activeTools.slice(0, 6).join(' · ') || '没有启用工具'}
+            tone="tools"
+          >
+            <div className="context-debug-session-tool-chips">
+              {context.activeTools.map((tool) => <span key={tool}>{tool}</span>)}
+            </div>
+            <pre className="context-debug-reader__code">{formatJson(context.toolSchemas)}</pre>
+          </ContextDisclosure>
+        </div>
+
+        <div className="context-debug-session-messages">
+          {context.modelCalls.map((call) => (
+            <ContextCallDocument call={call} context={context} key={call.index} />
+          ))}
+        </div>
+
+        <footer className="context-debug-session-footer">
+          <ContextDisclosure
+            label="本轮原始输入"
+            meta={`${context.prompt.length.toLocaleString('zh-CN')} 字符`}
+            tone="messages"
+          >
+            <pre className="context-debug-reader__code context-debug-reader__code--text">
+              {context.prompt || '没有捕获本轮原始输入'}
+            </pre>
+          </ContextDisclosure>
+          <ContextDisclosure label="本回合原始记录" meta="逐字段核对" tone="raw">
+            <pre className="context-debug-reader__code">{formatJson(context.raw)}</pre>
+          </ContextDisclosure>
+        </footer>
+      </article>
+    </section>
+  );
+}
+
+function TurnJourney({
+  currentContext,
+  onSelectTurn,
+  selectedTurnId,
+  turns,
+}: {
+  currentContext: DebugContextRecord;
+  onSelectTurn: (turnId: string) => void;
+  selectedTurnId: string;
+  turns: DebugTurnSummary[];
+}) {
+  const selectedButtonRef = useRef<HTMLButtonElement>(null);
+  const selectedDescription = describeDebugTurn(currentContext, turns);
+  useEffect(() => {
+    selectedButtonRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [selectedTurnId]);
+  return (
+    <nav className="context-debug-turns" aria-label="对话轮次">
+      <header>
+        <span><Clock3 aria-hidden="true" size={15} /><strong>轮次轨迹</strong></span>
+        <small>本机保留 {turns.length} 轮</small>
+      </header>
+      <ol>
+        {turns.map((turn, index) => {
+          const label = turn.turnId === currentContext.turnId
+            ? selectedDescription.label
+            : turnSummaryLabel(turn, index);
+          return (
+            <li data-phase={turn.assemblyPhase ?? 'unknown'} key={turn.turnId}>
+              <button
+                aria-current={selectedTurnId === turn.turnId ? 'step' : undefined}
+                onClick={() => onSelectTurn(turn.turnId)}
+                ref={selectedTurnId === turn.turnId ? selectedButtonRef : undefined}
+                type="button"
+              >
+                <span className="context-debug-turns__ordinal">
+                  {String(turn.turnOrdinal ?? index + 1).padStart(2, '0')}
+                </span>
+                <span className="context-debug-turns__copy">
+                  <span><strong>{label}</strong><time>{formatTimestamp(turn.capturedAtMs)}</time></span>
+                  <small>{turn.summary || `${turn.modelCallCount} 次模型调用 · ${turn.toolCallCount} 次工具`}</small>
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+      <p>这里是可核对的保留窗口；轮换掉的旧轮次不会被伪装成仍然可读。</p>
+    </nav>
+  );
+}
+
+function ContextAssemblyOverview({
+  context,
+  telemetry,
+  turns,
+}: {
+  context: DebugContextRecord;
+  telemetry: Record<string, unknown>;
+  turns: DebugTurnSummary[];
+}) {
+  const description = describeDebugTurn(context, turns);
+  const currentIndex = Math.max(0, turns.findIndex((turn) => turn.turnId === context.turnId));
+  const latestCall = context.modelCalls.at(-1);
+  const messageChanges = context.modelCalls.reduce(
+    (total, call) => ({
+      added: total.added + call.contextDelta.addedMessageCount,
+      removed: total.removed + call.contextDelta.removedMessageCount,
+    }),
+    { added: 0, removed: 0 },
+  );
+  const providerMessages = latestCall ? callProviderMessages(latestCall) : [];
+  const telemetryContext = record(telemetry.context);
+  const tokenCount = projectedNumber(telemetryContext, ['tokens']);
+  const layers = contextAssemblyLayers(context, providerMessages, description.phase);
+  return (
+    <header className="context-debug-assembly" data-phase={description.phase}>
+      <div className="context-debug-assembly__title">
+        <span className="context-debug-assembly__mark"><Sparkles aria-hidden="true" size={17} /></span>
+        <span>
+          <small>TURN {String(description.ordinal ?? currentIndex + 1).padStart(2, '0')} · CONTEXT ASSEMBLY</small>
+          <h2>{description.label}</h2>
+          <p>{description.description}</p>
+        </span>
+        <em>{formatTimestamp(context.capturedAtMs)}</em>
+      </div>
+      <dl className="context-debug-assembly__metrics">
+        <div><dt>模型</dt><dd>{modelLabel(context.model)}</dd></div>
+        <div><dt>最终消息</dt><dd>{providerMessages.length} 条</dd></div>
+        <div><dt>本轮调用</dt><dd>{context.modelCalls.length} 次</dd></div>
+        <div><dt>上下文用量</dt><dd>{tokenCount === undefined ? '未报告' : `${tokenCount.toLocaleString('zh-CN')} 词元`}</dd></div>
+        <div><dt>累计变化</dt><dd>+{messageChanges.added} / -{messageChanges.removed}</dd></div>
+      </dl>
+      <ol className="context-debug-assembly__layers" aria-label="本轮上下文装配顺序">
+        {layers.map((layer, index) => (
+          <li data-channel={layer.channel} key={layer.label}>
+            <span>{String(index + 1).padStart(2, '0')}</span>
+            <div><strong>{layer.label}</strong><small>{layer.detail}</small></div>
+            <em>{layer.meta}</em>
+          </li>
+        ))}
+      </ol>
+    </header>
+  );
+}
+
+function contextAssemblyLayers(
+  context: DebugContextRecord,
+  providerMessages: unknown[],
+  phase: ReturnType<typeof describeDebugTurn>['phase'],
+): Array<{ label: string; detail: string; meta: string; channel: string }> {
+  const options = record(context.systemPromptOptions);
+  const skills = Array.isArray(options.skills) ? options.skills : [];
+  const injectedMessages = providerMessages.filter((message) => Boolean(record(message).customType));
+  const dialogueMessages = providerMessages.filter((message) => !record(message).customType);
+  const injectedLabels = [...new Set(injectedMessages.map((message) => (
+    customMessageLabel(String(record(message).customType ?? ''))
+  )))].filter(Boolean);
+  const prioritizedInjectedLabels = phase === 'compaction_recovery'
+    ? [...injectedLabels].sort((left, right) => (
+        Number(right === '压缩恢复' || right === 'Room 恢复')
+        - Number(left === '压缩恢复' || left === 'Room 恢复')
+      ))
+    : injectedLabels;
+  return [
+    {
+      channel: 'system',
+      label: 'System 与项目指令',
+      detail: context.systemPrompt ? '角色、边界和项目级约束' : '本轮未捕获系统指令',
+      meta: `${context.systemPrompt.length.toLocaleString('zh-CN')} 字符`,
+    },
+    {
+      channel: 'tools',
+      label: 'Skills 与工具',
+      detail: skills.length ? skills.map((skill) => String(record(skill).name ?? 'Skill')).slice(0, 3).join(' · ') : '按本轮权限声明能力',
+      meta: `${skills.length} Skill · ${context.activeTools.length} 工具`,
+    },
+    {
+      channel: 'runtime',
+      label: phase === 'compaction_recovery' ? '压缩恢复与运行时' : '项目与运行时上下文',
+      detail: prioritizedInjectedLabels.slice(0, 3).join(' · ') || '本轮没有额外注入',
+      meta: `${injectedMessages.length} 条注入`,
+    },
+    {
+      channel: 'history',
+      label: 'Provider 对话尾部',
+      detail: dialogueMessages.length ? '历史与本轮消息按最终发送顺序保留' : '本轮没有对话消息',
+      meta: `${dialogueMessages.length} 条消息`,
+    },
+    {
+      channel: 'input',
+      label: '当前用户输入',
+      detail: compactTreePreview(context.prompt),
+      meta: `${context.prompt.length.toLocaleString('zh-CN')} 字符`,
+    },
+  ];
+}
+
+function turnSummaryLabel(turn: DebugTurnSummary, index: number): string {
+  if (turn.assemblyPhase === 'initial' || turn.turnOrdinal === 1) return '首轮装配';
+  if (turn.assemblyPhase === 'compaction_recovery') return '压缩后恢复';
+  if (turn.assemblyPhase === 'incremental') return '增量装配';
+  return index === 0 ? '最早保留轮次' : '对话轮次';
+}
+
+function ContextCallDocument({ call, context }: { call: DebugModelCall; context: DebugContextRecord }) {
+  const tools = context.toolExecutions.filter((tool) => tool.modelCallIndex === call.index);
+  const batches = context.toolBatches.filter((batch) => batch.modelCallIndex === call.index);
+  const providerMessages = callProviderMessages(call);
+  const titleId = `context-debug-call-${call.index}-title`;
+  return (
+    <section
+      aria-labelledby={titleId}
+      className="context-debug-session-call"
+      id={callEntryId(call.index)}
+      tabIndex={-1}
+    >
+      <header className="context-debug-session-call__marker">
+        <h3 id={titleId}>model call <b>{call.index}</b></h3>
+        <span>{call.completedAtMs ? 'completed' : 'running'}</span>
+        <time>{formatTimestamp(call.capturedAtMs)}</time>
+        <small>
+          {call.contextDelta.baseCallIndex ? `base #${call.contextDelta.baseCallIndex}` : 'initial context'} · +{call.contextDelta.addedMessageCount} / -{call.contextDelta.removedMessageCount}
+        </small>
+      </header>
+
+      {!hasExactProviderContext(call) ? (
+        <p className="context-debug-session-call__warning">
+          legacy snapshot · System prompt 与工具定义来自整轮记录，不是这次请求的精确证据
+        </p>
+      ) : null}
+
+      <ReadableMessageList
+        callIndex={call.index}
+        emptyLabel="本次调用没有新增消息"
+        messages={call.contextDelta.addedMessages}
+      />
+
+      {call.assistantMessage !== undefined ? (
+        <ReadableMessageList
+          callIndex={call.index}
+          emptyLabel="没有捕获模型回复"
+          messageId={(index) => assistantEntryId(call.index, index)}
+          messages={[call.assistantMessage]}
+        />
+      ) : null}
+
+      {batches.length || tools.length ? <ContextCallTools batches={batches} tools={tools} /> : null}
+
+      <div className="context-debug-session-call__request">
+        <ContextDisclosure
+          label="Request details"
+          meta={`${providerMessages.length} messages · ${callProviderTools(call, context).length} tools · ${call.providerExchanges.length} provider attempt`}
+          tone="provider"
+        >
+          <dl className="context-debug-session-delta" aria-label={`模型调用 ${call.index} 上下文变化`}>
+            <div><dt>common prefix</dt><dd>{call.contextDelta.commonPrefixMessages}</dd></div>
+            <div><dt>added</dt><dd>+{call.contextDelta.addedMessageCount}</dd></div>
+            <div><dt>removed</dt><dd>-{call.contextDelta.removedMessageCount}</dd></div>
+            <div><dt>duration</dt><dd>{durationLabel(call.capturedAtMs, call.completedAtMs)}</dd></div>
+          </dl>
+          <ContextDisclosure label="System prompt" meta={`${callProviderSystemPrompt(call, context).length} 字符`} tone="system">
+            <pre className="context-debug-reader__code context-debug-reader__code--text">{callProviderSystemPrompt(call, context) || '没有捕获 System prompt'}</pre>
+          </ContextDisclosure>
+          <ContextDisclosure label="Full messages" meta={`${providerMessages.length} 条`} tone="messages">
+            <ReadableMessageList callIndex={call.index} emptyLabel="当前调用上下文为空" messages={providerMessages} nested />
+          </ContextDisclosure>
+          <ContextDisclosure label="Tool schemas" meta={`${callProviderTools(call, context).length} 个`} tone="tools">
+            <pre className="context-debug-reader__code">{formatJson(callProviderTools(call, context))}</pre>
+          </ContextDisclosure>
+          <ContextDisclosure label="Provider exchange" meta={`${call.providerExchanges.length} 次`} tone="provider">
+            <pre className="context-debug-reader__code">{formatJson(call.providerExchanges)}</pre>
+          </ContextDisclosure>
+          <ContextDisclosure label="Raw call" meta="逐字段核对" tone="raw">
+            <pre className="context-debug-reader__code">{formatJson(call)}</pre>
+          </ContextDisclosure>
+        </ContextDisclosure>
+      </div>
+    </section>
+  );
+}
+
+function ReadableMessageList({
+  callIndex,
+  emptyLabel,
+  messageId,
+  messages,
+  nested = false,
+}: {
+  callIndex: number;
+  emptyLabel: string;
+  messageId?: (index: number) => string;
+  messages: unknown[];
+  nested?: boolean;
+}) {
+  if (!messages.length) return <p className="context-debug-reader__empty-copy">{emptyLabel}</p>;
+  return (
+    <ol className="context-debug-session-message-list" data-nested={nested || undefined}>
+      {messages.map((message, index) => {
+        const item = record(message);
+        const role = String(item.role ?? 'message').toLowerCase();
+        const customType = String(item.customType ?? '');
+        const body = readableMessageContent(message);
+        const id = messageId?.(index) ?? messageEntryId(callIndex, index);
+        return (
+          <li
+            data-custom={customType || undefined}
+            data-role={customType ? 'context' : role}
+            id={nested ? undefined : id}
+            key={`${role}:${customType}:${index}`}
+            tabIndex={nested ? undefined : -1}
+          >
+            <header>
+              <strong>{customType ? customMessageLabel(customType) : contextMessageRoleLabel(role)}</strong>
+              <small>#{index + 1}</small>
+            </header>
+            <div className="context-debug-session-message__body">
+              {customType ? body : <MarkdownBody text={body} />}
+            </div>
+            <details>
+              <summary>raw message</summary>
+              <pre className="context-debug-reader__code">{formatJson(message)}</pre>
+            </details>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function ContextCallTools({ batches, tools }: { batches: DebugToolBatch[]; tools: DebugToolExecution[] }) {
+  const toolsById = new Map(tools.map((tool) => [tool.toolCallId, tool]));
+  const visibleBatches = batches.length ? batches : tools.map((tool, index) => ({
+    id: `tool:${tool.toolCallId}`,
+    modelCallIndex: tool.modelCallIndex,
+    runtimeTurnIndex: tool.runtimeTurnIndex,
+    stage: index + 1,
+    executionMode: 'serial' as const,
+    startedAtMs: tool.startedAtMs,
+    endedAtMs: tool.endedAtMs,
+    status: tool.status,
+    toolCallIds: [tool.toolCallId],
+  }));
+  return (
+    <div className="context-debug-session-tools">
+      {visibleBatches.map((batch) => (
+        <section data-mode={batch.executionMode} key={batch.id}>
+          <header>
+            <span>stage {batch.stage}</span>
+            <strong>{batch.executionMode === 'parallel' ? `parallel · ${batch.toolCallIds.length} tools` : 'serial'}</strong>
+            <small>{durationLabel(batch.startedAtMs, batch.endedAtMs)}</small>
+          </header>
+          <div>
+            {batch.toolCallIds.map((toolCallId) => {
+              const tool = toolsById.get(toolCallId);
+              return tool ? <ToolExecutionDetails entryId={toolEntryId(toolCallId)} key={toolCallId} tool={tool} /> : null;
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function buildContextTree(context: DebugContextRecord): ContextTreeEntry[] {
+  return context.modelCalls.flatMap((call) => {
+    const entries: ContextTreeEntry[] = [{
+      depth: 0,
+      id: callEntryId(call.index),
+      kind: 'call',
+      label: `model call ${call.index}`,
+      preview: `+${call.contextDelta.addedMessageCount} · ${formatTimestamp(call.capturedAtMs)}`,
+    }];
+    call.contextDelta.addedMessages.forEach((message, index) => {
+      const item = record(message);
+      const role = String(item.role ?? 'message').toLowerCase();
+      const customType = String(item.customType ?? '');
+      entries.push({
+        depth: 1,
+        id: messageEntryId(call.index, index),
+        kind: customType ? 'context' : role === 'user' ? 'user' : role === 'assistant' ? 'assistant' : role.includes('tool') ? 'tool' : 'context',
+        label: customType ? customMessageLabel(customType) : contextMessageRoleLabel(role),
+        preview: compactTreePreview(readableMessageContent(message)),
+      });
+    });
+    if (call.assistantMessage !== undefined) {
+      entries.push({
+        depth: 1,
+        id: assistantEntryId(call.index, 0),
+        kind: 'assistant',
+        label: 'Assistant',
+        preview: compactTreePreview(readableMessageContent(call.assistantMessage)),
+      });
+    }
+    context.toolExecutions
+      .filter((tool) => tool.modelCallIndex === call.index)
+      .forEach((tool) => entries.push({
+        depth: 1,
+        id: toolEntryId(tool.toolCallId),
+        kind: 'tool',
+        label: tool.toolName,
+        preview: compactTreePreview(messagePreview(tool.args) || shortId(tool.toolCallId)),
+      }));
+    return entries;
+  });
+}
+
+function contextTreeEntryVisible(entry: ContextTreeEntry, filter: ContextTreeFilter, query: string): boolean {
+  const normalizedQuery = query.trim().toLocaleLowerCase('zh-CN');
+  if (normalizedQuery && !`${entry.label} ${entry.preview}`.toLocaleLowerCase('zh-CN').includes(normalizedQuery)) return false;
+  if (entry.kind === 'call') return filter !== 'user-only' || Boolean(normalizedQuery);
+  if (filter === 'default') return entry.kind !== 'context';
+  if (filter === 'no-tools') return entry.kind !== 'context' && entry.kind !== 'tool';
+  if (filter === 'user-only') return entry.kind === 'user';
+  return true;
+}
+
+function treeMarker(entry: ContextTreeEntry): string {
+  if (entry.kind === 'call') return '◆';
+  if (entry.kind === 'user') return '›';
+  if (entry.kind === 'assistant') return '•';
+  if (entry.kind === 'tool') return '$';
+  return '·';
+}
+
+function compactTreePreview(value: string): string {
+  const compact = value.replace(/\s+/gu, ' ').trim();
+  return compact.length > 54 ? `${compact.slice(0, 51)}…` : compact || '结构化消息';
+}
+
+function callEntryId(callIndex: number): string {
+  return `context-call-${callIndex}`;
+}
+
+function messageEntryId(callIndex: number, messageIndex: number): string {
+  return `context-call-${callIndex}-message-${messageIndex + 1}`;
+}
+
+function assistantEntryId(callIndex: number, messageIndex: number): string {
+  return `context-call-${callIndex}-assistant-${messageIndex + 1}`;
+}
+
+function toolEntryId(toolCallId: string): string {
+  return `context-tool-${toolCallId.replace(/[^A-Za-z0-9_-]/gu, '-')}`;
+}
+
+function ContextDisclosure({
+  children,
+  label,
+  meta,
+  tone,
+}: {
+  children: React.ReactNode;
+  label: string;
+  meta: string;
+  tone: 'messages' | 'provider' | 'raw' | 'system' | 'tools';
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      className="context-debug-reader__disclosure"
+      data-tone={tone}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      open={open}
+    >
+      <summary><span><strong>{label}</strong><small>{meta}</small></span></summary>
+      {open ? <div>{children}</div> : null}
+    </details>
+  );
+}
+
+function readableMessageContent(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(readableMessageContent).filter(Boolean).join('\n\n');
+  const item = record(value);
+  const content = item.content;
+  if (content !== undefined && content !== value) {
+    const rendered = readableMessageContent(content);
+    if (rendered) return rendered;
+  }
+  const direct = [item.text, item.input_text, item.output_text, item.thinking]
+    .find((candidate) => typeof candidate === 'string' && candidate.trim());
+  if (typeof direct === 'string') return direct;
+  const type = String(item.type ?? '').toLowerCase();
+  const name = String(item.name ?? record(item.function).name ?? '').trim();
+  if (type.includes('tool') || type.includes('function') || name) {
+    const args = item.arguments ?? record(item.function).arguments;
+    return [`调用工具：${name || '未命名工具'}`, args === undefined ? '' : `参数：${typeof args === 'string' ? args : formatJson(args)}`]
+      .filter(Boolean)
+      .join('\n');
+  }
+  return messagePreview(value) || formatJson(value);
+}
+
+function customMessageLabel(value: string): string {
+  const labels: Record<string, string> = {
+    'rag-ime-execution-mode': '执行模式',
+    'rag-ime-memory-recall': '记忆召回',
+    'rag-ime-work-state': '工作状态',
+    'rag-ime-compaction-recovery': '压缩恢复',
+    'rag-ime-room-compaction-recovery': 'Room 恢复',
+    'rag-ime-session-context': 'Session 上下文',
+    'rag-ime-workflow': '工作流',
+    'rag-ime-lifecycle': '生命周期',
+    'rag-ime-turn-context': '本轮上下文',
+  };
+  return labels[value] ?? value;
+}
+
+function contextMessageRoleLabel(value: string): string {
+  const labels: Record<string, string> = {
+    assistant: 'Assistant',
+    developer: 'System',
+    system: 'System',
+    tool: 'Tool',
+    toolresult: 'Tool Result',
+    user: 'User',
+  };
+  return labels[value.toLowerCase()] ?? 'Message';
+}
+
 function ContextXraySummary({ call, context, telemetry }: { call?: DebugModelCall; context?: DebugContextRecord; telemetry: Record<string, unknown> }) {
   const raw = record(context?.raw);
   const projection = record(raw.contextProjection ?? raw.contextAssembly ?? telemetry.contextProjection);
@@ -417,7 +932,7 @@ function ContextXraySummary({ call, context, telemetry }: { call?: DebugModelCal
       <XrayMetric label="缓存写入" value={cacheWrite} suffix="词元" />
     </dl>
     <div className="context-xray-summary__states"><span><strong>缓存状态</strong><small>{cacheEvidence ? cacheEvidence.capability === 'unsupported' ? '模型服务未报告' : cacheEvidence.cacheReadTokens > 0 ? '可用 · 已命中' : '可用 · 未命中' : '尚未收到状态'}</small></span><span><strong>压缩与恢复</strong><small>{compaction || '未报告'} / {recovery || '未报告'}</small></span><span><strong>本轮变化</strong><small>{call ? `共同前缀 ${call.contextDelta.commonPrefixMessages} 条${call.contextDelta.prefixBytes !== undefined ? ` / ${call.contextDelta.prefixBytes} 字节` : ''} · 新增 ${call.contextDelta.addedMessageCount} 条 · 移除 ${call.contextDelta.removedMessageCount} 条` : '暂无模型调用'}</small></span></div>
-    <p>来源正文默认隐藏。展开下方审计区后，才会显示具体消息、评分调试、模型服务载荷和工具定义。</p>
+    <p>正文默认隐藏。打开下方逐次上下文后，可按发生顺序阅读；完整请求和原始结构仍需就地展开。</p>
   </section>;
 }
 
@@ -435,148 +950,21 @@ function projectedText(source: Record<string, unknown>, keys: string[]): string 
   return '';
 }
 
-function DebugSummary({ context }: { context?: DebugContextRecord }) {
-  const model = context?.model ?? {};
-  return (
-    <dl className="context-debug-summary">
-      <div><dt><Server size={13} />模型</dt><dd>{modelLabel(model)}</dd></div>
-      <div><dt><ListTree size={13} />回合</dt><dd title={context?.turnId}>{shortId(context?.turnId ?? '') || '未捕获'}</dd></div>
-      <div><dt><Wrench size={13} />工具</dt><dd>{context?.toolExecutions.length ?? 0}</dd></div>
-      <div><dt><Clock3 size={13} />更新</dt><dd>{formatTimestamp(context?.updatedAtMs ?? 0)}</dd></div>
-    </dl>
-  );
-}
-
-function PayloadView({
-  call,
-  context,
-  tab,
-}: {
-  call: DebugModelCall;
-  context: DebugContextRecord;
-  tab: PayloadTab;
-}) {
-  if (tab === 'delta') {
-    return (
-      <div className="context-debug-delta">
-        <dl>
-          <div><dt>共同前缀</dt><dd>{call.contextDelta.commonPrefixMessages} 条</dd></div>
-          <div data-tone="added"><dt>新增</dt><dd>+{call.contextDelta.addedMessageCount}</dd></div>
-          <div data-tone="removed"><dt>移除</dt><dd>-{call.contextDelta.removedMessageCount}</dd></div>
-          <div><dt>基准调用</dt><dd>{call.contextDelta.baseCallIndex ? `#${call.contextDelta.baseCallIndex}` : '初始上下文'}</dd></div>
-        </dl>
-        <MessageList emptyLabel="本次调用没有新增消息" messages={call.contextDelta.addedMessages} />
-      </div>
-    );
-  }
-  if (tab === 'context') {
-    return <MessageList emptyLabel="当前调用上下文为空" messages={callProviderMessages(call)} />;
-  }
-  if (tab === 'provider-request') {
-    return <JsonPayload value={call.providerExchanges.map((exchange) => ({ index: exchange.index, capturedAtMs: exchange.capturedAtMs, payload: exchange.payload }))} />;
-  }
-  if (tab === 'provider-response') {
-    return <JsonPayload value={call.providerExchanges.map((exchange) => ({ index: exchange.index, status: exchange.status, headers: exchange.headers }))} />;
-  }
-  if (tab === 'assistant') return <JsonPayload value={call.assistantMessage ?? null} />;
-  if (tab === 'runtime-input') return <TextPayload value={context.prompt} />;
-  if (tab === 'system-prompt') {
-    return <TextPayload value={callProviderSystemPrompt(call, context)} />;
-  }
-  if (tab === 'tool-schemas') {
-    return <JsonPayload value={{ schemas: callProviderTools(call, context) }} />;
-  }
-  return <JsonPayload value={context.raw} />;
-}
-
-function MessageList({ emptyLabel, messages }: { emptyLabel: string; messages: unknown[] }) {
-  if (!messages.length) return <p className="context-debug-empty-copy">{emptyLabel}</p>;
-  return (
-    <ol className="context-debug-message-list">
-      {messages.map((message, index) => {
-        const role = String(record(message).role ?? 'message');
-        return (
-          <li key={`${role}:${index}`}>
-            <details>
-              <summary>
-                <span data-role={role}>{role}</span>
-                <strong>{messagePreview(message) || '结构化消息'}</strong>
-                <small>#{index + 1}</small>
-              </summary>
-              <pre>{formatJson(message)}</pre>
-            </details>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
-function JsonPayload({ value }: { value: unknown }) {
-  return <pre className="context-debug-code">{formatJson(value)}</pre>;
-}
-
-function TextPayload({ value }: { value: string }) {
-  return value ? <pre className="context-debug-code context-debug-code--text">{value}</pre> : <p className="context-debug-empty-copy">没有捕获文本</p>;
-}
-
-function ToolExecutionTimeline({
-  batches,
-  selectedCallIndex,
-  tools,
-}: {
-  batches: DebugToolBatch[];
-  selectedCallIndex?: number;
-  tools: DebugToolExecution[];
-}) {
-  const toolsById = new Map(tools.map((tool) => [tool.toolCallId, tool]));
-  return (
-    <section className="context-debug-tools" aria-label="工具串并行执行">
-      <header>
-        <div><Wrench size={15} /><span><strong>工具执行批次</strong><small>记录模式不等同于已证明的实际时间重叠</small></span></div>
-        <span>{tools.length} 次工具 · {batches.length} 个阶段</span>
-      </header>
-      <div className="context-debug-tools__body">
-        {batches.length ? batches.map((batch) => (
-          <section
-            className="context-debug-tool-stage"
-            data-active={batch.modelCallIndex === selectedCallIndex || undefined}
-            data-mode={batch.executionMode}
-            key={batch.id}
-          >
-            <header>
-              <span className="context-debug-tool-stage__number">阶段 {batch.stage}</span>
-              <strong>{batch.executionMode === 'parallel' ? `记录为并行批次 ${batch.toolCallIds.length} 项` : '记录为串行批次'}</strong>
-              <small>{batch.modelCallIndex ? `模型调用 ${batch.modelCallIndex}` : '未关联模型调用'} · {durationLabel(batch.startedAtMs, batch.endedAtMs)}</small>
-            </header>
-            <div className="context-debug-tool-stage__items">
-              {batch.toolCallIds.map((toolCallId) => {
-                const tool = toolsById.get(toolCallId);
-                return tool ? <ToolExecutionDetails key={toolCallId} tool={tool} /> : null;
-              })}
-            </div>
-          </section>
-        )) : (
-          <p className="context-debug-empty-copy">这轮没有工具调用</p>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function ToolExecutionDetails({ tool }: { tool: DebugToolExecution }) {
+function ToolExecutionDetails({ entryId, tool }: { entryId?: string; tool: DebugToolExecution }) {
   const [open, setOpen] = useState(tool.status !== 'completed');
   return (
     <details
       className="context-debug-tool"
+      id={entryId}
       onToggle={(event) => setOpen(event.currentTarget.open)}
       open={open}
+      tabIndex={entryId ? -1 : undefined}
     >
       <summary>
         <span className="context-debug-tool__state" data-status={tool.status}>
           {tool.status === 'running' ? <Play size={12} /> : tool.status === 'failed' ? <Activity size={12} /> : <Check size={12} />}
         </span>
-        <span><strong>{tool.toolName}</strong><small>{shortId(tool.toolCallId)}</small></span>
+        <span><strong>{tool.toolName}</strong><small>{compactTreePreview(messagePreview(tool.args) || shortId(tool.toolCallId))}</small></span>
         <em>{durationLabel(tool.startedAtMs, tool.endedAtMs)}</em>
       </summary>
       <div className="context-debug-tool__payloads">

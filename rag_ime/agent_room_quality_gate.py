@@ -226,6 +226,12 @@ def canonicalize_quality_gate(
             }
         )
     evidence_refs = list(dict.fromkeys(evidence_refs))
+    # Evidence completeness and lifecycle continuation are independent. A local
+    # work card can satisfy every acceptance criterion and still need a
+    # user-owned decision before the Root may continue. `wait` preserves that
+    # completed evidence while the Kernel records the explicit resume signal.
+    # `blocked`, by contrast, claims the current card cannot complete and is
+    # contradictory once every criterion has passed.
     # An empty acceptance set is not a completed task. This prevents legacy or
     # malformed Tasks from passing the delivery gate by vacuous truth.
     all_passed = bool(canonical_criteria) and (
@@ -236,9 +242,9 @@ def canonicalize_quality_gate(
         raise RoomQualityGateError(
             "deliver 要求当前工作卡片的每个验收项都有成功工具结果支持"
         )
-    if decision in {"wait", "blocked"} and all_passed:
+    if decision == "blocked" and all_passed:
         raise RoomQualityGateError(
-            f"所有验收项都已验证，不能选择 {decision}；请使用 deliver 或 handoff"
+            "所有验收项都已验证，不能选择 blocked；请使用 deliver、handoff 或 wait"
         )
 
     receipt = {
@@ -345,9 +351,9 @@ def validate_quality_gate_receipt(
         raise RoomQualityGateError(
             "complete continuation requires a ready_to_deliver receipt"
         )
-    if decision in {"wait", "block"} and verdict != "not_ready":
+    if decision == "block" and verdict != "not_ready":
         raise RoomQualityGateError(
-            f"{decision} continuation requires a not_ready receipt"
+            "block continuation requires a not_ready receipt"
         )
 
 

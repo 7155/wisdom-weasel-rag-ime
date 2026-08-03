@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
+import urllib.parse
 from collections.abc import Mapping
 from contextlib import contextmanager
 from datetime import datetime
@@ -20,12 +22,16 @@ from .memory_book_compiler import (
     memory_book_run_payload,
     update_stored_memory_book_diff,
 )
+from .memory_evidence_admission import transition_evidence_admission
+from .memory_ingest import looks_sensitive
 from .memory_projection import memory_projection_freshness, process_memory_projection_outbox
 from .owner_memory_curation import OwnerMemoryCurator, OwnerMemoryOrganizer
 from .text_utils import compact_whitespace, now_ms
 
 
 HISTORICAL_MEMORY_CURATION_SCHEMA_VERSION = "rag-ime.historical-memory-curation.v1"
+HISTORICAL_PROMOTION_AUTHORIZATION = "user_authorized_full_history_v1"
+HISTORICAL_MEMORY_WINDOW_MS = 24 * 60 * 60 * 1_000
 DEFAULT_HISTORICAL_CURATION_INSTRUCTION = (
     "这是 Agent 记忆系统的一次完整历史迁移。用户最终发送的内容、Agent/Room 对话摘要、"
     "已应用工具回执，以及输入法或语音形成的最终输入都只是候选证据；模型输出和 Room 私有过程"
@@ -33,6 +39,16 @@ DEFAULT_HISTORICAL_CURATION_INSTRUCTION = (
     "持续项目状态与仍有效计划；临时运行状态、单次按钮或页面操作、调试探针、重复残句和一次性问答"
     "不得进入长期记忆。新旧事实冲突时必须复用稳定 claimKey 让旧版本失效，不能让相互矛盾的当前"
     "Atom 并存。主题书应少而稳定，所有结论必须引用本批真实证据，并继续经过现有审核与应用流程。"
+)
+ATOM_FIRST_HISTORICAL_INSTRUCTION = (
+    "完整重整这批已经降噪、还原成最终表达的历史 Evidence。只用一套 Evidence→Atom→Book "
+    "流程：一句 Evidence 可以拆成多个彼此独立、可长期复用的 Atom，同一个 Atom 只存一次并可加入"
+    "多个稳定 Book。不要先把内容分成个人记忆和工作记忆；Atom 记录最小事实、偏好、原则、要求、"
+    "决定或约束，Book 自然组织主题。临时状态、一次性命令、未解决问题、重复片段和仅由时间、应用、"
+    "频率推断出的内容一律忽略。新证据确实更新旧结论时使用稳定目标做 update/supersede；语义等价"
+    "才 merge。只有用户明确要求忘记并且目标语义匹配时才 retract。每个保留结论必须逐字受到本批"
+    " Evidence 支持，不得补写助手推断。不要因为一条输入曾被旧整理器判为非长期内容就沿用旧结论，"
+    "这次要基于原 Evidence 重新判断。Book 要少而稳定，优先复用已有 Book。"
 )
 
 _TRANSIENT_STATE_RE = re.compile(
@@ -48,6 +64,360 @@ class HistoricalMemoryCurationError(RuntimeError):
     pass
 
 
+def prepare_atom_first_historical_recuration(
+    db_path: str | Path,
+    *,
+    project: str,
+    reset_run_id: str,
+    preverified_schema: bool = False,
+) -> dict[str, object]:
+    """Return active canonical Evidence to the candidate lane, audibly.
+
+    This is for a disposable offline candidate only. It never deletes source
+    text or old Atoms. Every admission change goes through the canonical
+    transition API so source projections, cursor rewinds, receipts, and a
+    later forensic review remain available.
+    """
+
+    path = Path(db_path).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    normalized_project = compact_whitespace(project)
+    normalized_run_id = compact_whitespace(reset_run_id)
+    if not normalized_run_id:
+        raise ValueError("reset_run_id is required")
+    with _connect(path) as conn:
+        if preverified_schema:
+            _verify_preverified_candidate_schema(conn)
+        else:
+            apply_database_migrations(conn)
+        input_events_sha256_before = _table_content_sha256(conn, "input_events")
+        legacy_evidence_sha256_before = _legacy_evidence_state_sha256(conn)
+        promotion = _promote_recovered_user_inputs(
+            conn,
+            project=normalized_project,
+            authorization_run_id=normalized_run_id,
+            created_at_ms=now_ms(),
+        )
+        rows = conn.execute(
+            """
+            SELECT evidence.evidence_id, evidence.admission_state
+            FROM agent_memory_evidence AS evidence
+            WHERE evidence.status = 'active'
+              AND evidence.owner_kind = 'user'
+              AND evidence.owner_id = 'default'
+              AND evidence.scope_mode = 'authoritative'
+              AND evidence.evidence_domain = 'personal_memory'
+              AND evidence.knowledge_domain = 'personal_memory'
+              AND COALESCE(evidence.forgotten_at_ms, 0) = 0
+              AND (? = '' OR evidence.project = ? OR evidence.project = '')
+            ORDER BY evidence.occurred_at_ms, evidence.evidence_id
+            """,
+            (normalized_project, normalized_project),
+        ).fetchall()
+        before = {
+            str(row[0]): int(row[1])
+            for row in conn.execute(
+                """
+                SELECT admission_state, COUNT(*)
+                FROM agent_memory_evidence
+                WHERE status = 'active' AND owner_kind = 'user'
+                  AND owner_id = 'default'
+                  AND evidence_domain = 'personal_memory'
+                GROUP BY admission_state ORDER BY admission_state
+                """
+            ).fetchall()
+        }
+        changed = 0
+        for row in rows:
+            transition = transition_evidence_admission(
+                conn,
+                str(row["evidence_id"]),
+                new_state="candidate",
+                reason_code="full_history_atom_first_recuration",
+                actor_kind="user",
+                run_id=normalized_run_id,
+                created_at_ms=now_ms(),
+                metadata={
+                    "source": HISTORICAL_MEMORY_CURATION_SCHEMA_VERSION,
+                    "candidateOnly": True,
+                },
+            )
+            changed += int(bool(transition.get("changed")))
+        after = {
+            str(row[0]): int(row[1])
+            for row in conn.execute(
+                """
+                SELECT admission_state, COUNT(*)
+                FROM agent_memory_evidence
+                WHERE status = 'active' AND owner_kind = 'user'
+                  AND owner_id = 'default'
+                  AND evidence_domain = 'personal_memory'
+                GROUP BY admission_state ORDER BY admission_state
+                """
+            ).fetchall()
+        }
+        input_events_sha256_after = _table_content_sha256(conn, "input_events")
+        if input_events_sha256_after != input_events_sha256_before:
+            raise HistoricalMemoryCurationError(
+                "historical reset changed immutable input_events"
+            )
+        legacy_evidence_sha256_after = _legacy_evidence_state_sha256(conn)
+        if legacy_evidence_sha256_after != legacy_evidence_sha256_before:
+            raise HistoricalMemoryCurationError(
+                "historical promotion mutated recovered audit Evidence"
+            )
+    return {
+        "schemaVersion": "rag-ime.atom-first-historical-reset.v1",
+        "ok": True,
+        "candidateOnly": True,
+        "rawInputEventsMutated": False,
+        "inputEventsSha256": input_events_sha256_after,
+        "legacyEvidenceSha256": legacy_evidence_sha256_after,
+        "legacyEvidenceMutated": False,
+        "historicalPromotion": promotion,
+        "eligibleEvidenceCount": len(rows),
+        "changedEvidenceCount": changed,
+        "beforeAdmissionStates": before,
+        "afterAdmissionStates": after,
+        "resetRunId": normalized_run_id,
+    }
+
+
+def resume_atom_first_historical_recuration(
+    db_path: str | Path,
+    *,
+    source_db_path: str | Path,
+    project: str,
+    reset_run_id: str,
+    preverified_schema: bool = False,
+) -> dict[str, object]:
+    """Verify an interrupted reset and resume without reopening decided Evidence.
+
+    Historical curation can take many governed model calls.  Re-running the
+    destructive reset after one accepted batch would silently discard its
+    admission decisions and cursor progress.  This receipt-based path verifies
+    the original reset plus both immutable source ledgers, then leaves every
+    current admission state untouched.
+    """
+
+    path = Path(db_path).expanduser().resolve()
+    source_path = Path(source_db_path).expanduser().resolve()
+    if not path.is_file() or not source_path.is_file():
+        raise FileNotFoundError(path if not path.is_file() else source_path)
+    normalized_run_id = compact_whitespace(reset_run_id)
+    if not normalized_run_id:
+        raise ValueError("reset_run_id is required")
+    with _connect(path) as conn:
+        if preverified_schema:
+            _verify_preverified_candidate_schema(conn)
+        else:
+            apply_database_migrations(conn)
+        reset_rows = conn.execute(
+            """
+            SELECT event_id, evidence_id, previous_state, new_state,
+                   reason_code, run_id, created_at_ms
+            FROM memory_evidence_admission_events
+            WHERE run_id = ?
+              AND reason_code = 'full_history_atom_first_recuration'
+            ORDER BY created_at_ms, event_id
+            """,
+            (normalized_run_id,),
+        ).fetchall()
+        if not reset_rows:
+            raise HistoricalMemoryCurationError(
+                "historical resume has no auditable reset receipt"
+            )
+        reset_events_by_evidence: dict[str, list[sqlite3.Row]] = {}
+        for row in reset_rows:
+            if str(row["new_state"] or "") != "candidate":
+                raise HistoricalMemoryCurationError(
+                    "historical reset contains a non-candidate transition"
+                )
+            reset_events_by_evidence.setdefault(
+                str(row["evidence_id"]), []
+            ).append(row)
+        duplicate_reset_ids = sorted(
+            evidence_id
+            for evidence_id, rows in reset_events_by_evidence.items()
+            if len(rows) > 1
+        )
+        recovered_retry_count = 0
+        if duplicate_reset_ids:
+            placeholders = ",".join("?" for _ in duplicate_reset_ids)
+            event_rows = conn.execute(
+                f"""
+                SELECT event_id, evidence_id, previous_state, new_state,
+                       reason_code, run_id, created_at_ms
+                FROM memory_evidence_admission_events
+                WHERE evidence_id IN ({placeholders})
+                ORDER BY evidence_id, created_at_ms, event_id
+                """,
+                tuple(duplicate_reset_ids),
+            ).fetchall()
+            all_events_by_evidence: dict[str, list[sqlite3.Row]] = {}
+            for row in event_rows:
+                all_events_by_evidence.setdefault(
+                    str(row["evidence_id"]), []
+                ).append(row)
+            current_states = {
+                str(row["evidence_id"]): str(row["admission_state"] or "")
+                for row in conn.execute(
+                    f"""
+                    SELECT evidence_id, admission_state
+                    FROM agent_memory_evidence
+                    WHERE evidence_id IN ({placeholders})
+                    """,
+                    tuple(duplicate_reset_ids),
+                ).fetchall()
+            }
+            for evidence_id in duplicate_reset_ids:
+                reset_events = reset_events_by_evidence[evidence_id]
+                first_reset_key = _admission_event_order_key(reset_events[0])
+                latest_reset_key = _admission_event_order_key(reset_events[-1])
+                evidence_events = all_events_by_evidence.get(evidence_id, [])
+                non_reset_between = [
+                    row
+                    for row in evidence_events
+                    if first_reset_key < _admission_event_order_key(row) < latest_reset_key
+                    and not _is_historical_reset_event(
+                        row,
+                        reset_run_id=normalized_run_id,
+                    )
+                ]
+                if any(
+                    str(row["new_state"] or "") == "admitted"
+                    for row in non_reset_between
+                ):
+                    raise HistoricalMemoryCurationError(
+                        "historical retry reopened an already admitted Evidence"
+                    )
+                non_reset_after = [
+                    row
+                    for row in evidence_events
+                    if _admission_event_order_key(row) > latest_reset_key
+                    and not _is_historical_reset_event(
+                        row,
+                        reset_run_id=normalized_run_id,
+                    )
+                ]
+                if non_reset_between and not non_reset_after:
+                    raise HistoricalMemoryCurationError(
+                        "historical retry did not restore the prior Evidence decision"
+                    )
+                if evidence_events:
+                    latest_event = evidence_events[-1]
+                    if current_states.get(evidence_id, "") != str(
+                        latest_event["new_state"] or ""
+                    ):
+                        raise HistoricalMemoryCurationError(
+                            "historical Evidence state does not match its latest receipt"
+                        )
+                recovered_retry_count += int(bool(non_reset_between))
+        promotion_receipt_count = int(
+            conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM memory_evidence_historical_promotion_receipts AS promotion
+                JOIN agent_memory_evidence AS evidence
+                  ON evidence.evidence_id = promotion.promoted_evidence_id
+                 AND evidence.content_sha256 = promotion.content_sha256
+                WHERE promotion.authorization_run_id = ?
+                """,
+                (normalized_run_id,),
+            ).fetchone()[0]
+        )
+        promotion_event_count = int(
+            conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM memory_evidence_admission_events
+                WHERE run_id = ? AND reason_code = 'historical_promotion_created'
+                """,
+                (normalized_run_id,),
+            ).fetchone()[0]
+        )
+        if promotion_receipt_count != promotion_event_count:
+            raise HistoricalMemoryCurationError(
+                "historical promotion receipts do not match admission receipts"
+            )
+        input_events_sha256 = _table_content_sha256(conn, "input_events")
+        legacy_evidence_sha256 = _legacy_evidence_state_sha256(conn)
+
+    source_uri = "file:" + urllib.parse.quote(str(source_path)) + "?mode=ro&immutable=1"
+    source_conn = sqlite3.connect(source_uri, uri=True)
+    source_conn.row_factory = sqlite3.Row
+    try:
+        source_input_events_sha256 = _table_content_sha256(
+            source_conn,
+            "input_events",
+        )
+        source_legacy_evidence_sha256 = _legacy_evidence_state_sha256(source_conn)
+    finally:
+        source_conn.close()
+    if input_events_sha256 != source_input_events_sha256:
+        raise HistoricalMemoryCurationError(
+            "historical candidate input_events no longer match the recovery source"
+        )
+    if legacy_evidence_sha256 != source_legacy_evidence_sha256:
+        raise HistoricalMemoryCurationError(
+            "historical candidate legacy Evidence no longer matches the recovery source"
+        )
+
+    before: dict[str, int] = {}
+    reset_after: dict[str, int] = {}
+    changed = 0
+    for rows in reset_events_by_evidence.values():
+        row = rows[0]
+        previous_state = str(row["previous_state"] or "")
+        new_state = str(row["new_state"] or "")
+        before[previous_state] = before.get(previous_state, 0) + 1
+        reset_after[new_state] = reset_after.get(new_state, 0) + 1
+        changed += int(previous_state != new_state)
+    return {
+        "schemaVersion": "rag-ime.atom-first-historical-reset.v1",
+        "ok": True,
+        "candidateOnly": True,
+        "resumed": True,
+        "rawInputEventsMutated": False,
+        "inputEventsSha256": input_events_sha256,
+        "legacyEvidenceSha256": legacy_evidence_sha256,
+        "legacyEvidenceMutated": False,
+        "sourceImmutableStateMatched": True,
+        "historicalPromotion": {
+            "schemaVersion": "rag-ime.historical-evidence-promotion.v1",
+            "authorizationKind": HISTORICAL_PROMOTION_AUTHORIZATION,
+            "receiptCount": promotion_receipt_count,
+            "legacyEvidencePreserved": True,
+            "resumed": True,
+        },
+        "eligibleEvidenceCount": len(reset_events_by_evidence),
+        "changedEvidenceCount": changed,
+        "resetReceiptCount": len(reset_rows),
+        "duplicateResetEvidenceCount": len(duplicate_reset_ids),
+        "recoveredRetryEvidenceCount": recovered_retry_count,
+        "beforeAdmissionStates": before,
+        "afterAdmissionStatesAtReset": reset_after,
+        "resetRunId": normalized_run_id,
+    }
+
+
+def _admission_event_order_key(row: Mapping[str, object]) -> tuple[int, str]:
+    return (int(row["created_at_ms"] or 0), str(row["event_id"] or ""))
+
+
+def _is_historical_reset_event(
+    row: Mapping[str, object],
+    *,
+    reset_run_id: str,
+) -> bool:
+    return (
+        str(row["run_id"] or "") == reset_run_id
+        and str(row["reason_code"] or "")
+        == "full_history_atom_first_recuration"
+    )
+
+
 def curate_historical_memory_database(
     db_path: str | Path,
     *,
@@ -56,6 +426,10 @@ def curate_historical_memory_database(
     timezone_name: str = "Asia/Shanghai",
     embedding_provider: EmbeddingProvider | None = None,
     max_batches: int = 512,
+    max_sources: int = 64,
+    auto_apply: bool = False,
+    include_agent_dialogue: bool = False,
+    preverified_schema: bool = False,
     approve_timelines: bool = True,
     instruction: str = DEFAULT_HISTORICAL_CURATION_INSTRUCTION,
 ) -> dict[str, object]:
@@ -71,10 +445,15 @@ def curate_historical_memory_database(
         raise FileNotFoundError(path)
     if max_batches < 1:
         raise ValueError("max_batches must be positive")
+    if max_sources < 1:
+        raise ValueError("max_sources must be positive")
     normalized_project = compact_whitespace(project)
     started_at_ms = now_ms()
     with _connect(path) as conn:
-        apply_database_migrations(conn)
+        if preverified_schema:
+            _verify_preverified_candidate_schema(conn)
+        else:
+            apply_database_migrations(conn)
         before = _database_counts(conn, project=normalized_project)
 
     source_store = AgentMemorySourceStore(path, project=normalized_project)
@@ -84,15 +463,26 @@ def curate_historical_memory_database(
         project=normalized_project,
         initial_settle_ms=0,
         daily_interval_ms=60_000,
-        max_sources=64,
+        # This runner owns a stopped, disposable candidate.  Advancing its
+        # synthetic clock by one lease per batch lets a restarted evaluation
+        # reclaim a cursor left in ``running`` by SIGTERM or a lost terminal,
+        # without weakening the one-hour production lease.
+        running_lease_ms=60_000,
+        max_sources=max_sources,
+        auto_apply=auto_apply,
+        include_agent_dialogue=include_agent_dialogue,
+        embedding_provider=embedding_provider,
+        personal_window_ms=HISTORICAL_MEMORY_WINDOW_MS,
     )
-    curator.initialize()
+    if not preverified_schema:
+        curator.initialize()
 
     timeline_report = _organize_historical_timelines(
         path,
         project=normalized_project,
         timezone_name=timezone_name,
         approve=approve_timelines,
+        preverified_schema=preverified_schema,
     )
     reviewed_runs: list[dict[str, object]] = []
     for run_id in _draft_owner_run_ids(path, project=normalized_project):
@@ -108,8 +498,10 @@ def curate_historical_memory_database(
     batch_reports: list[dict[str, object]] = []
     previous_signature: tuple[object, ...] | None = None
     stalled_rounds = 0
+    historical_clock_step_ms = curator.running_lease_ms + 1
     for batch_index in range(max_batches):
-        status = curator.status(current_ms=started_at_ms + batch_index + 1)
+        batch_time_ms = started_at_ms + batch_index * historical_clock_step_ms + 1
+        status = curator.status(current_ms=batch_time_ms)
         scopes = [
             dict(item)
             for item in status.get("scopes") or []
@@ -168,7 +560,7 @@ def curate_historical_memory_database(
                 owner_kind=owner_kind,
                 owner_id=owner_id,
                 instruction=instruction,
-                current_ms=started_at_ms + batch_index + 1,
+                current_ms=batch_time_ms,
             )
             if not bool(run_report.get("ok")):
                 raise HistoricalMemoryCurationError(
@@ -272,8 +664,360 @@ def curate_historical_memory_database(
             "transientRuntimeReceiptsRejected": True,
             "ambiguousEvidenceRetainedButNotPromoted": True,
             "automaticTimelineApproval": bool(approve_timelines),
+            "autoApplyVerifiedAtomFirstRuns": bool(auto_apply),
+            "agentDialogueExcluded": not bool(include_agent_dialogue),
+            "preverifiedSchema": bool(preverified_schema),
         },
     }
+
+
+def _verify_preverified_candidate_schema(conn: sqlite3.Connection) -> None:
+    required = {
+        "agent_memory_evidence",
+        "agent_memory_sources",
+        "input_events",
+        "memory_atoms",
+        "memory_books",
+        "memory_curation_cursors",
+        "memory_projection_outbox",
+        "memory_evidence_historical_promotion_receipts",
+    }
+    tables = {
+        str(row[0])
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    missing = sorted(required - tables)
+    if missing:
+        raise HistoricalMemoryCurationError(
+            "preverified candidate is missing required tables: "
+            + ",".join(missing)
+        )
+    quick_check = str(conn.execute("PRAGMA quick_check").fetchone()[0])
+    if quick_check != "ok":
+        raise HistoricalMemoryCurationError(
+            f"preverified candidate quick_check failed: {quick_check}"
+        )
+
+
+def _promote_recovered_user_inputs(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    authorization_run_id: str,
+    created_at_ms: int,
+) -> dict[str, object]:
+    """Project recovered user inputs into canonical Evidence with receipts.
+
+    Recovery Evidence remains audit-owned and unchanged. A prior
+    ``not_for_memory`` disposition is deliberately not reused because the user
+    asked Luna/max to reconsider the complete denoised history.
+    """
+
+    rows = conn.execute(
+        """
+        SELECT legacy.evidence_id AS legacy_evidence_id,
+               legacy.project, legacy.content_text, legacy.content_sha256,
+               legacy.occurred_at_ms, source.source_id,
+               source.input_event_id, source.canonical_text_sha256,
+               source.disposition, source.disposition_reason,
+               event.committed_text
+        FROM agent_memory_evidence AS legacy
+        JOIN agent_memory_sources AS source
+          ON source.source_id = legacy.source_id
+        JOIN memory_evidence_input_event_links AS source_link
+          ON source_link.evidence_id = legacy.evidence_id
+         AND source_link.input_event_id = source.input_event_id
+         AND source_link.relation = 'source'
+        JOIN input_events AS event ON event.id = source.input_event_id
+        WHERE legacy.status = 'active'
+          AND legacy.origin_kind = 'legacy_untyped_input'
+          AND legacy.scope_mode = 'legacy'
+          AND legacy.knowledge_domain = 'legacy'
+          AND legacy.trust_class = 'user_claim'
+          AND COALESCE(legacy.forgotten_at_ms, 0) = 0
+          AND source.status = 'active'
+          AND source.owner_kind = 'user' AND source.owner_id = 'default'
+          AND source.source_role = 'user'
+          AND source.source_kind = 'user_final'
+          AND source.trust_class = 'user_claim'
+          AND (? = '' OR legacy.project = ? OR legacy.project = '')
+          AND NOT EXISTS (
+              SELECT 1 FROM memory_tombstones AS tombstone
+              WHERE tombstone.active = 1
+                AND (
+                    (tombstone.target_type = 'memory_id'
+                     AND tombstone.target_value IN (
+                         legacy.evidence_id,
+                         ('event:' || source.input_event_id)
+                     ))
+                    OR
+                    (tombstone.target_type = 'source_event_id'
+                     AND tombstone.target_value = CAST(source.input_event_id AS TEXT))
+                )
+          )
+        ORDER BY source.created_at_ms, source.source_id
+        """,
+        (project, project),
+    ).fetchall()
+    created = 0
+    reused = 0
+    skipped_sensitive = 0
+    timestamp = max(0, int(created_at_ms))
+    for row in rows:
+        canonical = str(row["committed_text"] or "")
+        content_sha256 = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        if (
+            compact_whitespace(str(row["disposition_reason"] or ""))
+            == "sensitive_input"
+            or looks_sensitive(canonical)
+        ):
+            skipped_sensitive += 1
+            continue
+        if not compact_whitespace(canonical):
+            continue
+        if (
+            content_sha256 != str(row["content_sha256"])
+            or content_sha256 != str(row["canonical_text_sha256"])
+            or canonical != str(row["content_text"])
+        ):
+            raise HistoricalMemoryCurationError(
+                "recovered Evidence content no longer matches its immutable source"
+            )
+        legacy_evidence_id = str(row["legacy_evidence_id"])
+        source_id = str(row["source_id"])
+        input_event_id = int(row["input_event_id"])
+        identity_sha256 = hashlib.sha256(
+            (
+                legacy_evidence_id
+                + "\0"
+                + source_id
+                + "\0"
+                + str(input_event_id)
+                + "\0"
+                + content_sha256
+            ).encode("utf-8")
+        ).hexdigest()
+        promoted_evidence_id = f"evidence:historical:{identity_sha256[:48]}"
+        receipt_id = f"historical-promotion:{identity_sha256}"
+        existing = conn.execute(
+            """
+            SELECT promotion.promoted_evidence_id, promotion.source_id,
+                   promotion.input_event_id, promotion.content_sha256,
+                   evidence.content_sha256 AS promoted_content_sha256
+            FROM memory_evidence_historical_promotion_receipts AS promotion
+            JOIN agent_memory_evidence AS evidence
+              ON evidence.evidence_id = promotion.promoted_evidence_id
+            WHERE promotion.legacy_evidence_id = ?
+            """,
+            (legacy_evidence_id,),
+        ).fetchone()
+        if existing is not None:
+            if (
+                str(existing["promoted_evidence_id"]) != promoted_evidence_id
+                or str(existing["source_id"]) != source_id
+                or int(existing["input_event_id"]) != input_event_id
+                or str(existing["content_sha256"]) != content_sha256
+                or str(existing["promoted_content_sha256"]) != content_sha256
+            ):
+                raise HistoricalMemoryCurationError(
+                    "existing historical promotion receipt conflicts with its source"
+                )
+            reused += 1
+            continue
+
+        provenance_json = json.dumps(
+            {
+                "sourceType": "historical_reconstructed_input",
+                "legacyEvidenceId": legacy_evidence_id,
+                "sourceId": source_id,
+                "inputEventId": input_event_id,
+                "promotionReceiptId": receipt_id,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        metadata_json = json.dumps(
+            {
+                "historicalPromotion": True,
+                "previousDisposition": str(row["disposition"] or ""),
+                "previousDispositionReason": str(row["disposition_reason"] or ""),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        conn.execute(
+            """
+            INSERT INTO agent_memory_evidence(
+                evidence_id, project, role_id, session_id, source_kind,
+                source_id, idempotency_key, content_text, content_sha256,
+                provenance_json, metadata_json, privacy_class, status,
+                occurred_at_ms, recorded_at_ms, owner_kind, owner_id,
+                knowledge_domain, scope_kind, scope_id, visibility,
+                authorization_revision, binding_id, scope_mode,
+                evidence_domain, origin_kind, admission_state, admission_reason,
+                trust_class, boundary_kind, admission_revision,
+                admission_updated_at_ms
+            ) VALUES (
+                ?, ?, '', '', 'user_message', ?, ?, ?, ?, ?, ?, 'local',
+                'active', ?, ?, 'user', 'default', 'personal_memory', 'user',
+                'default', 'private', 'historical-full-history-v1', ?,
+                'authoritative', 'personal_memory', 'legacy_untyped_input',
+                'candidate', 'historical_promotion_created', 'user_claim',
+                'historical_reconstruction', 1, ?
+            )
+            """,
+            (
+                promoted_evidence_id,
+                str(row["project"] or project),
+                source_id,
+                f"historical-promotion:{legacy_evidence_id}",
+                canonical,
+                content_sha256,
+                provenance_json,
+                metadata_json,
+                int(row["occurred_at_ms"] or 0),
+                timestamp,
+                receipt_id,
+                timestamp,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO memory_evidence_input_event_links(
+                evidence_id, input_event_id, ordinal, relation,
+                content_sha256, created_at_ms
+            ) VALUES (?, ?, 0, 'source', ?, ?)
+            """,
+            (promoted_evidence_id, input_event_id, content_sha256, timestamp),
+        )
+        conn.execute(
+            """
+            INSERT INTO memory_evidence_historical_promotion_receipts(
+                receipt_id, promoted_evidence_id, legacy_evidence_id,
+                source_id, input_event_id, content_sha256,
+                authorization_kind, authorization_run_id, created_at_ms,
+                metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                receipt_id,
+                promoted_evidence_id,
+                legacy_evidence_id,
+                source_id,
+                input_event_id,
+                content_sha256,
+                HISTORICAL_PROMOTION_AUTHORIZATION,
+                authorization_run_id,
+                timestamp,
+                json.dumps(
+                    {
+                        "candidateOnly": True,
+                        "legacyEvidencePreserved": True,
+                        "rawInputEventsImmutable": True,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO memory_evidence_admission_events(
+                event_id, evidence_id, previous_state, new_state, reason_code,
+                actor_kind, run_id, created_at_ms, metadata_json
+            ) VALUES (?, ?, '', 'candidate', 'historical_promotion_created',
+                      'user', ?, ?, ?)
+            """,
+            (
+                f"evidence-admission:historical:{identity_sha256}",
+                promoted_evidence_id,
+                authorization_run_id,
+                timestamp,
+                json.dumps(
+                    {"promotionReceiptId": receipt_id},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            ),
+        )
+        created += 1
+    return {
+        "schemaVersion": "rag-ime.historical-evidence-promotion.v1",
+        "authorizationKind": HISTORICAL_PROMOTION_AUTHORIZATION,
+        "scannedLegacyEvidenceCount": len(rows),
+        "createdPromotedEvidenceCount": created,
+        "reusedPromotedEvidenceCount": reused,
+        "skippedSensitiveEvidenceCount": skipped_sensitive,
+        "legacyEvidencePreserved": True,
+    }
+
+
+def _legacy_evidence_state_sha256(conn: sqlite3.Connection) -> str:
+    digest = hashlib.sha256()
+    for row in conn.execute(
+        """
+        SELECT evidence_id, project, source_id, content_sha256, status,
+               owner_kind, owner_id, knowledge_domain, scope_kind, scope_id,
+               visibility, authorization_revision, binding_id, scope_mode,
+               evidence_domain, origin_kind, admission_state, admission_reason,
+               trust_class, boundary_kind, admission_revision,
+               admission_updated_at_ms, COALESCE(forgotten_at_ms, 0)
+        FROM agent_memory_evidence
+        WHERE origin_kind = 'legacy_untyped_input'
+          AND scope_mode = 'legacy'
+        ORDER BY evidence_id
+        """
+    ):
+        digest.update(
+            json.dumps(
+                list(row),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        )
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _table_content_sha256(conn: sqlite3.Connection, table: str) -> str:
+    if table != "input_events":
+        raise ValueError("unsupported immutable table fingerprint")
+    columns = [
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(input_events)").fetchall()
+    ]
+    if not columns:
+        raise HistoricalMemoryCurationError("input_events table is missing")
+    digest = hashlib.sha256()
+    for row in conn.execute(
+        f"SELECT * FROM input_events ORDER BY id"  # noqa: S608 - fixed table.
+    ):
+        values = []
+        for column in columns:
+            value = row[column]
+            values.append(
+                {"bytes": bytes(value).hex()}
+                if isinstance(value, (bytes, bytearray, memoryview))
+                else value
+            )
+        digest.update(
+            json.dumps(
+                values,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        )
+        digest.update(b"\n")
+    return digest.hexdigest()
 
 
 def _organize_historical_timelines(
@@ -282,6 +1026,7 @@ def _organize_historical_timelines(
     project: str,
     timezone_name: str,
     approve: bool,
+    preverified_schema: bool = False,
 ) -> dict[str, object]:
     try:
         timezone = ZoneInfo(timezone_name)
@@ -308,6 +1053,7 @@ def _organize_historical_timelines(
         path,
         project=project,
         timezone_name=timezone_name,
+        preverified_schema=preverified_schema,
     )
     results: list[dict[str, object]] = []
     for timeline_date in dates:

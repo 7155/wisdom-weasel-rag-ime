@@ -99,6 +99,97 @@ class ApprovalModelArbiterTests(unittest.TestCase):
                     (approval["approvalId"],),
                 )
 
+    def test_model_input_binds_request_identity_arguments_scope_and_task(self) -> None:
+        runtime = FakeCompletionRuntime(
+            {
+                "text": json.dumps(
+                    {
+                        "decision": "approve",
+                        "reasonCodes": ["bounded_operation", "authorized_scope"],
+                        "rationaleSummary": "范围和参数均已绑定。",
+                    },
+                    ensure_ascii=False,
+                )
+            }
+        )
+        scope_sha256 = str(self.session["workspaceScopeSha256"])
+        approval = self.sessions.create_approval(
+            session_id=str(self.session["id"]),
+            tool_name="workspace_shell",
+            operation="run",
+            payload_sha256="c" * 64,
+            preview={
+                "title": "Bounded read",
+                "summary": "Read the selected workspace",
+                "actionPayload": {
+                    "command": "printf 'ok'",
+                    "cwd": str(self.workspace),
+                    "allowNetwork": False,
+                },
+                "baseState": {"workspaceRootsSha256": scope_sha256},
+            },
+            risk_level="R2",
+            causal_metadata={"turnId": "turn-current"},
+            requested_at_ms=30,
+        )
+        approval = self.sessions.bind_approval_tool_call(
+            str(approval["approvalId"]),
+            tool_call_id="tool-call-current",
+        )
+        arbiter = ApprovalModelArbiter(
+            self.db_path,
+            runtime_provider=lambda: runtime,
+            context_provider=lambda current, session: {
+                "contextAvailable": True,
+                "contextKind": "session",
+                "contextId": session["id"],
+                "userRequests": [
+                    {
+                        "role": "user",
+                        "text": "Read the selected workspace file.",
+                    }
+                ],
+                "currentTask": {
+                    "kind": "session_task",
+                    "taskId": "task-current",
+                    "objective": "Read the selected workspace file.",
+                },
+            },
+            clock_ms=lambda: 150,
+        )
+
+        arbiter.decide(approval, self.session)
+
+        model_input = json.loads(
+            str(runtime.requests[0]["message"]).split(
+                "UNTRUSTED_APPROVAL_EVIDENCE_JSON:\n", 1
+            )[1]
+        )
+        self.assertEqual(
+            model_input["requestIdentity"],
+            {"turnId": "turn-current", "toolCallId": "tool-call-current"},
+        )
+        self.assertEqual(
+            model_input["currentApproval"]["arguments"]["command"],
+            "printf 'ok'",
+        )
+        self.assertEqual(
+            model_input["currentApproval"]["workspaceScope"]["scopeSha256"],
+            scope_sha256,
+        )
+        self.assertEqual(
+            model_input["currentApproval"]["riskClassification"]["riskLevel"],
+            "R2",
+        )
+        self.assertEqual(
+            model_input["approvalContext"]["currentTask"]["taskId"],
+            "task-current",
+        )
+        self.assertEqual(
+            model_input["approvalContext"]["userRequests"][0]["text"],
+            "Read the selected workspace file.",
+        )
+
     def test_invalid_or_unavailable_model_fails_closed_without_leaking_secrets(self) -> None:
         runtime = FakeCompletionRuntime(
             {
@@ -263,6 +354,7 @@ class ApprovalModelArbiterTests(unittest.TestCase):
         self.assertEqual(
             approval["preview"]["approvalArbitration"],
             {
+
                 "mode": "model",
                 "status": "running",
                 "modelProfile": "openai-codex/gpt-5.6-luna",
@@ -271,6 +363,29 @@ class ApprovalModelArbiterTests(unittest.TestCase):
             },
         )
         self.assertEqual(approval["expiresAtMs"], 180_020)
+
+    def test_pending_approval_cancellation_is_terminal_and_idempotent(self) -> None:
+        approval = self.approval()
+
+        first = self.sessions.cancel_pending_approvals(
+            str(self.session["id"]),
+            reason="user_abort",
+            turn_id="turn-abort",
+            now_ms=500,
+        )
+        second = self.sessions.cancel_pending_approvals(
+            str(self.session["id"]),
+            reason="user_abort",
+            turn_id="turn-abort",
+            now_ms=501,
+        )
+
+        self.assertEqual(first["cancelledApprovalIds"], [approval["approvalId"]])
+        self.assertEqual(second["cancelledApprovalIds"], [])
+        cancelled = self.sessions.get_approval(str(approval["approvalId"]))
+        self.assertEqual(cancelled["state"], "stale")
+        self.assertEqual(cancelled["decidedBy"], "runtime-cancellation")
+        self.assertEqual(cancelled["receipt"]["turnId"], "turn-abort")
 
 
 if __name__ == "__main__":

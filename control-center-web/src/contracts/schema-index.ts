@@ -969,6 +969,11 @@ export const contractSchemas = {
         "type": "string",
         "minLength": 1
       },
+      "toolCallId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      },
       "toolId": {
         "type": "string",
         "minLength": 1
@@ -1033,19 +1038,19 @@ export const contractSchemas = {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "planId",
-          "planRevision",
+          "todoId",
+          "todoRevision",
           "goalId",
           "goalRevision",
           "turnId",
           "roomBound"
         ],
         "properties": {
-          "planId": {
+          "todoId": {
             "type": "string",
             "maxLength": 240
           },
-          "planRevision": {
+          "todoRevision": {
             "type": "integer",
             "minimum": 0
           },
@@ -1356,19 +1361,19 @@ export const contractSchemas = {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "planId",
-          "planRevision",
+          "todoId",
+          "todoRevision",
           "goalId",
           "goalRevision",
           "turnId",
           "roomBound"
         ],
         "properties": {
-          "planId": {
+          "todoId": {
             "type": "string",
             "maxLength": 240
           },
-          "planRevision": {
+          "todoRevision": {
             "type": "integer",
             "minimum": 0
           },
@@ -1386,6 +1391,39 @@ export const contractSchemas = {
           },
           "roomBound": {
             "type": "boolean"
+          }
+        }
+      },
+      "roomLineage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "roomId",
+          "rootId",
+          "generation",
+          "taskId",
+          "dispatchId"
+        ],
+        "properties": {
+          "roomId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "rootId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "taskId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "dispatchId": {
+            "type": "string",
+            "maxLength": 240
           }
         }
       }
@@ -2735,10 +2773,7 @@ export const contractSchemas = {
         "minLength": 1
       },
       "scopeKind": {
-        "enum": [
-          "plan",
-          "goal"
-        ]
+        "const": "goal"
       },
       "scopeId": {
         "type": "string",
@@ -3118,7 +3153,13 @@ export const contractSchemas = {
       "dueReason",
       "idleMs",
       "compileState",
+      "draftCoverage",
+      "automation",
       "pendingDraftCount",
+      "ownerCuration",
+      "modelCuration",
+      "bookProjection",
+      "projection",
       "runs"
     ],
     "properties": {
@@ -3194,6 +3235,104 @@ export const contractSchemas = {
           }
         }
       },
+      "draftCoverage": {
+        "type": "object",
+        "required": [
+          "coveredThroughEventId",
+          "undraftedEventCount",
+          "coversAllPending",
+          "lastDraftRunId"
+        ],
+        "properties": {
+          "coveredThroughEventId": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "undraftedEventCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "coversAllPending": {
+            "type": "boolean"
+          },
+          "lastDraftRunId": {
+            "type": "string"
+          }
+        }
+      },
+      "automation": {
+        "type": "object",
+        "required": [
+          "minimumNewEvents",
+          "idleThresholdMs",
+          "dailyIntervalMs",
+          "schedulerPollIntervalMs",
+          "enabled",
+          "model",
+          "thinkingLevel",
+          "runsPerDay",
+          "autoApply",
+          "curationProtocol",
+          "targetSourceCount",
+          "maximumSourceCount",
+          "maximumInputTokens",
+          "reservedContextTokens"
+        ],
+        "properties": {
+          "minimumNewEvents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "idleThresholdMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "dailyIntervalMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "schedulerPollIntervalMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string"
+          },
+          "thinkingLevel": {
+            "type": "string"
+          },
+          "runsPerDay": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "autoApply": {
+            "type": "boolean"
+          },
+          "curationProtocol": {
+            "type": "string",
+            "const": "atom-first-v1"
+          },
+          "targetSourceCount": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "maximumSourceCount": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "maximumInputTokens": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "reservedContextTokens": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
       "pendingDraftCount": {
         "type": "integer",
         "minimum": 0
@@ -3241,6 +3380,127 @@ export const contractSchemas = {
             "items": {
               "type": "object"
             }
+          }
+        }
+      },
+      "modelCuration": {
+        "type": "object",
+        "required": [
+          "schemaVersion",
+          "ok",
+          "profile",
+          "requiredModel",
+          "requiredThinkingLevel",
+          "minimumContextTokens",
+          "stateCounts",
+          "runs"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.memory-curation-model-status.v1"
+          },
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "profile": {
+            "type": "string",
+            "const": "MEMORY_CURATION"
+          },
+          "requiredModel": {
+            "type": "string",
+            "const": "openai-codex/gpt-5.6-luna"
+          },
+          "requiredThinkingLevel": {
+            "type": "string",
+            "const": "max"
+          },
+          "minimumContextTokens": {
+            "type": "integer",
+            "minimum": 272000
+          },
+          "stateCounts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "bookProjection": {
+        "type": "object",
+        "required": [
+          "schemaVersion",
+          "ok",
+          "projectionOwner",
+          "currentAtomCount",
+          "desiredBookCount",
+          "activeBookCount",
+          "historicalBookCount",
+          "unbookedAtomCount",
+          "missingBookCount",
+          "staleBookCount",
+          "membershipMismatchCount",
+          "guardedBookCount",
+          "inSync"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.personal-memory-book-projection-status.v1"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "projectionOwner": {
+            "type": "string"
+          },
+          "currentAtomCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "desiredBookCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "activeBookCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "historicalBookCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unbookedAtomCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "missingBookCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "staleBookCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "membershipMismatchCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "guardedBookCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "inSync": {
+            "type": "boolean"
           }
         }
       },
@@ -3412,8 +3672,7 @@ export const contractSchemas = {
         "minLength": 1
       },
       "sessionId": {
-        "type": "string",
-        "minLength": 1
+        "type": "string"
       },
       "piEntryId": {
         "type": "string",
@@ -4340,98 +4599,6 @@ export const contractSchemas = {
       }
     }
   },
-  "agent-plan-mutation.v1": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "rag-ime.contract.agent-plan-mutation.v1",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "action"
-    ],
-    "properties": {
-      "action": {
-        "type": "string",
-        "enum": [
-          "save",
-          "submit_review",
-          "approve",
-          "return_to_draft",
-          "complete",
-          "cancel",
-          "reset"
-        ]
-      },
-      "expectedRevision": {
-        "type": "integer",
-        "minimum": 0
-      },
-      "title": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 160
-      },
-      "note": {
-        "type": "string",
-        "maxLength": 600
-      },
-      "items": {
-        "type": "array",
-        "maxItems": 100,
-        "items": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "title",
-            "status"
-          ],
-          "properties": {
-            "id": {
-              "type": "string",
-              "maxLength": 160
-            },
-            "title": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 240
-            },
-            "status": {
-              "type": "string",
-              "enum": [
-                "pending",
-                "in_progress",
-                "completed"
-              ]
-            }
-          }
-        }
-      }
-    },
-    "allOf": [
-      {
-        "if": {
-          "properties": {
-            "action": {
-              "const": "return_to_draft"
-            }
-          },
-          "required": [
-            "action"
-          ]
-        },
-        "then": {
-          "required": [
-            "expectedRevision",
-            "note"
-          ],
-          "properties": {
-            "note": {
-              "minLength": 1
-            }
-          }
-        }
-      }
-    ]
-  },
   "agent-role-book-tool-result.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.agent-role-book-tool-result.v1",
@@ -4845,6 +5012,153 @@ export const contractSchemas = {
       }
     }
   },
+  "agent-room-event-page.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-room-event-page.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "roomId",
+      "items",
+      "firstSequence",
+      "lastSequence",
+      "nextBeforeSequence",
+      "hasMore",
+      "retainedFirstSequence",
+      "retainedLastSequence",
+      "retainedPrefixTruncated"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-room-event-page.v1"
+      },
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "roomId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "items": {
+        "type": "array",
+        "maxItems": 200,
+        "items": {
+          "$ref": "#/$defs/event"
+        }
+      },
+      "firstSequence": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "lastSequence": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "nextBeforeSequence": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "hasMore": {
+        "type": "boolean"
+      },
+      "retainedFirstSequence": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "retainedLastSequence": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "retainedPrefixTruncated": {
+        "type": "boolean"
+      }
+    },
+    "$defs": {
+      "event": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "eventId",
+          "roomId",
+          "sequence",
+          "turnId",
+          "eventType",
+          "participantId",
+          "sourceSessionId",
+          "createdAtMs",
+          "payload",
+          "resumeToken"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.agent-room-event.v1"
+          },
+          "eventId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "roomId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "turnId": {
+            "type": "string"
+          },
+          "eventType": {
+            "type": "string",
+            "enum": [
+              "user_message",
+              "route_decision",
+              "participant_status",
+              "participant_delta",
+              "participant_activity",
+              "participant_message",
+              "room_post",
+              "room_config_changed",
+              "topic_changed",
+              "artifact_changed",
+              "turn_completed",
+              "turn_failed",
+              "snapshot_required"
+            ]
+          },
+          "participantId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sourceSessionId": {
+            "type": "string"
+          },
+          "topicId": {
+            "type": "string"
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "payload": {
+            "type": "object"
+          },
+          "resumeToken": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
   "agent-room-event.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.agent-room-event.v1",
@@ -5095,7 +5409,7 @@ export const contractSchemas = {
       },
       "events": {
         "type": "array",
-        "maxItems": 2000,
+        "maxItems": 200,
         "items": {
           "$ref": "#/$defs/event"
         }
@@ -6671,18 +6985,23 @@ export const contractSchemas = {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "planId",
-          "planRevision",
+          "todoId",
+          "todoRevision",
           "goalId",
           "goalRevision",
-          "roomBound"
+          "roomBound",
+          "roomId",
+          "rootId",
+          "taskId",
+          "dispatchId",
+          "generation"
         ],
         "properties": {
-          "planId": {
+          "todoId": {
             "type": "string",
             "maxLength": 240
           },
-          "planRevision": {
+          "todoRevision": {
             "type": "integer",
             "minimum": 0
           },
@@ -6696,6 +7015,26 @@ export const contractSchemas = {
           },
           "roomBound": {
             "type": "boolean"
+          },
+          "roomId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "rootId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "taskId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "dispatchId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },
@@ -6734,8 +7073,8 @@ export const contractSchemas = {
       "id",
       "batchId",
       "childSessionId",
-      "planItemId",
-      "planItemTitle",
+      "todoTask",
+      "todoPhase",
       "templateId",
       "templateVersion",
       "ordinal",
@@ -6770,13 +7109,13 @@ export const contractSchemas = {
         "type": "string",
         "minLength": 1
       },
-      "planItemId": {
-        "type": "string",
-        "maxLength": 160
-      },
-      "planItemTitle": {
+      "todoTask": {
         "type": "string",
         "maxLength": 240
+      },
+      "todoPhase": {
+        "type": "string",
+        "maxLength": 80
       },
       "templateId": {
         "type": "string",
@@ -7211,7 +7550,7 @@ export const contractSchemas = {
           "configuration",
           "agents",
           "browser",
-          "agent_plan",
+          "todo",
           "agent_goal",
           "plugins",
           "work_documents",
@@ -7226,7 +7565,9 @@ export const contractSchemas = {
           "workspace_shell",
           "workspace_job",
           "room_state",
+          "room_define",
           "room_collaborate",
+          "room_integrate",
           "room_post",
           "room_commit"
         ]
@@ -7339,7 +7680,7 @@ export const contractSchemas = {
           "configuration",
           "agents",
           "browser",
-          "agent_plan",
+          "todo",
           "agent_goal",
           "desktop_semantic",
           "plugins",
@@ -7472,7 +7813,13 @@ export const contractSchemas = {
           "references",
           "diagnostics",
           "rename",
-          "code_action_apply"
+          "code_action_apply",
+          "init",
+          "done",
+          "drop",
+          "append",
+          "view",
+          "rm"
         ]
       },
       "result": {
@@ -7489,7 +7836,7 @@ export const contractSchemas = {
       "schemaVersion",
       "ok",
       "sessionId",
-      "plan",
+      "todo",
       "goal",
       "actGate"
     ],
@@ -7505,8 +7852,8 @@ export const contractSchemas = {
         "minLength": 1,
         "maxLength": 240
       },
-      "plan": {
-        "$ref": "#/$defs/plan"
+      "todo": {
+        "$ref": "#/$defs/todo"
       },
       "goal": {
         "$ref": "#/$defs/goal"
@@ -7516,24 +7863,15 @@ export const contractSchemas = {
       }
     },
     "$defs": {
-      "planItem": {
+      "todoTask": {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "id",
-          "title",
-          "status",
-          "position",
-          "sequence",
-          "updatedAtMs"
+          "content",
+          "status"
         ],
         "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 160
-          },
-          "title": {
+          "content": {
             "type": "string",
             "minLength": 1,
             "maxLength": 240
@@ -7543,24 +7881,41 @@ export const contractSchemas = {
             "enum": [
               "pending",
               "in_progress",
-              "completed"
+              "blocked",
+              "completed",
+              "abandoned"
             ]
           },
-          "position": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "sequence": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "updatedAtMs": {
-            "type": "integer",
-            "minimum": 0
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
           }
         }
       },
-      "plan": {
+      "todoPhase": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "tasks"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "tasks": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/$defs/todoTask"
+            }
+          }
+        }
+      },
+      "todo": {
         "type": "object",
         "additionalProperties": false,
         "required": [
@@ -7568,19 +7923,15 @@ export const contractSchemas = {
           "id",
           "sessionId",
           "revision",
-          "title",
-          "status",
           "actor",
-          "note",
           "updatedAtMs",
-          "editable",
-          "actApproved",
-          "items",
+          "roomLineage",
+          "phases",
           "counts"
         ],
         "properties": {
           "schemaVersion": {
-            "const": "rag-ime.agent-plan.v2"
+            "const": "rag-ime.agent-todo.v1"
           },
           "id": {
             "type": "string",
@@ -7596,45 +7947,29 @@ export const contractSchemas = {
             "type": "integer",
             "minimum": 0
           },
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 160
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "draft",
-              "review",
-              "approved",
-              "executing",
-              "completed",
-              "cancelled"
-            ]
-          },
           "actor": {
             "type": "string",
             "maxLength": 120
-          },
-          "note": {
-            "type": "string",
-            "maxLength": 600
           },
           "updatedAtMs": {
             "type": "integer",
             "minimum": 0
           },
-          "editable": {
-            "type": "boolean"
+          "roomLineage": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/roomTodoLineage"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
-          "actApproved": {
-            "type": "boolean"
-          },
-          "items": {
+          "phases": {
             "type": "array",
-            "maxItems": 100,
+            "maxItems": 16,
             "items": {
-              "$ref": "#/$defs/planItem"
+              "$ref": "#/$defs/todoPhase"
             }
           },
           "counts": {
@@ -7644,7 +7979,8 @@ export const contractSchemas = {
               "total",
               "pending",
               "inProgress",
-              "completed"
+              "completed",
+              "abandoned"
             ],
             "properties": {
               "total": {
@@ -7662,12 +7998,96 @@ export const contractSchemas = {
                 "minimum": 0,
                 "maximum": 1
               },
+              "blocked": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              },
               "completed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "abandoned": {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 100
               }
             }
+          }
+        }
+      },
+      "roomTodoLineage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "roomId",
+          "rootId",
+          "taskId",
+          "workItemId",
+          "dispatchId",
+          "sessionId",
+          "participantId",
+          "generation",
+          "taskRevision",
+          "ownershipRevision",
+          "workItemRevision"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "const": "wisdom-weasel.room-todo-lineage.v1"
+          },
+          "roomId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320
+          },
+          "rootId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320
+          },
+          "taskId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320
+          },
+          "workItemId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320
+          },
+          "dispatchId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320
+          },
+          "sessionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "participantId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "taskRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "ownershipRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "workItemRevision": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },
@@ -7943,7 +8363,7 @@ export const contractSchemas = {
           "allowed",
           "reason",
           "message",
-          "planRevision",
+          "todoRevision",
           "goalRevision"
         ],
         "properties": {
@@ -7955,10 +8375,6 @@ export const contractSchemas = {
             "enum": [
               "approved",
               "user_execution_request",
-              "plan_required",
-              "plan_not_approved",
-              "plan_completed",
-              "plan_cancelled",
               "goal_paused",
               "goal_completed",
               "goal_cancelled",
@@ -7970,7 +8386,7 @@ export const contractSchemas = {
             "minLength": 1,
             "maxLength": 300
           },
-          "planRevision": {
+          "todoRevision": {
             "type": "integer",
             "minimum": 0
           },
@@ -9326,6 +9742,9 @@ export const contractSchemas = {
       "version": {
         "type": "string",
         "minLength": 1
+      },
+      "alwaysAvailable": {
+        "type": "boolean"
       }
     }
   },
@@ -10104,30 +10523,184 @@ export const contractSchemas = {
         "type": "string"
       },
       "captureMetadata": {
-        "type": "object",
-        "properties": {
-          "captureSource": {
-            "type": "string"
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "captureSource": {
+                "type": "string"
+              },
+              "fallbackReason": {
+                "type": "string"
+              },
+              "fieldContextChars": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "imeBufferChars": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "selectedTextSha256": {
+                "type": "string"
+              },
+              "selectionRule": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
           },
-          "fallbackReason": {
-            "type": "string"
-          },
-          "fieldContextChars": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "imeBufferChars": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "selectedTextSha256": {
-            "type": "string"
-          },
-          "selectionRule": {
-            "type": "string"
+          {
+            "type": "object",
+            "required": [
+              "schemaVersion",
+              "captureId",
+              "transactionId",
+              "sequence",
+              "channel",
+              "boundaryKind",
+              "boundaryConfidence",
+              "nativeCompositionBefore",
+              "rimeHandled",
+              "hostForwarded",
+              "modifiedReturn",
+              "finalCommitted",
+              "controllerEpoch",
+              "focusEpoch",
+              "appBundleId",
+              "fieldIdentitySha256",
+              "privacyRevision",
+              "occurredStartMs",
+              "occurredEndMs",
+              "contentSha256",
+              "captureSource",
+              "fallbackReason",
+              "fieldContextChars",
+              "imeBufferChars",
+              "selectionRule"
+            ],
+            "properties": {
+              "schemaVersion": {
+                "const": "rag-ime.input-capture.v2"
+              },
+              "captureId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "transactionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "sequence": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "channel": {
+                "type": "string",
+                "enum": [
+                  "input_method",
+                  "voice"
+                ]
+              },
+              "boundaryKind": {
+                "type": "string",
+                "enum": [
+                  "host_return",
+                  "focus_change",
+                  "app_change",
+                  "deactivate",
+                  "voice_final"
+                ]
+              },
+              "boundaryConfidence": {
+                "type": "string",
+                "enum": [
+                  "strong",
+                  "weak"
+                ]
+              },
+              "nativeCompositionBefore": {
+                "type": "boolean"
+              },
+              "rimeHandled": {
+                "type": "boolean"
+              },
+              "hostForwarded": {
+                "type": "boolean"
+              },
+              "modifiedReturn": {
+                "type": "boolean"
+              },
+              "finalCommitted": {
+                "type": "boolean"
+              },
+              "controllerEpoch": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "focusEpoch": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "appBundleId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "fieldIdentitySha256": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{64}$"
+              },
+              "privacyRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "occurredStartMs": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "occurredEndMs": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "contentSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{64}$"
+              },
+              "captureSource": {
+                "type": "string",
+                "enum": [
+                  "text_input_client",
+                  "accessibility",
+                  "ime_active_buffer",
+                  "voice_insertion"
+                ]
+              },
+              "fallbackReason": {
+                "type": "string",
+                "maxLength": 120
+              },
+              "fieldContextChars": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000
+              },
+              "imeBufferChars": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000
+              },
+              "selectionRule": {
+                "type": "string",
+                "maxLength": 120
+              }
+            },
+            "additionalProperties": false
           }
-        },
-        "additionalProperties": false
+        ]
       },
       "privacyDisposition": {
         "type": "string",
@@ -16391,6 +16964,9 @@ export const contractSchemas = {
               "taskTransfer": {
                 "$ref": "#/$defs/taskTransfer"
               },
+              "childTask": {
+                "type": "object"
+              },
               "childDispatch": {
                 "type": "object"
               },
@@ -16416,6 +16992,10 @@ export const contractSchemas = {
                 "minLength": 1
               },
               "waitingForDispatchId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "resumeDispatchId": {
                 "type": "string",
                 "minLength": 1
               },
@@ -16450,8 +17030,52 @@ export const contractSchemas = {
                 },
                 "then": {
                   "required": [
-                    "taskTransfer",
                     "childDispatch"
+                  ],
+                  "oneOf": [
+                    {
+                      "required": [
+                        "taskTransfer"
+                      ],
+                      "not": {
+                        "required": [
+                          "childTask"
+                        ]
+                      }
+                    },
+                    {
+                      "required": [
+                        "childTask"
+                      ],
+                      "not": {
+                        "required": [
+                          "taskTransfer"
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "childTask"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "decision": {
+                      "const": "dispatch"
+                    },
+                    "waitingFor": {
+                      "const": "participant"
+                    }
+                  },
+                  "required": [
+                    "waitingFor",
+                    "waitingForParticipantId",
+                    "waitingForDispatchId",
+                    "resumeCondition"
                   ]
                 }
               },
@@ -16536,6 +17160,23 @@ export const contractSchemas = {
           "type": "string",
           "minLength": 1
         }
+      },
+      "reviewFindings": {
+        "type": "array",
+        "maxItems": 64,
+        "items": {
+          "$ref": "#/$defs/reviewFinding"
+        }
+      },
+      "reviewFindingResponses": {
+        "type": "array",
+        "maxItems": 64,
+        "items": {
+          "$ref": "#/$defs/reviewFindingResponse"
+        }
+      },
+      "reviewEvidenceBinding": {
+        "$ref": "#/$defs/reviewEvidenceBinding"
       },
       "createdAtMs": {
         "type": "integer",
@@ -16698,6 +17339,54 @@ export const contractSchemas = {
           }
         }
       },
+      "reviewEvidenceBinding": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "bindingId",
+          "reviewTargetRevision",
+          "taskId",
+          "dispatchId",
+          "evidenceRefs",
+          "notBeforeMs"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "wisdom-weasel.review-evidence-binding.v1"
+          },
+          "bindingId": {
+            "type": "string",
+            "pattern": "^review-evidence-binding:[0-9a-f]{64}$"
+          },
+          "reviewTargetRevision": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "taskId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dispatchId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "notBeforeMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "questionOption": {
         "type": "object",
         "required": [
@@ -16725,6 +17414,234 @@ export const contractSchemas = {
           }
         },
         "additionalProperties": false
+      },
+      "reviewFinding": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "findingId",
+          "fingerprint",
+          "gateEffect",
+          "impact",
+          "category",
+          "scope",
+          "observation",
+          "expected",
+          "userImpact",
+          "evidenceRefs",
+          "reproduction",
+          "state",
+          "firstSeenRevision",
+          "lastCheckedRevision",
+          "failedRechecks",
+          "response"
+        ],
+        "properties": {
+          "findingId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "gateEffect": {
+            "type": "string",
+            "enum": [
+              "blocking",
+              "advisory"
+            ]
+          },
+          "impact": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "high",
+              "normal"
+            ]
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "correctness",
+              "security",
+              "privacy",
+              "data_loss",
+              "authorization",
+              "permission",
+              "destructive_behavior",
+              "core_runtime_unavailable",
+              "regression",
+              "review_target_identity",
+              "spec_mismatch",
+              "ux",
+              "performance",
+              "maintainability",
+              "test",
+              "documentation"
+            ]
+          },
+          "scope": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "criterionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "invariantId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "anyOf": [
+              {
+                "required": [
+                  "criterionId"
+                ]
+              },
+              {
+                "required": [
+                  "invariantId"
+                ]
+              }
+            ]
+          },
+          "observation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "userImpact": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "reproduction": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "resolved",
+              "dismissed",
+              "accepted_risk",
+              "contested",
+              "escalated"
+            ]
+          },
+          "dispositionRationale": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "ownerParticipantId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "firstSeenRevision": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "lastCheckedRevision": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "failedRechecks": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "response": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/reviewFindingResponse"
+              }
+            ]
+          }
+        }
+      },
+      "reviewFindingResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "findingId",
+          "action",
+          "rationale",
+          "evidenceRefs",
+          "participantId",
+          "createdAtMs"
+        ],
+        "properties": {
+          "findingId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "fixed",
+              "contest"
+            ]
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "participantId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
       }
     }
   },
@@ -16871,6 +17788,7 @@ export const contractSchemas = {
       "intentKind": {
         "type": "string",
         "enum": [
+          "align",
           "execute",
           "review",
           "revise",
@@ -16896,6 +17814,19 @@ export const contractSchemas = {
       "runtimeProfileRevision": {
         "type": "string",
         "minLength": 1
+      },
+      "alignmentOrdinal": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "dependsOnDispatchIds": {
+        "type": "array",
+        "maxItems": 16,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "attachmentIds": {
         "type": "array",
@@ -17146,31 +18077,6 @@ export const contractSchemas = {
       }
     }
   },
-  "room-legacy-ref.v1": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://wisdom-weasel.local/contracts/room-legacy-ref.v1.json",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "schemaVersion",
-      "sourceKind",
-      "sourceId"
-    ],
-    "properties": {
-      "schemaVersion": {
-        "type": "string",
-        "const": "wisdom-weasel.room-legacy-ref.v1"
-      },
-      "sourceKind": {
-        "type": "string",
-        "minLength": 1
-      },
-      "sourceId": {
-        "type": "string",
-        "minLength": 1
-      }
-    }
-  },
   "room-participant-binding.v2": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://wisdom-weasel.local/contracts/room-participant-binding.v2.json",
@@ -17279,146 +18185,6 @@ export const contractSchemas = {
       }
     }
   },
-  "room-peer-invitation.v1": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://wisdom-weasel.local/contracts/room-peer-invitation.v1.json",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "schemaVersion",
-      "invitationId",
-      "rootId",
-      "parentTaskId",
-      "parentDispatchId",
-      "openedByParticipantId",
-      "offeredToParticipantId",
-      "winnerParticipantId",
-      "intent",
-      "objective",
-      "expectedOutput",
-      "acceptanceCriterionIds",
-      "contextEvidenceRefs",
-      "state",
-      "revision",
-      "responseReceiptId",
-      "availableActions",
-      "createdAtMs",
-      "updatedAtMs"
-    ],
-    "properties": {
-      "schemaVersion": {
-        "type": "string",
-        "const": "wisdom-weasel.room-peer-invitation.v1"
-      },
-      "invitationId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "rootId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "parentTaskId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "parentDispatchId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "openedByParticipantId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "offeredToParticipantId": {
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "winnerParticipantId": {
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "intent": {
-        "type": "string",
-        "enum": [
-          "execute",
-          "review",
-          "revise"
-        ]
-      },
-      "objective": {
-        "type": "string",
-        "minLength": 1
-      },
-      "expectedOutput": {
-        "type": "string",
-        "minLength": 1
-      },
-      "acceptanceCriterionIds": {
-        "type": "array",
-        "minItems": 1,
-        "items": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "contextEvidenceRefs": {
-        "type": "array",
-        "items": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "state": {
-        "type": "string",
-        "enum": [
-          "open",
-          "offered",
-          "accepted",
-          "returned",
-          "counterproposed",
-          "review_ready",
-          "cancelled",
-          "expired"
-        ]
-      },
-      "revision": {
-        "type": "integer",
-        "minimum": 0
-      },
-      "responseReceiptId": {
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "availableActions": {
-        "type": "array",
-        "uniqueItems": true,
-        "items": {
-          "type": "string",
-          "enum": [
-            "accept",
-            "return",
-            "counterproposal",
-            "review_ready"
-          ]
-        }
-      },
-      "createdAtMs": {
-        "type": "integer",
-        "minimum": 0
-      },
-      "updatedAtMs": {
-        "type": "integer",
-        "minimum": 0
-      }
-    }
-  },
   "room-post.v2": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://wisdom-weasel.local/contracts/room-post.v2.json",
@@ -17495,8 +18261,15 @@ export const contractSchemas = {
           },
           "options": {
             "type": "array",
-            "minItems": 2,
-            "maxItems": 5,
+            "anyOf": [
+              {
+                "maxItems": 0
+              },
+              {
+                "minItems": 2,
+                "maxItems": 5
+              }
+            ],
             "items": {
               "$ref": "#/$defs/questionOption"
             }
@@ -17732,12 +18505,56 @@ export const contractSchemas = {
         },
         "additionalProperties": false
       },
+      "chronology": {
+        "$ref": "#/$defs/chronology"
+      },
       "createdAtMs": {
         "type": "integer",
         "minimum": 0
       }
     },
     "$defs": {
+      "chronology": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "roomEventId",
+          "roomEventSequence",
+          "createdAtMs",
+          "afterPostId",
+          "orderKey"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "const": "wisdom-weasel.room-post-chronology.v1"
+          },
+          "roomEventId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320
+          },
+          "roomEventSequence": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "afterPostId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 320
+          },
+          "orderKey": {
+            "type": "string",
+            "pattern": "^room-event:[0-9]{20}$"
+          }
+        }
+      },
       "questionOption": {
         "type": "object",
         "required": [
@@ -17871,132 +18688,6 @@ export const contractSchemas = {
       }
     }
   },
-  "room-rollout-policy.v1": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://wisdom-weasel.local/contracts/room-rollout-policy.v1.json",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "schemaVersion",
-      "policyId",
-      "stage",
-      "cohortId",
-      "readinessHash",
-      "rollbackTarget",
-      "adminRef",
-      "approvalSignature",
-      "createdAtMs"
-    ],
-    "properties": {
-      "schemaVersion": {
-        "const": "wisdom-weasel.room-rollout-policy.v1"
-      },
-      "policyId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "previousPolicyId": {
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "stage": {
-        "enum": [
-          "off",
-          "shadow",
-          "named_canary",
-          "production_cohort",
-          "kernel_only"
-        ]
-      },
-      "cohortId": {
-        "type": "string"
-      },
-      "readinessHash": {
-        "type": "string",
-        "pattern": "^[a-f0-9]{64}$"
-      },
-      "rollbackTarget": {
-        "enum": [
-          "off",
-          "shadow",
-          "named_canary",
-          "production_cohort",
-          "kernel_only"
-        ]
-      },
-      "adminRef": {
-        "type": "string",
-        "pattern": "^admin:"
-      },
-      "approvalSignature": {
-        "type": "string",
-        "pattern": "^[a-f0-9]{64}$"
-      },
-      "createdAtMs": {
-        "type": "integer",
-        "minimum": 0
-      }
-    }
-  },
-  "room-rollout-receipt.v1": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://wisdom-weasel.local/contracts/room-rollout-receipt.v1.json",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "schemaVersion",
-      "receiptId",
-      "policyId",
-      "action",
-      "fromStage",
-      "toStage",
-      "affectedRootIds",
-      "ledgerHash",
-      "createdAtMs"
-    ],
-    "properties": {
-      "schemaVersion": {
-        "const": "wisdom-weasel.room-rollout-receipt.v1"
-      },
-      "receiptId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "policyId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "action": {
-        "enum": [
-          "promote",
-          "rollback"
-        ]
-      },
-      "fromStage": {
-        "type": "string"
-      },
-      "toStage": {
-        "type": "string"
-      },
-      "affectedRootIds": {
-        "type": "array",
-        "items": {
-          "type": "string"
-        },
-        "uniqueItems": true
-      },
-      "ledgerHash": {
-        "type": "string",
-        "pattern": "^[a-f0-9]{64}$"
-      },
-      "createdAtMs": {
-        "type": "integer",
-        "minimum": 0
-      }
-    }
-  },
   "room-root-execution.v2": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://wisdom-weasel.local/contracts/room-root-execution.v2.json",
@@ -18100,7 +18791,7 @@ export const contractSchemas = {
       "terminalReceiptId",
       "activeProfileRef",
       "budgetPolicyRef",
-      "createdAtMs"
+      "independentReviewRequired"
     ],
     "properties": {
       "schemaVersion": {
@@ -18172,6 +18863,9 @@ export const contractSchemas = {
       "budgetPolicyRef": {
         "type": "string",
         "minLength": 1
+      },
+      "independentReviewRequired": {
+        "type": "boolean"
       },
       "createdAtMs": {
         "type": "integer",
@@ -18619,102 +19313,6 @@ export const contractSchemas = {
     },
     "additionalProperties": false
   },
-  "room-task.v2": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://wisdom-weasel.local/contracts/room-task.v2.json",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "schemaVersion",
-      "taskId",
-      "rootId",
-      "parentTaskId",
-      "ownerParticipantId",
-      "assigneeParticipantId",
-      "objective",
-      "expectedOutput",
-      "requirementItemIds",
-      "acceptanceCriterionIds",
-      "revision",
-      "state"
-    ],
-    "properties": {
-      "schemaVersion": {
-        "type": "string",
-        "const": "wisdom-weasel.room-task.v2"
-      },
-      "taskId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "rootId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "parentTaskId": {
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "ownerParticipantId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "assigneeParticipantId": {
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "objective": {
-        "type": "string",
-        "minLength": 1
-      },
-      "expectedOutput": {
-        "type": "string",
-        "minLength": 1
-      },
-      "requirementItemIds": {
-        "type": "array",
-        "items": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "acceptanceCriterionIds": {
-        "type": "array",
-        "items": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "contextEvidenceRefs": {
-        "type": "array",
-        "items": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "revision": {
-        "type": "integer",
-        "minimum": 0
-      },
-      "state": {
-        "type": "string",
-        "enum": [
-          "pending",
-          "active",
-          "review",
-          "waiting",
-          "blocked",
-          "completed",
-          "failed",
-          "cancelled"
-        ]
-      }
-    }
-  },
   "room-task.v3": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://wisdom-weasel.local/contracts/room-task.v3.json",
@@ -18765,8 +19363,14 @@ export const contractSchemas = {
         "enum": [
           "work",
           "invitation",
-          "review"
+          "review",
+          "report"
         ]
+      },
+      "workItemId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 320
       },
       "currentOwnerParticipantId": {
         "type": "string",
@@ -18840,8 +19444,266 @@ export const contractSchemas = {
           "required",
           "in_review",
           "accepted",
-          "changes_requested"
+          "accepted_with_notes",
+          "changes_requested",
+          "disputed",
+          "escalated",
+          "stale"
         ]
+      },
+      "resultSummary": {
+        "type": "string",
+        "maxLength": 2000
+      },
+      "resultKind": {
+        "type": "string",
+        "enum": [
+          "complete",
+          "dispatch",
+          "wait",
+          "post",
+          "block"
+        ]
+      },
+      "resultAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "verificationCount": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 8192
+      },
+      "verifications": {
+        "type": "array",
+        "maxItems": 64,
+        "items": {
+          "$ref": "#/$defs/publicVerification"
+        }
+      },
+      "artifactRefs": {
+        "type": "array",
+        "maxItems": 128,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      },
+      "residualRisks": {
+        "type": "array",
+        "maxItems": 32,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      },
+      "reviewTargetRevision": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "reviewEvidenceNotBeforeMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "reviewRound": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "reviewFindings": {
+        "type": "array",
+        "maxItems": 64,
+        "items": {
+          "$ref": "#/$defs/reviewFinding"
+        }
+      },
+      "workspacePolicy": {
+        "enum": [
+          "read_only",
+          "shared_single_writer",
+          "isolated_writable"
+        ]
+      },
+      "workspaceRoot": {
+        "type": "string",
+        "minLength": 1
+      },
+      "workspaceBaseRoot": {
+        "type": "string",
+        "minLength": 1
+      },
+      "workspaceBaseCommit": {
+        "type": "string",
+        "minLength": 1
+      },
+      "workspaceSnapshotSha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "workspaceBindingId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "workspaceRepositoryId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "workspaceLifecycleState": {
+        "type": "string",
+        "enum": [
+          "reserved",
+          "materialized",
+          "work_started",
+          "delivered",
+          "integration_started",
+          "integrated",
+          "conflict",
+          "failed",
+          "blocked",
+          "cancelled",
+          "orphaned",
+          "incomplete",
+          "retained",
+          "retry_bound",
+          "abandoned",
+          "cleanup_failed",
+          "cleaned"
+        ]
+      },
+      "workspaceCleanupState": {
+        "type": "string",
+        "enum": [
+          "not_authorized",
+          "authorized",
+          "retained",
+          "cleaned",
+          "missing",
+          "failed"
+        ]
+      },
+      "workspaceAttentionRequired": {
+        "type": "boolean"
+      },
+      "workspaceDeliveryRevision": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "workspaceDeliveryHead": {
+        "type": "string",
+        "minLength": 1
+      },
+      "workspaceDeliverySnapshotSha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "workspaceDelivery": {
+        "$ref": "#/$defs/workspaceDelivery"
+      },
+      "workspaceIntegrationPatchSha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "workspaceIntegratedRevision": {
+        "type": "string",
+        "minLength": 1
+      },
+      "workspaceIntegratedSnapshotSha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "workspaceTerminalReason": {
+        "type": "string",
+        "maxLength": 2000
+      },
+      "workspaceIntegrationState": {
+        "enum": [
+          "not_required",
+          "pending",
+          "applied"
+        ]
+      },
+      "workspaceIntegrationRef": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "workspaceRestorePolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mode",
+          "toolProfileVersion",
+          "executionMode",
+          "workspaceScopeGranted",
+          "workspaceScopeSha256",
+          "workspaceScopeGrantedAtMs",
+          "toolAllowlistMode",
+          "allowedTools",
+          "projectContextEnabled",
+          "piSkillsEnabled",
+          "codexSkillsEnabled"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "assistant",
+              "coordinator"
+            ]
+          },
+          "toolProfileVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "executionMode": {
+            "type": "string",
+            "enum": [
+              "read_only",
+              "per_action",
+              "workspace_managed",
+              "full_trust"
+            ]
+          },
+          "workspaceScopeGranted": {
+            "type": "boolean"
+          },
+          "workspaceScopeSha256": {
+            "type": "string",
+            "pattern": "^(|[0-9a-f]{64})$"
+          },
+          "workspaceScopeGrantedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "toolAllowlistMode": {
+            "type": "string",
+            "enum": [
+              "profile",
+              "explicit"
+            ]
+          },
+          "allowedTools": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            }
+          },
+          "projectContextEnabled": {
+            "type": "boolean"
+          },
+          "piSkillsEnabled": {
+            "type": "boolean"
+          },
+          "codexSkillsEnabled": {
+            "type": "boolean"
+          }
+        }
       },
       "revision": {
         "type": "integer",
@@ -18859,6 +19721,475 @@ export const contractSchemas = {
           "failed",
           "cancelled"
         ]
+      }
+    },
+    "$defs": {
+      "publicVerification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "label",
+          "result",
+          "source"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "pattern": "^(?!.*(?:AC-|ac:|criterionId|criterion:)).+$"
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "fail",
+              "not_verified",
+              "recorded"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "const": "quality_gate"
+          }
+        }
+      },
+      "workspaceDelivery": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "ownerParticipantId",
+          "ownerSessionId",
+          "workItemId",
+          "taskId",
+          "deliveryRevision",
+          "baseCommit",
+          "workspaceSnapshotSha256",
+          "patchSha256",
+          "deliveredAtMs",
+          "resultSummary",
+          "manifestSha256",
+          "files",
+          "totals",
+          "artifactRefs",
+          "verificationCount",
+          "verifications",
+          "verificationRefs",
+          "residualRisks"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "wisdom-weasel.room-workspace-delivery.v1"
+          },
+          "ownerParticipantId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320
+          },
+          "ownerSessionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320
+          },
+          "workItemId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320
+          },
+          "taskId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320
+          },
+          "deliveryRevision": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "baseCommit": {
+            "type": "string",
+            "minLength": 1
+          },
+          "workspaceSnapshotSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "patchSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "deliveredAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "resultSummary": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "manifestSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "files": {
+            "type": "array",
+            "maxItems": 512,
+            "items": {
+              "$ref": "#/$defs/workspaceDeliveryFile"
+            }
+          },
+          "totals": {
+            "$ref": "#/$defs/workspaceDeliveryTotals"
+          },
+          "artifactRefs": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          },
+          "verificationCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8192
+          },
+          "verifications": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "$ref": "#/$defs/publicVerification"
+            }
+          },
+          "verificationRefs": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          },
+          "residualRisks": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          }
+        }
+      },
+      "workspaceDeliveryFile": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "additions",
+          "deletions",
+          "binary",
+          "generated",
+          "redacted"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "additions": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "deletions": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "binary": {
+            "type": "boolean"
+          },
+          "generated": {
+            "type": "boolean"
+          },
+          "redacted": {
+            "type": "boolean"
+          }
+        }
+      },
+      "workspaceDeliveryTotals": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "fileCount",
+          "additions",
+          "deletions",
+          "binaryFiles",
+          "generatedFiles",
+          "redactedFiles"
+        ],
+        "properties": {
+          "fileCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 512
+          },
+          "additions": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "deletions": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "binaryFiles": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 512
+          },
+          "generatedFiles": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 512
+          },
+          "redactedFiles": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 512
+          }
+        }
+      },
+      "reviewFinding": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "findingId",
+          "fingerprint",
+          "gateEffect",
+          "impact",
+          "category",
+          "scope",
+          "observation",
+          "expected",
+          "userImpact",
+          "evidenceRefs",
+          "reproduction",
+          "state",
+          "firstSeenRevision",
+          "lastCheckedRevision",
+          "failedRechecks",
+          "response"
+        ],
+        "properties": {
+          "findingId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "gateEffect": {
+            "type": "string",
+            "enum": [
+              "blocking",
+              "advisory"
+            ]
+          },
+          "impact": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "high",
+              "normal"
+            ]
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "correctness",
+              "security",
+              "privacy",
+              "data_loss",
+              "authorization",
+              "permission",
+              "destructive_behavior",
+              "core_runtime_unavailable",
+              "regression",
+              "review_target_identity",
+              "spec_mismatch",
+              "ux",
+              "performance",
+              "maintainability",
+              "test",
+              "documentation"
+            ]
+          },
+          "scope": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "criterionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "invariantId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "anyOf": [
+              {
+                "required": [
+                  "criterionId"
+                ]
+              },
+              {
+                "required": [
+                  "invariantId"
+                ]
+              }
+            ]
+          },
+          "observation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "userImpact": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "reproduction": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "resolved",
+              "dismissed",
+              "accepted_risk",
+              "contested",
+              "escalated"
+            ]
+          },
+          "dispositionRationale": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "ownerParticipantId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "firstSeenRevision": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "lastCheckedRevision": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "failedRechecks": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "response": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "findingId",
+                  "action",
+                  "rationale",
+                  "evidenceRefs",
+                  "participantId",
+                  "createdAtMs"
+                ],
+                "properties": {
+                  "findingId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "fixed",
+                      "contest"
+                    ]
+                  },
+                  "rationale": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  },
+                  "evidenceRefs": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 64,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "participantId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "createdAtMs": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            ]
+          }
+        }
       }
     }
   },
@@ -19376,7 +20707,7 @@ export const contractSchemas = {
           }
         }
       },
-      "plan": {
+      "todo": {
         "type": "array",
         "maxItems": 8,
         "items": {
@@ -19384,16 +20715,17 @@ export const contractSchemas = {
           "additionalProperties": false,
           "required": [
             "status",
-            "title"
+            "content"
           ],
           "properties": {
             "status": {
               "enum": [
                 "pending",
-                "in_progress"
+                "in_progress",
+                "blocked"
               ]
             },
-            "title": {
+            "content": {
               "type": "string",
               "minLength": 1,
               "maxLength": 240
@@ -20130,7 +21462,7 @@ export const contractSchemas = {
           "authorityKind": {
             "type": "string",
             "enum": [
-              "session_plan",
+              "session_todo",
               "session_goal",
               "room_work_item"
             ]
@@ -20349,7 +21681,7 @@ export const contractSchemas = {
           "authorityKind": {
             "type": "string",
             "enum": [
-              "session_plan",
+              "session_todo",
               "session_goal",
               "room_work_item"
             ]
@@ -20488,7 +21820,7 @@ export const contractSchemas = {
           "authorityKind": {
             "type": "string",
             "enum": [
-              "session_plan",
+              "session_todo",
               "session_goal",
               "room_work_item"
             ]
@@ -20615,6 +21947,113 @@ export const contractSchemas = {
         "minLength": 1,
         "maxLength": 120
       },
+      "referencesEvidence": {
+        "type": "object",
+        "required": [
+          "root",
+          "path",
+          "relativePath",
+          "line",
+          "column",
+          "server",
+          "resourceRevision",
+          "preimageSha256",
+          "count",
+          "truncated",
+          "items"
+        ],
+        "properties": {
+          "root": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "relativePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "column": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "server": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "resourceRevision": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "preimageSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 64
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "relativePath",
+                "line",
+                "column",
+                "endLine",
+                "endColumn"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "relativePath": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "column": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "endLine": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "endColumn": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "changedFiles": {
         "type": "array",
         "minItems": 1,
@@ -20648,6 +22087,18 @@ export const contractSchemas = {
         "type": "boolean",
         "const": false
       }
+    },
+    "if": {
+      "properties": {
+        "operation": {
+          "const": "rename"
+        }
+      }
+    },
+    "then": {
+      "required": [
+        "referencesEvidence"
+      ]
     },
     "additionalProperties": false
   },

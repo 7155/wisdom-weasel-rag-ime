@@ -1,10 +1,11 @@
 import { ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
-import { memo, useMemo, useState, type ReactNode } from 'react';
+import { memo, useId, useMemo, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { AgentBlockRenderProps } from './renderer-contract';
 import { CodeContentBlock, StreamingCursor } from './CodeDiffRenderers';
 import { text } from './renderer-values';
+import { toggleDisclosurePreservingAnchor } from './disclosure-anchor';
 
 const MARKDOWN_FOLD_LINES = 48;
 const MARKDOWN_FOLD_CHARACTERS = 7_000;
@@ -29,6 +30,7 @@ export function MarkdownBody({
   text: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const disclosureId = useId();
   const partition = useMemo(
     () => streamingTail
       ? partitionStreamingMarkdownFragments(source)
@@ -53,10 +55,12 @@ export function MarkdownBody({
   if (!foldable) return body;
   return (
     <div className="agent-markdown-fold">
-      <div className="agent-markdown-fold__content">{body}</div>
+      <div className="agent-markdown-fold__content" id={disclosureId}>{body}</div>
       <button
+        aria-controls={disclosureId}
+        aria-expanded={expanded}
         className="agent-markdown-fold__toggle"
-        onClick={() => setExpanded((value) => !value)}
+        onClick={(event) => toggleDisclosurePreservingAnchor(event, setExpanded)}
         type="button"
       >
         {collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}

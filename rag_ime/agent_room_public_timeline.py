@@ -11,6 +11,7 @@ PUBLIC_ROOM_REPORT_MAX_CHARS = 8_000
 _PUBLIC_ROOM_REPORT_INTERNAL_MARKER = re.compile(
     r"(?:"
     r"\b[A-Za-z][A-Za-z0-9_]*(?:Id|Ref|Hash|Receipt)\b"
+    r"|(?i:\b(?:kernel|root|dispatch|task|ac|receipt(?:\s+id)?)\b)"
     r"|(?i:\b(?:sha256|AC-\d+)\b)"
     r"|(?i:(?:room-(?:root|work|task|dispatch|commit|post|receipt)|"
     r"execution:invoke|invoke|participant|agent|dispatch|task|root|"
@@ -32,6 +33,16 @@ _PUBLIC_ROOM_REPORT_PROTOCOL_PLACEHOLDER = re.compile(
     r"deliver|handoff|wait|blocked|done|complete(?:d)?|result|success|failed?"
     r"|已?完成|已?转交|等待|已?阻塞|成功|失败"
     r")\s*[.!。！]?$"
+)
+_PUBLIC_ROOM_REPORT_GENERIC_PROGRESS_PLACEHOLDER = re.compile(
+    r"(?i)^(?:"
+    r"(?:(?:i(?:'m| am)\s+|still\s+)?"
+    r"(?:processing|working|analy[sz]ing|checking|executing)"
+    r"(?:\s+(?:on it|now))?)"
+    r"|(?:(?:我|当前|任务)?(?:正在|还在|在)?"
+    r"(?:处理|分析|检查|执行|工作|进行)"
+    r"(?:中|一下|(?:这个)?(?:任务|请求))?)"
+    r")[\s.!。！…]*$"
 )
 _PUBLIC_ROOM_REPORT_GLOBAL_COMPLETION_CLAIM = re.compile(
     r"(?i)(?:"
@@ -70,10 +81,13 @@ def public_room_report_content(value: object, *, field_name: str) -> str:
             f"{field_name} must contain at most "
             f"{PUBLIC_ROOM_REPORT_MAX_CHARS} characters"
         )
-    if _PUBLIC_ROOM_REPORT_PROTOCOL_PLACEHOLDER.fullmatch(content):
+    if (
+        _PUBLIC_ROOM_REPORT_PROTOCOL_PLACEHOLDER.fullmatch(content)
+        or _PUBLIC_ROOM_REPORT_GENERIC_PROGRESS_PLACEHOLDER.fullmatch(content)
+    ):
         raise ValueError(
             f"{field_name} must be a meaningful user-facing report, not a "
-            "protocol label or terminal status"
+            "protocol label, generic progress filler, or terminal status"
         )
     if _PUBLIC_ROOM_REPORT_INTERNAL_MARKER.search(content):
         raise ValueError(
@@ -129,6 +143,7 @@ _ROOM_POST_PUBLIC_FIELDS = (
     "mentions",
     "blocks",
     "attachments",
+    "chronology",
     "idempotencyKey",
     "publicationSource",
     "createdAtMs",
@@ -160,6 +175,9 @@ class RoomPublicTimelineProjector:
         client_message_id: str,
         route_decisions: Sequence[Mapping[str, object]],
         dispatches: Sequence[Mapping[str, object]],
+        answer_to_post_id: str = "",
+        answer_display_text: str = "",
+        chronology_after_post_id: str = "",
     ) -> list[dict[str, object]]:
         room_id = str(post["roomId"])
         root_id = str(post["rootId"])
@@ -176,6 +194,22 @@ class RoomPublicTimelineProjector:
                 "rootId": root_id,
                 "postId": str(post["postId"]),
                 "attachmentReceipts": list(post.get("attachments") or []),
+                **(
+                    {"answerToPostId": answer_to_post_id}
+                    if answer_to_post_id
+                    else {}
+                ),
+                **(
+                    {"displayText": answer_display_text}
+                    if answer_display_text
+                    and answer_display_text != str(post["content"])
+                    else {}
+                ),
+                **(
+                    {"afterPostId": chronology_after_post_id}
+                    if chronology_after_post_id
+                    else {}
+                ),
             },
             turn_id=root_id,
             topic_id=topic_id,
@@ -211,7 +245,18 @@ class RoomPublicTimelineProjector:
                     "targetParticipantId": participant_id,
                     "status": "queued",
                     "reason": str(decision.get("reason") or "")[:160],
-                    "summary": f"{display_name} 已接手",
+                    "summary": (
+                        f"{display_name} 等待确认需求"
+                        if decision.get("phase") == "alignment"
+                        else f"{display_name} 已进入执行队列"
+                    ),
+                    "phase": str(decision.get("phase") or "execution"),
+                    "alignmentOrdinal": decision.get(
+                        "alignmentOrdinal"
+                    ),
+                    "dependsOnDispatchIds": list(
+                        decision.get("dependsOnDispatchIds") or []
+                    ),
                 },
                 turn_id=root_id,
                 participant_id=participant_id or None,
@@ -232,9 +277,10 @@ class RoomPublicTimelineProjector:
         event_type: str,
         public_data: Mapping[str, object],
         topic_id: str = "",
+        allow_after_terminal: bool = False,
     ) -> dict[str, object] | None:
         root_id = str(binding["rootId"])
-        if self._after_root_terminal(root_id):
+        if self._after_root_terminal(root_id) and not allow_after_terminal:
             return None
         dispatch_id = str(binding["dispatchId"])
         data = {

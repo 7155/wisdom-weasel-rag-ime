@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Mapping
+
+from .input_capture_contract import (
+    InputCaptureContractError,
+    capture_contract_from_metadata,
+)
 
 from .text_utils import compact_whitespace
 
@@ -74,6 +79,8 @@ def assess_input_text(
     finalized: bool | None = None,
     reconstructed: bool = False,
     tags: Iterable[str] = (),
+    capture_metadata: Mapping[str, object] | None = None,
+    app: str = "",
 ) -> InputQualityAssessment:
     """Classify input before it can enter model context or long-term memory.
 
@@ -90,7 +97,23 @@ def assess_input_text(
         or "finalized" in normalized_tags
         or "complete-input" in normalized_tags
     )
-    boundary_finalized = explicit_finalized if finalized is None else bool(finalized)
+    capture_contract = None
+    capture_contract_invalid = False
+    try:
+        capture_contract = capture_contract_from_metadata(
+            capture_metadata or {},
+            text=value,
+            source=normalized_source,
+            app=app or str((capture_metadata or {}).get("appBundleId") or ""),
+        )
+    except InputCaptureContractError:
+        capture_contract_invalid = True
+    trusted_capture_boundary = bool(
+        capture_contract is not None and capture_contract.is_strong_final
+    )
+    boundary_finalized = (
+        explicit_finalized if finalized is None else bool(finalized)
+    ) or trusted_capture_boundary
     reasons: list[str] = []
 
     if not source_context_enabled(normalized_source, tags=normalized_tags):
@@ -126,6 +149,8 @@ def assess_input_text(
         reasons.append("raw_rime_fragment")
     if normalized_source == RIME_FRAGMENT_SOURCE and reconstructed and not boundary_finalized:
         reasons.append("missing_finalized_boundary")
+    if capture_contract_invalid:
+        reasons.append("invalid_capture_v2")
 
     substantial = sentence_ended or cjk_count >= 6 or len(word_tokens) >= 3
     complete = bool(
@@ -154,9 +179,13 @@ def assess_input_text(
 
     # Long-term memory is intentionally stricter than recent Agent context.
     durable_signal = sentence_ended or cjk_count >= 8 or len(word_tokens) >= 4
-    memory_eligible = injectable and durable_signal
+    explicit_memory_boundary = normalized_source == "squirrel_assistant_remember"
+    memory_boundary_trusted = trusted_capture_boundary or explicit_memory_boundary
+    memory_eligible = injectable and durable_signal and memory_boundary_trusted
     if injectable and not durable_signal:
         reasons.append("insufficient_durable_signal")
+    if injectable and not memory_boundary_trusted:
+        reasons.append("untrusted_memory_boundary")
 
     if not complete and not reasons:
         reasons.append("incomplete_expression")

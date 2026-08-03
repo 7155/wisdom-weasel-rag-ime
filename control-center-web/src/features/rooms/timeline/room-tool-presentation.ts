@@ -7,6 +7,7 @@ import type {
 const technicalFieldName = /(?:^|[._-])(?:actor|block|command|commit|dispatch|event|generation|hash|id|participant|receipt|ref|revision|root|schema(?:version)?|session|sha\d*|task|token|turn)(?:$|[._-])/iu;
 const technicalFieldLabel = /(?:回执|哈希|内部标识|会话标识|分派标识|协议版本)/u;
 const technicalLine = /(?:receipt(?:Id)?|contentHash|payloadHash|outputHash|artifactHash|schemaVersion|dispatchId|rootId|taskId|turnId|sessionId|toolCallId|toolId|pathId)\s*(?:=|:)/iu;
+const internalProtocolTerm = /\b(?:Kernel|Root|Dispatch|Task|AC|Receipt\s+ID)\b/giu;
 const protocolReference = /\b(?:actor|block|call|command|dispatch|event|message|participant|post|receipt|room|root|session|task|tool|turn)[-_:][A-Za-z0-9_.:-]{4,}\b/giu;
 const contentHash = /\b(?:sha(?:1|224|256|384|512):)?[a-f0-9]{32,}\b/giu;
 const uuid = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/giu;
@@ -79,6 +80,14 @@ export function roomPublicToolResultView(view: PublicToolResultView): PublicTool
   };
 }
 
+export function roomPublicActivityText(value: string): string {
+  return sanitizeText(value);
+}
+
+export function roomPublicActivityOutput(value: string): string {
+  return sanitizeOutput(value);
+}
+
 function sanitizeField(field: PublicToolResultField): PublicToolResultField[] {
   if (isTechnicalField(field)) return [];
   const value = semanticReferenceFieldIds[field.id] === true
@@ -144,7 +153,19 @@ function sanitizeText(value: string): string {
     .replace(contentHash, '已隐藏的校验值')
     .replace(uuid, '已隐藏的记录')
     .replace(protocolReference, '协作记录')
+    .replace(internalProtocolTerm, naturalProtocolTerm)
+    .replace(/\s*(协作系统|协作记录|本轮工作|执行安排|工作项|验收标准|验证记录)\s*/gu, '$1')
     .trim();
+}
+
+function naturalProtocolTerm(value: string): string {
+  const normalized = value.toLocaleLowerCase('en-US').replace(/\s+/gu, ' ');
+  if (normalized === 'kernel') return '协作系统';
+  if (normalized === 'root') return '本轮工作';
+  if (normalized === 'dispatch') return '执行安排';
+  if (normalized === 'task') return '工作项';
+  if (normalized === 'ac') return '验收标准';
+  return '验证记录';
 }
 
 function sanitizePath(value: string): string {

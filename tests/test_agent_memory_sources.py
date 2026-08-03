@@ -141,6 +141,7 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
         self.assertFalse(result["createsDurableMemory"])
         self.assertFalse(result["requiresApproval"])
         self.assertEqual(result["sourceId"], source["sourceId"])
+        self.assertEqual(result["evidenceState"], "candidate")
         with closing(sqlite3.connect(self.db_path)) as conn:
             self.assertEqual(
                 conn.execute("SELECT COUNT(*) FROM memory_capture_hints").fetchone()[0],
@@ -149,6 +150,54 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
             self.assertEqual(
                 conn.execute("SELECT COUNT(*) FROM memory_atoms").fetchone()[0],
                 0,
+            )
+            self.assertEqual(
+                conn.execute(
+                    """
+                    SELECT evidence_domain, origin_kind, admission_state
+                    FROM agent_memory_evidence WHERE evidence_id = ?
+                    """,
+                    (result["evidenceId"],),
+                ).fetchone(),
+                ("personal_memory", "explicit_user_memory", "candidate"),
+            )
+
+    def test_project_capture_is_audited_but_not_personal_memory(self) -> None:
+        self.store.checkpoint_user_message(
+            session_id=str(self.session["id"]),
+            pi_entry_id="pi-entry:project-capture",
+            turn_id="turn:project-capture",
+            text="这个项目使用统一的发布门禁。",
+            created_at_ms=350,
+        )
+
+        result = self.store.capture_hint(
+            session_id=str(self.session["id"]),
+            kind="decision",
+            claim="项目使用统一发布门禁。",
+            scope="project",
+            basis="explicit_user_statement",
+            future_use="仅用于当前项目交付。",
+            created_at_ms=351,
+        )
+
+        self.assertEqual(result["evidenceState"], "rejected")
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            self.assertEqual(
+                conn.execute(
+                    """
+                    SELECT evidence_domain, admission_state, admission_reason,
+                           scope_mode
+                    FROM agent_memory_evidence WHERE evidence_id = ?
+                    """,
+                    (result["evidenceId"],),
+                ).fetchone(),
+                (
+                    "audit_context",
+                    "rejected",
+                    "project_scope_not_personal_memory",
+                    "quarantined",
+                ),
             )
 
     def test_capture_hint_rejects_workflow_prompt(self) -> None:
@@ -195,6 +244,14 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
             text="我以后会先给结论。",
             occurred_at_ms=401,
         )["evidence"]
+        tool_evidence = self.evidence.record_tool_receipt(
+            receipt_id="receipt:verified-answer-structure",
+            text="已应用默认先给结论的回答结构。",
+            session_id=str(self.session["id"]),
+            role_id=str(self.session["roleId"]),
+            applied=True,
+            occurred_at_ms=401,
+        )["evidence"]
 
         accepted = self.store.capture_hint(
             session_id=str(self.session["id"]),
@@ -208,6 +265,18 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
         )
         self.assertTrue(accepted["captured"])
 
+        verified = self.store.capture_hint(
+            session_id=str(self.session["id"]),
+            kind="preference",
+            claim="用户偏好并已启用先给结论的回答结构。",
+            scope="user",
+            basis="verified_outcome",
+            future_use="未来回答继续沿用已验证的结构。",
+            evidence_ids=[str(tool_evidence["evidenceId"])],
+            created_at_ms=403,
+        )
+        self.assertTrue(verified["captured"])
+
         with self.assertRaisesRegex(ValueError, "missing or outside this session"):
             self.store.capture_hint(
                 session_id=str(self.session["id"]),
@@ -217,7 +286,7 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
                 basis="verified_outcome",
                 future_use="助手自述不能成为用户记忆证据。",
                 evidence_ids=[str(assistant_evidence["evidenceId"])],
-                created_at_ms=403,
+                created_at_ms=404,
             )
 
     def test_transient_subagent_input_and_compaction_never_become_role_memory(self) -> None:
@@ -271,6 +340,33 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
         )
         listed = self.store.list_for_session(str(self.session["id"]))
         self.assertEqual([item["sourceId"] for item in listed], [result["source"]["sourceId"]])
+        self.assertNotIn("evidence", result)
+
+        personal = self.store.checkpoint_tool_receipt(
+            {
+                "approvalId": "approval:personal-memory",
+                "sessionId": self.session["id"],
+                "state": "applied",
+                "receipt": {
+                    "mutationApplied": True,
+                    "personalMemoryEligible": True,
+                    "summary": "用户已验证默认只显示聚合后的隐私安全报告。",
+                },
+            },
+            created_at_ms=301,
+        )
+        self.assertEqual(personal["evidence"]["admissionState"], "candidate")
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            self.assertEqual(
+                conn.execute(
+                    """
+                    SELECT evidence_domain, origin_kind, admission_state
+                    FROM agent_memory_evidence WHERE evidence_id = ?
+                    """,
+                    (personal["evidence"]["evidenceId"],),
+                ).fetchone(),
+                ("personal_memory", "applied_personal_receipt", "candidate"),
+            )
 
     def test_compaction_summary_is_role_owned_and_idempotent(self) -> None:
         first = self.store.checkpoint_compaction(

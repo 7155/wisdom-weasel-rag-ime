@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import tempfile
@@ -29,6 +30,7 @@ class MemoryCompileStateTest(unittest.TestCase):
         self.db_path = Path(self.tmp.name) / "rag-ime.sqlite"
         self.core = LocalSqliteCoreClient(self.db_path)
         self.core.initialize()
+        self.capture_ordinal = 0
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -544,39 +546,25 @@ class MemoryCompileStateTest(unittest.TestCase):
         base = now_ms()
         for offset in (0, 2_000):
             self.core.record_event(
-                InputEvent(
-                    event_id=None,
+                self._event(
+                    "输入法记忆应由模型清洗后再索引",
+                    "app:codex",
                     created_at_ms=base + offset,
-                    source="manual_commit",
-                    committed_text="输入法记忆应由模型清洗后再索引",
-                    privacy_disposition="allowed",
                     app="com.openai.codex",
-                    project="ime",
-                    context_group_id="app:codex",
                 )
             )
         self.core.record_event(
-            InputEvent(
-                event_id=None,
+            self._event(
+                "Type: ceshiwendang. Wait for LLM/model. Press a visible candidate and wait for the next prediction.",
+                "app:textedit",
                 created_at_ms=base + 3_000,
-                source="manual_commit",
-                committed_text="Type: ceshiwendang. Wait for LLM/model. Press a visible candidate and wait for the next prediction.",
-                privacy_disposition="allowed",
-                app="com.apple.TextEdit",
-                project="ime",
-                context_group_id="app:textedit",
             )
         )
         self.core.record_event(
-            InputEvent(
-                event_id=None,
+            self._event(
+                "我想设计一个候选展示方式",
+                "app:doctor-prediction",
                 created_at_ms=base + 4_000,
-                source="manual_commit",
-                committed_text="我想设计一个候选展示方式",
-                privacy_disposition="allowed",
-                app="com.apple.TextEdit",
-                project="ime",
-                context_group_id="app:doctor-prediction",
             )
         )
 
@@ -590,18 +578,54 @@ class MemoryCompileStateTest(unittest.TestCase):
         self.assertEqual(bundle["reconstruction"]["droppedRuntimeProbeCount"], 1)
         self.assertEqual(bundle["reconstruction"]["droppedDoctorEventCount"], 1)
 
-    @staticmethod
-    def _event(text: str, group_id: str) -> InputEvent:
+    def _event(
+        self,
+        text: str,
+        group_id: str,
+        *,
+        created_at_ms: int | None = None,
+        app: str = "com.apple.TextEdit",
+    ) -> InputEvent:
+        self.capture_ordinal += 1
+        ordinal = self.capture_ordinal
+        timestamp = now_ms() if created_at_ms is None else created_at_ms
         return InputEvent(
             event_id=None,
-            created_at_ms=now_ms(),
-            source="squirrel",
+            created_at_ms=timestamp,
+            source="squirrel_input_segment",
             committed_text=text,
             privacy_disposition="allowed",
-            app="com.apple.TextEdit",
+            app=app,
             project="ime",
             context_group_id=group_id,
             context_group_level="document",
+            capture_metadata={
+                "schemaVersion": "rag-ime.input-capture.v2",
+                "captureId": f"capture:compile-state:{ordinal}",
+                "transactionId": f"transaction:compile-state:{ordinal}",
+                "sequence": ordinal,
+                "channel": "input_method",
+                "boundaryKind": "host_return",
+                "boundaryConfidence": "strong",
+                "nativeCompositionBefore": False,
+                "rimeHandled": False,
+                "hostForwarded": True,
+                "modifiedReturn": False,
+                "finalCommitted": True,
+                "controllerEpoch": 1,
+                "focusEpoch": 1,
+                "appBundleId": app,
+                "fieldIdentitySha256": hashlib.sha256(group_id.encode("utf-8")).hexdigest(),
+                "privacyRevision": "foreground-privacy.v1",
+                "occurredStartMs": timestamp,
+                "occurredEndMs": timestamp + 20,
+                "contentSha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "captureSource": "text_input_client",
+                "fallbackReason": "",
+                "fieldContextChars": len(text),
+                "imeBufferChars": len(text),
+                "selectionRule": "final_committed_segment",
+            },
         )
 
 

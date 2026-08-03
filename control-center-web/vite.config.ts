@@ -8,7 +8,9 @@ import { defineConfig } from 'vitest/config';
 const rootDirectory = path.dirname(fileURLToPath(import.meta.url));
 const controlTransport = process.env.VITE_CONTROL_TRANSPORT ?? 'auto';
 const buildChannel = process.env.VITE_BUILD_CHANNEL ?? 'preview';
-const controlProxyTarget = normalizeControlProxyTarget(process.env.VITE_CONTROL_PROXY_TARGET);
+const controlProxyTarget = normalizeControlProxyTarget(
+  process.env.VITE_CONTROL_PROXY_TARGET ?? 'http://127.0.0.1:8768',
+);
 const nativeOnlyBuild = controlTransport === 'native';
 const httpOnlyBuild = controlTransport === 'http';
 const isolatedTransportBuild = nativeOnlyBuild || httpOnlyBuild;

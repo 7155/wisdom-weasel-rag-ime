@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from threading import RLock
 from typing import Any
 
-from .agent_context_runtime import render_context_items
+from .agent_context_runtime import render_provider_context_items
 from .agent_memory_context_support import (
     last_user_recall_text,
     recall_message_text,
@@ -18,6 +18,7 @@ from .agent_memory_context_support import (
 from .agent_prompt_support import bounded_text
 from .agent_room_kernel import RoomKernelFenceError
 from .session_recall_policy import session_recall_policy
+from .text_utils import compact_whitespace
 
 
 class AgentMemoryContextService:
@@ -59,7 +60,6 @@ class AgentMemoryContextService:
         )
         self._runtime_provider = runtime_provider
         self._state_lock = RLock()
-        self._last_query: dict[str, str] = {}
         self._recent_messages: dict[
             str,
             list[dict[str, object]],
@@ -178,8 +178,9 @@ class AgentMemoryContextService:
                     .start_summary_weight
                 ),
                 recent_messages=projected_recent,
-                planning_context=self.sessions.agent_plan(
-                    session_id
+                todo_context=_session_todo_projection(
+                    self.sessions,
+                    session_id,
                 ),
                 task_context=_memory_task_projection(task),
             )
@@ -210,80 +211,6 @@ class AgentMemoryContextService:
             "expiredLegacyItems": expired_legacy,
         }
 
-    def refresh_for_turn(
-        self,
-        session: Mapping[str, object],
-        *,
-        query_text: str,
-    ) -> dict[str, object]:
-        """Refresh the generic memory projection for one new user task.
-
-        Room and ordinary Agent Sessions share this lifecycle. Room-specific
-        responsibility context is composed elsewhere and never becomes a
-        prerequisite for personal-memory recall.
-        """
-
-        session_id = str(session.get("id") or "")
-        self.remember_query(session_id, query_text)
-        expired_legacy = 0
-        try:
-            expired_legacy = (
-                self.context_runtime
-                .expire_legacy_memory_bootstrap(
-                    session_id,
-                    current_dedupe_key=(
-                        self.memory_bootstrap.dedupe_key(
-                            session_id
-                        )
-                    ),
-                )
-            )
-            refreshed = self.refresh(
-                {
-                    "sessionId": session_id,
-                    "trigger": "turn_start",
-                    "queryText": query_text,
-                }
-            )
-        except RoomKernelFenceError:
-            raise
-        except Exception as exc:
-            existing = self.context_runtime.active_item(
-                session_id,
-                source_kind="memory_bootstrap",
-            )
-            if existing is not None:
-                receipt = _ready_existing(
-                    session_id,
-                    existing,
-                    dedupe_key=self.context_runtime.active_dedupe_key(
-                        session_id,
-                        source_kind="memory_bootstrap",
-                    ),
-                    expired_legacy=expired_legacy,
-                )
-                receipt["status"] = "ready_stale"
-                receipt["refreshError"] = _error_text(exc)
-                return receipt
-            return _bootstrap_failure(session_id, exc)
-
-        result = refreshed["result"]
-        return {
-            "schemaVersion": (
-                "rag-ime.memory-bootstrap-enqueue-result.v1"
-            ),
-            "ok": True,
-            "sessionId": session_id,
-            "status": "ready",
-            "itemId": str(result.get("itemId") or ""),
-            "dedupeKey": str(result.get("dedupeKey") or ""),
-            "sourceCount": int(result.get("sourceCount") or 0),
-            "queryAware": True,
-            "refreshedForCurrentTurn": True,
-            "priority": "developer",
-            "lifecycle": "session",
-            "expiredLegacyItems": expired_legacy,
-        }
 
     def refresh(
         self,
@@ -310,7 +237,6 @@ class AgentMemoryContextService:
             maximum=8_000,
         )
         query = self._refresh_query(
-            session_id,
             payload=payload,
             recent=recent,
             is_compaction=is_compaction,
@@ -396,8 +322,9 @@ class AgentMemoryContextService:
                 else 0.0
             ),
             recent_messages=projected_recent,
-            planning_context=self.sessions.agent_plan(
-                session_id
+            todo_context=_session_todo_projection(
+                self.sessions,
+                session_id,
             ),
             task_context=_memory_task_projection(task),
             compaction_recovery=compaction_recovery,
@@ -558,30 +485,6 @@ class AgentMemoryContextService:
             ),
         )
 
-    def remember_query(
-        self,
-        session_id: str,
-        query_text: str,
-    ) -> None:
-        query = bounded_text(query_text, maximum=8_000)
-        if not query:
-            return
-        with self._state_lock:
-            self._last_query[session_id] = query
-
-    def recall_query(
-        self,
-        session_id: str,
-        *,
-        fallback: str = "",
-    ) -> str:
-        with self._state_lock:
-            cached = self._last_query.get(session_id, "")
-        return cached or bounded_text(
-            fallback,
-            maximum=8_000,
-        )
-
     def replace_recent_messages(
         self,
         session_id: str,
@@ -647,7 +550,6 @@ class AgentMemoryContextService:
 
         with self._state_lock:
             for session_id in session_ids:
-                self._last_query.pop(session_id, None)
                 self._recent_messages.pop(session_id, None)
 
     def provider_context(
@@ -677,11 +579,10 @@ class AgentMemoryContextService:
             if isinstance(item, Mapping)
             and item.get("sourceKind") in allowed_source_kinds
         ]
-        return render_context_items(items)
+        return render_provider_context_items(items)
 
     def _refresh_query(
         self,
-        session_id: str,
         *,
         payload: Mapping[str, object],
         recent: Sequence[Mapping[str, object]],
@@ -694,12 +595,7 @@ class AgentMemoryContextService:
             payload.get("queryText"),
             maximum=8_000,
         )
-        if explicit_query:
-            return explicit_query
-        return self.recall_query(
-            session_id,
-            fallback=latest_user,
-        )
+        return explicit_query or latest_user
 
     @staticmethod
     def _validate_room_fence(
@@ -810,6 +706,39 @@ def _memory_task_projection(
     return task
 
 
+def _session_todo_projection(
+    sessions: Any,
+    session_id: str,
+) -> Mapping[str, object]:
+    """Project the authoritative Todo into Session Recall's bounded task shape."""
+
+    todo_reader = getattr(sessions, "agent_todo", None)
+    if not callable(todo_reader):
+        return {}
+    todo = todo_reader(session_id)
+    items: list[dict[str, str]] = []
+    phases = todo.get("phases") if isinstance(todo, Mapping) else []
+    for phase in phases if isinstance(phases, (list, tuple)) else []:
+        if not isinstance(phase, Mapping):
+            continue
+        tasks = phase.get("tasks")
+        for task in tasks if isinstance(tasks, (list, tuple)) else []:
+            if not isinstance(task, Mapping):
+                continue
+            status = compact_whitespace(
+                str(task.get("status") or "pending")
+            ).lower()
+            content = bounded_text(
+                task.get("content"),
+                maximum=240,
+            )
+            if status in {"pending", "in_progress", "blocked"} and content:
+                items.append({"status": status, "content": content})
+            if len(items) >= 8:
+                return {"items": items}
+    return {"items": items}
+
+
 def _ordinary_compaction_recovery(
     *,
     summary: str,
@@ -821,7 +750,7 @@ def _ordinary_compaction_recovery(
     Pi already places the generated compaction summary back into the active
     conversation as a ``compactionSummary`` message.  This local packet only
     proves which summary and capability receipts were recovered for the new
-    context epoch.  Current Task and Plan state are projected separately by
+    context epoch.  Current Task and Todo state are projected separately by
     their authoritative owners.
     """
 
@@ -926,7 +855,7 @@ def _error_text(error: BaseException) -> str:
 def _render_specification(
     specification: Mapping[str, object],
 ) -> str:
-    return render_context_items(
+    return render_provider_context_items(
         [
             {
                 "sourceKind": specification["source_kind"],

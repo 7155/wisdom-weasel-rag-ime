@@ -29,6 +29,8 @@ from rag_ime.predictor_latency import PredictorLatencyTrace, append_latency_trac
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.knowledge_workbench import KnowledgeGenerationResult, KnowledgeWorkbenchRequest
 from rag_ime.memory_ingest import normalize_text, upsert_memory_item
+from rag_ime.memory_evidence_admission import transition_evidence_admission
+from rag_ime.memory_maintenance_settings import MemoryMaintenanceSettings
 from rag_ime.memory_book_compiler import (
     apply_memory_book_plan,
     build_memory_book_source_bundle,
@@ -46,6 +48,45 @@ from rag_ime.rime_rank_export import record_rime_rank_feedback
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
+
+
+def _capture_v2(
+    text: str,
+    *,
+    capture_id: str,
+    app: str = "com.apple.TextEdit",
+    occurred_at_ms: int | None = None,
+) -> dict[str, object]:
+    timestamp = int(occurred_at_ms or time.time() * 1_000)
+    return {
+        "schemaVersion": "rag-ime.input-capture.v2",
+        "captureId": capture_id,
+        "transactionId": f"transaction:{capture_id}",
+        "sequence": 1,
+        "channel": "input_method",
+        "boundaryKind": "host_return",
+        "boundaryConfidence": "strong",
+        "nativeCompositionBefore": False,
+        "rimeHandled": False,
+        "hostForwarded": True,
+        "modifiedReturn": False,
+        "finalCommitted": True,
+        "controllerEpoch": 1,
+        "focusEpoch": 1,
+        "appBundleId": app,
+        "fieldIdentitySha256": hashlib.sha256(
+            f"field:{capture_id}".encode("utf-8")
+        ).hexdigest(),
+        "privacyRevision": "foreground-privacy.v1",
+        "occurredStartMs": timestamp,
+        "occurredEndMs": timestamp + 1,
+        "contentSha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "captureSource": "text_input_client",
+        "fallbackReason": "",
+        "fieldContextChars": len(text),
+        "imeBufferChars": len(text),
+        "selectionRule": "final_committed_segment",
+    }
 
 
 class _ManagementPredictionProvider:
@@ -1276,7 +1317,23 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertTrue(status["autoApply"])
         self.assertFalse(status["scheduledDraftOnly"])
         self.assertEqual(status["automation"]["runsPerDay"], 2)
-        self.assertEqual(status["automation"]["model"], "gpt/gpt-5.6-luna")
+        self.assertEqual(
+            status["automation"]["model"],
+            "openai-codex/gpt-5.6-luna",
+        )
+        self.assertEqual(status["automation"]["curationProtocol"], "atom-first-v1")
+        self.assertEqual(status["automation"]["targetSourceCount"], 1_000)
+        self.assertEqual(status["automation"]["maximumSourceCount"], 1_500)
+        self.assertEqual(status["automation"]["maximumInputTokens"], 200_000)
+        self.assertEqual(status["automation"]["reservedContextTokens"], 72_000)
+        self.assertEqual(
+            status["modelCuration"]["requiredModel"],
+            "openai-codex/gpt-5.6-luna",
+        )
+        self.assertEqual(status["modelCuration"]["requiredThinkingLevel"], "max")
+        self.assertEqual(status["modelCuration"]["minimumContextTokens"], 272_000)
+        self.assertEqual(status["modelCuration"]["runs"], [])
+        self.assertTrue(status["bookProjection"]["inSync"])
         self.assertEqual(status["ownerCuration"]["policy"]["cadence"], "twice_daily")
         self.assertTrue(
             status["ownerCuration"]["policy"]["autoApplyGovernedWrites"]
@@ -1313,6 +1370,145 @@ class DebugManagementApiTests(unittest.TestCase):
         )
         self.assertEqual(stale_status["pendingDraftCount"], 0)
         self.assertEqual(stale_status["runs"][0]["status"], "superseded")
+
+    def test_gateway_maintenance_runs_dreaming_when_automatic_organization_is_disabled(
+        self,
+    ) -> None:
+        managed = MemoryMaintenanceSettings(
+            automatic_organization_enabled=False,
+            dreaming_enabled=True,
+            dreaming_model="openai-codex/gpt-5.6-luna",
+            dreaming_thinking_level="max",
+        )
+        executor = Mock(
+            reference="openai-codex/gpt-5.6-luna",
+            thinking_level="max",
+            selected_model={"contextWindow": 400_000},
+        )
+        organizer = Mock()
+        runner = Mock()
+        runner.run_once.return_value = {
+            "schemaVersion": "rag-ime.personal-context-maintenance-run.v1",
+            "ok": True,
+            "targets": [],
+        }
+
+        with (
+            patch(
+                "rag_ime.debug_server.MemoryMaintenanceSettings.load",
+                return_value=managed,
+            ),
+            patch(
+                "rag_ime.debug_server.run_due_lexicon_organization"
+            ) as lexicon,
+            patch(
+                "rag_ime.debug_server.OwnerMemoryCurator"
+            ) as owner_curator,
+            patch(
+                "rag_ime.debug_server.build_governed_memory_model_executor",
+                return_value=executor,
+            ) as build_executor,
+            patch(
+                "rag_ime.debug_server.ManagedPiMemoryOrganizer",
+                return_value=organizer,
+            ),
+            patch(
+                "rag_ime.debug_server.PersonalContextMaintenanceRunner",
+                return_value=runner,
+            ) as runner_type,
+        ):
+            report = self.service._execute_gateway_memory_maintenance(
+                {
+                    "project": "wisdom-weasel-rag-ime",
+                    "manual": True,
+                    "maxSources": 321,
+                }
+            )
+
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["skipped"])
+        self.assertEqual(report["reason"], "automatic_organization_disabled")
+        self.assertTrue(report["lexiconOrganization"]["skipped"])
+        self.assertTrue(report["dreaming"]["ok"])
+        self.assertEqual(report["dreaming"]["executionOwner"], "agent_gateway")
+        lexicon.assert_not_called()
+        owner_curator.assert_not_called()
+        build_executor.assert_called_once_with(
+            self.service.agent.runtime,
+            "openai-codex/gpt-5.6-luna",
+            "max",
+            db_path=self.db_path,
+        )
+        config = runner_type.call_args.kwargs["config"]
+        self.assertTrue(config.enabled)
+        self.assertTrue(config.consolidate_roles)
+        self.assertFalse(config.build_timelines)
+        self.assertTrue(config.apply_safe_recent_work)
+        self.assertFalse(config.auto_publish_timelines)
+        self.assertEqual(config.batch_limit, 321)
+        runner.run_once.assert_called_once_with(force=True)
+        organizer.close.assert_called_once_with()
+
+    def test_gateway_maintenance_skips_dreaming_only_when_both_lanes_are_disabled(
+        self,
+    ) -> None:
+        managed = MemoryMaintenanceSettings(
+            automatic_organization_enabled=False,
+            dreaming_enabled=False,
+        )
+
+        with (
+            patch(
+                "rag_ime.debug_server.MemoryMaintenanceSettings.load",
+                return_value=managed,
+            ),
+            patch(
+                "rag_ime.debug_server.build_governed_memory_model_executor"
+            ) as build_executor,
+            patch(
+                "rag_ime.debug_server.PersonalContextMaintenanceRunner"
+            ) as runner_type,
+        ):
+            report = self.service._execute_gateway_memory_maintenance({})
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["dreaming"]["reason"], "memory_maintenance_disabled")
+        build_executor.assert_not_called()
+        runner_type.assert_not_called()
+
+    def test_gateway_maintenance_surfaces_dreaming_failure_in_combined_result(
+        self,
+    ) -> None:
+        managed = MemoryMaintenanceSettings(
+            automatic_organization_enabled=False,
+            dreaming_enabled=True,
+        )
+        runner = Mock()
+        runner.run_once.side_effect = RuntimeError("dreaming model unavailable")
+
+        with (
+            patch(
+                "rag_ime.debug_server.MemoryMaintenanceSettings.load",
+                return_value=managed,
+            ),
+            patch(
+                "rag_ime.debug_server.build_governed_memory_model_executor",
+                return_value=Mock(),
+            ),
+            patch(
+                "rag_ime.debug_server.ManagedPiMemoryOrganizer",
+                return_value=Mock(),
+            ),
+            patch(
+                "rag_ime.debug_server.PersonalContextMaintenanceRunner",
+                return_value=runner,
+            ),
+        ):
+            report = self.service._execute_gateway_memory_maintenance({})
+
+        self.assertFalse(report["ok"])
+        self.assertFalse(report["dreaming"]["ok"])
+        self.assertIn("dreaming model unavailable", report["dreaming"]["error"])
 
     def test_memory_catalog_filters_owner_scopes_and_reports_owner_labels(self) -> None:
         event_ref = self.core.record_event(
@@ -1375,18 +1571,38 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertIn(("agent", "role-a"), owners)
         self.assertIn(("agent", "role-b"), owners)
 
-    def test_memory_evidence_catalog_supports_audited_forget_and_restore(self) -> None:
-        event_ref = self.core.record_event(
+    def test_memory_source_forget_restore_is_audited_without_restoring_raw_input_to_evidence(self) -> None:
+        event_ref, receipt = self.core.record_event_with_capture_receipt(
             InputEvent(
                 event_id=None,
                 created_at_ms=int(time.time() * 1000),
-                source="manual_commit",
+                source="squirrel_input_segment",
                 committed_text="这条输入应该可以手动遗忘后恢复",
                 privacy_disposition="allowed",
                 project="wisdom-weasel-rag-ime",
+                app="com.apple.TextEdit",
+                capture_metadata=_capture_v2(
+                    "这条输入应该可以手动遗忘后恢复",
+                    capture_id="capture:management:forget-restore",
+                ),
             )
         )
         self.assertTrue(event_ref.startswith("event:"))
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            source_id = str(
+                conn.execute(
+                    "SELECT source_id FROM agent_memory_sources WHERE input_event_id = ?",
+                    (int(event_ref.split(":", 1)[1]),),
+                ).fetchone()[0]
+            )
+            transition_evidence_admission(
+                conn,
+                str(receipt["evidenceId"]),
+                new_state="admitted",
+                reason_code="luna_personal_memory_confirmed",
+                actor_kind="luna",
+                created_at_ms=int(time.time() * 1000) + 1,
+            )
         page = self.service.management.memory_page(
             "evidence",
             page_request(
@@ -1398,8 +1614,6 @@ class DebugManagementApiTests(unittest.TestCase):
             ),
         )
         summary = self.service.management.memory_summary()
-        source = page["items"][0]
-        source_id = str(source["id"])
 
         forgotten = self.service.management.memory_source_disposition(
             {
@@ -1407,17 +1621,27 @@ class DebugManagementApiTests(unittest.TestCase):
                 "disposition": "not_for_memory",
             }
         )
+        forgotten_page = self.service.management.memory_page(
+            "evidence",
+            page_request({"limit": 20}),
+        )
         restored = self.service.management.memory_source_disposition(
             {
                 "sourceId": source_id,
                 "disposition": "pending",
             }
         )
+        restored_page = self.service.management.memory_page(
+            "evidence",
+            page_request({"limit": 20}),
+        )
 
-        self.assertGreaterEqual(summary["evidenceSourceCount"], 1)
-        self.assertEqual(source["status"], "pending")
+        self.assertEqual(summary["evidenceSourceCount"], 1)
+        self.assertEqual(page["items"][0]["status"], "admitted")
         self.assertEqual(forgotten["source"]["disposition"], "not_for_memory")
-        self.assertEqual(restored["source"]["disposition"], "pending")
+        self.assertEqual(forgotten_page["items"], [])
+        self.assertEqual(restored["source"]["disposition"], "needs_review")
+        self.assertEqual(restored_page["items"], [])
         with self.core._connect() as conn:  # type: ignore[attr-defined]
             transitions = conn.execute(
                 """
@@ -1432,58 +1656,47 @@ class DebugManagementApiTests(unittest.TestCase):
             [tuple(row) for row in transitions[-2:]],
             [
                 ("not_for_memory", "user_forgotten", "user"),
-                ("pending", "user_restored", "user"),
+                ("needs_review", "user_restored_for_review", "user"),
             ],
         )
-        with self.core._connect() as conn:  # type: ignore[attr-defined]
-            conn.execute(
-                """
-                UPDATE agent_memory_sources
-                SET disposition = 'consolidated'
-                WHERE source_id = ?
-                """,
-                (source_id,),
-            )
-        with self.assertRaisesRegex(
-            ValueError,
-            "transition is not allowed",
-        ):
-            self.service.management.memory_source_disposition(
-                {
-                    "sourceId": source_id,
-                    "disposition": "not_for_memory",
-                }
-            )
-
-    def test_memory_evidence_catalog_never_echoes_sensitive_source_text(self) -> None:
-        self.core.record_event(
+    def test_memory_evidence_catalog_never_exposes_sensitive_audit_sources(self) -> None:
+        event_ref, _receipt = self.core.record_event_with_capture_receipt(
             InputEvent(
                 event_id=None,
                 created_at_ms=int(time.time() * 1000),
-                source="manual_commit",
+                source="squirrel_input_segment",
                 committed_text="临时 token=sk-abcdefghijk 不要显示",
                 privacy_disposition="allowed",
                 project="wisdom-weasel-rag-ime",
+                app="com.apple.TextEdit",
+                capture_metadata=_capture_v2(
+                    "临时 token=sk-abcdefghijk 不要显示",
+                    capture_id="capture:management:sensitive-evidence",
+                ),
             )
         )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            source_id = str(
+                conn.execute(
+                    "SELECT source_id FROM agent_memory_sources WHERE input_event_id = ?",
+                    (int(event_ref.split(":", 1)[1]),),
+                ).fetchone()[0]
+            )
 
         page = self.service.management.memory_page(
             "evidence",
-            page_request({"limit": 20, "status": "not_for_memory"}),
+            page_request({"limit": 20}),
         )
 
-        self.assertEqual(len(page["items"]), 1)
-        self.assertTrue(page["items"][0]["sensitive"])
-        self.assertFalse(page["items"][0]["canRestore"])
-        self.assertEqual(page["items"][0]["text"], "")
-        self.assertNotIn("sk-abcdefghijk", page["items"][0]["title"])
+        self.assertEqual(page["items"], [])
+        self.assertNotIn("sk-abcdefghijk", json.dumps(page, ensure_ascii=False))
         with self.assertRaisesRegex(
             ValueError,
             "sensitive memory evidence cannot be restored",
         ):
             self.service.management.memory_source_disposition(
                 {
-                    "sourceId": page["items"][0]["id"],
+                    "sourceId": source_id,
                     "disposition": "pending",
                 }
             )
@@ -1683,16 +1896,22 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertTrue((root / "macos" / "RagImeControlWebHost" / "WebHostView.swift").is_file())
 
     def test_memory_book_preview_is_dry_run_and_redacted(self) -> None:
-        self.core.record_event(
+        self.core.record_event_with_capture_receipt(
             InputEvent(
                 event_id=None,
                 created_at_ms=1_900_000_100_033,
-                source="manual",
+                source="squirrel_input_segment",
                 committed_text="真实历史整理入口",
                 privacy_disposition="allowed",
                 recent_context="不应该默认展示的上下文",
                 project="wisdom-weasel-rag-ime",
                 tags=("RAG",),
+                app="com.apple.TextEdit",
+                capture_metadata=_capture_v2(
+                    "真实历史整理入口",
+                    capture_id="capture:management:memory-book-preview",
+                    occurred_at_ms=1_900_000_100_033,
+                ),
             )
         )
 
@@ -2192,7 +2411,7 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(deep_search["turnId"], "turn:http:deep")
         self.assertTrue(tool_result["ok"])
         self.assertEqual(tool_result["operation"], "catalog")
-        self.assertEqual(set(workflow_state["result"]), {"plan", "goal", "actGate"})
+        self.assertEqual(set(workflow_state["result"]), {"todo", "goal", "actGate"})
         self.assertEqual(goal_usage["result"]["goal"]["usage"]["tokens"], 120)
         self.assertEqual(duplicate_goal_usage["result"]["goal"]["usage"]["tokens"], 120)
         self.assertEqual(goal_settle["result"]["state"], "continue")
@@ -2203,8 +2422,7 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertTrue(context_refresh["ok"])
         self.assertEqual(context_refresh["result"]["trigger"], "first_user_prompt")
         self.assertEqual(context_refresh["result"]["sourceCount"], 0)
-        self.assertIn("## 最近对话", context_refresh["result"]["sessionContext"])
-        self.assertNotIn("## Session 记忆", context_refresh["result"]["sessionContext"])
+        self.assertEqual(context_refresh["result"]["sessionContext"], "")
         self.assertEqual(approvals["items"][0]["approvalId"], approval["approvalId"])
         self.assertEqual(decision["approval"]["state"], "rejected")
         self.assertEqual(approval_result["approval"]["state"], "rejected")
@@ -2554,6 +2772,35 @@ class DebugManagementApiTests(unittest.TestCase):
                     message_status = response.status
                     accepted = json.loads(response.read().decode("utf-8"))
 
+            start_receipt = {
+                "schemaVersion": "rag-ime.room-start-execution.v1",
+                "ok": True,
+                "accepted": True,
+                "created": True,
+                "roomId": room_id,
+                "rootId": "room-root:http",
+            }
+            with patch.object(
+                self.service.agent,
+                "start_room_execution",
+                return_value=start_receipt,
+            ) as start_room_execution:
+                start_request = Request(
+                    f"{base_url}/rooms/{room_id}/start-execution",
+                    data=json.dumps(
+                        {
+                            "action": "start_execution",
+                            "rootId": "room-root:http",
+                            "clientActionId": "room-start:http",
+                        }
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(start_request, timeout=5) as response:
+                    start_status = response.status
+                    started = json.loads(response.read().decode("utf-8"))
+
             abort_receipt = {
                 "schemaVersion": "rag-ime.agent-room-abort.v1",
                 "ok": True,
@@ -2607,6 +2854,16 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(message_status, 202)
         self.assertEqual(accepted["participant"]["roleId"], "companion-firstlight-v1")
         self.assertEqual(accepted["clientMessageId"], "room-http-client-1")
+        self.assertEqual(start_status, 202)
+        self.assertEqual(started, start_receipt)
+        start_room_execution.assert_called_once_with(
+            room_id,
+            {
+                "action": "start_execution",
+                "rootId": "room-root:http",
+                "clientActionId": "room-start:http",
+            },
+        )
         self.assertEqual(abort_status, 200)
         self.assertEqual(aborted, abort_receipt)
         abort_room_turn.assert_called_once_with(

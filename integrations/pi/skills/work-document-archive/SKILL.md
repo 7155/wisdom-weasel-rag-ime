@@ -36,7 +36,7 @@ Use only the inputs required by the selected operation:
 | `repair` | `documentRef` and `authorityRef` |
 | `reopen` | `documentRef`, `authorityRef`, next `authorityRevision`, and `transitionReceiptId` |
 
-`authorityRef` contains `authorityKind` (`session_goal`, `session_plan`, or
+`authorityRef` contains `authorityKind` (`session_goal`, `session_todo`, or
 `room_work_item`), `authorityId`, and the current `authorityRevision`. Never
 infer terminal authority from prose, filenames, timestamps, local status, or
 the Skill's own output.
@@ -44,7 +44,7 @@ the Skill's own output.
 ## Owner and Authority
 
 The backend WorkDocument registry and outbox are the canonical owner of
-identity, state, transitions, indexes, and recovery. Goal, Plan, and Room
+identity, state, transitions, indexes, and recovery. Goal, Todo, and Room
 terminal receipts authorize archive eligibility. This Skill only translates an
 intent into a governed API request and reports the authoritative response.
 

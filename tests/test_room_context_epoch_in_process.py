@@ -131,6 +131,82 @@ class RoomContextEpochInProcessTest(unittest.TestCase):
                     workspace=workspace,
                 )
 
+    def test_isolated_shell_accepts_the_linked_room_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "workspace"
+            RUNNER.seed_project_workspace(workspace)
+            RUNNER._initialize_collaboration_workspace(workspace)
+            worktree = Path(directory) / "room-worktree"
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(workspace),
+                    "worktree",
+                    "add",
+                    "--detach",
+                    str(worktree),
+                    "HEAD",
+                ],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            implementation = (worktree / "calculator.py").read_text(
+                encoding="utf-8"
+            ).replace(
+                '    raise NotImplementedError("ROOM_PROJECT_TASK")',
+                "    if not values:\n"
+                "        return []\n"
+                "    minimum = min(values)\n"
+                "    return [value - minimum for value in values]",
+            )
+            (worktree / "calculator.py").write_text(
+                implementation,
+                encoding="utf-8",
+            )
+            prepared = SimpleNamespace(
+                command=RUNNER.TEST_COMMAND,
+                cwd=worktree.resolve(),
+                roots=(worktree.resolve(),),
+                allow_network=False,
+                timeout_seconds=30,
+            )
+
+            receipt = RUNNER._isolated_project_command_executor(
+                prepared,
+                workspace=workspace,
+            )
+
+        self.assertEqual(receipt["exitCode"], 0)
+        self.assertEqual(receipt["cwd"], str(worktree.resolve()))
+
+
+    def test_collaboration_workspace_has_a_clean_git_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "workspace"
+            RUNNER.seed_project_workspace(workspace)
+
+            commit = RUNNER._initialize_collaboration_workspace(workspace)
+
+            resolved = subprocess.run(
+                ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            ).stdout.strip()
+            status = subprocess.run(
+                ["git", "-C", str(workspace), "status", "--porcelain"],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            ).stdout
+        self.assertEqual(commit, resolved)
+        self.assertEqual(status, "")
+
+
     def test_report_session_ids_cover_every_collaboration_member(self) -> None:
         report = {
             "members": {
@@ -144,6 +220,20 @@ class RoomContextEpochInProcessTest(unittest.TestCase):
         self.assertEqual(
             RUNNER._report_session_ids(report),
             ("session:a", "session:b", "session:c"),
+        )
+
+    def test_report_dispatch_ids_cover_terminal_collaboration_dispatches(self) -> None:
+        report = {
+            "dispatches": [
+                {"dispatchId": "dispatch:align"},
+                {"dispatchId": "dispatch:execute"},
+                {"dispatchId": "dispatch:execute"},
+            ]
+        }
+
+        self.assertEqual(
+            RUNNER._report_dispatch_ids(report),
+            ("dispatch:align", "dispatch:execute"),
         )
 
     def test_report_session_ids_reject_missing_identity(self) -> None:

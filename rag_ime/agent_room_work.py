@@ -207,6 +207,153 @@ class AgentRoomWorkStore:
                 created_at_ms=timestamp,
             )
         return work_item_payload(row)
+    def create_root_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        work_id: str,
+        room_id: str,
+        objective: str,
+        expected_output: str,
+        current_owner_participant_id: str,
+        created_by_participant_id: str,
+        client_message_id: str,
+        acceptance_criteria: Sequence[object],
+        created_at_ms: int,
+        topic_id: str = "",
+        root_turn_id: str = "",
+    ) -> tuple[dict[str, object], bool]:
+        """Create the one accountable Root WorkItem in a caller transaction."""
+
+        normalized_room_id = _required_text(room_id, "room_id", maximum=320)
+        owner_id = _required_text(
+            current_owner_participant_id,
+            "current_owner_participant_id",
+            maximum=320,
+        )
+        creator_id = _required_text(
+            created_by_participant_id,
+            "created_by_participant_id",
+            maximum=320,
+        )
+        normalized_client_id = _required_text(
+            client_message_id,
+            "client_message_id",
+            maximum=320,
+        )
+        normalized_objective = _required_text(
+            objective,
+            "objective",
+            maximum=8_000,
+        )
+        normalized_expected = _required_text(
+            expected_output,
+            "expected_output",
+            maximum=8_000,
+        )
+        criteria = _text_list(
+            acceptance_criteria,
+            "acceptance_criteria",
+            maximum_items=16,
+            maximum_length=4_000,
+            required=True,
+        )
+        normalized_work_id = _required_text(work_id, "work_id", maximum=320)
+        root_turn = _required_text(root_turn_id, "root_turn_id", maximum=320)
+        timestamp = _timestamp(created_at_ms)
+        existing = conn.execute(
+            """
+            SELECT * FROM agent_room_work_items
+            WHERE room_id = ? AND created_by_participant_id = ?
+              AND client_message_id = ?
+            """,
+            (normalized_room_id, creator_id, normalized_client_id),
+        ).fetchone()
+        if existing is not None:
+            payload = work_item_payload(existing)
+            if (
+                payload["id"] != normalized_work_id
+                or payload["objective"] != normalized_objective
+                or payload["expectedOutput"] != normalized_expected
+                or payload["currentOwnerParticipantId"] != owner_id
+                or payload["accountableParticipantId"] != owner_id
+                or payload["acceptanceCriteria"] != criteria
+                or payload["rootTurnId"] != root_turn
+            ):
+                raise ValueError(
+                    "room definition WorkItem identity changed"
+                )
+            return payload, False
+        participant_rows = conn.execute(
+            """
+            SELECT id, participant_status FROM agent_room_participants
+            WHERE room_id = ? AND id IN (?, ?)
+            """,
+            (normalized_room_id, owner_id, creator_id),
+        ).fetchall()
+        statuses = {
+            str(row["id"]): str(row["participant_status"])
+            for row in participant_rows
+        }
+        if any(
+            statuses.get(value) != "active"
+            for value in {owner_id, creator_id}
+        ):
+            raise ValueError(
+                "root WorkItem owner and creator must be active Room participants"
+            )
+        duplicate_id = conn.execute(
+            "SELECT id FROM agent_room_work_items WHERE id = ?",
+            (normalized_work_id,),
+        ).fetchone()
+        if duplicate_id is not None:
+            raise ValueError("room definition WorkItem identity already exists")
+        assignment_key = (
+            f"room-definition:{root_turn}:{normalized_work_id}:assignment"
+        )
+        conn.execute(
+            """
+            INSERT INTO agent_room_work_items(
+                id, room_id, topic_id, root_turn_id, root_work_id, parent_work_id,
+                objective, expected_output, acceptance_criteria_json,
+                accountable_participant_id, current_owner_participant_id,
+                offered_to_participant_id, created_by_participant_id,
+                client_message_id, assignment_key, state, depth, revision,
+                result_summary, artifact_refs_json, evidence_refs_json,
+                blocker_json, accepted_turn_id, created_at_ms, updated_at_ms,
+                completed_at_ms
+            ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, ?, ?,
+                      'active', 1, 0, '', '[]', '[]', '{}', ?, ?, ?, NULL)
+            """,
+            (
+                normalized_work_id,
+                normalized_room_id,
+                str(topic_id or ""),
+                root_turn,
+                normalized_work_id,
+                normalized_objective,
+                normalized_expected,
+                json.dumps(criteria, ensure_ascii=False, separators=(",", ":")),
+                owner_id,
+                owner_id,
+                creator_id,
+                normalized_client_id,
+                assignment_key,
+                root_turn,
+                timestamp,
+                timestamp,
+            ),
+        )
+        row = self._row(conn, normalized_work_id)
+        self._append_event(
+            conn,
+            row,
+            event_type="assigned",
+            actor_participant_id=creator_id,
+            created_at_ms=timestamp,
+            payload={"source": "room_define", "rootId": root_turn},
+        )
+        return work_item_payload(row), True
 
     def assign(
         self,
@@ -896,6 +1043,7 @@ class AgentRoomWorkStore:
         self,
         root: Mapping[str, object],
         *,
+        result_summary: str = "",
         observed_at_ms: int | None = None,
     ) -> list[dict[str, object]]:
         """Project canonical Kernel lifecycle state into its claimed WorkItem."""
@@ -919,6 +1067,10 @@ class AgentRoomWorkStore:
         terminal_receipt_id = _optional_text(
             root.get("terminalReceiptId"),
             maximum=1_000,
+        )
+        normalized_result_summary = _optional_text(
+            result_summary,
+            maximum=2_000,
         )
         root_updated_at = root.get("updatedAtMs")
         timestamp = _timestamp(
@@ -1019,6 +1171,7 @@ class AgentRoomWorkStore:
                     """
                     UPDATE agent_room_work_items
                     SET state = ?, evidence_refs_json = ?, blocker_json = ?,
+                        result_summary = CASE WHEN ? <> '' THEN ? ELSE result_summary END,
                         updated_at_ms = ?, completed_at_ms = ?
                     WHERE id = ? AND accepted_turn_id = ? AND state = ?
                     """,
@@ -1034,6 +1187,8 @@ class AgentRoomWorkStore:
                             ensure_ascii=False,
                             separators=(",", ":"),
                         ),
+                        normalized_result_summary,
+                        normalized_result_summary,
                         timestamp,
                         timestamp if terminal else None,
                         str(row["id"]),
@@ -1065,6 +1220,7 @@ class AgentRoomWorkStore:
                         "rootId": root_id,
                         "kernelRootState": kernel_state,
                         "terminalReceiptId": terminal_receipt_id,
+                        "resultSummary": normalized_result_summary,
                     },
                 )
                 changed.append(work_item_payload(updated))

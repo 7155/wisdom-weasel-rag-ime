@@ -173,6 +173,25 @@ export const previewSessions: SessionSummary[] = [
     modelProfile: 'deepseek/deepseek-v4',
   },
   {
+    id: 'session-input',
+    title: '等待你的回答',
+    mode: 'assistant',
+    status: 'active',
+    roleId: 'companion-present-v1',
+    roleVersion: '1',
+    roleBookRevisionId: '',
+    toolProfileVersion: 'control-center-v1',
+    toolAllowlistMode: 'profile',
+    projectContextEnabled: true,
+    piSkillsEnabled: false,
+    codexSkillsEnabled: false,
+    updatedAtMs: previewNow - 30_000,
+    workspaceRoots: ['/Users/example/Projects/personal-agent-workbench'],
+    messageCount: 1,
+    lastMessagePreview: '请把待审问答做成更清楚的协作界面。',
+    modelProfile: 'openai/gpt-5.4',
+  },
+  {
     id: 'session-runtime',
     title: '运行时诊断',
     mode: 'assistant',
@@ -448,7 +467,7 @@ function previewRendererGallery(sessionId: string) {
         diff: '@@ -12,7 +12,9 @@ export function commit(events) {\n   const next = reduceBatch(state, events);\n-  set(next);\n-  flush();\n+  set((state) => reduceBatch(state, events));\n+  scheduleFlush();\n+  // batched: one paint per frame\n }\n',
       }),
       block('gal-artifact', 'artifact', { title: 'control-center-web-build.json', summary: '本轮构建回执', kind: 'receipt' }),
-      block('gal-citation', 'citation', { title: 'Control Center Web Migration Plan', snippet: '一次用户输入只渲染一个 Turn。', source: '本地计划' }),
+      block('gal-citation', 'citation', { title: '控制中心迁移记录', snippet: '一次用户输入只渲染一个 Turn。', source: '本地任务记录' }),
     ], previewNow - 280_000),
     message(sessionId, turn('c'), 'gal-assist-c', 'assistant', [
       block('gal-audio', 'audio', {
@@ -652,8 +671,8 @@ export function previewBackgroundJobs(
     error: input.error ?? '',
     approvalId: `approval-preview-${input.jobId.slice(-4)}`,
     causalMetadata: {
-      planId: `plan:${sessionId}`,
-      planRevision: 2,
+      todoId: `todo:${sessionId}`,
+      todoRevision: 2,
       goalId: `goal:${sessionId}`,
       goalRevision: 1,
       turnId: `${sessionId}:turn-architecture`,
@@ -764,7 +783,100 @@ export function previewAgentSnapshot(sessionId: string): AgentSnapshot {
   // The fresh demo session stays genuinely empty so the preview can render
   // the welcome state; every other id keeps the full scripted transcript.
   if (sessionId === 'session-fresh') {
-    return { lastSequence: 0, resumeToken: `${sessionId}:0`, status: 'idle', liveEvents: [], plan: null, messages: [] };
+    return { lastSequence: 0, resumeToken: `${sessionId}:0`, status: 'idle', liveEvents: [], todo: null, messages: [] };
+  }
+  if (sessionId === 'session-input') {
+    const turnId = `${sessionId}:turn-question`;
+    const sequence = 4;
+    return {
+      lastSequence: sequence,
+      resumeToken: `${sessionId}:${sequence}`,
+      status: 'busy',
+      liveEvents: [{
+        schemaVersion: 'rag-ime.agent-event.v1',
+        eventId: `${sessionId}:grouped-question`,
+        sessionId,
+        turnId,
+        sequence,
+        createdAtMs: previewNow - 10_000,
+        eventType: 'user_input_required',
+        payload: {
+          requestId: 'preview-grouped-question',
+          requestKind: 'grouped_questions',
+          method: 'editor',
+          title: '一起确认这次界面优化',
+          message: '伙伴已完成现状检查。回答下面两项后，会沿当前任务继续实现。',
+          timeout: 300_000,
+          questions: [
+            {
+              id: 'scope',
+              header: '优化范围',
+              question: '这次优先把哪些状态做清楚？',
+              options: [
+                {
+                  label: '只优化待审问答',
+                  description: '集中改进问题、选项与提交反馈。',
+                },
+                {
+                  label: '同时优化 Todo 状态',
+                  description: '补齐阻塞、继续与待处理的可见状态。',
+                },
+                {
+                  label: '统一两处体验',
+                  description: '让提问和任务状态使用同一套层级与反馈。',
+                  preview: 'Ask → 用户选择 → Todo 继续',
+                },
+              ],
+              recommended: 2,
+            },
+            {
+              id: 'evidence',
+              header: '验收证据',
+              question: '交付时需要覆盖哪些检查？',
+              multi: true,
+              options: [
+                {
+                  label: '键盘与读屏',
+                  description: '验证焦点、分组语义与提交状态。',
+                },
+                {
+                  label: '桌面与窄屏',
+                  description: '确认问题较多时仍能阅读和操作。',
+                },
+                {
+                  label: '真实提交链路',
+                  description: '核对回答只提交一次并继续当前回合。',
+                },
+              ],
+              recommended: 0,
+            },
+          ],
+        },
+        resumeToken: `${sessionId}:${sequence}`,
+      }],
+      todo: {
+        schemaVersion: 'rag-ime.agent-todo.v1',
+        id: `todo:${sessionId}`,
+        sessionId,
+        revision: 2,
+        actor: 'agent',
+        updatedAtMs: previewNow - 10_000,
+        phases: [{
+          name: '界面优化',
+          tasks: [
+            { content: '核对当前交互边界', status: 'completed' },
+            { content: '等待用户确认优化范围', status: 'blocked', reason: '需要用户选择范围和验收证据' },
+            { content: '继续实现并完成验收', status: 'pending' },
+          ],
+        }],
+        counts: { total: 3, pending: 1, inProgress: 0, blocked: 1, completed: 1, abandoned: 0 },
+      },
+      messages: [
+        message(sessionId, turnId, 'user-question', 'user', [
+          block('user-question-text', 'text', { text: '请把待审问答做成更清楚的协作界面。' }),
+        ], previewNow - 20_000),
+      ],
+    };
   }
   if (sessionId === 'session-states') {
     /* Sequence 0: the lifecycle events that follow carry 1..7 and must be
@@ -781,26 +893,26 @@ export function previewAgentSnapshot(sessionId: string): AgentSnapshot {
       resumeToken: `${sessionId}:0`,
       status: 'idle',
       liveEvents: [],
-      plan: null,
+      todo: null,
       messages: [],
       backgroundJobs: previewBackgroundJobs(sessionId),
     };
   }
   if (sessionId === 'session-report') {
     const messages = previewReportDelivery(sessionId);
-    return { lastSequence: messages.length, resumeToken: `${sessionId}:${messages.length}`, status: 'idle', liveEvents: [], plan: null, messages };
+    return { lastSequence: messages.length, resumeToken: `${sessionId}:${messages.length}`, status: 'idle', liveEvents: [], todo: null, messages };
   }
   if (sessionId === 'session-models') {
     const messages = previewModelSwitch(sessionId);
-    return { lastSequence: messages.length, resumeToken: `${sessionId}:${messages.length}`, status: 'idle', liveEvents: [], plan: null, messages };
+    return { lastSequence: messages.length, resumeToken: `${sessionId}:${messages.length}`, status: 'idle', liveEvents: [], todo: null, messages };
   }
   if (sessionId === 'session-gallery') {
     const messages = previewRendererGallery(sessionId);
-    return { lastSequence: messages.length, resumeToken: `${sessionId}:${messages.length}`, status: 'idle', liveEvents: [], plan: null, messages };
+    return { lastSequence: messages.length, resumeToken: `${sessionId}:${messages.length}`, status: 'idle', liveEvents: [], todo: null, messages };
   }
   if (sessionId === 'session-long') {
     const messages = previewLongTranscript(sessionId);
-    return { lastSequence: messages.length, resumeToken: `${sessionId}:${messages.length}`, status: 'idle', liveEvents: [], plan: null, messages };
+    return { lastSequence: messages.length, resumeToken: `${sessionId}:${messages.length}`, status: 'idle', liveEvents: [], todo: null, messages };
   }
   const userTurn = `${sessionId}:turn-architecture`;
   const mediaTurn = `${sessionId}:turn-media`;
@@ -809,13 +921,29 @@ export function previewAgentSnapshot(sessionId: string): AgentSnapshot {
     resumeToken: `${sessionId}:12`,
     status: 'idle',
     liveEvents: [],
-    plan: {
+    todo: {
+      schemaVersion: 'rag-ime.agent-todo.v1',
+      id: `todo:${sessionId}`,
+      sessionId,
       revision: 6,
-      items: [
-        { id: 'preview-plan-1', title: '核对当前上下文与任务边界', status: 'completed', sequence: 1, updatedAtMs: previewNow - 170_000 },
-        { id: 'preview-plan-2', title: '实现会话内可见的执行清单', status: 'in_progress', sequence: 4, updatedAtMs: previewNow - 36_000 },
-        { id: 'preview-plan-3', title: '验证压缩恢复与真实运行链路', status: 'pending', sequence: 5, updatedAtMs: previewNow - 30_000 },
+      actor: 'agent',
+      updatedAtMs: previewNow - 30_000,
+      phases: [
+        {
+          name: '实现',
+          tasks: [
+            { content: '核对当前上下文与任务边界', status: 'completed' },
+            { content: '实现会话内可见的 Todo', status: 'in_progress' },
+          ],
+        },
+        {
+          name: '验证',
+          tasks: [
+            { content: '验证压缩恢复与真实运行链路', status: 'blocked', reason: '等待真实 Provider 环境' },
+          ],
+        },
       ],
+      counts: { total: 3, pending: 0, inProgress: 1, blocked: 1, completed: 1, abandoned: 0 },
     },
     messages: [
       message(sessionId, userTurn, 'user-architecture', 'user', [
@@ -844,8 +972,8 @@ export function previewAgentSnapshot(sessionId: string): AgentSnapshot {
         }),
         block('answer-citation', 'citation', {
           index: 1,
-          title: 'Control Center Web Migration Plan',
-          source: '本地计划',
+          title: '控制中心迁移记录',
+          source: '本地任务记录',
           href: '#/planning',
           excerpt: '一次用户输入只渲染一个 Turn。',
         }),
@@ -915,7 +1043,7 @@ function previewStateEvents(sessionId: string): UiAgentEvent[] {
 }
 
 export function previewAgentEvents(sessionId: string): UiAgentEvent[] {
-  if (sessionId === 'session-fresh') return [];
+  if (sessionId === 'session-fresh' || sessionId === 'session-input') return [];
   if (sessionId === 'session-states') return previewStateEvents(sessionId);
   // The snapshot already carries the whole thread; the default media-turn
   // events below would append an unrelated turn and muddy the comparison

@@ -527,6 +527,13 @@ class ControlRoutePolicyTests(unittest.TestCase):
             "/api/agent/rooms/{roomId}/snapshot",
         )
         self.assertTrue(room_snapshot["remoteSafe"])
+        room_history = entries[ControlPathId.AGENT_ROOM_HISTORY.value]
+        self.assertEqual(
+            room_history["target"]["8766"],
+            "/api/agent/rooms/{roomId}/history",
+        )
+        self.assertEqual(room_history["query"], ["beforeSequence", "limit"])
+        self.assertTrue(room_history["remoteSafe"])
 
         wake_action = entries[ControlPathId.AGENT_WAKE_SCHEDULE_ACTION.value]
         self.assertEqual(wake_action["method"], "POST")
@@ -777,6 +784,39 @@ class ControlRoutePolicyTests(unittest.TestCase):
                 ControlAccessContext.native(),
             )
 
+    def test_memory_maintenance_trigger_is_bounded_and_local_only(self) -> None:
+        status = self.policy.resolve(ControlPathId.AGENT_MEMORY_MAINTENANCE_RUN)
+        trigger = self.policy.resolve(
+            ControlPathId.AGENT_MEMORY_MAINTENANCE_TRIGGER
+        )
+
+        self.assertEqual(status.method.value, "GET")
+        self.assertEqual(status.required_query, set())
+        self.assertEqual(status.query, {"runId", "jobId", "project", "limit"})
+        self.assertEqual(trigger.method.value, "POST")
+        self.assertEqual(
+            trigger.body,
+            {
+                "project",
+                "ownerKind",
+                "ownerId",
+                "instruction",
+                "manual",
+                "maxSources",
+            },
+        )
+        request = ControlRequest(
+            request_id="request-memory-maintenance",
+            path_id=ControlPathId.AGENT_MEMORY_MAINTENANCE_TRIGGER.value,
+            body={"project": "sample-project", "manual": False},
+        )
+        self.policy.authorize(request, ControlAccessContext.native())
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(
+                request,
+                ControlAccessContext.remote(device_id="phone-1", scopes={"*"}),
+            )
+
     def test_memory_entity_allows_public_book_summary_but_not_raw_atoms(self) -> None:
         allowed = ControlRequest(
             request_id="request-book",
@@ -902,6 +942,59 @@ class ControlRoutePolicyTests(unittest.TestCase):
                 scopes={ControlScope.AGENT_WRITE.value},
             ),
         )
+
+    def test_room_typed_start_requires_root_and_idempotency_identity(self) -> None:
+        request = ControlRequest(
+            request_id="request-room-start",
+            path_id=ControlPathId.AGENT_ROOM_START_EXECUTION.value,
+            params={"roomId": "room-1"},
+            body={
+                "action": "start_execution",
+                "rootId": "room-root:1",
+                "clientActionId": "room-start:1",
+            },
+        )
+        self.policy.authorize(request, ControlAccessContext.native())
+        remote = ControlAccessContext.remote(
+            device_id="phone-1",
+            scopes={ControlScope.AGENT_WRITE.value},
+        )
+        self.policy.authorize(request, remote)
+
+        for body in (
+            {"action": "start_execution", "rootId": "room-root:1"},
+            {
+                "action": "start_execution",
+                "rootId": "room-root:1",
+                "clientActionId": "room-start:1",
+                "dispatchId": "must-not-be-client-selected",
+            },
+        ):
+            with self.subTest(body=body), self.assertRaises(ControlApiError):
+                self.policy.authorize(
+                    ControlRequest(
+                        request_id="request-room-start-invalid",
+                        path_id=ControlPathId.AGENT_ROOM_START_EXECUTION.value,
+                        params={"roomId": "room-1"},
+                        body=body,
+                    ),
+                    ControlAccessContext.native(),
+                )
+
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(
+                ControlRequest(
+                    request_id="request-room-start-wrong-action",
+                    path_id=ControlPathId.AGENT_ROOM_START_EXECUTION.value,
+                    params={"roomId": "room-1"},
+                    body={
+                        "action": "skip_alignment",
+                        "rootId": "room-root:1",
+                        "clientActionId": "room-start:1",
+                    },
+                ),
+                remote,
+            )
 
     def test_room_root_abort_requires_a_root_and_idempotency_identity(self) -> None:
         request = ControlRequest(

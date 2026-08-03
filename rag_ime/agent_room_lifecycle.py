@@ -112,6 +112,28 @@ class RoomLifecycleService:
         self.participants.restore_sessions(room)
         return self.rooms.snapshot(room_id)
 
+    def history(
+        self,
+        room_id: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        value = dict(payload or {})
+        return self.rooms.history_page(
+            room_id,
+            before_sequence=_integer(
+                value.get("beforeSequence"),
+                default=0,
+                minimum=0,
+                maximum=2_147_483_647,
+            ),
+            limit=_integer(
+                value.get("limit"),
+                default=100,
+                minimum=1,
+                maximum=200,
+            ),
+        )
+
     def update(
         self,
         room_id: str,

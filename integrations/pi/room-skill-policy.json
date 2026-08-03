@@ -1,7 +1,7 @@
 {
   "schemaVersion": "wisdom-weasel.room-skill-policy.v1",
   "policyId": "room-core-v2",
-  "version": 5,
+  "version": 6,
   "hashRule": "sha256-skill-body-utf8-v1",
   "skills": [
     {
@@ -18,9 +18,9 @@
     },
     {
       "skillId": "implementation-execution",
-      "stages": ["implementation", "debugging", "feedback"],
+      "stages": ["implementation", "feedback"],
       "risk": "medium",
-      "nextCandidates": ["test-driven-implementation", "systematic-debugging", "quality-gate"]
+      "nextCandidates": ["test-driven-implementation", "systematic-debugging", "improve-codebase-architecture", "quality-gate"]
     },
     {
       "skillId": "test-driven-implementation",
@@ -30,9 +30,15 @@
     },
     {
       "skillId": "systematic-debugging",
+      "stages": ["debugging"],
+      "risk": "high",
+      "nextCandidates": ["implementation-execution", "improve-codebase-architecture"]
+    },
+    {
+      "skillId": "improve-codebase-architecture",
       "stages": [],
       "risk": "high",
-      "nextCandidates": ["implementation-execution"]
+      "nextCandidates": ["alignment-and-decision"]
     },
     {
       "skillId": "quality-gate",

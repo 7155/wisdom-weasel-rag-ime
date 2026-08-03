@@ -25,10 +25,30 @@ type MemoryChange = {
   sourceCount: number;
 };
 
+type GroupedQuestionOption = {
+  label: string;
+  description?: string;
+  preview?: string;
+};
+
 type GroupedQuestion = {
   id: string;
   question: string;
-  options: string[];
+  header?: string;
+  options: GroupedQuestionOption[];
+  multi: boolean;
+  legacy: boolean;
+  recommended?: number;
+};
+
+type GroupedAnswerDraft = {
+  selected: readonly string[];
+  custom: string;
+};
+
+type GroupedAnswer = {
+  selected: string[];
+  custom?: string;
 };
 
 type MemoryRun = {
@@ -269,7 +289,7 @@ export function MemoryReviewDialog({
   );
 }
 
-export function GenericUserInputDialog({
+export function GenericUserInputCard({
   activity,
   sessionId,
   onError,
@@ -280,6 +300,7 @@ export function GenericUserInputDialog({
 }) {
   const transport = useControlTransport();
   const fieldId = useId();
+  const titleId = `${fieldId}-title`;
   const payload = activity?.payload ?? {};
   const requestId = text(payload.requestId);
   const method = text(payload.method);
@@ -288,7 +309,7 @@ export function GenericUserInputDialog({
     ? parseGroupedQuestions(payload.questions)
     : [];
   const groupedRequest = requestKind === 'grouped_questions';
-  const title = text(payload.title) || (groupedRequest ? '伙伴需要你一起确认几件事' : 'Agent 需要你的回答');
+  const title = text(payload.title) || (groupedRequest ? '伙伴需要你一起确认几件事' : '伙伴需要你的回答');
   const message = text(payload.message);
   const placeholder = text(payload.placeholder);
   const prefill = text(payload.prefill);
@@ -298,7 +319,7 @@ export function GenericUserInputDialog({
     : [];
   const timeoutMs = integer(payload.timeout);
   const [value, setValue] = useState('');
-  const [groupedAnswers, setGroupedAnswers] = useState<ReadonlyMap<string, string>>(() => new Map());
+  const [groupedAnswers, setGroupedAnswers] = useState<ReadonlyMap<string, GroupedAnswerDraft>>(() => new Map());
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -321,7 +342,7 @@ export function GenericUserInputDialog({
   const requiresChoice = method === 'select' || method === 'confirm';
   const groupedRequestIsValid = groupedRequest && groupedQuestions.length > 0;
   const allGroupedQuestionsAnswered = groupedRequestIsValid && groupedQuestions.every((question) => (
-    groupedAnswers.has(question.id)
+    groupedAnswerIsValid(question, groupedAnswers.get(question.id))
   ));
   const canSubmit = !submitting && (
     groupedRequest ? allGroupedQuestionsAnswered : !requiresChoice || Boolean(value)
@@ -350,13 +371,44 @@ export function GenericUserInputDialog({
     }
   }
 
+  function updateGroupedOption(question: GroupedQuestion, label: string, checked: boolean): void {
+    setGroupedAnswers((current) => {
+      const previous: GroupedAnswerDraft = current.get(question.id) ?? { selected: [], custom: '' };
+      const selected = question.multi
+        ? question.options
+          .map((option) => option.label)
+          .filter((optionLabel) => (
+            optionLabel === label ? checked : previous.selected.includes(optionLabel)
+          ))
+        : [label];
+      const next = new Map(current);
+      next.set(question.id, {
+        selected,
+        custom: question.multi ? previous.custom : '',
+      });
+      return next;
+    });
+  }
+
+  function updateGroupedCustom(question: GroupedQuestion, custom: string): void {
+    setGroupedAnswers((current) => {
+      const previous: GroupedAnswerDraft = current.get(question.id) ?? { selected: [], custom: '' };
+      const next = new Map(current);
+      next.set(question.id, {
+        selected: question.multi ? previous.selected : [],
+        custom,
+      });
+      return next;
+    });
+  }
+
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     if (!canSubmit) return;
     if (groupedRequest) {
       if (!groupedRequestIsValid || !allGroupedQuestionsAnswered) return;
       const answers = Object.fromEntries(groupedQuestions.map((question) => (
-        [question.id, groupedAnswers.get(question.id)!]
+        [question.id, canonicalGroupedAnswer(question, groupedAnswers.get(question.id))]
       )));
       void respond({
         value: JSON.stringify({ answers }),
@@ -375,18 +427,23 @@ export function GenericUserInputDialog({
   }
 
   return (
-    <Dialog open>
-      <DialogContent
-        className="agent-user-input-dialog"
-        hideClose
-        onEscapeKeyDown={(event) => event.preventDefault()}
-        onInteractOutside={(event) => event.preventDefault()}
-      >
-        <DialogHeader>
-          <span className="agent-review-dialog__eyebrow"><MessageSquareText size={15} />{groupedRequest ? '伙伴在等你的回答' : '等待你的回答'}</span>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{message || (groupedRequest ? '请一起确认下面的问题，提交后伙伴会继续协作。' : 'Agent 已暂停，收到明确回答后会继续当前回合。')}</DialogDescription>
-        </DialogHeader>
+    <section
+      aria-labelledby={titleId}
+      className="agent-user-input-card agent-user-input-dialog"
+      data-request-kind={groupedRequest ? 'grouped' : method}
+    >
+      <header className="agent-user-input-card__header">
+        <span className="agent-review-dialog__eyebrow">
+          <MessageSquareText size={15} />
+          {groupedRequest ? '伙伴在等你的回答' : '等待你的回答'}
+        </span>
+        <h2 id={titleId}>{title}</h2>
+        <p>
+          {message || (groupedRequest
+            ? '请一起确认下面的问题，提交后伙伴会继续协作。'
+            : '伙伴已暂停，收到明确回答后会继续当前回合。')}
+        </p>
+      </header>
 
         <form className="agent-user-input-dialog__form" onSubmit={submit}>
           {!groupedRequest && method === 'select' ? (
@@ -405,7 +462,7 @@ export function GenericUserInputDialog({
                   <span>{option}</span>
                 </label>
               ))}
-              {options.length === 0 ? <p role="alert">此请求没有可选项，请取消并让 Agent 重新提问。</p> : null}
+              {options.length === 0 ? <p role="alert">此请求没有可选项，请取消并让伙伴重新提问。</p> : null}
             </fieldset>
           ) : null}
 
@@ -426,29 +483,86 @@ export function GenericUserInputDialog({
           {groupedRequest ? (
             groupedRequestIsValid ? (
               <div className="agent-user-input-dialog__grouped" aria-label="需要一起确认的问题">
-                {groupedQuestions.map((question, questionIndex) => (
-                  <fieldset className="agent-user-input-dialog__choices" key={question.id}>
-                    <legend>{questionIndex + 1}. {question.question}</legend>
-                    {question.options.map((option, optionIndex) => (
-                      <label key={`${question.id}:${option}`}>
-                        <input
-                          autoFocus={questionIndex === 0 && optionIndex === 0}
-                          checked={groupedAnswers.get(question.id) === option}
+                {groupedQuestions.map((question, questionIndex) => {
+                  const answer = groupedAnswers.get(question.id);
+                  const customId = `${fieldId}-question-${questionIndex}-custom`;
+                  const questionLabelId = `${fieldId}-question-${questionIndex}-label`;
+                  const customDescriptionId = `${customId}-description`;
+                  return (
+                    <fieldset
+                      aria-labelledby={questionLabelId}
+                      className="agent-user-input-dialog__choices"
+                      key={question.id}
+                    >
+                      <legend>
+                        {question.header ? (
+                          <span className="agent-user-input-dialog__question-header">{question.header}</span>
+                        ) : null}
+                        <span className="agent-user-input-dialog__question" id={questionLabelId}>
+                          <span>{questionIndex + 1}.</span> {question.question}
+                        </span>
+                      </legend>
+                      {question.options.map((option, optionIndex) => {
+                        const optionId = `${fieldId}-question-${questionIndex}-option-${optionIndex}`;
+                        const labelId = `${optionId}-label`;
+                        const descriptionId = option.description ? `${optionId}-description` : undefined;
+                        const previewId = option.preview ? `${optionId}-preview` : undefined;
+                        const recommendedId = question.recommended === optionIndex
+                          ? `${optionId}-recommended`
+                          : undefined;
+                        const describedBy = [descriptionId, previewId, recommendedId]
+                          .filter((id): id is string => Boolean(id))
+                          .join(' ') || undefined;
+                        return (
+                          <label className="agent-user-input-dialog__option" key={`${question.id}:${option.label}`}>
+                            <input
+                              aria-describedby={describedBy}
+                              aria-labelledby={labelId}
+                              autoFocus={questionIndex === 0 && optionIndex === 0}
+                              checked={answer?.selected.includes(option.label) ?? false}
+                              disabled={submitting}
+                              name={`${fieldId}:question:${questionIndex}`}
+                              onChange={(event) => updateGroupedOption(
+                                question,
+                                option.label,
+                                event.currentTarget.checked,
+                              )}
+                              type={question.multi ? 'checkbox' : 'radio'}
+                              value={option.label}
+                            />
+                            <span className="agent-user-input-dialog__option-copy">
+                              <span className="agent-user-input-dialog__option-heading">
+                                <strong id={labelId}>{option.label}</strong>
+                                {recommendedId ? <em id={recommendedId}>推荐</em> : null}
+                              </span>
+                              {option.description ? <small id={descriptionId}>{option.description}</small> : null}
+                              {option.preview ? (
+                                <code className="agent-user-input-dialog__option-preview" id={previewId}>
+                                  {option.preview}
+                                </code>
+                              ) : null}
+                            </span>
+                          </label>
+                        );
+                      })}
+                      <div className="agent-user-input-dialog__custom">
+                        <label htmlFor={customId}>其他</label>
+                        <Input
+                          aria-describedby={customDescriptionId}
                           disabled={submitting}
-                          name={`${fieldId}:${question.id}`}
-                          onChange={() => setGroupedAnswers((current) => {
-                            const next = new Map(current);
-                            next.set(question.id, option);
-                            return next;
-                          })}
-                          type="radio"
-                          value={option}
+                          id={customId}
+                          maxLength={1_000}
+                          onChange={(event) => updateGroupedCustom(question, event.target.value)}
+                          placeholder="输入其他回答"
+                          value={answer?.custom ?? ''}
                         />
-                        <span>{option}</span>
-                      </label>
-                    ))}
-                  </fieldset>
-                ))}
+                        <small id={customDescriptionId}>
+                          {question.multi ? '可与上方选项一起提交。' : '填写后会清除已选项。'}
+                        </small>
+                      </div>
+                    </fieldset>
+                  );
+                })}
               </div>
             ) : (
               <p className="agent-review-dialog__error" role="alert">这组问题暂时无法完整显示，请取消后让伙伴重新提问。</p>
@@ -506,10 +620,14 @@ export function GenericUserInputDialog({
             </Button>
           </footer>
         </form>
-      </DialogContent>
-    </Dialog>
+    </section>
   );
 }
+
+const GROUPED_QUESTION_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,79}$/u;
+const GROUPED_CUSTOM_OPTION_LABELS = new Set(['other', '其他', '其它', '自定义']);
+const GROUPED_QUESTION_KEYS = new Set(['id', 'question', 'header', 'options', 'multi', 'recommended']);
+const GROUPED_OPTION_KEYS = new Set(['label', 'description', 'preview']);
 
 function parseGroupedQuestions(value: unknown): GroupedQuestion[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > 4) return [];
@@ -517,17 +635,120 @@ function parseGroupedQuestions(value: unknown): GroupedQuestion[] {
   const questionIds = new Set<string>();
   for (const item of value) {
     const source = record(item);
-    const id = text(source.id);
-    const question = text(source.question);
-    if (!id || !question || questionIds.has(id) || !Array.isArray(source.options) || source.options.length < 1) {
+    const id = groupedContractText(source.id, 80);
+    const question = groupedContractText(source.question, 160);
+    const header = source.header === undefined ? '' : groupedContractText(source.header, 80);
+    if (
+      !id
+      || !GROUPED_QUESTION_ID_PATTERN.test(id)
+      || !question
+      || header === null
+      || questionIds.has(id)
+      || Object.keys(source).some((key) => !GROUPED_QUESTION_KEYS.has(key))
+      || !Array.isArray(source.options)
+      || source.options.length < 2
+      || source.options.length > 5
+      || (source.multi !== undefined && typeof source.multi !== 'boolean')
+    ) {
       return [];
     }
-    const options = source.options.map(text);
-    if (options.some((option) => !option) || new Set(options).size !== options.length) return [];
+
+    const options: GroupedQuestionOption[] = [];
+    const optionLabels = new Set<string>();
+    let legacyOptions: boolean | undefined;
+    for (const itemOption of source.options) {
+      const legacyOption = typeof itemOption === 'string';
+      if (legacyOptions !== undefined && legacyOptions !== legacyOption) return [];
+      legacyOptions = legacyOption;
+      const optionSource = legacyOption ? {} : record(itemOption);
+      const label = groupedContractText(
+        legacyOption ? itemOption : optionSource.label,
+        240,
+      );
+      const description = legacyOption || optionSource.description === undefined
+        ? ''
+        : groupedContractText(optionSource.description, 500);
+      const preview = legacyOption || optionSource.preview === undefined
+        ? ''
+        : groupedContractText(optionSource.preview, 500);
+      if (
+        !label
+        || description === null
+        || preview === null
+        || GROUPED_CUSTOM_OPTION_LABELS.has(label.toLowerCase())
+        || optionLabels.has(label)
+        || (!legacyOption && Object.keys(optionSource).some((key) => !GROUPED_OPTION_KEYS.has(key)))
+      ) {
+        return [];
+      }
+      optionLabels.add(label);
+      options.push({
+        label,
+        ...(description ? { description } : {}),
+        ...(preview ? { preview } : {}),
+      });
+    }
+
+    let recommended: number | undefined;
+    if (source.recommended !== undefined) {
+      if (
+        typeof source.recommended !== 'number'
+        || !Number.isInteger(source.recommended)
+        || source.recommended < 0
+        || source.recommended >= options.length
+      ) {
+        return [];
+      }
+      recommended = source.recommended;
+    }
+
+    if (legacyOptions === true && source.multi === true) return [];
     questionIds.add(id);
-    questions.push({ id, question, options });
+    questions.push({
+      id,
+      question,
+      ...(header ? { header } : {}),
+      options,
+      multi: source.multi === true,
+      legacy: legacyOptions === true,
+      ...(recommended === undefined ? {} : { recommended }),
+    });
   }
   return questions;
+}
+
+function groupedContractText(value: unknown, maximum: number): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return normalized && normalized.length <= maximum ? normalized : null;
+}
+
+function groupedAnswerIsValid(question: GroupedQuestion, answer?: GroupedAnswerDraft): boolean {
+  if (!answer) return false;
+  const offeredLabels = new Set(question.options.map((option) => option.label));
+  const selectedLabels = new Set(answer.selected);
+  const custom = answer.custom.trim();
+  if (
+    selectedLabels.size !== answer.selected.length
+    || answer.selected.some((label) => !offeredLabels.has(label))
+    || (!question.multi && answer.selected.length > 1)
+    || (!question.multi && answer.selected.length > 0 && Boolean(custom))
+  ) {
+    return false;
+  }
+  return answer.selected.length > 0 || Boolean(custom);
+}
+
+function canonicalGroupedAnswer(
+  question: GroupedQuestion,
+  answer?: GroupedAnswerDraft,
+): GroupedAnswer | string {
+  const selected = question.options
+    .map((option) => option.label)
+    .filter((label) => answer?.selected.includes(label));
+  const custom = answer?.custom.trim() ?? '';
+  if (question.legacy) return custom || selected[0] || '';
+  return custom ? { selected, custom } : { selected };
 }
 
 function formatTimeout(timeoutMs: number): string {

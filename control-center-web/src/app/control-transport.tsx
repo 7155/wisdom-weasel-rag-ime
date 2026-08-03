@@ -48,7 +48,10 @@ export function useOptionalControlTransport(): ControlTransport | null {
 }
 
 export function createConfiguredControlTransport(): ControlTransport {
-  const requested = import.meta.env.VITE_CONTROL_TRANSPORT ?? detectTransport();
+  const developmentOverride = developmentTransportOverride();
+  const requested = developmentOverride
+    ?? import.meta.env.VITE_CONTROL_TRANSPORT
+    ?? detectTransport();
   if (requested === 'native') {
     try {
       return new NativeControlTransport();
@@ -58,11 +61,18 @@ export function createConfiguredControlTransport(): ControlTransport {
   }
   if (requested === 'http') {
     return new HttpControlTransport({
-      baseUrl: import.meta.env.VITE_CONTROL_BASE_URL
-        ?? 'http://127.0.0.1:8766',
+      baseUrl: developmentOverride === 'http'
+        ? window.location.origin
+        : import.meta.env.VITE_CONTROL_BASE_URL ?? 'http://127.0.0.1:8766',
     });
   }
   return createPreviewTransport();
+}
+
+function developmentTransportOverride(): 'http' | 'mock' | null {
+  if (!import.meta.env.DEV) return null;
+  const requested = new URLSearchParams(window.location.search).get('controlTransport');
+  return requested === 'http' || requested === 'mock' ? requested : null;
 }
 
 function detectTransport(): 'native' | 'http' | 'mock' {

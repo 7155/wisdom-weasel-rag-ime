@@ -16,7 +16,9 @@ ROOM_PUBLIC_TOOLS = (
     "room_state",
     "room_post",
     "room_commit",
+    "room_define",
     "room_collaborate",
+    "room_integrate",
 )
 _SURFACES = frozenset({"prompt", "runtime", "gateway", "ui"})
 _MODEL_TOOL_CATALOG_KEYS = (
@@ -27,6 +29,40 @@ _MODEL_TOOL_CATALOG_KEYS = (
     "output",
     "does",
 )
+REVIEW_FINDING_CATEGORIES = (
+    "correctness",
+    "security",
+    "privacy",
+    "data_loss",
+    "authorization",
+    "permission",
+    "destructive_behavior",
+    "core_runtime_unavailable",
+    "regression",
+    "review_target_identity",
+    "spec_mismatch",
+    "ux",
+    "performance",
+    "maintainability",
+    "test",
+    "documentation",
+)
+REVIEW_FINDING_CATEGORY_SET = frozenset(REVIEW_FINDING_CATEGORIES)
+REVIEW_FINDING_RE_REVIEW_EXCEPTION_CATEGORIES = frozenset(
+    {
+        "authorization",
+        "core_runtime_unavailable",
+        "data_loss",
+        "destructive_behavior",
+        "permission",
+        "privacy",
+        "regression",
+        "review_target_identity",
+        "security",
+    }
+)
+
+
 
 _RICH_BLOCK_INPUT_SCHEMA = {
     "type": "array",
@@ -69,10 +105,116 @@ _EVIDENCE_INPUT_SCHEMA = {
     },
 }
 
+_REVIEW_FINDING_INPUT_SCHEMA = {
+    "type": "array",
+    "maxItems": 64,
+    "items": {
+        "type": "object",
+        "required": [
+            "findingId",
+            "gateEffect",
+            "impact",
+            "category",
+            "scope",
+            "observation",
+            "expected",
+            "userImpact",
+            "evidenceRefs",
+            "reproduction",
+            "state",
+        ],
+        "properties": {
+            "findingId": {"type": "string", "minLength": 1, "maxLength": 160},
+            "gateEffect": {"enum": ["blocking", "advisory"]},
+            "impact": {"enum": ["critical", "high", "normal"]},
+            "category": {
+                "enum": list(REVIEW_FINDING_CATEGORIES)
+            },
+            "scope": {
+                "type": "object",
+                "properties": {
+                    "acceptance": _ACCEPTANCE_ALIAS_SCHEMA,
+                    "invariantId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 160,
+                    },
+                },
+                "oneOf": [
+                    {"required": ["acceptance"]},
+                    {"required": ["invariantId"]},
+                ],
+                "additionalProperties": False,
+            },
+            "observation": {"type": "string", "minLength": 1, "maxLength": 2000},
+            "expected": {"type": "string", "minLength": 1, "maxLength": 2000},
+            "userImpact": {"type": "string", "minLength": 1, "maxLength": 2000},
+            "evidenceRefs": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 64,
+                "uniqueItems": True,
+                "items": {"type": "string", "minLength": 1},
+            },
+            "reproduction": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 16,
+                "items": {"type": "string", "minLength": 1, "maxLength": 1000},
+            },
+            "state": {
+                "enum": ["open", "resolved", "dismissed", "accepted_risk"]
+            },
+            "dispositionRationale": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000,
+            },
+            "ownerParticipantRef": {"type": "string", "minLength": 1},
+        },
+        "allOf": [
+            {
+                "if": {
+                    "properties": {
+                        "state": {"enum": ["dismissed", "accepted_risk"]}
+                    },
+                    "required": ["state"],
+                },
+                "then": {"required": ["dispositionRationale"]},
+            }
+        ],
+        "additionalProperties": False,
+    },
+}
+
+_REVIEW_FINDING_RESPONSE_INPUT_SCHEMA = {
+    "type": "array",
+    "maxItems": 64,
+    "items": {
+        "type": "object",
+        "required": ["findingId", "action", "rationale", "evidenceRefs"],
+        "properties": {
+            "findingId": {"type": "string", "minLength": 1, "maxLength": 160},
+            "action": {"enum": ["fixed", "contest"]},
+            "rationale": {"type": "string", "minLength": 1, "maxLength": 2000},
+            "evidenceRefs": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 64,
+                "uniqueItems": True,
+                "items": {"type": "string", "minLength": 1},
+            },
+        },
+        "additionalProperties": False,
+    },
+}
+
 _QUESTION_OPTIONS_INPUT_SCHEMA = {
     "type": "array",
-    "minItems": 2,
-    "maxItems": 5,
+    "anyOf": [
+        {"maxItems": 0},
+        {"minItems": 2, "maxItems": 5},
+    ],
     "items": {
         "type": "object",
         "required": ["value", "label"],
@@ -125,30 +267,29 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
         },
         "room_collaborate": {
             "description": (
-                "自己继续手上工作的同时，请另一位平级伙伴完成一个明确、互不重叠的"
-                "小部分。目标必须是另一位可用伙伴，不能是自己；acceptance 只能使用"
-                "当前工作卡片给出的验收短名。"
+                "自己保留当前责任，请另一位平级伙伴完成一个明确子任务。子任务只能"
+                "只读检查或使用独立 Git worktree 写入；父任务继续运行时禁止共享工作区"
+                "写入。acceptance 只能使用当前工作卡片的验收短名。"
             ),
             "when": (
-                "自己仍能继续，同时需要另一位伙伴独立查证、实现或检查",
-                "用户明确要求分成不同部分，自己继续推进并等待各自结果，"
-                "结果到齐后一起复核",
-                "需要清楚点名一位伙伴一起做，但不是把自己的全部工作交出去",
+                "Facilitator/Reporter 把明确、互不重叠的实现或调查交给一位伙伴",
             ),
             "notFor": (
-                "自己的全部工作必须由对方接着完成",
-                "用户已经指定由该伙伴在你完成后做最终检查或下一阶段",
+                "Room worker 需要更小的只读检查；使用有界 Agent delegation 路径",
+                "最终独立复核；集成后用 room_commit 的 review handoff",
+                "把整个 Root 和最终回复责任交出去",
+                "两个伙伴同时修改同一共享工作区",
                 "只想公开说一句话或私下自言自语",
             ),
             "input": (
-                "目标伙伴的 participantRef、邀请目的、具体工作、预期结果、"
-                "至少一个当前验收短名和可选的已公开证据"
+                "目标伙伴、目的、具体工作、预期结果、至少一个验收短名、"
+                "workspacePolicy 和可选的已公开证据"
             ),
             "output": (
-                "是否邀请成功、是否已经邀请过，以及目标伙伴的 participantRef；"
-                "自己继续手上的工作。没有成功结果时，不得声称对方已经开始"
+                "邀请回执、子任务与工作区边界；当前负责人随后继续集成或明确等待。"
+                "没有成功结果时不得声称对方已经开始"
             ),
-            "does": "邀请一位伙伴并行完成一项范围明确、可取消且不会重复创建的工作。",
+            "does": "创建一个范围明确、可取消且受工作区写入策略约束的子任务。",
             "risk": "R1",
             "operation": "room.collaborate",
             "inputSchema": {
@@ -159,6 +300,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     "objective",
                     "expectedOutput",
                     "acceptance",
+                    "workspacePolicy",
                 ],
                 "properties": {
                     "targetParticipantRef": {
@@ -171,7 +313,13 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     },
                     "objective": {"type": "string", "minLength": 1},
                     "expectedOutput": {"type": "string", "minLength": 1},
-                    "intent": {"enum": ["execute", "review", "revise"]},
+                    "intent": {"enum": ["execute", "revise"]},
+                    "workspacePolicy": {
+                        "enum": [
+                            "read_only",
+                            "isolated_writable",
+                        ]
+                    },
                     "acceptance": {
                         "description": (
                             "从当前工作卡片选择要由这位伙伴协助满足的验收短名；"
@@ -191,16 +339,58 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                 "additionalProperties": False,
             },
         },
+        "room_integrate": {
+            "description": (
+                "Facilitator 处理 isolated_writable 子任务：默认安全合入，也可对"
+                "已保留工作区做有回执的 retry 或 abandon。合入先执行无副作用检查；"
+                "有冲突时不写入。"
+            ),
+            "when": ("独立 worktree 子任务已完成，准备做集成后验证",),
+            "notFor": (
+                "共享单写者任务、尚未完成的子任务、Reviewer 自己修改被审对象",
+            ),
+            "input": "room_state 返回的 childTaskId、动作及恢复/放弃理由",
+            "output": "动作是否完成、生命周期与是否仍需人工处理",
+            "does": "只处理一个属于当前 Root 的精确隔离工作区绑定。",
+            "risk": "R1",
+            "operation": "room.integrate",
+            "inputSchema": {
+                "type": "object",
+                "required": ["childTaskId"],
+                "properties": {
+                    "childTaskId": {"type": "string", "minLength": 1},
+                    "action": {
+                        "enum": ["integrate", "retry", "abandon"],
+                        "default": "integrate",
+                    },
+                    "reason": {"type": "string", "minLength": 1},
+                    "targetParticipantRef": {
+                        "type": "string",
+                        "minLength": 1,
+                    },
+                    "acceptance": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 64,
+                        "items": _ACCEPTANCE_ALIAS_SCHEMA,
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
         "room_post": {
             "description": (
-                "立即发布一条有实质新变化的公开 Room 中途消息；不会结束本轮工作，"
-                "也不会转移自己的责任。"
+                "每个 active Dispatch 最多发布一条有实质新变化的公开 Room 中途消息；"
+                "用当前 Persona 和岗位的自然语言说明具体变化，不写通用状态填充。"
+                "后续细粒度进展继续更新稳定的 Tool 活动面。它不会结束本轮工作，也不会"
+                "转移自己的责任；需要用户回答的问题必须改用 room_commit(wait)。"
             ),
             "when": (
-                "仍要继续当前工作，并有新增的完成项、验证、问题、风险或下一步",
+                "仍要继续当前工作，并有新增的完成项、验证、风险或下一步",
             ),
             "notFor": (
                 "私下思考、自言自语、创建新工作、声称已经完成或重复既有状态",
+                "任何需要用户回答的问题；必须用 room_commit(wait) 发布并暂停",
                 "马上要调用 room_commit，且同一内容会写在 publicSummary 中",
             ),
             "input": "消息类型、写给用户的内容、可选通知对象与结构化展示块",
@@ -215,7 +405,6 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     "kind": {
                         "enum": [
                             "progress",
-                            "question",
                             "answer",
                             "evidence",
                             "notice",
@@ -241,6 +430,104 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                 "additionalProperties": False,
             },
         },
+"room_define": {
+    "description": (
+        "需求对齐完成后，把最终目标、推导出的需求、可观察验收条件和"
+        "首位建议实施伙伴一次性写入当前 Room Root；只允许当前对齐 Dispatch "
+        "调用。Reviewer 不能作为实现伙伴。"
+    ),
+    "when": (
+        "已经读取原始用户请求并完成必要澄清，准备进入实现阶段",
+    ),
+    "notFor": (
+        "尚未澄清的用户请求、修改已有目录、创建额外工作卡片或替代 room_commit",
+    ),
+    "input": (
+        "最终 objective、expectedOutput、1-8 条 requirements、1-16 条 "
+        "acceptanceCriteria，以及一位非 Reviewer 实现伙伴的 participantRef"
+    ),
+    "output": (
+        "新的不可变 RequirementCatalog、稳定 AC-1... 别名、一个由 Facilitator "
+        "负责的 Root WorkItem 和首位建议实施伙伴；随后用 room_collaborate "
+        "分配一个或多个有边界的实现任务"
+    ),
+    "does": "只修订当前 Root/Task 的需求与验收，不创建第二个 Root 或任务系统。",
+    "risk": "R1",
+    "operation": "room.define",
+    "inputSchema": {
+        "type": "object",
+        "required": [
+            "objective",
+            "expectedOutput",
+            "requirements",
+            "acceptanceCriteria",
+            "implementationParticipantRef",
+        ],
+        "properties": {
+            "objective": {"type": "string", "minLength": 1, "maxLength": 8000},
+            "expectedOutput": {"type": "string", "minLength": 1, "maxLength": 8000},
+            "requirements": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {"type": "string", "minLength": 1, "maxLength": 4000},
+            },
+            "acceptanceCriteria": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 16,
+                "items": {
+                    "oneOf": [
+                        {"type": "string", "minLength": 1, "maxLength": 4000},
+                        {
+                            "type": "object",
+                            "required": ["statement"],
+                            "properties": {
+                                "statement": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 4000,
+                                },
+                                "kind": {
+                                    "enum": ["requirement", "user_journey"],
+                                },
+                                "expectedReceiptTypes": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "enum": [
+                                            "test",
+                                            "build",
+                                            "install",
+                                            "browser",
+                                            "evidence",
+                                        ]
+                                    },
+                                },
+                                "fullNameZh": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 200,
+                                },
+                            },
+                            "additionalProperties": False,
+                        },
+                    ]
+                },
+            },
+            "implementationParticipantRef": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 320,
+                "description": (
+                    "首位建议实施伙伴；必须是活跃的非 Facilitator、非 Reviewer 成员"
+                ),
+            },
+        },
+        "additionalProperties": False,
+    },
+},
         "room_commit": {
             "description": (
                 "结束自己当前部分时，选择 deliver（完成）、handoff（交给下一位）、"
@@ -298,6 +585,25 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                         "minLength": 1,
                     },
                     "evidence": _EVIDENCE_INPUT_SCHEMA,
+                    "reviewFindings": {
+                        **_REVIEW_FINDING_INPUT_SCHEMA,
+                        "description": (
+                            "仅 Reviewer Task：提交当前 reviewTargetRevision 的完整 "
+                            "finding 列表。服务端计算 fingerprint、复验次数与 verdict。"
+                            "reviewRound>1 时，无关的新 Finding 会转为 advisory；新的 "
+                            "blocking 只保留既有 Blocker/同一验收项，以及 security、"
+                            "permission、privacy、data_loss、destructive_behavior、"
+                            "core_runtime_unavailable、regression、"
+                            "review_target_identity 类例外。不要自行填写 approved。"
+                        ),
+                    },
+                    "reviewFindingResponses": {
+                        **_REVIEW_FINDING_RESPONSE_INPUT_SCHEMA,
+                        "description": (
+                            "仅 Reviewer 发回的 revise Task：Facilitator 对每条 open "
+                            "blocking finding 选择 fixed 或 contest，并绑定本次新证据。"
+                        ),
+                    },
                     "residualRisks": {
                         "description": (
                             "当前出口仍保留的真实风险；没有时传空数组。"
@@ -308,12 +614,14 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     },
                     "publicSummary": {
                         "description": (
-                            "必填的用户可见正式回复。用自然语言说明结果或进度、已经做了"
-                            "什么、为什么这样做、怎样验证、问题或风险、尚未验证的边界和"
-                            "下一步；省略不适用项，不输出私下推理、内部协议字段、引用 ID "
-                            "或工具流水。主张不得强于实际观察。服务端会拒绝内部 Room "
-                            "标识、原始回执、哈希和机器绝对路径，并把它作为本轮唯一的"
-                            "完成、交接、等待或阻塞回复发布；不要再用 room_post 重复发布。"
+                            "必填的用户可见正式回复。保持当前 Persona 的自然语气，并按当前"
+                            "岗位说明结果或进度、已经做了什么、为什么这样做、怎样验证、"
+                            "问题或风险、尚未验证的边界和下一步；省略不适用项，不输出通用"
+                            "状态填充；不输出私下推理、内部协议字段、引用 ID 或工具流水。"
+                            "handoff 要点明交接双方、内容和原因，wait 要点明阻塞与恢复条件。主张不"
+                            "得强于实际观察。服务端会拒绝内部 Room 标识、原始回执、哈希和"
+                            "机器绝对路径，并把它作为本轮唯一的完成、交接、等待或阻塞回复"
+                            "发布；不要再用 room_post 重复发布。"
                         ),
                         "type": "string",
                         "minLength": 1,
@@ -387,6 +695,14 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                         "minLength": 1,
                     },
                     "question": {"type": "string", "minLength": 1},
+                    "questionKind": {
+                        "description": (
+                            "仅 wait-for-user question：bounded 表示存在诚实的 2–5 个"
+                            "互斥选项且必须填写 questionOptions；unbounded 仅用于无法"
+                            "枚举有限答案的开放问题，并且必须省略 questionOptions。"
+                        ),
+                        "enum": ["bounded", "unbounded"],
+                    },
                     "questionOptions": _QUESTION_OPTIONS_INPUT_SCHEMA,
                     "blocker": {"type": "string", "minLength": 1},
                     "attemptedAlternatives": {
@@ -457,6 +773,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                                     },
                                     {"required": ["resumeCondition"]},
                                     {"required": ["question"]},
+                                    {"required": ["questionKind"]},
                                     {"required": ["questionOptions"]},
                                     {"required": ["blocker"]},
                                     {"required": ["attemptedAlternatives"]},
@@ -486,6 +803,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                                     },
                                     {"required": ["resumeCondition"]},
                                     {"required": ["question"]},
+                                    {"required": ["questionKind"]},
                                     {"required": ["questionOptions"]},
                                     {"required": ["blocker"]},
                                     {"required": ["attemptedAlternatives"]},
@@ -555,13 +873,51 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                         },
                     },
                     {
-                        "if": {"required": ["questionOptions"]},
+                        "if": {"required": ["question"]},
                         "then": {
                             "properties": {
                                 "decision": {"const": "wait"},
                                 "waitingFor": {"const": "user"},
                             },
-                            "required": ["question", "waitingFor"],
+                            "required": ["questionKind", "waitingFor"],
+                        },
+                    },
+                    {
+                        "if": {
+                            "properties": {
+                                "questionKind": {"const": "bounded"}
+                            },
+                            "required": ["questionKind"],
+                        },
+                        "then": {
+                            "required": ["question", "questionOptions"]
+                        },
+                    },
+                    {
+                        "if": {
+                            "properties": {
+                                "questionKind": {"const": "unbounded"}
+                            },
+                            "required": ["questionKind"],
+                        },
+                        "then": {
+                            "required": ["question"],
+                            "not": {"required": ["questionOptions"]},
+                        },
+                    },
+                    {
+                        "if": {"required": ["questionOptions"]},
+                        "then": {
+                            "properties": {
+                                "decision": {"const": "wait"},
+                                "waitingFor": {"const": "user"},
+                                "questionKind": {"const": "bounded"},
+                            },
+                            "required": [
+                                "question",
+                                "questionKind",
+                                "waitingFor",
+                            ],
                         },
                     },
                     {
@@ -585,6 +941,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                                     },
                                     {"required": ["resumeCondition"]},
                                     {"required": ["question"]},
+                                    {"required": ["questionKind"]},
                                     {"required": ["questionOptions"]},
                                 ]
                             }
@@ -697,6 +1054,11 @@ class RoomCapabilityManifestStore:
                 "available": True,
                 "authorized": not denied_by,
                 "deniedBy": denied_by,
+                **(
+                    {"alwaysAvailable": True}
+                    if source.get("alwaysAvailable") is True and not denied_by
+                    else {}
+                ),
             }
             projections = source.get("runtimeProjections")
             if projections:
@@ -1307,6 +1669,7 @@ class RoomCapabilityManifestStore:
         *,
         session_id: str,
         dispatch_id: str,
+        not_before_ms: int = 0,
     ) -> set[str]:
         """Return successful evidence-producing Tool receipts for one Dispatch."""
 
@@ -1323,6 +1686,7 @@ class RoomCapabilityManifestStore:
                 WHERE execution.session_id = ?
                   AND manifest.dispatch_id = ?
                   AND execution.status = 'applied'
+                  AND execution.created_at_ms >= ?
                   AND execution.tool_name NOT IN (
                     'room_post',
                     'room_collaborate',
@@ -1333,9 +1697,51 @@ class RoomCapabilityManifestStore:
                 (
                     _required(session_id, "session_id"),
                     _required(dispatch_id, "dispatch_id"),
+                    max(0, int(not_before_ms)),
                 ),
             ).fetchall()
         return {str(row["execution_receipt_id"]) for row in rows}
+
+    def runtime_evidence_tools(
+        self,
+        *,
+        session_id: str,
+        dispatch_id: str,
+        not_before_ms: int = 0,
+    ) -> dict[str, str]:
+        """Map successful evidence receipt ids to their canonical Tool names."""
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT execution.execution_receipt_id,execution.tool_name
+                FROM room_v2_tool_execution_receipts execution
+                JOIN room_v2_tool_invocation_receipts invocation
+                  ON invocation.receipt_id = execution.invocation_receipt_id
+                JOIN room_v2_capability_manifests manifest
+                  ON manifest.manifest_id = invocation.manifest_id
+                 AND manifest.manifest_hash = invocation.manifest_hash
+                WHERE execution.session_id = ?
+                  AND manifest.dispatch_id = ?
+                  AND execution.status = 'applied'
+                  AND execution.created_at_ms >= ?
+                  AND execution.tool_name NOT IN (
+                    'room_post',
+                    'room_collaborate',
+                    'room_commit'
+                  )
+                ORDER BY execution.execution_receipt_id
+                """,
+                (
+                    _required(session_id, "session_id"),
+                    _required(dispatch_id, "dispatch_id"),
+                    max(0, int(not_before_ms)),
+                ),
+            ).fetchall()
+        return {
+            str(row["execution_receipt_id"]): str(row["tool_name"])
+            for row in rows
+        }
 
     def record_runtime_execution(
         self,
@@ -1710,6 +2116,23 @@ class RoomCapabilityManifestStore:
                         if key != "receiptId"
                     }
                 )
+                duplicate = conn.execute(
+                    """
+                    SELECT * FROM room_v2_tool_disclosure_receipts
+                    WHERE manifest_id=? AND receipt_kind=? AND query_text=?
+                      AND tool_name=? AND payload_hash=?
+                    """,
+                    (
+                        payload["manifestId"],
+                        payload["kind"],
+                        payload["query"],
+                        payload["toolName"],
+                        payload_hash,
+                    ),
+                ).fetchone()
+                if duplicate is not None:
+                    resolved.append(_disclosure_payload(duplicate))
+                    continue
                 conn.execute(
                     """
                     INSERT INTO room_v2_tool_disclosure_receipts(
@@ -1743,7 +2166,7 @@ class RoomCapabilityManifestStore:
         if row is None:
             raise KeyError(manifest_id)
         payload = _manifest_payload(row)
-        if payload["manifestHash"] != _hash(manifest_hash, "manifest_hash"):
+        if payload["manifestHash"] != manifest_hash:
             raise CapabilityManifestConflict("Capability Manifest hash mismatch")
         return payload
 
@@ -1835,7 +2258,7 @@ def _canonical_tool(name: str) -> str:
     if canonical.startswith("room_") and canonical not in ROOM_PUBLIC_TOOLS:
         raise ValueError(
             "Room public tool surface only supports "
-            "room_state/room_collaborate/room_post/room_commit"
+            + "/".join(ROOM_PUBLIC_TOOLS)
         )
     return canonical
 

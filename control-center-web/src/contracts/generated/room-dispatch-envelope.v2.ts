@@ -17,11 +17,109 @@ export interface RoomDispatchEnvelopeV2 {
   targetSessionId: string;
   targetParticipantId: string;
   triggerId: string;
-  intentKind: 'execute' | 'review' | 'revise' | 'resume' | 'retry' | 'wake' | 'callback' | 'close';
+  intentKind:
+    'align' | 'execute' | 'review' | 'revise' | 'resume' | 'retry' | 'wake' | 'callback' | 'close';
   idempotencyKey: string;
   attempt: number;
   capabilityEpoch: number;
   runtimeProfileRevision: string;
+  alignmentOrdinal?: number;
+  /**
+   * @maxItems 16
+   */
+  dependsOnDispatchIds?:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ];
   /**
    * @maxItems 8
    */

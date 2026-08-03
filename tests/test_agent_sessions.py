@@ -314,389 +314,288 @@ class AgentSessionStoreTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(count, 3)
 
-    def test_agent_plan_is_append_only_and_projects_latest_item_state(self) -> None:
-        session = self.store.create(title="plan", created_at_ms=100)
+    def test_agent_todo_revisions_project_atomic_state_transitions(self) -> None:
+        session = self.store.create(title="todo", created_at_ms=100)
         session_id = str(session["id"])
 
-        created = self.store.update_agent_plan_item(
+        initialized = self.store.mutate_agent_todo(
             session_id,
-            title="核对权限边界",
-            status="pending",
+            {
+                "op": "init",
+                "list": [
+                    {
+                        "phase": "执行",
+                        "items": ["核对权限边界", "实现并验收"],
+                    }
+                ],
+            },
+            actor="test-agent",
             updated_at_ms=200,
         )
-        item_id = str(created["event"]["itemId"])
-        advanced = self.store.update_agent_plan_item(
-            session_id,
-            item_id=item_id,
-            status="in_progress",
-            updated_at_ms=300,
-        )
-
-        self.assertEqual(advanced["plan"]["revision"], 2)
+        self.assertEqual(initialized["todo"]["revision"], 1)
+        self.assertEqual(initialized["todo"]["actor"], "test-agent")
         self.assertEqual(
-            advanced["plan"]["items"],
+            initialized["todo"]["phases"],
             [
                 {
-                    "id": item_id,
-                    "title": "核对权限边界",
-                    "status": "in_progress",
-                    "position": 1,
-                    "sequence": 2,
-                    "updatedAtMs": 300,
+                    "name": "执行",
+                    "tasks": [
+                        {"content": "核对权限边界", "status": "in_progress"},
+                        {"content": "实现并验收", "status": "pending"},
+                    ],
                 }
             ],
         )
+
+        started = self.store.mutate_agent_todo(
+            session_id,
+            {"op": "start", "task": "核对权限边界"},
+            updated_at_ms=300,
+        )
+        self.assertEqual(started["todo"]["revision"], 2)
+        self.assertEqual(
+            [
+                task["status"]
+                for task in started["todo"]["phases"][0]["tasks"]
+            ],
+            ["in_progress", "pending"],
+        )
+
+        completed = self.store.mutate_agent_todo(
+            session_id,
+            {"op": "done", "task": "核对权限边界"},
+            updated_at_ms=400,
+        )
+        self.assertEqual(completed["todo"]["revision"], 3)
+        self.assertEqual(
+            completed["completedTasks"],
+            [{"phase": "执行", "task": "核对权限边界"}],
+        )
+
+        appended = self.store.mutate_agent_todo(
+            session_id,
+            {"op": "append", "phase": "执行", "items": ["补充回归"]},
+            updated_at_ms=500,
+        )
+        self.assertEqual(appended["todo"]["revision"], 4)
+        self.assertEqual(
+            [task["content"] for task in appended["todo"]["phases"][0]["tasks"]],
+            ["核对权限边界", "实现并验收", "补充回归"],
+        )
+
+        dropped = self.store.mutate_agent_todo(
+            session_id,
+            {"op": "drop", "task": "实现并验收"},
+            updated_at_ms=600,
+        )
+        self.assertEqual(dropped["todo"]["revision"], 5)
+        self.assertEqual(
+            [task["status"] for task in dropped["todo"]["phases"][0]["tasks"]],
+            ["completed", "abandoned", "in_progress"],
+        )
+
+        removed = self.store.mutate_agent_todo(
+            session_id,
+            {"op": "rm", "task": "补充回归"},
+            updated_at_ms=700,
+        )
+        self.assertEqual(removed["todo"]["revision"], 6)
+        self.assertEqual(removed["todo"]["counts"]["total"], 2)
+        self.assertEqual(
+            self.store.agent_todo(session_id),
+            removed["todo"],
+        )
+        viewed = self.store.mutate_agent_todo(session_id, {"op": "view"})
+        self.assertFalse(viewed["changed"])
+        self.assertEqual(viewed["todo"], removed["todo"])
+
         with closing(sqlite3.connect(self.db_path)) as conn:
             events = conn.execute(
                 """
-                SELECT sequence, status FROM agent_plan_events
-                WHERE session_id = ? ORDER BY sequence
+                SELECT revision, operation
+                FROM agent_todo_events
+                WHERE session_id = ? ORDER BY revision
                 """,
                 (session_id,),
             ).fetchall()
-        self.assertEqual(events, [(1, "pending"), (2, "in_progress")])
-
-    def test_agent_plan_allows_only_one_in_progress_item(self) -> None:
-        session = self.store.create(title="plan", created_at_ms=100)
-        session_id = str(session["id"])
-        first = self.store.update_agent_plan_item(
-            session_id,
-            title="第一项",
-            status="in_progress",
-        )
-        second = self.store.update_agent_plan_item(
-            session_id,
-            title="第二项",
-            status="pending",
+        self.assertEqual(
+            events,
+            [
+                (1, "init"),
+                (2, "start"),
+                (3, "done"),
+                (4, "append"),
+                (5, "drop"),
+                (6, "rm"),
+            ],
         )
 
-        with self.assertRaisesRegex(ValueError, "only one"):
-            self.store.update_agent_plan_item(
+    def test_agent_todo_block_advances_work_and_unblock_preserves_reasoned_state(self) -> None:
+        session_id = str(self.store.create(title="blocked todo", created_at_ms=100)["id"])
+        self.store.mutate_agent_todo(
+            session_id,
+            {
+                "op": "init",
+                "phase": "执行",
+                "items": ["等待用户选择", "继续其余验收"],
+            },
+            updated_at_ms=200,
+        )
+
+        blocked = self.store.mutate_agent_todo(
+            session_id,
+            {
+                "op": "block",
+                "task": "等待用户选择",
+                "reason": "等待用户决定兼容性范围",
+            },
+            updated_at_ms=300,
+        )["todo"]
+        self.assertEqual(
+            blocked["phases"][0]["tasks"],
+            [
+                {
+                    "content": "等待用户选择",
+                    "status": "blocked",
+                    "reason": "等待用户决定兼容性范围",
+                },
+                {"content": "继续其余验收", "status": "in_progress"},
+            ],
+        )
+        self.assertEqual(blocked["counts"]["blocked"], 1)
+        self.assertEqual(blocked["counts"]["inProgress"], 1)
+
+        unblocked = self.store.mutate_agent_todo(
+            session_id,
+            {"op": "unblock", "task": "等待用户选择"},
+            updated_at_ms=400,
+        )["todo"]
+        self.assertEqual(
+            [task["status"] for task in unblocked["phases"][0]["tasks"]],
+            ["pending", "in_progress"],
+        )
+        self.assertNotIn("reason", unblocked["phases"][0]["tasks"][0])
+
+        restarted = self.store.mutate_agent_todo(
+            session_id,
+            {"op": "start", "task": "等待用户选择"},
+            updated_at_ms=500,
+        )["todo"]
+        self.assertEqual(
+            [task["status"] for task in restarted["phases"][0]["tasks"]],
+            ["in_progress", "pending"],
+        )
+
+    def test_agent_todo_start_transitions_are_atomic_and_keep_one_current_task(
+        self,
+    ) -> None:
+        session_id = str(self.store.create(title="concurrent todo")["id"])
+        self.store.mutate_agent_todo(
+            session_id,
+            {
+                "op": "init",
+                "items": ["第一项", "第二项"],
+            },
+        )
+
+        def start(task: str) -> None:
+            self.store.mutate_agent_todo(
                 session_id,
-                item_id=str(second["event"]["itemId"]),
-                status="in_progress",
+                {"op": "start", "task": task},
             )
-        self.store.update_agent_plan_item(
-            session_id,
-            item_id=str(first["event"]["itemId"]),
-            status="completed",
-        )
-        promoted = self.store.update_agent_plan_item(
-            session_id,
-            item_id=str(second["event"]["itemId"]),
-            status="in_progress",
-        )
-        self.assertEqual(promoted["plan"]["counts"]["inProgress"], 1)
-        self.assertEqual(promoted["plan"]["counts"]["completed"], 1)
-
-    def test_agent_plan_serializes_concurrent_in_progress_transitions(self) -> None:
-        session_id = str(self.store.create(title="concurrent plan")["id"])
-        first_id = str(
-            self.store.update_agent_plan_item(
-                session_id,
-                title="第一项",
-                status="pending",
-            )["event"]["itemId"]
-        )
-        second_id = str(
-            self.store.update_agent_plan_item(
-                session_id,
-                title="第二项",
-                status="pending",
-            )["event"]["itemId"]
-        )
-
-        def promote(item_id: str) -> str:
-            try:
-                self.store.update_agent_plan_item(
-                    session_id,
-                    item_id=item_id,
-                    status="in_progress",
-                )
-            except ValueError as exc:
-                self.assertIn("only one", str(exc))
-                return "blocked"
-            return "promoted"
 
         with ThreadPoolExecutor(max_workers=2) as pool:
-            outcomes = list(pool.map(promote, (first_id, second_id)))
+            list(pool.map(start, ("第一项", "第二项")))
 
-        self.assertEqual(sorted(outcomes), ["blocked", "promoted"])
-        plan = self.store.agent_plan(session_id)
-        self.assertEqual(plan["counts"]["inProgress"], 1)
-        self.assertEqual(plan["revision"], 3)
+        todo = self.store.agent_todo(session_id)
+        self.assertEqual(todo["counts"]["inProgress"], 1)
+        self.assertEqual(todo["counts"]["total"], 2)
+        self.assertEqual(
+            sorted(
+                task["status"]
+                for phase in todo["phases"]
+                for task in phase["tasks"]
+            ),
+            ["in_progress", "pending"],
+        )
+        self.assertEqual(todo["revision"], 3)
         with closing(sqlite3.connect(self.db_path)) as conn:
-            sequences = [
-                int(row[0])
+            operations = [
+                row[0]
                 for row in conn.execute(
                     """
-                    SELECT sequence FROM agent_plan_events
-                    WHERE session_id = ? ORDER BY sequence
+                    SELECT operation
+                    FROM agent_todo_events
+                    WHERE session_id = ? ORDER BY revision
                     """,
                     (session_id,),
                 ).fetchall()
             ]
-        self.assertEqual(sequences, [1, 2, 3])
+        self.assertEqual(operations, ["init", "start", "start"])
 
-    def test_agent_plan_keeps_creation_order_when_item_status_changes(self) -> None:
-        session = self.store.create(title="stable plan", created_at_ms=100)
-        session_id = str(session["id"])
-        first = self.store.update_agent_plan_item(
+    def test_agent_todo_keeps_creation_order_when_task_status_changes(self) -> None:
+        session_id = str(self.store.create(title="stable todo", created_at_ms=100)["id"])
+        self.store.mutate_agent_todo(
             session_id,
-            title="读取现状",
-            status="pending",
+            {
+                "op": "init",
+                "list": [
+                    {
+                        "phase": "交付",
+                        "items": ["读取现状", "实现界面"],
+                    }
+                ],
+            },
             updated_at_ms=200,
         )
-        second = self.store.update_agent_plan_item(
+        self.store.mutate_agent_todo(
             session_id,
-            title="实现界面",
-            status="pending",
+            {"op": "done", "task": "读取现状"},
             updated_at_ms=300,
         )
-        self.store.update_agent_plan_item(
+        todo = self.store.mutate_agent_todo(
             session_id,
-            item_id=str(first["event"]["itemId"]),
-            status="completed",
+            {"op": "start", "task": "实现界面"},
             updated_at_ms=400,
-        )
-        plan = self.store.update_agent_plan_item(
-            session_id,
-            item_id=str(second["event"]["itemId"]),
-            status="in_progress",
-            updated_at_ms=500,
-        )["plan"]
+        )["todo"]
 
         self.assertEqual(
-            [item["title"] for item in plan["items"]],
+            [task["content"] for task in todo["phases"][0]["tasks"]],
             ["读取现状", "实现界面"],
         )
         self.assertEqual(
-            [item["status"] for item in plan["items"]],
+            [task["status"] for task in todo["phases"][0]["tasks"]],
             ["completed", "in_progress"],
         )
 
-    def test_completed_plan_can_finish_without_a_late_approval_transition(self) -> None:
-        for submitted_for_review in (False, True):
-            with self.subTest(submitted_for_review=submitted_for_review):
-                session_id = str(
-                    self.store.create(
-                        title=f"complete plan {submitted_for_review}",
-                    )["id"]
-                )
-                plan = self.store.mutate_agent_plan(
-                    session_id,
-                    {
-                        "action": "save",
-                        "title": "已按用户请求执行",
-                        "items": [{"title": "完成并核验", "status": "completed"}],
-                    },
-                )["plan"]
-                if submitted_for_review:
-                    plan = self.store.mutate_agent_plan(
-                        session_id,
-                        {
-                            "action": "submit_review",
-                            "expectedRevision": plan["revision"],
-                        },
-                    )["plan"]
-                    self.assertEqual(plan["status"], "review")
-                completed = self.store.mutate_agent_plan(
-                    session_id,
-                    {
-                        "action": "complete",
-                        "expectedRevision": plan["revision"],
-                    },
-                )["plan"]
-                self.assertEqual(completed["status"], "completed")
-
-    def test_plan_review_gate_preserves_approved_scope_and_tracks_execution(self) -> None:
-        session = self.store.create(title="reviewed plan", created_at_ms=100)
-        session_id = str(session["id"])
-        saved = self.store.mutate_agent_plan(
+    def test_todo_never_changes_work_authority(self) -> None:
+        session_id = str(self.store.create(title="todo authority")["id"])
+        before = self.store.workflow_state(session_id)
+        self.store.mutate_agent_todo(
             session_id,
-            {
-                "action": "save",
-                "title": "交付 Goal Mode",
-                "items": [
-                    {"title": "核对契约", "status": "pending"},
-                    {"title": "实现并验收", "status": "pending"},
-                ],
-            },
-            updated_at_ms=200,
-        )["plan"]
-        first_id, second_id = [str(item["id"]) for item in saved["items"]]
-
-        reordered = self.store.mutate_agent_plan(
-            session_id,
-            {
-                "action": "save",
-                "expectedRevision": saved["revision"],
-                "title": "交付 Goal Mode",
-                "items": [
-                    {"id": second_id, "title": "实现并验收", "status": "pending"},
-                    {"id": first_id, "title": "核对契约", "status": "pending"},
-                ],
-            },
-            updated_at_ms=300,
-        )["plan"]
-        self.assertEqual([item["id"] for item in reordered["items"]], [second_id, first_id])
-        self.assertEqual([item["position"] for item in reordered["items"]], [1, 2])
-
-        review = self.store.mutate_agent_plan(
-            session_id,
-            {"action": "submit_review", "expectedRevision": reordered["revision"]},
-            updated_at_ms=400,
-        )["plan"]
-        self.assertEqual(review["status"], "review")
-        review_gate = self.store.workflow_state(session_id)["actGate"]
-        self.assertTrue(review_gate["allowed"])
-        self.assertEqual(review_gate["reason"], "user_execution_request")
-        with self.assertRaisesRegex(ValueError, "while plan is review"):
-            self.store.update_agent_plan_item(session_id, item_id=second_id, status="in_progress")
-
-        approved = self.store.mutate_agent_plan(
-            session_id,
-            {"action": "approve", "expectedRevision": review["revision"]},
-            updated_at_ms=500,
-        )["plan"]
-        self.assertEqual(approved["status"], "approved")
-        self.assertTrue(self.store.workflow_state(session_id)["actGate"]["allowed"])
-        with self.assertRaisesRegex(ValueError, "titles cannot change"):
-            self.store.update_agent_plan_item(
-                session_id,
-                item_id=second_id,
-                title="悄悄扩大范围",
-            )
-        with self.assertRaisesRegex(ValueError, "cannot add new items"):
-            self.store.update_agent_plan_item(session_id, title="未审阅步骤", status="pending")
-
-        executing = self.store.record_agent_plan_execution_started(session_id)["plan"]
-        self.assertEqual(executing["status"], "executing")
-        replayed_execution = self.store.record_agent_plan_execution_started(
-            session_id
-        )["plan"]
-        self.assertEqual(replayed_execution["revision"], executing["revision"])
-        self.store.update_agent_plan_item(session_id, item_id=second_id, status="completed")
-        finished_items = self.store.update_agent_plan_item(
-            session_id,
-            item_id=first_id,
-            status="completed",
-        )["plan"]
-        completed = self.store.mutate_agent_plan(
-            session_id,
-            {"action": "complete", "expectedRevision": finished_items["revision"]},
-            updated_at_ms=600,
-        )["plan"]
-        self.assertEqual(completed["status"], "completed")
-        self.assertFalse(completed["actApproved"])
-        completed_state = self.store.workflow_state(session_id)
-        validate_contract(
-            completed_state,
-            "agent-workflow-state.v1.json",
+            {"op": "init", "items": ["执行用户请求"]},
+            actor="agent-runtime",
         )
-        completed_gate = completed_state["actGate"]
-        self.assertTrue(completed_gate["allowed"])
-        self.assertEqual(completed_gate["reason"], "user_execution_request")
-        self.assertIn("原有策略审批", completed_gate["message"])
-
-    def test_cancelled_plan_does_not_revoke_a_new_user_execution_request(self) -> None:
-        session_id = str(self.store.create(title="cancelled")["id"])
-        saved = self.store.mutate_agent_plan(
+        after = self.store.mutate_agent_todo(
             session_id,
-            {
-                "action": "save",
-                "title": "取消前计划",
-                "items": [{"title": "不再执行", "status": "pending"}],
-            },
-        )["plan"]
-        self.store.mutate_agent_plan(
-            session_id,
-            {
-                "action": "cancel",
-                "expectedRevision": saved["revision"],
-            },
-        )
+            {"op": "start", "task": "执行用户请求"},
+            actor="agent-runtime",
+        )["todo"]
 
-        state = self.store.workflow_state(session_id)
-        validate_contract(state, "agent-workflow-state.v1.json")
-        self.assertTrue(state["actGate"]["allowed"])
-        self.assertEqual(state["actGate"]["reason"], "user_execution_request")
-
-
-    def test_plan_return_to_draft_requires_provenance_and_rejects_replay(
-        self,
-    ) -> None:
-        session_id = str(self.store.create(title="review provenance")["id"])
-        review = self.store.mutate_agent_plan(
-            session_id,
-            {
-                "action": "submit_review",
-                "title": "审阅计划",
-                "items": [{"title": "修复反馈", "status": "pending"}],
-            },
-        )["plan"]
-        with self.assertRaisesRegex(ValueError, "note must not be empty"):
-            self.store.mutate_agent_plan(
-                session_id,
-                {
-                    "action": "return_to_draft",
-                    "expectedRevision": review["revision"],
-                },
-                actor="reviewer:alice",
-            )
-
-        returned = self.store.mutate_agent_plan(
-            session_id,
-            {
-                "action": "return_to_draft",
-                "expectedRevision": review["revision"],
-                "note": "补充失败路径与验收证据",
-            },
-            actor="reviewer:alice",
-            updated_at_ms=777,
-        )["plan"]
-        self.assertEqual(returned["status"], "draft")
-        self.assertEqual(returned["actor"], "reviewer:alice")
-        self.assertEqual(returned["note"], "补充失败路径与验收证据")
-        with self.assertRaisesRegex(ValueError, "changed; refresh"):
-            self.store.mutate_agent_plan(
-                session_id,
-                {
-                    "action": "return_to_draft",
-                    "expectedRevision": review["revision"],
-                    "note": "重复提交",
-                },
-                actor="reviewer:alice",
-            )
+        workflow = self.store.workflow_state(session_id)
+        self.assertEqual(before["actGate"]["reason"], "user_execution_request")
+        self.assertTrue(workflow["actGate"]["allowed"])
+        self.assertEqual(workflow["actGate"]["reason"], "user_execution_request")
+        self.assertEqual(workflow["todo"], self.store.agent_todo(session_id))
+        self.assertEqual(workflow["actGate"]["todoRevision"], after["revision"])
         self.assertEqual(
-            AgentSessionStore(self.db_path).agent_plan(session_id),
-            returned,
+            workflow["actGate"]["goalRevision"],
+            workflow["goal"]["revision"],
         )
-        with self.assertRaisesRegex(ValueError, "unsupported"):
-            self.store.mutate_agent_plan(
-                session_id,
-                {
-                    "action": "start_execution",
-                    "expectedRevision": returned["revision"],
-                },
-            )
 
-    def test_plan_and_goal_mutation_contracts_require_review_and_setup_fences(
+    def test_todo_and_goal_mutation_contract_requires_goal_setup_fence(
         self,
     ) -> None:
-        validate_contract(
-            {
-                "action": "return_to_draft",
-                "expectedRevision": 4,
-                "note": "补充验收证据",
-            },
-            "agent-plan-mutation.v1.json",
-        )
-        with self.assertRaisesRegex(ValueError, "missing required field"):
-            validate_contract(
-                {"action": "return_to_draft", "expectedRevision": 4},
-                "agent-plan-mutation.v1.json",
-            )
         validate_contract(
             {
                 "action": "confirm_setup",
@@ -726,8 +625,7 @@ class AgentSessionStoreTests(unittest.TestCase):
                 "agent-goal-mutation.v1.json",
             )
 
-
-    def test_fenced_room_dispatch_is_a_work_authority_without_rewriting_the_plan(self) -> None:
+    def test_fenced_room_dispatch_is_a_work_authority_without_rewriting_todo(self) -> None:
         session = self.store.create(title="Room worker", created_at_ms=100)
         session_id = str(session["id"])
 
@@ -739,25 +637,14 @@ class AgentSessionStoreTests(unittest.TestCase):
 
         self.assertTrue(ordinary["actGate"]["allowed"])
         self.assertEqual(ordinary["actGate"]["reason"], "user_execution_request")
-        self.assertEqual(room["plan"]["status"], "draft")
+        self.assertEqual(room["todo"]["revision"], 0)
+        self.assertEqual(room["todo"]["phases"], [])
         self.assertTrue(room["actGate"]["allowed"])
         self.assertIn("当前 Room 任务已经开始", room["actGate"]["message"])
 
     def test_thread_goal_budget_pause_and_evidence_audit_control_act_gate(self) -> None:
         session = self.store.create(title="goal", created_at_ms=100)
         session_id = str(session["id"])
-        plan = self.store.mutate_agent_plan(
-            session_id,
-            {
-                "action": "submit_review",
-                "title": "完成 Goal",
-                "items": [{"title": "实现并验证", "status": "pending"}],
-            },
-        )["plan"]
-        self.store.mutate_agent_plan(
-            session_id,
-            {"action": "approve", "expectedRevision": plan["revision"]},
-        )
 
         goal = self.store.mutate_agent_goal(
             session_id,
@@ -765,7 +652,7 @@ class AgentSessionStoreTests(unittest.TestCase):
                 "action": "confirm_setup",
                 "confirmed": True,
                 "expectedRevision": 0,
-                "successCriteria": "所有计划项完成并有可核验回执",
+                "successCriteria": "所有 Todo 项完成并有可核验回执",
                 "evidenceExpectations": ["聚焦测试结果", "交付产物引用"],
                 "objective": "在固定预算内交付可验证实现",
                 "tokenBudget": 1_000,
@@ -774,7 +661,7 @@ class AgentSessionStoreTests(unittest.TestCase):
         )["workflow"]["goal"]
         self.assertEqual(
             goal["successCriteria"],
-            "所有计划项完成并有可核验回执",
+            "所有 Todo 项完成并有可核验回执",
         )
         self.assertEqual(
             goal["evidenceExpectations"],
@@ -784,8 +671,8 @@ class AgentSessionStoreTests(unittest.TestCase):
         self.assertEqual(reconnected_goal, goal)
         workflow = self.store.workflow_state(session_id)
         self.assertEqual(
-            workflow["actGate"]["planRevision"],
-            workflow["plan"]["revision"],
+            workflow["actGate"]["todoRevision"],
+            workflow["todo"]["revision"],
         )
         self.assertEqual(
             workflow["actGate"]["goalRevision"],
@@ -876,23 +763,10 @@ class AgentSessionStoreTests(unittest.TestCase):
         )["workflow"]
         self.assertFalse(cleared["goal"]["configured"])
         self.assertTrue(cleared["actGate"]["allowed"])
-
     def test_cancelled_goal_is_terminal_audited_and_blocks_future_work(
         self,
     ) -> None:
         session_id = str(self.store.create(title="cancelled goal")["id"])
-        review = self.store.mutate_agent_plan(
-            session_id,
-            {
-                "action": "submit_review",
-                "title": "可取消 Goal",
-                "items": [{"title": "执行工作", "status": "in_progress"}],
-            },
-        )["plan"]
-        self.store.mutate_agent_plan(
-            session_id,
-            {"action": "approve", "expectedRevision": review["revision"]},
-        )
         goal = self.store.mutate_agent_goal(
             session_id,
             {
@@ -984,18 +858,6 @@ class AgentSessionStoreTests(unittest.TestCase):
     ) -> None:
         session = self.store.create(title="goal continuation", created_at_ms=100)
         session_id = str(session["id"])
-        review = self.store.mutate_agent_plan(
-            session_id,
-            {
-                "action": "submit_review",
-                "title": "完成持久 Goal",
-                "items": [{"title": "收集验收证据", "status": "in_progress"}],
-            },
-        )["plan"]
-        self.store.mutate_agent_plan(
-            session_id,
-            {"action": "approve", "expectedRevision": review["revision"]},
-        )
         goal = self.store.mutate_agent_goal(
             session_id,
             {
@@ -1154,18 +1016,6 @@ class AgentSessionStoreTests(unittest.TestCase):
     def test_goal_continuation_budget_serializes_concurrent_claims(self) -> None:
         session_id = str(
             self.store.create(title="concurrent continuation")["id"]
-        )
-        review = self.store.mutate_agent_plan(
-            session_id,
-            {
-                "action": "submit_review",
-                "title": "并发续投上限",
-                "items": [{"title": "验证原子上限", "status": "in_progress"}],
-            },
-        )["plan"]
-        self.store.mutate_agent_plan(
-            session_id,
-            {"action": "approve", "expectedRevision": review["revision"]},
         )
         goal_id = str(
             self.store.mutate_agent_goal(
@@ -1344,6 +1194,40 @@ class AgentSessionStoreTests(unittest.TestCase):
                 approved=True,
                 payload_sha256="d" * 64,
                 decided_at_ms=6_001,
+            )
+
+    def test_approval_tool_call_binding_is_durable_and_immutable(self) -> None:
+        session = self.store.create(title="approval identity", created_at_ms=100)
+        approval = self.store.create_approval(
+            session_id=str(session["id"]),
+            tool_name="workspace_shell",
+            operation="run",
+            payload_sha256="a" * 64,
+            preview={"summary": "运行命令"},
+            risk_level="R3",
+            requested_at_ms=1_000,
+        )
+
+        bound = self.store.bind_approval_tool_call(
+            str(approval["approvalId"]),
+            tool_call_id="tool:workspace-shell:1",
+        )
+        self.assertEqual(bound["toolCallId"], "tool:workspace-shell:1")
+        self.assertEqual(
+            self.store.get_approval(str(approval["approvalId"]))["toolCallId"],
+            "tool:workspace-shell:1",
+        )
+        self.assertEqual(
+            self.store.bind_approval_tool_call(
+                str(approval["approvalId"]),
+                tool_call_id="tool:workspace-shell:1",
+            )["toolCallId"],
+            "tool:workspace-shell:1",
+        )
+        with self.assertRaisesRegex(ValueError, "another tool call"):
+            self.store.bind_approval_tool_call(
+                str(approval["approvalId"]),
+                tool_call_id="tool:workspace-shell:2",
             )
 
 

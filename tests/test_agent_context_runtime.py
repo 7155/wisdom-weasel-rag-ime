@@ -12,6 +12,7 @@ from rag_ime.agent_context_runtime import (
     AgentContextRuntime,
     compose_runtime_prompt,
     render_context_items,
+    render_provider_context_items,
 )
 from rag_ime.agent_memory_context_support import recall_messages
 from rag_ime.agent_sessions import AgentSessionStore
@@ -128,8 +129,8 @@ class AgentContextRuntimeTests(unittest.TestCase):
                 "required": ["summary"],
                 "properties": {"summary": {"type": "string"}},
             },
-            "planItemId": "plan-item:one",
-            "planItemTitle": "核对子 Agent 证据",
+            "todoTask": "核对子 Agent 证据",
+            "todoPhase": "验证",
             "state": "completed",
             "result": {
                 "summary": "已取得 artifact://one",
@@ -172,6 +173,7 @@ class AgentContextRuntimeTests(unittest.TestCase):
             ["引用真实产物", "列出未决风险"],
         )
         self.assertIn("do not auto-accept", materialized["prompt"])
+        self.assertIn("linked parent Todo task", materialized["prompt"])
 
     def test_until_ack_items_reappear_without_duplicate_storage(self) -> None:
         item = self.runtime.enqueue(
@@ -391,7 +393,68 @@ class AgentContextRuntimeTests(unittest.TestCase):
         self.assertIn("先读测试，再做最小改动。", rendered)
         self.assertEqual(rendered.count("代码任务交付偏好"), 1)
 
-    def test_compaction_history_cannot_override_current_task_or_plan(self) -> None:
+    def test_provider_context_keeps_only_recalled_evidence_in_rag_block(self) -> None:
+        rendered = render_provider_context_items(
+            [
+                {
+                    "sourceKind": "memory_bootstrap",
+                    "payload": {
+                        "schemaVersion": "rag-ime.session-memory-recall.v1",
+                        "retrieval": {"temporalIntent": False},
+                        "recentConversation": [
+                            {"role": "user", "text": "不应重复注入的旧输入"}
+                        ],
+                        "task": {
+                            "objective": "修正 Provider 上下文顺序",
+                            "acceptanceCriteria": ["CURRENT-ORDER"],
+                        },
+                        "items": [
+                            {
+                                "sourceType": "memory_atom",
+                                "title": "偏好",
+                                "text": "优先保持缓存前缀稳定。",
+                            }
+                        ],
+                    },
+                }
+            ]
+        )
+
+        self.assertEqual(
+            rendered.count('<rag-ime-context type="memory_recall">'),
+            1,
+        )
+        rag_block = rendered.split(
+            '<rag-ime-context type="memory_recall">',
+            maxsplit=1,
+        )[1].split("</rag-ime-context>", maxsplit=1)[0]
+        self.assertIn("优先保持缓存前缀稳定", rag_block)
+        self.assertNotIn("Provider 上下文顺序", rag_block)
+        self.assertNotIn("CURRENT-ORDER", rag_block)
+        self.assertIn("<work-state>", rendered)
+        self.assertIn("Provider 上下文顺序", rendered)
+        self.assertNotIn("## 最近对话", rendered)
+        self.assertNotIn("不应重复注入的旧输入", rendered)
+
+    def test_provider_context_omits_rag_block_without_recalled_evidence(self) -> None:
+        rendered = render_provider_context_items(
+            [
+                {
+                    "sourceKind": "memory_bootstrap",
+                    "payload": {
+                        "schemaVersion": "rag-ime.session-memory-recall.v1",
+                        "task": {"objective": "保留工作状态"},
+                        "items": [],
+                    },
+                }
+            ]
+        )
+
+        self.assertNotIn("<rag-ime-context", rendered)
+        self.assertIn("<work-state>", rendered)
+        self.assertIn("保留工作状态", rendered)
+
+    def test_compaction_history_cannot_override_current_task_or_todo(self) -> None:
         rendered = render_context_items(
             [
                 {
@@ -413,10 +476,10 @@ class AgentContextRuntimeTests(unittest.TestCase):
                             "objective": "只执行当前修复",
                             "acceptanceCriteria": ["CURRENT-AC"],
                         },
-                        "plan": [
+                        "todo": [
                             {
-                                "status": "completed",
-                                "title": "CURRENT-PLAN",
+                                "status": "in_progress",
+                                "content": "CURRENT-TODO",
                             }
                         ],
                         "items": [],
@@ -435,8 +498,8 @@ class AgentContextRuntimeTests(unittest.TestCase):
         self.assertIn("## 当前任务（本轮权威投影）", rendered)
         self.assertIn("只执行当前修复", rendered)
         self.assertIn("CURRENT-AC", rendered)
-        self.assertIn("## 当前计划（本轮权威投影）", rendered)
-        self.assertIn("- [已完成] CURRENT-PLAN", rendered)
+        self.assertIn("## 当前 Todo（本轮权威投影）", rendered)
+        self.assertIn("- [进行中] CURRENT-TODO", rendered)
         self.assertNotIn("OLD-STATE", rendered)
 
     def test_empty_session_memory_does_not_consume_provider_context(self) -> None:

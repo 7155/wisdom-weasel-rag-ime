@@ -16,6 +16,7 @@ import {
   assertBrowserSnapshotId,
   assertControlRequest,
   assertControlSubscription,
+  managedAgentMediaContentPath,
   browserCapabilities,
   type AgentImagePasteOptions,
   type ControlEventObserver,
@@ -122,6 +123,12 @@ export class HttpControlTransport implements ControlTransport {
   browserSnapshotImageUrl(snapshotId: string): string {
     assertBrowserSnapshotId(snapshotId);
     return this.url('browser.snapshot.image', { snapshotId }, undefined).toString();
+  }
+
+  agentMediaContentUrl(receiptPath: string): string {
+    const managedPath = managedAgentMediaContentPath(receiptPath);
+    if (!managedPath) throw new TypeError('Agent media content requires a managed receipt path');
+    return new URL(managedPath, this.baseUrl).toString();
   }
 
   async pasteImages(options: AgentImagePasteOptions): Promise<PickedFile[]> {

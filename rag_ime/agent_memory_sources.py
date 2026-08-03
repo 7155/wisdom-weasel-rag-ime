@@ -139,6 +139,14 @@ class AgentMemorySourceStore:
             source="pi_agent_tool_receipt",
             canonical=summary,
             tags=("agent-session", "approved-tool-receipt"),
+            metadata={
+                "applied": True,
+                "mutationApplied": True,
+                "personalMemoryEligible": (
+                    receipt.get("personalMemoryEligible") is True
+                ),
+                "approvalId": approval_id,
+            },
             created_at_ms=created_at_ms,
         )
 
@@ -655,7 +663,7 @@ class AgentMemorySourceStore:
         evidence_ids: list[str] | tuple[str, ...] = (),
         created_at_ms: int | None = None,
     ) -> dict[str, object]:
-        """Attach a non-authoritative curation hint to current user evidence."""
+        """Attach a user-grounded, non-authoritative durable-memory candidate."""
 
         normalized_session = compact_whitespace(session_id)
         normalized_kind = compact_whitespace(kind).lower()
@@ -711,9 +719,13 @@ class AgentMemorySourceStore:
                 source = conn.execute(
                     """
                     SELECT source.source_id, source.status, source.disposition,
-                           source.source_kind, source.pi_entry_id, session.role_id
+                           source.source_kind, source.pi_entry_id, session.role_id,
+                           source.input_event_id, source.canonical_text_sha256,
+                           event.committed_text, event.project,
+                           event.created_at_ms AS event_created_at_ms
                     FROM agent_memory_sources AS source
                     JOIN agent_sessions AS session ON session.id = source.session_id
+                    JOIN input_events AS event ON event.id = source.input_event_id
                     WHERE source.source_id = ? AND source.session_id = ?
                     """,
                     (requested_source, normalized_session),
@@ -722,9 +734,13 @@ class AgentMemorySourceStore:
                 source = conn.execute(
                     """
                     SELECT source.source_id, source.status, source.disposition,
-                           source.source_kind, source.pi_entry_id, session.role_id
+                           source.source_kind, source.pi_entry_id, session.role_id,
+                           source.input_event_id, source.canonical_text_sha256,
+                           event.committed_text, event.project,
+                           event.created_at_ms AS event_created_at_ms
                     FROM agent_memory_sources AS source
                     JOIN agent_sessions AS session ON session.id = source.session_id
+                    JOIN input_events AS event ON event.id = source.input_event_id
                     WHERE source.session_id = ?
                       AND source.status = 'active'
                       AND source.source_kind = 'user_final'
@@ -834,6 +850,18 @@ class AgentMemorySourceStore:
                 """,
                 (resolved_source_id, normalized_kind, normalized_claim),
             ).fetchone()
+            if stored is None:
+                raise RuntimeError("memory capture hint did not persist")
+            evidence_id, evidence_state = _checkpoint_explicit_memory_evidence(
+                conn,
+                hint_id=str(stored["hint_id"]),
+                source=source,
+                session_id=normalized_session,
+                scope=normalized_scope,
+                claim=normalized_claim,
+                future_use=normalized_future_use,
+                created_at_ms=timestamp,
+            )
         return {
             "schemaVersion": "rag-ime.memory-capture-hint.v1",
             "ok": True,
@@ -846,6 +874,8 @@ class AgentMemorySourceStore:
                 else "accepted"
             ),
             "hintId": str(stored[0]),
+            "evidenceId": evidence_id,
+            "evidenceState": evidence_state,
             "sourceId": resolved_source_id,
             "kind": normalized_kind,
             "scope": normalized_scope,
@@ -922,7 +952,7 @@ class AgentMemorySourceStore:
                 raise KeyError(source_id)
             previous = str(row["disposition"])
             if normalized_actor in {"user", "rollback"}:
-                _assert_source_curation_not_running(
+                assert_source_curation_not_running(
                     conn,
                     row,
                     timestamp=timestamp,
@@ -975,13 +1005,13 @@ class AgentMemorySourceStore:
                 (source_id,),
             ).fetchone()
             if normalized_actor in {"user", "rollback"}:
-                _invalidate_source_review_drafts(
+                invalidate_source_review_drafts(
                     conn,
                     source_id=source_id,
                     timestamp=timestamp,
                 )
                 if normalized_disposition in _CURATION_ELIGIBLE_DISPOSITIONS:
-                    _rewind_curation_cursors_for_source(
+                    rewind_curation_cursors_for_source(
                         conn,
                         source=updated,
                         timestamp=timestamp,
@@ -1093,14 +1123,25 @@ class AgentMemorySourceStore:
                 (session_id, pi_entry_id, source_kind),
             ).fetchone()
             if existing is not None:
+                evidence = _checkpoint_applied_receipt_evidence(
+                    conn,
+                    source=existing,
+                    canonical=canonical,
+                    project=self.project,
+                    metadata=metadata,
+                    created_at_ms=timestamp,
+                )
                 payload = _source_payload(existing)
-                return {
+                result = {
                     "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
                     "ok": True,
                     "stored": False,
                     "status": "already_checkpointed",
                     "source": payload,
                 }
+                if evidence is not None:
+                    result["evidence"] = evidence
+                return result
 
             event = conn.execute(
                 """
@@ -1213,14 +1254,25 @@ class AgentMemorySourceStore:
                 "SELECT * FROM agent_memory_sources WHERE source_id = ?",
                 (source_id,),
             ).fetchone()
+            evidence = _checkpoint_applied_receipt_evidence(
+                conn,
+                source=row,
+                canonical=canonical,
+                project=self.project,
+                metadata=metadata,
+                created_at_ms=timestamp,
+            )
         payload = _source_payload(row)
-        return {
+        result = {
             "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
             "ok": True,
             "stored": True,
             "status": "checkpointed",
             "source": payload,
         }
+        if evidence is not None:
+            result["evidence"] = evidence
+        return result
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -1237,7 +1289,7 @@ class AgentMemorySourceStore:
             conn.close()
 
 
-def _assert_source_curation_not_running(
+def assert_source_curation_not_running(
     conn: sqlite3.Connection,
     source: sqlite3.Row,
     *,
@@ -1272,7 +1324,7 @@ def _assert_source_curation_not_running(
         raise ValueError("memory source curation is currently running")
 
 
-def _invalidate_source_review_drafts(
+def invalidate_source_review_drafts(
     conn: sqlite3.Connection,
     *,
     source_id: str,
@@ -1318,7 +1370,7 @@ def _invalidate_source_review_drafts(
     )
 
 
-def _rewind_curation_cursors_for_source(
+def rewind_curation_cursors_for_source(
     conn: sqlite3.Connection,
     *,
     source: sqlite3.Row,
@@ -1435,6 +1487,250 @@ def _rewind_curation_cursors_for_source(
                 cursor_project,
             ),
         )
+
+
+def _checkpoint_applied_receipt_evidence(
+    conn: sqlite3.Connection,
+    *,
+    source: sqlite3.Row,
+    canonical: str,
+    project: str,
+    metadata: Mapping[str, object] | None,
+    created_at_ms: int,
+) -> dict[str, object] | None:
+    payload = dict(metadata or {})
+    if payload.get("applied") is not True or payload.get("personalMemoryEligible") is not True:
+        return None
+    source_id = str(source["source_id"])
+    input_event_id = int(source["input_event_id"])
+    content_sha256 = str(source["canonical_text_sha256"] or "")
+    evidence_id = f"evidence:receipt:{source_id}"
+    metadata_json = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    provenance_json = json.dumps(
+        {
+            "sourceType": "agent_memory_source",
+            "sourceId": source_id,
+            "inputEventId": input_event_id,
+            "approvalId": str(source["approval_id"] or ""),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO agent_memory_evidence(
+            evidence_id, project, role_id, session_id, source_kind, source_id,
+            idempotency_key, content_text, content_sha256, provenance_json,
+            metadata_json, privacy_class, status, occurred_at_ms, recorded_at_ms,
+            owner_kind, owner_id, knowledge_domain, scope_kind, scope_id,
+            visibility, authorization_revision, binding_id, scope_mode,
+            evidence_domain, origin_kind, admission_state, admission_reason,
+            trust_class, boundary_kind, admission_revision,
+            admission_updated_at_ms
+        ) VALUES (?, ?, ?, ?, 'tool_receipt', ?, ?, ?, ?, ?, ?, 'private',
+                  'active', ?, ?, 'user', 'default', 'personal_memory', 'user',
+                  'default', 'private', 'memory-evidence-v2', ?, 'authoritative',
+                  'personal_memory', 'applied_personal_receipt', 'candidate',
+                  'awaiting_luna_adjudication', 'applied_receipt',
+                  'applied_tool_receipt', 1, ?)
+        """,
+        (
+            evidence_id,
+            compact_whitespace(project),
+            str(source["role_id"] or ""),
+            str(source["session_id"] or ""),
+            source_id,
+            f"applied-personal-receipt:{source_id}",
+            compact_whitespace(canonical),
+            content_sha256,
+            provenance_json,
+            metadata_json,
+            int(source["created_at_ms"] or created_at_ms),
+            created_at_ms,
+            f"applied-receipt:{source_id}",
+            created_at_ms,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO memory_evidence_input_event_links(
+            evidence_id, input_event_id, ordinal, relation,
+            content_sha256, created_at_ms
+        ) VALUES (?, ?, 0, 'source', ?, ?)
+        """,
+        (evidence_id, input_event_id, content_sha256, created_at_ms),
+    )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO memory_evidence_admission_events(
+            event_id, evidence_id, previous_state, new_state, reason_code,
+            actor_kind, created_at_ms, metadata_json
+        ) VALUES (?, ?, '', 'candidate', 'awaiting_luna_adjudication',
+                  'rule', ?, ?)
+        """,
+        (
+            f"evidence-admission:receipt:{source_id}:initial",
+            evidence_id,
+            created_at_ms,
+            json.dumps(
+                {"approvalId": str(source["approval_id"] or "")},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        ),
+    )
+    row = conn.execute(
+        """
+        SELECT evidence_id, admission_state, admission_reason
+        FROM agent_memory_evidence WHERE evidence_id = ?
+        """,
+        (evidence_id,),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("applied receipt Evidence did not persist")
+    return {
+        "evidenceId": str(row["evidence_id"]),
+        "admissionState": str(row["admission_state"]),
+        "admissionReason": str(row["admission_reason"]),
+    }
+
+
+def _checkpoint_explicit_memory_evidence(
+    conn: sqlite3.Connection,
+    *,
+    hint_id: str,
+    source: sqlite3.Row,
+    session_id: str,
+    scope: str,
+    claim: str,
+    future_use: str,
+    created_at_ms: int,
+) -> tuple[str, str]:
+    """Project a reviewed capture hint into the canonical Evidence owner."""
+
+    source_id = str(source["source_id"])
+    input_event_id = int(source["input_event_id"])
+    content_text = compact_whitespace(str(source["committed_text"] or ""))
+    content_sha256 = str(source["canonical_text_sha256"] or "")
+    if not content_text or len(content_sha256) != 64:
+        raise ValueError("memory capture source has no canonical input content")
+    evidence_id = f"evidence:explicit:{hint_id}"
+    personal_scope = scope == "user"
+    admission_state = "candidate" if personal_scope else "rejected"
+    admission_reason = (
+        "awaiting_luna_adjudication"
+        if personal_scope
+        else "project_scope_not_personal_memory"
+    )
+    evidence_domain = "personal_memory" if personal_scope else "audit_context"
+    scope_mode = "authoritative" if personal_scope else "quarantined"
+    metadata_json = json.dumps(
+        {
+            "hintId": hint_id,
+            "claim": claim,
+            "futureUse": future_use,
+            "captureScope": scope,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    provenance_json = json.dumps(
+        {
+            "sourceType": "agent_memory_source",
+            "sourceId": source_id,
+            "inputEventId": input_event_id,
+            "sessionId": session_id,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    occurred_at_ms = int(source["event_created_at_ms"] or created_at_ms)
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO agent_memory_evidence(
+            evidence_id, project, role_id, session_id, source_kind, source_id,
+            idempotency_key, content_text, content_sha256, provenance_json,
+            metadata_json, privacy_class, status, occurred_at_ms, recorded_at_ms,
+            owner_kind, owner_id, knowledge_domain, scope_kind, scope_id,
+            visibility, authorization_revision, binding_id, scope_mode,
+            evidence_domain, origin_kind, admission_state, admission_reason,
+            trust_class, boundary_kind, admission_revision,
+            admission_updated_at_ms
+        ) VALUES (?, ?, ?, ?, 'user_message', ?, ?, ?, ?, ?, ?, 'private',
+                  'active', ?, ?, 'user', 'default', ?, ?, ?, 'private',
+                  'memory-evidence-v2', ?, ?, ?, 'explicit_user_memory', ?, ?,
+                  'explicit_command', 'explicit_user_action', 1, ?)
+        """,
+        (
+            evidence_id,
+            str(source["project"] or ""),
+            str(source["role_id"] or ""),
+            session_id,
+            source_id,
+            f"explicit-memory-hint:{hint_id}",
+            content_text,
+            content_sha256,
+            provenance_json,
+            metadata_json,
+            occurred_at_ms,
+            created_at_ms,
+            "personal_memory" if personal_scope else "project_knowledge",
+            "user" if personal_scope else "project",
+            "default" if personal_scope else str(source["project"] or ""),
+            f"explicit-memory:{hint_id}",
+            scope_mode,
+            evidence_domain,
+            admission_state,
+            admission_reason,
+            created_at_ms,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO memory_evidence_input_event_links(
+            evidence_id, input_event_id, ordinal, relation,
+            content_sha256, created_at_ms
+        ) VALUES (?, ?, 0, 'source', ?, ?)
+        """,
+        (evidence_id, input_event_id, content_sha256, created_at_ms),
+    )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO memory_evidence_admission_events(
+            event_id, evidence_id, previous_state, new_state, reason_code,
+            actor_kind, created_at_ms, metadata_json
+        ) VALUES (?, ?, '', ?, ?, 'rule', ?, ?)
+        """,
+        (
+            f"evidence-admission:explicit:{hint_id}:initial",
+            evidence_id,
+            admission_state,
+            admission_reason,
+            created_at_ms,
+            json.dumps(
+                {"hintId": hint_id, "captureScope": scope},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        ),
+    )
+    row = conn.execute(
+        "SELECT admission_state FROM agent_memory_evidence WHERE evidence_id = ?",
+        (evidence_id,),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("explicit Memory Evidence did not persist")
+    return evidence_id, str(row["admission_state"])
 
 
 def _source_payload(row: sqlite3.Row) -> dict[str, object]:

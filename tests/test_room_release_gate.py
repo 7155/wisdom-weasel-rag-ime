@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rag_ime.db import apply_database_migrations
+from rag_ime.db import apply_database_migrations, latest_migration_version
 from rag_ime.room_release_gate import stage_room_v2_canary
 
 
@@ -59,7 +59,10 @@ class RoomReleaseGateTests(unittest.TestCase):
             frontend_dist=self.frontend, output_dir=self.root / name, pi_build=self.pi_build) for name in ("out-a", "out-b")]
         self.assertEqual(before, self.db.read_bytes())
         self.assertEqual(reports[0]["receiptHash"], reports[1]["receiptHash"])
-        self.assertEqual(reports[0]["checks"]["migrationVersion"], 126)
+        self.assertEqual(
+            reports[0]["checks"]["migrationVersion"],
+            latest_migration_version(),
+        )
         self.assertEqual(reports[0]["checks"]["schemaCount"], 152)
         self.assertTrue(reports[0]["checks"]["piBuildManifestValid"])
         self.assertTrue(reports[0]["checks"]["piBuildProductCommitMatches"])

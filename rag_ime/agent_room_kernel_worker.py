@@ -455,15 +455,16 @@ class RoomKernelWorkerLoop:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            changed = False
             try:
                 changed = bool(self.worker.reconcile())
                 changed = self.worker.run_once() is not None or changed
+                if changed:
+                    self.on_change()
             except Exception:
                 # A leased but unacknowledged effect is intentionally left for
                 # expiry reconciliation; it must never be replayed blindly.
+                # Projection callbacks are part of the same recoverable
+                # iteration: one stale read model must not kill the worker.
                 _LOG.exception("Room Kernel worker iteration failed")
-            if changed:
-                self.on_change()
             self._wake.wait(self.poll_seconds)
             self._wake.clear()

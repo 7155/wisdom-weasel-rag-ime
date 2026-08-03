@@ -70,15 +70,18 @@ export const SessionRail = forwardRef<HTMLElement, {
   const [collapsedRoots, setCollapsedRoots] = useState<ReadonlySet<string>>(new Set());
   const groups = useMemo(() => projectGroups(sessions, query), [query, sessions]);
   const projectCount = new Set(sessions.map((session) => primaryRoot(session)).filter(Boolean)).size;
+  const selectedRoot = useMemo(
+    () => primaryRoot(sessions.find((session) => session.id === selectedId)),
+    [selectedId, sessions],
+  );
   useEffect(() => {
-    const selectedRoot = primaryRoot(sessions.find((session) => session.id === selectedId));
     setCollapsedRoots((current) => {
       if (!current.has(selectedRoot)) return current;
       const next = new Set(current);
       next.delete(selectedRoot);
       return next;
     });
-  }, [selectedId, sessions]);
+  }, [selectedId, selectedRoot]);
 
   function toggleProject(root: string): void {
     setCollapsedRoots((current) => {

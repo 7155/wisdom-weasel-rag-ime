@@ -128,6 +128,7 @@ from rag_ime.agent_core_policy import (  # noqa: E402
     core_agent_policy_prompt,
     durable_memory_policy_prompt,
     managed_goal_policy_prompt,
+    todo_policy_prompt,
     work_policy_prompt,
 )
 from rag_ime.agent_definitions import (  # noqa: E402
@@ -862,6 +863,14 @@ def _prompt_metadata_defaults(
 # merely transport a user message. Every discovered symbol must be classified
 # so a new prompt producer cannot silently bypass this audit.
 PROMPT_SYMBOL_CLASSIFICATION = {
+    "activity_timeline_curation.py::ACTIVITY_ORGANIZATION_CONTRACT_REPAIR_PROMPT_VERSION": "prompt-version",
+    "activity_timeline_curation.py::ACTIVITY_ORGANIZATION_PROMPT_VERSION": "prompt-version",
+    "activity_timeline_curation.py::ACTIVITY_ORGANIZATION_REPAIR_PROMPT_VERSION": "prompt-version",
+    "activity_timeline_curation.py::ACTIVITY_ORGANIZATION_VERIFIER_PROMPT_VERSION": "prompt-version",
+    "activity_timeline_curation.py::build_activity_organization_contract_repair_prompt": "background-prompt",
+    "activity_timeline_curation.py::build_activity_organization_prompt": "background-prompt",
+    "activity_timeline_curation.py::build_activity_organization_repair_prompt": "background-prompt",
+    "activity_timeline_curation.py::build_activity_organization_verifier_prompt": "background-prompt",
     "agent_approval_model.py::APPROVAL_MODEL_PROMPT_VERSION": "prompt-version",
     "agent_approval_model.py::_arbiter_prompt": "dynamic-prompt",
     "agent_approval_model.py::_model_input": "bounded-prompt-input",
@@ -870,6 +879,7 @@ PROMPT_SYMBOL_CLASSIFICATION = {
     "agent_core_policy.py::core_agent_policy_prompt": "stable-assembler",
     "agent_core_policy.py::durable_memory_policy_prompt": "stable-prompt",
     "agent_core_policy.py::managed_goal_policy_prompt": "stable-prompt",
+    "agent_core_policy.py::todo_policy_prompt": "stable-prompt",
     "agent_core_policy.py::work_policy_prompt": "stable-prompt",
     "agent_definitions.py::_MANAGED_ROOM_LIFECYCLE_PROMPT": "stable-prompt",
     "agent_delegation.py::_subagent_prompt": "dynamic-prompt",
@@ -898,6 +908,7 @@ PROMPT_SYMBOL_CLASSIFICATION = {
     "deepseek_memory_organizer.py::_phrase_pinyin_repair_system_prompt": "background-prompt",
     "deepseek_memory_organizer.py::_role_book_curation_system_prompt": "background-prompt",
     "historical_memory_curation.py::DEFAULT_HISTORICAL_CURATION_INSTRUCTION": "background-prompt",
+    "memory_model_executor.py::_session_prompt": "background-prompt",
     "memory_generator.py::_core_optimization_system_prompt": "background-prompt",
     "memory_generator.py::_memory_generation_system_prompt": "background-prompt",
     "mlx_predictor_server.py::LOGITS_SYSTEM_PROMPT": "auxiliary-surface-prompt",
@@ -919,6 +930,7 @@ PROMPT_SYMBOL_CLASSIFICATION = {
     "mlx_predictor_server.py::_seeded_prompt_replay_candidate_scores": "auxiliary-ranking-helper",
     "mlx_predictor_server.py::_stable_prompt_prefix": "auxiliary-stable-prefix",
     "pi_runtime.py::_IME_SURFACE_SYSTEM_PROMPT": "auxiliary-surface-prompt",
+    "pi_runtime.py::_MEMORY_CURATION_SYSTEM_PROMPT": "background-prompt",
     "pi_runtime.py::_VOICE_REFINEMENT_SYSTEM_PROMPT": "auxiliary-surface-prompt",
     "pi_runtime.py::_empty_role_book_prompt": "zero-byte-provider",
     "pi_runtime.py::_render_session_prompt": "stable-assembler",
@@ -933,6 +945,11 @@ PROMPT_SYMBOL_CLASSIFICATION = {
     "predictor.py::_remove_prediction_prompt_echo": "auxiliary-output-filter",
     "predictor.py::_status_prompt_mode": "auxiliary-route-selector",
     "predictor.py::build_selected_text_rag_prompt": "auxiliary-prompt-assembler",
+    "personal_memory_curation.py::_atom_prompt": "background-prompt",
+    "personal_memory_curation.py::_evidence_prompt": "background-prompt",
+    "personal_memory_curation.py::_verifier_prompt": "background-prompt",
+    "personal_memory_luna_evaluation.py::_evaluation_prompt": "evaluation-prompt",
+    "real_memory_rag_evaluation.py::build_real_memory_query_prompt": "evaluation-prompt",
     "rime_sidecar.py::_looks_like_model_prompt_echo": "auxiliary-output-filter",
     "rime_sidecar.py::_looks_like_prompt_example_leak": "auxiliary-output-filter",
     "room_effect_eval.py::_prompt_contract_errors": "test-contract-validator",
@@ -1073,6 +1090,15 @@ def _ordinary_prompt_records() -> list[PromptRecord]:
             "stable system prefix",
             "every ordinary Agent and Room Session",
             work_policy_prompt(),
+        ),
+        _record(
+            "agent.core.todo",
+            "ordinary-agent",
+            "rag_ime/agent_core_policy.py",
+            "todo_policy_prompt",
+            "stable system prefix",
+            "every ordinary Agent and Room Session",
+            todo_policy_prompt(),
         ),
         _record(
             "agent.core.durable-memory",
@@ -2173,12 +2199,6 @@ def _auxiliary_prompt_records() -> list[PromptRecord]:
 
 
 def _tool_payloads() -> dict[str, object]:
-    gateway = ControlToolGateway(
-        sessions=object(),  # type: ignore[arg-type]
-        management=object(),  # type: ignore[arg-type]
-        core=object(),
-        project="wisdom-weasel-rag-ime",
-    )
     session = {
         "id": "agent:prompt-audit",
         "mode": "coordinator",
@@ -2188,6 +2208,12 @@ def _tool_payloads() -> dict[str, object]:
         "toolAllowlistMode": "profile",
         "allowedTools": [],
     }
+    gateway = ControlToolGateway(
+        sessions={str(session["id"]): session},  # type: ignore[arg-type]
+        management=object(),  # type: ignore[arg-type]
+        core=object(),
+        project="wisdom-weasel-rag-ime",
+    )
     product = [dict(item) for item in gateway.runtime_manifests(session)]
     room_registry = room_runtime_registry()
     room = [

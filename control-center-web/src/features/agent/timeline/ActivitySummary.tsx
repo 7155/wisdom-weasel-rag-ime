@@ -19,7 +19,7 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Button,
   Dialog,
@@ -42,7 +42,11 @@ import {
 } from '@/contracts/approval-decision';
 import { writeClipboardText } from '@/platform/clipboard';
 import { SafeFieldList } from './BlockRenderer';
-import { toggleDisclosurePreservingAnchor } from './disclosure-anchor';
+import {
+  toggleDisclosureOnKeyPreservingAnchor,
+  toggleDisclosurePreservingAnchor,
+  useAutoFollowScroll,
+} from './disclosure-anchor';
 import { publicToolResultView, safeSourceLabels, type PublicToolResultView } from './public-tool-result';
 import { publicAgentErrorText } from '../public-error';
 
@@ -61,26 +65,35 @@ export function ActivitySummary({
 }) {
   const automatedWaiting = activities.some((activity) => (
     activity.status === 'waiting'
-    && activity.kind.includes('approval')
+    && Boolean(text(activity.payload.approvalId))
     && !approvalNeedsHumanDecision(activity.payload)
   ));
   const running = automatedWaiting || activities.some((activity) => activity.status === 'running');
   const [detailsOpen, setDetailsOpen] = useState(false);
   const waiting = activities.some((activity) => (
     activity.status === 'waiting'
-    && (!activity.kind.includes('approval') || approvalNeedsHumanDecision(activity.payload))
+    && (
+      !text(activity.payload.approvalId)
+      || approvalNeedsHumanDecision(activity.payload)
+    )
   ));
   const failed = activities.some((activity) => activity.status === 'failed');
   const terminalFailure = activities.some((activity) => (
     activity.kind === 'turn_failed' && activity.status === 'failed'
   ));
-  // Live tool events arrive in rapid succession. Automatically opening a
-  // running group and closing it again at settlement repeatedly changes the
-  // virtualized row height, which makes the entire conversation flash and
-  // jump. Keep every activity group compact until the user explicitly opens
-  // it; status, the safe highlight and approval actions remain visible while
-  // collapsed.
-  const [inlineOpen, setInlineOpen] = useState(false);
+  const pendingApproval = activities.find((activity) => (
+    activity.status === 'waiting'
+    && Boolean(text(activity.payload.approvalId))
+    && Boolean(text(activity.payload.toolCallId))
+  ));
+  const pendingApprovalId = text(pendingApproval?.payload.approvalId);
+  const [inlineOpen, setInlineOpen] = useState(Boolean(pendingApprovalId));
+  const presentedApprovalRef = useRef(pendingApprovalId);
+  useEffect(() => {
+    if (!pendingApprovalId || pendingApprovalId === presentedApprovalRef.current) return;
+    presentedApprovalRef.current = pendingApprovalId;
+    setInlineOpen(true);
+  }, [pendingApprovalId]);
 
   if (activities.length === 0) return null;
   const summary = aggregateSummary(activities);
@@ -118,18 +131,6 @@ export function ActivitySummary({
           : failed
             ? '未完成'
             : '完成';
-  const pendingApprovals = activities.flatMap((activity) => {
-    const approvalId = text(activity.payload.approvalId);
-    const hash = text(activity.payload.payloadSha256);
-    if (activity.status !== 'waiting' || !approvalId || !hash || !onApprovalDecision || !approvalNeedsHumanDecision(activity.payload)) return [];
-    const presentation = activityPresentation(activity);
-    return [{
-      approvalId,
-      hash,
-      title: presentation.title,
-      summary: publicActivitySummary(activity.summary, presentation.title),
-    }];
-  });
   const liveActivities = running || waiting ? activities.slice(-3) : [];
   const state = terminalFailure ? 'failed' : waiting ? 'waiting' : running ? 'running' : failed ? 'mixed' : 'done';
   const summaryContent = (
@@ -144,16 +145,6 @@ export function ActivitySummary({
       <ChevronRight aria-hidden="true" size={16} />
     </>
   );
-  const approvals = pendingApprovals.map((approval) => (
-    <div className="agent-activity-approval" key={approval.approvalId}>
-      <ShieldAlert aria-hidden="true" size={16} />
-      <span><strong>{approval.title}</strong><small>{approval.summary}</small></span>
-      <div>
-        <Button size="small" variant="quiet" onClick={() => onApprovalDecision?.(approval.approvalId, 'rejected', approval.hash)}>拒绝</Button>
-        <Button size="small" variant="primary" onClick={() => onApprovalDecision?.(approval.approvalId, 'approved', approval.hash)}>批准</Button>
-      </div>
-    </div>
-  ));
   if (inline) {
     const InlineIcon = terminalFailure
       ? TriangleAlert
@@ -175,6 +166,7 @@ export function ActivitySummary({
             aria-expanded={inlineOpen}
             aria-label={`${inlineTitle}，${inlineSummary}，${inlineStatus}`}
             onClick={(event) => toggleDisclosurePreservingAnchor(event, setInlineOpen)}
+            onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setInlineOpen)}
           >
             <InlineIcon aria-hidden="true" className="agent-activity__inline-icon" size={15} />
             <strong>{inlineTitle}</strong>
@@ -205,7 +197,6 @@ export function ActivitySummary({
             </div>
           ) : null}
         </details>
-        {approvals}
       </div>
     );
   }
@@ -259,7 +250,6 @@ export function ActivitySummary({
           ))}
         </div>
       ) : null}
-      {approvals}
     </div>
   );
 }
@@ -275,19 +265,29 @@ function ActivityRow({
   onOpenApproval?: (activity: AgentActivityProjection) => void;
   onRequestPermission?: () => void;
 }) {
-  const presentation = activityPresentation(activity);
-  const Icon = presentation.icon;
   const payload = activity.payload;
-  const isToolActivity = activity.kind === 'tool_started' || activity.kind === 'tool_progress' || activity.kind === 'tool_finished';
-  const toolView = isToolActivity ? publicToolResultView(activity) : null;
+  const approvalId = text(payload.approvalId);
+  const hash = text(payload.payloadSha256);
+  const boundToTool = Boolean(approvalId && text(payload.toolCallId));
+  const displayActivity: AgentActivityProjection = boundToTool && activity.kind.includes('approval')
+    ? { ...activity, kind: 'tool_progress' }
+    : activity;
+  const presentation = activityPresentation(displayActivity);
+  const approvalPresentation = approvalId
+    ? activityPresentation({
+        ...activity,
+        kind: activity.status === 'waiting' ? 'approval_required' : 'approval_resolved',
+      })
+    : null;
+  const Icon = presentation.icon;
+  const isToolActivity = ['tool_started', 'tool_progress', 'tool_finished'].includes(displayActivity.kind);
+  const toolView = isToolActivity ? publicToolResultView(displayActivity) : null;
   const visibleSummary = activity.kind === 'turn_failed'
     ? publicAgentErrorText(activity.summary, '模型服务请求失败，请重试或切换模型。')
     : publicActivitySummary(activity.summary, presentation.title);
-  const approvalId = text(payload.approvalId);
-  const hash = text(payload.payloadSha256);
   const canDecide = activity.status === 'waiting' && approvalNeedsHumanDecision(payload) && approvalId && hash && onApprovalDecision;
   const progressHistory = isToolActivity ? agentToolProgressHistory(payload.progressHistory) : [];
-  const [rowOpen, setRowOpen] = useState(false);
+  const [rowOpen, setRowOpen] = useState(Boolean(boundToTool && activity.status === 'waiting'));
   const nowMs = useActivityClock(activity.status === 'running');
   const duration = activityDuration(activity, nowMs);
   return (
@@ -300,6 +300,7 @@ function ActivityRow({
       <summary
         aria-expanded={rowOpen}
         onClick={(event) => toggleDisclosurePreservingAnchor(event, setRowOpen)}
+        onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setRowOpen)}
       >
         <span className="agent-activity-row__icon" data-kind={presentation.kind}><Icon size={15} /></span>
         <span>
@@ -336,11 +337,20 @@ function ActivityRow({
               {toolView.destination.label}<ExternalLink size={13} aria-hidden="true" />
             </a>
           ) : null}
-          {canDecide ? (
-            <div className="agent-activity-row__approval-actions">
-              <Button size="small" variant="quiet" onClick={() => onApprovalDecision(approvalId, 'rejected', hash)}>拒绝</Button>
-              <Button size="small" variant="primary" onClick={() => onApprovalDecision(approvalId, 'approved', hash)}>批准</Button>
-            </div>
+          {approvalPresentation ? (
+            <section className="agent-activity-row__approval" aria-label={`审批状态：${approvalPresentation.title}`}>
+              <ShieldAlert aria-hidden="true" size={15} />
+              <span>
+                <strong>{approvalPresentation.title}</strong>
+                <small>{approvalPresentation.detail ?? '审批状态与这次 Tool 调用使用同一 toolCallId。'}</small>
+              </span>
+              {canDecide ? (
+                <div className="agent-activity-row__approval-actions">
+                  <Button size="small" variant="quiet" onClick={() => onApprovalDecision?.(approvalId, 'rejected', hash)}>拒绝</Button>
+                  <Button size="small" variant="primary" onClick={() => onApprovalDecision?.(approvalId, 'approved', hash)}>批准</Button>
+                </div>
+              ) : null}
+            </section>
           ) : null}
           {toolView?.recovery === 'approval' && onOpenApproval ? (
             <div className="agent-tool-recovery">
@@ -355,6 +365,127 @@ function ActivityRow({
       ) : null}
     </details>
   );
+}
+
+interface PublicActivityFeedEntry {
+  id: string;
+  kind: 'reasoning' | 'tool';
+  label: string;
+  status: AgentActivityProjection['status'];
+  summary: string;
+  timestamp: number;
+}
+
+/** A live-only, bounded projection. Historical detail remains in the adjacent
+ * disclosures, while this log follows new public updates until the reader
+ * deliberately scrolls away from its end. */
+export function PublicActivityFeed({
+  activities,
+}: {
+  activities: AgentActivityProjection[];
+}) {
+  const entries = publicActivityFeedEntries(activities);
+  const active = activities.some((activity) => (
+    activity.status === 'running' || activity.status === 'waiting'
+  ));
+  const contentKey = entries.map((entry) => (
+    `${entry.id}:${entry.status}:${entry.summary}`
+  )).join('\u001f');
+  const { onScroll, scrollRef } = useAutoFollowScroll<HTMLDivElement>(contentKey, active);
+  if (!active || entries.length === 0) return null;
+  return (
+    <section className="agent-public-activity" aria-label="最新公开思考与工具活动">
+      <header>
+        <span>
+          <strong>最新活动</strong>
+          <small>Provider 公开摘要与 Tool 回执</small>
+        </span>
+        <b>{entries.length} 条</b>
+      </header>
+      <div
+        aria-label="最新公开思考与工具活动"
+        aria-live="polite"
+        aria-relevant="additions text"
+        className="agent-public-activity__feed"
+        onScroll={onScroll}
+        ref={scrollRef}
+        role="log"
+        tabIndex={0}
+      >
+        {entries.map((entry) => (
+          <article data-kind={entry.kind} data-state={entry.status} key={entry.id}>
+            <span aria-hidden="true">
+              {entry.kind === 'reasoning' ? <Brain size={14} /> : <Wrench size={14} />}
+            </span>
+            <span>
+              <strong>{entry.label}</strong>
+              <small>{entry.summary}</small>
+            </span>
+            <i>{statusLabel(entry.status)}</i>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function publicActivityFeedEntries(
+  activities: AgentActivityProjection[],
+): PublicActivityFeedEntry[] {
+  const entries: Array<PublicActivityFeedEntry & { order: number }> = [];
+  let order = 0;
+  for (const activity of activities) {
+    if (
+      activity.kind === 'reasoning_summary'
+      && text(activity.payload.source) === 'provider_reasoning_summary'
+    ) {
+      for (const [index, item] of reasoningItemsFromPayload(activity.payload, activity.summary).entries()) {
+        entries.push({
+          id: `${activity.id}:reasoning:${index}`,
+          kind: 'reasoning',
+          label: '公开思考摘要',
+          status: activity.status,
+          summary: boundedInlineSummary(item),
+          timestamp: activity.updatedAtMs,
+          order: order++,
+        });
+      }
+      continue;
+    }
+    if (!['tool_started', 'tool_progress', 'tool_finished'].includes(activity.kind)) continue;
+    const history = agentToolProgressHistory(activity.payload.progressHistory);
+    const view = publicToolResultView(activity);
+    if (history.length) {
+      for (const entry of history) {
+        entries.push({
+          id: `${activity.id}:${entry.eventId}`,
+          kind: 'tool',
+          label: view.toolLabel,
+          status: entry.status,
+          summary: boundedInlineSummary(entry.summary, 180),
+          timestamp: entry.createdAtMs,
+          order: order++,
+        });
+      }
+      continue;
+    }
+    entries.push({
+      id: `${activity.id}:${activity.kind}`,
+      kind: 'tool',
+      label: view.toolLabel,
+      status: activity.status,
+      summary: boundedInlineSummary(
+        view.error ?? view.summary ?? publicActivitySummary(activity.summary, view.toolLabel),
+        180,
+      ),
+      timestamp: activity.updatedAtMs,
+      order: order++,
+    });
+  }
+  return entries
+    .sort((left, right) => left.timestamp - right.timestamp || left.order - right.order)
+    .slice(-24)
+    .map(({ order: _order, ...entry }) => entry);
 }
 
 export function ReasoningActivitySummary({
@@ -417,7 +548,10 @@ function ReasoningSummaryDetails({ items }: { items: string[] }) {
 }
 
 function reasoningSummaryItems(activities: AgentActivityProjection[]): { items: string[]; running: boolean } {
-  const reasoning = activities.filter((activity) => activity.kind === 'reasoning_summary');
+  const reasoning = activities.filter((activity) => (
+    activity.kind === 'reasoning_summary'
+    && text(activity.payload.source) === 'provider_reasoning_summary'
+  ));
   const items = reasoning.flatMap((activity) => reasoningItemsFromPayload(activity.payload, activity.summary));
   return {
     items: [...new Set(items)].slice(-12),
@@ -643,11 +777,13 @@ function activityPresentation(activity: AgentActivityProjection): ActivityPresen
     if (decision.mode === 'model') {
       const model = approvalModelLabel(decision.model);
       const arbiter = `独立审批 Agent（${model}）`;
-      const settledTitle = decision.decision === 'approve'
-        ? `${arbiter}已批准这次操作`
-        : decision.decision === 'deny'
-          ? `${arbiter}已拒绝这次操作`
-          : '';
+      const settledTitle = decision.status === 'failed_closed'
+        ? `${arbiter}无法形成可验证裁决，已拒绝这次操作`
+        : decision.decision === 'approve'
+          ? `${arbiter}已批准这次操作`
+          : decision.decision === 'deny'
+            ? `${arbiter}已拒绝这次操作`
+            : '';
       return {
         title: settledTitle || `${arbiter}正在评估这次操作`,
         kind: 'approval',
@@ -707,7 +843,7 @@ function activityPresentation(activity: AgentActivityProjection): ActivityPresen
   if (toolId.includes('workspace')) {
     return { title: toolView?.toolLabel ?? '运行环境', kind: 'runtime', icon: TerminalSquare };
   }
-  if (toolId.includes('planning') || toolId === 'agent_plan') return { title: toolId === 'agent_plan' ? '任务执行清单' : '规划', kind: 'tool', icon: Bot };
+  if (toolId.includes('planning') || toolId === 'todo') return { title: toolId === 'todo' ? 'Todo' : '规划', kind: 'tool', icon: Bot };
   return { title: toolView?.toolLabel ?? '工具操作', kind: 'tool', icon: Wrench };
 }
 

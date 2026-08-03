@@ -6,7 +6,7 @@ import {
   ShieldCheck,
   TriangleAlert,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AgentActivityProjection, AgentProjectionState } from '@/contracts/agent-reducer';
 import { approvalNeedsHumanDecision } from '@/contracts/approval-decision';
 import { validateContract } from '@/contracts/validators';
@@ -60,15 +60,17 @@ export type WorkspaceLspPresentation = {
 export function WorkspaceLspStatusView({
   capabilityCatalog,
   catalogStatus,
+  onRefresh,
   projection,
   tools,
 }: {
   capabilityCatalog?: CapabilityCatalog;
   catalogStatus: 'loading' | 'ready' | 'failed';
+  onRefresh?: () => void;
   projection?: AgentProjectionState;
   tools: ToolManifest[];
 }) {
-  const nowMs = useRuntimeProjectionClock(capabilityCatalog);
+  const nowMs = useRuntimeProjectionClock(capabilityCatalog, onRefresh);
   const view = projectWorkspaceLspStatus(tools, catalogStatus, projection, capabilityCatalog, nowMs);
   const StateIcon = view.state === 'ready'
     ? CheckCircle2
@@ -308,8 +310,11 @@ function currentRuntimeProjection(
   return { kind: 'current', value: projection };
 }
 
-function useRuntimeProjectionClock(catalog?: CapabilityCatalog): number {
+function useRuntimeProjectionClock(catalog?: CapabilityCatalog, onRefresh?: () => void): number {
   const [, renderAtExpiry] = useState(0);
+  const refreshRef = useRef(onRefresh);
+  const refreshedProjectionRef = useRef('');
+  refreshRef.current = onRefresh;
   const validated = validatedCatalogRuntimeProjection(catalog);
   const projection = validated.kind === 'valid' ? validated.value : undefined;
   const runtimeInstanceId = projection?.runtimeInstanceId ?? '';
@@ -317,11 +322,22 @@ function useRuntimeProjectionClock(catalog?: CapabilityCatalog): number {
   const expiresAtMs = projection?.heartbeatExpiresAtMs ?? 0;
   const current = projection?.current === true;
   useEffect(() => {
-    if (!current || expiresAtMs <= Date.now()) return;
-    const timer = window.setTimeout(
-      () => renderAtExpiry((revision) => revision + 1),
-      expiresAtMs - Date.now() + 1,
-    );
+    if (!current) {
+      refreshedProjectionRef.current = '';
+      return undefined;
+    }
+    const projectionKey = `${runtimeInstanceId}:${runtimeEpoch}:${expiresAtMs}`;
+    const expire = () => {
+      renderAtExpiry((revision) => revision + 1);
+      if (refreshedProjectionRef.current === projectionKey) return;
+      refreshedProjectionRef.current = projectionKey;
+      refreshRef.current?.();
+    };
+    if (expiresAtMs <= Date.now()) {
+      expire();
+      return undefined;
+    }
+    const timer = window.setTimeout(expire, expiresAtMs - Date.now() + 1);
     return () => window.clearTimeout(timer);
   }, [current, expiresAtMs, runtimeEpoch, runtimeInstanceId]);
   return Date.now();

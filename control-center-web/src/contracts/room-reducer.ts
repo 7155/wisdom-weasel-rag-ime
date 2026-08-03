@@ -1,8 +1,15 @@
 import type { ProjectionDiagnostic, ProjectionGap, ProjectionReduction } from './agent-reducer';
 import { approvalNeedsHumanDecision } from './approval-decision';
-import type { AgentRoomSnapshotV1, RoomPostV2 } from './generated';
+import type { AgentRoomEventPageV1, AgentRoomSnapshotV1, RoomPostV2 } from './generated';
 import type { UiAgentMessage, UiRoomEvent } from './ui-events';
 import { parseContract, parseRoomEvent, tryParseAgentMessage } from './validators';
+
+export interface RoomMessageQuestionProjection {
+  prompt: string;
+  options: RoomQuestionOptionProjection[];
+  status: 'pending' | 'answered' | 'superseded';
+  answer?: string;
+}
 
 export interface RoomMessageProjection {
   id: string;
@@ -20,9 +27,29 @@ export interface RoomMessageProjection {
   dispatchId?: string;
   sourceMessageId?: string;
   sourceBlockId?: string;
+  sourceEventId?: string;
+  /** Authoritative server event order; optimistic messages fall back to time. */
+  sequence?: number;
+  /** Canonical RoomPost order metadata when the publication carries it. */
+  chronology?: RoomPostV2['chronology'];
   createdAtMs: number;
   postKind?: RoomPostV2['kind'];
+  mentionedParticipantIds?: string[];
+  question?: RoomMessageQuestionProjection;
+  answerToPostId?: string;
   completedAtMs?: number;
+}
+
+export type RoomQuestionOptionProjection =
+  NonNullable<RoomPostV2['question']>['options'][number];
+
+export interface PendingRoomQuestionProjection {
+  postId: string;
+  roomId: string;
+  rootId: string;
+  sequence: number;
+  prompt: string;
+  options: RoomQuestionOptionProjection[];
 }
 
 export interface RoomActivityProjection {
@@ -31,7 +58,7 @@ export interface RoomActivityProjection {
   participantId: string | null;
   sourceSessionId: string;
   kind: string;
-  status: 'running' | 'waiting' | 'completed' | 'failed';
+  status: 'running' | 'waiting' | 'completed' | 'failed' | 'aborted';
   summary: string;
   payload: Record<string, unknown>;
   createdAtMs: number;
@@ -102,6 +129,7 @@ export interface RoomProjectionState {
   turnOrder: string[];
   optimisticByClientMessageId: Record<string, string>;
   diagnostics: ProjectionDiagnostic[];
+  pendingUserQuestion?: PendingRoomQuestionProjection;
 }
 
 export interface RoomSnapshot {
@@ -112,6 +140,10 @@ export interface RoomSnapshot {
 
 export type RoomEventSnapshot = Omit<AgentRoomSnapshotV1, 'events'> & {
   events: UiRoomEvent[];
+};
+
+export type RoomEventPage = Omit<AgentRoomEventPageV1, 'items'> & {
+  items: UiRoomEvent[];
 };
 
 export interface RoomEventReductionOptions {
@@ -134,6 +166,7 @@ export interface OptimisticRoomMessageInput {
   text: string;
   nowMs: number;
   attachments?: RoomAttachmentReceipt[];
+  answerToPostId?: string;
 }
 
 const diagnosticLimit = 50;
@@ -336,7 +369,16 @@ export function appendOptimisticRoomMessage(
   if (state.optimisticByClientMessageId[input.clientMessageId]) return state;
   const next = cloneState(state);
   const id = `local-room:${input.clientMessageId}`;
-  const turnId = `local-room-turn:${input.clientMessageId}`;
+  const requestedAnswerToPostId = text(input.answerToPostId);
+  const answeredPost = requestedAnswerToPostId
+    ? state.messagesById[requestedAnswerToPostId]
+    : undefined;
+  const answerToPostId = answeredPost?.question
+    ? requestedAnswerToPostId
+    : '';
+  const turnId = answerToPostId
+    ? answeredPost!.turnId
+    : `local-room-turn:${input.clientMessageId}`;
   const message: RoomMessageProjection = {
     id,
     roomId: state.roomId,
@@ -359,13 +401,14 @@ export function appendOptimisticRoomMessage(
     clientMessageId: input.clientMessageId,
     projectionKind: 'optimistic',
     rootId: turnId,
+    ...(answerToPostId ? { answerToPostId } : {}),
     createdAtMs: input.nowMs,
   };
   next.messagesById[id] = message;
   next.messageOrder.push(id);
   next.optimisticByClientMessageId[input.clientMessageId] = id;
   attachMessage(next, message);
-  next.turnsById[turnId].status = 'queued';
+  if (!answerToPostId) next.turnsById[turnId].status = 'queued';
   return next;
 }
 
@@ -440,9 +483,11 @@ export function selectRoomParticipantPublicProgress(
       kind: 'post',
       status: message.status === 'failed'
         ? 'failed'
-        : ['queued', 'streaming'].includes(message.status)
-          ? 'running'
-          : 'completed',
+        : message.status === 'aborted'
+          ? 'aborted'
+          : ['queued', 'streaming'].includes(message.status)
+            ? 'running'
+            : 'completed',
       summary,
       updatedAtMs: message.completedAtMs ?? message.createdAtMs,
     });
@@ -507,6 +552,41 @@ export function parseRoomEventSnapshot(value: unknown): RoomEventSnapshot {
     }
   }
   return { ...snapshot, events };
+}
+
+export function parseRoomEventPage(value: unknown): RoomEventPage {
+  const page = parseContract('agent-room-event-page.v1', value);
+  const items = page.items.map((event) => parseRoomEvent(event));
+  if (!items.length) {
+    if (page.firstSequence !== 0 || page.lastSequence !== 0 || page.hasMore) {
+      throw new TypeError('Empty Room history page must use zero bounds and no earlier page');
+    }
+  } else {
+    if (
+      items[0]?.sequence !== page.firstSequence
+      || items.at(-1)?.sequence !== page.lastSequence
+    ) {
+      throw new TypeError('Room history page bounds do not match its events');
+    }
+    for (const [index, event] of items.entries()) {
+      if (
+        event.roomId !== page.roomId
+        || event.sequence !== page.firstSequence + index
+      ) {
+        throw new TypeError('Room history page events must be contiguous and belong to the Room');
+      }
+    }
+    if (
+      page.hasMore !== (page.retainedFirstSequence < page.firstSequence)
+      || page.nextBeforeSequence !== (page.hasMore ? page.firstSequence : 0)
+    ) {
+      throw new TypeError('Room history page cursor does not match retained bounds');
+    }
+  }
+  if (page.retainedPrefixTruncated !== (page.retainedFirstSequence > 1)) {
+    throw new TypeError('Room history page must disclose a truncated retained prefix');
+  }
+  return { ...page, items };
 }
 
 export function replayRoomEventSnapshot(
@@ -597,20 +677,43 @@ function applyUserMessage(
 ): void {
   const clientMessageId = text(payload.clientMessageId);
   const attachments = roomAttachmentReceipts(payload.attachmentReceipts, event.roomId);
+  const rawAnswerText = text(payload.text ?? payload.message);
+  const explicitAnswerToPostId = text(payload.answerToPostId);
+  const pendingQuestion = state.pendingUserQuestion;
+  const matchesPendingQuestion = Boolean(
+    pendingQuestion
+    && event.sequence > pendingQuestion.sequence
+    && event.roomId === pendingQuestion.roomId
+    && event.turnId === pendingQuestion.rootId
+    && explicitAnswerToPostId === pendingQuestion.postId
+  );
+  const answerToPostId = matchesPendingQuestion
+    ? pendingQuestion!.postId
+    : explicitAnswerToPostId;
+  const selectedOption = matchesPendingQuestion
+    ? pendingQuestion!.options.find((option) => option.value === rawAnswerText)
+    : undefined;
+  const answerText = text(payload.displayText) || selectedOption?.label || rawAnswerText;
+  if (matchesPendingQuestion) {
+    updateQuestionMessage(state, pendingQuestion!.postId, 'answered', answerText);
+    state.pendingUserQuestion = undefined;
+  }
   const message: RoomMessageProjection = {
     id: text(payload.messageId) || `${event.eventId}:user`,
     roomId: event.roomId,
     turnId: event.turnId,
     participantId: event.participantId,
     sourceSessionId: event.sourceSessionId,
+    sourceEventId: text(payload.sourceEventId) || event.eventId,
+    sequence: event.sequence,
     role: 'user',
     status: 'completed',
-    text: text(payload.text ?? payload.message),
+    text: answerText,
     message: roomUserMessage({
       id: text(payload.messageId) || `${event.eventId}:user`,
       roomId: event.roomId,
       turnId: event.turnId,
-      text: text(payload.text ?? payload.message),
+      text: answerText,
       status: 'completed',
       attachments,
       createdAtMs: event.createdAtMs,
@@ -619,6 +722,7 @@ function applyUserMessage(
     projectionKind: 'post',
     rootId: text(payload.rootId) || event.turnId,
     ...(clientMessageId ? { clientMessageId } : {}),
+    ...(answerToPostId ? { answerToPostId } : {}),
     createdAtMs: event.createdAtMs,
     completedAtMs: event.createdAtMs,
   };
@@ -748,6 +852,8 @@ function applyParticipantDelta(
         turnId: event.turnId,
         participantId: event.participantId,
         sourceSessionId: event.sourceSessionId,
+        sourceEventId: text(payload.sourceEventId) || event.eventId,
+        sequence: event.sequence,
         role: 'assistant',
         status: 'streaming',
         text: text(payload.delta),
@@ -785,6 +891,8 @@ function applyParticipantMessage(
     turnId: event.turnId || parsed.value.turnId,
     participantId: event.participantId,
     sourceSessionId: event.sourceSessionId,
+    sourceEventId: text(payload.sourceEventId) || event.eventId,
+    sequence: event.sequence,
     role: parsed.value.role === 'user' ? 'user' : 'assistant',
     status: parsed.value.status,
     text: messageText(parsed.value),
@@ -813,6 +921,7 @@ function applyParticipantMessage(
     replaceProvisionalMessage(state, provisional.id, message);
     return;
   }
+  if (findEquivalentCanonicalRoomPost(state, message)) return;
   upsertMessage(state, message, clientMessageId);
 }
 
@@ -835,30 +944,76 @@ function applyRoomPost(
     });
     return;
   }
+  const postSequence = post.chronology?.roomEventSequence ?? event.sequence;
+  const postCreatedAtMs = post.chronology?.createdAtMs ?? post.createdAtMs;
+  const pendingAnswerToPostId = (
+    state.pendingUserQuestion
+    && postSequence > state.pendingUserQuestion.sequence
+    && post.roomId === state.pendingUserQuestion.roomId
+    && post.rootId === state.pendingUserQuestion.rootId
+    && post.publicationSource.kind === 'user'
+    && post.authorActorRef.startsWith('user:')
+  ) ? state.pendingUserQuestion.postId : '';
+  const pendingAnswerQuestion = pendingAnswerToPostId
+    ? state.messagesById[pendingAnswerToPostId]?.question
+    : undefined;
+  const publicPostContent = pendingAnswerQuestion?.options.find(
+    (option) => option.value === post.content,
+  )?.label || post.content;
+  updatePendingUserQuestion(state, event, post);
   const fallbackBlock: UiAgentMessage['blocks'][number] = {
     schemaVersion: 'rag-ime.agent-block.v1',
     id: `${post.postId}:text`,
     type: 'text',
     status: 'completed',
     presentationKind: 'markdown',
-    data: { text: post.content },
+    data: { text: publicPostContent },
     source: { kind: post.publicationSource.kind, ref: post.publicationSource.ref },
     visibility: post.visibility === 'room' ? 'room_post' : 'root_post',
     generation: post.generation,
   };
+  const clientMessageId = post.publicationSource.kind === 'user'
+    ? post.publicationSource.ref
+    : '';
+  const priorClientMessageId = clientMessageId
+    ? state.messageOrder.find((messageId) => (
+        state.messagesById[messageId]?.clientMessageId === clientMessageId
+      ))
+    : undefined;
+  const answerToPostId = pendingAnswerToPostId
+    || (priorClientMessageId
+      ? state.messagesById[priorClientMessageId]?.answerToPostId
+      : undefined)
+    || '';
   const message: RoomMessageProjection = {
     id: post.postId,
     roomId: event.roomId,
     turnId: post.rootId,
     participantId: event.participantId,
     sourceSessionId: event.sourceSessionId,
+    sourceEventId: post.chronology?.roomEventId
+      || text(payload.sourceEventId)
+      || post.publicationSource.ref
+      || event.eventId,
+    sequence: postSequence,
+    ...(post.chronology ? { chronology: { ...post.chronology } } : {}),
     role: post.publicationSource.kind === 'user' ? 'user' : 'assistant',
     status: 'completed',
-    text: post.content,
+    text: publicPostContent,
     projectionKind: 'post',
     postKind: post.kind,
     rootId: post.rootId,
+    ...(state.pendingUserQuestion?.postId === post.postId ? {
+      question: {
+        prompt: state.pendingUserQuestion.prompt,
+        options: [...state.pendingUserQuestion.options],
+        status: 'pending',
+      },
+    } satisfies Pick<RoomMessageProjection, 'question'> : {}),
+    ...(clientMessageId ? { clientMessageId } : {}),
+    ...(answerToPostId ? { answerToPostId } : {}),
     ...(post.dispatchId ? { dispatchId: post.dispatchId } : {}),
+    ...(post.mentions?.length ? { mentionedParticipantIds: [...post.mentions] } : {}),
     message: {
       schemaVersion: 'rag-ime.agent-message.v1',
       id: post.postId,
@@ -869,11 +1024,11 @@ function applyRoomPost(
       blocks: (post.blocks?.length ? post.blocks : [fallbackBlock]) as UiAgentMessage['blocks'],
       attachments: [],
       citations: [],
-      createdAtMs: post.createdAtMs,
-      completedAtMs: post.createdAtMs,
+      createdAtMs: postCreatedAtMs,
+      completedAtMs: postCreatedAtMs,
     },
-    createdAtMs: post.createdAtMs,
-    completedAtMs: post.createdAtMs,
+    createdAtMs: postCreatedAtMs,
+    completedAtMs: postCreatedAtMs,
   };
   const provisional = findProvisionalMessage(state, {
     rootId: post.rootId,
@@ -883,14 +1038,94 @@ function applyRoomPost(
     messageIds: [post.postId, post.publicationSource.ref],
     blockIds: (post.blocks ?? []).flatMap((block) => [block.id, block.ref]),
   });
-  if (provisional) {
-    replaceProvisionalMessage(state, provisional.id, message);
+  const superseded = provisional
+    ?? findEquivalentRuntimeReply(state, message);
+  if (superseded) {
+    replaceProvisionalMessage(state, superseded.id, message);
   } else {
-    upsertMessage(state, message);
+    upsertMessage(state, message, clientMessageId);
   }
   markPublishedDispatchTerminal(state, event, post);
 }
 
+
+function updatePendingUserQuestion(
+  state: RoomProjectionState,
+  event: UiRoomEvent,
+  post: RoomPostV2,
+): void {
+  const pending = state.pendingUserQuestion;
+  const postSequence = post.chronology?.roomEventSequence ?? event.sequence;
+  if (
+    pending
+    && postSequence > pending.sequence
+    && post.roomId === pending.roomId
+    && post.rootId === pending.rootId
+    && post.roomId === event.roomId
+    && post.rootId === event.turnId
+    && post.publicationSource.kind === 'user'
+    && post.authorActorRef.startsWith('user:')
+  ) {
+    const selectedOption = pending.options.find(
+      (option) => option.value === post.content,
+    );
+    updateQuestionMessage(
+      state,
+      pending.postId,
+      'answered',
+      selectedOption?.label || post.content,
+    );
+    state.pendingUserQuestion = undefined;
+    return;
+  }
+
+  if (
+    post.kind !== 'wait'
+    || post.visibility !== 'room'
+    || post.publicationSource.kind !== 'room_commit'
+    || !post.question
+    || post.roomId !== event.roomId
+    || post.rootId !== event.turnId
+    || (pending && postSequence <= pending.sequence)
+  ) return;
+
+  const options = [...post.question.options];
+  if (
+    (options.length !== 0 && (options.length < 2 || options.length > 5))
+    || new Set(options.map((option) => option.value)).size !== options.length
+    || options.filter((option) => option.recommended).length > 1
+  ) return;
+
+  if (pending && pending.postId !== post.postId) {
+    updateQuestionMessage(state, pending.postId, 'superseded');
+  }
+  state.pendingUserQuestion = {
+    postId: post.postId,
+    roomId: post.roomId,
+    rootId: post.rootId,
+    sequence: postSequence,
+    prompt: post.question.prompt,
+    options,
+  };
+}
+
+function updateQuestionMessage(
+  state: RoomProjectionState,
+  postId: string,
+  status: RoomMessageQuestionProjection['status'],
+  answer?: string,
+): void {
+  const message = state.messagesById[postId];
+  if (!message?.question) return;
+  state.messagesById[postId] = {
+    ...message,
+    question: {
+      ...message.question,
+      status,
+      ...(answer ? { answer } : {}),
+    },
+  };
+}
 function markPublishedDispatchTerminal(
   state: RoomProjectionState,
   event: UiRoomEvent,
@@ -975,6 +1210,73 @@ function findProvisionalMessage(
   return aliased ?? (candidates.length === 1 ? candidates[0] : undefined);
 }
 
+function findEquivalentCanonicalRoomPost(
+  state: RoomProjectionState,
+  message: RoomMessageProjection,
+): RoomMessageProjection | undefined {
+  return findEquivalentAssistantReply(state, message, true);
+}
+
+function findEquivalentRuntimeReply(
+  state: RoomProjectionState,
+  message: RoomMessageProjection,
+): RoomMessageProjection | undefined {
+  return findEquivalentAssistantReply(state, message, false);
+}
+
+function findEquivalentAssistantReply(
+  state: RoomProjectionState,
+  message: RoomMessageProjection,
+  canonical: boolean,
+): RoomMessageProjection | undefined {
+  const sourceAliases = roomMessageSourceAliases(message);
+  if (
+    message.role !== 'assistant'
+    || sourceAliases.size === 0
+  ) return undefined;
+  return Object.values(state.messagesById)
+    .filter((candidate) => (
+      candidate.id !== message.id
+      && candidate.role === 'assistant'
+      && candidate.projectionKind === 'post'
+      && Boolean(candidate.postKind) === canonical
+      && candidate.rootId === message.rootId
+      && candidate.dispatchId === message.dispatchId
+      && (
+        candidate.participantId === message.participantId
+        || Boolean(
+          candidate.sourceSessionId
+          && candidate.sourceSessionId === message.sourceSessionId
+        )
+      )
+      && roomMessagesShareSourceAlias(candidate, sourceAliases)
+    ))
+    .sort((left, right) => (
+      (right.sequence ?? -1) - (left.sequence ?? -1)
+      || right.createdAtMs - left.createdAtMs
+      || right.id.localeCompare(left.id)
+    ))[0];
+}
+
+function roomMessagesShareSourceAlias(
+  candidate: RoomMessageProjection,
+  sourceAliases: ReadonlySet<string>,
+): boolean {
+  for (const alias of roomMessageSourceAliases(candidate)) {
+    if (sourceAliases.has(alias)) return true;
+  }
+  return false;
+}
+
+function roomMessageSourceAliases(message: RoomMessageProjection): Set<string> {
+  return new Set([
+    message.sourceEventId,
+    message.sourceMessageId,
+    message.sourceBlockId,
+    message.message?.id,
+  ].filter((value): value is string => Boolean(value)));
+}
+
 function replaceProvisionalMessage(
   state: RoomProjectionState,
   provisionalId: string,
@@ -1021,19 +1323,26 @@ function upsertMessage(
   const optimisticId = clientMessageId
     ? state.optimisticByClientMessageId[clientMessageId]
     : undefined;
-  let replacedOptimistic = false;
-  if (optimisticId && optimisticId !== message.id) {
-    const index = state.messageOrder.indexOf(optimisticId);
-    const optimistic = state.messagesById[optimisticId];
-    delete state.messagesById[optimisticId];
-    delete state.optimisticByClientMessageId[clientMessageId];
+  const acceptedId = clientMessageId
+    ? state.messageOrder.find((messageId) => (
+        messageId !== message.id
+        && state.messagesById[messageId]?.clientMessageId === clientMessageId
+      ))
+    : undefined;
+  const replacedId = optimisticId ?? acceptedId;
+  let replacedExisting = false;
+  if (replacedId && replacedId !== message.id) {
+    const index = state.messageOrder.indexOf(replacedId);
+    const previous = state.messagesById[replacedId];
+    delete state.messagesById[replacedId];
     if (index >= 0) {
       state.messageOrder[index] = message.id;
-      replacedOptimistic = true;
+      replacedExisting = true;
     }
-    if (optimistic) detachMessage(state, optimistic);
+    if (previous) detachMessage(state, previous);
   }
-  if (!state.messagesById[message.id] && !replacedOptimistic) state.messageOrder.push(message.id);
+  if (clientMessageId) delete state.optimisticByClientMessageId[clientMessageId];
+  if (!state.messagesById[message.id] && !replacedExisting) state.messageOrder.push(message.id);
   state.messagesById[message.id] = message;
   attachMessage(state, message);
 }
@@ -1090,7 +1399,7 @@ function upsertActivity(
   const existing = state.activitiesById[id];
   const staleToolStreamingUpdate = Boolean(
     existing
-    && ['completed', 'failed'].includes(existing.status)
+    && ['completed', 'failed', 'aborted'].includes(existing.status)
     && ['tool_started', 'tool_progress'].includes(sourceEventType),
   );
   const status = staleToolStreamingUpdate ? existing!.status : candidateStatus;
@@ -1381,6 +1690,7 @@ function completeParticipantTurn(
       completedAtMs: nowMs,
     };
   }
+  settleTurnActivities(state, turn, status, nowMs, participantId, dispatchId);
   // A participant/Dispatch terminal only settles its execution lane. The
   // participant-less Root terminal remains the sole input-unlock authority.
   turn.status = 'running';
@@ -1423,6 +1733,7 @@ function completeTurn(
   turn.failedDispatchIds = [...failedDispatches];
   turn.abortedDispatchIds = [...abortedDispatches];
   if (failure) turn.failure = failure;
+  settleTurnActivities(state, turn, status, nowMs);
   for (const messageId of turn.messageIds) {
     const message = state.messagesById[messageId];
     if (!message || message.role === 'user' || message.status === 'completed') continue;
@@ -1430,6 +1741,51 @@ function completeTurn(
       ...message,
       status: status === 'completed' ? 'completed' : status,
       completedAtMs: nowMs,
+    };
+  }
+}
+function settleTurnActivities(
+  state: RoomProjectionState,
+  turn: RoomTurnProjection,
+  fallbackStatus: Extract<RoomTurnProjection['status'], 'completed' | 'failed' | 'aborted'>,
+  nowMs: number,
+  participantId = '',
+  dispatchId = '',
+): void {
+  const settleWaiting = (!participantId && !dispatchId) || fallbackStatus !== 'completed';
+  for (const activityId of turn.activityIds) {
+    const activity = state.activitiesById[activityId];
+    if (
+      !activity
+      || (
+        activity.status !== 'running'
+        && !(settleWaiting && activity.status === 'waiting')
+      )
+    ) continue;
+    const activityParticipantId = activity.participantId ?? '';
+    const activityDispatchId = text(activity.payload.dispatchId);
+    if (participantId && activityParticipantId !== participantId) continue;
+    if (dispatchId && activityDispatchId !== dispatchId) continue;
+
+    let status: Extract<
+      RoomActivityProjection['status'],
+      'completed' | 'failed' | 'aborted'
+    > = fallbackStatus;
+    if (!participantId && !dispatchId) {
+      if (activityDispatchId) {
+        if (turn.failedDispatchIds?.includes(activityDispatchId)) status = 'failed';
+        else if (turn.abortedDispatchIds?.includes(activityDispatchId)) status = 'aborted';
+        else if (turn.terminalDispatchIds?.includes(activityDispatchId)) status = 'completed';
+      } else if (activityParticipantId) {
+        if (turn.failedParticipantIds?.includes(activityParticipantId)) status = 'failed';
+        else if (turn.abortedParticipantIds?.includes(activityParticipantId)) status = 'aborted';
+        else if (turn.terminalParticipantIds?.includes(activityParticipantId)) status = 'completed';
+      }
+    }
+    state.activitiesById[activityId] = {
+      ...activity,
+      status,
+      updatedAtMs: Math.max(activity.updatedAtMs ?? activity.createdAtMs, nowMs),
     };
   }
 }
@@ -1635,7 +1991,7 @@ function roomParticipantProgressSummary(
     && summary !== eventKind
     && !/\b(?:participant|route|tool|turn)_[a-z_]+\b/iu.test(summary)
   ) return summary;
-  if (sourceEventType === 'reasoning_summary') return '公开思路已更新';
+  if (sourceEventType === 'reasoning_summary') return '工作摘要已更新';
   if (['current_progress', 'progress'].includes(sourceEventType)) return '工作进度已更新';
   if (sourceEventType.startsWith('tool_')) return '工具进度已更新';
   if (eventKind === 'route_decision') return '已确认本轮分工';

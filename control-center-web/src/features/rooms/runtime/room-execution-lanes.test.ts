@@ -74,6 +74,138 @@ describe('selectRoomTurnExecution', () => {
     expect(selected.lanes[0].activities.map((item) => item.id)).toEqual(['route-1']);
   });
 
+  it('keeps an accepted answer in canonical message order after its question', () => {
+    const projection = createRoomProjection('room-1');
+    projection.turnOrder.push('root-1');
+    projection.turnsById['root-1'] = {
+      id: 'root-1',
+      rootId: 'root-1',
+      status: 'running',
+      messageIds: ['opening', 'question', 'answer'],
+      activityIds: [],
+      participantIds: ['participant-1'],
+      createdAtMs: 1,
+      updatedAtMs: 3,
+    };
+    projection.messagesById.opening = {
+      id: 'opening',
+      roomId: 'room-1',
+      turnId: 'root-1',
+      participantId: null,
+      sourceSessionId: '',
+      role: 'user',
+      status: 'completed',
+      text: '开始改进',
+      rootId: 'root-1',
+      createdAtMs: 1,
+    };
+    projection.messagesById.question = {
+      id: 'question',
+      roomId: 'room-1',
+      turnId: 'root-1',
+      participantId: 'participant-1',
+      sourceSessionId: 'session-1',
+      role: 'assistant',
+      status: 'completed',
+      text: '请选择方案',
+      projectionKind: 'post',
+      postKind: 'wait',
+      rootId: 'root-1',
+      dispatchId: 'dispatch-1',
+      question: {
+        prompt: '采用哪个方案？',
+        options: [
+          { value: 'safe', label: '稳妥方案' },
+          { value: 'fast', label: '快速方案' },
+        ],
+        status: 'answered',
+        answer: '稳妥方案',
+      },
+      createdAtMs: 2,
+    };
+    projection.messagesById.answer = {
+      id: 'answer',
+      roomId: 'room-1',
+      turnId: 'root-1',
+      participantId: null,
+      sourceSessionId: '',
+      role: 'user',
+      status: 'completed',
+      text: '稳妥方案',
+      rootId: 'root-1',
+      answerToPostId: 'question',
+      createdAtMs: 3,
+    };
+
+    const selected = selectRoomTurnExecution(projection, 'root-1');
+
+    expect(selected.messageIds).toEqual(['opening', 'question', 'answer']);
+    expect(selected.userMessageIds).toEqual(['opening', 'answer']);
+    expect(selected.lanes).toHaveLength(1);
+    expect(selected.lanes[0]?.messageIds).toEqual(['question']);
+  });
+
+  it('uses authoritative event sequence before timestamp and a stable fallback for legacy messages', () => {
+    const projection = createRoomProjection('room-1');
+    projection.turnOrder.push('root-1');
+    projection.turnsById['root-1'] = {
+      id: 'root-1',
+      rootId: 'root-1',
+      status: 'running',
+      messageIds: [
+        'legacy-b',
+        'server-late',
+        'legacy-a',
+        'server-early',
+        'legacy-newer',
+      ],
+      activityIds: [],
+      participantIds: [],
+      createdAtMs: 1,
+      updatedAtMs: 500,
+    };
+    const messages = [
+      { id: 'legacy-b', text: 'legacy b', createdAtMs: 100 },
+      {
+        id: 'server-late',
+        text: 'server late',
+        createdAtMs: 1,
+        sequence: 999,
+        chronology: {
+          schemaVersion: 'wisdom-weasel.room-post-chronology.v1' as const,
+          roomEventId: 'event-2',
+          roomEventSequence: 2,
+          createdAtMs: 1,
+          afterPostId: 'server-early',
+          orderKey: 'room-event:00000000000000000002',
+        },
+      },
+      { id: 'legacy-a', text: 'legacy a', createdAtMs: 100 },
+      { id: 'server-early', text: 'server early', createdAtMs: 500, sequence: 1 },
+      { id: 'legacy-newer', text: 'legacy newer', createdAtMs: 200 },
+    ];
+    for (const message of messages) {
+      projection.messagesById[message.id] = {
+        roomId: 'room-1',
+        turnId: 'root-1',
+        participantId: null,
+        sourceSessionId: '',
+        role: 'user',
+        status: 'completed',
+        rootId: 'root-1',
+        ...message,
+      };
+    }
+
+    expect(selectRoomTurnExecution(projection, 'root-1').messageIds).toEqual([
+      'server-early',
+      'server-late',
+      'legacy-a',
+      'legacy-b',
+      'legacy-newer',
+    ]);
+  });
+
   it('keeps two dispatches owned by the same participant in separate slots', () => {
     const projection = createRoomProjection('room-1');
     projection.turnOrder.push('root-1');

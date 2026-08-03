@@ -21,15 +21,11 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol
 
 
-_SESSION_MEMORY_OPEN = '<rag-ime-context type="session_memory">'
+_SESSION_MEMORY_OPEN = '<rag-ime-context type="memory_recall">'
 _SESSION_MEMORY_CLOSE = "</rag-ime-context>"
 _LIFECYCLE_HOOK_OPEN = '<rag-ime-context type="lifecycle_hook"'
 _MANAGED_ROOM_AUTHORITY = "当前 Dispatch 是你这一轮唯一的受管责任"
-_CONFLICTING_ROOM_WORKFLOW_TEXT = (
-    "计划尚未批准",
-    "先创建执行计划并提交审阅",
-    "不得执行写操作",
-)
+_CONFLICTING_ROOM_WORKFLOW_TEXT = ("不得执行写操作",)
 _ROUTING_CARD_FIELDS = frozenset(
     {"name", "when", "notFor", "input", "output", "does"}
 )

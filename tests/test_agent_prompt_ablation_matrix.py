@@ -65,7 +65,7 @@ class AgentPromptAblationMatrixTests(unittest.TestCase):
 
         self.assertEqual(len(by_surface["single_agent"]), 4)
         self.assertEqual(len(by_surface["goal"]), 2)
-        self.assertEqual(len(by_surface["room"]), 3)
+        self.assertEqual(len(by_surface["room"]), 4)
         self.assertEqual(
             {item["id"] for item in scenarios},
             {
@@ -76,6 +76,7 @@ class AgentPromptAblationMatrixTests(unittest.TestCase):
                 "goal.authorized-evidence-producing-continuation",
                 "goal.stale-evidence-cannot-settle-current-revision",
                 "room.child-returned-is-not-parent-accepted",
+                "room.facilitator-integrates-before-optional-review",
                 "room.notice-does-not-create-polite-ping-pong",
                 "room.cancelled-generation-rejects-late-write",
             },
@@ -156,6 +157,9 @@ class AgentPromptAblationMatrixTests(unittest.TestCase):
         ]
         returned = scenarios["room.child-returned-is-not-parent-accepted"]
         no_ping_pong = scenarios["room.notice-does-not-create-polite-ping-pong"]
+        facilitated = scenarios[
+            "room.facilitator-integrates-before-optional-review"
+        ]
         late_write = scenarios["room.cancelled-generation-rejects-late-write"]
 
         self.assertEqual(
@@ -168,14 +172,63 @@ class AgentPromptAblationMatrixTests(unittest.TestCase):
                 for behavior in memory_capture["forbiddenBehavior"]
             )
         )
-        self.assertNotIn(
-            "room_commit",
-            [call["tool"] for call in returned["expectedCalls"]],
-        )
+        returned_tools = [call["tool"] for call in returned["expectedCalls"]]
+        self.assertEqual(returned_tools, ["room_state"])
+        self.assertNotIn("room_collaborate", returned_tools)
+        self.assertNotIn("room_commit", returned_tools)
         self.assertTrue(
             any(
                 "returned" in behavior and "parentAccepted" in behavior
                 for behavior in returned["forbiddenBehavior"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "review Dispatch" in behavior
+                for behavior in returned["forbiddenBehavior"]
+            )
+        )
+        self.assertTrue(
+            any(
+                metric["name"] == "review_dispatch_created"
+                and metric["target"] == "false"
+                for metric in returned["metrics"]
+            )
+        )
+        self.assertEqual(facilitated["expectedCalls"], [])
+        self.assertEqual(facilitated["allowedTools"], [])
+        self.assertEqual(facilitated["executionLayer"], "kernel_pre_dispatch")
+        self.assertFalse(facilitated["providerInvocationExpected"])
+        work_item = facilitated["setup"]["workItem"]
+        self.assertTrue(work_item["integrated"])
+        self.assertTrue(work_item["dependenciesSettled"])
+        self.assertEqual(work_item["reviewWarranted"], "pending")
+        self.assertTrue(work_item["reviewerDistinct"])
+        self.assertEqual(
+            work_item["integrationOwner"],
+            facilitated["setup"]["participants"]["facilitator"],
+        )
+        workspace_policy = facilitated["setup"]["workspacePolicy"]
+        self.assertEqual(len(workspace_policy["writableWorkerWorkspaceReceipts"]), 2)
+        self.assertTrue(workspace_policy["integrationWorkspaceReceipt"])
+        self.assertTrue(
+            any(
+                "review Dispatch" in behavior
+                for behavior in facilitated["forbiddenBehavior"]
+            )
+        )
+        self.assertTrue(
+            any(
+                metric["name"] == "review_before_integration_count"
+                and metric["target"] == "0"
+                for metric in facilitated["metrics"]
+            )
+        )
+        self.assertTrue(
+            any(
+                metric["name"] == "reporter_final_summary_count"
+                and metric["target"] == "1"
+                for metric in facilitated["metrics"]
             )
         )
         for deterministic in (

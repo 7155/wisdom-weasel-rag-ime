@@ -4,7 +4,10 @@ import json
 import unittest
 
 from rag_ime.deepseek_config import load_deepseek_config
-from rag_ime.deepseek_memory_organizer import DeepSeekMemoryOrganizer
+from rag_ime.deepseek_memory_organizer import (
+    DeepSeekMemoryOrganizer,
+    DeepSeekMemoryOrganizerError,
+)
 from rag_ime.memory_curation import (
     MEMORY_CURATION_ARCHITECTURE,
     build_memory_curation_model_bundle,
@@ -98,6 +101,221 @@ class MemoryCurationTests(unittest.TestCase):
         self.assertEqual(result["memoryAtoms"], [])
         self.assertEqual(result["topicBooks"], [])
         self.assertEqual(result["curationDiagnostics"]["ignoredDecisionCount"], 1)
+
+    def test_explicit_forget_decision_projects_a_guarded_retraction(self) -> None:
+        bundle = _source_bundle(include_feedback=False)
+        bundle["recentEvents"] = [
+            {
+                "eventId": 201,
+                "sourceEventIds": [201],
+                "sourceRef": "S1",
+                "createdAtMs": 1,
+                "text": "忘记输入法碎片不能直接注入 Agent 上下文这条记忆。",
+                "finalized": True,
+                "memoryEligible": True,
+            }
+        ]
+
+        result = curation_decisions_to_compile_output(
+            {
+                "retract": [
+                    {
+                        "e": "E1",
+                        "p": "P1",
+                        "confidence": 0.99,
+                        "reason": "explicit_user_forget",
+                    }
+                ],
+                "ignore": [],
+            },
+            source_bundle=bundle,
+            project="ime",
+        )
+
+        self.assertEqual(result["curationOutcome"], "changes")
+        self.assertEqual(
+            result["memoryRetractions"],
+            [
+                {
+                    "targetAtomId": "atom:no-fragment-context",
+                    "reason": "explicit_user_forget",
+                    "sourceEventIds": [201],
+                    "confidence": 0.99,
+                }
+            ],
+        )
+        self.assertEqual(
+            result["sourceDecisions"][0]["reasonCode"],
+            "explicit_memory_forget",
+        )
+        self.assertEqual(
+            result["sourceDecisions"][0]["disposition"],
+            "not_for_memory",
+        )
+        self.assertEqual(result["curationDiagnostics"]["retractionCount"], 1)
+
+    def test_independent_verifier_rejection_fails_the_frozen_batch(self) -> None:
+        class RejectingExecutor:
+            def complete(
+                self,
+                *,
+                messages,
+                max_tokens=None,
+                phase="model-call",
+                isolated=False,
+            ):
+                del max_tokens, isolated
+                if phase == "atom-first-verifier":
+                    packet = json.loads(messages[1]["content"])
+                    return {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": json.dumps(
+                                        {
+                                            "v": 1,
+                                            "ok": 0,
+                                            "coveredEvidenceRefs": ["E1", "E2"],
+                                            "checkedActionCount": packet[
+                                                "expectedActionCount"
+                                            ],
+                                            "decisionDigest": packet["decisionDigest"],
+                                            "findings": [
+                                                {
+                                                    "code": "unsupported_inference",
+                                                    "actionType": "attach",
+                                                    "actionIndex": 0,
+                                                    "evidenceRefs": ["E1"],
+                                                }
+                                            ],
+                                            "errors": ["unsupported_inference"],
+                                        }
+                                    )
+                                }
+                            }
+                        ]
+                    }
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "attach": [["E1", "P1"]],
+                                        "create": [],
+                                        "update": [],
+                                        "supersede": [],
+                                        "merge": [],
+                                        "retract": [],
+                                        "ignore": ["E2"],
+                                        "tagMerges": [],
+                                        "warnings": [],
+                                    }
+                                )
+                            }
+                        }
+                    ]
+                }
+
+        organizer = DeepSeekMemoryOrganizer(
+            load_deepseek_config(
+                env={
+                    "DEEPSEEK_API_KEY": "secret",
+                    "RAG_IME_DEEPSEEK_MODEL": "deepseek-v4-flash",
+                }
+            ),
+            completion_executor=RejectingExecutor(),
+        )
+        with self.assertRaisesRegex(
+            DeepSeekMemoryOrganizerError,
+            "independent memory curation verifier rejected",
+        ):
+            organizer.compile_memory_curation(
+                bundle=_source_bundle(include_feedback=False),
+                project="ime",
+            )
+
+    def test_one_evidence_can_create_independent_atoms_in_multiple_books(self) -> None:
+        bundle = _source_bundle(include_feedback=False)
+        bundle["recentEvents"] = [
+            {
+                "eventId": 201,
+                "sourceEventIds": [201],
+                "sourceRef": "S1",
+                "createdAtMs": 1,
+                "text": (
+                    "Rime 候选不能被模型候选重排；切换应用后必须让旧模型候选失效。"
+                ),
+                "app": "com.openai.codex",
+                "contextGroupId": "app:codex",
+                "finalized": True,
+                "memoryEligible": True,
+            }
+        ]
+
+        result = curation_decisions_to_compile_output(
+            {
+                "create": [
+                    {
+                        "e": "E1",
+                        "text": "Rime 候选不能被模型候选重排。",
+                        "kind": "project_constraint",
+                        "topicRefs": ["G1"],
+                        "tags": ["new:Rime", "new:候选排序"],
+                        "confidence": 0.98,
+                    },
+                    {
+                        "e": "E1",
+                        "text": "切换应用后必须让旧模型候选失效。",
+                        "kind": "project_requirement",
+                        "topicRefs": ["G1", "new:context-stability"],
+                        "topicTitle": "上下文稳定性",
+                        "tags": ["new:候选失效"],
+                        "confidence": 0.97,
+                    },
+                ],
+                "ignore": [],
+                "warnings": [],
+            },
+            source_bundle=bundle,
+            project="ime",
+        )
+
+        self.assertEqual(len(result["memoryAtoms"]), 2)
+        self.assertEqual(
+            {item["kind"] for item in result["memoryAtoms"]},
+            {"project_constraint", "project_requirement"},
+        )
+        self.assertTrue(
+            all(item["sourceEventIds"] == [201] for item in result["memoryAtoms"])
+        )
+        self.assertEqual(
+            result["sourceDecisions"],
+            [
+                {
+                    "sourceRef": "S1",
+                    "evidenceRef": "E1",
+                    "disposition": "remember",
+                    "reasonCode": "atom_create",
+                    "confidence": 0.98,
+                }
+            ],
+        )
+        books_by_title = {item["title"]: item for item in result["topicBooks"]}
+        self.assertEqual(set(books_by_title), {"输入法", "上下文稳定性"})
+        context_atom = next(
+            item
+            for item in result["memoryAtoms"]
+            if "切换应用" in item["canonicalText"]
+        )
+        self.assertIn(
+            context_atom["atomId"],
+            books_by_title["输入法"]["memoryAtomIds"],
+        )
+        self.assertIn(
+            context_atom["atomId"],
+            books_by_title["上下文稳定性"]["memoryAtomIds"],
+        )
 
     def test_compact_reference_protocol_expands_without_model_repeating_rows(self) -> None:
         result = curation_decisions_to_compile_output(
@@ -202,9 +420,12 @@ class MemoryCurationTests(unittest.TestCase):
                 "RAG_IME_DEEPSEEK_MODEL": "deepseek-v4-flash",
             }
         )
-        captured: dict[str, object] = {}
+        captured: list[dict[str, object]] = []
 
         class FakeResponse:
+            def __init__(self, content: dict[str, object]):
+                self.content = content
+
             def __enter__(self):
                 return self
 
@@ -217,19 +438,7 @@ class MemoryCurationTests(unittest.TestCase):
                         "choices": [
                             {
                                 "message": {
-                                    "content": json.dumps(
-                                        {
-                                            "attach": [["E1", "P1"]],
-                                            "create": [],
-                                            "update": [],
-                                            "supersede": [],
-                                            "merge": [],
-                                            "ignore": ["E2"],
-                                            "tagMerges": [],
-                                            "warnings": [],
-                                        },
-                                        ensure_ascii=False,
-                                    )
+                                    "content": json.dumps(self.content, ensure_ascii=False)
                                 }
                             }
                         ]
@@ -239,8 +448,34 @@ class MemoryCurationTests(unittest.TestCase):
 
         def fake_urlopen(request, timeout):
             del timeout
-            captured["payload"] = json.loads(request.data.decode("utf-8"))
-            return FakeResponse()
+            request_payload = json.loads(request.data.decode("utf-8"))
+            captured.append(request_payload)
+            user_payload = json.loads(request_payload["messages"][1]["content"])
+            if "decisionDigest" in user_payload:
+                return FakeResponse(
+                    {
+                        "v": 1,
+                        "ok": 1,
+                        "coveredEvidenceRefs": ["E1", "E2"],
+                        "checkedActionCount": user_payload["expectedActionCount"],
+                        "decisionDigest": user_payload["decisionDigest"],
+                        "findings": [],
+                        "errors": [],
+                    }
+                )
+            return FakeResponse(
+                {
+                    "attach": [["E1", "P1"]],
+                    "create": [],
+                    "update": [],
+                    "supersede": [],
+                    "merge": [],
+                    "retract": [],
+                    "ignore": ["E2"],
+                    "tagMerges": [],
+                    "warnings": [],
+                }
+            )
 
         result = DeepSeekMemoryOrganizer(config, urlopen=fake_urlopen).compile_memory_curation(
             bundle=_source_bundle(include_feedback=False),
@@ -250,7 +485,9 @@ class MemoryCurationTests(unittest.TestCase):
         self.assertEqual(result["schemaVersion"], "rag-ime.memory-curation-decisions.v1")
         self.assertEqual(result["attach"], [["E1", "P1"]])
         self.assertEqual(result["ignore"], ["E2"])
-        request = captured["payload"]
+        self.assertTrue(result["independentlyVerified"])
+        self.assertEqual(len(captured), 2)
+        request = captured[0]
         system_prompt = request["messages"][0]["content"]
         self.assertIn("Atom-first", system_prompt)
         self.assertIn("禁止输出 dailyBooks", system_prompt)

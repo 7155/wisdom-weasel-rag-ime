@@ -27,5 +27,6 @@ export interface RoomRootExecutionV3 {
   terminalReceiptId: string | null;
   activeProfileRef: string | null;
   budgetPolicyRef: string;
-  createdAtMs: number;
+  independentReviewRequired: boolean;
+  createdAtMs?: number;
 }

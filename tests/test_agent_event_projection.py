@@ -96,6 +96,226 @@ class AgentEventProjectionTests(unittest.TestCase):
 
         self.assertEqual(sessions.event_types, ["turn_completed"])
 
+    def test_room_completion_projects_response_usage_and_cache_receipt(
+        self,
+    ) -> None:
+        class Kernel:
+            mode = "kernel_only"
+            binding = {
+                "roomId": "room:1",
+                "rootId": "root:1",
+                "dispatchId": "dispatch:1",
+                "generation": 1,
+                "state": "committed",
+                "runtimeTurnId": "turn:1",
+                "attempt": 0,
+            }
+
+            @classmethod
+            def session_binding(
+                cls,
+                _session_id: str,
+            ) -> dict[str, object]:
+                return cls.binding
+
+            @staticmethod
+            def post_for_dispatch(
+                dispatch_id: str,
+            ) -> dict[str, object]:
+                if dispatch_id != "dispatch:1":
+                    raise AssertionError("response lookup used another Dispatch")
+                return {"postId": "post:1"}
+
+        class Rooms(_Rooms):
+            @staticmethod
+            def get(_room_id: str) -> dict[str, object]:
+                return {"activeTopicId": "topic:1"}
+
+        class Timeline:
+            def __init__(self) -> None:
+                self.events: list[tuple[str, dict[str, object]]] = []
+                self.allow_after_terminal = False
+
+            def publish_runtime(self, **values: object) -> None:
+                self.allow_after_terminal = bool(
+                    values.get("allow_after_terminal")
+                )
+                self.events.append((
+                    str(values["event_type"]),
+                    dict(values["public_data"]),  # type: ignore[arg-type]
+                ))
+
+        class KernelProjection:
+            @staticmethod
+            def sync_room(_room_id: str, *, now_ms: int) -> None:
+                if now_ms != 10:
+                    raise AssertionError("completion timestamp was not preserved")
+
+        timeline = Timeline()
+        service = AgentEventProjectionService(
+            sessions=None,
+            room_kernel=Kernel(),
+            rooms=Rooms(),
+            agent_blocks=None,
+            observations=_Observations(),
+            room_kernel_projection=KernelProjection(),
+            room_events=None,
+            public_timeline=timeline,  # type: ignore[arg-type]
+            room_turns=_ForbiddenLegacyTurns(),
+            append_recent_message=lambda *_args: None,
+            record_assistant_evidence=lambda _event: {},
+            notify_intercom=lambda: None,
+        )
+
+        service.mirror_to_room(
+            AgentEventEnvelope(
+                event_id="event:usage",
+                session_id="session:1",
+                turn_id="turn:1",
+                sequence=1,
+                created_at_ms=10,
+                event_type="message_completed",
+                payload={
+                    "message": {
+                        "role": "assistant",
+                        "provider": "anthropic",
+                        "model": "claude-sonnet-4-5",
+                        "usage": {
+                            "input": 1200,
+                            "output": 80,
+                            "cacheRead": 900,
+                            "cacheWrite": 30,
+                            "totalTokens": 2210,
+                        },
+                    },
+                    "usageReported": True,
+                    "cacheUsageReported": True,
+                },
+                resume_token="event:usage",
+            )
+        )
+
+        self.assertEqual(timeline.events, [(
+            "participant_activity",
+            {
+                "status": "draft_ready",
+                "summary": "正在整理正式 Post",
+                "requestId": "dispatch:1:provider",
+                "runtimeTurnId": "turn:1",
+                "usageReported": True,
+                "cacheUsageReported": True,
+                "provider": "anthropic",
+                "model": "claude-sonnet-4-5",
+                "usage": {
+                    "input": 1200,
+                    "output": 80,
+                    "cacheRead": 900,
+                    "cacheWrite": 30,
+                    "totalTokens": 2210,
+                },
+                "responsePostId": "post:1",
+            },
+        )])
+        self.assertTrue(timeline.allow_after_terminal)
+
+    def test_terminal_room_allows_only_explicit_response_provenance(
+        self,
+    ) -> None:
+        class Events:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def publish_projection(
+                self,
+                **values: object,
+            ) -> dict[str, object]:
+                self.calls.append(dict(values))
+                return dict(values)
+
+        events = Events()
+        projector = RoomPublicTimelineProjector(
+            events,  # type: ignore[arg-type]
+            root_is_terminal=lambda _root_id: True,
+        )
+        event = AgentEventEnvelope(
+            event_id="event:final-usage",
+            session_id="session:1",
+            turn_id="runtime-turn:1",
+            sequence=1,
+            created_at_ms=10,
+            event_type="message_completed",
+            payload={},
+            resume_token="event:final-usage",
+        )
+        values = {
+            "event": event,
+            "binding": {
+                "roomId": "room:1",
+                "rootId": "root:1",
+                "dispatchId": "dispatch:1",
+            },
+            "participant": {"id": "participant:1"},
+            "event_type": "participant_activity",
+            "public_data": {
+                "requestId": "dispatch:1:provider",
+                "usageReported": True,
+            },
+        }
+
+        self.assertIsNone(projector.publish_runtime(**values))
+        self.assertEqual(events.calls, [])
+        projected = projector.publish_runtime(
+            **values,
+            allow_after_terminal=True,
+        )
+
+        self.assertIsNotNone(projected)
+        self.assertEqual(len(events.calls), 1)
+        self.assertEqual(
+            events.calls[0]["payload"],
+            {
+                "sourceEventId": "event:final-usage",
+                "sourceEventType": "message_completed",
+                "data": {
+                    "requestId": "dispatch:1:provider",
+                    "usageReported": True,
+                    "rootId": "root:1",
+                    "dispatchId": "dispatch:1",
+                },
+            },
+        )
+
+    def test_room_reasoning_projection_is_public_and_bounded(
+        self,
+    ) -> None:
+        event_type, projected = room_event_projection(
+            AgentEventEnvelope(
+                event_id="event:reasoning",
+                session_id="session:1",
+                turn_id="turn:1",
+                sequence=1,
+                created_at_ms=1,
+                event_type="reasoning_summary",
+                payload={
+                    "status": "running",
+                    "summary": "结" * 700,
+                    "source": "runtime-" * 20,
+                    "items": [f"{index}:" + ("步" * 300) for index in range(13)],
+                },
+                resume_token="event:reasoning",
+            )
+        )
+
+        self.assertEqual(event_type, "participant_activity")
+        self.assertEqual(projected["status"], "running")
+        self.assertEqual(len(str(projected["summary"])), 500)
+        self.assertLessEqual(len(str(projected["source"])), 80)
+        self.assertEqual(len(projected["items"]), 12)  # type: ignore[arg-type]
+        self.assertTrue(all(
+            len(str(item)) <= 240
+            for item in projected["items"]  # type: ignore[union-attr]
+        ))
+
     def test_runtime_retry_and_missing_commit_recovery_stay_nonterminal(
         self,
     ) -> None:
@@ -145,7 +365,10 @@ class AgentEventProjectionTests(unittest.TestCase):
             Kernel.binding["state"] = "retry_wait"
             return {
                 "receiptKind": "runtime_retry_scheduled",
-                "details": {"attempt": 2},
+                "details": {
+                    "attempt": 2,
+                    "availableAtMs": int(values["created_at_ms"]) + 1_000,
+                },
             }
 
         service = AgentEventProjectionService(
@@ -220,6 +443,8 @@ class AgentEventProjectionTests(unittest.TestCase):
                 "summary": "模型连接中断，已进入有界重试等待",
                 "requestId": "dispatch:1:provider",
                 "retryAttempt": 2,
+                "retryAtMs": 1_001,
+                "retryDelayMs": 1_000,
             },
         ))
         self.assertEqual(timeline.events[1][0], "turn_completed")
@@ -230,6 +455,8 @@ class AgentEventProjectionTests(unittest.TestCase):
                 "summary": "当前回合未形成权威提交，已进入有界恢复等待",
                 "requestId": "dispatch:1:provider",
                 "retryAttempt": 2,
+                "retryAtMs": 1_003,
+                "retryDelayMs": 1_000,
             },
         ))
 

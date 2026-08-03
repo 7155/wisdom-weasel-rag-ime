@@ -16,6 +16,7 @@ export type CapabilityCatalogItem = Record<string, unknown> & {
   kind: CapabilityKind;
   displayName: string;
   description: string;
+  alwaysAvailable?: boolean;
   source: { kind: string; label: string };
   status: string;
   risk: string;

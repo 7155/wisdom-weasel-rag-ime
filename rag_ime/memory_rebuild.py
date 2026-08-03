@@ -8,6 +8,7 @@ from typing import Iterable
 from .input_event_assembly import assemble_input_rows
 from .input_quality import DISABLED_CONTEXT_SOURCES
 from .memory_ingest import normalize_text
+from .memory_evidence_admission import admitted_personal_evidence_sql
 from .memory_tag_graph import recompute_tag_graph
 from .retrieval_docs import rebuild_retrieval_docs
 from .text_utils import compact_whitespace, now_ms
@@ -100,6 +101,18 @@ def audit_memory_database(conn: sqlite3.Connection) -> dict[str, object]:
             "SELECT source, status, COUNT(*) AS count FROM memory_tags GROUP BY source, status"
         ).fetchall()
     }
+    admitted = admitted_personal_evidence_sql("evidence")
+    evidence_states = {
+        str(row["admission_state"]): int(row["count"])
+        for row in conn.execute(
+            """
+            SELECT admission_state, COUNT(*) AS count
+            FROM agent_memory_evidence
+            WHERE evidence_domain = 'personal_memory'
+            GROUP BY admission_state
+            """
+        ).fetchall()
+    }
     return {
         "schemaVersion": MEMORY_REBUILD_SCHEMA_VERSION,
         "inputEvents": _count(conn, "input_events"),
@@ -128,6 +141,52 @@ def audit_memory_database(conn: sqlite3.Connection) -> dict[str, object]:
         "memoryAtoms": _count(conn, "memory_atoms"),
         "activeMemoryAtoms": sum(active_atom_kinds.values()),
         "activeAtomKinds": active_atom_kinds,
+        "canonicalEvidenceTotal": _count(conn, "agent_memory_evidence"),
+        "personalEvidenceStates": evidence_states,
+        "admittedPersonalEvidence": int(
+            conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM agent_memory_evidence AS evidence
+                WHERE {admitted}
+                """
+            ).fetchone()[0]
+        ),
+        "admittedEvidenceWithoutCurrentAtom": int(
+            conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM agent_memory_evidence AS evidence
+                WHERE {admitted}
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM memory_atom_evidence_links AS evidence_link
+                      JOIN memory_atoms AS linked_atom
+                        ON linked_atom.id = evidence_link.memory_atom_id
+                      WHERE evidence_link.evidence_id = evidence.evidence_id
+                        AND linked_atom.status IN ('active', 'approved')
+                  )
+                """
+            ).fetchone()[0]
+        ),
+        "currentAtomsWithoutAdmittedEvidence": int(
+            conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM memory_atoms AS atom
+                WHERE atom.status IN ('active', 'approved')
+                  AND atom.kind != 'source_event_archive'
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM memory_atom_evidence_links AS evidence_link
+                      JOIN agent_memory_evidence AS evidence
+                        ON evidence.evidence_id = evidence_link.evidence_id
+                      WHERE evidence_link.memory_atom_id = atom.id
+                        AND {admitted}
+                  )
+                """
+            ).fetchone()[0]
+        ),
         "activeAtomsWithoutApp": int(
             conn.execute(
                 "SELECT COUNT(*) FROM memory_atoms WHERE status = 'active' AND trim(COALESCE(scope_app, '')) = ''"

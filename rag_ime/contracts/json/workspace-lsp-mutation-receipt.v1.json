@@ -19,6 +19,66 @@
     "operation": {"type": "string", "enum": ["rename", "code_action_apply"]},
     "root": {"type": "string", "minLength": 1, "maxLength": 4096},
     "server": {"type": "string", "minLength": 1, "maxLength": 120},
+    "referencesEvidence": {
+      "type": "object",
+      "required": [
+        "root",
+        "path",
+        "relativePath",
+        "line",
+        "column",
+        "server",
+        "resourceRevision",
+        "preimageSha256",
+        "count",
+        "truncated",
+        "items"
+      ],
+      "properties": {
+        "root": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "relativePath": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "line": {"type": "integer", "minimum": 1},
+        "column": {"type": "integer", "minimum": 1},
+        "server": {"type": "string", "minLength": 1, "maxLength": 120},
+        "resourceRevision": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "preimageSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "count": {"type": "integer", "minimum": 0, "maximum": 64},
+        "truncated": {"type": "boolean"},
+        "items": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "relativePath",
+              "line",
+              "column",
+              "endLine",
+              "endColumn"
+            ],
+            "properties": {
+              "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+              "relativePath": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "line": {"type": "integer", "minimum": 1},
+              "column": {"type": "integer", "minimum": 1},
+              "endLine": {"type": "integer", "minimum": 1},
+              "endColumn": {"type": "integer", "minimum": 1}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "changedFiles": {
       "type": "array",
       "minItems": 1,
@@ -36,5 +96,9 @@
     },
     "undoAvailable": {"type": "boolean", "const": false}
   },
+  "if": {
+    "properties": {"operation": {"const": "rename"}}
+  },
+  "then": {"required": ["referencesEvidence"]},
   "additionalProperties": false
 }

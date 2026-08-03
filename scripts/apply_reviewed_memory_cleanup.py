@@ -291,6 +291,24 @@ def _run_smoke_queries(
     }
 
 
+def _process_targets_runtime(command: str, *, database_path: Path) -> bool:
+    if any(
+        executable in command
+        for executable in (
+            "/Contents/MacOS/RagImeDesktopBridge",
+            "/Contents/MacOS/RagImeVoice",
+            "/Contents/MacOS/RagImeControl",
+        )
+    ):
+        return True
+    managed_paths = (
+        database_path,
+        database_path.parent / "app",
+        database_path.parent / "components",
+    )
+    return any(str(candidate) in command for candidate in managed_paths)
+
+
 def _runtime_stop_verification(path: Path, *, required: bool) -> dict[str, object]:
     labels = (
         "com.rag-ime.sidecar",
@@ -351,7 +369,12 @@ def _runtime_stop_verification(path: Path, *, required: bool) -> dict[str, objec
                 capture_output=True,
                 text=True,
             )
-            processes.extend(line.strip() for line in result.stdout.splitlines() if line.strip())
+            processes.extend(
+                line
+                for raw_line in result.stdout.splitlines()
+                if (line := raw_line.strip())
+                and _process_targets_runtime(line, database_path=path)
+            )
     errors: list[str] = []
     if loaded:
         errors.append("loaded_launch_agents=" + ",".join(loaded))

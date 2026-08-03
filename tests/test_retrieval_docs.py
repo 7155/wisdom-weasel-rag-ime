@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import sqlite3
@@ -14,6 +15,7 @@ from rag_ime.cli import main
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.memory_book_compiler import apply_memory_book_plan, memory_book_plan_from_compile_output
 from rag_ime.memory_ingest import normalize_text, upsert_memory_item
+from rag_ime.memory_evidence_admission import transition_evidence_admission
 from rag_ime.models import InputEvent
 from rag_ime.retrieval_docs import rebuild_retrieval_docs
 from rag_ime.text_utils import now_ms
@@ -101,11 +103,23 @@ class RetrievalDocsTests(unittest.TestCase):
 
         self.assertEqual(report["counts"]["book"], 1)
         self.assertIsNotNone(row)
-        self.assertIn("RAG 输入法多路召回方案", row["raw_text"])
+        self.assertIn("多路召回偏好", row["raw_text"])
         self.assertIn("VCP", row["tags_text"])
         self.assertIn("多路召回", row["surface_hints_text"])
         self.assertIn("Topic Book", row["query_expansions_text"])
         self.assertEqual(row["time_key"], "topic:rag-retrieval")
+        metadata = json.loads(row["metadata_json"])
+        self.assertTrue(metadata["inlineAtomsComplete"])
+        self.assertEqual(metadata["memoryAtomCount"], 1)
+        self.assertEqual(
+            metadata["inlineAtoms"],
+            [
+                {
+                    "atomId": "atom:vcp-style-rag-core",
+                    "text": "用户偏好检索系统同时使用 BM25、向量、标签和时间召回。",
+                }
+            ],
+        )
 
     def test_activity_timeline_has_its_own_retrieval_doc_type(self) -> None:
         event_id = self._record_seed_event()
@@ -245,7 +259,7 @@ class RetrievalDocsTests(unittest.TestCase):
             row = conn.execute("SELECT * FROM memory_retrieval_docs WHERE doc_type = 'atom'").fetchone()
 
         self.assertIsNotNone(row)
-        self.assertIn("RAG core 应使用", row["raw_text"])
+        self.assertIn("用户偏好检索系统同时使用", row["raw_text"])
         self.assertIn("RAG core", row["tags_text"])
         self.assertIn("VCP式RAG", row["aliases_text"])
         self.assertIn("混合召回", row["surface_hints_text"])
@@ -487,7 +501,7 @@ class RetrievalDocsTests(unittest.TestCase):
         self.assertEqual(report["counts"]["atom"], 0)
         self.assertEqual(report["counts"]["book"], 0)
 
-    def test_hidden_raw_event_still_publishes_remembered_derived_artifacts(self) -> None:
+    def test_hidden_raw_event_cannot_keep_personal_derived_artifacts_alive(self) -> None:
         sessions = AgentSessionStore(self.db_path)
         session = sessions.create(title="projection-remember", created_at_ms=1)
         sources = AgentMemorySourceStore(self.db_path, project="wisdom-weasel-rag-ime")
@@ -538,8 +552,8 @@ class RetrievalDocsTests(unittest.TestCase):
             }
 
         self.assertIn(("phrase", "phrase:多路召回"), projected)
-        self.assertIn(("atom", "atom:vcp-style-rag-core"), projected)
-        self.assertTrue(any(kind == "book" for kind, _ in projected))
+        self.assertNotIn(("atom", "atom:vcp-style-rag-core"), projected)
+        self.assertFalse(any(kind == "book" for kind, _ in projected))
 
     def test_retrieval_docs_rebuild_is_idempotent(self) -> None:
         self._record_seed_event()
@@ -716,27 +730,69 @@ class RetrievalDocsTests(unittest.TestCase):
         self.assertGreaterEqual(payload["docCount"], 1)
 
     def _record_seed_event(self) -> int:
-        memory_id = self.core.record_event(
+        text = "我偏好检索系统同时使用 BM25、向量、标签和时间四路召回。"
+        timestamp = now_ms()
+        capture_id = f"capture:retrieval-docs:{timestamp}"
+        metadata = {
+            "schemaVersion": "rag-ime.input-capture.v2",
+            "captureId": capture_id,
+            "transactionId": f"transaction:retrieval-docs:{timestamp}",
+            "sequence": 1,
+            "channel": "input_method",
+            "boundaryKind": "host_return",
+            "boundaryConfidence": "strong",
+            "nativeCompositionBefore": False,
+            "rimeHandled": False,
+            "hostForwarded": True,
+            "modifiedReturn": False,
+            "finalCommitted": True,
+            "controllerEpoch": 1,
+            "focusEpoch": 1,
+            "appBundleId": "com.apple.TextEdit",
+            "fieldIdentitySha256": hashlib.sha256(
+                b"field:retrieval-docs"
+            ).hexdigest(),
+            "privacyRevision": "foreground-privacy.v1",
+            "occurredStartMs": timestamp,
+            "occurredEndMs": timestamp + 1,
+            "contentSha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "captureSource": "text_input_client",
+            "fallbackReason": "",
+            "fieldContextChars": len(text),
+            "imeBufferChars": len(text),
+            "selectionRule": "final_committed_segment",
+        }
+        memory_id, receipt = self.core.record_event_with_capture_receipt(
             InputEvent(
                 event_id=None,
-                created_at_ms=now_ms(),
-                source="manual",
-                committed_text="RAG 输入法多路召回方案",
+                created_at_ms=timestamp,
+                source="squirrel_input_segment",
+                committed_text=text,
                 privacy_disposition="allowed",
                 recent_context="BM25 向量 TagMemo Time DeepSeek",
                 project="wisdom-weasel-rag-ime",
                 tags=("RAG", "输入法"),
+                app="com.apple.TextEdit",
+                capture_metadata=metadata,
             )
         )
         event_id = int(memory_id.split(":", 1)[1])
         with self.connect() as conn:
+            transition_evidence_admission(
+                conn,
+                str(receipt["evidenceId"]),
+                new_state="admitted",
+                reason_code="luna_personal_memory_confirmed",
+                actor_kind="luna",
+                created_at_ms=timestamp + 2,
+            )
             apply_memory_book_plan(
                 conn,
                 memory_book_plan_from_compile_output(
                     {
                         "phraseCandidates": [
                             {
-                                "text": "RAG 输入法多路召回方案",
+                                "text": "多路召回",
                                 "tags": ["RAG", "输入法"],
                                 "sourceEventIds": [event_id],
                                 "weight": 0.8,
@@ -788,22 +844,23 @@ def sample_compile_output(event_id: int) -> dict[str, object]:
         "topicBooks": [
             {
                 "bookKey": "rag-retrieval",
-                "title": "RAG 输入法多路召回方案",
-                "summary": "用户希望借鉴 VCP 的 BM25、向量、TagMemo 和 Time。",
+                "title": "多路召回偏好",
+                "summary": "用户长期偏好同时使用 BM25、向量、标签和时间召回。",
                 "tags": ["RAG", "输入法", "VCP"],
                 "surfaceHints": ["多路召回", "TagMemo"],
                 "queryExpansions": ["VCP RAG", "Topic Book"],
                 "sourceEventIds": [event_id],
+                "memoryAtomIds": ["atom:vcp-style-rag-core"],
                 "confidence": 0.86,
             }
         ],
         "memoryAtoms": [
             {
                 "atomId": "atom:vcp-style-rag-core",
-                "kind": "project_fact",
-                "claimKey": "project:rag-ime.retrieval-architecture",
-                "canonicalText": "RAG core 应使用 BM25、向量、TagMemo 和 Time 多路召回。",
-                "summary": "用户希望底层 RAG core 成为通用上下文预测层。",
+                "kind": "durable_preference",
+                "claimKey": "preference:retrieval.multichannel",
+                "canonicalText": "用户偏好检索系统同时使用 BM25、向量、标签和时间召回。",
+                "summary": "这是跨项目复用的长期检索偏好。",
                 "tags": ["RAG core", "BM25", "TagMemo"],
                 "aliases": ["VCP式RAG"],
                 "surfaceHints": ["混合召回", "语义图召回"],

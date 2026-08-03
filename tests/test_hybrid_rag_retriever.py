@@ -478,7 +478,7 @@ class HybridRagRetrieverTests(unittest.TestCase):
             [item["text"] for item in payload["candidates"]],
         )
 
-    def test_hybrid_retrieval_keeps_reviewed_artifact_when_raw_event_is_hidden(self) -> None:
+    def test_hybrid_retrieval_hides_derived_artifact_when_raw_event_is_hidden(self) -> None:
         event_id = self._record_event("本地模型实验", tags=("输入法",))
         sessions = AgentSessionStore(self.db_path)
         session = sessions.create(title="hidden-raw", created_at_ms=1)
@@ -520,7 +520,7 @@ class HybridRagRetrieverTests(unittest.TestCase):
                 ),
             )
 
-        self.assertTrue(
+        self.assertFalse(
             any(
                 item["source_id"] == "atom:qwen3-local-model"
                 for item in payload["memoryHits"]

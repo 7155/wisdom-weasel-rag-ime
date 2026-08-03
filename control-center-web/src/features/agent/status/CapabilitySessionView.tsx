@@ -225,6 +225,7 @@ function CapabilityRow({
   const preference = policy.session[item.canonicalId] ?? item.disclosure.preference;
   const projectPreference = policy.projectDefault[item.canonicalId] ?? 'inherit';
   const globalPreference = policy.globalDefault[item.canonicalId] ?? 'inherit';
+  const fixed = item.alwaysAvailable === true;
 
   return (
     <article className="agent-capability-session__row">
@@ -238,13 +239,20 @@ function CapabilityRow({
         <p>{item.description || '后端目录暂未提供说明。'}</p>
       </div>
 
-      <Select
-        aria-label={`${item.displayName}的当前对话临时设置`}
-        disabled={busy || pending}
-        onValueChange={(value) => onPreferenceChange(item.canonicalId, value)}
-        options={capabilityPreferenceOptions}
-        value={preference}
-      />
+      {fixed ? (
+        <div className="agent-capability-session__fixed">
+          <strong>固定加载</strong>
+          <small>基础能力，不可关闭</small>
+        </div>
+      ) : (
+        <Select
+          aria-label={`${item.displayName}的当前对话临时设置`}
+          disabled={busy || pending}
+          onValueChange={(value) => onPreferenceChange(item.canonicalId, value)}
+          options={capabilityPreferenceOptions}
+          value={preference}
+        />
+      )}
 
       <div className="agent-capability-session__effective">
         <strong>{capabilityEffectiveLabel(item.disclosure.effective)}</strong>
@@ -261,9 +269,15 @@ function CapabilityRow({
             <dt>所需权限</dt>
             <dd>{item.requiredPermissions.length ? item.requiredPermissions.map(permissionLabel).join('、') : '无需额外权限'}</dd>
           </div>
-          <div><dt>当前对话临时设置</dt><dd>{preferenceLabel(preference)}</dd></div>
-          <div><dt>项目默认</dt><dd>{preferenceLabel(projectPreference)}</dd></div>
-          <div><dt>所有对话默认</dt><dd>{preferenceLabel(globalPreference)}</dd></div>
+          {fixed ? (
+            <div><dt>加载策略</dt><dd>普通伙伴会话固定加载，不参与披露开关</dd></div>
+          ) : (
+            <>
+              <div><dt>当前对话临时设置</dt><dd>{preferenceLabel(preference)}</dd></div>
+              <div><dt>项目默认</dt><dd>{preferenceLabel(projectPreference)}</dd></div>
+              <div><dt>所有对话默认</dt><dd>{preferenceLabel(globalPreference)}</dd></div>
+            </>
+          )}
           <div><dt>生效来源</dt><dd>{capabilityScopeLabel(item.effectiveScope)}</dd></div>
         </dl>
         <p className="agent-capability-session__reason">
@@ -298,6 +312,7 @@ function capabilityReasonLabel(reason: string): string {
     inherited_project_default: '继承当前项目默认',
     inherited_global_default: '继承所有对话默认',
     inherited_built_in_default: '继承产品内置默认',
+    required_session_tool: '普通伙伴会话固定加载此基础能力',
     existing_session_policy_authorizes_tool: '当前对话的既有工具权限允许执行',
     existing_session_policy_does_not_authorize_tool: '当前对话的既有工具权限不允许执行',
     session_context_required: '进入具体对话后才能核对执行权限',

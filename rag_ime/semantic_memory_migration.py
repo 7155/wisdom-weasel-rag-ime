@@ -8,6 +8,7 @@ from typing import Mapping
 
 from .activity_timeline import DailyActivityTimelineStore, TIMELINE_SEGMENTATION_MODE
 from .db import apply_database_migrations, migration_status
+from .db.migration_runner import DEFAULT_MIGRATIONS_DIR
 from .embeddings import EmbeddingProvider
 from .memory_ingest import normalize_text
 from .memory_projection import (
@@ -82,6 +83,7 @@ def migrate_semantic_memory_database(
     timezone_name: str = "Asia/Shanghai",
     embedding_provider: EmbeddingProvider | None = None,
     require_vector_freshness: bool = False,
+    migrations_dir: str | Path = DEFAULT_MIGRATIONS_DIR,
 ) -> dict[str, object]:
     """Upgrade one writable candidate DB; callers own backup and activation.
 
@@ -97,7 +99,10 @@ def migrate_semantic_memory_database(
     timestamp = now_ms()
     with _connect(path) as conn:
         protected_before = _protected_state(conn)
-        migration_result = apply_database_migrations(conn)
+        migration_result = apply_database_migrations(
+            conn,
+            migrations_dir=migrations_dir,
+        )
         legacy_report = _migrate_legacy_items(
             conn,
             project=project,
@@ -129,6 +134,7 @@ def migrate_semantic_memory_database(
         projection_report = _drain_projection_outbox(
             conn,
             embedding_provider=embedding_provider,
+            migrations_dir=migrations_dir,
         )
         protected_after = _protected_state(conn)
         if protected_after != protected_before:
@@ -580,6 +586,7 @@ def _drain_projection_outbox(
     conn: sqlite3.Connection,
     *,
     embedding_provider: EmbeddingProvider | None,
+    migrations_dir: str | Path = DEFAULT_MIGRATIONS_DIR,
 ) -> dict[str, object]:
     reports: list[dict[str, object]] = []
     for _ in range(8):
@@ -587,6 +594,7 @@ def _drain_projection_outbox(
             conn,
             embedding_provider=embedding_provider,
             max_events=512,
+            migrations_dir=migrations_dir,
         )
         reports.append(report)
         if int(report.get("processed") or 0) == 0:
@@ -916,6 +924,12 @@ def _active_artifact_evidence_errors(
                 visibility_cache[event_id] = visible
             if not visible:
                 invisible.append(event_id)
+                continue
+            # Phrase and Timeline are non-personal projections over observable
+            # input history. A pending/rejected personal-Memory disposition
+            # cannot erase their separate UI/retrieval purpose. They still
+            # fail closed above when the input event is missing or forgotten.
+            if artifact_type in {"phrase", "timeline"}:
                 continue
             dispositions = disposition_cache.get(event_id)
             if dispositions is None:

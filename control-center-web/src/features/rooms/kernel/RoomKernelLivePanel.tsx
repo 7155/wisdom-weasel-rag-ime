@@ -1,6 +1,7 @@
 import { CircleAlert, Workflow } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, EmptyState } from '@/components/primitives';
+import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
 import type { RoomEventEnvelopeV2 } from '@/contracts/generated/room-event-envelope.v2';
 import {
   applyRoomKernelSnapshot,
@@ -10,11 +11,18 @@ import {
   type RoomKernelSnapshot,
   type CancellationSurfaceProjection,
 } from '@/contracts/room-kernel-reducer';
-import { selectRoomParticipantPublicProgress } from '@/contracts/room-reducer';
+import {
+  selectRoomParticipantPublicProgress,
+  type RoomActivityProjection,
+} from '@/contracts/room-reducer';
 import { parseContract } from '@/contracts/validators';
 import { useOptionalControlTransport } from '@/app/control-transport';
+import type { ControlTransport } from '@/platform/transport';
 import { RoomKernelControlPlane } from './RoomKernelControlPlane';
+import type { RoomTaskSubagentRun } from './RoomTaskFlowGraph';
 import { parseRoomRequirementsReadProjection, type RoomRequirementsReadProjection } from '../requirements/room-requirements-read-model';
+import type { RoomCollaborationRole, RoomWorkItem } from '../room-types';
+import { roomPublicActivityText } from '../timeline/room-tool-presentation';
 import {
   useRoomLiveStore,
   type RoomKernelLiveState,
@@ -22,16 +30,45 @@ import {
 } from '../state/live-store';
 import { createControlRoomKernelCommandTransport } from './room-kernel-command-transport';
 import { evaluateRoomKernelControlGate, type RoomKernelControlGate } from './room-kernel-control-gate';
+const ROOM_SUBAGENT_ACTIVE_POLL_MS = 1_000;
+const ROOM_SUBAGENT_POTENTIAL_POLL_MS = 5_000;
+const MAX_ROOM_SUBAGENT_BATCHES_PER_SESSION = 50;
+const MAX_ROOM_SUBAGENT_RUNS_PER_BATCH = 2;
+const MAX_ROOM_SUBAGENT_RUNS_PER_TASK = 8;
+const MAX_DATE_EPOCH_MS = 8_640_000_000_000_000;
 
+export type RoomTaskSubagentSessionProjection = {
+  runsByTaskId: Record<string, RoomTaskSubagentRun[]>;
+  hasActive: boolean;
+};
+
+type RoomTaskSubagentReadModel = {
+  scopeKey: string;
+  sessions: Record<string, RoomTaskSubagentSessionProjection>;
+};
+
+export type RoomTaskSubagentLineage = {
+  rootId: string;
+  generation: number;
+  validDispatchIds: ReadonlySet<string>;
+};
 
 export function RoomKernelLivePanel({
   participantLabels = {},
+  participantSessionIds = [],
+  participantRoles = {},
   roomId,
+  subagentsByTaskId: providedSubagentsByTaskId,
   visible = true,
+  workItems = [],
 }: {
   participantLabels?: Record<string, string>;
+  participantSessionIds?: readonly string[];
+  participantRoles?: Record<string, RoomCollaborationRole>;
   roomId: string;
+  subagentsByTaskId?: Record<string, RoomTaskSubagentRun[]>;
   visible?: boolean;
+  workItems?: RoomWorkItem[];
 }) {
   const transport = useOptionalControlTransport();
   const projection = useRoomLiveStore(
@@ -49,6 +86,22 @@ export function RoomKernelLivePanel({
       : [],
     [publicProjection],
   );
+  const publicActivities = useMemo(
+    () => publicProjection
+      ? publicProjection.activityOrder
+          .map((activityId) => publicProjection.activitiesById[activityId])
+          .filter((activity): activity is RoomActivityProjection => Boolean(activity))
+      : [],
+    [publicProjection],
+  );
+  const polledSubagentsByTaskId = useRoomTaskSubagents({
+    enabled: visible && providedSubagentsByTaskId === undefined,
+    participantSessionIds,
+    projection,
+    roomId,
+    transport,
+  });
+  const subagentsByTaskId = providedSubagentsByTaskId ?? polledSubagentsByTaskId;
   const [requirementsByRootId, setRequirementsByRootId] = useState<Record<string, RoomRequirementsReadProjection>>({});
   const projectionRef = useRef<RoomKernelProjection | null>(projection);
   const [controlGate, setControlGate] = useState<RoomKernelControlGate | null>(null);
@@ -290,6 +343,7 @@ export function RoomKernelLivePanel({
       ) : null}
     </p>
     {projection && Object.keys(projection.rootsById).length > 0 ? <RoomKernelControlPlane
+      activities={publicActivities}
       projection={projection}
       budgetsByRootId={{}}
       contextReceiptsByRootId={{}}
@@ -298,8 +352,11 @@ export function RoomKernelLivePanel({
       commandDisabledReason={kernelCommandDisabledReason(controlGate)}
       panicEnabled={controlGate?.panicEnabled === true}
       participantLabels={participantLabels}
+      participantRoles={participantRoles}
       participantProgress={participantProgress}
+      subagentsByTaskId={subagentsByTaskId}
       requirementsByRootId={requirementsByRootId}
+      workItems={workItems}
     /> : liveState === 'error' ? <EmptyState
       description="检查点仍保留。修复连接或运行时问题后，可以从已确认状态继续。"
       icon={CircleAlert}
@@ -314,6 +371,409 @@ export function RoomKernelLivePanel({
       title="还没有任务"
     /> : null}
   </section>;
+}
+export function useRoomTaskSubagents({
+  enabled,
+  participantSessionIds,
+  projection,
+  roomId,
+  transport,
+}: {
+  enabled: boolean;
+  participantSessionIds: readonly string[];
+  projection: RoomKernelProjection | null;
+  roomId: string;
+  transport: ControlTransport | null;
+}): Record<string, RoomTaskSubagentRun[]> {
+  const sessionIds = uniqueRoomParticipantSessionIds(participantSessionIds);
+  const lineageByTaskId = roomTaskSubagentLineage(projection);
+  const lineageKey = roomTaskSubagentLineageKey(lineageByTaskId);
+  const taskIds = [...lineageByTaskId.keys()].sort();
+  const sessionKey = JSON.stringify(sessionIds);
+  const scopeKey = JSON.stringify([roomId, sessionIds, lineageKey]);
+  const potentiallyActive = roomKernelMayHaveActiveSubagents(projection);
+  const [readModel, setReadModel] = useState<RoomTaskSubagentReadModel>({
+    scopeKey: '',
+    sessions: {},
+  });
+  const readModelRef = useRef(readModel);
+  const pollingRevisionRef = useRef(0);
+  readModelRef.current = readModel;
+
+  useEffect(() => {
+    const revision = ++pollingRevisionRef.current;
+    const current = readModelRef.current;
+    let retained = current.scopeKey === scopeKey ? { ...current.sessions } : {};
+    const publish = () => {
+      const next = { scopeKey, sessions: { ...retained } };
+      readModelRef.current = next;
+      setReadModel(next);
+    };
+    if (!enabled || !transport || !roomId || !sessionIds.length || !taskIds.length) {
+      if (current.scopeKey !== scopeKey || Object.keys(current.sessions).length) {
+        retained = {};
+        publish();
+      }
+      return;
+    }
+
+    const roomTransport = transport;
+    const allowedLineage = lineageByTaskId;
+    let active = true;
+    const controllers = new Set<AbortController>();
+    const timers = new Set<number>();
+
+    if (current.scopeKey !== scopeKey) publish();
+
+    const schedule = (sessionId: string, delayMs: number | null) => {
+      if (!active || revision !== pollingRevisionRef.current || delayMs === null) return;
+      const handle = window.setTimeout(() => {
+        timers.delete(handle);
+        void pollSession(sessionId);
+      }, delayMs);
+      timers.add(handle);
+    };
+
+    async function pollSession(sessionId: string): Promise<void> {
+      if (!active || revision !== pollingRevisionRef.current) return;
+      const controller = new AbortController();
+      controllers.add(controller);
+      try {
+        const value = await roomTransport.request({
+          pathId: 'agent.subagents.list',
+          query: { sessionId, limit: MAX_ROOM_SUBAGENT_BATCHES_PER_SESSION },
+          signal: controller.signal,
+        });
+        if (!active || revision !== pollingRevisionRef.current) return;
+        const parsed = parseRoomTaskSubagentResponse(
+          value,
+          roomId,
+          sessionId,
+          allowedLineage,
+        );
+        retained = { ...retained, [sessionId]: parsed };
+        publish();
+        schedule(sessionId, roomSubagentPollDelay(parsed.hasActive, potentiallyActive));
+      } catch (error) {
+        if (!active || revision !== pollingRevisionRef.current || isAbort(error)) return;
+        const previous = retained[sessionId];
+        schedule(
+          sessionId,
+          roomSubagentPollDelay(previous?.hasActive === true, potentiallyActive),
+        );
+      } finally {
+        controllers.delete(controller);
+      }
+    }
+
+    for (const sessionId of sessionIds) void pollSession(sessionId);
+    return () => {
+      active = false;
+      for (const timer of timers) window.clearTimeout(timer);
+      for (const controller of controllers) controller.abort();
+    };
+  }, [enabled, lineageKey, potentiallyActive, roomId, scopeKey, sessionKey, transport]);
+
+  if (readModel.scopeKey !== scopeKey) return {};
+  return mergeRoomTaskSubagentSessions(readModel.sessions, new Set(taskIds));
+}
+
+export function parseRoomTaskSubagentResponse(
+  value: unknown,
+  roomId: string,
+  parentSessionId: string,
+  lineageByTaskId: ReadonlyMap<string, RoomTaskSubagentLineage>,
+): RoomTaskSubagentSessionProjection {
+  const runsByTaskAndId = new Map<string, Map<string, RoomTaskSubagentRun>>();
+  const response = record(value);
+  if (response.ok !== true || !Array.isArray(response.items)) {
+    throw new TypeError('Subagent status response is invalid');
+  }
+  const batches = response.items.slice(0, MAX_ROOM_SUBAGENT_BATCHES_PER_SESSION);
+  for (const valueBatch of batches) {
+    const batch = record(valueBatch);
+    const batchId = protocolText(batch.id);
+    const causalMetadata = record(batch.causalMetadata);
+    const taskId = protocolText(causalMetadata.taskId);
+    const lineage = lineageByTaskId.get(taskId);
+    const rootId = protocolText(causalMetadata.rootId);
+    const dispatchId = protocolText(causalMetadata.dispatchId);
+    const generation = safeNonNegativeInteger(causalMetadata.generation);
+    const runs = array(batch.runs);
+    if (
+      batch.schemaVersion !== 'rag-ime.agent-subagent-batch.v1'
+      || !batchId
+      || protocolText(batch.parentSessionId) !== parentSessionId
+      || causalMetadata.roomBound !== true
+      || protocolText(causalMetadata.roomId) !== roomId
+      || !lineage
+      || rootId !== lineage.rootId
+      || generation !== lineage.generation
+      || !lineage.validDispatchIds.has(dispatchId)
+      || runs.length < 1
+      || runs.length > MAX_ROOM_SUBAGENT_RUNS_PER_BATCH
+    ) continue;
+
+    const taskRuns = runsByTaskAndId.get(taskId) ?? new Map<string, RoomTaskSubagentRun>();
+    for (const valueRun of runs) {
+      const parsed = parseRoomTaskSubagentRun(valueRun, batchId);
+      if (!parsed) continue;
+      const current = taskRuns.get(parsed.id);
+      if (!current || parsed.run.updatedAtMs >= current.updatedAtMs) {
+        taskRuns.set(parsed.id, parsed.run);
+      }
+    }
+    if (taskRuns.size) runsByTaskAndId.set(taskId, taskRuns);
+  }
+
+  const runsByTaskId = Object.fromEntries(
+    [...runsByTaskAndId.entries()].map(([taskId, taskRuns]) => [
+      taskId,
+      [...taskRuns.values()].sort(roomTaskSubagentOrder),
+    ]),
+  );
+  return {
+    runsByTaskId,
+    hasActive: Object.values(runsByTaskId).some((runs) => runs.some((run) => (
+      run.state === 'queued' || run.state === 'running'
+    ))),
+  };
+}
+
+export function roomSubagentPollDelay(
+  hasActiveRuns: boolean,
+  roomMayStillRun: boolean,
+): number | null {
+  if (hasActiveRuns) return ROOM_SUBAGENT_ACTIVE_POLL_MS;
+  if (roomMayStillRun) return ROOM_SUBAGENT_POTENTIAL_POLL_MS;
+  return null;
+}
+
+function parseRoomTaskSubagentRun(
+  value: unknown,
+  batchId: string,
+): { id: string; run: RoomTaskSubagentRun } | null {
+  const item = record(value);
+  const id = protocolText(item.id);
+  const task = boundedPublicText(roomPublicActivityText(protocolText(item.task)), 180);
+  const budget = record(item.budget);
+  const usage = record(item.usage);
+  const templates: AgentSubagentRunV1['templateId'][] = [
+    'researcher',
+    'planner',
+    'worker',
+    'reviewer',
+    'delegate',
+  ];
+  const states: AgentSubagentRunV1['state'][] = [
+    'queued',
+    'running',
+    'completed',
+    'failed',
+    'aborted',
+    'timed_out',
+  ];
+  const ordinal = safeNonNegativeInteger(item.ordinal);
+  const maxTurns = safeNonNegativeInteger(budget.maxTurns);
+  const maxToolCalls = safeNonNegativeInteger(budget.maxToolCalls);
+  const maxTotalTokens = safeNonNegativeInteger(budget.maxTotalTokens);
+  const maxDurationMs = safeNonNegativeInteger(budget.maxDurationMs);
+  const maxOutputChars = safeNonNegativeInteger(budget.maxOutputChars);
+  const turnCount = safeNonNegativeInteger(usage.turnCount);
+  const toolCount = safeNonNegativeInteger(usage.toolCount);
+  const totalTokens = safeNonNegativeInteger(usage.totalTokens);
+  const createdAtMs = safeEpochMs(item.createdAtMs);
+  const updatedAtMs = safeEpochMs(item.updatedAtMs);
+  const startedAtMs = safeNullableEpochMs(item.startedAtMs);
+  const completedAtMs = safeNullableEpochMs(item.completedAtMs);
+  if (
+    item.schemaVersion !== 'rag-ime.agent-subagent-run.v1'
+    || !id
+    || protocolText(item.batchId) !== batchId
+    || !task
+    || !templates.includes(item.templateId as AgentSubagentRunV1['templateId'])
+    || !states.includes(item.state as AgentSubagentRunV1['state'])
+    || ordinal === null
+    || maxTurns === null
+    || maxToolCalls === null
+    || maxTotalTokens === null
+    || maxDurationMs === null
+    || maxOutputChars === null
+    || turnCount === null
+    || toolCount === null
+    || totalTokens === null
+    || createdAtMs === null
+    || updatedAtMs === null
+    || startedAtMs === undefined
+    || completedAtMs === undefined
+  ) return null;
+
+  return {
+    id,
+    run: {
+      templateId: item.templateId as AgentSubagentRunV1['templateId'],
+      ordinal,
+      task,
+      state: item.state as AgentSubagentRunV1['state'],
+      budget: {
+        maxTurns,
+        maxToolCalls,
+        maxTotalTokens,
+        maxDurationMs,
+        maxOutputChars,
+      },
+      usage: { turnCount, toolCount, totalTokens },
+      resultSummary: boundedPublicText(
+        roomPublicActivityText(protocolText(record(item.result).summary)),
+        220,
+      ),
+      error: roomTaskSubagentPublicError(item.state as AgentSubagentRunV1['state']),
+      createdAtMs,
+      startedAtMs,
+      updatedAtMs,
+      completedAtMs,
+    },
+  };
+}
+
+function mergeRoomTaskSubagentSessions(
+  sessions: Record<string, RoomTaskSubagentSessionProjection>,
+  allowedTaskIds: ReadonlySet<string>,
+): Record<string, RoomTaskSubagentRun[]> {
+  const merged = new Map<string, RoomTaskSubagentRun[]>();
+  for (const sessionId of Object.keys(sessions).sort()) {
+    const session = sessions[sessionId];
+    if (!session) continue;
+    for (const [taskId, runs] of Object.entries(session.runsByTaskId)) {
+      if (!allowedTaskIds.has(taskId)) continue;
+      merged.set(taskId, [...(merged.get(taskId) ?? []), ...runs]);
+    }
+  }
+  return Object.fromEntries(
+    [...merged.entries()].map(([taskId, runs]) => [
+      taskId,
+      runs.sort(roomTaskSubagentOrder).slice(0, MAX_ROOM_SUBAGENT_RUNS_PER_TASK),
+    ]),
+  );
+}
+
+function roomTaskSubagentOrder(
+  left: RoomTaskSubagentRun,
+  right: RoomTaskSubagentRun,
+): number {
+  return roomTaskSubagentStatePriority(left.state) - roomTaskSubagentStatePriority(right.state)
+    || left.ordinal - right.ordinal
+    || right.updatedAtMs - left.updatedAtMs
+    || left.templateId.localeCompare(right.templateId)
+    || left.task.localeCompare(right.task);
+}
+
+function roomTaskSubagentStatePriority(state: AgentSubagentRunV1['state']): number {
+  if (state === 'failed' || state === 'timed_out') return 0;
+  if (state === 'running') return 1;
+  if (state === 'queued') return 2;
+  if (state === 'aborted') return 3;
+  return 4;
+}
+
+function roomTaskSubagentPublicError(state: AgentSubagentRunV1['state']): string {
+  if (state === 'failed') return '任务内协作者未能完成；负责人可检查任务状态后决定是否重试。';
+  if (state === 'timed_out') return '任务内协作者未在限定时间内完成；负责人可决定是否重试。';
+  return '';
+}
+
+function roomTaskSubagentLineage(
+  projection: RoomKernelProjection | null,
+): Map<string, RoomTaskSubagentLineage> {
+  const lineage = new Map<string, RoomTaskSubagentLineage>();
+  if (!projection) return lineage;
+  const dispatchIdsByTaskId = new Map<string, Set<string>>();
+  for (const dispatch of Object.values(projection.dispatchesById)) {
+    const task = projection.tasksById[dispatch.taskId];
+    const root = task ? projection.rootsById[task.rootId] : undefined;
+    if (
+      !task
+      || !root
+      || dispatch.rootId !== task.rootId
+      || dispatch.generation !== root.generation
+    ) continue;
+    const dispatchIds = dispatchIdsByTaskId.get(task.taskId) ?? new Set<string>();
+    dispatchIds.add(dispatch.dispatchId);
+    dispatchIdsByTaskId.set(task.taskId, dispatchIds);
+  }
+  for (const task of Object.values(projection.tasksById)) {
+    const root = projection.rootsById[task.rootId];
+    if (!root) continue;
+    lineage.set(task.taskId, {
+      rootId: task.rootId,
+      generation: root.generation,
+      validDispatchIds: dispatchIdsByTaskId.get(task.taskId) ?? new Set<string>(),
+    });
+  }
+  return lineage;
+}
+
+function roomTaskSubagentLineageKey(
+  lineageByTaskId: ReadonlyMap<string, RoomTaskSubagentLineage>,
+): string {
+  return JSON.stringify([...lineageByTaskId.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([taskId, lineage]) => [
+      taskId,
+      lineage.rootId,
+      lineage.generation,
+      [...lineage.validDispatchIds].sort(),
+    ]));
+}
+
+function roomKernelMayHaveActiveSubagents(projection: RoomKernelProjection | null): boolean {
+  if (!projection) return false;
+  return Object.values(projection.rootsById).some((root) => (
+    !['completed', 'failed', 'cancelled', 'cancelled_with_unknowns'].includes(root.state)
+  )) || Object.values(projection.tasksById).some((task) => (
+    !['completed', 'failed', 'cancelled'].includes(task.state)
+  ));
+}
+
+function uniqueRoomParticipantSessionIds(values: readonly string[]): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const sessionId = protocolText(value);
+    if (!sessionId || seen.has(sessionId)) continue;
+    seen.add(sessionId);
+    result.push(sessionId);
+  }
+  return result.sort();
+}
+
+function boundedPublicText(value: unknown, maximum: number): string {
+  if (typeof value !== 'string') return '';
+  const normalized = value
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  if (normalized.length <= maximum) return normalized;
+  return `${normalized.slice(0, maximum - 1).trimEnd()}…`;
+}
+
+function protocolText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function safeNonNegativeInteger(value: unknown): number | null {
+  return Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : null;
+}
+
+function safeEpochMs(value: unknown): number | null {
+  const parsed = safeNonNegativeInteger(value);
+  if (parsed === null || parsed > MAX_DATE_EPOCH_MS) return null;
+  return parsed;
+}
+
+function safeNullableEpochMs(value: unknown): number | null | undefined {
+  if (value === null) return null;
+  return safeEpochMs(value) ?? undefined;
 }
 
 function parseRequirementsByRootId(value: unknown): Record<string, RoomRequirementsReadProjection> {
@@ -355,12 +815,30 @@ export function parseSnapshot(value: unknown, roomId: string): RoomKernelSnapsho
     snapshotHash: item.snapshotHash,
     roots: array(item.roots).map((entry) => parseContract('room-root-execution.v3', entry)),
     tasks: array(item.tasks).map((entry) => parseContract('room-task.v3', entry)),
+    taskUpdatedAtMsById: nonNegativeIntegerRecord(
+      item.taskUpdatedAtMsById,
+      'taskUpdatedAtMsById',
+    ),
     dispatches: array(item.dispatches).map((entry) => parseContract('room-dispatch-envelope.v2', entry)),
     posts: array(item.posts).map((entry) => parseContract('room-post.v2', entry)),
     sessions: array(item.sessions) as RoomKernelSnapshot['sessions'],
     receipts: array(item.receipts).map((entry) => parseContract('room-kernel-receipt.v1', entry)),
     cancellationSurfaces: array(item.cancellationSurfaces).map(parseCancellationSurface),
   };
+}
+
+function nonNegativeIntegerRecord(value: unknown, field: string): Record<string, number> {
+  if (value === undefined) return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError(`${field} must be an object`);
+  }
+  const item = value as Record<string, unknown>;
+  const result: Record<string, number> = {};
+  for (const [key, entry] of Object.entries(item)) {
+    if (!key.trim()) throw new TypeError(`${field} has an empty key`);
+    result[key] = nonNegativeInteger(entry, `${field}.${key}`);
+  }
+  return result;
 }
 
 function parseCancellationSurface(value: unknown): CancellationSurfaceProjection {
@@ -424,7 +902,8 @@ function errorStatus(error: unknown): number {
 
 function publicError(error: unknown, fallback: string): string {
   const message = error instanceof Error && !(error instanceof TypeError) ? error.message.trim() : '';
-  return message && /[\u3400-\u9fff]/u.test(message) ? message : fallback;
+  const safeMessage = roomPublicActivityText(message);
+  return safeMessage && /[\u3400-\u9fff]/u.test(safeMessage) ? safeMessage : fallback;
 }
 
 function isAbort(error: unknown): boolean {

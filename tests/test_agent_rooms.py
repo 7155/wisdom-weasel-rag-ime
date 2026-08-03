@@ -135,6 +135,82 @@ class AgentRoomTests(unittest.TestCase):
                 authoritative_participant_id=str(owner["id"]),
             )
 
+
+    def test_parallel_managed_routing_reserves_reviewer_for_final_handoff(
+        self,
+    ) -> None:
+        room = self.store.create(
+            title="实现后独立复核",
+            routing_policy="parallel",
+            participants=[
+                {
+                    **self._participant("companion-present-v1", "主持者"),
+                    "collaborationRole": "coordinator",
+                },
+                {
+                    **self._participant("companion-firstlight-v1", "实施者"),
+                    "collaborationRole": "implementer",
+                },
+                {
+                    **self._participant("companion-future-v1", "审查者"),
+                    "collaborationRole": "reviewer",
+                },
+            ],
+        )
+        facilitator, implementer, reviewer = room["participants"]
+
+        decisions = self.store.plan_routes(
+            str(room["id"]),
+            "并行完成实现，集成后再独立复核。",
+            authoritative_participant_id=str(facilitator["id"]),
+        )
+        self.assertEqual(
+            [decision["targetParticipantId"] for decision in decisions],
+            [facilitator["id"], implementer["id"]],
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "Reviewer cannot own managed implementation ingress",
+        ):
+            self.store.plan_routes(
+                str(room["id"]),
+                "直接开始工作。",
+                authoritative_participant_id=str(reviewer["id"]),
+            )
+        with self.assertRaisesRegex(
+            ValueError,
+            "Reviewer cannot enter the implementation wave",
+        ):
+            self.store.plan_routes(
+                str(room["id"]),
+                "@审查者 直接实现。",
+                requested_participant_ids=[str(reviewer["id"])],
+                authoritative_participant_id=str(facilitator["id"]),
+            )
+
+    def test_parallel_unaddressed_conversation_selects_one_responder(
+        self,
+    ) -> None:
+        room = self.store.create(
+            title="普通对话不隐式并行",
+            routing_policy="parallel",
+            participants=[
+                self._participant("companion-present-v1", "澄·今"),
+                self._participant("companion-firstlight-v1", "澄·初"),
+                self._participant("companion-future-v1", "澄·远"),
+            ],
+        )
+
+        decisions = self.store.plan_routes(
+            str(room["id"]),
+            "请先回答这个普通问题",
+            conversation_only=True,
+        )
+
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(len(decisions[0]["selectedParticipantIds"]), 1)
+        self.assertEqual(decisions[0]["reason"], "natural_fallback")
+
     def test_room_never_persists_or_projects_retired_builtin_role_ids(
         self,
     ) -> None:
@@ -318,6 +394,54 @@ class AgentRoomTests(unittest.TestCase):
             [event["sequence"] for event in snapshot["events"]],
             list(range(3, 103)),
         )
+
+    def test_history_page_walks_the_retained_prefix_without_unbounded_snapshot(self) -> None:
+        room = self.store.create(
+            title="分页房间",
+            routing_policy="moderator",
+            participants=[
+                self._participant("companion-present-v1", "澄"),
+                self._participant("companion-firstlight-v1", "Hermes"),
+            ],
+        )
+        room_id = str(room["id"])
+        for sequence in range(1, 261):
+            self.store.append_event(
+                room_id=room_id,
+                event_type="participant_status",
+                payload={"status": f"step-{sequence}"},
+                created_at_ms=sequence,
+                retain_per_room=250,
+            )
+
+        snapshot = self.store.snapshot(room_id)
+        first_page = self.store.history_page(
+            room_id,
+            before_sequence=int(snapshot["firstSequence"]),
+            limit=25,
+        )
+        second_page = self.store.history_page(
+            room_id,
+            before_sequence=int(first_page["firstSequence"]),
+            limit=25,
+        )
+
+        self.assertEqual(len(snapshot["events"]), 200)
+        self.assertEqual(snapshot["firstSequence"], 61)
+        self.assertEqual(
+            [event["sequence"] for event in first_page["items"]],
+            list(range(36, 61)),
+        )
+        self.assertTrue(first_page["hasMore"])
+        self.assertEqual(first_page["nextBeforeSequence"], 36)
+        self.assertEqual(
+            [event["sequence"] for event in second_page["items"]],
+            list(range(11, 36)),
+        )
+        self.assertFalse(second_page["hasMore"])
+        self.assertEqual(second_page["nextBeforeSequence"], 0)
+        self.assertEqual(second_page["retainedFirstSequence"], 11)
+        self.assertTrue(second_page["retainedPrefixTruncated"])
 
     def test_participant_public_cursor_prevents_reinjecting_old_room_messages(self) -> None:
         room = self.store.create(
@@ -2180,7 +2304,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         prompt_payload = prompt.call_args.args[1]
         self.assertEqual(prompt_payload["message"], "请协调大家检查当前项目")
         moderator_context = prompt_payload["_transientContext"]
-        self.assertIn("你本轮从“整合伙伴”的角度参与", moderator_context)
+        self.assertIn("你本轮从“主持整合者”的角度参与", moderator_context)
         self.assertNotIn("agents.room_ask", moderator_context)
         self.assertNotIn("role=researcher", moderator_context)
         self.assertNotIn("role=implementer", moderator_context)

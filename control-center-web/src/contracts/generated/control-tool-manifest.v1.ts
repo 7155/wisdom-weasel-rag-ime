@@ -34,5 +34,6 @@ export interface ControlToolManifestV1 {
     'status' | 'table' | 'citation' | 'tool_result' | 'diff' | 'approval' | 'terminal' | 'media';
   availability: 'online' | 'offline' | 'disabled' | 'unconfigured';
   version: string;
+  alwaysAvailable?: boolean;
   [k: string]: unknown;
 }

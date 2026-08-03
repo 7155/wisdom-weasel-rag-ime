@@ -511,7 +511,7 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
         conflicted = CANARY.provider_prompt_governance_evidence(context)
         self.assertEqual(
             conflicted["conflictingWorkflowMarkers"],
-            ["不得执行写操作", "计划尚未批准"],
+            ["不得执行写操作"],
         )
         self.assertEqual(conflicted["lifecycleHookBlockCount"], 1)
         self.assertEqual(conflicted["volatileCurrentTimeCount"], 1)
@@ -1240,7 +1240,7 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
                             "role": "developer",
                             "content": (
                                 "Core 规则：不输出相关度、分数或内部 ID。\n"
-                                '<rag-ime-context type="session_memory">\n'
+                                '<rag-ime-context type="memory_recall">\n'
                                 "## Session 记忆\n"
                                 "- **项目偏好**: 每个 epoch 只补一份恢复包。\n"
                                 "</rag-ime-context>"
@@ -1262,7 +1262,7 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
             {
                 "payload": {
                     "input": (
-                        '<rag-ime-context type="session_memory">'
+                        '<rag-ime-context type="memory_recall">'
                         "## Session 记忆\nsourceId=atom:private\n相关度：0.92"
                         "</rag-ime-context>"
                     )
@@ -1286,7 +1286,7 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
                         {
                             "role": "developer",
                             "content": (
-                                '<rag-ime-context type="session_memory">'
+                                '<rag-ime-context type="memory_recall">'
                                 "## Session 记忆\n- 只恢复一份有界上下文。"
                                 "</rag-ime-context>"
                             ),

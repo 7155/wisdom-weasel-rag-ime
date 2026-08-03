@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from difflib import SequenceMatcher
 from dataclasses import dataclass
 from datetime import date, datetime, time as datetime_time, timedelta
 from typing import Iterable, Mapping, Sequence
@@ -110,7 +111,7 @@ def recent_complete_input_context(
         f"""
         SELECT e.id, e.created_at_ms, e.source, e.committed_text, e.recent_context,
                e.preedit, e.app, e.project, e.context_group_id, e.context_group_level,
-               e.tags_json
+               e.tags_json, e.capture_metadata_json
         FROM input_events e
         LEFT JOIN memory_state s ON s.event_id = e.id
         WHERE {' AND '.join(where)}
@@ -212,10 +213,17 @@ def _fragments_belong_together(previous: Mapping[str, object], current: Mapping[
     if previous_context and current_context:
         if previous_context in current_context or current_context in previous_context:
             return gap_ms <= 5 * 60 * 1000
+        if cumulative_context_snapshots_are_revisions(
+            previous_context,
+            current_context,
+            gap_ms=gap_ms,
+        ):
+            return True
         overlap_limit = min(len(previous_context), len(current_context), 120)
         for size in range(overlap_limit, 7, -1):
             if previous_context[-size:] == current_context[:size]:
                 return gap_ms <= 5 * 60 * 1000
+        return False
     previous_text = _value(previous, "committed_text", "text")
     if _SENTENCE_END_RE.search(previous_text) and gap_ms > 1200:
         return False
@@ -273,6 +281,15 @@ def _standalone_record(row: Mapping[str, object], *, text: str) -> dict[str, obj
     reconstructed = recent_context if use_context else text
     source = _value(row, "source") or "input"
     tags = _tags(row)
+    row_keys = row.keys()
+    capture_metadata_value: object = (
+        row["capture_metadata_json"]
+        if "capture_metadata_json" in row_keys
+        else row["captureMetadata"]
+        if "captureMetadata" in row_keys
+        else {}
+    )
+    capture_metadata = _json_object(capture_metadata_value)
     finalized = source != FINALIZED_INPUT_SOURCE or (
         "finalized" in tags or "complete-input" in tags
     )
@@ -283,6 +300,8 @@ def _standalone_record(row: Mapping[str, object], *, text: str) -> dict[str, obj
         finalized=finalized,
         reconstructed=use_context,
         tags=tags,
+        capture_metadata=capture_metadata,
+        app=_value(row, "app"),
     )
     return {
         "id": f"event:{event_id}" if event_id else f"event:{stable_text_hash(reconstructed).split(':')[-1][:12]}",
@@ -317,6 +336,16 @@ def join_input_fragments(fragments: Iterable[str]) -> str:
     return compact_whitespace("".join(str(fragment or "") for fragment in fragments))
 
 
+def _json_object(value: object) -> dict[str, object]:
+    if isinstance(value, Mapping):
+        return dict(value)
+    try:
+        decoded = json.loads(str(value or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return dict(decoded) if isinstance(decoded, dict) else {}
+
+
 def reconstruct_input_fragment_run(fragments: Sequence[str], recent_contexts: Sequence[str]) -> str:
     """Use a compact cumulative snapshot only when it clearly covers this run.
 
@@ -332,6 +361,19 @@ def reconstruct_input_fragment_run(fragments: Sequence[str], recent_contexts: Se
     latest = contexts[-1]
     if len(latest) > min(180, len(joined) + 48):
         return joined
+    if len(contexts) > 1 and all(
+        cumulative_context_snapshots_are_revisions(
+            previous,
+            current,
+            gap_ms=0,
+        )
+        for previous, current in zip(contexts, contexts[1:])
+    ):
+        # Older Squirrel history can contain several bounded snapshots of the
+        # same field while Backspace replaces one character. Concatenating
+        # those revisions repeats the whole sentence and leaks editor noise to
+        # memory curation; the final bounded snapshot is the corrected value.
+        return latest
     cursor = 0
     for fragment in (compact_whitespace(item) for item in fragments):
         if not fragment:
@@ -341,6 +383,54 @@ def reconstruct_input_fragment_run(fragments: Sequence[str], recent_contexts: Se
             return joined
         cursor = index + len(fragment)
     return latest if len(latest) >= len(joined) else joined
+
+
+def cumulative_context_snapshots_are_revisions(
+    previous: str,
+    current: str,
+    *,
+    gap_ms: int,
+) -> bool:
+    """Recognize a short-lived correction of one bounded foreground snapshot.
+
+    Exact containment is handled by callers as the ordinary append case. This
+    predicate is deliberately narrower: both snapshots must be bounded, occur
+    within one Rime burst, stay close in length, and preserve most characters
+    at their edges. It therefore catches Backspace corrections without merging
+    merely related commands or separate utterances in the same application.
+    """
+
+    left = compact_whitespace(previous)
+    right = compact_whitespace(current)
+    if (
+        not left
+        or not right
+        or left == right
+        or gap_ms < 0
+        or gap_ms > 30_000
+        or min(len(left), len(right)) < 8
+        or max(len(left), len(right)) > 180
+    ):
+        return False
+    longest = max(len(left), len(right))
+    shortest = min(len(left), len(right))
+    if longest - shortest > max(4, longest // 5):
+        return False
+
+    prefix = 0
+    for left_char, right_char in zip(left, right):
+        if left_char != right_char:
+            break
+        prefix += 1
+    suffix = 0
+    remaining = shortest - prefix
+    for left_char, right_char in zip(reversed(left), reversed(right)):
+        if left_char != right_char or suffix >= remaining:
+            break
+        suffix += 1
+    stable_edge_ratio = (prefix + suffix) / shortest
+    similarity = SequenceMatcher(None, left, right, autojunk=False).ratio()
+    return stable_edge_ratio >= 0.8 and similarity >= 0.86
 
 
 def _day_window(target: date, *, label: str, template: datetime) -> TemporalWindow:

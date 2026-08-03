@@ -19,6 +19,7 @@ from .agent_events import AgentEventHub
 from .agent_protocol import AgentEventEnvelope
 from .agent_runtime_failure import classify_runtime_failure
 from .agent_tool_block_bridge import AgentToolBlockBuffer
+from .agent_tool_ids import MEMORY_CURATION_TOOL_PROFILE
 from .agent_runtime_driver import AgentRuntimeError, CompactionObserver
 from .agent_sessions import AgentSessionStore
 from .pi_runtime import (
@@ -44,6 +45,7 @@ from .pi_runtime_public import (
     public_pi_model,
     public_reasoning_summaries,
     public_usage,
+    public_usage_evidence,
     redact_mapping,
     ui_confirmation_value,
 )
@@ -822,43 +824,13 @@ class PiRuntimeHostManager:
                     and not stale_active_room
                     else None
                 )
-                current_binding_hash = str(
-                    current_room.get("runtimeBindingHash") or ""
-                )
-                desired_binding_hash = str(
-                    desired_room.get("runtimeBindingHash") or ""
-                )
-                same_context_dispatch_rotation = bool(
-                    rebind
-                    and not rebind["contextEpochChanged"]
-                    and str(current_room.get("dispatchId") or "").strip()
-                    and str(desired_room.get("dispatchId") or "").strip()
-                    and current_room.get("dispatchId")
-                    != desired_room.get("dispatchId")
-                    and current_room_skill_policy == desired_room_skill_policy
-                )
-                same_mode_binding = (
+                same_mode_binding = bool(
                     current_room
                     and desired_room
                     and not stale_active_room
-                    and (
-                        same_context_dispatch_rotation
-                        or (
-                            not bool(rebind and rebind["contextEpochChanged"])
-                            and (
-                                (
-                                    bool(desired_binding_hash)
-                                    and current_binding_hash
-                                    == desired_binding_hash
-                                )
-                                or (
-                                    not desired_binding_hash
-                                    and current_room.get("promptPlanHash")
-                                    == desired_room.get("promptPlanHash")
-                                )
-                            )
-                        )
-                    )
+                    and rebind is not None
+                    and not bool(rebind["contextEpochChanged"])
+                    and current_room_skill_policy == desired_room_skill_policy
                 )
                 if (
                     (not current_room and not desired_room)
@@ -883,6 +855,7 @@ class PiRuntimeHostManager:
                     and rebind is not None
                     and not stale_active_room
                     and bool(rebind["contextEpochChanged"])
+                    and current_room_skill_policy == desired_room_skill_policy
                 ):
                     self._sync_idle_snapshot(session_id, snapshot)
                     with self._lock:
@@ -908,18 +881,38 @@ class PiRuntimeHostManager:
             )
             if desired_room and not managed_system_prompt:
                 raise PiRuntimeError("managed Room Session has no live PromptPlan payload")
+            memory_curation_session = (
+                str(session.get("toolProfileVersion") or "")
+                == MEMORY_CURATION_TOOL_PROFILE
+            )
             params: dict[str, object] = {
                 "sessionId": session_id,
                 "cwd": cwd,
                 "systemPrompt": managed_system_prompt or self.config.system_prompt_for_session(session),
-                "toolManifest": self.tool_catalog(session_id),
+                "toolManifest": (
+                    []
+                    if memory_curation_session
+                    else self.tool_catalog(session_id)
+                ),
                 "noContextFiles": (
                     str(session.get("toolProfileVersion") or "")
-                    in {"ime-surface-v1", "voice-refinement-v1"}
+                    in {
+                        "ime-surface-v1",
+                        "voice-refinement-v1",
+                        MEMORY_CURATION_TOOL_PROFILE,
+                    }
                     or not bool(session.get("projectContextEnabled", False))
                 ),
-                "piSkillsEnabled": bool(session.get("piSkillsEnabled", False)),
-                "codexSkillsEnabled": bool(session.get("codexSkillsEnabled", False)),
+                "piSkillsEnabled": (
+                    False
+                    if memory_curation_session
+                    else bool(session.get("piSkillsEnabled", False))
+                ),
+                "codexSkillsEnabled": (
+                    False
+                    if memory_curation_session
+                    else bool(session.get("codexSkillsEnabled", False))
+                ),
             }
             session_context = str(
                 session.get("sessionContext") or ""
@@ -2109,7 +2102,7 @@ class PiRuntimeHostManager:
             else full_room_context
         )
         room_context = str(context_value or "").strip()
-        if session_context:
+        if session_context and opened.get("reused") is True:
             dispatch_params["sessionContext"] = session_context
         if not full_room_context and not use_delta:
             raise PiRuntimeError(
@@ -2421,6 +2414,11 @@ class PiRuntimeHostManager:
             state = self._states.get(session_id)
             request_id = state.pending_approvals.get(approval_id) if state else None
             turn_id = state.turn_id if state else ""
+        approval = self.sessions.get_approval(approval_id)
+        tool_call_id = str(approval.get("toolCallId") or "").strip()
+        causal = approval.get("causalMetadata")
+        if isinstance(causal, Mapping):
+            turn_id = str(causal.get("turnId") or "").strip() or turn_id
         if not request_id:
             raise PiRuntimeError("approval request is no longer pending")
         self._require_client().send(
@@ -2437,6 +2435,7 @@ class PiRuntimeHostManager:
                 "requestId": request_id,
                 "approvalId": approval_id,
                 "state": resolution_state or ("approved" if approved else "rejected"),
+                **({"toolCallId": tool_call_id} if tool_call_id else {}),
             },
             turn_id=turn_id,
         )
@@ -2749,60 +2748,36 @@ class PiRuntimeHostManager:
                     turn_id=turn_id,
                 )
             elif update_type == "thinking_start":
-                raw_message = as_mapping(raw.get("message"))
-                message_id = pi_message_id(raw_message, turn_id)
-                content_index = as_integer(update.get("contentIndex"))
-                reasoning_id = f"reasoning:{message_id}:{content_index}"
                 self.events.publish(
                     session_id,
                     "status_changed",
                     {
                         "status": "analyzing",
                         "phase": "reasoning",
-                        "summary": "正在分析问题与下一步",
-                    },
-                    turn_id=turn_id,
-                )
-                self.events.publish(
-                    session_id,
-                    "reasoning_summary",
-                    {
-                        "requestId": reasoning_id,
-                        "sourceMessageId": message_id,
-                        "summary": "正在分析问题与下一步",
-                        "items": [],
-                        "source": "runtime_status",
-                        "state": "running",
+                        "summary": "正在等待 Provider 的公开思考摘要",
                     },
                     turn_id=turn_id,
                 )
             elif update_type == "thinking_end":
                 raw_message = as_mapping(raw.get("message"))
                 summaries = public_reasoning_summaries(raw_message)
-                message_id = pi_message_id(raw_message, turn_id)
-                content_index = as_integer(update.get("contentIndex"))
-                reasoning_id = f"reasoning:{message_id}:{content_index}"
-                self.events.publish(
-                    session_id,
-                    "reasoning_summary",
-                    {
-                        "requestId": reasoning_id,
-                        "sourceMessageId": message_id,
-                        "summary": (
-                            summaries[-1]
-                            if summaries
-                            else "分析阶段已完成"
-                        ),
-                        "items": summaries,
-                        "source": (
-                            "provider_reasoning_summary"
-                            if summaries
-                            else "runtime_status"
-                        ),
-                        "state": "completed",
-                    },
-                    turn_id=turn_id,
-                )
+                if summaries:
+                    message_id = pi_message_id(raw_message, turn_id)
+                    content_index = as_integer(update.get("contentIndex"))
+                    reasoning_id = f"reasoning:{message_id}:{content_index}"
+                    self.events.publish(
+                        session_id,
+                        "reasoning_summary",
+                        {
+                            "requestId": reasoning_id,
+                            "sourceMessageId": message_id,
+                            "summary": summaries[-1],
+                            "items": summaries,
+                            "source": "provider_reasoning_summary",
+                            "state": "completed",
+                        },
+                        turn_id=turn_id,
+                    )
             return
         if event_type == "message_end":
             raw_message = as_mapping(raw.get("message"))
@@ -2855,6 +2830,7 @@ class PiRuntimeHostManager:
                 {
                     "message": message.to_payload(),
                     "usage": public_usage(raw.get("message")),
+                    **public_usage_evidence(raw_message),
                     "telemetry": dict(as_mapping(raw.get("telemetry"))),
                 },
                 turn_id=turn_id,

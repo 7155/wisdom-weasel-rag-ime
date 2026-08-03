@@ -26,39 +26,56 @@ class AgentDefinitionCompatibilityTests(unittest.TestCase):
         self.assertEqual(len({item["roleId"] for item in personas}), len(personas))
         self.assertEqual(len({item["templateId"] for item in templates}), len(templates))
 
-    def test_room_lifecycle_distinguishes_parallel_help_from_sequential_handoff(
+    def test_room_lifecycle_separates_facilitator_implementation_and_review(
         self,
     ) -> None:
-        prompt = collaboration_role("implementer", "1").system_prompt
-        content = prompt.replace("\n", "")
+        facilitator = collaboration_role("coordinator", "1").system_prompt
+        researcher = collaboration_role("researcher", "1").system_prompt
+        implementer = collaboration_role("implementer", "1").system_prompt
+        reviewer = collaboration_role("reviewer", "1").system_prompt
 
-        for expected in (
-            "每个人地位相同",
-            "平级切片",
-            "立即推进自己的部分",
-            "room_collaborate",
-            "每次邀请都必须得到成功回执",
-            "room_commit.handoff",
-            "最终检查属于顺序交接",
-            "waitingForParticipantRef",
-            "不要用 sleep 或轮询命令",
-            "read、grep、find、ls",
-            "精确文本修改使用 edit",
-            "bash 只用于必须由命令完成的构建",
-            "只有出现用户能感知的新进展时才用 room_post",
-            "完成主张不得强于实际观察",
-            "不要在公开内容里出现 Kernel、Root、Dispatch、Task、AC",
-            "room_commit.evidence",
-            "不得改写、拼接、猜测",
-        ):
-            self.assertIn(expected, content)
-        for hidden_name in (
-            "workspace_read",
-            "workspace_patch",
-            "workspace_shell",
-        ):
-            self.assertNotIn(hidden_name, content)
-        self.assertEqual(prompt.count("## 让用户看得懂"), 1)
+        for prompt in (facilitator, researcher, implementer, reviewer):
+            content = prompt.replace("\n", "")
+            self.assertIn("当前工作卡片是你这一轮唯一负责的部分", content)
+            self.assertIn("room_state", content)
+            self.assertIn("room_commit.evidence", content)
+            self.assertIn("不得改写、拼接、猜测", content)
+            self.assertIn("完成主张不得强于实际观察", content)
+            self.assertIn("exact managed Pi transcript prefix", content)
+            self.assertIn("不承诺 provider cache hit", content)
+            self.assertIn("有界 Agent subagent/delegation", content)
+            self.assertIn("不得邀请第三位 Room partner 或调用 room_collaborate", content)
+            self.assertIn("workspace_lsp", content)
+            self.assertIn(
+                "status/symbols/hover/definition/references/diagnostics",
+                content,
+            )
+            self.assertNotIn("workspace_read", content)
+            self.assertNotIn("workspace_patch", content)
+            self.assertNotIn("workspace_shell", content)
+            self.assertEqual(prompt.count("## 让用户看得懂"), 1)
+            self.assertIn("保持当前 Persona 的语气", content)
+            self.assertIn("岗位必须改变发言内容", content)
+            self.assertIn("不是固定句式", content)
+            self.assertIn("不要输出协议字段、JSON、回执套话", content)
+            self.assertIn("每位伙伴最多发布一条 conversationalupdate", content)
+            self.assertIn("稳定的 Tool 活动面", content)
+
+        self.assertIn("临时 Facilitator", facilitator)
+        self.assertIn("room_collaborate", facilitator)
+        self.assertIn("room_integrate", facilitator)
+        self.assertIn(
+            "room_commit(decision=handoff, intent=review)",
+            facilitator.replace("\n", ""),
+        )
+        self.assertIn("当前计划或集成决定及其理由", facilitator)
+        self.assertIn("实际核对的材料和它改变的判断", researcher)
+        self.assertIn("不要代替独立审查", implementer)
+        self.assertIn("可观察改动、验证结果和交回 Facilitator", implementer)
+        self.assertIn("本轮只审查已经集成的完整结果", reviewer)
+        self.assertIn("不得修改被审对象", reviewer)
+        self.assertIn("通过或退回", reviewer)
+        self.assertIn("不冒充最终用户回复", reviewer)
 
 
 class AgentDefinitionCompilerTests(unittest.TestCase):

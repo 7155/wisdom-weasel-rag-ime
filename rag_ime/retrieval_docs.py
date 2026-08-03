@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
+from .db.migration_runner import DEFAULT_MIGRATIONS_DIR
 from .input_quality import MEMORY_CONTEXT_OPT_IN_TAG
+from .memory_evidence_admission import event_has_admitted_personal_evidence_sql
 from .memory_projection_consistency import (
     ACTIVE_RETRIEVAL_PROJECTION_VERSION,
     bump_source_revision,
@@ -20,6 +23,8 @@ from .text_utils import build_fts_document, compact_whitespace, now_ms, truncate
 
 
 RETRIEVAL_DOCS_REBUILD_SCHEMA_VERSION = "rag-ime.retrieval-docs-rebuild.v1"
+_BOOK_INLINE_ATOM_LIMIT = 64
+_BOOK_INLINE_ATOM_CHAR_LIMIT = 8_000
 
 
 def rebuild_retrieval_docs(
@@ -33,6 +38,7 @@ def rebuild_retrieval_docs(
     include_legacy_items: bool = False,
     include_items: bool | None = None,
     source_refs: Iterable[tuple[str, str]] | None = None,
+    migrations_dir: str | Path = DEFAULT_MIGRATIONS_DIR,
 ) -> dict[str, object]:
     """Rebuild governed retrieval projections and retire legacy item docs.
 
@@ -41,7 +47,7 @@ def rebuild_retrieval_docs(
     disabling raw legacy projections can never remove IME phrase candidates.
     """
 
-    ensure_memory_v2_schema(conn)
+    ensure_memory_v2_schema(conn, migrations_dir=migrations_dir)
     consistency_repair = repair_superseded_memory_residuals(conn)
     targeted_refs = (
         {
@@ -385,6 +391,12 @@ def _memory_item_docs(
                 ),
             ]
         )
+        doc_type = "phrase" if str(row["kind"]) == "phrase" else "item"
+        source_events_visible = (
+            _source_events_projection_visible
+            if doc_type == "phrase"
+            else _source_events_retrievable
+        )
         if not text or _is_tombstoned(
             memory_id=memory_id,
             text=text,
@@ -393,11 +405,10 @@ def _memory_item_docs(
             tombstones=tombstones,
         ) or (
             source_event_ids
-            and not _source_events_retrievable(conn, source_event_ids)
+            and not source_events_visible(conn, source_event_ids)
         ):
             continue
         tags = _memory_item_tags(conn, memory_item_pk=int(row["id"]))
-        doc_type = "phrase" if str(row["kind"]) == "phrase" else "item"
         if doc_type == "phrase" and not include_phrases:
             continue
         if doc_type == "item" and not include_legacy_items:
@@ -473,7 +484,11 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
             tombstones=tombstones,
         ) or (
             source_event_ids
-            and not _source_events_retrievable(conn, source_event_ids)
+            and not (
+                _source_events_retrievable(conn, source_event_ids)
+                if str(row["knowledge_domain"] or "") == "personal_memory"
+                else _source_events_legacy_memory_visible(conn, source_event_ids)
+            )
         ):
             continue
         aliases = _atom_aliases(conn, atom_id=atom_id)
@@ -550,7 +565,11 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
             tombstones=tombstones,
         ) or (
             source_event_ids
-            and not _source_events_retrievable(conn, source_event_ids)
+            and not (
+                _source_events_retrievable(conn, source_event_ids)
+                if str(row["knowledge_domain"] or "") == "personal_memory"
+                else _source_events_legacy_memory_visible(conn, source_event_ids)
+            )
         ):
             continue
         book_type = str(row["book_type"] or "")
@@ -562,6 +581,10 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
             atom_ids,
         ):
             continue
+        inline_atoms, inline_atoms_complete = _inline_book_atoms(
+            conn,
+            atom_ids,
+        )
         docs.append(
             {
                 "doc_id": f"book:{book_id}",
@@ -589,6 +612,9 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                     "bookTitle": compact_whitespace(str(row["title"] or "")),
                     "sourceEventIds": source_event_ids,
                     "memoryAtomIds": atom_ids,
+                    "memoryAtomCount": len(atom_ids),
+                    "inlineAtoms": inline_atoms,
+                    "inlineAtomsComplete": inline_atoms_complete,
                     "source": "memory_books",
                     "bookStatus": str(row["status"] or "active"),
                     "archived": str(row["status"] or "") == "archived",
@@ -643,7 +669,7 @@ def _activity_timeline_docs(
             )
             or (
                 source_event_ids
-                and not _source_events_retrievable(conn, source_event_ids)
+                and not _source_events_projection_visible(conn, source_event_ids)
             )
         ):
             continue
@@ -743,6 +769,17 @@ def _projected_scope(
         "owner_kind", "owner_id", "knowledge_domain", "scope_kind", "scope_id",
         "visibility", "authorization_revision", "binding_id", "scope_mode",
     )}
+    if (
+        str(observed["scope_mode"] or "") == "authoritative"
+        and str(observed["knowledge_domain"] or "") == "personal_memory"
+        and str(observed["owner_kind"] or "") == "user"
+        and str(observed["scope_kind"] or "") == "user"
+        and str(observed["visibility"] or "") == "private"
+    ):
+        # Personal Memory is the authoritative storage/evidence domain.  The
+        # shared retrieval scope vocabulary exposes its read projection as the
+        # user's private profile without changing the source Atom or Book.
+        observed["knowledge_domain"] = "user_profile_preference"
     try:
         authoritative = scope_from_row(observed)
     except ValueError as exc:
@@ -978,22 +1015,57 @@ def _source_events_retrievable(
     if not normalized:
         return False
     placeholders = ",".join("?" for _ in normalized)
+    admitted_event = event_has_admitted_personal_evidence_sql("event")
     visible = int(
         conn.execute(
             f"""SELECT COUNT(*)
                 FROM input_events AS event
                 WHERE event.id IN ({placeholders})
-                  AND NOT EXISTS (
-                      SELECT 1 FROM memory_tombstones AS tombstone
-                      WHERE tombstone.active = 1
-                        AND (
-                            (tombstone.target_type = 'source_event_id'
-                             AND tombstone.target_value = CAST(event.id AS TEXT))
-                            OR
-                            (tombstone.target_type = 'memory_id'
-                             AND tombstone.target_value = ('event:' || event.id))
+                  AND {admitted_event}""",
+            tuple(normalized),
+        ).fetchone()[0]
+    )
+    return visible == len(normalized)
+
+
+def _source_events_projection_visible(
+    conn: sqlite3.Connection,
+    event_ids: list[object] | tuple[object, ...],
+) -> bool:
+    """Visibility for non-personal projections such as phrases and timelines.
+
+    Those projections remain separate from personal Memory Evidence, but still
+    fail closed on explicit forgetting. They must not be forced through Luna's
+    personal-memory admission predicate merely to remain useful to Rime or the
+    activity view.
+    """
+
+    normalized = _positive_event_ids(event_ids)
+    if not normalized:
+        return False
+    placeholders = ",".join("?" for _ in normalized)
+    visible = int(
+        conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM input_events AS event
+            WHERE event.id IN ({placeholders})
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM memory_tombstones AS tombstone
+                  WHERE tombstone.active = 1
+                    AND (
+                        (
+                            tombstone.target_type = 'source_event_id'
+                            AND tombstone.target_value = CAST(event.id AS TEXT)
                         )
-                  )""",
+                        OR (
+                            tombstone.target_type = 'memory_id'
+                            AND tombstone.target_value = ('event:' || event.id)
+                        )
+                    )
+              )
+            """,
             tuple(normalized),
         ).fetchone()[0]
     )
@@ -1001,24 +1073,57 @@ def _source_events_retrievable(
         return False
     governed_unavailable = int(
         conn.execute(
-            f"""SELECT COUNT(*)
-                FROM (
-                    SELECT input_event_id
-                    FROM agent_memory_sources
-                    WHERE input_event_id IN ({placeholders})
-                    GROUP BY input_event_id
-                    HAVING SUM(
-                        CASE
-                            WHEN status = 'active'
-                             AND disposition NOT IN ('not_for_memory', 'expired')
-                            THEN 1 ELSE 0
-                        END
-                    ) = 0
-                ) AS unavailable""",
+            f"""
+            SELECT COUNT(*)
+            FROM (
+                SELECT input_event_id
+                FROM agent_memory_sources
+                WHERE input_event_id IN ({placeholders})
+                GROUP BY input_event_id
+                HAVING SUM(
+                    CASE
+                        WHEN status = 'active'
+                         AND disposition NOT IN ('not_for_memory', 'expired')
+                        THEN 1 ELSE 0
+                    END
+                ) = 0
+            ) AS unavailable
+            """,
             tuple(normalized),
         ).fetchone()[0]
     )
     return governed_unavailable == 0
+
+
+def _source_events_legacy_memory_visible(
+    conn: sqlite3.Connection,
+    event_ids: list[object] | tuple[object, ...],
+) -> bool:
+    """Keep legacy Atom/Book reads governed while migration remains possible.
+
+    Legacy memory does not have capture-v2 Evidence lineage, so it cannot pass
+    the personal admission predicate.  It may remain readable during migration,
+    but never after its raw source is hidden, deleted, or otherwise unavailable.
+    Phrase and Timeline projections use the less restrictive projection helper
+    above because they are not personal-memory claims.
+    """
+
+    normalized = _positive_event_ids(event_ids)
+    if not normalized or not _source_events_projection_visible(conn, normalized):
+        return False
+    placeholders = ",".join("?" for _ in normalized)
+    hidden = int(
+        conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM memory_state
+            WHERE event_id IN ({placeholders})
+              AND COALESCE(deleted, 0) != 0
+            """,
+            tuple(normalized),
+        ).fetchone()[0]
+    )
+    return hidden == 0
 
 
 def _json_list(raw: Any) -> list[str]:
@@ -1050,3 +1155,56 @@ def _current_atom_ids(conn: sqlite3.Connection, atom_ids: list[str]) -> bool:
         ).fetchone()[0]
     )
     return current == len(ids)
+
+
+def _inline_book_atoms(
+    conn: sqlite3.Connection,
+    atom_ids: list[str],
+) -> tuple[list[dict[str, str]], bool]:
+    """Expose a bounded, ordered Book expansion for consumer-budget decisions.
+
+    Retrieval continues to index only the Book title and summary.  The member
+    payload is metadata so a downstream consumer can inject a genuinely small
+    Book in full without another database read.  Larger Books deliberately
+    report an incomplete expansion and therefore remain summary indexes whose
+    relevant Atoms must compete in ordinary retrieval.
+    """
+
+    ordered_ids = list(dict.fromkeys(atom_ids))
+    if not ordered_ids:
+        return [], True
+    limited_ids = ordered_ids[:_BOOK_INLINE_ATOM_LIMIT]
+    placeholders = ",".join("?" for _ in limited_ids)
+    rows = conn.execute(
+        f"""
+        SELECT id, text, canonical_text
+        FROM memory_atoms
+        WHERE id IN ({placeholders})
+          AND status IN ('active', 'approved')
+          AND claim_state = 'current'
+          AND privacy_level != 'sensitive'
+        """,
+        tuple(limited_ids),
+    ).fetchall()
+    by_id = {str(row["id"]): row for row in rows}
+    result: list[dict[str, str]] = []
+    used_chars = 0
+    complete = len(limited_ids) == len(ordered_ids)
+    for atom_id in limited_ids:
+        row = by_id.get(atom_id)
+        text = (
+            ""
+            if row is None
+            else compact_whitespace(
+                str(row["canonical_text"] or row["text"] or "")
+            )
+        )
+        if not text:
+            complete = False
+            continue
+        if used_chars + len(text) > _BOOK_INLINE_ATOM_CHAR_LIMIT:
+            complete = False
+            break
+        result.append({"atomId": atom_id, "text": text})
+        used_chars += len(text)
+    return result, complete and len(result) == len(ordered_ids)

@@ -85,7 +85,7 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertTrue(defaults["memory"]["automaticOrganization"]["enabled"])
         self.assertEqual(
             defaults["memory"]["automaticOrganization"]["model"],
-            "gpt/gpt-5.6-luna",
+            "openai-codex/gpt-5.6-luna",
         )
         self.assertEqual(
             defaults["memory"]["automaticOrganization"]["thinkingLevel"],
@@ -95,8 +95,14 @@ class SettingsSchemaTests(unittest.TestCase):
             defaults["memory"]["automaticOrganization"]["runsPerDay"],
             2,
         )
+        self.assertTrue(
+            defaults["memory"]["automaticOrganization"]["includeAgentDialogue"]
+        )
         self.assertTrue(defaults["memory"]["dreaming"]["enabled"])
-        self.assertEqual(defaults["memory"]["dreaming"]["model"], "gpt/gpt-5.6-luna")
+        self.assertEqual(
+            defaults["memory"]["dreaming"]["model"],
+            "openai-codex/gpt-5.6-luna",
+        )
         self.assertEqual(defaults["memory"]["dreaming"]["thinkingLevel"], "max")
         self.assertEqual(defaults["memory"]["dreaming"]["runsPerDay"], 2)
         self.assertNotIn("externalSources", defaults["memory"])
@@ -178,6 +184,14 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(
             fields["memory.automaticOrganization.thinkingLevel"]["modelKey"],
             "memory.automaticOrganization.model",
+        )
+        self.assertEqual(
+            fields["memory.automaticOrganization.includeAgentDialogue"]["label"],
+            "整理 Agent 对话摘要",
+        )
+        self.assertIn(
+            "不可独立支持事实",
+            fields["memory.automaticOrganization.includeAgentDialogue"]["description"],
         )
         self.assertEqual(
             fields["memory.dreaming.model"]["type"],

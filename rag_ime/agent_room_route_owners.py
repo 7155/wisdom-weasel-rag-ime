@@ -40,8 +40,10 @@ ROOM_ROUTE_OWNER_CENSUS = (
     RoomRouteOwner("wake.dispatch", "_dispatch_scheduled_wake", "wake_scheduler", "kernel", "reject_legacy"),
     RoomRouteOwner("tool.room_state", "execute_room_capability_tool", "reject", "kernel", "canonical_only"),
     RoomRouteOwner("tool.room_collaborate", "execute_room_capability_tool", "reject", "kernel", "canonical_only"),
+    RoomRouteOwner("tool.room_integrate", "execute_room_capability_tool", "reject", "kernel", "canonical_only"),
     RoomRouteOwner("tool.room_post", "execute_room_capability_tool", "reject", "kernel", "canonical_only"),
     RoomRouteOwner("tool.room_commit", "execute_room_capability_tool", "reject", "kernel", "canonical_only"),
+    RoomRouteOwner("tool.room_define", "execute_room_capability_tool", "reject", "kernel", "canonical_only"),
 )
 
 

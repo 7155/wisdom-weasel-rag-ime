@@ -14,7 +14,11 @@ from unittest.mock import patch
 
 from rag_ime.agent_artifacts import AgentArtifactStore
 from rag_ime.agent_context_runtime import AgentContextRuntime
-from rag_ime.agent_delegation import AgentDelegationCoordinator, AgentDelegationStore
+from rag_ime.agent_delegation import (
+    AgentDelegationCoordinator,
+    AgentDelegationStore,
+    _subagent_prompt,
+)
 from rag_ime.agent_events import AgentEventHub
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_templates import AgentTemplateBudget, agent_template as real_agent_template
@@ -386,6 +390,7 @@ class AgentDelegationTests(unittest.TestCase):
         cancellation_grace_ms: int = 50,
         subagent_session_retention_ms: int | None = None,
         subagent_session_gc_interval_ms: int | None = None,
+        room_context_provider=None,
     ) -> AgentDelegationCoordinator:
         return AgentDelegationCoordinator(
             db_path=self.db_path,
@@ -397,6 +402,7 @@ class AgentDelegationTests(unittest.TestCase):
             cancellation_grace_ms=cancellation_grace_ms,
             subagent_session_retention_ms=subagent_session_retention_ms,
             subagent_session_gc_interval_ms=subagent_session_gc_interval_ms,
+            room_context_provider=room_context_provider,
         )
 
     def test_fixed_catalog_parallel_results_and_internal_sessions(self) -> None:
@@ -501,6 +507,114 @@ class AgentDelegationTests(unittest.TestCase):
                 {"agent": "market-shell-agent", "task": "执行任意命令", **_TASK_CONTRACT},
             )
         coordinator.close()
+
+    def test_read_only_execution_mode_fences_stale_parent_profile(self) -> None:
+        coordinator = self.coordinator()
+        parent_id = str(self.parent["id"])
+        original_get = self.sessions.get
+
+        def stale_parent_get(session_id: str, *args, **kwargs):
+            session = original_get(session_id, *args, **kwargs)
+            if str(session_id) == parent_id:
+                return {
+                    **session,
+                    "toolProfileVersion": "control-center-v1",
+                    "executionMode": "read_only",
+                }
+            return session
+
+        try:
+            with patch.object(self.sessions, "get", side_effect=stale_parent_get):
+                batch = coordinator.delegate(
+                    parent_id,
+                    {"agent": "worker", "task": "只读子任务", **_TASK_CONTRACT},
+                )["batch"]
+            child = self.sessions.get(str(batch["runs"][0]["childSessionId"]))
+            self.assertEqual(child["toolProfileVersion"], "subagent-readonly-v1")
+            self.assertEqual(child["executionMode"], "read_only")
+        finally:
+            coordinator.close()
+
+    def test_room_bound_delegation_records_task_lineage(self) -> None:
+        coordinator = self.coordinator(
+            room_context_provider=lambda _session_id: {
+                "roomBound": True,
+                "roomId": "room:delegation",
+                "rootId": "root:delegation",
+                "taskId": "task:delegation",
+                "dispatchId": "dispatch:delegation",
+                "generation": 7,
+            }
+        )
+
+        response = coordinator.delegate(
+            str(self.parent["id"]),
+            {
+                "agent": "researcher",
+                "task": "读取任务证据",
+                **_TASK_CONTRACT,
+            },
+        )
+
+        self.assertEqual(
+            response["batch"]["causalMetadata"],
+            {
+                "todoId": f"todo:{self.parent['id']}",
+                "todoRevision": 0,
+                "goalId": "",
+                "goalRevision": 0,
+                "roomBound": True,
+                "roomId": "room:delegation",
+                "rootId": "root:delegation",
+                "taskId": "task:delegation",
+                "dispatchId": "dispatch:delegation",
+                "generation": 7,
+            },
+        )
+        coordinator.close()
+
+    def test_room_bound_child_prompt_routes_handoff_without_private_room_ownership(
+        self,
+    ) -> None:
+        run = {
+            "task": "核对 Room 委派上下文",
+            "expectedOutput": "有界结果",
+            "acceptanceCriteria": ["列出真实依据"],
+        }
+        fork_batch = {
+            "contextMode": "fork",
+            "depth": 2,
+            "maxDepth": 2,
+            "causalMetadata": {"roomBound": True},
+        }
+        fork_prompt = _subagent_prompt(run, fork_batch)
+        self.assertIn("私有、有界助手", fork_prompt)
+        self.assertIn("不得 settle Room、room_post 或直接打开原生 Ask", fork_prompt)
+        self.assertIn("exact managed Pi transcript prefix", fork_prompt)
+        self.assertIn("不承诺 provider cache hit", fork_prompt)
+        self.assertIn("只用 status/symbols/hover/definition/references/diagnostics", fork_prompt)
+        self.assertIn("hash-bound approval", fork_prompt)
+        self.assertIn("导出符号变更先用 references", fork_prompt)
+
+        fresh_prompt = _subagent_prompt(
+            run,
+            {
+                **fork_batch,
+                "contextMode": "fresh",
+            },
+        )
+        self.assertIn("fresh 表示独立上下文", fresh_prompt)
+        self.assertIn("不引入父会话私有 transcript", fresh_prompt)
+
+        ordinary_prompt = _subagent_prompt(
+            run,
+            {
+                **fork_batch,
+                "causalMetadata": {"roomBound": False},
+            },
+        )
+        self.assertNotIn("Room nested handoff", ordinary_prompt)
+
 
     def test_delegation_contract_rejects_legacy_unstructured_tasks(self) -> None:
         coordinator = self.coordinator()
@@ -614,7 +728,7 @@ class AgentDelegationTests(unittest.TestCase):
         self.assertEqual(payload["authority"], "evidence_only")
         self.assertEqual(payload["acceptanceCriteria"], ["结论带有证据边界"])
         self.assertEqual(
-            self.sessions.agent_plan(str(self.parent["id"]))["items"],
+            self.sessions.agent_todo(str(self.parent["id"]))["phases"],
             [],
         )
         restarted.close()
@@ -767,30 +881,35 @@ class AgentDelegationTests(unittest.TestCase):
             finally:
                 coordinator.close()
 
-    def test_plan_backed_delegation_requires_and_preserves_explicit_item_link(self) -> None:
+    def test_todo_backed_delegation_requires_and_preserves_explicit_task_link(self) -> None:
         session_id = str(self.parent["id"])
-        item_id = "plan-item:delegated-research"
-        self.sessions.update_agent_plan_item(
+        todo_task = "核对子 Agent 证据"
+        self.sessions.mutate_agent_todo(
             session_id,
-            item_id=item_id,
-            title="核对子 Agent 证据",
-            status="in_progress",
+            {
+                "op": "init",
+                "list": [{"phase": "验证", "items": [todo_task]}],
+            },
+        )
+        self.sessions.mutate_agent_todo(
+            session_id,
+            {"op": "start", "task": todo_task},
         )
         coordinator = self.coordinator()
         try:
-            with self.assertRaisesRegex(ValueError, "planItemId is required"):
+            with self.assertRaisesRegex(ValueError, "todoTask is required"):
                 coordinator.delegate(
                     session_id,
-                    {"agent": "researcher", "task": "缺少明确 Plan 关联", **_TASK_CONTRACT},
+                    {"agent": "researcher", "task": "缺少明确 Todo 关联", **_TASK_CONTRACT},
                 )
             with self.assertRaisesRegex(ValueError, "does not belong"):
                 coordinator.delegate(
                     session_id,
                     {
                         "agent": "researcher",
-                        "task": "错误 Plan 关联",
+                        "task": "错误 Todo 关联",
                         **_TASK_CONTRACT,
-                        "planItemId": "plan-item:other",
+                        "todoTask": "其他不存在的任务",
                     },
                 )
 
@@ -800,17 +919,18 @@ class AgentDelegationTests(unittest.TestCase):
                     "agent": "researcher",
                     "task": "返回证据供主持会话核验",
                     **_TASK_CONTRACT,
-                    "planItemId": item_id,
+                    "todoTask": todo_task,
                 },
             )["batch"]
             run = batch["runs"][0]
-            self.assertEqual(run["planItemId"], item_id)
-            self.assertEqual(run["planItemTitle"], "核对子 Agent 证据")
+            self.assertEqual(run["todoTask"], todo_task)
+            self.assertEqual(run["todoPhase"], "验证")
             self.assertEqual(run["state"], "completed")
             self.assertEqual(
-                self.sessions.agent_plan(session_id)["items"][0]["status"],
+                self.sessions.agent_todo(session_id)["phases"][0]["tasks"][0]["status"],
                 "in_progress",
             )
+
             def linked_terminal_progress() -> list[Mapping[str, object]]:
                 parent_events, gap = self.events.replay(session_id)
                 self.assertFalse(gap)
@@ -818,14 +938,15 @@ class AgentDelegationTests(unittest.TestCase):
                     event.payload
                     for event in parent_events
                     if event.event_type == "tool_progress"
+                    and event.payload.get("runId") == run["id"]
                     and event.payload.get("state") == "completed"
                 ]
 
             _wait_until(lambda: bool(linked_terminal_progress()))
             terminal_progress = linked_terminal_progress()
-            self.assertEqual(terminal_progress[-1]["planItemId"], item_id)
-            self.assertEqual(terminal_progress[-1]["planItemTitle"], "核对子 Agent 证据")
-            self.assertTrue(terminal_progress[-1]["requiresParentPlanUpdate"])
+            self.assertEqual(terminal_progress[-1]["todoTask"], todo_task)
+            self.assertEqual(terminal_progress[-1]["todoPhase"], "验证")
+            self.assertTrue(terminal_progress[-1]["requiresParentTodoUpdate"])
         finally:
             coordinator.close()
 

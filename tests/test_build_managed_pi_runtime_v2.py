@@ -57,6 +57,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 "runtimeToolNames": Path(
                     "packages/rag-ime-runtime-host/src/runtime-tool-names.ts"
                 ),
+                "ask": Path("packages/rag-ime-runtime-host/src/ask.ts"),
                 "toolBridge": Path("packages/rag-ime-runtime-host/src/tool-bridge.ts"),
                 "toolArtifacts": Path("packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts"),
                 "providerContextJournal": Path(

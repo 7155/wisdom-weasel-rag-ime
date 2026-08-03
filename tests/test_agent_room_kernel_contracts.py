@@ -9,14 +9,12 @@ from rag_ime.agent_room_kernel_contracts import (
     CONTRACT_FILES,
     DISPATCH_ENVELOPE_SCHEMA_VERSION,
     EVENT_ENVELOPE_SCHEMA_VERSION,
-    LEGACY_REF_SCHEMA_VERSION,
     KERNEL_COMMAND_SCHEMA_VERSION,
     KERNEL_RECEIPT_SCHEMA_VERSION,
     PARTICIPANT_BINDING_SCHEMA_VERSION,
     ROOM_BINDING_SCHEMA_VERSION,
     ROOM_COMMIT_SCHEMA_VERSION,
     ROOM_QUALITY_GATE_RECEIPT_SCHEMA_VERSION,
-    ROOM_PEER_INVITATION_SCHEMA_VERSION,
     ROOM_POST_SCHEMA_VERSION,
     ROOM_SETTLE_RECEIPT_SCHEMA_VERSION,
     ROOM_SETTLE_RESULT_SCHEMA_VERSION,
@@ -100,11 +98,6 @@ class AgentRoomKernelContractsTest(unittest.TestCase):
                 "https://wisdom-weasel.local/contracts/room-participant-binding.v2.json",
                 PARTICIPANT_BINDING_SCHEMA_VERSION,
             ),
-            "legacyRef": (
-                "room-legacy-ref.v1.json",
-                "https://wisdom-weasel.local/contracts/room-legacy-ref.v1.json",
-                LEGACY_REF_SCHEMA_VERSION,
-            ),
             "kernelCommand": (
                 "room-kernel-command.v1.json",
                 "https://wisdom-weasel.local/contracts/room-kernel-command.v1.json",
@@ -129,11 +122,6 @@ class AgentRoomKernelContractsTest(unittest.TestCase):
                 "room-settle-result.v1.json",
                 "https://wisdom-weasel.local/contracts/room-settle-result.v1.json",
                 ROOM_SETTLE_RESULT_SCHEMA_VERSION,
-            ),
-            "peerInvitation": (
-                "room-peer-invitation.v1.json",
-                "https://wisdom-weasel.local/contracts/room-peer-invitation.v1.json",
-                ROOM_PEER_INVITATION_SCHEMA_VERSION,
             ),
             "agentApprovalModelDecision": (
                 "agent-approval-model-decision.v1.json",
@@ -169,6 +157,7 @@ class AgentRoomKernelContractsTest(unittest.TestCase):
                 "terminalReceiptId": None,
                 "activeProfileRef": None,
                 "budgetPolicyRef": "room-budget:default-v1",
+                "independentReviewRequired": False,
                 "createdAtMs": 1,
             },
         )
@@ -266,6 +255,57 @@ class AgentRoomKernelContractsTest(unittest.TestCase):
                 "payload": {},
             },
         )
+
+    def test_public_task_verification_contract_rejects_internal_acceptance_ids(
+        self,
+    ) -> None:
+        payload = {
+            "schemaVersion": ROOM_TASK_SCHEMA_VERSION,
+            "taskId": "task:public-verification",
+            "rootId": "root:1",
+            "parentTaskId": None,
+            "taskKind": "work",
+            "currentOwnerParticipantId": "participant:worker",
+            "ownershipRevision": 0,
+            "ownershipReceiptId": None,
+            "objective": "Inspect the route.",
+            "expectedOutput": "A source-backed report.",
+            "requirementItemIds": ["requirement:1"],
+            "acceptanceCriterionIds": ["criterion:private"],
+            "contextEvidenceRefs": [],
+            "invitationId": None,
+            "reviewOfTaskIds": [],
+            "reviewAuthorParticipantIds": [],
+            "reviewState": "not_required",
+            "verifications": [
+                {
+                    "label": "验收项 1",
+                    "result": "pass",
+                    "source": "quality_gate",
+                }
+            ],
+            "revision": 0,
+            "state": "active",
+        }
+        validate_kernel_contract("roomTask", payload)
+        for verification in (
+            {
+                "label": "AC-1",
+                "result": "pass",
+                "source": "quality_gate",
+            },
+            {
+                "label": "验收项 1",
+                "result": "pass",
+                "source": "criterionId:criterion:private",
+            },
+        ):
+            with self.subTest(verification=verification):
+                with self.assertRaises(ContractValidationError):
+                    validate_kernel_contract(
+                        "roomTask",
+                        {**payload, "verifications": [verification]},
+                    )
 
     def test_structured_wait_question_round_trips_through_post_and_commit_contracts(
         self,

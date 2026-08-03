@@ -43,7 +43,7 @@ import {
   isUnresolvedAgentCommandPending,
   publicAgentErrorText,
 } from './public-error';
-import { ApprovalReviewDialog, GenericUserInputDialog, MemoryReviewDialog } from './review/AgentReviewDialogs';
+import { ApprovalReviewDialog, GenericUserInputCard, MemoryReviewDialog } from './review/AgentReviewDialogs';
 import {
   activeSessionId,
   commandItems,
@@ -106,7 +106,7 @@ function AgentWorkspace() {
   const [timelineAtBottom, setTimelineAtBottom] = useState(true);
   const [scrollToLatestRequest, setScrollToLatestRequest] = useState(0);
   const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
-  const [statusOpen, setStatusOpen] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(shouldOpenTaskCenterByDefault);
   const [error, setVisibleError] = useState('');
   const [sendTimings] = useState(() => new AgentSendTimingTracker());
   const session = sessions.find((item) => item.id === selectedId);
@@ -1633,7 +1633,7 @@ function AgentWorkspace() {
 
   return (
     <main className="agent-feature" data-route-id="agent" data-rail-open={railOpen} data-status-open={statusOpen}>
-      <h1 className="agent-feature__title">与澄对话</h1>
+      <h1 className="agent-feature__title">Agent 任务中心</h1>
       <SessionRail ref={railRef} sessions={sessions} selectedId={selectedId} loading={loading} error={sessionLoadError} open={railOpen} modal={railModal} blocked={statusModal || newSessionOpen} showArchived={showArchived} onSelect={selectSession} onCreate={() => { if (mobileViewport) setRailOpen(false); setNewSessionOpen(true); }} onShowArchivedChange={setShowArchived} onArchive={(sessionId, archived) => void archiveSession(sessionId, archived)} onDelete={deleteSession} onRetry={() => void loadSessions(selectedIdRef.current || requestedSessionId)} onClose={closeMobileRail} />
       <AgentPaneResizer side="rail" />
       <button className="agent-rail-backdrop" aria-hidden="true" disabled={!railModal} tabIndex={-1} onClick={closeMobileRail} type="button" />
@@ -1649,11 +1649,19 @@ function AgentWorkspace() {
           {error ? <p role="alert" title={error}><AlertCircle size={14} /><span>{error}</span></p> : null}
           <div className="agent-conversation__actions">
             <IconButton label="查看对话路径与分支" icon={<GitBranch size={17} />} onClick={() => openForkDialog()} disabled={!session} tooltip />
-            <IconButton ref={statusToggleRef} className="agent-status-toggle" aria-controls="agent-status-panel" aria-expanded={statusOpen} label={statusOpen ? '收起状态面板' : '展开状态面板'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} disabled={!session} onClick={toggleStatus} tooltip />
+            <IconButton ref={statusToggleRef} className="agent-status-toggle" aria-controls="agent-status-panel" aria-expanded={statusOpen} label={statusOpen ? '收起任务中心' : '展开任务中心'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} disabled={!session} onClick={toggleStatus} tooltip />
           </div>
         </header>
         {selectedId ? <AgentTimeline assistantName={identity.assistantName} sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked && !isRoomParticipant} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} scrollToLatestRequest={scrollToLatestRequest} onAtBottomChange={setTimelineAtBottom} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setSelectedDraft} onRetryTurn={retryTurn} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
         {session ? (
+          <div className="agent-composer-dock">
+            {pendingGenericInput && !pendingApproval && !pendingMemoryReview ? (
+              <GenericUserInputCard
+                activity={pendingGenericInput}
+                sessionId={selectedId}
+                onError={(message) => setSessionError(selectedId, message)}
+              />
+            ) : (
           <AgentComposer
             assistantName={identity.assistantName}
             attachments={attachments}
@@ -1696,6 +1704,8 @@ function AgentWorkspace() {
             onToolSelect={chooseTool}
             onWorkspaceRootsChange={() => void manageWorkspaceRoots()}
           />
+            )}
+          </div>
         ) : (
           <AgentConversationState
             loading={loading}
@@ -1726,11 +1736,6 @@ function AgentWorkspace() {
       />
       <MemoryReviewDialog
         activity={pendingApproval ? undefined : pendingMemoryReview}
-        sessionId={selectedId}
-        onError={(message) => setSessionError(selectedId, message)}
-      />
-      <GenericUserInputDialog
-        activity={pendingApproval || pendingMemoryReview ? undefined : pendingGenericInput}
         sessionId={selectedId}
         onError={(message) => setSessionError(selectedId, message)}
       />
@@ -1820,6 +1825,11 @@ function modelCatalogNotice(value: unknown, usingCachedCatalog = false): string 
   return '模型目录暂时不可用，对话记录仍可查看。';
 }
 function isMobileViewport(): boolean { return window.matchMedia?.('(max-width: 760px)').matches === true; }
+function shouldOpenTaskCenterByDefault(): boolean {
+  return typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && !window.matchMedia('(max-width: 1360px)').matches;
+}
 
 const PASTED_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const MAX_AGENT_IMAGE_BYTES = 20 * 1024 * 1024;

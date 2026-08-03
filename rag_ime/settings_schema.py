@@ -111,14 +111,14 @@ DEFAULT_SETTINGS: dict[str, object] = {
         },
         "automaticOrganization": {
             "enabled": True,
-            "model": "gpt/gpt-5.6-luna",
+            "model": "openai-codex/gpt-5.6-luna",
             "thinkingLevel": "max",
             "runsPerDay": 2,
             "includeAgentDialogue": True,
         },
         "dreaming": {
             "enabled": True,
-            "model": "gpt/gpt-5.6-luna",
+            "model": "openai-codex/gpt-5.6-luna",
             "thinkingLevel": "max",
             "runsPerDay": 2,
         },
@@ -394,12 +394,12 @@ SETTINGS_SCHEMA: dict[str, object] = {
                 {"key": "memory.timeDecay.topicBookHalfLifeDays", "type": "integer", "label": "主题书衰减半衰期", "default": 180},
                 {"key": "memory.timeDecay.stablePreferenceHalfLifeDays", "type": "integer", "label": "稳定偏好衰减半衰期", "default": 365},
                 {"key": "memory.automaticOrganization.enabled", "type": "boolean", "label": "自动整理", "default": True},
-                {"key": "memory.automaticOrganization.model", "type": "pi-model", "label": "自动整理模型", "default": "gpt/gpt-5.6-luna"},
+                {"key": "memory.automaticOrganization.model", "type": "pi-model", "label": "自动整理模型", "default": "openai-codex/gpt-5.6-luna"},
                 {"key": "memory.automaticOrganization.thinkingLevel", "type": "pi-thinking", "label": "自动整理思考", "default": "max", "modelKey": "memory.automaticOrganization.model", "options": ["off", "minimal", "low", "medium", "high", "xhigh", "max"]},
                 {"key": "memory.automaticOrganization.runsPerDay", "type": "integer", "label": "每天自动整理次数", "default": 2},
                 {"key": "memory.automaticOrganization.includeAgentDialogue", "type": "boolean", "label": "整理 Agent 对话摘要", "default": True},
                 {"key": "memory.dreaming.enabled", "type": "boolean", "label": "记忆做梦", "default": True},
-                {"key": "memory.dreaming.model", "type": "pi-model", "label": "做梦模型", "default": "gpt/gpt-5.6-luna"},
+                {"key": "memory.dreaming.model", "type": "pi-model", "label": "做梦模型", "default": "openai-codex/gpt-5.6-luna"},
                 {"key": "memory.dreaming.thinkingLevel", "type": "pi-thinking", "label": "做梦思考", "default": "max", "modelKey": "memory.dreaming.model", "options": ["off", "minimal", "low", "medium", "high", "xhigh", "max"]},
                 {"key": "memory.dreaming.runsPerDay", "type": "integer", "label": "每天做梦次数", "default": 2},
                 {"key": "memory.recall.detailLevel", "type": "enum", "label": "召回详细程度", "options": ["compact", "balanced", "detailed"], "default": "compact"},
@@ -719,7 +719,7 @@ _FIELD_METADATA: dict[str, dict[str, object]] = {
     "memory.timeDecay.topicBookHalfLifeDays": {"min": 7, "max": 3650, "unit": "天", "expert": True},
     "memory.timeDecay.stablePreferenceHalfLifeDays": {"min": 30, "max": 3650, "unit": "天", "expert": True},
     "memory.automaticOrganization.enabled": {
-        "description": "把新的用户最终输入、成功回执和压缩后的 Agent 对话异步编译为 Atom 与 Topic Book；关闭后仍保留现有记忆",
+        "description": "把 Agent 在对话中通过 memory_capture 标记的用户长期候选异步编译为 Atom 与 Topic Book；原始会话、工具回执和任务状态不参与",
         "applyMode": "next_maintenance_run",
     },
     "memory.automaticOrganization.model": {
@@ -738,7 +738,7 @@ _FIELD_METADATA: dict[str, dict[str, object]] = {
         "unit": "次/天",
     },
     "memory.automaticOrganization.includeAgentDialogue": {
-        "description": "只传入最新会话摘要和摘要后的短尾窗，不把完整原始对话送给整理模型",
+        "description": "只传入最新会话摘要和摘要后的有界短尾窗，作为不可独立支持事实的上下文；关闭后不删除任何 Evidence、Atom 或 Book",
         "applyMode": "next_maintenance_run",
     },
     "memory.dreaming.enabled": {

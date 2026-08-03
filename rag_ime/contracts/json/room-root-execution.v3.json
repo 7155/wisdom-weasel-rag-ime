@@ -17,7 +17,7 @@
     "terminalReceiptId",
     "activeProfileRef",
     "budgetPolicyRef",
-    "createdAtMs"
+    "independentReviewRequired"
   ],
   "properties": {
     "schemaVersion": {"type": "string", "const": "wisdom-weasel.room-root-execution.v3"},
@@ -33,6 +33,7 @@
     "terminalReceiptId": {"type": ["string", "null"]},
     "activeProfileRef": {"type": ["string", "null"]},
     "budgetPolicyRef": {"type": "string", "minLength": 1},
+    "independentReviewRequired": {"type": "boolean"},
     "createdAtMs": {"type": "integer", "minimum": 0}
   }
 }

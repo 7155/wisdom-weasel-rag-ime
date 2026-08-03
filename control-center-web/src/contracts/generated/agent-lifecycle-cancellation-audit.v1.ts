@@ -8,7 +8,7 @@ export interface AgentLifecycleCancellationAuditV1 {
   schemaVersion: 'rag-ime.agent-lifecycle-cancellation-audit.v1';
   requestId: string;
   sessionId: string;
-  scopeKind: 'plan' | 'goal';
+  scopeKind: 'goal';
   scopeId: string;
   sourceRevision: number;
   transitionRevision: number;

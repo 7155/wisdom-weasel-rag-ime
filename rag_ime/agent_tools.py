@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -19,12 +20,18 @@ from .agent_execution_policy import (
     APPROVAL_MODEL,
     APPROVAL_DENY,
     approval_strategy,
+    read_only_blocks_effect,
+    read_only_policy_active,
 )
 from .agent_background_jobs import AgentBackgroundJobService
 from .agent_memory_sources import AgentMemorySourceStore
 from .agent_role_book import AgentRoleBookStore
-from .agent_tool_artifacts import AgentToolArtifactProjector
-from .agent_tool_ids import CONTROL_TOOL_IDS, DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
+from .agent_tool_ids import (
+    CONTROL_CENTER_TOOL_PROFILE,
+    CONTROL_TOOL_IDS,
+    DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+    READONLY_TOOL_PROFILE,
+)
 from .agent_sessions import AgentSessionStore
 from .agent_workspace import PreparedWorkspaceCommand, WorkspaceHarness
 from .browser_control import BrowserControlService
@@ -139,12 +146,14 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "displayName": "个人上下文记忆",
         "description": (
             "查询用户 Evidence、Atom、Book 与已批准 Timeline；"
-            "Role Book 请用 agent_role_book。写操作只能经持久提议和原生审批。"
+            "memory_capture 只提交绑定当前用户原话的长期候选，Role Book 请用 agent_role_book。"
         ),
-        "when": ("任务需要查找历史输入、用户事实、偏好或治理记忆变更",),
-        "notFor": ("当前对话已经足够或只是流程噪声、失败回执和临时指令",),
-        "input": "检索问题、范围、证据引用或待审变更",
-        "output": "带证据的记忆结果、草案、审批或回滚状态",
+        "when": ("任务需要查找历史用户事实，或用户表达了跨 Session 有用的稳定偏好、事实、决定、纠正或原则",),
+        "notFor": (
+            "原始会话、助手回答、工具回执、任务进度、文件改动、测试结果、报错、临时指令或当前对话已足够",
+        ),
+        "input": "检索问题、范围、用户证据引用或用户长期记忆候选",
+        "output": "带证据的记忆结果、候选、草案、审批或回滚状态",
         "does": "检索并治理用户长期上下文记忆。",
         "operations": (
             "catalog",
@@ -287,11 +296,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "id": "agents",
         "domain": "agents",
         "displayName": "多 Agent 协作",
-        "description": "管理有界子 Agent 委派及 Plan 关联",
+        "description": "管理有界子 Agent 委派及 Todo 关联",
         "when": ("任务需要并行研究、实现或复核",),
         "notFor": ("单 Agent 可直接完成的任务",),
-        "input": "Agent、任务、Plan item、上下文或运行 ID",
-        "output": "关联 Plan 的状态、产物或取消回执",
+        "input": "Agent、任务、当前 Todo 任务、上下文或运行 ID",
+        "output": "关联 Todo 的状态、产物或取消回执",
         "does": "执行可审计、可取消的有界委派。",
         "operations": (
             "catalog",
@@ -336,19 +345,31 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "tool_result",
     },
     {
-        "id": "agent_plan",
+        "id": "todo",
         "domain": "planning",
-        "displayName": "任务执行清单",
-        "description": "维护跨回合与压缩保留的 Session 执行清单；它不修改用户的每日规划",
-        "when": ("复杂任务需要跨回合维护执行步骤、复核或完成状态",),
-        "notFor": ("修改用户每日计划或简单单步任务",),
-        "input": "清单项、状态、证据、复核或取消动作",
-        "output": "跨回合保留的 Agent 执行清单与状态",
-        "does": (
-            "维护 Session 内可恢复的任务执行清单；每完成一步就更新状态，"
-            "全部验收后先 complete 再最终答复。"
+        "displayName": "Todo",
+        "description": "维护当前 Session 的分阶段执行清单；状态变更立即同步到任务中心，不需要用户批准",
+        "when": (
+            "任务包含至少三个清晰动作、用户给出多项要求，或工作需要跨回合、跨阶段验证",
         ),
-        "operations": ("list", "update", "submit_review", "complete", "cancel"),
+        "notFor": ("简单问答、单步操作、修改用户每日计划或替代长期 Goal",),
+        "input": "init、start、done、drop、block、unblock、append、view 或 rm",
+        "output": "当前 Todo 的阶段、任务状态、计数与本次完成项",
+        "does": (
+            "按 OMP Todo 状态机维护 Session 清单；每次调用原子更新并发布最新投影，"
+            "Agent 可自行创建、推进、完成、阻塞、解除阻塞、放弃或清空。"
+        ),
+        "operations": (
+            "init",
+            "start",
+            "done",
+            "drop",
+            "block",
+            "unblock",
+            "append",
+            "view",
+            "rm",
+        ),
         "resultPresentation": "tool_result",
     },
     {
@@ -393,12 +414,12 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "modelVisible": False,
         "domain": "planning",
         "displayName": "工作文档",
-        "description": "固定读取与管理当前权威 Plan、Goal 或 Room WorkItem 绑定的活动及归档工作文档",
+        "description": "固定读取与管理当前权威 Todo、Goal 或 Room WorkItem 绑定的活动及归档工作文档",
         "when": ("本地控制面需要列出、检查、修复、重开或擦除权威工作文档",),
         "notFor": ("扫描工作区猜测文档身份，或绕过终态回执与擦除审批",),
         "input": "规范 work_documents 操作及其固定参数",
         "output": "经 JSON 契约验证的列表、详情或命令回执",
-        "does": "调用 WorkDocumentService 固定适配器；不创建第二个 Plan、Goal 或 Room 状态所有者。",
+        "does": "调用 WorkDocumentService 固定适配器；不创建第二个 Todo、Goal 或 Room 状态所有者。",
         "operations": (
             "list",
             "history.search",
@@ -460,7 +481,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
             "绕过原生批准直接写入文件",
         ),
         "input": "操作名、授权根或源文件、位置、服务器选择与有界超时",
-        "output": "有界语义结果、服务状态，或哈希绑定的多文件修改预览和回执",
+        "output": "有界语义结果、服务状态，或含引用证据的哈希绑定多文件修改预览和回执",
         "does": "在 WorkspaceHarness 安全边界内读取语言服务结果并受控应用纯文本编辑。",
         "operations": (
             "status",
@@ -725,58 +746,120 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
             },
         ],
     },
-    "agent_plan": {
+    "todo": {
         "type": "object",
-        "oneOf": [
-            {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["op"],
-                "properties": {
-                    "op": {"const": "list"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string"},
+            "list": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 20,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["phase", "items"],
+                    "properties": {
+                        "phase": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 80,
+                        },
+                        "items": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 100,
+                            "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 240,
+                            },
+                        },
+                    },
                 },
             },
-            {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["op"],
-                "anyOf": [
-                    {"required": ["title"]},
-                    {"required": ["itemId"]},
-                ],
-                "properties": {
-                    "op": {"const": "update"},
-                    "itemId": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 160,
-                        "description": "更新已有计划项时使用 list 返回的 itemId；创建时可省略。",
-                    },
-                    "title": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 240,
-                        "description": "创建新计划项时必填。",
-                    },
-                    "status": {
-                        "type": "string",
-                        "enum": ["pending", "in_progress", "completed"],
-                    },
+            "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
+                "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240,
                 },
+            },
+            "phase": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+            },
+            "task": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240,
+            },
+            "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500,
+            },
+        },
+        "oneOf": [
+            {
+                "required": ["op"],
+                "oneOf": [
+                    {"required": ["list"]},
+                    {"required": ["items"]},
+                ],
+                "properties": {"op": {"const": "init"}},
+            },
+            {
+                "required": ["op", "task"],
+                "properties": {"op": {"const": "start"}},
             },
             *[
                 {
-                    "type": "object",
-                    "additionalProperties": False,
                     "required": ["op"],
-                    "properties": {
-                        "op": {"const": operation},
-                        "note": {"type": "string", "maxLength": 600},
-                    },
+                    "oneOf": [
+                        {"required": ["task"]},
+                        {"required": ["phase"]},
+                    ],
+                    "properties": {"op": {"const": operation}},
                 }
-                for operation in ("submit_review", "complete", "cancel")
+                for operation in ("done", "drop", "block", "unblock")
             ],
+            {
+                "additionalProperties": False,
+                "required": ["op", "phase", "items"],
+                "properties": {
+                    "op": {"const": "append"},
+                    "phase": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 80,
+                    },
+                    "items": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 100,
+                        "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 240,
+                        },
+                    },
+                },
+            },
+            {
+                "required": ["op"],
+                "properties": {"op": {"const": "view"}},
+            },
+            {
+                "required": ["op"],
+                "not": {"required": ["task", "phase"]},
+                "properties": {"op": {"const": "rm"}},
+            },
         ],
     },
     "agent_goal": {
@@ -946,7 +1029,7 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                     "op": {"const": "register"},
                     "authorityKind": {
                         "type": "string",
-                        "enum": ["session_plan", "session_goal", "room_work_item"],
+                        "enum": ["session_goal", "room_work_item"],
                     },
                     "authorityId": {"type": "string", "minLength": 1, "maxLength": 240},
                     "authorityRevision": {"type": "integer", "minimum": 0},
@@ -1079,7 +1162,7 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
         "properties": {
             "authorityKind": {
                 "type": "string",
-                "enum": ["session_plan", "session_goal", "room_work_item"],
+                "enum": ["session_goal", "room_work_item"],
             },
             "authorityId": {"type": "string", "minLength": 1, "maxLength": 240},
             "authorityRevision": {"type": "integer", "minimum": 0},
@@ -1248,7 +1331,7 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "targetRoleId": {"type": "string", "maxLength": 120},
     "targetRoleVersion": {"type": "string", "maxLength": 40},
     "planningTaskId": {"type": "string", "maxLength": 240},
-    "planItemId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "todoTask": {"type": "string", "minLength": 1, "maxLength": 240},
     "wakeAtMs": {"type": "integer", "minimum": 1},
     "timezone": {"type": "string", "maxLength": 80},
     "recurrenceKind": {"type": "string", "enum": ["once", "daily", "weekly"]},
@@ -1261,6 +1344,15 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     },
     "version": {"type": "string", "enum": ["1"]},
     "task": {"type": "string", "minLength": 1, "maxLength": 8_000},
+    "expectedOutput": {"type": "string", "minLength": 1, "maxLength": 2_000},
+    "acceptanceCriteria": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "uniqueItems": True,
+        "items": {"type": "string", "minLength": 1, "maxLength": 1_000},
+    },
+    "outputSchema": {"type": "object"},
     "tasks": {
         "type": "array",
         "minItems": 1,
@@ -1269,7 +1361,7 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
         "items": {
             "type": "object",
             "additionalProperties": False,
-            "required": ["agent", "task"],
+            "required": ["agent", "task", "expectedOutput", "acceptanceCriteria"],
             "properties": {
                 "agent": {
                     "type": "string",
@@ -1277,6 +1369,23 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
                 },
                 "version": {"type": "string", "enum": ["1"]},
                 "task": {"type": "string", "minLength": 1, "maxLength": 8_000},
+                "expectedOutput": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2_000,
+                },
+                "acceptanceCriteria": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "uniqueItems": True,
+                    "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1_000,
+                    },
+                },
+                "outputSchema": {"type": "object"},
             },
         },
     },
@@ -1425,7 +1534,8 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
     "models": ("slot", "provider", "endpoint", "model", "sourceApprovalId"),
     "configuration": ("query", "limit", "action", "sourceApprovalId"),
     "agents": (
-        "agent", "version", "task", "tasks", "planItemId", "contextMode", "wait",
+        "agent", "version", "task", "tasks", "expectedOutput",
+        "acceptanceCriteria", "outputSchema", "todoTask", "contextMode", "wait",
         "runId", "batchId", "artifactId", "limit",
     ),
     "plugins": ("draftId", "manifest", "files", "sourcePath", "validationToken", "enable"),
@@ -1530,7 +1640,10 @@ _RUNTIME_TOOL_REQUIRED_ALTERNATIVES: dict[
 ] = {
     ("models", "profile_preview"): (("provider",), ("endpoint",), ("model",)),
     ("models", "profile_apply"): (("provider",), ("endpoint",), ("model",)),
-    ("agents", "delegate"): (("tasks",), ("agent", "task")),
+    ("agents", "delegate"): (
+        ("tasks",),
+        ("agent", "task", "expectedOutput", "acceptanceCriteria"),
+    ),
     ("agents", "abort"): (("runId",), ("batchId",)),
     ("agent_role_book", "review"): (("revisionId",), ("draftId",)),
     ("memory", "get"): (("targetId",), ("draftId",)),
@@ -1724,6 +1837,12 @@ class ControlToolGateway:
         )
 
     def runtime_manifests(self, session: Mapping[str, object]) -> list[Mapping[str, object]]:
+        # The runtime callback may retain a Prompt-time Session mapping. Reload
+        # the durable policy immediately before disclosure so a Room workspace
+        # lease cannot be widened by a stale workspace-managed grant.
+        session_id = str(session.get("id") or "").strip()
+        if session_id:
+            session = self.sessions.get(session_id)
         manifest_items = self._manifest_items(session)
         capability_catalog = build_capability_catalog(
             tool_manifests=manifest_items,
@@ -1762,6 +1881,11 @@ class ControlToolGateway:
                 "output": spec["output"],
                 "does": spec["does"],
                 "risk": manifest.get("riskLevel") or "R0",
+                **(
+                    {"alwaysAvailable": True}
+                    if manifest.get("alwaysAvailable") is True
+                    else {}
+                ),
             }
             if spec.get("modelVisible") is False:
                 item["modelVisible"] = False
@@ -1815,6 +1939,19 @@ class ControlToolGateway:
             }
             validate_contract(manifest, "control-tool-manifest.v1.json")
             if session is not None:
+                fixed_todo = _fixed_todo_for_session(
+                    session,
+                    tool_id=str(spec["id"]),
+                )
+                authorization_session = (
+                    {
+                        **session,
+                        "toolAllowlistMode": "profile",
+                        "allowedTools": [],
+                    }
+                    if fixed_todo
+                    else session
+                )
                 mode_compatible = str(session.get("mode") or "assistant") in manifest["sessionModes"]
                 manifest["profileOperations"] = {
                     profile: [
@@ -1843,7 +1980,7 @@ class ControlToolGateway:
                     for operation in operations
                     if mode_compatible
                     and _tool_profile_allows(
-                        session,
+                        authorization_session,
                         tool=str(spec["id"]),
                         operation=operation,
                         spec=spec,
@@ -1854,9 +1991,16 @@ class ControlToolGateway:
                 manifest["enabled"] = bool(effective_operations)
                 manifest["effectiveOperations"] = effective_operations
                 manifest["explicitlyAllowed"] = (
-                    str(session.get("toolAllowlistMode") or "profile") != "explicit"
-                    or str(spec["id"]) in {str(value) for value in session.get("allowedTools") or []}
+                    True
+                    if fixed_todo
+                    else (
+                        str(session.get("toolAllowlistMode") or "profile") != "explicit"
+                        or str(spec["id"])
+                        in {str(value) for value in session.get("allowedTools") or []}
+                    )
                 )
+                if fixed_todo and manifest["enabled"] is True:
+                    manifest["alwaysAvailable"] = True
                 if (
                     include_runtime_projection
                     and str(spec["id"]) == "workspace_lsp"
@@ -1881,7 +2025,9 @@ class ControlToolGateway:
         args = _normalize_runtime_tool_args(tool, raw_args)
         if tool in {
             "room_state",
+            "room_define",
             "room_collaborate",
+            "room_integrate",
             "room_post",
             "room_commit",
         }:
@@ -1906,6 +2052,13 @@ class ControlToolGateway:
         operation = str(args.get("op") or "")
         if operation not in spec["operations"]:
             raise ValueError(f"unsupported {tool} operation")
+        if read_only_policy_active(session) and read_only_blocks_effect(
+            tool,
+            operation,
+        ):
+            raise ValueError(
+                "workspace mutation is blocked by the active read-only policy"
+            )
 
         room_authorization = self._authorize_room_product_tool(
             session_id=session_id,
@@ -1999,6 +2152,17 @@ class ControlToolGateway:
         room_authorization: Mapping[str, object] | None,
     ) -> dict[str, object]:
         session_id = str(session["id"])
+        # Re-read immediately before authorization/approval so a waiting Room
+        # Dispatch cannot apply a mutation after its workspace lease becomes
+        # read-only.
+        session = self.sessions.get(session_id)
+        if read_only_policy_active(session) and read_only_blocks_effect(
+            tool,
+            operation,
+        ):
+            raise ValueError(
+                "workspace mutation is blocked by the active read-only policy"
+            )
         if not _tool_profile_allows(session, tool=tool, operation=operation, spec=spec):
             raise ValueError("tool operation is not enabled for this session tool profile")
         if (tool, operation) in {
@@ -2030,7 +2194,7 @@ class ControlToolGateway:
             "configuration": self._configuration,
             "agents": self._agents,
             "browser": self._browser,
-            "agent_plan": self._agent_plan,
+            "todo": self._todo,
             "agent_goal": self._agent_goal,
             "plugins": self._plugins,
             "work_documents": self._work_documents,
@@ -2081,6 +2245,8 @@ class ControlToolGateway:
                 session,
                 tool=tool,
                 operation=operation,
+                preview=args,
+                risk_level=risk_level,
             )
             if strategy == APPROVAL_DENY:
                 # A denied operation must not leave a pending approval behind.
@@ -2102,10 +2268,23 @@ class ControlToolGateway:
                     _room_invocation_receipt_id(room_authorization)
                 ),
                 room_root_id=_room_invocation_root_id(room_authorization),
+                room_lineage=_room_invocation_lineage(room_authorization),
             )
+            approval = (
+                result.get("approval")
+                if isinstance(result.get("approval"), Mapping)
+                else None
+            )
+            if approval is None:
+                raise ValueError("approval preparation returned no approval")
+            result = dict(result)
+            result["approval"] = self.sessions.bind_approval_tool_call(
+                str(approval.get("approvalId") or ""),
+                tool_call_id=str(request["toolCallId"]),
+            )
+            approval = result["approval"]
             if strategy in {APPROVAL_AUTO, APPROVAL_MODEL}:
-                approval = result.get("approval") if isinstance(result.get("approval"), Mapping) else None
-                if approval is None or self._auto_approval_executor is None:
+                if self._auto_approval_executor is None:
                     raise ValueError("unattended approval bridge is unavailable")
                 result = dict(self._auto_approval_executor(approval))
         response = {
@@ -2354,6 +2533,7 @@ class ControlToolGateway:
         operation: str,
         invocation_receipt_id: str,
         root_id: str,
+        room_lineage: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         if not invocation_receipt_id:
             return dict(prepared)
@@ -2388,6 +2568,12 @@ class ControlToolGateway:
         rebound_base_state = {
             **base_state,
             "roomInvocationReceiptId": invocation_receipt_id,
+            **(
+                {"roomLineage": dict(room_lineage)}
+                if isinstance(room_lineage, Mapping)
+                and room_lineage.get("rootId")
+                else {}
+            ),
         }
         rebound_preview = {
             **preview,
@@ -2561,80 +2747,70 @@ class ControlToolGateway:
             return dict(self.delegation.abort(session_id, args))  # type: ignore[attr-defined]
         raise ValueError("unsupported agents operation")
 
-    def _agent_plan(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+    def _todo(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         session_id = _bounded_text(args.get("_sessionId"), maximum=240)
         if not session_id:
-            raise ValueError("agent plan session is missing")
-        if operation == "list":
-            plan = self.sessions.agent_plan(
-                session_id,
-                limit=_bounded_int(args.get("limit"), default=100, minimum=1, maximum=100),
+            raise ValueError("Todo session is missing")
+        mutation: dict[str, object] = {"op": operation}
+        for key in ("list", "items", "phase", "task", "reason"):
+            if key in args:
+                mutation[key] = args[key]
+        result = self.sessions.mutate_agent_todo(
+            session_id,
+            mutation,
+            actor="agent-runtime",
+        )
+        todo = (
+            dict(result["todo"])
+            if isinstance(result.get("todo"), Mapping)
+            else self.sessions.agent_todo(session_id)
+        )
+        if operation != "view":
+            self._publish_workflow(session_id, f"todo:{operation}")
+            if self.work_documents is not None:
+                try:
+                    self.work_documents.observe_authority(  # type: ignore[attr-defined,union-attr]
+                        "session_todo",
+                        session_id,
+                    )
+                except Exception:
+                    # The observer persists its own retry record. The Todo
+                    # mutation is already durable and must not be replayed.
+                    pass
+        counts = todo.get("counts") if isinstance(todo.get("counts"), Mapping) else {}
+        total = _safe_int(counts.get("total"))
+        if total == 0:
+            summary = (
+                "Todo list is empty."
+                if operation == "view"
+                else "Todo list cleared."
             )
-            counts = plan["counts"] if isinstance(plan.get("counts"), Mapping) else {}
-            return {
-                "summary": (
-                    f"当前计划有 {_safe_int(counts.get('pending'))} 项待办、"
-                    f"{_safe_int(counts.get('inProgress'))} 项进行中、"
-                    f"{_safe_int(counts.get('completed'))} 项已完成"
-                ),
-                "presentationKind": "task_plan",
-                "plan": plan,
-                "items": list(plan.get("items") or []),
-            }
-        if operation == "update":
-            result = self.sessions.update_agent_plan_item(
-                session_id,
-                item_id=_bounded_text(args.get("itemId"), maximum=160),
-                title=_bounded_text(args.get("title"), maximum=240),
-                status=_bounded_text(args.get("status"), maximum=40),
+        else:
+            summary = (
+                f"Todo：{_safe_int(counts.get('completed'))}/{total} 已完成，"
+                f"{_safe_int(counts.get('inProgress'))} 进行中，"
+                f"{_safe_int(counts.get('pending'))} 待处理，"
+                f"{_safe_int(counts.get('blocked'))} 已阻塞，"
+                f"{_safe_int(counts.get('abandoned'))} 已放弃"
             )
-            event = result["event"] if isinstance(result.get("event"), Mapping) else {}
-            plan = result["plan"] if isinstance(result.get("plan"), Mapping) else {}
-            self._publish_workflow(session_id, "plan:item_update")
-            return {
-                "summary": f"计划项《{event.get('title', '')}》已更新为 {event.get('status', '')}",
-                "presentationKind": "task_plan",
-                "event": event,
-                "plan": plan,
-                "items": list(plan.get("items") or []),
-            }
-        if operation in {"submit_review", "complete", "cancel"}:
-            action = {
-                "submit_review": "submit_review",
-                "complete": "complete",
-                "cancel": "cancel",
-            }[operation]
-            result = self.sessions.mutate_agent_plan(
-                session_id,
-                {
-                    "action": action,
-                    "note": _bounded_text(args.get("note"), maximum=600),
-                },
-                actor="agent-runtime",
-            )
-            plan = result["plan"] if isinstance(result.get("plan"), Mapping) else {}
-            self._publish_workflow(session_id, f"plan:{action}")
-            summary = f"执行计划已进入 {plan.get('status', '')} 状态"
-            if operation == "submit_review":
-                summary = (
-                    "执行计划已提交审阅；可继续处理用户已明确要求的工作区内操作，"
-                    "具体动作仍服从原有风险与审批策略。"
-                )
-            return {
-                "summary": summary,
-                "presentationKind": "task_plan",
-                "plan": plan,
-                "items": list(plan.get("items") or []),
-                **(
-                    {
-                        "mutationAllowed": True,
-                        "nextAction": "continue_in_scope_execution",
-                    }
-                    if operation == "submit_review"
-                    else {}
-                ),
-            }
-        raise ValueError("unsupported agent_plan operation")
+        completed_tasks = [
+            dict(item)
+            for item in result.get("completedTasks", [])
+            if isinstance(item, Mapping)
+        ]
+        return {
+            "summary": summary,
+            "presentationKind": "todo",
+            "todo": todo,
+            "phases": list(todo.get("phases") or []),
+            "storage": str(result.get("storage") or "session"),
+            "completedTasks": completed_tasks,
+            **(
+                {"event": dict(result["event"])}
+                if isinstance(result.get("event"), Mapping)
+                else {}
+            ),
+        }
 
     def _agent_goal(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         session_id = _bounded_text(args.get("_sessionId"), maximum=240)
@@ -2829,6 +3005,14 @@ class ControlToolGateway:
         tool = str(approval.get("toolId") or "")
         operation = str(approval.get("operation") or "")
         session_id = str(approval.get("sessionId") or "")
+        live_session = self.sessions.get(session_id)
+        if read_only_policy_active(live_session) and read_only_blocks_effect(
+            tool,
+            operation,
+        ):
+            raise ValueError(
+                "workspace mutation is blocked by the active read-only policy"
+            )
         room_invocation_receipt_id = _approval_room_invocation_receipt_id(
             approval
         )
@@ -2861,37 +3045,19 @@ class ControlToolGateway:
         tool = str(approval.get("toolId") or "")
         operation = str(approval.get("operation") or "")
         if (tool, operation) == ("workspace_job", "start"):
-            result = self._apply_background_job_start(approval)
-            self._mark_workspace_execution_started(approval)
-            return result
+            return self._apply_background_job_start(approval)
         if (tool, operation) == ("workspace_job", "cancel"):
             return self._apply_background_job_cancel(approval)
         if (tool, operation) == ("workspace_shell", "run"):
-            result = self._apply_workspace_command(approval)
-            if (
-                result.get("mutationApplied") is True
-                and _safe_int(result.get("exitCode")) == 0
-                and result.get("timedOut") is not True
-                and result.get("outputLimited") is not True
-            ):
-                self._mark_workspace_execution_started(approval)
-            return result
+            return self._apply_workspace_command(approval)
         if (tool, operation) == ("workspace_patch", "apply"):
-            result = self._apply_workspace_patch(approval)
-            self._mark_workspace_execution_started(approval)
-            return result
+            return self._apply_workspace_patch(approval)
         if (tool, operation) == ("workspace_edit", "apply"):
-            result = self._apply_workspace_edit(approval)
-            self._mark_workspace_execution_started(approval)
-            return result
+            return self._apply_workspace_edit(approval)
         if (tool, operation) == ("workspace_write", "apply"):
-            result = self._apply_workspace_write(approval)
-            self._mark_workspace_execution_started(approval)
-            return result
+            return self._apply_workspace_write(approval)
         if tool == "workspace_lsp" and operation in {"rename", "code_action_apply"}:
-            result = self._apply_workspace_lsp(approval)
-            self._mark_workspace_execution_started(approval)
-            return result
+            return self._apply_workspace_lsp(approval)
         if (tool, operation) == ("desktop_semantic", "act"):
             return self._apply_desktop_action(approval)
         if (tool, operation) == ("planning", "undo_task_event"):
@@ -2985,15 +3151,6 @@ class ControlToolGateway:
             audit_persisted=True,
         )
 
-    def _mark_workspace_execution_started(self, approval: Mapping[str, object]) -> None:
-        """Advance Plan only after the hash-bound workspace write succeeds."""
-
-        session_id = str(approval.get("sessionId") or "")
-        before = self.sessions.agent_plan(session_id)
-        if before.get("status") != "approved":
-            return
-        self.sessions.record_agent_plan_execution_started(session_id)
-        self._publish_workflow(session_id, "plan:start_execution")
 
     def _prepare_browser_action(
         self,
@@ -3165,6 +3322,7 @@ class ControlToolGateway:
         risk_level: str,
         room_invocation_receipt_id: str = "",
         room_root_id: str = "",
+        room_lineage: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         prepared = self._prepare_approval_operation(
             session_id=session_id,
@@ -3180,6 +3338,7 @@ class ControlToolGateway:
             operation=operation,
             invocation_receipt_id=room_invocation_receipt_id,
             root_id=room_root_id,
+            room_lineage=room_lineage,
         )
 
     def _prepare_approval_operation(
@@ -5476,16 +5635,28 @@ class ControlToolGateway:
         )
         if prepared.roots_digest != str(base_state.get("workspaceRootsSha256") or ""):
             raise ValueError("authorized workspace changed after approval preview")
+        causal_metadata = (
+            dict(approval.get("causalMetadata"))
+            if isinstance(approval.get("causalMetadata"), Mapping)
+            else {}
+        )
+        lineage = base_state.get("roomLineage")
+        if isinstance(lineage, Mapping):
+            causal_metadata.update(
+                {
+                    "roomId": lineage.get("roomId"),
+                    "rootId": lineage.get("rootId"),
+                    "generation": lineage.get("generation"),
+                    "taskId": lineage.get("taskId"),
+                    "dispatchId": lineage.get("dispatchId"),
+                }
+            )
         receipt = self._background_job_service().start(
             session_id,
             prepared,
             label=action_payload.get("label"),
             approval_id=str(approval.get("approvalId") or ""),
-            causal_metadata=(
-                approval.get("causalMetadata")
-                if isinstance(approval.get("causalMetadata"), Mapping)
-                else None
-            ),
+            causal_metadata=causal_metadata,
         )
         return {
             **receipt,
@@ -5893,7 +6064,7 @@ class ControlToolGateway:
             authority_kind = str(work_document.get("authorityKind") or "")
             authority_id = str(work_document.get("authorityId") or "")
             if (
-                authority_kind in {"session_plan", "session_goal"}
+                authority_kind == "session_goal"
                 and authority_id != session_id
             ):
                 raise ValueError(
@@ -7771,6 +7942,31 @@ def _room_invocation_root_id(
     return _bounded_text(command.get("rootId"), maximum=240)
 
 
+def _room_invocation_lineage(
+    authorization: Mapping[str, object] | None,
+) -> dict[str, object]:
+    if not isinstance(authorization, Mapping):
+        return {}
+    invocation = authorization.get("invocationReceipt")
+    if not isinstance(invocation, Mapping):
+        return {}
+    command = invocation.get("canonicalCommand")
+    if not isinstance(command, Mapping):
+        return {}
+    root_id = _bounded_text(command.get("rootId"), maximum=240)
+    if not root_id:
+        return {}
+    return {
+        "roomId": _bounded_text(command.get("roomId"), maximum=240),
+        "rootId": root_id,
+        "generation": _bounded_int(
+            command.get("generation"), default=0, minimum=0, maximum=2_147_483_647
+        ),
+        "taskId": _bounded_text(command.get("taskId"), maximum=240),
+        "dispatchId": _bounded_text(command.get("dispatchId"), maximum=240),
+    }
+
+
 def _auto_approved_room_execution_receipt(
     response: Mapping[str, object],
 ) -> dict[str, object] | None:
@@ -7941,6 +8137,20 @@ def _secret_key(key: str) -> bool:
     )
 
 
+def _fixed_todo_for_session(
+    session: Mapping[str, object],
+    *,
+    tool_id: str,
+) -> bool:
+    return (
+        tool_id == "todo"
+        and str(session.get("sessionKind") or "conversation") == "conversation"
+        and str(session.get("toolProfileVersion") or CONTROL_CENTER_TOOL_PROFILE)
+        == CONTROL_CENTER_TOOL_PROFILE
+        and str(session.get("mode") or "assistant") in {"assistant", "coordinator"}
+    )
+
+
 def _tool_profile_allows(
     session: Mapping[str, object],
     *,
@@ -7954,6 +8164,8 @@ def _tool_profile_allows(
     ):
         return False
     profile = str(session.get("toolProfileVersion") or "control-center-v1")
+    if read_only_policy_active(session) and read_only_blocks_effect(tool, operation):
+        return False
     if profile in {"control-center-v1", "subagent-worker-v1"}:
         return True
     if profile != "subagent-readonly-v1":
@@ -7990,7 +8202,9 @@ def _tool_profile_allows(
             }
         ),
         "agent_schedule": frozenset({"list", "runs"}),
-        "agent_plan": frozenset({"list"}),
+        "todo": frozenset(
+            {"init", "start", "done", "drop", "append", "view", "rm"}
+        ),
         "agent_goal": frozenset({"list"}),
         "work_documents": frozenset({"list", "history.search", "get"}),
         "workspace_list": frozenset({"list"}),
@@ -8057,8 +8271,8 @@ def _runtime_memory_tool_parameter_schema(
                 "minLength": 1,
                 "maxLength": 800,
                 "description": (
-                    "一条脱离当前对话仍可独立理解、未来仍可能有用的陈述；"
-                    "不要复制大段原文。"
+                    "只陈述一条由当前用户原话支持、脱离当前对话仍可独立理解且会改变未来协作的"
+                    "稳定偏好、个人事实、长期决定、纠正或原则；不得记录任务执行与会话状态。"
                 ),
             },
             "sourceId": {
@@ -8073,7 +8287,8 @@ def _runtime_memory_tool_parameter_schema(
                 "type": "string",
                 "enum": ["user", "project"],
                 "description": (
-                    "跨项目适用的用户信息选 user；只属于当前项目的事实与约束选 project。"
+                    "跨项目适用的用户偏好、个人事实或原则选 user；"
+                    "用户明确声明的长期项目约束或决定选 project。"
                 ),
             },
             "basis": {
@@ -8086,11 +8301,11 @@ def _runtime_memory_tool_parameter_schema(
                     "verified_outcome",
                 ],
                 "description": (
-                    "explicit_user_request=用户要求记住；"
+                    "explicit_user_request=用户明确要求记住；"
                     "explicit_user_statement=用户明确陈述；"
-                    "user_correction=用户纠正；"
-                    "repeated_user_signal=当前可见上下文至少两条独立用户证据；"
-                    "verified_outcome=工具或运行结果已验证。"
+                    "user_correction=用户纠正已有记忆；"
+                    "repeated_user_signal=当前可见上下文至少两条独立用户表达；"
+                    "verified_outcome=已应用工具回执或运行结果提供可核验依据。"
                 ),
             },
             "futureUse": {
@@ -8098,7 +8313,8 @@ def _runtime_memory_tool_parameter_schema(
                 "minLength": 1,
                 "maxLength": 300,
                 "description": (
-                    "说明未来 Session 在什么情形下应怎样使用该候选，不要复述 claim。"
+                    "说明未来 Session 在什么情形下应怎样使用该候选；"
+                    "若只影响当前任务或当前会话，就不应调用 capture。"
                 ),
             },
             "supersedes": {
@@ -8141,7 +8357,9 @@ def _runtime_memory_tool_parameter_schema(
                         "pitfall",
                     ],
                     "description": (
-                        "只选 preference、fact、decision、correction 或 pitfall。"
+                        "preference=稳定偏好；fact=用户明确陈述的个人事实；"
+                        "decision=跨 Session 持续的决定或约束；correction=用户纠正；"
+                        "pitfall=用户明确表达的长期原则或边界。"
                     ),
                 },
                 "captureScope": {
@@ -8212,6 +8430,10 @@ def _runtime_tool_parameter_schema(
         return _runtime_memory_tool_parameter_schema(normalized_operations)
     configured = _RUNTIME_TOOL_PARAMETER_SCHEMAS.get(tool_id)
     if configured is not None:
+        # Runtime manifests are public projections.  Never expose the module-level
+        # schema objects themselves: callers and tests may normalize the returned
+        # payload in place, and one mutation must not corrupt later Sessions.
+        configured = copy.deepcopy(configured)
         allowed = {str(operation) for operation in operations}
         branches = configured.get("oneOf")
         if isinstance(branches, list):

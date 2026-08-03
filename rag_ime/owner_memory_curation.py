@@ -17,6 +17,7 @@ from .db import apply_database_migrations
 from .embeddings import EmbeddingProvider
 from .hybrid_rag_models import HybridRagQuery
 from .hybrid_rag_retriever import retrieve_hybrid_rag_memory_hit_objects
+from .input_quality import FINALIZED_INPUT_SOURCE, assess_input_text
 from .memory_book_compiler import (
     apply_stored_memory_book_run,
     collapse_rime_fragment_run,
@@ -26,8 +27,16 @@ from .memory_book_compiler import (
     store_memory_book_plan,
 )
 from .memory_evidence_ledger import backfill_input_event_evidence
+from .memory_evidence_admission import (
+    PERSONAL_EVIDENCE_ORIGINS,
+    admitted_personal_evidence_sql,
+    curatable_personal_evidence_sql,
+    rollback_evidence_admissions_for_run,
+    transition_evidence_admission,
+)
 from .memory_evidence_policy import memory_evidence_exclusion_reason
 from .memory_ingest import normalize_text
+from .memory_curation import MEMORY_CURATION_ARCHITECTURE
 from .memory_purpose import personal_current_state_profile, purpose_audit_fields
 from .personal_context import (
     load_activity_timeline_context,
@@ -43,11 +52,14 @@ OWNER_CURATION_RUN_SCHEMA_VERSION = "rag-ime.owner-memory-curation-run.v1"
 DEFAULT_DAILY_INTERVAL_MS = 24 * 60 * 60 * 1000
 DEFAULT_INITIAL_SETTLE_MS = 20 * 60 * 1000
 DEFAULT_RUNNING_LEASE_MS = 60 * 60 * 1000
-MIN_DURABLE_CONTEXT_SPAN_MS = 30 * 60 * 1000
-DEFAULT_MAX_SOURCES = 64
+DEFAULT_MAX_SOURCES = 1_000
+MAX_PERSONAL_V2_SOURCES = 1_500
+MAX_PERSONAL_V2_INPUT_TOKENS = 200_000
+MAX_PERSONAL_V2_WINDOW_MS = 12 * 60 * 60 * 1_000
 MAX_EXTERNAL_MODEL_INPUTS_PER_RUN = 8
 MAX_OWNER_MODEL_INPUTS_PER_RUN = 6
 MAX_OWNER_MEMORY_ATOMS_PER_RUN = 6
+MAX_ATOM_FIRST_TOPIC_BOOKS_PER_RUN = 8
 MAX_EXISTING_MEMORY_RECALL_PROBES = 20
 MAX_RECALLED_EXISTING_ATOMS = 20
 MAX_RECALLED_EXISTING_BOOKS = 8
@@ -125,13 +137,26 @@ _DERIVED_PROTOCOL_NOISE_RE = re.compile(
 )
 _DURABLE_ATOM_KINDS = frozenset(
     {
+        "personal_fact",
+        "personal_habit",
+        "durable_preference",
+        "personal_principle",
+        # Existing reviewed catalogs retain these legacy kinds so corrections
+        # and rollback remain possible. The active model boundary accepts only
+        # the four personal-memory kinds above.
         "project_fact",
         "project_requirement",
-        "durable_preference",
         "project_decision",
-        "project_plan",
         "security_constraint",
         "project_constraint",
+    }
+)
+_PERSONAL_ATOM_KINDS = frozenset(
+    {
+        "personal_fact",
+        "personal_habit",
+        "durable_preference",
+        "personal_principle",
     }
 )
 _GENERIC_OWNER_BOOK_TITLE_RE = re.compile(
@@ -155,7 +180,7 @@ class OwnerMemoryOrganizer(Protocol):
 
 
 class OwnerMemoryCurator:
-    """Daily owner-scoped curation over final user text, receipts and compactions."""
+    """Compile only user-grounded durable-memory candidates and explicit imports."""
 
     def __init__(
         self,
@@ -171,6 +196,7 @@ class OwnerMemoryCurator:
         auto_apply: bool = False,
         include_agent_dialogue: bool = True,
         embedding_provider: EmbeddingProvider | None = None,
+        personal_window_ms: int = MAX_PERSONAL_V2_WINDOW_MS,
     ) -> None:
         self.db_path = Path(db_path)
         self.organizer = organizer
@@ -182,10 +208,33 @@ class OwnerMemoryCurator:
         self.auto_apply = bool(auto_apply)
         self.include_agent_dialogue = bool(include_agent_dialogue)
         self.embedding_provider = embedding_provider
-        # The provider projection has a hard 64-input contract. Rime commits
-        # are coalesced before this limit is applied, so this is a logical
-        # utterance cap rather than a low-level event cap.
-        self.max_sources = max(1, min(int(max_sources), 64))
+        self.personal_window_ms = max(
+            60_000,
+            min(24 * 60 * 60 * 1_000, int(personal_window_ms)),
+        )
+        self.curation_protocol_version = compact_whitespace(
+            str(getattr(organizer, "curation_protocol_version", ""))
+        )
+        self.atom_first = (
+            self.curation_protocol_version == MEMORY_CURATION_ARCHITECTURE
+        )
+        # ``personal_v2`` remains the compatibility flag for the canonical
+        # Evidence ledger, large frozen batches, resumable model receipts and
+        # rollback. Atom-first replaces the old personal-only classifier but
+        # must retain those governance guarantees.
+        self.personal_v2 = self.curation_protocol_version in {
+            "personal-v2",
+            MEMORY_CURATION_ARCHITECTURE,
+        }
+        # Legacy organizers retain their 64-input contract. The governed Luna
+        # path uses continuity-sized batches and a separate token hard gate.
+        self.max_sources = max(
+            1,
+            min(
+                int(max_sources),
+                MAX_PERSONAL_V2_SOURCES if self.personal_v2 else 64,
+            ),
+        )
         self.sources = AgentMemorySourceStore(self.db_path, project=self.project)
 
     def initialize(self) -> None:
@@ -203,6 +252,18 @@ class OwnerMemoryCurator:
         current_ms: int | None = None,
     ) -> dict[str, object]:
         timestamp = self.clock_ms() if current_ms is None else max(0, int(current_ms))
+        if self.personal_v2:
+            requested_kind = compact_whitespace(owner_kind)
+            requested_id = compact_whitespace(owner_id)
+            if requested_kind not in {"", "user"} or requested_id not in {
+                "",
+                "default",
+            }:
+                raise ValueError(
+                    "canonical Evidence curation only accepts the global user/default owner"
+                )
+            owner_kind = "user"
+            owner_id = "default"
         with self._connect() as conn:
             return owner_memory_curation_status(
                 conn,
@@ -214,6 +275,8 @@ class OwnerMemoryCurator:
                 owner_kind=owner_kind,
                 owner_id=owner_id,
                 auto_apply=self.auto_apply,
+                include_agent_dialogue=self.include_agent_dialogue,
+                canonical_personal=self.personal_v2,
             )
 
     def run_due(
@@ -288,6 +351,9 @@ class OwnerMemoryCurator:
             }
 
         run_id = _owner_run_id(owner[0], owner[1], current_ms)
+        model_run_started = False
+        personal_evidence_applied = False
+        stored_plan = False
         try:
             with self._connect() as conn:
                 bundle = _build_owner_source_bundle(
@@ -299,6 +365,8 @@ class OwnerMemoryCurator:
                     include_agent_dialogue=self.include_agent_dialogue,
                     embedding_provider=self.embedding_provider,
                     include_existing_memory=False,
+                    canonical_personal=self.personal_v2,
+                    personal_window_ms=self.personal_window_ms,
                 )
             inputs = [
                 dict(item)
@@ -323,9 +391,30 @@ class OwnerMemoryCurator:
                     "reason": "no_sources",
                 }
 
-            boundary = (
+            cursor_boundary = (
+                int(
+                    dict(bundle.get("cursor") or {}).get(
+                        "fromSourceCreatedAtMs"
+                    )
+                    or 0
+                ),
+                str(
+                    dict(bundle.get("cursor") or {}).get("fromSourceId")
+                    or ""
+                ),
+            )
+            input_boundary = (
                 int(inputs[-1]["createdAtMs"]),
                 str(inputs[-1]["sourceId"]),
+            )
+            # Capture-v2 outbox replay can insert a finalized input after the
+            # daily cursor has passed its event-time position. Personal Memory
+            # explicitly rescans unresolved Evidence below, so keep the main
+            # watermark monotonic instead of replaying already-adjudicated rows.
+            boundary = (
+                max(cursor_boundary, input_boundary)
+                if self.personal_v2
+                else input_boundary
             )
             deterministic: list[dict[str, object]] = []
             model_inputs: list[dict[str, object]] = []
@@ -345,28 +434,83 @@ class OwnerMemoryCurator:
                 rule = (
                     "duplicate_repeated_input"
                     if duplicate
-                    else _deterministic_disposition(item)
+                    else (
+                        _deterministic_personal_v2_disposition(item)
+                        if self.personal_v2
+                        else _deterministic_disposition(item)
+                    )
                 )
+                evidence_ids = _input_evidence_ids(item)
+                evidence_state = compact_whitespace(
+                    str(item.get("evidenceAdmissionState") or "")
+                ).lower()
+                if self.personal_v2 and rule is not None and evidence_state == "admitted":
+                    # A deterministic noise/duplicate rule may keep fresh
+                    # candidates away from Luna, but it cannot silently demote
+                    # Evidence that a previous governed run or the user already
+                    # admitted. Preserve the canonical state and move on.
+                    source_ids = _input_source_ids(item)
+                    deterministic.append(
+                        {
+                            "sourceRef": item["sourceRef"],
+                            "sourceId": item["sourceId"],
+                            "sourceIds": source_ids,
+                            "evidenceId": evidence_ids[0] if len(evidence_ids) == 1 else "",
+                            "evidenceIds": evidence_ids,
+                            "evidenceAdmissionState": "admitted",
+                            "disposition": "remember",
+                            "reasonCode": "already_admitted_evidence",
+                            "changed": False,
+                        }
+                    )
+                    continue
                 if rule is None:
                     model_inputs.append(item)
                     continue
                 source_ids = _input_source_ids(item)
-                transitions = [
-                    self.sources.set_disposition(
-                        source_id,
-                        disposition="not_for_memory",
-                        reason_code=rule,
-                        actor_kind="rule",
-                        run_id=run_id,
-                        created_at_ms=current_ms,
-                    )
-                    for source_id in source_ids
-                ]
+                if self.personal_v2 and evidence_ids:
+                    with self._connect() as conn:
+                        transitions = [
+                            transition_evidence_admission(
+                                conn,
+                                evidence_id,
+                                new_state="rejected",
+                                reason_code=rule,
+                                actor_kind="rule",
+                                run_id=run_id,
+                                created_at_ms=current_ms,
+                                metadata={
+                                    "protocol": "personal-v2",
+                                    "sourceRef": str(item["sourceRef"]),
+                                },
+                            )
+                            for evidence_id in evidence_ids
+                        ]
+                else:
+                    # Malformed or ambiguous canonical identity fails closed at
+                    # the compatibility source ledger; there is no Evidence row
+                    # that can be mutated safely.
+                    transitions = [
+                        self.sources.set_disposition(
+                            source_id,
+                            disposition="not_for_memory",
+                            reason_code=rule,
+                            actor_kind="rule",
+                            run_id=run_id,
+                            created_at_ms=current_ms,
+                        )
+                        for source_id in source_ids
+                    ]
                 deterministic.append(
                     {
                         "sourceRef": item["sourceRef"],
                         "sourceId": item["sourceId"],
                         "sourceIds": source_ids,
+                        "evidenceId": evidence_ids[0] if len(evidence_ids) == 1 else "",
+                        "evidenceIds": evidence_ids,
+                        "evidenceAdmissionState": (
+                            "rejected" if evidence_ids else ""
+                        ),
                         "disposition": "not_for_memory",
                         "reasonCode": rule,
                         "changed": any(
@@ -376,7 +520,14 @@ class OwnerMemoryCurator:
                     }
                 )
 
-            bounded_model_inputs = _bounded_owner_model_inputs(model_inputs)
+            bounded_model_inputs = (
+                _bounded_personal_v2_model_inputs(
+                    model_inputs,
+                    window_ms=self.personal_window_ms,
+                )
+                if self.personal_v2
+                else _bounded_owner_model_inputs(model_inputs)
+            )
             deferred_model_input_count = max(
                 0,
                 len(model_inputs) - len(bounded_model_inputs),
@@ -387,9 +538,14 @@ class OwnerMemoryCurator:
                 # cursor at the last source actually presented to it. The
                 # bound accounts for clauses as well as source count because a
                 # single user input can legitimately contain several facts.
-                boundary = (
+                model_boundary = (
                     int(model_inputs[-1]["createdAtMs"]),
                     str(model_inputs[-1]["sourceId"]),
+                )
+                boundary = (
+                    max(cursor_boundary, model_boundary)
+                    if self.personal_v2
+                    else model_boundary
                 )
 
             compile_output: dict[str, object] = {}
@@ -399,14 +555,47 @@ class OwnerMemoryCurator:
             plan: dict[str, object] | None = None
             if model_inputs:
                 with self._connect() as conn:
-                    existing_memory_context = _build_existing_memory_context(
-                        conn,
-                        inputs=model_inputs,
-                        owner_kind=owner[0],
-                        owner_id=owner[1],
-                        project=self.project,
-                        embedding_provider=self.embedding_provider,
+                    existing_memory_context = (
+                        _build_atom_first_memory_context(
+                            conn,
+                            inputs=model_inputs,
+                            owner_kind=owner[0],
+                            owner_id=owner[1],
+                            project=self.project,
+                            embedding_provider=self.embedding_provider,
+                        )
+                        if self.atom_first
+                        else _build_current_personal_atom_catalog(conn)
+                        if self.personal_v2
+                        else _build_existing_memory_context(
+                            conn,
+                            inputs=model_inputs,
+                            owner_kind=owner[0],
+                            owner_id=owner[1],
+                            project=self.project,
+                            embedding_provider=self.embedding_provider,
+                        )
                     )
+                if self.personal_v2:
+                    fitted_model_inputs = _fit_personal_v2_inputs_to_catalog(
+                        model_inputs,
+                        existing_memory_context=existing_memory_context,
+                        context_only=bundle.get("contextOnly"),
+                    )
+                    if len(fitted_model_inputs) < len(model_inputs):
+                        deferred_model_input_count += (
+                            len(model_inputs) - len(fitted_model_inputs)
+                        )
+                        model_inputs = fitted_model_inputs
+                        model_boundary = (
+                            int(model_inputs[-1]["createdAtMs"]),
+                            str(model_inputs[-1]["sourceId"]),
+                        )
+                        boundary = (
+                            max(cursor_boundary, model_boundary)
+                            if self.personal_v2
+                            else model_boundary
+                        )
                 model_event_ids = [
                     event_id
                     for item in model_inputs
@@ -435,6 +624,12 @@ class OwnerMemoryCurator:
                             for item in model_inputs
                         ],
                         "legalSourceEventIds": model_event_ids,
+                        "legalEvidenceIds": [
+                            evidence_id
+                            for item in model_inputs
+                            for evidence_id in _input_evidence_ids(item)
+                        ],
+                        "curationRunId": run_id,
                         "cursor": {
                             **dict(bundle.get("cursor") or {}),
                             "toSourceCreatedAtMs": boundary[0],
@@ -444,6 +639,20 @@ class OwnerMemoryCurator:
                         },
                     }
                 )
+                begin_model_run = getattr(self.organizer, "begin_run", None)
+                if callable(begin_model_run):
+                    begin_model_run(
+                        run_id,
+                        frozen_input_sha256=hashlib.sha256(
+                            json.dumps(
+                                model_bundle,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ).encode("utf-8")
+                        ).hexdigest(),
+                    )
+                    model_run_started = True
                 compile_output = self.organizer.curate_owner_memory(
                     bundle=model_bundle,
                     project=self.project,
@@ -451,15 +660,21 @@ class OwnerMemoryCurator:
                     owner_id=owner[1],
                     instruction=instruction,
                 )
-                compile_output = _reconcile_owner_compile_claim_keys(
-                    compile_output,
-                    model_inputs=model_inputs,
-                    existing_memory_atoms=[
-                        dict(item)
-                        for item in model_bundle.get("existingMemoryAtoms") or []
-                        if isinstance(item, dict)
-                    ],
-                )
+                if self.personal_v2:
+                    compile_output = _with_personal_v2_run_identity(
+                        compile_output,
+                        run_id=run_id,
+                    )
+                if not self.personal_v2:
+                    compile_output = _reconcile_owner_compile_claim_keys(
+                        compile_output,
+                        model_inputs=model_inputs,
+                        existing_memory_atoms=[
+                            dict(item)
+                            for item in model_bundle.get("existingMemoryAtoms") or []
+                            if isinstance(item, dict)
+                        ],
+                    )
                 claim_key_reconciliations = [
                     dict(item)
                     for item in compile_output.get("claimKeyReconciliations") or []
@@ -470,16 +685,26 @@ class OwnerMemoryCurator:
                     for item in compile_output.get("memoryAtomRepairs") or []
                     if isinstance(item, dict)
                 ]
-                model_decisions = self._apply_model_decisions(
-                    compile_output,
-                    model_inputs=model_inputs,
-                    existing_memory_atoms=[
-                        dict(item)
-                        for item in model_bundle.get("existingMemoryAtoms") or []
-                        if isinstance(item, dict)
-                    ],
-                    run_id=run_id,
-                    current_ms=current_ms,
+                model_decisions = (
+                    self._apply_personal_v2_evidence_decisions(
+                        compile_output,
+                        model_inputs=model_inputs,
+                        run_id=run_id,
+                        current_ms=current_ms,
+                        apply=False,
+                    )
+                    if self.personal_v2
+                    else self._apply_model_decisions(
+                        compile_output,
+                        model_inputs=model_inputs,
+                        existing_memory_atoms=[
+                            dict(item)
+                            for item in model_bundle.get("existingMemoryAtoms") or []
+                            if isinstance(item, dict)
+                        ],
+                        run_id=run_id,
+                        current_ms=current_ms,
+                    )
                 )
                 needs_review_source_ids = [
                     source_id
@@ -488,7 +713,11 @@ class OwnerMemoryCurator:
                     for source_id in decision.get("sourceIds") or []
                     if compact_whitespace(str(source_id or ""))
                 ]
-                if needs_review_source_ids and not self.auto_apply:
+                if (
+                    needs_review_source_ids
+                    and not self.personal_v2
+                    and not self.auto_apply
+                ):
                     with self._connect() as conn:
                         boundary = _boundary_before_sources(
                             conn,
@@ -514,9 +743,9 @@ class OwnerMemoryCurator:
                 governed = _govern_owner_compile_output(
                     {
                         **compile_output,
-                        # Durable writes follow the fail-closed decisions that
-                        # were actually applied to evidence, not unchecked
-                        # organizer output.
+                        # Durable writes follow decisions validated against the
+                        # frozen canonical Evidence refs, not unchecked model
+                        # output.
                         "sourceDecisions": model_decisions,
                     },
                     bundle=model_bundle,
@@ -566,12 +795,36 @@ class OwnerMemoryCurator:
                                 sort_keys=True,
                             )[:1200]
                         )
+                if self.personal_v2 and model_run_started:
+                    finish_model_run = getattr(self.organizer, "finish_run", None)
+                    if callable(finish_model_run):
+                        finish_model_run()
+                    model_run_started = False
+                if self.personal_v2:
+                    model_decisions = self._apply_personal_v2_evidence_decisions(
+                        compile_output,
+                        model_inputs=model_inputs,
+                        run_id=run_id,
+                        current_ms=current_ms,
+                        apply=True,
+                    )
+                    personal_evidence_applied = any(
+                        bool(decision.get("changed"))
+                        for decision in model_decisions
+                    )
+                    if plan is not None:
+                        metadata = dict(plan.get("metadata") or {})
+                        metadata["sourceDecisions"] = model_decisions
+                        plan["metadata"] = metadata
+
+                if plan is not None:
                     with self._connect() as conn:
                         stored = store_memory_book_plan(
                             conn,
                             plan,
                             supersede_project_drafts=True,
                         )
+                    stored_plan = True
                     stored_run_id = str(stored.get("runId") or run_id)
                     if self.auto_apply:
                         with self._connect() as conn:
@@ -599,6 +852,17 @@ class OwnerMemoryCurator:
                             source_decisions=model_decisions,
                             created_at_ms=current_ms,
                             run_kind="manual_curation" if manual else "daily_curation",
+                            curation_metadata={
+                                "personalCurationV2": dict(
+                                    compile_output.get("personalCurationV2") or {}
+                                ),
+                                "modelDiagnostics": dict(
+                                    compile_output.get("modelDiagnostics") or {}
+                                ),
+                                "modelBundleStats": dict(
+                                    compile_output.get("modelBundleStats") or {}
+                                ),
+                            },
                         )
                     run_status = "idle"
                     stored_run_id = run_id
@@ -620,6 +884,11 @@ class OwnerMemoryCurator:
                 run_status = "idle"
                 stored_run_id = run_id
 
+            if model_run_started:
+                finish_model_run = getattr(self.organizer, "finish_run", None)
+                if callable(finish_model_run):
+                    finish_model_run()
+                model_run_started = False
             self._finish_scope(
                 owner_kind=owner[0],
                 owner_id=owner[1],
@@ -654,12 +923,35 @@ class OwnerMemoryCurator:
                 "diffCount": len(plan.get("diffs") or []) if plan is not None else 0,
             }
         except Exception as exc:
+            if model_run_started:
+                fail_model_run = getattr(self.organizer, "fail_run", None)
+                if callable(fail_model_run):
+                    try:
+                        fail_model_run(exc)
+                    except Exception:
+                        # The curation cursor still fails closed below. A
+                        # resumable model-run receipt must not be overwritten
+                        # by cleanup failure in this adapter boundary.
+                        pass
             self._fail_scope(
                 owner_kind=owner[0],
                 owner_id=owner[1],
                 error=exc,
                 current_ms=current_ms,
             )
+            if personal_evidence_applied and not stored_plan:
+                try:
+                    with self._connect() as conn:
+                        rollback_evidence_admissions_for_run(
+                            conn,
+                            run_id,
+                            created_at_ms=current_ms,
+                        )
+                except Exception:
+                    # Preserve the primary failure. The admission run remains
+                    # fully auditable and a later recovery can retry the same
+                    # guarded rollback by run id.
+                    pass
             return {
                 "ok": False,
                 "ownerKind": owner[0],
@@ -724,18 +1016,7 @@ class OwnerMemoryCurator:
                 durable_atom_event_ids.intersection(source_event_ids)
             )
             actor_kind = "model"
-            minute_scale_context_only = _minute_scale_context_only_evidence(
-                item.get("sourceEventIds"),
-                model_inputs=model_inputs,
-                legal_event_ids=legal_model_event_ids,
-            )
-            if minute_scale_context_only:
-                disposition = "not_for_memory"
-                confidence = 1.0
-                effective = "not_for_memory"
-                reason = "minute_scale_context_only"
-                actor_kind = "system"
-            elif over_capacity_atom_event_ids.intersection(source_event_ids):
+            if over_capacity_atom_event_ids.intersection(source_event_ids):
                 # Never consolidate a dense logical source after storing only
                 # a prefix of its proposed Atoms. Keep the whole source in the
                 # review lane so an operator can split or re-curate it.
@@ -859,6 +1140,120 @@ class OwnerMemoryCurator:
                     ),
                 }
             )
+        return results
+
+    def _apply_personal_v2_evidence_decisions(
+        self,
+        compile_output: Mapping[str, object],
+        *,
+        model_inputs: list[dict[str, object]],
+        run_id: str,
+        current_ms: int,
+        apply: bool = True,
+    ) -> list[dict[str, object]]:
+        inputs_by_ref = {
+            compact_whitespace(str(item.get("sourceRef") or "")): item
+            for item in model_inputs
+            if compact_whitespace(str(item.get("sourceRef") or ""))
+        }
+        raw_decisions = compile_output.get("sourceDecisions")
+        decisions = [
+            dict(item)
+            for item in raw_decisions if isinstance(item, Mapping)
+        ] if isinstance(raw_decisions, list) else []
+        decisions_by_ref: dict[str, dict[str, object]] = {}
+        for decision in decisions:
+            source_ref = compact_whitespace(str(decision.get("sourceRef") or ""))
+            if source_ref not in inputs_by_ref or source_ref in decisions_by_ref:
+                raise ValueError(
+                    "personal-v2 Evidence decisions contain an unknown or duplicate source ref"
+                )
+            decisions_by_ref[source_ref] = decision
+        if set(decisions_by_ref) != set(inputs_by_ref):
+            raise ValueError(
+                "personal-v2 Evidence decisions do not cover the frozen batch"
+            )
+
+        state_to_disposition = {
+            "admitted": "remember",
+            "rejected": "not_for_memory",
+            "needs_review": "needs_review",
+        }
+        prepared: list[dict[str, object]] = []
+        for source_ref, item in inputs_by_ref.items():
+            evidence_ids = _input_evidence_ids(item)
+            if not evidence_ids:
+                raise ValueError(
+                    "personal-v2 source does not resolve to canonical Evidence"
+                )
+            decision = decisions_by_ref[source_ref]
+            decision_evidence_ids = _input_evidence_ids(decision)
+            if decision_evidence_ids != evidence_ids:
+                raise ValueError(
+                    "personal-v2 Evidence decision changed canonical Evidence ids"
+                )
+            state = compact_whitespace(
+                str(decision.get("evidenceAdmissionState") or "")
+            ).lower()
+            disposition = compact_whitespace(
+                str(decision.get("disposition") or "")
+            ).lower()
+            if state not in state_to_disposition or state_to_disposition[state] != disposition:
+                raise ValueError(
+                    "personal-v2 Evidence decision has an inconsistent state"
+                )
+            reason = compact_whitespace(
+                str(decision.get("reasonCode") or "luna_personal_memory_review")
+            )[:160]
+            source_ids = _input_source_ids(item)
+            prepared.append(
+                {
+                    "sourceRef": source_ref,
+                    "sourceId": source_ids[-1] if source_ids else "",
+                    "sourceIds": source_ids,
+                    "evidenceId": evidence_ids[0] if len(evidence_ids) == 1 else "",
+                    "evidenceIds": evidence_ids,
+                    "disposition": disposition,
+                    "reasonCode": reason,
+                    "confidence": _bounded_float(
+                        decision.get("confidence"),
+                        default=0.0,
+                    ),
+                    "evidenceAdmissionState": state,
+                    "changed": False,
+                }
+            )
+        if not apply:
+            return prepared
+        results: list[dict[str, object]] = []
+        with self._connect() as conn:
+            for item in prepared:
+                transitions = [
+                    transition_evidence_admission(
+                        conn,
+                        str(evidence_id),
+                        new_state=str(item["evidenceAdmissionState"]),
+                        reason_code=str(item["reasonCode"]),
+                        actor_kind="luna",
+                        created_at_ms=current_ms,
+                        run_id=run_id,
+                        metadata={
+                            "protocol": "personal-v2",
+                            "sourceRef": str(item["sourceRef"]),
+                            "confidence": float(item["confidence"]),
+                        },
+                    )
+                    for evidence_id in item["evidenceIds"]
+                ]
+                results.append(
+                    {
+                        **item,
+                        "changed": any(
+                            bool(transition.get("changed"))
+                            for transition in transitions
+                        ),
+                    }
+                )
         return results
 
     def _claim_scope(
@@ -1022,7 +1417,10 @@ class OwnerMemoryCurator:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path)
+        # A completed model turn can coincide with a bounded diagnostic read or
+        # projection query.  Let that short reader finish instead of discarding
+        # the governed curation run at the audit/write boundary.
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
         try:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
@@ -1046,6 +1444,8 @@ def owner_memory_curation_status(
     owner_kind: str = "",
     owner_id: str = "",
     auto_apply: bool = False,
+    include_agent_dialogue: bool = True,
+    canonical_personal: bool = False,
 ) -> dict[str, object]:
     timestamp = int(time.time() * 1000) if current_ms is None else max(0, int(current_ms))
     scopes = _owner_scope_statuses(
@@ -1057,6 +1457,7 @@ def owner_memory_curation_status(
         owner_kind=owner_kind,
         owner_id=owner_id,
         auto_apply=auto_apply,
+        canonical_personal=canonical_personal,
     )
     interval_ms = max(60_000, int(daily_interval_ms))
     return {
@@ -1072,14 +1473,20 @@ def owner_memory_curation_status(
                 else "interval"
             ),
             "dailyIntervalMs": interval_ms,
-            "sourceKinds": [
-                "user_final",
-                "explicit_memory",
-                "tool_receipt",
-                "session_compaction",
-            ],
-            "assistantTurnsRead": True,
-            "assistantTurnsAreContextOnly": True,
+            "sourceKinds": (
+                ["user_final", "explicit_memory", "tool_receipt"]
+                if canonical_personal
+                else ["user_final", "explicit_memory", "session_digest"]
+            ),
+            "evidenceOrigins": (
+                sorted(PERSONAL_EVIDENCE_ORIGINS) if canonical_personal else []
+            ),
+            "historicalLegacyRequiresPromotionReceipt": bool(canonical_personal),
+            "canonicalPersonalEvidenceOnly": bool(canonical_personal),
+            "assistantTurnsRead": bool(include_agent_dialogue),
+            "assistantTurnsAreContextOnly": bool(include_agent_dialogue),
+            "toolReceiptsEligible": bool(canonical_personal),
+            "sessionArtifactsEligible": False,
             "rawScreenshotsRead": False,
             "semanticWritesRequireReview": not auto_apply,
             "autoApplyGovernedWrites": bool(auto_apply),
@@ -1104,6 +1511,7 @@ def _owner_scope_statuses(
     owner_kind: str = "",
     owner_id: str = "",
     auto_apply: bool = False,
+    canonical_personal: bool = False,
 ) -> list[dict[str, object]]:
     clauses = [
         "s.status = 'active'",
@@ -1120,22 +1528,54 @@ def _owner_scope_statuses(
     if normalized_id:
         clauses.append("s.owner_id = ?")
         values.append(normalized_id)
-    rows = conn.execute(
-        f"""
-        SELECT s.owner_kind, s.owner_id,
-               MIN(s.created_at_ms) AS first_source_ms,
-               MAX(s.created_at_ms) AS last_source_ms,
-               COUNT(*) AS total_source_count,
-               SUM(CASE WHEN s.disposition = 'needs_review' THEN 1 ELSE 0 END)
-                   AS needs_review_source_count
-        FROM agent_memory_sources AS s
-        JOIN input_events AS e ON e.id = s.input_event_id
-        WHERE {' AND '.join(clauses)}
-        GROUP BY s.owner_kind, s.owner_id
-        ORDER BY s.owner_kind, s.owner_id
-        """,  # noqa: S608 - clauses are fixed above.
-        tuple(values),
-    ).fetchall()
+    if canonical_personal:
+        rows = conn.execute(
+            f"""
+            WITH canonical_sources AS (
+                SELECT s.source_id, s.owner_kind, s.owner_id, s.created_at_ms,
+                       MIN(evidence.admission_state) AS evidence_admission_state
+                FROM agent_memory_sources AS s
+                JOIN input_events AS e ON e.id = s.input_event_id
+                CROSS JOIN memory_evidence_input_event_links AS source_link
+                           INDEXED BY idx_memory_evidence_input_event
+                CROSS JOIN agent_memory_evidence AS evidence
+                WHERE {' AND '.join(clauses)}
+                  AND source_link.input_event_id = s.input_event_id
+                  AND source_link.relation = 'source'
+                  AND evidence.evidence_id = source_link.evidence_id
+                  AND {curatable_personal_evidence_sql('evidence')}
+                GROUP BY s.source_id, s.owner_kind, s.owner_id, s.created_at_ms
+                HAVING COUNT(DISTINCT evidence.evidence_id) = 1
+            )
+            SELECT owner_kind, owner_id,
+                   MIN(created_at_ms) AS first_source_ms,
+                   MAX(created_at_ms) AS last_source_ms,
+                   COUNT(*) AS total_source_count,
+                   SUM(CASE WHEN evidence_admission_state = 'needs_review'
+                            THEN 1 ELSE 0 END) AS needs_review_source_count
+            FROM canonical_sources
+            GROUP BY owner_kind, owner_id
+            ORDER BY owner_kind, owner_id
+            """,  # noqa: S608 - clauses and Evidence predicate are fixed above.
+            tuple(values),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            f"""
+            SELECT s.owner_kind, s.owner_id,
+                   MIN(s.created_at_ms) AS first_source_ms,
+                   MAX(s.created_at_ms) AS last_source_ms,
+                   COUNT(*) AS total_source_count,
+                   SUM(CASE WHEN s.disposition = 'needs_review' THEN 1 ELSE 0 END)
+                       AS needs_review_source_count
+            FROM agent_memory_sources AS s
+            JOIN input_events AS e ON e.id = s.input_event_id
+            WHERE {' AND '.join(clauses)}
+            GROUP BY s.owner_kind, s.owner_id
+            ORDER BY s.owner_kind, s.owner_id
+            """,  # noqa: S608 - clauses are fixed above.
+            tuple(values),
+        ).fetchall()
     result: list[dict[str, object]] = []
     for row in rows:
         kind = str(row["owner_kind"])
@@ -1157,6 +1597,7 @@ def _owner_scope_statuses(
             project=project,
             cursor_ms=cursor_ms,
             cursor_id=cursor_id,
+            canonical_personal=canonical_personal,
         )
         last_run_id = str(cursor["last_run_id"] or "") if cursor is not None else ""
         last_run_status = _run_status(conn, last_run_id)
@@ -1228,7 +1669,11 @@ def _agent_conversation_context(
     max_messages: int = 10,
     max_chars: int = 2_000,
 ) -> dict[str, object]:
-    """Return the latest digest plus a small uncompacted dialogue tail."""
+    """Return the latest digest plus a small uncompacted dialogue tail.
+
+    This projection is context-only: it carries no legal Evidence IDs and may
+    never independently support an Atom or Book.
+    """
 
     bounded_messages = max(1, min(int(max_messages), 10))
     char_budget = max(600, min(int(max_chars), 2_000))
@@ -1377,6 +1822,106 @@ def _empty_existing_memory_context() -> dict[str, object]:
     }
 
 
+def _build_current_personal_atom_catalog(
+    conn: sqlite3.Connection,
+) -> dict[str, object]:
+    """Load the complete supported current personal Atom catalog, never Books."""
+
+    rows = conn.execute(
+        f"""
+        SELECT atom.*
+        FROM memory_atoms AS atom
+        WHERE atom.owner_kind = 'user' AND atom.owner_id = 'default'
+          AND atom.knowledge_domain = 'personal_memory'
+          AND atom.scope_kind = 'user' AND atom.scope_id = 'default'
+          AND atom.scope_mode = 'authoritative'
+          AND COALESCE(atom.scope_project, '') = ''
+          AND COALESCE(atom.scope_app, '') = ''
+          AND atom.kind IN (
+              'personal_fact', 'personal_habit',
+              'durable_preference', 'personal_principle'
+          )
+          AND atom.status IN ('active', 'approved')
+          AND atom.claim_state = 'current'
+          AND EXISTS (
+              SELECT 1
+              FROM memory_atom_evidence_links AS atom_link
+              JOIN agent_memory_evidence AS supporting_evidence
+                ON supporting_evidence.evidence_id = atom_link.evidence_id
+              WHERE atom_link.memory_atom_id = atom.id
+                AND atom_link.relation IN ('supports', 'corrects')
+                AND {admitted_personal_evidence_sql('supporting_evidence')}
+          )
+        ORDER BY atom.claim_key, atom.id
+        """
+    ).fetchall()
+    atoms: list[dict[str, object]] = []
+    for row in rows:
+        atom_id = str(row["id"])
+        evidence_ids = [
+            str(item["evidence_id"])
+            for item in conn.execute(
+                f"""
+                SELECT DISTINCT link.evidence_id
+                FROM memory_atom_evidence_links AS link
+                JOIN agent_memory_evidence AS linked_evidence
+                  ON linked_evidence.evidence_id = link.evidence_id
+                WHERE link.memory_atom_id = ?
+                  AND link.relation IN ('supports', 'corrects')
+                  AND {admitted_personal_evidence_sql('linked_evidence')}
+                ORDER BY link.evidence_id
+                """,
+                (atom_id,),
+            ).fetchall()
+        ]
+        tags = [
+            str(item["tag"])
+            for item in conn.execute(
+                """
+                SELECT tag.tag
+                FROM memory_atom_tags AS atom_tag
+                JOIN memory_tags AS tag
+                  ON CAST(tag.id AS TEXT) = atom_tag.tag_id
+                WHERE atom_tag.memory_atom_id = ?
+                ORDER BY atom_tag.weight DESC, tag.tag
+                """,
+                (atom_id,),
+            ).fetchall()
+        ]
+        atoms.append(
+            {
+                "atomId": atom_id,
+                "kind": str(row["kind"]),
+                "claimKey": str(row["claim_key"]),
+                "canonicalText": str(row["canonical_text"] or row["text"] or ""),
+                "evidenceIds": evidence_ids,
+                "sourceEventIds": _json_ints(row["source_event_ids_json"]),
+                "tags": tags,
+                "confidence": float(row["confidence"] or 0.0),
+                "validFromMs": int(row["valid_from_ms"] or 0),
+                "lineageId": str(row["lineage_id"] or ""),
+                "claimState": str(row["claim_state"] or "current"),
+                "status": str(row["status"] or "active"),
+                "project": "",
+                "app": "",
+            }
+        )
+    return {
+        "existingMemoryBooks": [],
+        "existingMemoryAtoms": atoms,
+        "existingMemoryRecall": {
+            "strategy": "complete_current_personal_atom_catalog",
+            "probeCount": 0,
+            "hybridQueryCount": 0,
+            "hybridErrorCount": 0,
+            "vectorEnabled": False,
+            "recalledAtomCount": len(atoms),
+            "recalledBookCount": 0,
+        },
+        "archivedMemoryBookGuards": [],
+    }
+
+
 def _build_existing_memory_context(
     conn: sqlite3.Connection,
     *,
@@ -1485,6 +2030,67 @@ def _build_existing_memory_context(
     }
 
 
+def _build_atom_first_memory_context(
+    conn: sqlite3.Connection,
+    *,
+    inputs: list[dict[str, object]],
+    owner_kind: str,
+    owner_id: str,
+    project: str,
+    embedding_provider: EmbeddingProvider | None,
+) -> dict[str, object]:
+    """Combine the complete personal catalog with relevant topic memory.
+
+    Personal claims need full-catalog duplicate/correction checks. Project and
+    knowledge-topic Atoms can be much larger, so they retain bounded hybrid
+    recall together with their Books. This is one model snapshot, not two
+    classifiers or two write paths.
+    """
+
+    personal = _build_current_personal_atom_catalog(conn)
+    relevant = _build_existing_memory_context(
+        conn,
+        inputs=inputs,
+        owner_kind=owner_kind,
+        owner_id=owner_id,
+        project=project,
+        embedding_provider=embedding_provider,
+    )
+    atoms_by_id: dict[str, dict[str, object]] = {}
+    for source in (relevant, personal):
+        for raw in source.get("existingMemoryAtoms") or []:
+            if not isinstance(raw, dict):
+                continue
+            atom_id = compact_whitespace(str(raw.get("atomId") or ""))
+            if atom_id:
+                atoms_by_id[atom_id] = dict(raw)
+    recall = dict(relevant.get("existingMemoryRecall") or {})
+    recall.update(
+        {
+            "strategy": "complete_personal_plus_relevant_topic_memory",
+            "personalCatalogAtomCount": len(
+                personal.get("existingMemoryAtoms") or []
+            ),
+            "recalledAtomCount": len(atoms_by_id),
+            "recalledBookCount": len(relevant.get("existingMemoryBooks") or []),
+        }
+    )
+    return {
+        "existingMemoryBooks": [
+            dict(item)
+            for item in relevant.get("existingMemoryBooks") or []
+            if isinstance(item, dict)
+        ],
+        "existingMemoryAtoms": list(atoms_by_id.values()),
+        "existingMemoryRecall": recall,
+        "archivedMemoryBookGuards": [
+            dict(item)
+            for item in relevant.get("archivedMemoryBookGuards") or []
+            if isinstance(item, dict)
+        ],
+    }
+
+
 def _with_owner_bundle_hash(payload: dict[str, object]) -> dict[str, object]:
     result = dict(payload)
     result.pop("bundleHash", None)
@@ -1531,6 +2137,89 @@ def _capture_hints_for_sources(
     return result
 
 
+def _curatable_personal_evidence_by_event_id(
+    conn: sqlite3.Connection,
+    event_ids: list[int],
+) -> dict[int, sqlite3.Row]:
+    selected = sorted({int(value) for value in event_ids if int(value) > 0})
+    candidates: dict[int, list[sqlite3.Row]] = {}
+    for offset in range(0, len(selected), 400):
+        chunk = selected[offset : offset + 400]
+        if not chunk:
+            continue
+        rows = conn.execute(
+            f"""
+            SELECT source_link.input_event_id, evidence.*
+            FROM memory_evidence_input_event_links AS source_link
+                 INDEXED BY idx_memory_evidence_input_event
+            CROSS JOIN agent_memory_evidence AS evidence
+            WHERE source_link.input_event_id IN ({','.join('?' for _ in chunk)})
+              AND source_link.relation = 'source'
+              AND evidence.evidence_id = source_link.evidence_id
+              AND {curatable_personal_evidence_sql('evidence')}
+            ORDER BY source_link.input_event_id, evidence.recorded_at_ms,
+                     evidence.evidence_id
+            """,
+            tuple(chunk),
+        ).fetchall()
+        for row in rows:
+            candidates.setdefault(int(row["input_event_id"]), []).append(row)
+    # Ambiguous identity fails closed: the model must never choose between two
+    # physical Evidence owners for one immutable input event.
+    return {
+        event_id: rows[0]
+        for event_id, rows in candidates.items()
+        if len(rows) == 1
+    }
+
+
+def _preceding_personal_context_rows(
+    conn: sqlite3.Connection,
+    *,
+    owner_kind: str,
+    owner_id: str,
+    project: str,
+    before_created_at_ms: int,
+    before_source_id: str,
+) -> list[dict[str, object]]:
+    rows = conn.execute(
+        """
+        SELECT event.created_at_ms, event.committed_text, event.source,
+               event.app
+        FROM agent_memory_sources AS source
+        JOIN input_events AS event ON event.id = source.input_event_id
+        WHERE source.owner_kind = ? AND source.owner_id = ?
+          AND source.status = 'active' AND source.source_role = 'user'
+          AND (? = '' OR event.project = ? OR event.project = '')
+          AND (
+              source.created_at_ms < ?
+              OR (source.created_at_ms = ? AND source.source_id < ?)
+          )
+        ORDER BY source.created_at_ms DESC, source.source_id DESC
+        LIMIT 12
+        """,
+        (
+            owner_kind,
+            owner_id,
+            project,
+            project,
+            max(0, int(before_created_at_ms)),
+            max(0, int(before_created_at_ms)),
+            compact_whitespace(before_source_id),
+        ),
+    ).fetchall()
+    return [
+        {
+            "occurredAtMs": int(row["created_at_ms"] or 0),
+            "channel": str(row["source"] or ""),
+            "app": str(row["app"] or ""),
+            "text": compact_whitespace(str(row["committed_text"] or ""))[:1200],
+        }
+        for row in reversed(rows)
+        if compact_whitespace(str(row["committed_text"] or ""))
+    ]
+
+
 def _build_owner_source_bundle(
     conn: sqlite3.Connection,
     *,
@@ -1541,6 +2230,8 @@ def _build_owner_source_bundle(
     include_agent_dialogue: bool = True,
     embedding_provider: EmbeddingProvider | None = None,
     include_existing_memory: bool = True,
+    canonical_personal: bool = False,
+    personal_window_ms: int = MAX_PERSONAL_V2_WINDOW_MS,
 ) -> dict[str, object]:
     cursor = conn.execute(
         """
@@ -1552,8 +2243,40 @@ def _build_owner_source_bundle(
     ).fetchone()
     cursor_ms = int(cursor["last_source_created_at_ms"] or 0) if cursor is not None else 0
     cursor_id = str(cursor["last_source_id"] or "") if cursor is not None else ""
-    logical_limit = max(1, min(int(limit), 64))
-    physical_limit = min(50_000, max(2_048, logical_limit * 128))
+    logical_limit = max(
+        1,
+        min(int(limit), MAX_PERSONAL_V2_SOURCES if canonical_personal else 64),
+    )
+    physical_limit = min(
+        50_000,
+        max(2_048, logical_limit * (2 if canonical_personal else 128)),
+    )
+    source_order_sql = (
+        "COALESCE(CAST(json_extract(s.metadata_json, "
+        "'$.sourceOccurredAtMs') AS INTEGER), s.created_at_ms) ASC, "
+        "s.created_at_ms ASC, s.source_id ASC"
+        if canonical_personal
+        else "s.created_at_ms ASC, s.source_id ASC"
+    )
+    late_personal_clause = (
+        f"""
+              OR (
+                  s.disposition IN ('pending', 'needs_review')
+                  AND (
+                      SELECT COUNT(DISTINCT late_evidence.evidence_id)
+                      FROM memory_evidence_input_event_links AS late_link
+                           INDEXED BY idx_memory_evidence_input_event
+                      CROSS JOIN agent_memory_evidence AS late_evidence
+                      WHERE late_link.input_event_id = s.input_event_id
+                        AND late_link.relation = 'source'
+                        AND late_evidence.evidence_id = late_link.evidence_id
+                        AND {curatable_personal_evidence_sql('late_evidence')}
+                  ) = 1
+              )
+        """
+        if canonical_personal
+        else ""
+    )
     rows = conn.execute(
         f"""
         SELECT s.*, e.committed_text, e.source AS event_source,
@@ -1567,10 +2290,11 @@ def _build_owner_source_bundle(
           AND (
               s.created_at_ms > ?
               OR (s.created_at_ms = ? AND s.source_id > ?)
+              {late_personal_clause}
           )
-        ORDER BY s.created_at_ms ASC, s.source_id ASC
+        ORDER BY {source_order_sql}
         LIMIT ?
-        """,
+        """,  # noqa: S608 - the ordering expression is fixed above.
         (
             owner_kind,
             owner_id,
@@ -1587,9 +2311,23 @@ def _build_owner_source_bundle(
         conn,
         [str(row["source_id"]) for row in rows],
     )
+    evidence_by_event_id = (
+        _curatable_personal_evidence_by_event_id(
+            conn,
+            [int(row["input_event_id"]) for row in rows],
+        )
+        if canonical_personal
+        else {}
+    )
     raw_inputs: list[dict[str, object]] = []
     for row in rows:
         source_metadata = _json_mapping(row["metadata_json"])
+        evidence = evidence_by_event_id.get(int(row["input_event_id"]))
+        evidence_metadata = (
+            _json_mapping(evidence["metadata_json"])
+            if evidence is not None
+            else {}
+        )
         raw_inputs.append(
             {
                 "sourceId": str(row["source_id"]),
@@ -1598,7 +2336,14 @@ def _build_owner_source_bundle(
                 "trustClass": str(row["trust_class"]),
                 "createdAtMs": int(row["created_at_ms"] or 0),
                 "sourceEventIds": [int(row["input_event_id"])],
-                "text": compact_whitespace(str(row["committed_text"] or ""))[:4000],
+                "text": compact_whitespace(
+                    str(
+                        evidence["content_text"]
+                        if evidence is not None
+                        else row["committed_text"]
+                        or ""
+                    )
+                )[:4000],
                 "disposition": str(row["disposition"]),
                 "source": str(row["event_source"] or ""),
                 "recentContext": compact_whitespace(
@@ -1622,21 +2367,96 @@ def _build_owner_source_bundle(
                 "externalTier": compact_whitespace(
                     str(source_metadata.get("externalTier") or "")
                 )[:80],
+                "evidenceId": (
+                    str(evidence["evidence_id"]) if evidence is not None else ""
+                ),
+                "evidenceIds": (
+                    [str(evidence["evidence_id"])] if evidence is not None else []
+                ),
+                "evidenceAdmissionState": (
+                    str(evidence["admission_state"]) if evidence is not None else ""
+                ),
+                "evidenceOriginKind": (
+                    str(evidence["origin_kind"]) if evidence is not None else ""
+                ),
+                "boundaryKind": (
+                    str(evidence["boundary_kind"]) if evidence is not None else ""
+                ),
+                "sourceChannel": compact_whitespace(
+                    str(
+                        evidence_metadata.get("sourceChannel")
+                        or (
+                            "voice"
+                            if evidence is not None
+                            and str(evidence["origin_kind"]) == "capture_v2_voice"
+                            else "input_method"
+                        )
+                    )
+                )[:40],
             }
         )
+    if canonical_personal:
+        # Historical imports may be written months after the input occurred.
+        # Luna needs one chronological local day, not one ingestion batch, both
+        # to reconstruct Rime fragments correctly and to see the day's complete
+        # cross-application context.
+        raw_inputs.sort(
+            key=lambda item: (
+                int(
+                    item.get("sourceOccurredAtMs")
+                    or item.get("createdAtMs")
+                    or 0
+                ),
+                int(item.get("createdAtMs") or 0),
+                str(item.get("sourceId") or ""),
+            )
+        )
     curation_date = (
-        local_date_for_timestamp(int(raw_inputs[0]["createdAtMs"]))
+        local_date_for_timestamp(
+            int(
+                (
+                    raw_inputs[0].get("sourceOccurredAtMs")
+                    if canonical_personal
+                    else raw_inputs[0].get("createdAtMs")
+                )
+                or 0
+            )
+        )
         if raw_inputs
         else local_date_for_timestamp(0)
     )
     raw_inputs = [
         item
         for item in raw_inputs
-        if local_date_for_timestamp(int(item["createdAtMs"])) == curation_date
+        if local_date_for_timestamp(
+            int(
+                (
+                    item.get("sourceOccurredAtMs")
+                    if canonical_personal
+                    else item.get("createdAtMs")
+                )
+                or 0
+            )
+        )
+        == curation_date
     ]
-    inputs = _bounded_external_model_inputs(
-        _coalesce_owner_inputs(raw_inputs),
-        limit=logical_limit,
+    if canonical_personal and raw_inputs:
+        window_start_ms = int(
+            raw_inputs[0].get("sourceOccurredAtMs")
+            or raw_inputs[0].get("createdAtMs")
+            or 0
+        )
+        raw_inputs = [
+            item
+            for item in raw_inputs
+            if int(item.get("sourceOccurredAtMs") or item.get("createdAtMs") or 0)
+            <= window_start_ms + max(60_000, int(personal_window_ms))
+        ]
+    projected_inputs = _coalesce_owner_inputs(raw_inputs)
+    inputs = (
+        projected_inputs[:logical_limit]
+        if canonical_personal
+        else _bounded_external_model_inputs(projected_inputs, limit=logical_limit)
     )
     session_ids = list(
         dict.fromkeys(
@@ -1696,6 +2516,18 @@ def _build_owner_source_bundle(
         if isinstance(event_id, int)
     ]
     purpose_profile = personal_current_state_profile(conn)
+    context_only = (
+        _preceding_personal_context_rows(
+            conn,
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            project=project,
+            before_created_at_ms=int(inputs[0]["createdAtMs"]) if inputs else 0,
+            before_source_id=str(inputs[0]["sourceId"]) if inputs else "",
+        )
+        if canonical_personal and inputs
+        else []
+    )
     payload: dict[str, object] = {
         "schemaVersion": "rag-ime.owner-memory-source-bundle.v1",
         "project": project,
@@ -1733,6 +2565,7 @@ def _build_owner_source_bundle(
         ],
         "activityContext": activity_context,
         "agentConversationContext": conversation_context,
+        "contextOnly": context_only,
         "legalContextGroupIds": [],
         # Only immutable owner inputs are legal fact evidence. Timeline and
         # conversation context intentionally expose no event/evidence ids.
@@ -1921,10 +2754,19 @@ def _existing_memory_recall_probes(
     probes: list[str] = []
     seen: set[str] = set()
     for item in inputs:
-        text = compact_whitespace(str(item.get("text") or ""))
-        if not text:
-            continue
-        clauses = split_sentences(text) or [text]
+        hinted_claims = [
+            compact_whitespace(str(hint.get("claim") or ""))
+            for hint in item.get("captureHints") or []
+            if isinstance(hint, Mapping)
+            and compact_whitespace(str(hint.get("claim") or ""))
+        ]
+        texts = hinted_claims or [compact_whitespace(str(item.get("text") or ""))]
+        clauses = [
+            clause
+            for text in texts
+            if text
+            for clause in (split_sentences(text) or [text])
+        ]
         for clause in clauses:
             probe = compact_whitespace(clause)[:600]
             normalized = normalize_text(probe)
@@ -2406,11 +3248,22 @@ def _coalesce_owner_inputs(
 
     for item in raw_inputs:
         if str(item.get("source") or "") == "squirrel_rime_commit_burst":
-            if fragment_run and not rime_fragments_belong_together(
-                fragment_run[-1],
-                item,
-            ):
-                flush_fragments()
+            if fragment_run:
+                previous_state = compact_whitespace(
+                    str(fragment_run[-1].get("evidenceAdmissionState") or "")
+                )
+                current_state = compact_whitespace(
+                    str(item.get("evidenceAdmissionState") or "")
+                )
+                if (
+                    previous_state
+                    and current_state
+                    and previous_state != current_state
+                ) or not rime_fragments_belong_together(fragment_run[-1], item):
+                    # A logical reconstruction is also the unit of Evidence
+                    # adjudication. Never coalesce physical events that have
+                    # already diverged into different admission states.
+                    flush_fragments()
             fragment_run.append(item)
             continue
         flush_fragments()
@@ -2482,6 +3335,81 @@ def _bounded_owner_model_inputs(
     return result
 
 
+def _bounded_personal_v2_model_inputs(
+    inputs: list[dict[str, object]],
+    *,
+    window_ms: int = MAX_PERSONAL_V2_WINDOW_MS,
+) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    estimated_tokens = 0
+    window_start_ms = 0
+    for item in inputs[:MAX_PERSONAL_V2_SOURCES]:
+        occurred_at_ms = int(
+            item.get("sourceOccurredAtMs") or item.get("createdAtMs") or 0
+        )
+        if not window_start_ms:
+            window_start_ms = occurred_at_ms
+        if occurred_at_ms > window_start_ms + max(60_000, int(window_ms)):
+            break
+        item_tokens = _estimate_personal_v2_tokens(
+            compact_whitespace(str(item.get("text") or ""))
+        ) + 32
+        if result and estimated_tokens + item_tokens > MAX_PERSONAL_V2_INPUT_TOKENS:
+            break
+        if item_tokens > MAX_PERSONAL_V2_INPUT_TOKENS:
+            raise ValueError("one personal Evidence expression exceeds the curation budget")
+        result.append(item)
+        estimated_tokens += item_tokens
+    return result
+
+
+def _fit_personal_v2_inputs_to_catalog(
+    inputs: list[dict[str, object]],
+    *,
+    existing_memory_context: Mapping[str, object],
+    context_only: object,
+) -> list[dict[str, object]]:
+    catalog_tokens = sum(
+        _estimate_personal_v2_tokens(
+            " ".join(
+                (
+                    compact_whitespace(str(item.get("claimKey") or "")),
+                    compact_whitespace(
+                        str(item.get("canonicalText") or item.get("text") or "")
+                    ),
+                )
+            )
+        )
+        + 24
+        for item in existing_memory_context.get("existingMemoryAtoms") or []
+        if isinstance(item, Mapping)
+    )
+    context_tokens = sum(
+        _estimate_personal_v2_tokens(str(item.get("text") or "")) + 12
+        for item in context_only if isinstance(item, Mapping)
+    ) if isinstance(context_only, list) else 0
+    evidence_budget = MAX_PERSONAL_V2_INPUT_TOKENS - catalog_tokens - context_tokens - 2_000
+    if evidence_budget < 1_000:
+        raise ValueError(
+            "complete current personal Atom catalog leaves no safe Evidence budget"
+        )
+    result: list[dict[str, object]] = []
+    used = 0
+    for item in inputs:
+        cost = _estimate_personal_v2_tokens(str(item.get("text") or "")) + 32
+        if result and used + cost > evidence_budget:
+            break
+        result.append(item)
+        used += cost
+    return result
+
+
+def _estimate_personal_v2_tokens(value: str) -> int:
+    text = str(value or "")
+    cjk = len(re.findall(r"[\u3400-\u9fff]", text))
+    return cjk + max(1, (len(text) - cjk + 3) // 4)
+
+
 def _is_agent_curated_external_source(item: Mapping[str, object]) -> bool:
     provider = compact_whitespace(str(item.get("externalProvider") or ""))
     metadata_tags = item.get("sourceMetadataTags")
@@ -2503,6 +3431,18 @@ def _is_agent_curated_external_source(item: Mapping[str, object]) -> bool:
 def _input_source_ids(item: Mapping[str, object]) -> list[str]:
     candidates = item.get("sourceIds")
     values = candidates if isinstance(candidates, list) else [item.get("sourceId")]
+    return list(
+        dict.fromkeys(
+            compact_whitespace(str(value or ""))
+            for value in values
+            if compact_whitespace(str(value or ""))
+        )
+    )
+
+
+def _input_evidence_ids(item: Mapping[str, object]) -> list[str]:
+    candidates = item.get("evidenceIds")
+    values = candidates if isinstance(candidates, list) else [item.get("evidenceId")]
     return list(
         dict.fromkeys(
             compact_whitespace(str(value or ""))
@@ -2600,54 +3540,16 @@ def _expanded_logical_atom_sources(
     return sorted(expanded), source_texts
 
 
-def _minute_scale_context_only_evidence(
-    source_event_ids: object,
-    *,
-    model_inputs: list[dict[str, object]],
-    legal_event_ids: set[int],
-) -> bool:
-    selected = _positive_event_ids(source_event_ids).intersection(
-        legal_event_ids
-    )
-    if not selected:
-        return False
-    supporting_inputs = [
-        item
-        for item in model_inputs
-        if selected.intersection(
-            _positive_event_ids(item.get("sourceEventIds"))
-        )
-    ]
-    if not supporting_inputs:
-        return False
-    # Final user statements, applied receipts, and already-curated external
-    # summaries are primary evidence. This gate is only for context summaries
-    # that describe a short-lived activity window.
-    if any(
-        compact_whitespace(str(item.get("sourceKind") or ""))
-        != "session_compaction"
-        for item in supporting_inputs
-    ):
-        return False
-    if any(
-        _DURABLE_ASSERTION_RE.search(
-            compact_whitespace(str(item.get("text") or ""))
-        )
-        for item in supporting_inputs
-    ):
-        return False
-    occurred_at_ms = [
-        int(
-            item.get("sourceOccurredAtMs")
-            or item.get("createdAtMs")
-            or 0
-        )
-        for item in supporting_inputs
-    ]
-    return (
-        max(occurred_at_ms, default=0)
-        - min(occurred_at_ms, default=0)
-        < MIN_DURABLE_CONTEXT_SPAN_MS
+def _is_durable_candidate_input(item: Mapping[str, object]) -> bool:
+    source_kind = compact_whitespace(str(item.get("sourceKind") or ""))
+    if _input_evidence_ids(item):
+        return source_kind in {"user_final", "explicit_memory"}
+    if source_kind == "explicit_memory" or _is_agent_curated_external_source(item):
+        return True
+    return source_kind == "user_final" and any(
+        isinstance(hint, Mapping)
+        and compact_whitespace(str(hint.get("claim") or ""))
+        for hint in item.get("captureHints") or []
     )
 
 
@@ -2686,10 +3588,17 @@ def _owner_atom_event_ids_by_capacity(
     legal_event_ids = {
         event_id
         for model_input in model_inputs
+        if _is_durable_candidate_input(model_input)
         for event_id in _positive_event_ids(model_input.get("sourceEventIds"))
     }
     eligible: set[int] = set()
     over_capacity: set[int] = set()
+    personal_v2 = (
+        compact_whitespace(
+            str(dict(compile_output.get("personalCurationV2") or {}).get("protocol") or "")
+        )
+        == "personal-v2"
+    )
     for atom_index, item in enumerate(
         list(compile_output.get("memoryAtoms") or [])
     ):
@@ -2703,12 +3612,6 @@ def _owner_atom_event_ids_by_capacity(
             model_inputs=model_inputs,
             legal_event_ids=legal_event_ids,
         )
-        if _minute_scale_context_only_evidence(
-            item.get("sourceEventIds"),
-            model_inputs=model_inputs,
-            legal_event_ids=legal_event_ids,
-        ):
-            continue
         if not canonical or contains_sensitive_content(canonical) or not source_ids:
             continue
         if _durable_atom_rejection_reason(
@@ -2723,7 +3626,7 @@ def _owner_atom_event_ids_by_capacity(
             continue
         target = (
             eligible
-            if atom_index < MAX_OWNER_MEMORY_ATOMS_PER_RUN
+            if personal_v2 or atom_index < MAX_OWNER_MEMORY_ATOMS_PER_RUN
             else over_capacity
         )
         target.update(source_ids)
@@ -2846,7 +3749,25 @@ def _govern_owner_compile_output(
         for event_id in item.get("sourceEventIds") or []
         if str(event_id).isdigit() and int(event_id) in legal_event_ids
     }
-    project = compact_whitespace(str(bundle.get("project") or ""))
+    personal_metadata = dict(compile_output.get("personalCurationV2") or {})
+    personal_v2 = (
+        compact_whitespace(str(personal_metadata.get("protocol") or ""))
+        == "personal-v2"
+    )
+    atom_first = (
+        compact_whitespace(str(compile_output.get("curationArchitecture") or ""))
+        == MEMORY_CURATION_ARCHITECTURE
+        or compact_whitespace(
+            str(personal_metadata.get("curationArchitecture") or "")
+        )
+        == MEMORY_CURATION_ARCHITECTURE
+    )
+    personal_only = personal_v2 and not atom_first
+    project = (
+        ""
+        if personal_only
+        else compact_whitespace(str(bundle.get("project") or ""))
+    )
     owner_hash = hashlib.sha256(
         f"{owner_kind}\0{owner_id}\0{project}".encode("utf-8")
     ).hexdigest()[:16]
@@ -2872,9 +3793,29 @@ def _govern_owner_compile_output(
     }
     atoms: list[dict[str, object]] = []
     atom_ids: list[str] = []
-    for item in list(
-        compile_output.get("memoryAtoms") or []
-    )[:MAX_OWNER_MEMORY_ATOMS_PER_RUN]:
+    governed_atom_id_by_proposed_id: dict[str, str] = {}
+    legal_evidence_ids = {
+        compact_whitespace(str(value or ""))
+        for value in bundle.get("legalEvidenceIds") or []
+        if compact_whitespace(str(value or ""))
+    }
+    evidence_ids_by_event_id: dict[int, set[str]] = {}
+    for source_input in bundle_inputs:
+        if compact_whitespace(str(source_input.get("sourceRef") or "")) not in remembered_refs:
+            continue
+        source_evidence_ids = {
+            value
+            for value in _input_evidence_ids(source_input)
+            if value in legal_evidence_ids
+        }
+        for event_id in _positive_event_ids(source_input.get("sourceEventIds")):
+            evidence_ids_by_event_id.setdefault(event_id, set()).update(
+                source_evidence_ids
+            )
+    proposed_atoms = list(compile_output.get("memoryAtoms") or [])
+    if not personal_v2:
+        proposed_atoms = proposed_atoms[:MAX_OWNER_MEMORY_ATOMS_PER_RUN]
+    for item in proposed_atoms:
         if not isinstance(item, dict):
             continue
         canonical = compact_whitespace(
@@ -2895,15 +3836,20 @@ def _govern_owner_compile_output(
                 or ""
             )
         )
+        personal_atom = kind in _PERSONAL_ATOM_KINDS
+        atom_project = "" if personal_atom else project
+        atom_app = (
+            ""
+            if personal_atom
+            else compact_whitespace(str(item.get("app") or ""))
+        )
+        atom_owner_hash = hashlib.sha256(
+            f"{owner_kind}\0{owner_id}\0{atom_project}".encode("utf-8")
+        ).hexdigest()[:16]
         if (
             not canonical
             or contains_sensitive_content(canonical)
             or not source_ids
-            or _minute_scale_context_only_evidence(
-                item.get("sourceEventIds"),
-                model_inputs=bundle_inputs,
-                legal_event_ids=remembered_event_ids,
-            )
             or _durable_atom_rejection_reason(
                 canonical,
                 kind=kind,
@@ -2912,20 +3858,46 @@ def _govern_owner_compile_output(
             )
         ):
             continue
+        operation = compact_whitespace(str(item.get("operation") or ""))
         atom_id = (
-            f"atom:{owner_hash}:"
-            f"{stable_text_hash(normalize_text(canonical)).removeprefix('sha256:')[:24]}"
+            compact_whitespace(str((existing_claim or {}).get("atomId") or ""))
+            if operation in {"attach", "update", "merge"}
+            and existing_claim is not None
+            else (
+                f"atom:{atom_owner_hash}:"
+                f"{stable_text_hash(normalize_text(canonical)).removeprefix('sha256:')[:24]}"
+            )
         )
         if not claim_key:
             claim_digest = stable_text_hash(normalize_text(canonical)).removeprefix(
                 "sha256:"
             )[:8]
-            claim_key = f"owner:{owner_hash[:8]}:{kind}:{claim_digest}"
-        atom_ids.append(atom_id)
+            claim_key = f"owner:{atom_owner_hash[:8]}:{kind}:{claim_digest}"
         origin_tags = _origin_tags_for_event_ids(
             source_ids,
             model_inputs=bundle_inputs,
         )
+        supported_evidence_ids = {
+            evidence_id
+            for event_id in source_ids
+            for evidence_id in evidence_ids_by_event_id.get(event_id, set())
+        }
+        requested_evidence_ids = {
+            compact_whitespace(str(value or ""))
+            for value in item.get("evidenceIds") or []
+            if compact_whitespace(str(value or ""))
+        }
+        atom_evidence_ids = sorted(
+            supported_evidence_ids.intersection(requested_evidence_ids)
+            if requested_evidence_ids
+            else supported_evidence_ids
+        )
+        if personal_v2 and not atom_evidence_ids:
+            continue
+        proposed_atom_id = compact_whitespace(str(item.get("atomId") or ""))
+        if proposed_atom_id:
+            governed_atom_id_by_proposed_id[proposed_atom_id] = atom_id
+        atom_ids.append(atom_id)
         atoms.append(
             {
                 **item,
@@ -2946,11 +3918,45 @@ def _govern_owner_compile_output(
                     else summary
                 ),
                 "sourceEventIds": source_ids,
-                "tags": origin_tags,
+                "tags": (
+                    list(
+                        dict.fromkeys(
+                            [
+                                *[
+                                    compact_whitespace(str(value))
+                                    for value in item.get("tags") or []
+                                    if compact_whitespace(str(value))
+                                ],
+                                *origin_tags,
+                            ]
+                        )
+                    )[:12]
+                    if personal_v2
+                    else origin_tags
+                ),
                 "semanticGroupIds": [],
                 "directCandidateAllowed": False,
                 "ownerKind": owner_kind,
                 "ownerId": owner_id,
+                "project": atom_project,
+                "app": atom_app,
+                "evidenceIds": atom_evidence_ids,
+                "curationArchitecture": (
+                    MEMORY_CURATION_ARCHITECTURE if atom_first else ""
+                ),
+                "knowledgeDomain": (
+                    "personal_memory" if personal_atom else "legacy"
+                ),
+                "scopeKind": "user" if personal_atom else "legacy",
+                "scopeId": "default" if personal_atom else "",
+                "visibility": "private" if personal_atom else "legacy",
+                "authorizationRevision": (
+                    "memory-atom-v2" if personal_atom else ""
+                ),
+                "bindingId": (
+                    "personal-memory:user:default" if personal_atom else ""
+                ),
+                "scopeMode": "authoritative" if personal_atom else "legacy",
             }
         )
 
@@ -2989,6 +3995,7 @@ def _govern_owner_compile_output(
             continue
         retractions.append(
             {
+                **item,
                 "targetAtomId": target_id,
                 "reason": compact_whitespace(
                     str(item.get("reason") or "explicit_user_forget")
@@ -3000,7 +4007,7 @@ def _govern_owner_compile_output(
                 "project": project,
             }
         )
-        if len(retractions) >= 4:
+        if not personal_v2 and len(retractions) >= 4:
             break
 
     retracted_ids = {
@@ -3031,11 +4038,18 @@ def _govern_owner_compile_output(
         ]
         if isinstance(item, dict)
     ]
+    proposed_book_limit = (
+        0
+        if personal_only
+        else MAX_ATOM_FIRST_TOPIC_BOOKS_PER_RUN
+        if atom_first
+        else 3
+    )
     proposed_books = [
         dict(item)
         for item in compile_output.get("topicBooks") or []
         if isinstance(item, dict)
-    ][:3]
+    ][:proposed_book_limit]
     current_atom_by_id = {
         compact_whitespace(str(item.get("atomId") or "")): item
         for item in [*retained_existing_atoms, *atoms]
@@ -3073,20 +4087,28 @@ def _govern_owner_compile_output(
             proposed.get("sourceEventIds"),
             remembered_event_ids,
         )
-        explicit_member_ids = [
-            compact_whitespace(str(value))
-            for value in proposed.get("memoryAtomIds") or []
-            if compact_whitespace(str(value)) in current_atom_id_set
-        ]
-        new_member_ids = [
-            atom_id
-            for atom_id in atom_ids
-            if set(
-                _positive_event_ids(
-                    current_atom_by_id[atom_id].get("sourceEventIds")
-                )
-            ).intersection(source_ids)
-        ]
+        explicit_member_ids = []
+        for value in proposed.get("memoryAtomIds") or []:
+            proposed_member_id = compact_whitespace(str(value))
+            member_id = governed_atom_id_by_proposed_id.get(
+                proposed_member_id,
+                proposed_member_id,
+            )
+            if member_id in current_atom_id_set:
+                explicit_member_ids.append(member_id)
+        new_member_ids = (
+            []
+            if explicit_member_ids
+            else [
+                atom_id
+                for atom_id in atom_ids
+                if set(
+                    _positive_event_ids(
+                        current_atom_by_id[atom_id].get("sourceEventIds")
+                    )
+                ).intersection(source_ids)
+            ]
+        )
         retained_member_ids = [
             compact_whitespace(str(value))
             for value in (existing_book or {}).get("memoryAtomIds") or []
@@ -3219,16 +4241,31 @@ def _explicit_forget_matches_atom(
     return any(normalize_text(term) in request_normalized for term in terms)
 
 
+def _has_active_capture_hint(item: Mapping[str, object]) -> bool:
+    return any(
+        isinstance(hint, Mapping)
+        and compact_whitespace(str(hint.get("claim") or ""))
+        for hint in item.get("captureHints") or []
+    )
+
+
 def _deterministic_disposition(item: Mapping[str, object]) -> str | None:
     source_kind = compact_whitespace(str(item.get("sourceKind") or ""))
     text = compact_whitespace(str(item.get("text") or ""))
+    if source_kind == "tool_receipt" and _FAILED_TOOL_RECEIPT_RE.search(text):
+        return "failed_tool_receipt"
+    if source_kind == "tool_receipt" and _TRANSIENT_TOOL_RECEIPT_RE.search(text):
+        return "transient_runtime_receipt"
     if source_kind == "tool_receipt":
-        if _FAILED_TOOL_RECEIPT_RE.search(text):
-            return "failed_tool_receipt"
-        if _TRANSIENT_TOOL_RECEIPT_RE.search(text):
-            return "transient_runtime_receipt"
-    if source_kind != "user_final":
+        return "tool_receipt_not_durable"
+    if source_kind == "session_compaction":
+        return "session_artifact_audit_only"
+    if source_kind == "session_digest":
+        return None if _is_agent_curated_external_source(item) else "session_artifact_audit_only"
+    if source_kind == "explicit_memory":
         return None
+    if source_kind != "user_final":
+        return "unsupported_memory_source"
     if not text:
         return "empty_input"
     if reason := memory_evidence_exclusion_reason(text):
@@ -3254,7 +4291,98 @@ def _deterministic_disposition(item: Mapping[str, object]) -> str | None:
         and not _DURABLE_ASSERTION_RE.search(text)
     ):
         return "transient_user_instruction"
+    if not _has_active_capture_hint(item):
+        return "memory_capture_not_requested"
     return None
+
+
+def _deterministic_personal_v2_disposition(
+    item: Mapping[str, object],
+) -> str | None:
+    """Reject structurally invalid/noisy inputs before Luna sees any text."""
+
+    if not _input_evidence_ids(item):
+        return "canonical_personal_evidence_missing"
+    source_kind = compact_whitespace(str(item.get("sourceKind") or ""))
+    text = compact_whitespace(str(item.get("text") or ""))
+    if source_kind not in {"user_final", "explicit_memory"}:
+        return "non_user_personal_evidence"
+    if not text:
+        return "empty_input"
+    if reason := memory_evidence_exclusion_reason(text):
+        return reason
+    if contains_sensitive_content(text):
+        return "sensitive_input"
+    if (
+        compact_whitespace(str(item.get("evidenceOriginKind") or ""))
+        == "legacy_untyped_input"
+        and compact_whitespace(str(item.get("source") or ""))
+        == "reconstructed_user_input"
+    ):
+        quality = assess_input_text(
+            text,
+            source=FINALIZED_INPUT_SOURCE,
+            finalized=True,
+            tags=("finalized", "complete-input"),
+        )
+        quality_reasons = set(quality.reasons)
+        for reason in (
+            "empty",
+            "symbols_only",
+            "repeated_noise",
+            "known_low_signal_fragment",
+            "isolated_ascii_token",
+            "short_cjk_fragment",
+            "single_word",
+            "incomplete_expression",
+            "insufficient_durable_signal",
+        ):
+            if reason in quality_reasons or (
+                reason == "incomplete_expression" and not quality.injectable
+            ):
+                return f"historical_reconstruction_{reason}"
+    if _FILLER_RE.fullmatch(text):
+        return "input_noise_filler"
+    if len(text) <= 8 and _RANDOM_INPUT_RE.fullmatch(text):
+        return "random_key_input"
+    if len(text) <= 80 and _RUNTIME_PROBE_RE.search(text):
+        return "runtime_probe"
+    if _DERIVED_PROTOCOL_NOISE_RE.search(text):
+        return "workflow_protocol_noise"
+    if _EXPLICIT_MEMORY_FORGET_RE.search(text):
+        return None
+    if (
+        _TRANSIENT_CONTEXT_SIGNAL_RE.search(text)
+        and _NON_DURABLE_CONCLUSION_RE.search(text)
+    ):
+        return "explicit_non_durable_context"
+    if _looks_like_standalone_question(text):
+        return "standalone_question_no_durable_claim"
+    if (
+        len(text) <= 60
+        and _TRANSIENT_USER_COMMAND_RE.fullmatch(text)
+        and not _DURABLE_ASSERTION_RE.search(text)
+    ):
+        return "transient_user_instruction"
+    return None
+
+
+def _with_personal_v2_run_identity(
+    compile_output: Mapping[str, object],
+    *,
+    run_id: str,
+) -> dict[str, object]:
+    result = dict(compile_output)
+    for field in ("memoryAtoms", "memoryRetractions"):
+        result[field] = [
+            {**dict(item), "curationRunId": run_id}
+            for item in result.get(field) or []
+            if isinstance(item, Mapping)
+        ]
+    metadata = dict(result.get("personalCurationV2") or {})
+    metadata["runId"] = run_id
+    result["personalCurationV2"] = metadata
+    return result
 
 
 def _pending_source_count(
@@ -3265,7 +4393,29 @@ def _pending_source_count(
     project: str,
     cursor_ms: int,
     cursor_id: str,
+    canonical_personal: bool = False,
 ) -> int:
+    canonical_clause = (
+        f"""
+              AND (
+                  SELECT COUNT(DISTINCT pending_evidence.evidence_id)
+                  FROM memory_evidence_input_event_links AS pending_link
+                       INDEXED BY idx_memory_evidence_input_event
+                  CROSS JOIN agent_memory_evidence AS pending_evidence
+                  WHERE pending_link.input_event_id = s.input_event_id
+                    AND pending_link.relation = 'source'
+                    AND pending_evidence.evidence_id = pending_link.evidence_id
+                    AND {curatable_personal_evidence_sql('pending_evidence')}
+              ) = 1
+        """
+        if canonical_personal
+        else ""
+    )
+    late_personal_clause = (
+        "OR s.disposition IN ('pending', 'needs_review')"
+        if canonical_personal
+        else ""
+    )
     return int(
         conn.execute(
             f"""
@@ -3275,9 +4425,11 @@ def _pending_source_count(
             WHERE s.owner_kind = ? AND s.owner_id = ? AND s.status = 'active'
               AND (? = '' OR e.project = ? OR e.project = '')
               AND s.disposition IN ({','.join('?' for _ in _ELIGIBLE_DISPOSITIONS)})
+              {canonical_clause}
               AND (
                   s.created_at_ms > ?
                   OR (s.created_at_ms = ? AND s.source_id > ?)
+                  {late_personal_clause}
               )
             """,
             (
@@ -3389,6 +4541,7 @@ def _store_empty_owner_run(
     source_decisions: list[dict[str, object]],
     created_at_ms: int,
     run_kind: str,
+    curation_metadata: Mapping[str, object] | None = None,
 ) -> None:
     metadata = {
         "ownerKind": owner_kind,
@@ -3403,6 +4556,7 @@ def _store_empty_owner_run(
             if decision.get("disposition") == "needs_review"
         ),
         "curationOutcome": "no_durable_memory_changes",
+        **dict(curation_metadata or {}),
         **purpose_audit_fields(),
     }
     conn.execute(

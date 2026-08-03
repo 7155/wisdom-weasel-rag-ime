@@ -1,11 +1,12 @@
 import { CONTROL_ROUTES, type ControlPathId } from '@/platform/routes';
-import type {
-  ControlEventObserver,
-  ControlRequest,
-  ControlSubscription,
-  ControlTransport,
-  ControlTransportKind,
-  FrontendCapabilities,
+import {
+  managedAgentMediaContentPath,
+  type ControlEventObserver,
+  type ControlRequest,
+  type ControlSubscription,
+  type ControlTransport,
+  type ControlTransportKind,
+  type FrontendCapabilities,
 } from '@/platform/transport';
 
 type StubHandler = unknown | ((request: ControlRequest) => unknown | Promise<unknown>);
@@ -33,6 +34,14 @@ export class StubControlTransport implements ControlTransport {
         tcc: false,
       },
     };
+  }
+
+  agentMediaContentUrl(receiptPath: string): string {
+    const managedPath = managedAgentMediaContentPath(receiptPath);
+    if (!managedPath) throw new TypeError('Agent media content requires a managed receipt path');
+    return this.kind === 'native'
+      ? new URL(managedPath, 'http://127.0.0.1:8766').toString()
+      : managedPath;
   }
 
   async request<Response = unknown>(request: ControlRequest): Promise<Response> {

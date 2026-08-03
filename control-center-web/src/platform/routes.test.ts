@@ -54,7 +54,6 @@ const canonicalPathIds = [
   'agent.session.backgroundJob.logs',
   'agent.session.backgroundJob.cancel',
   'agent.session.workflow.get',
-  'agent.session.plan.mutate',
   'agent.session.goal.mutate',
   'agent.session.intercom.list',
   'agent.session.intercom.send',
@@ -83,8 +82,10 @@ const canonicalPathIds = [
   'agent.room.participant.update',
   'agent.room.delete',
   'agent.room.message',
+  'agent.room.startExecution',
   'agent.room.abort',
   'agent.room.events',
+  'agent.room.history',
   'agent.room.kernel.snapshot',
   'agent.room.kernel.events',
   'agent.room.kernel.command',
@@ -128,6 +129,7 @@ const canonicalPathIds = [
   'agent.approval.get',
   'agent.approval.decide',
   'agent.memoryMaintenance.run',
+  'agent.memoryMaintenance.trigger',
   'agent.subagents.templates',
   'agent.subagents.list',
   'agent.subagents.create',
@@ -497,7 +499,7 @@ describe('control route policy', () => {
       assertControlRequest({
         pathId: 'memory.source.disposition',
         body: {
-          sourceId: 'input-memory:42',
+          evidenceId: 'evidence:input:42',
           disposition: 'not_for_memory',
         },
       }),
@@ -642,6 +644,24 @@ describe('control route policy', () => {
         },
       }),
     ).not.toThrow();
+  });
+
+  it('allows only the typed Room start action fields', () => {
+    expect(() =>
+      assertControlRequest({
+        pathId: 'agent.room.startExecution',
+        params: { roomId: 'room-1' },
+        body: {
+          action: 'start_execution',
+          rootId: 'root-1',
+          clientActionId: 'room-start-1',
+        },
+      }),
+    ).not.toThrow();
+    expect(CONTROL_ROUTES['agent.room.startExecution']).toMatchObject({
+      method: 'POST',
+      path: '/api/agent/rooms/:roomId/start-execution',
+    });
   });
 
   it('rejects arbitrary URL/host fields and fields outside each route contract', () => {

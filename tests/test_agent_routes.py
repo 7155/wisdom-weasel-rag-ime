@@ -240,8 +240,16 @@ class AgentRouteTests(unittest.TestCase):
             ("room:123", "messages"),
         )
         self.assertEqual(
+            agent_room_route("/api/agent/rooms/room%3A123/start-execution"),
+            ("room:123", "start-execution"),
+        )
+        self.assertEqual(
             agent_room_route("/api/agent/rooms/room%3A123/snapshot"),
             ("room:123", "snapshot"),
+        )
+        self.assertEqual(
+            agent_room_route("/api/agent/rooms/room%3A123/history"),
+            ("room:123", "history"),
         )
         self.assertEqual(agent_room_route("/api/agent/rooms/room:123"), ("room:123", ""))
         for path in (

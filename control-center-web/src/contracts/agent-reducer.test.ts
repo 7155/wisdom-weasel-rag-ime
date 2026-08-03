@@ -12,6 +12,7 @@ import {
   reduceAgentEvent,
   rewriteOptimisticAgentMessage,
   reduceAgentEvents,
+  type AgentTodoProjection,
 } from './agent-reducer';
 import { parseAgentEvent } from './validators';
 import { agentEventFixture as agentEvent } from '@/test/fixtures/events';
@@ -366,6 +367,156 @@ describe('AgentEventReducer', () => {
     expect(recovered.status).toBe('waiting');
   });
 
+  it('binds approval state to its owning tool call instead of creating another turn', () => {
+    const started = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      agentEvent(1, 'tool_started', {
+        toolCallId: 'tool-bound-1',
+        toolName: 'workspace_shell',
+        args: { command: 'pwd' },
+      }),
+    ).state;
+    const waiting = reduceAgentEvent(
+      started,
+      {
+        ...agentEvent(2, 'approval_required', {
+          approvalId: 'approval-bound-1',
+          toolCallId: 'tool-bound-1',
+          payloadSha256: 'a'.repeat(64),
+          operation: 'run',
+        }),
+        turnId: 'approval:approval-bound-1',
+      },
+    ).state;
+
+    expect(waiting.activityOrder).toEqual(['tool-bound-1']);
+    expect(waiting.turnOrder).toEqual(['turn-1']);
+    expect(waiting.activitiesById['tool-bound-1']).toMatchObject({
+      kind: 'tool_started',
+      status: 'waiting',
+      turnId: 'turn-1',
+      payload: {
+        approvalId: 'approval-bound-1',
+        toolCallId: 'tool-bound-1',
+        toolName: 'workspace_shell',
+        args: { command: 'pwd' },
+      },
+    });
+    expect(waiting.activitiesById['approval-bound-1']).toBeUndefined();
+
+    const resolved = reduceAgentEvent(
+      waiting,
+      {
+        ...agentEvent(3, 'approval_resolved', {
+          approvalId: 'approval-bound-1',
+          toolCallId: 'tool-bound-1',
+          state: 'rejected',
+          automatic: true,
+        }),
+        turnId: 'approval:approval-bound-1',
+      },
+    ).state;
+    expect(resolved.activityOrder).toEqual(['tool-bound-1']);
+    expect(resolved.activitiesById['tool-bound-1']).toMatchObject({
+      kind: 'tool_started',
+      status: 'failed',
+      turnId: 'turn-1',
+      payload: {
+        approvalId: 'approval-bound-1',
+        toolName: 'workspace_shell',
+      },
+    });
+
+    const finished = reduceAgentEvent(
+      resolved,
+      agentEvent(4, 'tool_finished', {
+        toolCallId: 'tool-bound-1',
+        toolName: 'workspace_shell',
+        args: {},
+        result: {
+          details: {
+            result: {
+              decisionMode: 'model',
+              decisionStatus: 'failed_closed',
+              approvalId: 'approval-bound-1',
+            },
+          },
+        },
+      }),
+    ).state;
+    expect(finished.activityOrder).toEqual(['tool-bound-1']);
+    expect(finished.activitiesById['tool-bound-1'].payload).toMatchObject({
+      approvalId: 'approval-bound-1',
+      args: { command: 'pwd' },
+    });
+    expect(finished.activitiesById['tool-bound-1']).toMatchObject({
+      kind: 'tool_finished',
+      status: 'failed',
+      turnId: 'turn-1',
+    });
+  });
+
+  it('reconciles a completed legacy approval row into the matching tool result', () => {
+    const started = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      agentEvent(1, 'tool_started', {
+        toolCallId: 'tool-legacy-1',
+        toolName: 'workspace_shell',
+        args: { command: 'pwd' },
+      }),
+    ).state;
+    const legacyApproval = reduceAgentEvent(
+      started,
+      {
+        ...agentEvent(2, 'approval_resolved', {
+          approvalId: 'approval-legacy-1',
+          state: 'rejected',
+          decisionMode: 'model',
+          approvalModelDecision: {
+            decision: 'deny',
+            status: 'failed_closed',
+          },
+        }),
+        turnId: 'approval:approval-legacy-1',
+      },
+    ).state;
+    expect(legacyApproval.activityOrder).toEqual([
+      'tool-legacy-1',
+      'approval-legacy-1',
+    ]);
+
+    const reconciled = reduceAgentEvent(
+      legacyApproval,
+      agentEvent(3, 'tool_finished', {
+        toolCallId: 'tool-legacy-1',
+        toolName: 'workspace_shell',
+        args: {},
+        result: {
+          details: {
+            result: {
+              approvalId: 'approval-legacy-1',
+              summary: '审批未通过，命令没有执行。',
+            },
+          },
+        },
+      }),
+    ).state;
+
+    expect(reconciled.activityOrder).toEqual(['tool-legacy-1']);
+    expect(reconciled.activitiesById['approval-legacy-1']).toBeUndefined();
+    expect(reconciled.turnOrder).toEqual(['turn-1']);
+    expect(reconciled.turnsById['approval:approval-legacy-1']).toBeUndefined();
+    expect(reconciled.activitiesById['tool-legacy-1']).toMatchObject({
+      kind: 'tool_finished',
+      status: 'failed',
+      turnId: 'turn-1',
+      payload: {
+        approvalId: 'approval-legacy-1',
+        decisionMode: 'model',
+      },
+    });
+  });
+
   it('restores a generic Pi question from the authoritative snapshot', () => {
     const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
       messages: [],
@@ -532,6 +683,7 @@ describe('AgentEventReducer', () => {
           ...rawAgentEvent(41, 'reasoning_summary', {
             requestId: 'reasoning-many-reads',
             summary: '检查只读结果',
+            source: 'provider_reasoning_summary',
             state: 'completed',
           }),
           turnId: 'runtime-turn-many-reads',
@@ -636,13 +788,16 @@ describe('AgentEventReducer', () => {
     expect(updated.lifecycleCancellationAuditOrder).toEqual([completedAudit.requestId]);
     expect(updated.lifecycleCancellationAuditsById[completedAudit.requestId]).toEqual(completedAudit);
   });
-  it('replaces active Room authorization with the fenced workflow on reconnect', () => {
-    const plan = {
-      id: 'plan:room-session',
+  it('replaces an active Room authorization with the current Session workflow on reconnect', () => {
+    const todo = {
+      schemaVersion: 'rag-ime.agent-todo.v1',
+      id: 'todo:room-session',
       sessionId: 'session-1',
       revision: 0,
-      status: 'draft',
-      items: [],
+      actor: 'agent',
+      updatedAtMs: 0,
+      phases: [],
+      counts: { total: 0, pending: 0, inProgress: 0, completed: 0, abandoned: 0 },
     };
     const goal = {
       schemaVersion: 'rag-ime.agent-goal.v1',
@@ -667,96 +822,119 @@ describe('AgentEventReducer', () => {
       liveEvents: [],
       lastSequence: 7,
       resumeToken: 'session-1:7',
-      plan,
+      todo,
       goal,
       actGate: {
         allowed: true,
         reason: 'approved',
         message: '当前 Room 任务已经开始，可以在本轮权限范围内继续工作。',
-        planRevision: 0,
+        todoRevision: 0,
         goalRevision: 0,
       },
     });
 
     expect(authorized.actGate).toMatchObject({ allowed: true, reason: 'approved' });
 
+    const pausedGoal = {
+      ...goal,
+      configured: true,
+      goalId: 'goal:paused',
+      revision: 1,
+      objective: '等待恢复',
+      successCriteria: '由用户恢复后继续',
+      status: 'paused',
+    };
     const reconnected = applyAgentSnapshot(authorized, {
       messages: [],
       liveEvents: [],
       lastSequence: 8,
       resumeToken: 'session-1:8',
-      plan,
-      goal,
+      todo,
+      goal: pausedGoal,
       actGate: {
         allowed: false,
-        reason: 'plan_required',
-        message: '先创建执行计划并提交审阅。',
-        planRevision: 0,
-        goalRevision: 0,
+        reason: 'goal_paused',
+        message: '当前 Goal 已暂停，恢复后才能继续写入。',
+        todoRevision: 0,
+        goalRevision: 1,
       },
     });
 
-    expect(reconnected.plan).toMatchObject({ id: plan.id, revision: plan.revision });
+    expect(reconnected.todo).toMatchObject({ id: todo.id, revision: todo.revision });
     expect(reconnected.goal).toMatchObject({
-      sessionId: goal.sessionId,
-      revision: goal.revision,
-      status: goal.status,
+      sessionId: pausedGoal.sessionId,
+      revision: pausedGoal.revision,
+      status: pausedGoal.status,
     });
     expect(reconnected.actGate).toEqual({
       allowed: false,
-      reason: 'plan_required',
-      message: '先创建执行计划并提交审阅。',
-      planRevision: 0,
-      goalRevision: 0,
+      reason: 'goal_paused',
+      message: '当前 Goal 已暂停，恢复后才能继续写入。',
+      todoRevision: 0,
+      goalRevision: 1,
     });
   });
 
-  it('restores the durable plan and advances it from live agent_plan results', () => {
+  it('restores the durable Todo and advances it from live todo results', () => {
     const restored = applyAgentSnapshot(createAgentProjection('session-1'), {
       messages: [],
       liveEvents: [],
       lastSequence: 0,
       resumeToken: '',
-      plan: {
+      todo: todoProjection({
         revision: 2,
-        items: [
-          { id: 'step-1', title: '核对现状', status: 'completed', sequence: 1, updatedAtMs: 10 },
-          { id: 'step-2', title: '实现清单', status: 'in_progress', sequence: 2, updatedAtMs: 20 },
-        ],
-      },
+        phases: [{
+          name: '实现',
+          tasks: [
+            { content: '核对现状', status: 'completed' },
+            { content: '实现清单', status: 'blocked', reason: '等待用户确认范围' },
+          ],
+        }],
+        counts: { total: 2, pending: 0, inProgress: 0, blocked: 1, completed: 1, abandoned: 0 },
+      }),
     });
 
-    expect(restored.plan.counts).toEqual({
+    expect(restored.todo.counts).toEqual({
       total: 2,
       pending: 0,
-      inProgress: 1,
+      inProgress: 0,
+      blocked: 1,
       completed: 1,
+      abandoned: 0,
+    });
+    expect(restored.todo.phases[0]?.tasks[1]).toMatchObject({
+      status: 'blocked',
+      reason: '等待用户确认范围',
     });
 
     const advanced = reduceAgentEvent(
       restored,
       agentEvent(1, 'tool_finished', {
-        toolCallId: 'plan-update',
-        toolName: 'agent_plan',
+        toolCallId: 'todo-update',
+        toolName: 'todo',
         result: {
           details: {
             result: {
-              plan: {
+              todo: todoProjection({
                 revision: 3,
-                items: [
-                  { id: 'step-1', title: '核对现状', status: 'completed', sequence: 1, updatedAtMs: 10 },
-                  { id: 'step-2', title: '实现清单', status: 'completed', sequence: 3, updatedAtMs: 30 },
-                ],
-              },
+                phases: [{
+                  name: '实现',
+                  tasks: [
+                    { content: '核对现状', status: 'completed' },
+                    { content: '实现清单', status: 'completed' },
+                  ],
+                }],
+                counts: { total: 2, pending: 0, inProgress: 0, completed: 2, abandoned: 0 },
+              }),
             },
           },
         },
       }),
     ).state;
 
-    expect(advanced.plan.revision).toBe(3);
-    expect(advanced.plan.items.map((item) => item.status)).toEqual(['completed', 'completed']);
-    expect(advanced.plan.counts.completed).toBe(2);
+    expect(advanced.todo.revision).toBe(3);
+    expect(advanced.todo.phases[0]?.tasks.map((item) => item.status)).toEqual(['completed', 'completed']);
+    expect(advanced.todo.counts.completed).toBe(2);
   });
 
   it('uses the authoritative idle snapshot status to recover a stale aborting turn', () => {
@@ -852,21 +1030,21 @@ describe('AgentEventReducer', () => {
     const state = reduceAgentEvent(
       createAgentProjection('session-1'),
       agentEvent(1, 'tool_finished', {
-        toolCallId: 'tool-plan-required',
+        toolCallId: 'tool-goal-paused',
         toolName: 'edit',
         isError: true,
         result: {
           details: {
             ok: false,
-            error: 'Act Gate blocked workspace mutation (plan_required): 先创建执行计划并提交审阅。',
+            error: 'Act Gate blocked workspace mutation (goal_paused): 当前 Goal 已暂停，恢复后才能继续写入。',
           },
         },
       }),
     ).state;
 
-    expect(state.activitiesById['tool-plan-required']).toMatchObject({
+    expect(state.activitiesById['tool-goal-paused']).toMatchObject({
       status: 'completed',
-      summary: '工作区变更未执行：请先提交执行计划并等待用户批准。',
+      summary: '工作区变更未执行：当前 Todo、Goal 或权限状态不允许执行。',
       payload: {
         isError: false,
         governanceBlocked: true,
@@ -1291,6 +1469,21 @@ function textOf(message: { blocks: { data: Record<string, unknown> }[] }): strin
   return String(message.blocks[0]?.data.text ?? '');
 }
 
+function todoProjection(overrides: Partial<AgentTodoProjection> = {}): AgentTodoProjection {
+  return {
+    schemaVersion: 'rag-ime.agent-todo.v1',
+    id: 'todo:session-1',
+    sessionId: 'session-1',
+    revision: 1,
+    actor: 'agent',
+    updatedAtMs: 10,
+    phases: [],
+    counts: { total: 0, pending: 0, inProgress: 0, completed: 0, abandoned: 0 },
+    ...overrides,
+    roomLineage: overrides.roomLineage ?? null,
+  };
+}
+
 function backgroundJob(
   status: AgentBackgroundJobV1['status'],
   updatedAtMs: number,
@@ -1327,8 +1520,8 @@ function backgroundJob(
     error: '',
     approvalId: 'approval-1',
     causalMetadata: {
-      planId: 'plan-1',
-      planRevision: 1,
+      todoId: 'todo-1',
+      todoRevision: 1,
       goalId: 'goal-1',
       goalRevision: 1,
       turnId: 'turn-1',

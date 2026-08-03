@@ -15,7 +15,7 @@ ASSISTANT_CONTROL_TOOL_IDS = (
     "configuration",
     "agents",
     "browser",
-    "agent_plan",
+    "todo",
     "agent_goal",
     "plugins",
     "work_documents",
@@ -40,6 +40,7 @@ READONLY_TOOL_PROFILE = "subagent-readonly-v1"
 WORKER_TOOL_PROFILE = "subagent-worker-v1"
 SURFACE_TOOL_PROFILE = "ime-surface-v1"
 VOICE_REFINEMENT_TOOL_PROFILE = "voice-refinement-v1"
+MEMORY_CURATION_TOOL_PROFILE = "memory-curation-v1"
 DANGEROUS_AUTO_APPROVE_TOOL_PROFILE = "control-center-auto-approve-v1"
 DANGEROUS_MODE_CONFIRMATION = "ENABLE_FULL_TRUST"
 
@@ -50,6 +51,7 @@ SUPPORTED_AGENT_TOOL_PROFILES = frozenset(
         WORKER_TOOL_PROFILE,
         SURFACE_TOOL_PROFILE,
         VOICE_REFINEMENT_TOOL_PROFILE,
+        MEMORY_CURATION_TOOL_PROFILE,
         DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
     }
 )

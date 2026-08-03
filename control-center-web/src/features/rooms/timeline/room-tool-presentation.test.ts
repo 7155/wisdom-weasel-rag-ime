@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { PublicToolResultView } from '@/features/agent/timeline/public-tool-result';
-import { roomPublicToolResultView } from './room-tool-presentation';
+import {
+  roomPublicActivityText,
+  roomPublicToolResultView,
+} from './room-tool-presentation';
 
 describe('roomPublicToolResultView', () => {
   it('keeps humane tool details while removing protocol metadata and machine paths', () => {
@@ -35,7 +38,7 @@ describe('roomPublicToolResultView', () => {
       { id: 'path', label: '目标', value: 'Report.tsx', code: true },
       { id: 'query', label: '查询', value: '任务汇报' },
     ]);
-    expect(view.output?.text).toBe('已更新 …/Report.tsx\n任务 协作记录 已完成');
+    expect(view.output?.text).toBe('已更新 …/Report.tsx\n任务协作记录已完成');
     expect(JSON.stringify(view)).not.toContain('receipt-room-82');
     expect(JSON.stringify(view)).not.toContain('/Volumes/undo 4t');
     expect(JSON.stringify(view)).not.toContain('/Users/alice');
@@ -79,6 +82,17 @@ describe('roomPublicToolResultView', () => {
 
     expect(view.summary).toBe('项目工具已完成');
     expect(view.output).toBeUndefined();
+  });
+
+  it('translates standalone internal protocol terms in public activity text', () => {
+    const text = roomPublicActivityText(
+      'Kernel 已从 Root 创建 Dispatch，Task 按 AC 完成并保存 Receipt ID。',
+    );
+
+    expect(text).toBe(
+      '协作系统已从本轮工作创建执行安排，工作项按验收标准完成并保存验证记录。',
+    );
+    expect(text).not.toMatch(/Kernel|Root|Dispatch|Task|\bAC\b|Receipt ID/iu);
   });
 });
 

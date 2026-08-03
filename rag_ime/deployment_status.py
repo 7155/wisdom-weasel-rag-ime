@@ -159,7 +159,7 @@ def audit_installed_product(
     for component_id, marker_component in (
         ("sidecar", "sidecar-runtime"),
         ("mlxPredictor", "mlx-predictor"),
-        ("memoryBookMaintenance", "memory-book-maintenance"),
+        ("memoryBookMaintenance", "memory-maintenance-trigger"),
     ):
         components[component_id] = _commit_component(
             component_id=component_id,

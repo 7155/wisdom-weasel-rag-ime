@@ -25,6 +25,7 @@
     "runtimeToolNames": "packages/rag-ime-runtime-host/src/runtime-tool-names.ts",
     "toolBridge": "packages/rag-ime-runtime-host/src/tool-bridge.ts",
     "toolArtifacts": "packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts",
+    "ask": "packages/rag-ime-runtime-host/src/ask.ts",
     "providerContextJournal": "packages/rag-ime-runtime-host/src/provider-context-journal.ts",
     "sessionContextRefresh": "packages/rag-ime-runtime-host/src/session-context-refresh.ts",
     "summarizationCompletion": "packages/coding-agent/src/core/compaction/summarization-completion.ts",
@@ -75,8 +76,13 @@
     "discoveryTools": [
       "Use tool_search for detail and tool_load for one to four exact schemas needed by the same next step.",
       "const loaded = loadBackendTools(",
+      "const progressiveTools = tools.filter((tool) => tool.alwaysAvailable !== true);",
       "tools: prepared.map((item) => ({",
       "...backendToolRouteEntry(item.tool),"
+    ],
+    "ask": [
+      "export const ASK_SCHEMA_VERSION = \"rag-ime.grouped-questions.v2\" as const;",
+      "export function createAskExtension"
     ],
     "memoryCapture": [
       "export function createMemoryCaptureExtension",
@@ -90,7 +96,8 @@
     ],
     "runtimeToolNames": [
       "export const TOOL_LOAD_TOOL_NAME = \"tool_load\";",
-      "export const MEMORY_CAPTURE_TOOL_NAME = \"memory_capture\";"
+      "export const MEMORY_CAPTURE_TOOL_NAME = \"memory_capture\";",
+      "export const ASK_TOOL_NAME = \"ask\""
     ],
     "toolBridge": [
       "when?: string[];",
@@ -98,12 +105,13 @@
       "input?: string;",
       "output?: string;",
       "does?: string;",
+      "alwaysAvailable?: boolean;",
       "const artifacts = new ToolArtifactBuffer();"
     ],
     "toolArtifacts": [
       "export class ToolArtifactBuffer",
       "export function modelVisibleResult",
-      "const ROOM_DELIVERY_TOOLS = new Set([\"room_post\", \"room_commit\"]);"
+      "const ROOM_DELIVERY_TOOLS: Record<string, true> = { room_post: true, room_commit: true };"
     ],
     "providerContextJournal": [
       "export class ProviderContextJournal",
@@ -139,7 +147,6 @@
       "event.message.stopReason === \"error\" || event.message.stopReason === \"aborted\""
     ],
     "workflowControl": [
-      "const showPlan = Boolean(planStatus) && (planStatus !== \"draft\" || planItems.length > 0);",
       "<workflow-state>",
       "const MAX_GOAL_SETTLE_ATTEMPTS_PER_SCOPE = 5;",
       "pi.on(\"before_agent_settle\"",

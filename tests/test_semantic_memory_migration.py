@@ -28,6 +28,7 @@ from rag_ime.embeddings import HashingEmbeddingProvider
 from rag_ime.memory_projection import (
     RETRIEVAL_DOCS_PROJECTION,
     enqueue_memory_projection,
+    process_memory_projection_outbox,
 )
 from rag_ime.semantic_memory_migration import (
     _timeline_conservation_errors,
@@ -237,6 +238,52 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
             verification = verify_semantic_memory_database(conn, project=PROJECT)
 
         self.assertTrue(verification["ok"], verification["errors"])
+
+    def test_project_timeline_does_not_require_personal_memory_admission(self) -> None:
+        report = migrate_semantic_memory_database(
+            self.db_path,
+            project=PROJECT,
+            timezone_name="Asia/Shanghai",
+        )
+        self.assertTrue(report["verification"]["ok"])
+        sessions = AgentSessionStore(self.db_path)
+        session = sessions.create(title="timeline-pending-source", created_at_ms=1)
+        sources = AgentMemorySourceStore(self.db_path, project=PROJECT)
+        source = sources.checkpoint_user_message(
+            session_id=str(session["id"]),
+            pi_entry_id="entry:timeline-pending",
+            turn_id="turn:timeline-pending",
+            text="这是一条仅用于项目活动时间线的输入。",
+            created_at_ms=1_800_000_000_000,
+        )["source"]
+        event_id = int(source["inputEventId"])
+        segment = {
+            "segmentId": "segment:timeline-pending",
+            "eventCount": 1,
+            "sourceEventIds": [event_id],
+        }
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute(
+                """INSERT INTO daily_activity_timelines(
+                       timeline_id, project, timeline_date, timezone, status,
+                       source_event_ids_json, source_event_hash, segments_json,
+                       summary_text, event_count, segment_count, metadata_json,
+                       created_at_ms, updated_at_ms
+                   ) VALUES ('timeline:pending-personal-disposition', ?,
+                             '2026-07-19', 'Asia/Shanghai', 'approved', ?, ?, ?,
+                             '项目活动时间线', 1, 1, ?, 1, 1)""",
+                (
+                    PROJECT,
+                    json.dumps([event_id]),
+                    "d" * 64,
+                    json.dumps([segment], ensure_ascii=False),
+                    json.dumps({"segmentationMode": TIMELINE_SEGMENTATION_MODE}),
+                ),
+            )
+            verification = verify_semantic_memory_database(conn, project=PROJECT)
+
+        self.assertTrue(verification["ok"], verification["errors"])
         self.assertEqual(verification["activeArtifactEvidenceErrors"], [])
 
     def test_verification_accepts_consolidated_source_evidence(self) -> None:
@@ -363,7 +410,10 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
 
         self.assertEqual(input_after, input_before)
         self.assertTrue(report["verification"]["ok"])
-        self.assertEqual(report["migration"]["currentVersion"], 126)
+        self.assertEqual(
+            report["migration"]["currentVersion"],
+            latest_migration_version(),
+        )
         self.assertEqual(report["legacyItems"]["promoted"], 1)
         self.assertEqual(report["legacyItems"]["quarantined"], 1)
         self.assertFalse(report["verification"]["vectorGateRequired"])
@@ -393,6 +443,9 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
         )
         self.assertLess(int(timeline["segment_count"]), 99)
         self.assertNotIn("item", doc_types)
+        # Legacy Atoms remain readable during the governed migration window so
+        # existing memory does not disappear before P7 retires or rebinds it.
+        # New personal-memory Atoms still require admitted canonical Evidence.
         self.assertGreaterEqual(doc_types.get("atom", 0), 2)
 
     def test_copy_cli_and_atomic_activation_keep_rollback(self) -> None:
@@ -552,7 +605,15 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
                     "",
                 )
             if args[:2] == ["pgrep", "-fl"] and "agImeControl" in str(args[-1]):
-                return subprocess.CompletedProcess(args, 0, "43 RagImeControl\n", "")
+                command = self.db_path.parent / "RagImeControl.app/Contents/MacOS/RagImeControl"
+                return subprocess.CompletedProcess(args, 0, f"43 {command}\n", "")
+            if args[:2] == ["pgrep", "-fl"] and "ag_ime" in str(args[-1]):
+                return subprocess.CompletedProcess(
+                    args,
+                    0,
+                    "44 python -m rag_ime.cli --db-path /tmp/unrelated/rag-ime.sqlite agent-gateway\n",
+                    "",
+                )
             return subprocess.CompletedProcess(args, 1, "", "")
 
         with mock.patch.object(module.subprocess, "run", side_effect=fake_run), mock.patch.object(
@@ -567,7 +628,10 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
         self.assertIn("listening_runtime_ports=8766", proof["errors"])
         self.assertIn("database_open_handles=1", proof["errors"])
         self.assertIn("orphan_runtime_processes=1", proof["errors"])
-        self.assertEqual(proof["orphanRuntimeProcesses"], ["43 RagImeControl"])
+        self.assertEqual(
+            proof["orphanRuntimeProcesses"],
+            [f"43 {self.db_path.parent / 'RagImeControl.app/Contents/MacOS/RagImeControl'}"],
+        )
 
     def test_strict_verification_rejects_missing_stale_and_uncaught_up_vectors(self) -> None:
         provider = HashingEmbeddingProvider(dimensions=16)
@@ -588,6 +652,48 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
 
         with closing(sqlite3.connect(self.db_path)) as conn:
             conn.row_factory = sqlite3.Row
+            conn.execute(
+                """
+                UPDATE daily_activity_timelines
+                SET status = 'approved', approved_by = 'test',
+                    approved_at_ms = updated_at_ms
+                WHERE timeline_id = (
+                    SELECT timeline_id
+                    FROM daily_activity_timelines
+                    WHERE project = ? AND status = 'draft'
+                    ORDER BY updated_at_ms DESC, timeline_id DESC
+                    LIMIT 1
+                )
+                """,
+                (PROJECT,),
+            )
+            enqueue_memory_projection(
+                conn,
+                projection_kind=RETRIEVAL_DOCS_PROJECTION,
+                aggregate_type="project",
+                aggregate_id=PROJECT,
+                operation="test_strict_vector_fixture",
+                project=PROJECT,
+            )
+            conn.commit()
+            projection = process_memory_projection_outbox(
+                conn,
+                embedding_provider=provider,
+            )
+            self.assertEqual(projection["failed"], [])
+            self.assertEqual(projection["dead"], [])
+            baseline = verify_semantic_memory_database(
+                conn,
+                project=PROJECT,
+                provider_fingerprint=provider.fingerprint,
+                require_vector_freshness=True,
+            )
+            self.assertTrue(baseline["activationEligible"])
+            self.assertGreater(baseline["expectedRetrievalDocuments"], 0)
+            self.assertEqual(
+                baseline["expectedRetrievalDocuments"],
+                baseline["activeRetrievalDocuments"],
+            )
             doc_id = str(
                 conn.execute(
                     "SELECT doc_id FROM memory_retrieval_docs ORDER BY doc_id LIMIT 1"
@@ -754,8 +860,11 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
         self.assertEqual(migrate.returncode, 0, migrate.stderr)
         with closing(sqlite3.connect(candidate)) as conn:
             conn.execute(
-                """DELETE FROM memory_retrieval_doc_vectors
-                   WHERE rowid = (SELECT rowid FROM memory_retrieval_doc_vectors LIMIT 1)"""
+                """
+                UPDATE input_events
+                SET committed_text = committed_text || '（已篡改）'
+                WHERE id = (SELECT id FROM input_events ORDER BY id LIMIT 1)
+                """
             )
             conn.commit()
 

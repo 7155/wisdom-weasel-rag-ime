@@ -18,12 +18,14 @@ source checkpoint is not a signed and notarized macOS binary release.
 - Separate public-source and distributable-binary readiness decisions.
 - Governed coordinator background jobs include approval-bound launch, durable
   redacted cursor logs, lifecycle events, management APIs, cancellation, and
-  Control Center controls. Focused validation and connected current-source
-  browser acceptance pass; formal same-snapshot installed acceptance remains open.
-- Plan and Goal lifecycles, per-capability Tool/Skill disclosure, Session
-  overrides, governed workspace operations, explicit LSP degradation, and active/
-  archived Work Document flows share backend-owned contracts with Control Center
-  projections. `agent_goal` is discoverable through the managed Pi Tool catalog.
+  Control Center controls. Focused validation, current-source browser preview,
+  and installed backend-connected acceptance pass; installed native-app visual
+  acceptance remains open.
+- Session-local phased Todo tracking and Goal lifecycles, per-capability
+  Tool/Skill disclosure, Session overrides, governed workspace operations,
+  explicit LSP degradation, and active/archived Work Document flows share
+  backend-owned contracts with Control Center projections. `todo` and
+  `agent_goal` are discoverable through the managed Pi Tool catalog.
 - Source support lets Room messages carry bounded, Room-owned clipboard or file
   images through authorized participant dispatch without exposing Session-private
   media; focused image-flow validation and same-snapshot installed acceptance
@@ -36,6 +38,9 @@ source checkpoint is not a signed and notarized macOS binary release.
 - Python 3.12 is the declared and tested minimum.
 - Model selection is feature-owned: Agent/Room roles, Active RAG, and voice
   refinement use real runtime model catalogs instead of dead settings.
+- The approval-gated Agent Plan lifecycle is retired. Migration `0135` converts
+  active legacy rows to phased Todo events, renames causal receipts, and drops
+  the old Plan tables; Todo records progress but never grants execution authority.
 - HTTP route ownership is consolidated for ordinary families, with a
   fail-closed ratchet for deliberately special routes.
 - Room-turn bookkeeping has one mutation owner.
@@ -46,9 +51,34 @@ source checkpoint is not a signed and notarized macOS binary release.
 - The Control Center Room timeline now separates live reasoning, Tool activity,
   public participant reports, shared review, and the final reply in equal,
   responsive participant lanes with user-facing status language.
+- Settled Room reports now show the linked runtime response's Provider, model,
+  input/output/cache usage, and an exact Session-turn context-inspection action;
+  missing telemetry is labeled unavailable instead of inferred.
+- The Control Center Room Tasks view now leads with a responsive lifecycle
+  graph from creation through participant work and execution to the shared
+  result. Per-participant details remain available in a secondary disclosure;
+  final-state rendering stays bound to the authoritative Root projection.
+- Agent and Room prompts now keep the durable core, discovered Skills, working
+  directory, and Tool schemas as a cache-stable prefix. Execution policy,
+  query-aware recalled memory, workflow/lifecycle state, and current-turn context
+  are ordered hidden runtime messages; recall refreshes only at Session start or
+  after compaction instead of being rebuilt on every turn.
+- Ask-style user questions now replace the ordinary Agent or Room composer with
+  an in-place, responsive answer card; no modal masks the conversation, and the
+  timeline reserves the card's measured height while the turn is waiting.
+- Ordinary Agent Sessions now keep `ask` and `todo` as non-hideable base
+  capabilities. Ask remains Pi-host-owned, Todo keeps the backend-owned
+  lifecycle contract, and material user-owned choices route through the
+  alignment-and-decision Skill before structured Ask UI is shown.
+- The no-tools Provider cache Canary now accepts and records an explicit
+  thinking level, so Luna Max cache evidence cannot silently run at a weaker
+  reasoning setting.
 
 ### Fixed
 
+- Agent approvals now retain their originating Tool-call identity and causal
+  turn, so pending and fail-closed Luna decisions stay inside the owning task
+  row instead of creating a duplicate timeline task.
 - Exact failed Room Tool commands cannot loop under a new call ID without new
   successful Tool evidence.
 - A terminal Tool invocation receipt cannot execute twice.
@@ -61,6 +91,9 @@ source checkpoint is not a signed and notarized macOS binary release.
 - Sealed Room maintenance now uses lightweight control-state fencing, preserves
   transcripts when reopening revoked nonresident Sessions, and treats repeated
   Tool-disclosure receipt timestamps as idempotent instead of blocking compaction.
+- Ask answers now close only after a contiguous durable resolution event, and
+  the Agent status rail consumes the current `workspace_lsp` capability
+  projection instead of inferring readiness from historical Tool receipts.
 - Room WorkItems now mirror canonical Kernel lifecycle changes and startup
   reconciliation; blocked work is no longer presented as actively executing.
 - Room settlement now deduplicates review invitations, retries recoverable
@@ -73,6 +106,15 @@ source checkpoint is not a signed and notarized macOS binary release.
   authoritative post-commit surface, accepts current action-button badges,
   commits native Rime composition before assistant selection, and fails before
   clearing evidence when frontend tracing is disabled.
+- Agent project headers now truly hide their conversation rows and preserve
+  manual collapse across live Session-summary refreshes; wide desktop Agent
+  workspaces open the renamed task center by default.
+- Installed-product audit now recognizes the gateway-owned
+  `memory-maintenance-trigger` marker at the memory-book maintenance component
+  path instead of reporting a false overwritten-marker failure.
+- Squirrel preparation now validates the capture-delivery-aware frontend trace
+  gate, typechecks the durable input-capture outbox with its client, and uses a
+  narrow cross-file delivery method instead of inaccessible private helpers.
 
 ### Validation
 
@@ -80,20 +122,34 @@ source checkpoint is not a signed and notarized macOS binary release.
   explicitly skipped cases in 1,429.139 seconds. The preceding audit's sole
   stale execution-policy wording assertion was repaired and the entire suite
   rerun. Existing unclosed-SQLite `ResourceWarning` output remains visible.
-- Control Center passed 96 files / 801 tests and its production build. Full
+- Control Center passed 96 files / 813 tests and its production build. Full
   Playwright passed 160 cases with 35 intentional skips.
+- Background jobs passed 235 focused backend lifecycle, Tool, HTTP route,
+  projection, Session, and Room cancellation tests; the Control Center path
+  passed 5 focused files / 188 tests and a production build. A current-source
+  browser preview exercised list, cursor-log disclosure, and two-step cancel UI.
+  An installed managed-Pi turn then loaded `workspace_job`, reached `running`
+  after governed approval, returned cursor logs, cancelled the process group,
+  persisted `cancelled`, and published started/progress/cancelled events.
+  Installed native Control Center visual acceptance remains open.
+- The Room task-flow source passed 26 focused preview/control tests and
+  TypeScript checks. Browser inspection at 1440×1000 and 430×900 verified two
+  task/dispatch paths, stage order, detail disclosure, and no graph overflow.
+  This proof used the current-source preview transport, not an installed app.
 - Import boundaries passed. Route ownership passed with 91 dispatched routes,
-  204 declared routes, and 40/40 undeclared-route checks.
+  203 declared routes, and 40/40 undeclared-route checks. All 156 generated
+  Control Center contracts reproduced without drift.
 - The current managed Pi payload passed protocol-v2, OAuth, and Runtime hello
-  smoke checks. It was not installed.
+  smoke checks, then installed and activated as the current verified generation.
 - A real TextEdit/Squirrel run produced 84 privacy-safe AppKit events and passed
   native Rime composition, post-commit overlay visibility, source badges,
   Option+number assistant selection, commit, and follow-up checks. The focused
   foreground analyzer suite passes 79 tests.
-- The repository-only release audit finds no forbidden, secret-shaped, or
-  machine-path candidates, but correctly fails while the worktree is dirty.
-  Distribution also remains blocked by foreground acceptance, the declared
-  blocked status, and the missing release manifest.
+- The repository-only release audit remains blocked by the dirty worktree and a
+  pre-existing OpenAI-key-shaped test fixture at
+  `tests/test_historical_memory_curation.py:275`; it also reports pending
+  tracked-file deletions. Distribution remains blocked by foreground acceptance,
+  the declared blocked status, and the missing release manifest.
 
 ### Known Distribution Gates
 

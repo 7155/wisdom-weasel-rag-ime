@@ -12,6 +12,12 @@ notFor:
 
 # Systematic Debugging
 
+Method provenance: this Room-bounded Skill adapts Matt Pocock's
+`diagnosing-bugs` at upstream commit
+`2ab958093e83e0ec752e6c1c5932da465bf23e0c`. The upstream method supplies the
+feedback-loop discipline; Room policy, capability, workspace, and receipts
+remain authoritative.
+
 ## Observation Ledger
 
 Keep four columns separate:
@@ -47,6 +53,9 @@ environment, artifact, or instrumentation permission. Do not theorize.
    observations.
 4. Choose one experiment whose outcomes distinguish the leading hypotheses.
    Change one variable, record the result, and update the hypothesis set.
+   For a performance regression, establish a repeatable baseline and use a
+   profiler, query plan, or timing/bisection harness; measure before changing
+   code instead of replacing a performance signal with broad logs.
 5. Fix only the smallest cause supported by evidence. Add a regression that
    would fail on the original defect.
 6. Re-run the exact feedback command, real path, and proportional regression.

@@ -29,7 +29,8 @@ REQUIRE_BALANCED_QUOTA=1
 REQUIRE_SNAPSHOT_SELECTION_TRACE=1
 AUTO_TYPE=1
 AUTO_QUERY="${RAG_IME_FOREGROUND_SOAK_AUTO_QUERY:-er qi}"
-AUTO_KEY="${RAG_IME_FOREGROUND_SOAK_AUTO_KEY:-6}"
+AUTO_COMMIT_KEY="${RAG_IME_FOREGROUND_SOAK_AUTO_COMMIT_KEY:-6}"
+AUTO_KEY="${RAG_IME_FOREGROUND_SOAK_AUTO_KEY:-option-1}"
 AUTO_TYPE_DELAY="${RAG_IME_FOREGROUND_SOAK_AUTO_DELAY_SECONDS:-2.5}"
 AUTO_CHAR_DELAY="${RAG_IME_FOREGROUND_SOAK_AUTO_CHAR_DELAY_SECONDS:-0.04}"
 CHAIN_REPEATS="${RAG_IME_FOREGROUND_SOAK_CHAIN_REPEATS:-10}"
@@ -71,9 +72,11 @@ Options:
   --no-balanced-quota   Do not require product model/RAG/Rime quota trace
   --no-snapshot-selection-trace
                        Do not require accepted snapshot-selection trace before side commits
-  --auto-query TEXT     Text used for auto typing / manual instructions
-  --auto-key KEY        Number key used for auto typing / manual instructions
-  --chain-repeats N     Repeat side-candidate selection N times for chaining evidence (default: 10)
+  --auto-query TEXT     Pinyin text used for the first automated case
+  --auto-commit-key KEY Native Rime candidate key sent after each Pinyin query (default: 6)
+  --auto-key KEY        Assistant action repeated after native commit (default: option-1)
+                       Supported actions: Tab or Option+number.
+  --chain-repeats N     Repeat assistant selection N times for chaining evidence (default: 10)
   --no-app-switch       Do not include an automated app switch between soak cases
   --min-duration-sec N  Required foreground trace duration in seconds
   --min-backspaces N    Required delete/backspace invalidations
@@ -139,6 +142,10 @@ while [[ $# -gt 0 ]]; do
       AUTO_QUERY="$2"
       shift
       ;;
+    --auto-commit-key)
+      AUTO_COMMIT_KEY="$2"
+      shift
+      ;;
     --auto-key)
       AUTO_KEY="$2"
       shift
@@ -182,6 +189,11 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+if [[ "$AUTO_KEY" != "tab" && ! "$AUTO_KEY" =~ ^option-[0-9]$ ]]; then
+  echo "--auto-key must be tab or option-0 through option-9" >&2
+  exit 2
+fi
+
 if [[ "$REQUIRE_SIDE_COMMIT" != "1" ]]; then
   MIN_SIDE_COMMITS=0
 fi
@@ -206,12 +218,12 @@ if [[ -n "${RAG_IME_FOREGROUND_SOAK_CASES:-}" ]]; then
   AUTO_CASES_TEXT="$RAG_IME_FOREGROUND_SOAK_CASES"
 else
   AUTO_CASES_TEXT="$(cat <<EOF
-er qi	$AUTO_KEY	$CHAIN_REPEATS	continuous_pinyin
-zhe ge fang an	$AUTO_KEY	2	ordinary_pinyin_with_app_switch
-lian xu yu ce	$AUTO_KEY	2	ordinary_pinyin
-open /		0	raw_english_path
-cd ~/Downloads		0	shell_path
-https://example.com		0	url_passthrough
+$AUTO_QUERY	$AUTO_COMMIT_KEY	$AUTO_KEY	$CHAIN_REPEATS	continuous_pinyin
+zhe ge fang an	$AUTO_COMMIT_KEY	$AUTO_KEY	2	ordinary_pinyin_with_app_switch
+lian xu yu ce	$AUTO_COMMIT_KEY	$AUTO_KEY	2	ordinary_pinyin
+open /			0	raw_english_path
+cd ~/Downloads			0	shell_path
+https://example.com			0	url_passthrough
 EOF
 )"
 fi
@@ -285,6 +297,7 @@ open_test_file=$OPEN_TEST_FILE
 select_input_source=$SELECT_INPUT_SOURCE
 auto_type=$AUTO_TYPE
 auto_query=$AUTO_QUERY
+auto_commit_key=$AUTO_COMMIT_KEY
 auto_key=$AUTO_KEY
 chain_repeats=$CHAIN_REPEATS
 auto_case_count=$AUTO_CASE_COUNT
@@ -362,36 +375,45 @@ import sys
 path = Path(sys.argv[1]).expanduser()
 input_source = sys.argv[2]
 app_switch = sys.argv[3] == "1"
-cases: list[tuple[str, str, int, str]] = []
+cases: list[tuple[str, str, str, int, str]] = []
 for line in os.environ.get("RAG_IME_FOREGROUND_SOAK_CASES_RESOLVED", "").splitlines():
     if not line.strip():
         continue
     parts = line.split("\t")
     query = parts[0].strip()
-    key = parts[1].strip() if len(parts) > 1 else ""
-    repeats_text = parts[2].strip() if len(parts) > 2 else "0"
-    label = parts[3].strip() if len(parts) > 3 else "case"
+    commit_key = parts[1].strip() if len(parts) > 1 else ""
+    action_key = parts[2].strip() if len(parts) > 2 else ""
+    repeats_text = parts[3].strip() if len(parts) > 3 else "0"
+    label = parts[4].strip() if len(parts) > 4 else "case"
     try:
         repeats = int(repeats_text or "0")
     except ValueError:
         repeats = 0
-    cases.append((query, key, max(0, repeats), label))
+    cases.append((query, commit_key, action_key, max(0, repeats), label))
 
 steps = [
     "RAG-IME foreground soak test",
     "",
     f"1. Make sure the active input source is {input_source}.",
-    "2. For pinyin cases, wait for visible model, RAG, and memory side candidates.",
-    "3. For raw English/path/URL cases, verify side candidates do not hijack normal typing.",
-    "4. After side-candidate selection, wait for the next prediction before selecting again.",
-    "5. Press Backspace/Delete near the end and verify the next request uses updated foreground context.",
+    "2. For Pinyin cases, commit one native Rime candidate with the ordinary number key.",
+    "3. Wait for visible model, RAG, and memory side candidates.",
+    "4. Select assistant candidates only with Tab or Option+number.",
+    "5. For raw English/path/URL cases, verify side candidates do not hijack normal typing.",
+    "6. After assistant selection, wait for the next prediction before selecting again.",
+    "7. Press Backspace/Delete near the end and verify the next request uses updated foreground context.",
 ]
 if app_switch:
-    steps.append("6. Switch away from this editor once during the second case, then return; stale candidates must not commit.")
+    steps.append("8. Switch away from this editor once during the second case, then return; stale candidates must not commit.")
 steps.append("")
 steps.append("Cases:")
-for index, (query, key, repeats, label) in enumerate(cases, start=1):
-    action = f"press visible side-candidate key {key} {repeats} time(s)" if key and repeats else "type only; normal text must pass through"
+for index, (query, commit_key, action_key, repeats, label) in enumerate(cases, start=1):
+    if action_key and repeats:
+        action = (
+            f"commit native Rime with {commit_key}, then trigger assistant action "
+            f"{action_key} {repeats} time(s)"
+        )
+    else:
+        action = "type only; normal text must pass through"
     steps.append(f"- {index}. [{label}] type `{query}`; {action}.")
 steps.append("")
 path.write_text(
@@ -405,6 +427,44 @@ fi
 if [[ "$AUTO_TYPE" == "1" ]]; then
   set +e
   osascript - "$OPEN_APP" "$AUTO_TYPE_DELAY" "$AUTO_CHAR_DELAY" "$AUTO_APP_SWITCH" "$AUTO_CASES_TEXT" <<'APPLESCRIPT'
+on sendAssistantAction(actionKey)
+  tell application "System Events"
+    if actionKey is "" or actionKey is "none" then
+      return false
+    else if actionKey is "tab" then
+      key code 48
+    else if actionKey begins with "option-" then
+      set digitText to text 8 thru -1 of actionKey
+      set digitKeyCodes to {{"1", 18}, {"2", 19}, {"3", 20}, {"4", 21}, {"5", 23}, {"6", 22}, {"7", 26}, {"8", 28}, {"9", 25}, {"0", 29}}
+      repeat with digitKeyPair in digitKeyCodes
+        if item 1 of digitKeyPair is digitText then
+          key code (item 2 of digitKeyPair) using option down
+          return true
+        end if
+      end repeat
+      return false
+    end if
+  end tell
+  return true
+end sendAssistantAction
+
+on sendNativeCommit(commitKey)
+  tell application "System Events"
+    if commitKey is "" or commitKey is "none" then
+      return false
+    else if commitKey is "return" then
+      key code 36
+    else if commitKey is "enter" then
+      key code 76
+    else if commitKey is "space" then
+      key code 49
+    else
+      keystroke commitKey
+    end if
+  end tell
+  return true
+end sendNativeCommit
+
 on run argv
   set appName to item 1 of argv
   set waitSeconds to (item 2 of argv) as number
@@ -425,10 +485,12 @@ on run argv
         set fields to text items of lineText
         set AppleScript's text item delimiters to ""
         set queryText to item 1 of fields
-        set sideKey to ""
+        set commitKey to ""
+        set actionKey to ""
         set chainRepeats to 0
-        if (count of fields) is greater than 1 then set sideKey to item 2 of fields
-        if (count of fields) is greater than 2 then set chainRepeats to (item 3 of fields) as integer
+        if (count of fields) is greater than 1 then set commitKey to item 2 of fields
+        if (count of fields) is greater than 2 then set actionKey to item 3 of fields
+        if (count of fields) is greater than 3 then set chainRepeats to (item 4 of fields) as integer
         set caseIndex to caseIndex + 1
         keystroke return
         delay 0.2
@@ -436,6 +498,7 @@ on run argv
           keystroke (character charIndex of queryText)
           delay charDelaySeconds
         end repeat
+        my sendNativeCommit(commitKey)
         delay waitSeconds
         if shouldAppSwitch is 1 and caseIndex is 2 then
           key code 48 using {command down}
@@ -444,7 +507,7 @@ on run argv
           delay 0.8
         end if
         repeat with chainIndex from 1 to chainRepeats
-          if sideKey is not "" then keystroke sideKey
+          my sendAssistantAction(actionKey)
           delay waitSeconds
         end repeat
       end if
@@ -464,7 +527,7 @@ fi
 
 manual_required+=("Foreground editor typing verification")
 manual_required+=("Real Squirrel candidate panel visual check")
-manual_required+=("Side candidate number-key commit verification across ${AUTO_CASE_COUNT} foreground soak cases, including ${CHAIN_REPEATS} continuous prediction selections")
+manual_required+=("Native Rime ordinary-number commit plus Tab/Option-number assistant selection across ${AUTO_CASE_COUNT} foreground soak cases, including ${CHAIN_REPEATS} continuous prediction selections")
 manual_required+=("Backspace/Delete committed-context resync verification")
 if [[ "$AUTO_APP_SWITCH" == "1" ]]; then
   manual_required+=("App switch stale-candidate invalidation verification")

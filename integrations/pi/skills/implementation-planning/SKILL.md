@@ -14,113 +14,117 @@ notFor:
 
 ## Planning Invariants
 
-- Reread the confirmed packet's immutable `User Source` block before planning.
-  The original request and vision outrank every AI summary. Do not grill the
-  user, replay requirement questions, or revise the selected approach.
-- Begin each persisted plan with that block byte-for-byte. Keep originals,
-  append corrections, and put planning interpretation below it.
-- Preserve its reference and revision instead of copying it into a new workflow
-  record. Project scope is automatic; do not invent a work ID between stages.
-- Plan from observable acceptance backward, not from a directory tree forward.
-- One state owner owns each shared contract; parallel lanes must not race on it.
-- A candidate is a verifiable vertical result for one fresh Session, not a file
-  list or arbitrary Agent-sized chunk.
+- Reread the confirmed packet's immutable `User Source`; the original request and vision outrank every AI summary.
+  Do not grill the user or revise the selected route.
+- Begin each persisted plan with that block byte-for-byte. Preserve its ref and
+  revision; do not invent a work ID between stages.
+- Plan backward from observable acceptance. A candidate is a verifiable
+  vertical result for one fresh context window, never a file list.
+- One canonical owner controls each shared contract; derived copies are read-only.
 
 ## Workflow
 
-1. Compare the confirmed interpretation back to the verbatim request, vision,
-   and appended corrections. Verify that scope, acceptance, permissions, and
-   any material solution choice remain confirmed. If planning exposes a new
-   user-owned choice, stop with `needs_alignment_decision` and return it to
+1. Compare interpretation with verbatim request, vision, corrections, scope,
+   acceptance, permissions, and decision. If a new user-owned choice appears,
+   stop with `needs_alignment_decision` and return it to
    `alignment-and-decision`; do not ask or compare options here.
-2. Inspect implementation, the confirmed Domain Language Delta, glossary, and
-   ADRs. Resolve facts yourself. Identify state and contract owners,
-   dependency direction, test seams, migrations, permissions, and extension
-   points. Planning goes deeper than alignment only to locate executable seams.
-3. Map every acceptance check to implementation work and fresh verification.
-   Prefer the highest stable behavior seam already present.
-4. First test whether one Session can finish the change coherently. If so,
-   return one candidate instead of manufacturing parallel work.
-5. Otherwise split into tracer-bullet candidates: each cuts a narrow but
-   complete path through the affected layers, produces observable behavior,
-   is independently verifiable, and fits one fresh context window. Do not split
-   into "backend, frontend, tests" or per-file tasks.
-6. Express every dependency as a blocking edge. A candidate with no unfinished
-   dependencies is on the frontier. Name shared-contract owners, integration
-   order, permission needs, cancellation effects, and rollback points.
-7. Treat a wide mechanical migration as the exception to vertical slicing.
-   Use expand-migrate-contract: add the compatible form, migrate batches sized
-   by blast radius, then remove the old form after all consumers move. Add an
-   integrate-and-verify candidate when no batch stays independently green.
-8. Allow parallel candidates only when they cannot compete for the same state
-   or contract. Otherwise serialize or combine them under one owner.
-9. Keep the smallest plan that covers all acceptance without widening scope.
+2. Inspect implementation plus the confirmed Domain Language Delta, glossary,
+   and ADRs. Locate owners, dependency direction, test seams, migrations,
+   permissions, and extension points. Planning goes deeper than alignment only
+   to locate executable seams.
+3. Map every acceptance check to implementation and fresh verification. Prefer
+   the highest stable behavior seam already present.
+4. If one Session can finish coherently, return one candidate. Otherwise use
+   tracer-bullet candidates: each crosses affected layers, produces observable
+   behavior, is independently verifiable, and fits one fresh context window.
+5. Express dependencies as blocking edges. Work with no unfinished blocking
+   edges is on the frontier. Name owner, order, permission, cancellation,
+   integration, and rollback boundaries.
+6. For wide migrations use expand-migrate-contract: add a compatible form,
+   migrate bounded batches, then remove the old form after consumers move.
+7. Parallelize only when at least two candidates have non-overlapping
+   responsibilities, no unmet prerequisite, and a material waiting-time
+   benefit. Otherwise serialize or combine them under one owner; never create
+   parallel work merely to fill a roster.
+8. Keep one Facilitator/Integrator accountable for shared contracts and the
+   authoritative workspace. For concurrent writable children, require a
+   separate receipted workspace from the same Root baseline; read-only work
+   may share a baseline.
+9. Keep the smallest plan covering all acceptance without widening scope.
+
+## Managed Room Boundary
+
+`room_define` is the alignment commit, not a planning Tool. Consume the
+existing Root/Task, WorkItem, aliases, participant binding, and receipts after
+Kernel handoff. Do not create another Root, Task, Dispatch, WorkItem, or task
+store. The Facilitator owns decomposition, assignment, reassignment,
+dependency handling, and integration; this Skill may describe candidate
+capabilities and owners, but must not silently recruit or create Dispatches.
+Candidate WorkItems remain non-overlapping and review is an optional,
+post-integration Kernel handoff to a distinct participant, never a planning
+child. Stale, foreign, or missing authority returns a governed wait or
+blocker, never replacement state.
+- Consume `room_state` for the current aliases, then use
+  `room_commit(handoff)` only after the active alignment Dispatch has fenced
+  the next target. `room_collaborate` remains only a bounded implementation
+  child; review is an optional post-integration handoff to a distinct
+  participant.
+- Participant Session/Dispatch identity is distinct from filesystem roots.
+  Act only through the bound workspace harness and accepted evidence receipts;
+  a path does not establish isolation.
 
 ## Durable State Gate
 
-When a plan adds or changes durable state, it is not ready until it includes:
+State-changing plans must include:
 
-- A stateful-object census: identity, persisted fields, lifecycle, and any
-  replicas, caches, indexes, projections, or receipts for each object.
-- One canonical owner for every object and transition, with all other copies
-  explicitly read-only or derived.
-- A transition table covering source state, event, preconditions, destination
-  state, atomic effects, durable evidence, and recovery for each transition.
-- Invariants that must hold within and across objects, including authorization,
-  uniqueness, ordering, and terminal-state rules where applicable.
-- Adversarial checks for crash boundaries, concurrent or duplicate operations,
-  restart/restore/replay, and bypass attempts through alternate entry points.
+- a stateful-object census of identity, fields, lifecycle, replicas, caches,
+  indexes, projections, and receipts;
+- one canonical owner per object and transition;
+- a transition table with state, event, preconditions, atomic effects,
+  durable evidence, and recovery;
+- invariants for authorization, uniqueness, ordering, and terminal states;
+- adversarial checks for crash boundaries, concurrent or duplicate operations,
+  restart/restore/replay, and bypass attempts.
 
-Map every invariant and adversarial check to observable verification evidence.
+Map every invariant and adversarial check to observable evidence.
 
-## Task Candidate Contract
-
-Each candidate must state:
+## Candidate Contract
 
 ```text
-Objective:
-End-to-end behavior:
-Owned state or contract:
-Inputs and blocking candidates:
-Acceptance aliases:
-Test seam and fresh evidence:
-Permissions, workspace, and cancellation:
-Rollback or integration signal:
+Objective | end-to-end behavior | owned state or contract
+Inputs and blocking candidates | acceptance aliases
+Test seam and fresh evidence | permissions and cancellation
+Rollback or integration signal
 ```
 
-When candidates share a contract, add one integration owner and an explicit
-order: contract first, independent consumers second, integration verification
-last. Serialize candidates that must edit the same owner.
+Shared contracts need one integration owner and explicit order: contract,
+independent consumers, integration verification.
 
 ## Output Contract
 
-The full plan starts with `User Source`, then labeled AI interpretation. Return
-its source hash/ref, ordered candidates, owners, blockers, frontier,
-parallel/serial choice, evidence gates, non-goals, rollback, and one status:
-`ready_for_kernel_start`, `needs_alignment_decision`, or
-`blocked_by_external_fact`. A candidate is not managed work until the Kernel
-accepts it. Once bound to a Goal, Task, or Dispatch, route the accepted plan
-reference and exact acceptance aliases to `implementation-execution`.
+Start with `User Source`, then AI interpretation. Return source hash/ref,
+ordered candidates, capability-compatible owner recommendations for the
+Facilitator, blockers, frontier, explicit parallel/serial choice, one
+integration owner/workspace, review-warrant decision, evidence gates,
+non-goals, rollback, and `ready_for_kernel_start`,
+`needs_alignment_decision`, or `blocked_by_external_fact`. Once the Runtime
+accepts the plan, route the accepted plan reference and exact acceptance
+aliases to `implementation-execution`.
 
-Keep the full contract for the caller. Publicly show candidate titles, blocking
-graph, material risks, and status. Do not repeat the
+Publicly show titles, blocking graph, material risks, and status. Do not repeat the
 confirmed requirements or dump every field unless requested.
 
 ## Self-Check
 
-- Does every acceptance item map to implementation and verification?
-- Did I check the plan against original request and vision, not an AI summary?
-- Is each candidate a complete vertical result sized for one fresh Session?
-- Are blocking edges and the current frontier explicit?
-- Is every parallel lane safe without concurrent ownership of the same state?
-- Is the integration order and rollback point explicit?
+- Does every acceptance item map to implementation and fresh verification?
+- Is each candidate a complete vertical result for one fresh Session?
+- Are blocking edges, frontier, shared owners, order, and rollback explicit?
 - Could one coherent Session do this more simply?
-- Did I avoid re-grilling, creating work, or choosing Agents?
+- Did I leave assignment and roster changes to the Facilitator/Kernel rather
+  than use round-robin or free-text mentions?
 
 ## Boundaries
 
-Do not allocate Agents, create WorkItems or Dispatches, grant capabilities,
-publish tracker tickets, write implementation code, or invent a master/sub-Agent
-hierarchy. Revise a plan from specific feedback, but do not turn planning into
-another interview or overwrite the `User Source` block. User approval belongs
-to material choices; Kernel acceptance turns candidates into managed work.
+Do not allocate Agents, create managed work, publish tracker tickets, write
+implementation code, reopen confirmed choices, or invent a hierarchy. A plan
+is not Runtime work until accepted by the Kernel.

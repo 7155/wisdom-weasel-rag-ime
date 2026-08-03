@@ -99,7 +99,7 @@ describe('Agent experience', () => {
 
   it('collapses complete project groups and restores their conversations', async () => {
     const user = userEvent.setup();
-    render(
+    const { container, rerender } = render(
       <TooltipProvider>
         <SessionRail
           sessions={previewSessions}
@@ -120,9 +120,27 @@ describe('Agent experience', () => {
     await user.click(project);
     expect(project).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByRole('button', { name: '控制中心迁移' })).not.toBeInTheDocument();
+    const sessionGroup = container.querySelector<HTMLElement>('.agent-session-project__sessions');
+    expect(sessionGroup).not.toBeNull();
+    expect(getComputedStyle(sessionGroup!).display).toBe('none');
+
+    rerender(
+      <TooltipProvider>
+        <SessionRail
+          sessions={[...previewSessions]}
+          selectedId="session-preview"
+          loading={false}
+          onSelect={() => {}}
+          onCreate={() => {}}
+        />
+      </TooltipProvider>,
+    );
+    expect(project).toHaveAttribute('aria-expanded', 'false');
+    expect(getComputedStyle(sessionGroup!).display).toBe('none');
 
     await user.click(project);
     expect(screen.getByRole('button', { name: '控制中心迁移' })).toBeInTheDocument();
+    expect(getComputedStyle(sessionGroup!).display).toBe('grid');
   });
 
   it('offers archive, delete confirmation, and archived visibility controls per conversation', async () => {
@@ -822,8 +840,8 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await user.click(await screen.findByRole('button', { name: '展开状态面板' }));
-    const statusPanel = await screen.findByLabelText('当前对话状态');
+    await user.click(await screen.findByRole('button', { name: '展开任务中心' }));
+    const statusPanel = await screen.findByLabelText('当前对话任务中心');
 
     expect(await within(statusPanel).findByRole('button', { name: /取消与暂停回执/ })).toHaveAttribute('aria-expanded', 'true');
     expect(within(statusPanel).getByText('目标暂停')).toBeVisible();
@@ -845,8 +863,8 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await user.click(await screen.findByRole('button', { name: '展开状态面板' }));
-    const statusPanel = await screen.findByLabelText('当前对话状态');
+    await user.click(await screen.findByRole('button', { name: '展开任务中心' }));
+    const statusPanel = await screen.findByLabelText('当前对话任务中心');
     const sectionToggle = await within(statusPanel).findByRole('button', { name: /子智能体/ });
     const section = sectionToggle.closest('section')!;
 
@@ -874,8 +892,8 @@ describe('Agent experience', () => {
       query: { sessionId: 'session-preview' },
     })));
 
-    await user.click(await screen.findByRole('button', { name: '展开状态面板' }));
-    const statusPanel = await screen.findByLabelText('当前对话状态');
+    await user.click(await screen.findByRole('button', { name: '展开任务中心' }));
+    const statusPanel = await screen.findByLabelText('当前对话任务中心');
     const capabilityToggle = await within(statusPanel).findByRole('button', { name: /当前对话工具与技能/ });
     const capabilitySection = capabilityToggle.closest('section')!;
     await user.click(capabilityToggle);
@@ -904,8 +922,8 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await user.click(await screen.findByRole('button', { name: '展开状态面板' }));
-    const statusPanel = await screen.findByLabelText('当前对话状态');
+    await user.click(await screen.findByRole('button', { name: '展开任务中心' }));
+    const statusPanel = await screen.findByLabelText('当前对话任务中心');
     const capabilityToggle = await within(statusPanel).findByRole('button', { name: /当前对话工具与技能/ });
     const capabilitySection = capabilityToggle.closest('section')!;
     await user.click(capabilityToggle);
@@ -959,8 +977,8 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await user.click(await screen.findByRole('button', { name: '展开状态面板' }));
-    const statusPanel = await screen.findByLabelText('当前对话状态');
+    await user.click(await screen.findByRole('button', { name: '展开任务中心' }));
+    const statusPanel = await screen.findByLabelText('当前对话任务中心');
     const capabilityToggle = await within(statusPanel).findByRole('button', { name: /当前对话工具与技能/ });
     const capabilitySection = capabilityToggle.closest('section')!;
     await user.click(capabilityToggle);
@@ -994,8 +1012,8 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await user.click(await screen.findByRole('button', { name: '展开状态面板' }));
-    const statusPanel = await screen.findByLabelText('当前对话状态');
+    await user.click(await screen.findByRole('button', { name: '展开任务中心' }));
+    const statusPanel = await screen.findByLabelText('当前对话任务中心');
     const capabilityToggle = await within(statusPanel).findByRole('button', { name: /当前对话工具与技能/ });
     const capabilitySection = capabilityToggle.closest('section')!;
     await user.click(capabilityToggle);
@@ -1040,8 +1058,8 @@ describe('Agent experience', () => {
       error: '',
       approvalId: 'approval-1',
       causalMetadata: {
-        planId: 'plan-1',
-        planRevision: 1,
+        todoId: 'todo-1',
+        todoRevision: 1,
         goalId: 'goal-1',
         goalRevision: 1,
         turnId: 'turn-1',
@@ -1129,8 +1147,8 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await user.click(await screen.findByRole('button', { name: '展开状态面板' }));
-    const statusPanel = await screen.findByLabelText('当前对话状态');
+    await user.click(await screen.findByRole('button', { name: '展开任务中心' }));
+    const statusPanel = await screen.findByLabelText('当前对话任务中心');
     await within(statusPanel).findByRole('button', { name: /构建工作区索引/ });
     const capabilityToggle = await within(statusPanel).findByRole('button', { name: /当前对话工具与技能/ });
     const capabilitySection = capabilityToggle.closest('section')!;
@@ -1179,17 +1197,17 @@ describe('Agent experience', () => {
     expect(document.querySelectorAll('.agent-session-row')).toHaveLength(1);
     expect(screen.queryByText('研究员临时会话')).not.toBeInTheDocument();
 
-    await user.click(await screen.findByRole('button', { name: '展开状态面板' }));
-    const statusPanel = await screen.findByLabelText('当前对话状态');
+    const statusPanel = await screen.findByLabelText('当前对话任务中心');
+    expect(statusPanel).toHaveAttribute('data-open', 'true');
     await waitFor(() => expect(within(statusPanel).getByText('研究员')).toBeInTheDocument());
-    const planPanel = await within(statusPanel).findByRole('region', { name: '会话执行计划' });
-    expect(planPanel).toHaveTextContent('第 2 / 3 步 · 1 项已完成');
+    const todoPanel = await within(statusPanel).findByRole('region', { name: 'Todo' });
+    expect(todoPanel).toHaveTextContent('1/3 已收束');
+    expect(todoPanel).toHaveTextContent('实现会话内可见的 Todo');
     expect(within(statusPanel).getByText('执行中 · 1/3')).toBeInTheDocument();
-    expect(document.querySelector('.agent-timeline .agent-plan-card')).not.toBeInTheDocument();
     expect(within(statusPanel).getByText('规划员')).toBeInTheDocument();
     expect(within(statusPanel).getByText('审阅者')).toBeInTheDocument();
     expect(within(statusPanel).getByText('执行者')).toBeInTheDocument();
-    expect(within(statusPanel).getAllByText('关联计划：接入前端')).toHaveLength(4);
+    expect(within(statusPanel).getAllByText('关联 Todo：实现 · 接入前端')).toHaveLength(4);
     expect(statusPanel.querySelector('.agent-status-subagent[data-state="running"] .agent-status-subagent__state svg')).toBeInTheDocument();
     expect(statusPanel.querySelector('.agent-status-subagent[data-state="queued"] .agent-status-subagent__state svg')).toBeInTheDocument();
     expect(statusPanel.querySelector('.agent-status-subagent[data-state="completed"]')).toBeInTheDocument();
@@ -1271,18 +1289,34 @@ describe('Agent experience', () => {
     useAgentLiveStore.getState().clear(sessionId);
   });
 
-  it('keeps the durable Session plan out of current-turn progress', () => {
-    const sessionId = 'session-plan-panel';
+  it('keeps the durable Session Todo out of current-turn progress', () => {
+    const sessionId = 'session-todo-panel';
     useAgentLiveStore.getState().appendOptimistic(sessionId, {
-      clientMessageId: 'plan-panel',
-      text: '按计划执行',
+      clientMessageId: 'todo-panel',
+      text: '按 Todo 执行',
       nowMs: 1,
     });
     const projection = useAgentLiveStore.getState().projections[sessionId];
     const turnId = projection.turnOrder[0]!;
+    const todo = {
+      schemaVersion: 'rag-ime.agent-todo.v1',
+      id: `todo:${sessionId}`,
+      sessionId,
+      revision: 2,
+      actor: 'agent',
+      updatedAtMs: 3,
+      phases: [{
+        name: '实现',
+        tasks: [
+          { content: '核对权限边界', status: 'completed' },
+          { content: '验证原生交互', status: 'in_progress' },
+        ],
+      }],
+      counts: { total: 2, pending: 0, inProgress: 1, completed: 1, abandoned: 0 },
+    };
     useAgentLiveStore.getState().applyEvents(sessionId, [{
       schemaVersion: 'rag-ime.agent-event.v1',
-      eventId: 'agent-plan-start',
+      eventId: 'todo-start',
       sessionId,
       turnId,
       sequence: 1,
@@ -1290,15 +1324,15 @@ describe('Agent experience', () => {
       streamKind: 'agent',
       eventType: 'tool_started',
       payload: {
-        toolCallId: 'agent-plan-call',
-        toolId: 'agent_plan',
-        operation: 'list',
-        summary: '正在读取当前计划',
+        toolCallId: 'todo-call',
+        toolId: 'todo',
+        operation: 'view',
+        summary: '正在读取 Todo',
       },
-      resumeToken: 'agent-plan-start',
+      resumeToken: 'todo-start',
     }, {
       schemaVersion: 'rag-ime.agent-event.v1',
-      eventId: 'agent-plan-result',
+      eventId: 'todo-result',
       sessionId,
       turnId,
       sequence: 2,
@@ -1306,27 +1340,18 @@ describe('Agent experience', () => {
       streamKind: 'agent',
       eventType: 'tool_finished',
       payload: {
-        toolCallId: 'agent-plan-call',
-        toolId: 'agent_plan',
-        operation: 'list',
-        summary: '当前计划已读取',
-        result: {
-          details: {
-            result: {
-              items: [
-                { itemId: 'step-1', title: '核对权限边界', status: 'completed' },
-                { itemId: 'step-2', title: '验证原生交互', status: 'in_progress' },
-              ],
-            },
-          },
-        },
+        toolCallId: 'todo-call',
+        toolId: 'todo',
+        operation: 'view',
+        summary: 'Todo 已读取',
+        result: { details: { result: { todo } } },
       },
-      resumeToken: 'agent-plan-result',
+      resumeToken: 'todo-result',
     }]);
 
     const current = useAgentLiveStore.getState().projections[sessionId];
     expect(projectStatusPanel(current).tasks).toEqual([]);
-    expect(current.plan.items.map((item) => item.title)).toEqual([
+    expect(current.todo.phases[0]?.tasks.map((item) => item.content)).toEqual([
       '核对权限边界',
       '验证原生交互',
     ]);
@@ -2401,6 +2426,46 @@ describe('Agent experience', () => {
     expect(screen.queryByText('思考中')).not.toBeInTheDocument();
   });
 
+  it('replaces the composer with an in-place question card while the turn waits for input', async () => {
+    const transport = featureTransport();
+    renderAgent(transport);
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(
+      useAgentLiveStore.getState().projections['session-preview']?.lastSequence,
+    ).toBeGreaterThan(0));
+    const projection = useAgentLiveStore.getState().projections['session-preview'];
+    const turnId = projection.turnOrder.at(-1) ?? 'turn-user-input';
+
+    act(() => {
+      useAgentLiveStore.getState().applyEvents('session-preview', [{
+        schemaVersion: 'rag-ime.agent-event.v1',
+        eventId: 'grouped-user-input-inline',
+        sessionId: 'session-preview',
+        turnId,
+        sequence: projection.lastSequence + 1,
+        createdAtMs: Date.now(),
+        streamKind: 'agent',
+        eventType: 'user_input_required',
+        payload: {
+          requestId: 'grouped-user-input-inline',
+          requestKind: 'grouped_questions',
+          title: '确认交付方式',
+          questions: [{
+            id: 'delivery',
+            question: '这次怎么交付？',
+            options: [{ label: '直接提交' }, { label: '先看预览' }],
+          }],
+        },
+        resumeToken: 'grouped-user-input-inline',
+      }]);
+    });
+
+    const card = await screen.findByRole('region', { name: '确认交付方式' });
+    expect(card.parentElement).toHaveClass('agent-composer-dock');
+    expect(screen.queryByRole('textbox', { name: '消息' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '确认交付方式' })).not.toBeInTheDocument();
+  });
+
   it('opens memory review immediately and resumes Pi when the user defers it', async () => {
     const transport = featureTransport();
     const user = userEvent.setup();
@@ -2627,7 +2692,7 @@ describe('Agent experience', () => {
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.prompt')).toBe(false);
 
     await user.click(screen.getByRole('option', { name: /\/status/ }));
-    expect(screen.getByLabelText('当前对话状态')).toHaveAttribute('data-open', 'true');
+    expect(screen.getByLabelText('当前对话任务中心')).toHaveAttribute('data-open', 'true');
 
     await openCommandPalette();
     await user.click(screen.getByRole('option', { name: /\/settings/ }));
@@ -3872,16 +3937,16 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(featureTransport());
 
-    const toggle = await screen.findByRole('button', { name: '展开状态面板' });
-    expect(screen.queryByRole('button', { name: /打开当前对话状态面板/ })).not.toBeInTheDocument();
+    const toggle = await screen.findByRole('button', { name: '展开任务中心' });
+    expect(screen.queryByRole('button', { name: /打开当前对话任务中心/ })).not.toBeInTheDocument();
     await user.click(toggle);
-    const panel = screen.getByRole('dialog', { name: '当前对话状态' });
+    const panel = screen.getByRole('dialog', { name: '当前对话任务中心' });
     const conversation = document.querySelector('.agent-conversation');
     const rail = document.querySelector('.agent-session-rail');
     expect(panel).toHaveAttribute('aria-modal', 'true');
     expect(conversation).toHaveAttribute('inert');
     expect(rail).toHaveAttribute('inert');
-    await waitFor(() => expect(within(panel).getByRole('button', { name: '收起状态面板' })).toHaveFocus());
+    await waitFor(() => expect(within(panel).getByRole('button', { name: '收起任务中心' })).toHaveFocus());
 
     await user.tab({ shift: true });
     expect(panel).toContainElement(document.activeElement as HTMLElement);
@@ -3892,6 +3957,15 @@ describe('Agent experience', () => {
     expect(conversation).not.toHaveAttribute('inert');
     expect(rail).not.toHaveAttribute('inert');
     await waitFor(() => expect(toggle).toHaveFocus());
+  });
+
+  it('opens the task center by default on wide desktops', async () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false })));
+    renderAgent(featureTransport());
+
+    const panel = await screen.findByLabelText('当前对话任务中心');
+    expect(panel).toHaveAttribute('data-open', 'true');
+    expect(screen.getByRole('button', { name: '收起任务中心', expanded: true })).toBeInTheDocument();
   });
 
   it('releases the session rail grid column when collapsed on desktop', async () => {
@@ -3916,7 +3990,7 @@ describe('Agent experience', () => {
     await user.click(screen.getByRole('button', { name: '收起对话列表' }));
 
     expect(feature()).toHaveAttribute('data-rail-open', 'false');
-    expect(getComputedStyle(feature()!).gridTemplateColumns).toBe('0 minmax(0, 1fr) 0');
+    expect(getComputedStyle(feature()!).gridTemplateColumns).toBe('0 minmax(0, 1fr) var(--agent-status-width)');
     expect(screen.getByRole('textbox', { name: '消息' })).toBe(composer);
     expect(composer).toBeVisible();
     expect(composer.closest('.agent-composer-wrap')).toBeInTheDocument();
@@ -4099,7 +4173,6 @@ function featureTransport(
       'agent.runtime.get': runtimeRoute,
       'agent.session.snapshot': snapshotRoute,
       'agent.session.workflow.get': workflowRouteFixture(),
-      'agent.session.plan.mutate': workflowRouteFixture(),
       'agent.session.goal.mutate': workflowRouteFixture(),
       'agent.session.models': modelCatalog,
       'agent.session.commands': commandCatalog(),
@@ -4138,7 +4211,7 @@ function forkListFixture() {
     sessionId: 'session-preview',
     items: [
       { entryId: 'session-preview:user-architecture', text: '把迁移进度按真实代码链整理一下，别把工具日志当回答。', role: 'user', createdAtMs: 0 },
-      { entryId: 'session-preview:assistant-architecture', text: '三条工作线已经收束到同一个可执行计划。', role: 'assistant', createdAtMs: 0 },
+      { entryId: 'session-preview:assistant-architecture', text: '三条工作线已经收束到同一个 Todo。', role: 'assistant', createdAtMs: 0 },
       { entryId: 'session-preview:user-media', text: '读取输入法工具书，并把结果作为可展开卡片保留。', role: 'user', createdAtMs: 0 },
       { entryId: 'session-preview:assistant-media', text: '已完成。正文展示工具书内容，精确接口与参数继续留在右侧运行状态中。', role: 'assistant', createdAtMs: 0 },
       { entryId: 'internal-context', text: '<rag-ime-deep-search-context>private deep-search evidence</rag-ime-deep-search-context>', role: 'user', createdAtMs: 0 },
@@ -4151,24 +4224,27 @@ function workflowRouteFixture() {
     schemaVersion: 'rag-ime.agent-workflow-state.v1',
     ok: true,
     sessionId: 'session-preview',
-    plan: {
-      schemaVersion: 'rag-ime.agent-plan.v2',
-      id: 'plan:preview',
+    todo: {
+      schemaVersion: 'rag-ime.agent-todo.v1',
+      id: 'todo:preview',
       sessionId: 'session-preview',
       revision: 4,
-      title: '控制中心迁移',
-      status: 'executing',
       actor: 'agent',
-      note: '',
       updatedAtMs: Date.now(),
-      editable: false,
-      actApproved: true,
-      items: [
-        { id: 'plan:item:1', title: '核对现状', status: 'completed', position: 1, sequence: 1, updatedAtMs: Date.now() },
-        { id: 'plan:item:2', title: '接入前端', status: 'in_progress', position: 2, sequence: 2, updatedAtMs: Date.now() },
-        { id: 'plan:item:3', title: '运行验收', status: 'pending', position: 3, sequence: 3, updatedAtMs: Date.now() },
+      phases: [
+        {
+          name: '实现',
+          tasks: [
+            { content: '核对现状', status: 'completed' },
+            { content: '接入前端', status: 'in_progress' },
+          ],
+        },
+        {
+          name: '验证',
+          tasks: [{ content: '运行验收', status: 'pending' }],
+        },
       ],
-      counts: { total: 3, pending: 1, inProgress: 1, completed: 1 },
+      counts: { total: 3, pending: 1, inProgress: 1, completed: 1, abandoned: 0 },
     },
     goal: {
       schemaVersion: 'rag-ime.agent-goal.v1',
@@ -4190,9 +4266,9 @@ function workflowRouteFixture() {
     },
     actGate: {
       allowed: true,
-      reason: 'approved',
-      message: 'Plan 已批准，可以执行。',
-      planRevision: 4,
+      reason: 'user_execution_request',
+      message: '用户已请求执行。',
+      todoRevision: 4,
       goalRevision: 0,
     },
   };
@@ -4210,8 +4286,8 @@ function subagentListFixture() {
     id,
     batchId: 'batch-status-panel',
     childSessionId: `session-child-${id}`,
-    planItemId: 'plan:item:2',
-    planItemTitle: '接入前端',
+    todoTask: '接入前端',
+    todoPhase: '实现',
     templateId,
     templateVersion: '1',
     ordinal: 0,

@@ -69,6 +69,64 @@ class InputEventAssemblyTests(unittest.TestCase):
         self.assertFalse(records[0]["injectable"])
         self.assertIn("missing_finalized_boundary", records[0]["qualityReasons"])
 
+    def test_backspace_snapshot_revisions_collapse_to_the_final_context(self) -> None:
+        rows = [
+            {
+                "id": 1,
+                "created_at_ms": 1_000,
+                "source": "squirrel_rime_commit_burst",
+                "committed_text": "整里",
+                "recent_context": "记忆系统需要先完成输入重建与整里",
+                "app": "com.openai.codex",
+                "project": "wisdom-weasel-rag-ime",
+                "context_group_id": "codex-thread",
+                "context_group_level": "document",
+            },
+            {
+                "id": 2,
+                "created_at_ms": 1_700,
+                "source": "squirrel_rime_commit_burst",
+                "committed_text": "整理",
+                "recent_context": "记忆系统需要先完成输入重建与整理",
+                "app": "com.openai.codex",
+                "project": "wisdom-weasel-rag-ime",
+                "context_group_id": "codex-thread",
+                "context_group_level": "document",
+            },
+        ]
+
+        records = assemble_input_rows(rows)
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["text"], "记忆系统需要先完成输入重建与整理")
+        self.assertEqual(records[0]["sourceEventIds"], [1, 2])
+
+    def test_short_gap_does_not_merge_different_context_snapshots(self) -> None:
+        rows = [
+            {
+                "id": 1,
+                "created_at_ms": 1_000,
+                "source": "squirrel_rime_commit_burst",
+                "committed_text": "整理",
+                "recent_context": "今天先整理输入法的完整历史记录",
+                "app": "com.openai.codex",
+                "context_group_id": "codex-thread",
+            },
+            {
+                "id": 2,
+                "created_at_ms": 1_700,
+                "source": "squirrel_rime_commit_burst",
+                "committed_text": "验证",
+                "recent_context": "随后验证浏览器中的真实前台交互",
+                "app": "com.openai.codex",
+                "context_group_id": "codex-thread",
+            },
+        ]
+
+        records = assemble_input_rows(rows)
+
+        self.assertEqual(len(records), 2)
+
     def test_dynamic_budget_can_select_more_than_twenty_records(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-recent-context-") as temporary:
             core = LocalSqliteCoreClient(Path(temporary) / "rag-ime.sqlite")

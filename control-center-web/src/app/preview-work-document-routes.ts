@@ -46,7 +46,16 @@ export function createPreviewWorkDocumentRoutes(): PreviewRoutes {
             'terminal-receipt-preview-archived',
           )
         : activeDocument();
-      return { schemaVersion: 'rag-ime.work-document-detail.v1', document };
+      return {
+        schemaVersion: 'rag-ime.work-document-detail.v1',
+        document,
+        reopen: {
+          eligible: document.state === 'archived',
+          authorityRevision: document.authorityRevision,
+          transitionReceiptId: document.terminalReceiptId || '',
+          reasonCode: document.state === 'archived' ? 'ready' : 'document_not_archived',
+        },
+      };
     },
     'workDocuments.register': () => previewWorkDocumentCommand('register', activeDocument()),
     'workDocuments.archive': (request: ControlRequest) => {
@@ -91,18 +100,18 @@ function previewWorkDocument(
   const historical = documentId === ARCHIVED_DOCUMENT_ID;
   return {
     documentId,
-    authorityKind: historical ? 'session_goal' : 'session_plan',
+    authorityKind: historical ? 'session_goal' : 'session_todo',
     authorityId: historical ? 'goal-preview' : 'session-preview',
     authorityRevision: 7,
-    authorityKey: historical ? 'goal:preview' : 'session:preview',
+    authorityKey: historical ? 'goal:preview' : 'todo:preview',
     documentRevision: revision,
     contentSha256: historical ? '5'.repeat(64) : '4'.repeat(64),
     workspaceRoot: '/Users/preview/PersonalAgentWorkbench',
-    path: archived ? 'archive/session-preview/plan.md' : 'docs/agent/plan.md',
-    activePath: 'docs/agent/plan.md',
-    archivePath: 'archive/session-preview/plan.md',
+    path: archived ? 'archive/session-preview/todo.md' : 'docs/agent/todo.md',
+    activePath: 'docs/agent/todo.md',
+    archivePath: 'archive/session-preview/todo.md',
     state,
-    title: historical ? '输入法前台验收目标' : '控制中心发布计划',
+    title: historical ? '输入法前台验收目标' : '控制中心发布 Todo',
     terminalReceiptId,
     error: '',
     createdAtMs: Date.now() - 172_800_000,

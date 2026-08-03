@@ -18,6 +18,8 @@ from rag_ime.db.migration_runner import (
     migration_status,
 )
 
+POST_0126_MIGRATIONS = tuple(range(127, 143))
+
 
 class DatabaseMigrationTests(unittest.TestCase):
     def test_empty_database_applies_all_migrations_idempotently(self) -> None:
@@ -35,11 +37,11 @@ class DatabaseMigrationTests(unittest.TestCase):
                     31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
                     41, 42, 43, 44, 45, 46, 47,
                     51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-                    61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126,
+                    61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, *POST_0126_MIGRATIONS,
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 126)
+            self.assertEqual(status["currentVersion"], 142)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -51,6 +53,9 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("input_events", tables)
             self.assertIn("collaboration_profile_versions", tables)
             self.assertIn("collaboration_profile_active_pointers", tables)
+            self.assertIn("room_workspace_bindings", tables)
+            self.assertIn("room_workspace_events", tables)
+            self.assertIn("room_workspace_integration_leases", tables)
             self.assertIn("room_v2_prompt_compile_receipts", tables)
             self.assertIn("room_v2_prompt_compare_diffs", tables)
             self.assertIn("room_v2_session_context_epochs", tables)
@@ -94,6 +99,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("agent_memory_sources", tables)
             self.assertIn("memory_source_disposition_events", tables)
             self.assertIn("memory_curation_cursors", tables)
+            self.assertIn("memory_evidence_historical_promotion_receipts", tables)
             self.assertIn("agent_media", tables)
             self.assertIn("agent_message_media", tables)
             self.assertIn("agent_rooms", tables)
@@ -118,8 +124,9 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("agent_personas", tables)
             self.assertIn("agent_role_runtime_preferences", tables)
             self.assertIn("agent_session_tool_policies", tables)
-            self.assertIn("agent_plan_events", tables)
-            self.assertIn("agent_plan_state_events", tables)
+            self.assertIn("agent_todo_events", tables)
+            self.assertNotIn("agent_plan_events", tables)
+            self.assertNotIn("agent_plan_state_events", tables)
             self.assertIn("agent_thread_goal_events", tables)
             self.assertIn("agent_goal_completion_audits", tables)
             self.assertIn("agent_goal_usage_receipts", tables)
@@ -363,7 +370,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 self.assertEqual(
                     upgraded.applied_versions,
-                    (111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126),
+                    (111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126) + POST_0126_MIGRATIONS,
                 )
                 self.assertEqual(replay.applied_versions, ())
                 self.assertEqual(
@@ -567,7 +574,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 self.assertEqual(
                     upgraded.applied_versions,
-                    (111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126),
+                    (111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126) + POST_0126_MIGRATIONS,
                 )
                 self.assertEqual(replay.applied_versions, ())
                 self.assertEqual(
@@ -728,8 +735,8 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 upgraded = apply_database_migrations(conn)
 
-                self.assertEqual(upgraded.applied_versions, (94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126))
-                self.assertEqual(upgraded.current_version, 126)
+                self.assertEqual(upgraded.applied_versions, (94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126) + POST_0126_MIGRATIONS)
+                self.assertEqual(upgraded.current_version, 142)
                 self.assertEqual(
                     conn.execute(
                         "SELECT checksum FROM schema_migrations WHERE version=93"
@@ -796,7 +803,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 upgraded = apply_database_migrations(conn)
 
-                self.assertEqual(upgraded.applied_versions, (97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126))
+                self.assertEqual(upgraded.applied_versions, (97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126) + POST_0126_MIGRATIONS)
                 self.assertEqual(
                     conn.execute(
                         "SELECT file_name, mime_type FROM agent_media WHERE media_id='media_legacytext01'"
@@ -861,12 +868,12 @@ class DatabaseMigrationTests(unittest.TestCase):
                     )
 
                 appended = apply_database_migrations(conn)
-                self.assertEqual(appended.applied_versions, (63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126))
+                self.assertEqual(appended.applied_versions, (63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126) + POST_0126_MIGRATIONS)
                 self.assertEqual(conn.execute("PRAGMA quick_check").fetchone()[0], "ok")
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
                 status = migration_status(conn)
                 self.assertTrue(status["ok"])
-                self.assertEqual(status["currentVersion"], 126)
+                self.assertEqual(status["currentVersion"], 142)
 
     def test_legacy_atoms_preserve_supersession_lineage_and_require_evidence(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0058-") as temporary:
@@ -956,7 +963,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
             self.assertEqual(
                 result.applied_versions,
-                (59, 60, 61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126),
+                (59, 60, 61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126) + POST_0126_MIGRATIONS,
             )
             self.assertEqual(
                 rows["atom:legacy-old"],
@@ -1085,7 +1092,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 (
                     39, 40, 41, 42, 43, 44, 45, 46, 47,
                     51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-                    61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126,
+                    61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, *POST_0126_MIGRATIONS,
                 ),
             )
             self.assertEqual(
@@ -1150,7 +1157,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 self.assertEqual(
                     result.applied_versions,
-                    (61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126),
+                    (61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126) + POST_0126_MIGRATIONS,
                 )
                 self.assertEqual(
                     conn.execute(
@@ -1242,7 +1249,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 self.assertEqual(
                     result.applied_versions,
-                    (62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126),
+                    (62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126) + POST_0126_MIGRATIONS,
                 )
                 self.assertEqual(
                     conn.execute(
@@ -1339,7 +1346,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 self.assertEqual(
                     result.applied_versions,
-                    (66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126),
+                    (66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126) + POST_0126_MIGRATIONS,
                 )
                 self.assertEqual(
                     rows,
@@ -1474,6 +1481,232 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertEqual(columns["context_group_level"][4], "'app'")
             self.assertEqual(columns["capture_metadata_json"][4], "'{}'")
             self.assertEqual(conn.execute("SELECT committed_text FROM input_events").fetchone()[0], "保留内容")
+
+    def test_0135_and_0136_migrate_legacy_plan_state_to_todo_and_remove_old_schema(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0134-") as temporary:
+            migrations_0134 = Path(temporary) / "migrations"
+            migrations_0134.mkdir()
+            for migration in load_migrations():
+                if migration.version <= 134:
+                    shutil.copy2(migration.path, migrations_0134 / migration.path.name)
+
+            with closing(sqlite3.connect(":memory:")) as conn:
+                conn.execute("PRAGMA foreign_keys = ON")
+                apply_database_migrations(conn, migrations_dir=migrations_0134)
+                conn.execute(
+                    """
+                    INSERT INTO agent_sessions(
+                        id, title, session_mode, role_id, role_version, model_profile,
+                        tool_profile_version, created_at_ms, updated_at_ms,
+                        last_opened_at_ms, status
+                    ) VALUES (
+                        'session:plan-cutover', '迁移会话', 'assistant', 'companion', '1',
+                        'test/model', 'test-tools', 1, 1, 1, 'idle'
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO agent_sessions(
+                        id, title, session_mode, role_id, role_version, model_profile,
+                        tool_profile_version, created_at_ms, updated_at_ms,
+                        last_opened_at_ms, status
+                    ) VALUES (
+                        'session:cancelled-plan', '已取消迁移会话', 'assistant',
+                        'companion', '1', 'test/model', 'test-tools', 1, 1, 1, 'idle'
+                    )
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO agent_plan_events(
+                        event_id, session_id, sequence, item_id, title, status,
+                        created_at_ms, position, is_deleted
+                    ) VALUES (?, 'session:plan-cutover', ?, ?, ?, ?, ?, ?, 0)
+                    """,
+                    (
+                        ("plan-item:1", 1, "item:1", "核对输入", "completed", 10, 1),
+                        ("plan-item:2", 2, "item:2", "完成迁移", "in_progress", 20, 2),
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO agent_plan_state_events(
+                        event_id, session_id, sequence, title, status, actor, note, created_at_ms
+                    ) VALUES (
+                        'plan-state:1', 'session:plan-cutover', 1, '旧执行计划',
+                        'executing', 'agent', '', 15
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO agent_plan_events(
+                        event_id, session_id, sequence, item_id, title, status,
+                        created_at_ms, position, is_deleted
+                    ) VALUES (
+                        'cancelled-plan-item:1', 'session:cancelled-plan', 1,
+                        'item:cancelled', '不再执行', 'pending', 30, 0, 0
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO agent_plan_state_events(
+                        event_id, session_id, sequence, title, status, actor, note, created_at_ms
+                    ) VALUES (
+                        'cancelled-plan-state:1', 'session:cancelled-plan', 1,
+                        '已取消计划', 'cancelled', 'user', '', 31
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO work_documents(
+                        document_id, authority_kind, authority_id, authority_revision,
+                        authority_key, title, workspace_root, relative_path,
+                        active_relative_path, archive_relative_path, content_sha256,
+                        state, created_at_ms, updated_at_ms
+                    ) VALUES (
+                        'document:plan-cutover', 'session_plan', 'session:plan-cutover', 2,
+                        'session_plan:session:plan-cutover', '执行文档', '/workspace',
+                        'docs/agent/plan.md', 'docs/agent/plan.md',
+                        'archive/plan.md', ?, 'active', 20, 20
+                    )
+                    """,
+                    ("a" * 64,),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO work_documents(
+                        document_id, authority_kind, authority_id, authority_revision,
+                        authority_key, title, workspace_root, relative_path,
+                        active_relative_path, archive_relative_path, content_sha256,
+                        state, terminal_receipt_id, created_at_ms, updated_at_ms
+                    ) VALUES (
+                        'document:cancelled-plan', 'session_plan',
+                        'session:cancelled-plan', 4,
+                        'session_plan:session:cancelled-plan', '已归档执行文档',
+                        '/workspace', 'docs/agent/cancelled-plan.md',
+                        'docs/agent/cancelled-plan.md',
+                        'archive/cancelled-plan.md', ?, 'archived',
+                        'receipt:legacy-plan-terminal', 30, 31
+                    )
+                    """,
+                    ("c" * 64,),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO work_document_terminal_receipts(
+                        receipt_id, authority_kind, authority_id, authority_revision,
+                        terminal_state, receipt_sha256, created_at_ms
+                    ) VALUES (
+                        'receipt:legacy-plan-terminal', 'session_plan',
+                        'session:cancelled-plan', 4, 'cancelled', ?, 31
+                    )
+                    """,
+                    ("d" * 64,),
+                )
+
+                result = apply_database_migrations(conn)
+
+                self.assertEqual(
+                    result.applied_versions,
+                    (135, 136, 137, 138, 139, 140, 141, 142),
+                )
+                todo = conn.execute(
+                    """
+                    SELECT revision, phases_json, actor, operation, created_at_ms
+                    FROM agent_todo_events
+                    WHERE session_id = 'session:plan-cutover'
+                    """
+                ).fetchone()
+                self.assertEqual(todo[0], 1)
+                self.assertEqual(todo[2:], ("agent", "migrate", 20))
+                self.assertEqual(
+                    json.loads(todo[1]),
+                    [
+                        {
+                            "name": "旧执行计划",
+                            "tasks": [
+                                {"content": "核对输入", "status": "completed"},
+                                {"content": "完成迁移", "status": "in_progress"},
+                            ],
+                        }
+                    ],
+                )
+                cancelled_todo = conn.execute(
+                    """
+                    SELECT phases_json
+                    FROM agent_todo_events
+                    WHERE session_id = 'session:cancelled-plan'
+                    """
+                ).fetchone()
+                self.assertEqual(
+                    json.loads(cancelled_todo[0])[0]["tasks"],
+                    [{"content": "不再执行", "status": "abandoned"}],
+                )
+                self.assertEqual(
+                    conn.execute(
+                        """
+                        SELECT terminal_receipt_id, authority_revision
+                        FROM work_documents
+                        WHERE document_id = 'document:cancelled-plan'
+                        """
+                    ).fetchone(),
+                    ("", 1),
+                )
+                self.assertEqual(
+                    conn.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM work_document_terminal_receipts
+                        WHERE authority_id = 'session:cancelled-plan'
+                        """
+                    ).fetchone()[0],
+                    0,
+                )
+                tables = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                self.assertNotIn("agent_plan_events", tables)
+                self.assertNotIn("agent_plan_state_events", tables)
+                self.assertEqual(
+                    conn.execute(
+                        """
+                        SELECT authority_kind, authority_id, authority_revision, authority_key
+                        FROM work_documents
+                        WHERE document_id = 'document:plan-cutover'
+                        """
+                    ).fetchone(),
+                    (
+                        "session_todo",
+                        "session:plan-cutover",
+                        1,
+                        "session_todo:session:plan-cutover",
+                    ),
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        """
+                        INSERT INTO work_documents(
+                            document_id, authority_kind, authority_id, authority_revision,
+                            authority_key, workspace_root, relative_path,
+                            active_relative_path, archive_relative_path, content_sha256,
+                            state, created_at_ms, updated_at_ms
+                        ) VALUES (
+                            'document:legacy-plan', 'session_plan', 'session:plan-cutover', 2,
+                            'session_plan:legacy', '/workspace', 'legacy.md', 'legacy.md',
+                            'archive/legacy.md', ?, 'active', 20, 20
+                        )
+                        """,
+                        ("b" * 64,),
+                    )
+                self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+                self.assertEqual(conn.execute("PRAGMA quick_check").fetchone()[0], "ok")
 
     def test_checksum_change_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-") as tmp:

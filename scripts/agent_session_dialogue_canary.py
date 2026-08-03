@@ -45,7 +45,7 @@ EXPECTED_TOOLS = {
     "edit",
     "bash",
 }
-EXPECTED_DEFERRED_TOOL = "agent_plan"
+EXPECTED_TODO_TOOL = "todo"
 FORBIDDEN_ROOM_MARKERS = (
     '<rag-ime-context type="room_context">',
     "<room-prompt-plan",
@@ -401,12 +401,10 @@ def wait_for_agent_turn(
     timeout: float,
     expected_marker: str,
     approve_actions: bool,
-) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     deadline = time.monotonic() + timeout
     decisions: list[dict[str, Any]] = []
-    plan_decisions: list[dict[str, Any]] = []
     decided_ids: set[str] = set()
-    approved_plan_revisions: set[int] = set()
     minimum_assistant_count = 1
     last: dict[str, Any] = {}
     while time.monotonic() < deadline:
@@ -420,87 +418,6 @@ def wait_for_agent_turn(
                     decided_ids=decided_ids,
                 )
             )
-            workflow = requester(
-                base_url,
-                "GET",
-                f"/api/agent/sessions/{encoded(session_id)}/workflow",
-                timeout=10,
-            )
-            plan = workflow.get("plan") if isinstance(workflow.get("plan"), dict) else {}
-            revision = int(plan.get("revision") or 0)
-            if plan.get("status") == "review" and revision not in approved_plan_revisions:
-                approved = requester(
-                    base_url,
-                    "POST",
-                    f"/api/agent/sessions/{encoded(session_id)}/plan",
-                    {"action": "approve", "expectedRevision": revision},
-                    timeout=15,
-                )
-                approved_plan = (
-                    approved.get("plan")
-                    if isinstance(approved.get("plan"), dict)
-                    else {}
-                )
-                if approved_plan.get("status") != "approved":
-                    raise RuntimeError("Agent plan approval did not open Act")
-                before_continuation = requester(
-                    base_url,
-                    "GET",
-                    f"/api/agent/sessions/{encoded(session_id)}/messages",
-                    timeout=15,
-                )
-                prior_assistant_count = len(_assistant_texts(before_continuation))
-                delivery = (
-                    "prompt"
-                    if str(before_continuation.get("status") or "") == "idle"
-                    else "steer"
-                )
-                continuation_payload = {
-                    "message": (
-                        "原生控制中心已经批准当前执行计划。继续执行获批计划；"
-                        "不要重复已经完成的只读步骤，完成全部验收后再输出终局标记。"
-                    ),
-                    "clientMessageId": (
-                        f"agent-plan-approved-{session_id}-{revision}"
-                    ),
-                    "delivery": delivery,
-                }
-                try:
-                    continuation = requester(
-                        base_url,
-                        "POST",
-                        f"/api/agent/sessions/{encoded(session_id)}/prompt",
-                        continuation_payload,
-                        timeout=30,
-                    )
-                except RuntimeError as error:
-                    if delivery != "steer" or "SESSION_IDLE" not in str(error):
-                        raise
-                    continuation_payload["delivery"] = "prompt"
-                    continuation_payload["clientMessageId"] = (
-                        f"agent-plan-approved-{session_id}-{revision}-idle"
-                    )
-                    continuation = requester(
-                        base_url,
-                        "POST",
-                        f"/api/agent/sessions/{encoded(session_id)}/prompt",
-                        continuation_payload,
-                        timeout=30,
-                    )
-                approved_plan_revisions.add(revision)
-                minimum_assistant_count = max(
-                    minimum_assistant_count,
-                    prior_assistant_count + 1,
-                )
-                plan_decisions.append(
-                    {
-                        "fromRevision": revision,
-                        "toRevision": int(approved_plan.get("revision") or 0),
-                        "status": "approved",
-                        "continuationDelivery": continuation_payload["delivery"],
-                        "continuationTurnId": str(continuation.get("turnId") or ""),
-                    }
-                )
         snapshot = requester(
             base_url,
             "GET",
@@ -524,7 +441,7 @@ def wait_for_agent_turn(
             and texts
             and expected_marker in texts[-1]
         ):
-            return last, decisions, plan_decisions
+            return last, decisions
         if last["status"] == "idle" and failures:
             raise RuntimeError(
                 "Agent Session failed before producing the expected result: "
@@ -559,7 +476,16 @@ def _debug_context(
         if isinstance(item, dict)
     ]
     prompts = [
-        str((call.get("providerContext") or {}).get("systemPrompt") or "")
+        str(provider_context.get("systemPrompt") or "")
+        for provider_context in (
+            call.get("providerContext") or {}
+            for call in context.get("modelCalls") or []
+            if isinstance(call, dict)
+        )
+        if isinstance(provider_context, dict)
+    ]
+    provider_contexts = [
+        call.get("providerContext") or {}
         for call in context.get("modelCalls") or []
         if isinstance(call, dict) and isinstance(call.get("providerContext"), dict)
     ]
@@ -569,7 +495,7 @@ def _debug_context(
                 *_provider_session_memory_blocks(
                     context.get("providerRequests") or []
                 ),
-                *_session_memory_blocks(prompts),
+                *_session_memory_blocks(provider_contexts),
             ]
         )
     )
@@ -894,8 +820,8 @@ def _tool_checks(evidence: dict[str, Any], workspace: Path) -> dict[str, bool]:
     return {
         "skillLoadedExactlyOnce": skill_names.count(EXPECTED_SKILL) == 1,
         "nativeToolsResidentFromFirstCall": EXPECTED_TOOLS <= active_tools,
-        "deferredPlanLoadedExactlyOnce": (
-            tool_load_names == [EXPECTED_DEFERRED_TOOL]
+        "deferredTodoLoadedExactlyOnce": (
+            tool_load_names == [EXPECTED_TODO_TOOL]
         ),
         "nativeToolsNeverSearchedOrLoaded": (
             not by_name["tool_search"]
@@ -1022,19 +948,19 @@ def agent_session_task_message(workspace: Path) -> str:
         "随后用 read(path='read-boundary.txt', offset=1, limit=1000) 分段读取；"
         "每次严格使用上一次结果提示的 offset 续读，直到不再返回续读提示，"
         "不得重复同一 offset，也不得用 bash 绕过读取上限。"
-        f"任何写入或 bash 前，用 tool_load 精确加载 {EXPECTED_DEFERRED_TOOL}，"
-        "建立覆盖基线测试、精确修改和回归测试的执行清单并 submit_review；"
-        "系统回执显示计划已批准前不得尝试写入或 bash。"
-        f"计划批准后用 bash(command={TEST_COMMAND!r}, timeout=120) 运行基线测试；"
+        f"任何写入或 bash 前，用 tool_load 精确加载 {EXPECTED_TODO_TOOL}，"
+        "建立覆盖基线测试、精确修改和回归测试的分阶段 Todo，并 start 基线测试任务；"
+        "Todo 只跟踪当前执行进度，不构成权限；显式用户请求与原生动作审批仍是执行依据。"
+        f"随后用 bash(command={TEST_COMMAND!r}, timeout=120) 运行基线测试；"
         "等待原生批准，确认修改前测试非零退出且不要把失败说成成功。"
         "再用 edit 只修改 calculator.py：在一个 edits 数组中做精确替换，"
         "实现 normalize_scores；空列表返回 []，非空时只计算一次 "
         "minimum = min(values)，再返回每个 value - minimum；等待原生批准。"
         f"随后复用 bash 再运行同一命令 {TEST_COMMAND!r} 并等待批准，必须退出码 0。"
-        "每一步取得回执后都要把对应 agent_plan 计划项更新为 completed；"
-        "所有计划项和验收均完成后，必须先调用 agent_plan complete，再输出最终回答。"
+        "每一步取得回执后都要用 todo done 完成当前任务并 start 下一项；"
+        "所有 Todo 项和验收均完成后，再输出最终回答。"
         f"最终回答以 {FINAL_MARKER} 开头，列出失败、修复、通过测试和剩余风险。"
-        f"计划待审或等待批准时不得输出 {FINAL_MARKER}，它只代表全部验收真的完成。"
+        f"等待原生动作批准时不得输出 {FINAL_MARKER}，它只代表全部验收真的完成。"
         "不要调用任何 room_*、agents 或其他无关产品 Tool。"
     )
 
@@ -1108,7 +1034,7 @@ def run(
         prompt_payload,
         timeout=30,
     )
-    settled, approvals, plan_approvals = wait_for_agent_turn(
+    settled, approvals = wait_for_agent_turn(
         args.base_url,
         requester=requester,
         session_id=session_id,
@@ -1117,19 +1043,7 @@ def run(
         expected_marker=FINAL_MARKER,
         approve_actions=True,
     )
-    task_turn_ids = list(
-        dict.fromkeys(
-            turn_id
-            for turn_id in [
-                str(accepted.get("turnId") or ""),
-                *[
-                    str(item.get("continuationTurnId") or "")
-                    for item in plan_approvals
-                ],
-            ]
-            if turn_id
-        )
-    )
+    task_turn_ids = [str(accepted.get("turnId") or "")]
     before = _aggregate_debug_contexts(
         [
             _debug_context(
@@ -1175,7 +1089,7 @@ def run(
         recovery_payload,
         timeout=30,
     )
-    recovered, recovery_approvals, recovery_plan_approvals = wait_for_agent_turn(
+    recovered, recovery_approvals = wait_for_agent_turn(
         args.base_url,
         requester=requester,
         session_id=session_id,
@@ -1192,6 +1106,22 @@ def run(
         turn_id=str(recovery_accepted.get("turnId") or ""),
     )
     tool_checks = _tool_checks(before, workspace)
+    workflow_after = requester(
+        args.base_url,
+        "GET",
+        f"/api/agent/sessions/{encoded(session_id)}/workflow",
+        timeout=15,
+    )
+    todo_after = (
+        workflow_after.get("todo")
+        if isinstance(workflow_after.get("todo"), dict)
+        else {}
+    )
+    todo_counts = (
+        todo_after.get("counts")
+        if isinstance(todo_after.get("counts"), dict)
+        else {}
+    )
     approved_actions = [
         item for item in approvals if item.get("decision") == "approve"
     ]
@@ -1227,7 +1157,10 @@ def run(
             and item["runtimeNotified"] is True
             for item in rejected_actions
         )
-        and len(plan_approvals) == 1,
+        and int(todo_counts.get("total") or 0) >= 3
+        and int(todo_counts.get("completed") or 0)
+        == int(todo_counts.get("total") or 0)
+        and int(todo_counts.get("inProgress") or 0) == 0,
         "projectImplementationApproved": _approved_project_source(final_source),
         "independentTestsPass": independent["exitCode"] == 0,
         "promptAndRoleBookValid": all(before["systemPromptChecks"].values())
@@ -1245,13 +1178,11 @@ def run(
         "compactionRecoveryValid": recovered["status"] == "idle"
         and sum(RECOVERY_MARKER in text for text in recovered["assistantTexts"]) == 1
         and not recovery_approvals
-        and not recovery_plan_approvals
         and TASK_MARKER in compact_summary
         and TASK_MARKER in current_after_text
         and "当前任务：已完成；不要重复执行。" in current_after_text
-        and "计划状态：completed" in current_after_text
         and "继续执行上述原始需求。" not in current_after_text
-        and "## 当前计划" not in current_after_text
+        and "## 当前 Todo" not in current_after_text
         and all(after["systemPromptChecks"].values())
         and set(EXPECTED_TOOLS) <= {
             str(value) for value in after["activeTools"]
@@ -1282,7 +1213,7 @@ def run(
         "settled": settled,
         "recovered": recovered,
         "approvals": approvals,
-        "planApprovals": plan_approvals,
+        "todo": todo_after,
         "toolChecks": tool_checks,
         "beforeCompaction": before,
         "compaction": {

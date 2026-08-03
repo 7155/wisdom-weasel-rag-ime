@@ -16,11 +16,16 @@ export interface AgentSubagentBatchV1 {
   maxDepth: number;
   abortRequested: boolean;
   causalMetadata: {
-    planId: string;
-    planRevision: number;
+    todoId: string;
+    todoRevision: number;
     goalId: string;
     goalRevision: number;
     roomBound: boolean;
+    roomId: string;
+    rootId: string;
+    taskId: string;
+    dispatchId: string;
+    generation: number;
   };
   createdAtMs: number;
   updatedAtMs: number;

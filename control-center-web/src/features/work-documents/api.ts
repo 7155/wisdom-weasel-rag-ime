@@ -19,21 +19,26 @@ export const workDocumentQueryKeys = {
   detail: (documentId: string) => [...workDocumentQueryKeys.root, 'detail', documentId] as const,
 };
 
-const workDocumentRouteIds = [
+const workDocumentReadRouteIds = [
   'workDocuments.list',
-  'workDocuments.history.search',
   'workDocuments.get',
-  'workDocuments.archive',
-  'workDocuments.repair',
-  'workDocuments.reopen',
-  'workDocuments.erase.preview',
-  'workDocuments.erase',
 ] as const;
+
+export interface WorkDocumentAccess {
+  read: boolean;
+  history: boolean;
+  archive: boolean;
+  repair: boolean;
+  reopen: boolean;
+  erase: boolean;
+  missingReadRoutes: string[];
+}
 
 export interface WorkDocumentWorkspace {
   active: UseQueryResult<WorkDocumentListV1, Error>;
   capabilities: UseQueryResult<FrontendCapabilities, Error>;
   capabilityKnown: boolean;
+  access: WorkDocumentAccess;
   detail: UseQueryResult<WorkDocumentDetailV1, Error>;
   history: UseQueryResult<WorkDocumentListV1, Error>;
   supported: boolean;
@@ -52,8 +57,20 @@ export function useWorkDocumentWorkspace(
     staleTime: 30_000,
   });
   const routeIds = new Set(capabilities.data?.routeIds ?? []);
-  const supported = capabilities.data?.features.workDocuments === true
-    && workDocumentRouteIds.every((pathId) => routeIds.has(pathId));
+  // Route disclosure is the executable contract. A host with the read routes
+  // must not lose its whole document library merely because one destructive or
+  // repair command was added in a newer release.
+  const missingReadRoutes = workDocumentReadRouteIds.filter((pathId) => !routeIds.has(pathId));
+  const access: WorkDocumentAccess = {
+    read: missingReadRoutes.length === 0,
+    history: routeIds.has('workDocuments.history.search'),
+    archive: routeIds.has('workDocuments.archive'),
+    repair: routeIds.has('workDocuments.repair'),
+    reopen: routeIds.has('workDocuments.reopen'),
+    erase: routeIds.has('workDocuments.erase.preview') && routeIds.has('workDocuments.erase'),
+    missingReadRoutes,
+  };
+  const supported = access.read;
   const capabilityKnown = capabilities.data !== undefined;
 
   const active = useQuery({
@@ -72,7 +89,7 @@ export function useWorkDocumentWorkspace(
       query: { ...(historyQuery ? { query: historyQuery } : {}), limit: 100 },
       signal,
     }),
-    enabled: supported && scope === 'history',
+    enabled: supported && access.history && scope === 'history',
   });
   const detail = useQuery({
     queryKey: workDocumentQueryKeys.detail(documentId),
@@ -97,6 +114,7 @@ export function useWorkDocumentWorkspace(
 
   return {
     active,
+    access,
     capabilities,
     capabilityKnown,
     detail,

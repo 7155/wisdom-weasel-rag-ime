@@ -8,40 +8,181 @@ export interface AgentWorkflowStateV1 {
   schemaVersion: 'rag-ime.agent-workflow-state.v1';
   ok: true;
   sessionId: string;
-  plan: Plan;
+  todo: Todo;
   goal: Goal;
   actGate: ActGate;
 }
-export interface Plan {
-  schemaVersion: 'rag-ime.agent-plan.v2';
+export interface Todo {
+  schemaVersion: 'rag-ime.agent-todo.v1';
   id: string;
   sessionId: string;
   revision: number;
-  title: string;
-  status: 'draft' | 'review' | 'approved' | 'executing' | 'completed' | 'cancelled';
   actor: string;
-  note: string;
   updatedAtMs: number;
-  editable: boolean;
-  actApproved: boolean;
+  roomLineage: RoomTodoLineage | null;
   /**
-   * @maxItems 100
+   * @maxItems 16
    */
-  items: PlanItem[];
+  phases:
+    | []
+    | [TodoPhase]
+    | [TodoPhase, TodoPhase]
+    | [TodoPhase, TodoPhase, TodoPhase]
+    | [TodoPhase, TodoPhase, TodoPhase, TodoPhase]
+    | [TodoPhase, TodoPhase, TodoPhase, TodoPhase, TodoPhase]
+    | [TodoPhase, TodoPhase, TodoPhase, TodoPhase, TodoPhase, TodoPhase]
+    | [TodoPhase, TodoPhase, TodoPhase, TodoPhase, TodoPhase, TodoPhase, TodoPhase]
+    | [TodoPhase, TodoPhase, TodoPhase, TodoPhase, TodoPhase, TodoPhase, TodoPhase, TodoPhase]
+    | [
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+      ]
+    | [
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+      ]
+    | [
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+      ]
+    | [
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+      ]
+    | [
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+      ]
+    | [
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+      ]
+    | [
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+      ]
+    | [
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+        TodoPhase,
+      ];
   counts: {
     total: number;
     pending: number;
     inProgress: number;
+    blocked?: number;
     completed: number;
+    abandoned: number;
   };
 }
-export interface PlanItem {
-  id: string;
-  title: string;
-  status: 'pending' | 'in_progress' | 'completed';
-  position: number;
-  sequence: number;
-  updatedAtMs: number;
+export interface RoomTodoLineage {
+  schemaVersion: 'wisdom-weasel.room-todo-lineage.v1';
+  roomId: string;
+  rootId: string;
+  taskId: string;
+  workItemId: string;
+  dispatchId: string;
+  sessionId: string;
+  participantId: string;
+  generation: number;
+  taskRevision: number;
+  ownershipRevision: number;
+  workItemRevision: number;
+}
+export interface TodoPhase {
+  name: string;
+  /**
+   * @maxItems 100
+   */
+  tasks: TodoTask[];
+}
+export interface TodoTask {
+  content: string;
+  status: 'pending' | 'in_progress' | 'blocked' | 'completed' | 'abandoned';
+  reason?: string;
 }
 export interface Goal {
   schemaVersion: 'rag-ime.agent-goal.v1';
@@ -470,15 +611,11 @@ export interface ActGate {
   reason:
     | 'approved'
     | 'user_execution_request'
-    | 'plan_required'
-    | 'plan_not_approved'
-    | 'plan_completed'
-    | 'plan_cancelled'
     | 'goal_paused'
     | 'goal_completed'
     | 'goal_cancelled'
     | 'goal_budget_exhausted';
   message: string;
-  planRevision: number;
+  todoRevision: number;
   goalRevision: number;
 }

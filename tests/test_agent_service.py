@@ -148,6 +148,34 @@ class AgentServiceTests(unittest.TestCase):
         self.service.close()
         self.tmp.cleanup()
 
+    def test_debug_context_forwards_the_runtime_payload(self) -> None:
+        session = self.service.create_session({"title": "debug context"})[
+            "session"
+        ]
+        expected = {
+            "schemaVersion": "rag-ime.pi-debug-context-response.v1",
+            "sessionId": str(session["id"]),
+            "turnId": "turn:one",
+            "available": True,
+            "context": {"providerRequestReceipts": []},
+        }
+        with patch.object(
+            self.service.runtime,
+            "debug_context",
+            create=True,
+            return_value=expected,
+        ) as debug_context:
+            response = self.service.debug_context(
+                str(session["id"]),
+                "turn:one",
+            )
+
+        self.assertEqual(response, expected)
+        debug_context.assert_called_once_with(
+            str(session["id"]),
+            "turn:one",
+        )
+
     def test_runtime_and_session_crud_are_typed(self) -> None:
         runtime = self.service.runtime_status()
         self.assertEqual(runtime["schemaVersion"], "rag-ime.agent-runtime.v1")
@@ -804,6 +832,10 @@ class AgentServiceTests(unittest.TestCase):
             preview={"title": "危险操作", "summary": "删除数据库"},
             risk_level="R3",
         )
+        approval = self.service.sessions.bind_approval_tool_call(
+            str(approval["approvalId"]),
+            tool_call_id="tool:approval-rejection",
+        )
         with patch.object(
             self.service.approval_model,
             "decide",
@@ -830,6 +862,17 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(
             stored["decidedBy"],
             "approval-model:approval-model-decision:deny",
+        )
+        events, _ = self.service.events.replay(session_id)
+        resolved = next(
+            event
+            for event in events
+            if event.event_type == "approval_resolved"
+            and event.payload.get("approvalId") == approval["approvalId"]
+        )
+        self.assertEqual(
+            resolved.payload["toolCallId"],
+            "tool:approval-rejection",
         )
 
     def test_paused_or_exhausted_goal_blocks_provider_prompt_before_runtime(self) -> None:
@@ -895,20 +938,13 @@ class AgentServiceTests(unittest.TestCase):
                 {"title": "goal settle continuation"}
             )["session"]["id"]
         )
-        review = self.service.sessions.mutate_agent_plan(
+        self.service.sessions.mutate_agent_todo(
             session_id,
-            {
-                "action": "submit_review",
-                "title": "继续完成当前 Goal",
-                "items": [{"title": "完成剩余验收", "status": "in_progress"}],
-            },
-        )["plan"]
-        self.service.sessions.mutate_agent_plan(
+            {"op": "init", "items": ["完成剩余验收并提供证据"]},
+        )
+        self.service.sessions.mutate_agent_todo(
             session_id,
-            {
-                "action": "approve",
-                "expectedRevision": review["revision"],
-            },
+            {"op": "start", "task": "完成剩余验收并提供证据"},
         )
         goal = self.service.sessions.mutate_agent_goal(
             session_id,
@@ -1045,7 +1081,7 @@ class AgentServiceTests(unittest.TestCase):
                     "status": "cleared",
                     "budgetExceeded": False,
                 },
-                {"allowed": False, "reason": "plan_required"},
+                {"allowed": True, "reason": "user_execution_request"},
             ),
             (
                 "paused",
@@ -1092,26 +1128,15 @@ class AgentServiceTests(unittest.TestCase):
                 {"allowed": False, "reason": "goal_budget_exhausted"},
             ),
             (
-                "cancelled",
-                {
-                    "configured": True,
-                    "goalId": "goal:cancelled-plan",
-                    "revision": 5,
-                    "status": "active",
-                    "budgetExceeded": False,
-                },
-                {"allowed": False, "reason": "plan_cancelled"},
-            ),
-            (
                 "blocked",
                 {
                     "configured": True,
                     "goalId": "goal:blocked",
-                    "revision": 6,
+                    "revision": 5,
                     "status": "active",
                     "budgetExceeded": False,
                 },
-                {"allowed": False, "reason": "plan_not_approved"},
+                {"allowed": False, "reason": "native_approval_required"},
             ),
         ]
         for expected, goal, gate in cases:
@@ -1120,7 +1145,7 @@ class AgentServiceTests(unittest.TestCase):
                     self.service,
                     "workflow_state",
                     return_value={
-                        "plan": {},
+                        "todo": {},
                         "goal": goal,
                         "actGate": gate,
                     },
@@ -1130,7 +1155,7 @@ class AgentServiceTests(unittest.TestCase):
                 self.assertEqual(result["followUpKey"], "")
                 self.assertEqual(result["message"], "")
 
-    def test_new_session_keeps_query_aware_bootstrap_without_empty_provider_envelope(self) -> None:
+    def test_new_session_reuses_one_query_aware_bootstrap_until_compaction(self) -> None:
         created = self.service.create_session({"title": "个人上下文"})
         session = created["session"]
         session_id = str(session["id"])
@@ -1210,37 +1235,27 @@ class AgentServiceTests(unittest.TestCase):
             first["memoryBootstrap"]["dedupeKey"],
             f"memory-bootstrap:{session_id}:v3",
         )
-        self.assertRegex(
+        self.assertEqual(
             second["memoryBootstrap"]["dedupeKey"],
-            rf"^memory-bootstrap:{session_id}:v4:[0-9a-f]{{24}}$",
-        )
-        self.assertNotEqual(
             first["memoryBootstrap"]["dedupeKey"],
-            second["memoryBootstrap"]["dedupeKey"],
         )
         self.assertEqual(second["contextItemsDelivered"], 1)
-        self.assertTrue(
-            first["memoryBootstrap"]["refreshedForCurrentTurn"]
+        self.assertNotIn(
+            "refreshedForCurrentTurn",
+            first["memoryBootstrap"],
         )
-        self.assertTrue(
-            second["memoryBootstrap"]["refreshedForCurrentTurn"]
+        self.assertNotIn(
+            "refreshedForCurrentTurn",
+            second["memoryBootstrap"],
         )
-        self.assertEqual(build_memory.call_count, 2)
+        self.assertEqual(build_memory.call_count, 1)
         self.assertIn(
             "第一轮",
-            build_memory.call_args_list[0].kwargs["query_text"],
-        )
-        self.assertIn(
-            "第二轮",
-            build_memory.call_args_list[1].kwargs["query_text"],
+            build_memory.call_args.kwargs["query_text"],
         )
         self.assertEqual(
-            build_memory.call_args_list[0].kwargs["trigger"],
+            build_memory.call_args.kwargs["trigger"],
             "first_user_prompt",
-        )
-        self.assertEqual(
-            build_memory.call_args_list[1].kwargs["trigger"],
-            "turn_start",
         )
         runtime_envelopes = []
         for call in runtime_prompt.call_args_list:
@@ -1260,11 +1275,11 @@ class AgentServiceTests(unittest.TestCase):
         )
         self.assertEqual(runtime_envelopes[1]["message"], "第二轮")
         self.assertIn(
-            "MEMORY_B_ONLY",
+            "MEMORY_A_ONLY",
             runtime_envelopes[1]["sessionContext"],
         )
         self.assertNotIn(
-            "MEMORY_A_ONLY",
+            "MEMORY_B_ONLY",
             runtime_envelopes[1]["sessionContext"],
         )
         self.assertTrue(first["memoryEvidence"]["stored"])
@@ -1279,7 +1294,7 @@ class AgentServiceTests(unittest.TestCase):
             session_id,
             status="expired",
         )
-        self.assertEqual(len(expired), 1)
+        self.assertEqual(expired, [])
 
         self.service.events.publish(
             session_id,
@@ -1413,12 +1428,14 @@ class AgentServiceTests(unittest.TestCase):
         )
         self.assertEqual(len(delivered), 1)
         self.assertEqual(delivered[0]["lifecycle"], "persistent")
-        self.assertEqual(
-            runtime_prompt.call_args.args[1],
-            "按当前问题重新召回",
+        runtime_message = str(runtime_prompt.call_args.args[1])
+        self.assertTrue(runtime_message.startswith(RUNTIME_PROMPT_ENVELOPE_PREFIX))
+        envelope = json.loads(
+            runtime_message[len(RUNTIME_PROMPT_ENVELOPE_PREFIX):]
         )
+        self.assertEqual(envelope["message"], "按当前问题重新召回")
 
-    def test_compaction_refresh_replaces_session_context_with_recent_dialogue_and_plan(self) -> None:
+    def test_compaction_refresh_replaces_session_context_with_recent_dialogue_and_todo(self) -> None:
         session = self.service.create_session({"title": "压缩刷新"})["session"]
         session_id = str(session["id"])
         with patch.object(
@@ -1432,10 +1449,17 @@ class AgentServiceTests(unittest.TestCase):
             },
         ):
             self.service.prompt(session_id, {"message": "继续完成 Session 记忆刷新"})
-        self.service.sessions.update_agent_plan_item(
+        self.service.sessions.mutate_agent_todo(
             session_id,
-            title="验证压缩后的 Provider 上下文",
-            status="in_progress",
+            {
+                "op": "init",
+                "phase": "压缩验收",
+                "items": ["验证压缩后的 Provider 上下文"],
+            },
+        )
+        self.service.sessions.mutate_agent_todo(
+            session_id,
+            {"op": "start", "task": "验证压缩后的 Provider 上下文"},
         )
 
         refreshed = self.service.refresh_session_context(
@@ -1473,7 +1497,7 @@ class AgentServiceTests(unittest.TestCase):
         )
 
         context = refreshed["result"]["sessionContext"]
-        self.assertIn("## 当前计划", context)
+        self.assertIn("## 当前 Todo", context)
         self.assertIn("验证压缩后的 Provider 上下文", context)
         history_heading = "## 压缩恢复回执（非任务状态）"
         self.assertIn(history_heading, context)
@@ -1481,7 +1505,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertNotIn("ORIGINAL-RECOVERY-AC", context)
         self.assertNotIn("我已经完成首轮召回", context)
         self.assertIn(
-            "当前用户消息、本轮 workflow_control、当前任务与当前计划",
+            "当前用户消息、本轮 workflow_control、当前任务与当前 Todo",
             context,
         )
         self.assertIn("sha256:", context)
@@ -1490,9 +1514,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertNotIn("## 最近对话", context)
         self.assertNotIn("命中通道", context)
         self.assertNotIn("score=", context)
-        self.assertTrue(
-            refreshed["result"]["compactionRecoveryPacket"]
-        )
+        self.assertTrue(refreshed["result"]["compactionRecoveryPacket"])
         active = self.service.context_runtime.materialize(session_id)
         self.assertEqual(active["itemIds"], [refreshed["result"]["itemId"]])
         self.assertNotIn("ORIGINAL-RECOVERY-AC", active["prompt"])
@@ -1501,44 +1523,19 @@ class AgentServiceTests(unittest.TestCase):
             len(self.service.context_runtime.list_items(session_id, status="expired")),
             1,
         )
-
-    def test_completed_plan_compaction_recovers_terminal_state_without_restarting_work(self) -> None:
+    def test_completed_todo_compaction_recovers_terminal_state_without_restarting_work(self) -> None:
         session = self.service.create_session({"title": "已完成任务压缩"})["session"]
         session_id = str(session["id"])
-        for item_id, title in (
-            ("plan-item:baseline", "运行失败基线"),
-            ("plan-item:patch", "完成精确修改"),
-            ("plan-item:regression", "运行回归测试"),
-        ):
-            self.service.sessions.update_agent_plan_item(
+        tasks = ["运行失败基线", "完成精确修改", "运行回归测试"]
+        self.service.sessions.mutate_agent_todo(
+            session_id,
+            {"op": "init", "phase": "回归验收", "items": tasks},
+        )
+        for task in tasks:
+            self.service.sessions.mutate_agent_todo(
                 session_id,
-                item_id=item_id,
-                title=title,
-                status="pending",
+                {"op": "done", "task": task},
             )
-        self.service.sessions.mutate_agent_plan(
-            session_id,
-            {"action": "submit_review", "note": "提交执行计划"},
-        )
-        self.service.sessions.mutate_agent_plan(
-            session_id,
-            {"action": "approve", "note": "批准执行计划"},
-        )
-        self.service.sessions.record_agent_plan_execution_started(session_id)
-        for item_id in (
-            "plan-item:baseline",
-            "plan-item:patch",
-            "plan-item:regression",
-        ):
-            self.service.sessions.update_agent_plan_item(
-                session_id,
-                item_id=item_id,
-                status="completed",
-            )
-        self.service.sessions.mutate_agent_plan(
-            session_id,
-            {"action": "complete", "note": "全部验收完成"},
-        )
 
         refreshed = self.service.refresh_session_context(
             {
@@ -1572,10 +1569,10 @@ class AgentServiceTests(unittest.TestCase):
         self.assertIn(history_heading, context)
         self.assertNotIn("TERMINAL-RECOVERY-AC", context)
         self.assertNotIn("当前任务：已完成；不要重复执行。", context)
-        self.assertNotIn("计划状态：completed", context)
+        self.assertNotIn("Todo 状态：completed", context)
         self.assertNotIn("任务已由本 Session 完成；无待交接责任。", context)
         self.assertNotIn("继续执行上述原始需求。", context)
-        self.assertNotIn("## 当前计划", context)
+        self.assertNotIn("## 当前 Todo", context)
         self.assertNotIn("[待办]", context)
         self.assertEqual(context.count(history_heading), 1)
 
@@ -1677,10 +1674,17 @@ class AgentServiceTests(unittest.TestCase):
         self.assertIn(str(work["expectedOutput"]), start_context)
         self.assertIn("包含当前任务", start_context)
 
-        self.service.sessions.update_agent_plan_item(
+        self.service.sessions.mutate_agent_todo(
             session_id,
-            title="核验 Room Provider Payload",
-            status="in_progress",
+            {
+                "op": "init",
+                "phase": "Room 验收",
+                "items": ["核验 Room Provider Payload"],
+            },
+        )
+        self.service.sessions.mutate_agent_todo(
+            session_id,
+            {"op": "start", "task": "核验 Room Provider Payload"},
         )
         with patch.object(
             self.service.memory_bootstrap,
@@ -1943,7 +1947,14 @@ class AgentServiceTests(unittest.TestCase):
                     },
                 )
 
-        self.assertEqual(sent_messages[0], "第一轮")
+        sent_message = sent_messages[0]
+        self.assertTrue(sent_message.startswith(RUNTIME_PROMPT_ENVELOPE_PREFIX))
+        self.assertEqual(
+            json.loads(
+                sent_message[len(RUNTIME_PROMPT_ENVELOPE_PREFIX):]
+            )["message"],
+            "第一轮",
+        )
         replay.assert_not_called()
 
     def test_corrupt_role_book_falls_back_to_base_persona_without_blocking_chat(self) -> None:
@@ -2115,7 +2126,14 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(response["entryId"], "entry-user-1")
         rewind.assert_called_once_with(session_id, entry_id="entry-user-1")
         self.assertEqual(prompt.call_args.args[0], session_id)
-        self.assertEqual(prompt.call_args.args[1], "修改后的问题")
+        runtime_message = str(prompt.call_args.args[1])
+        self.assertTrue(runtime_message.startswith(RUNTIME_PROMPT_ENVELOPE_PREFIX))
+        self.assertEqual(
+            json.loads(
+                runtime_message[len(RUNTIME_PROMPT_ENVELOPE_PREFIX):]
+            )["message"],
+            "修改后的问题",
+        )
         replay, gap = self.service.events.replay(session_id)
         self.assertFalse(gap)
         self.assertNotIn(old_event.event_id, [event.event_id for event in replay])
@@ -2638,10 +2656,17 @@ class AgentServiceTests(unittest.TestCase):
     def test_message_snapshot_returns_event_resume_cursor(self) -> None:
         session = self.service.create_session({"title": "恢复游标"})["session"]
         session_id = str(session["id"])
-        self.service.sessions.update_agent_plan_item(
+        self.service.sessions.mutate_agent_todo(
             session_id,
-            title="恢复可见计划",
-            status="in_progress",
+            {
+                "op": "init",
+                "phase": "恢复",
+                "items": ["恢复可见 Todo"],
+            },
+        )
+        self.service.sessions.mutate_agent_todo(
+            session_id,
+            {"op": "start", "task": "恢复可见 Todo"},
         )
         event = self.service.events.publish(session_id, "status_changed", {"status": "ready"})
         with patch.object(self.service.runtime, "messages", return_value=[]):
@@ -2651,8 +2676,8 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(response["resumeToken"], event.resume_token)
         self.assertEqual(response["status"], "idle")
         self.assertEqual(response["liveEvents"], [event.to_payload()])
-        self.assertEqual(response["plan"]["items"][0]["title"], "恢复可见计划")
-        self.assertEqual(response["plan"]["items"][0]["status"], "in_progress")
+        self.assertEqual(response["todo"]["phases"][0]["tasks"][0]["content"], "恢复可见 Todo")
+        self.assertEqual(response["todo"]["phases"][0]["tasks"][0]["status"], "in_progress")
 
     def test_message_snapshot_uses_active_room_workflow_authorization(self) -> None:
         session = self.service.create_session({"title": "Room 快照授权"})["session"]
@@ -2685,7 +2710,7 @@ class AgentServiceTests(unittest.TestCase):
             workflow = self.service.workflow_state(session_id)
             response = self.service.messages(session_id)
 
-        self.assertEqual(response["plan"], workflow["plan"])
+        self.assertEqual(response["todo"], workflow["todo"])
         self.assertEqual(response["goal"], workflow["goal"])
         self.assertEqual(response["actGate"], workflow["actGate"])
         self.assertTrue(response["actGate"]["allowed"])
@@ -2727,7 +2752,7 @@ class AgentServiceTests(unittest.TestCase):
                     workflow = self.service.workflow_state(session_id)
                     response = self.service.messages(session_id)
 
-                self.assertEqual(response["plan"], workflow["plan"])
+                self.assertEqual(response["todo"], workflow["todo"])
                 self.assertEqual(response["goal"], workflow["goal"])
                 self.assertEqual(response["actGate"], workflow["actGate"])
                 self.assertTrue(response["actGate"]["allowed"])
@@ -5012,7 +5037,11 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(first["sessionId"], second["sessionId"])
         self.assertTrue(str(first["session"]["title"]).startswith("记忆检索 "))
         self.assertEqual(first["evidenceCount"], 1)
-        sent = prompt.call_args_list[0].args[1]
+        runtime_message = str(prompt.call_args_list[0].args[1])
+        self.assertTrue(runtime_message.startswith(RUNTIME_PROMPT_ENVELOPE_PREFIX))
+        sent = json.loads(
+            runtime_message[len(RUNTIME_PROMPT_ENVELOPE_PREFIX):]
+        )["message"]
         self.assertIn(
             "<agent-user-query>\n最近我在做什么？\n</agent-user-query>",
             sent,
@@ -5021,7 +5050,6 @@ class AgentServiceTests(unittest.TestCase):
         self.assertNotIn("输入法深度查找任务", sent)
         self.assertIn("控制中心使用连续 Pi Session", sent)
         self.assertIn("任何写操作仍必须经过原生审批", sent)
-        self.assertNotIn(RUNTIME_PROMPT_ENVELOPE_PREFIX, sent)
         sources = self.service.list_memory_sources({"sessionId": first["sessionId"]})["items"]
         self.assertEqual(
             [item["canonicalTextSha256"] for item in sources],

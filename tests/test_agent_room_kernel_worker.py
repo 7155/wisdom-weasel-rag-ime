@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from threading import Event
 from pathlib import Path
 
 from rag_ime.agent_room_kernel import RoomKernelStore
-from rag_ime.agent_room_kernel_worker import KernelCommandBus, RoomKernelWorker
+from rag_ime.agent_room_kernel_worker import (
+    KernelCommandBus,
+    RoomKernelWorker,
+    RoomKernelWorkerLoop,
+)
 from tests.test_agent_room_kernel import dispatch, root, task
 
 
@@ -500,6 +505,43 @@ class RoomKernelWorkerTests(unittest.TestCase):
         self.assertEqual(root_projection["state"], "cancelled")
         self.assertIsNotNone(root_projection["terminalReceiptId"])
         self.assertEqual({item["state"] for item in self.store.cancellation_surface_projection("room:1")}, {"terminated"})
+
+    def test_loop_survives_a_projection_callback_failure(self) -> None:
+        recovered = Event()
+        callback_count = 0
+
+        class FakeStore:
+            mode = "cohort"
+
+        class FakeWorker:
+            store = FakeStore()
+
+            @staticmethod
+            def reconcile() -> bool:
+                return False
+
+            @staticmethod
+            def run_once() -> dict[str, bool]:
+                return {"changed": True}
+
+        def on_change() -> None:
+            nonlocal callback_count
+            callback_count += 1
+            if callback_count == 1:
+                raise RuntimeError("stale projection")
+            recovered.set()
+
+        loop = RoomKernelWorkerLoop(
+            FakeWorker(),  # type: ignore[arg-type]
+            on_change=on_change,
+            poll_seconds=0.01,
+        )
+        try:
+            self.assertTrue(loop.start())
+            self.assertTrue(recovered.wait(1.0))
+            self.assertTrue(loop.running)
+        finally:
+            loop.close()
 
     def test_shadow_worker_never_leases_or_calls_runtime(self) -> None:
         shadow = RoomKernelStore(self.db_path, mode="shadow")

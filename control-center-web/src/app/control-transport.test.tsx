@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ControlTransportProvider,
   createConfiguredControlTransport,
@@ -19,6 +19,27 @@ describe('ControlTransportProvider', () => {
       </ControlTransportProvider>,
     );
     expect(screen.getByText('mock')).toBeInTheDocument();
+  });
+
+  it('allows an explicit same-origin HTTP transport in development previews', async () => {
+    const originalUrl = window.location.href;
+    window.history.replaceState({}, '', '/?controlTransport=http#/context-debug');
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ sessions: [] }),
+      { headers: { 'Content-Type': 'application/json' }, status: 200 },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const transport = createConfiguredControlTransport();
+      expect(transport.kind).toBe('http');
+      await transport.request({ pathId: 'agent.sessions.list' });
+      expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+        `${window.location.origin}/api/agent/sessions`,
+      );
+    } finally {
+      vi.unstubAllGlobals();
+      window.history.replaceState({}, '', originalUrl);
+    }
   });
 
   it('keeps the preview memory surface representative and contract-valid', async () => {
@@ -58,11 +79,6 @@ describe('ControlTransportProvider', () => {
     const workflow = await transport.request<Record<string, unknown>>({
       pathId: 'agent.session.workflow.get',
       params: { sessionId: 'session-preview' },
-    });
-    const approved = await transport.request<Record<string, unknown>>({
-      pathId: 'agent.session.plan.mutate',
-      params: { sessionId: 'session-preview' },
-      body: { action: 'approve', expectedRevision: 2 },
     });
     const pausedGoal = await transport.request<Record<string, unknown>>({
       pathId: 'agent.session.goal.mutate',
@@ -131,12 +147,14 @@ describe('ControlTransportProvider', () => {
 
     expect(workflow).toMatchObject({
       schemaVersion: 'rag-ime.agent-workflow-state.v1',
-      plan: { status: 'review' },
+      todo: {
+        phases: expect.arrayContaining([
+          expect.objectContaining({ name: '实现' }),
+          expect.objectContaining({ name: '验证' }),
+        ]),
+        counts: { total: 3, pending: 0, inProgress: 1, blocked: 1, completed: 1, abandoned: 0 },
+      },
       goal: { configured: true },
-    });
-    expect(approved).toMatchObject({
-      plan: { status: 'approved' },
-      actGate: { allowed: true },
     });
     expect(pausedGoal).toMatchObject({
       goal: { status: 'paused' },

@@ -32,14 +32,22 @@ _TAG_NOISE = {
     "那个",
 }
 _KIND_MAP = {
-    "fact": "project_fact",
+    "fact": "personal_fact",
+    "personal_fact": "personal_fact",
+    "habit": "personal_habit",
+    "personal_habit": "personal_habit",
+    "preference": "durable_preference",
+    "durable_preference": "durable_preference",
+    "principle": "personal_principle",
+    "personal_principle": "personal_principle",
     "project_fact": "project_fact",
     "requirement": "project_requirement",
     "project_requirement": "project_requirement",
-    "preference": "durable_preference",
-    "durable_preference": "durable_preference",
     "decision": "project_decision",
     "project_decision": "project_decision",
+    "constraint": "project_constraint",
+    "project_constraint": "project_constraint",
+    "security_constraint": "security_constraint",
     "plan": "project_plan",
     "project_plan": "project_plan",
     "question": "project_question",
@@ -66,6 +74,7 @@ def build_memory_curation_model_bundle(bundle: Mapping[str, object]) -> dict[str
         evidence.append(
             {
                 "ref": f"E{len(evidence) + 1}",
+                "sourceRef": compact_whitespace(str(item.get("sourceRef") or "")),
                 "eventIds": source_ids,
                 "text": text[:600],
                 "app": compact_whitespace(str(item.get("app") or ""))[:120],
@@ -243,9 +252,17 @@ def curation_decisions_to_compile_output(
     group_atom_ids: dict[str, list[str]] = defaultdict(list)
     group_source_ids: dict[str, list[int]] = defaultdict(list)
     supersedes: list[dict[str, object]] = []
+    memory_retractions: list[dict[str, object]] = []
     ignored_count = 0
     invalid_count = 0
     merge_count = 0
+    retraction_count = 0
+    accepted_evidence_refs: set[str] = set()
+    retracted_evidence_refs: set[str] = set()
+    ignored_evidence_refs: set[str] = set()
+    invalid_evidence_refs: set[str] = set()
+    confidence_by_evidence_ref: dict[str, float] = defaultdict(float)
+    reason_by_evidence_ref: dict[str, str] = {}
 
     decision_items = _curation_decision_items(
         decisions_payload,
@@ -264,14 +281,73 @@ def curation_decisions_to_compile_output(
         )
         if action == "ignore":
             ignored_count += 1
+            for ref in evidence_refs:
+                if ref in evidence_by_ref:
+                    ignored_evidence_refs.add(ref)
+                    confidence_by_evidence_ref[ref] = max(
+                        confidence_by_evidence_ref[ref],
+                        _float(decision.get("confidence"), default=0.95),
+                    )
+                    reason_by_evidence_ref[ref] = compact_whitespace(
+                        str(decision.get("reason") or "model_ignored_no_durable_memory")
+                    )[:160]
+            continue
+        if action == "retract":
+            target_ref = compact_whitespace(str(decision.get("targetRef") or ""))
+            referenced_atom = atoms_by_ref.get(target_ref)
+            target_atom_id = compact_whitespace(
+                str((referenced_atom or {}).get("atomId") or "")
+            )
+            if not source_ids:
+                warnings.append(f"retraction_missing_evidence:{decision_index}")
+                invalid_count += 1
+                invalid_evidence_refs.update(
+                    ref for ref in evidence_refs if ref in evidence_by_ref
+                )
+                continue
+            if not target_atom_id or target_atom_id not in source_atoms_by_id:
+                warnings.append(
+                    f"retraction_target_not_found:{decision_index}:{target_ref or 'empty'}"
+                )
+                invalid_count += 1
+                invalid_evidence_refs.update(
+                    ref for ref in evidence_refs if ref in evidence_by_ref
+                )
+                continue
+            confidence = _float(decision.get("confidence"), default=0.0)
+            memory_retractions.append(
+                {
+                    "targetAtomId": target_atom_id,
+                    "reason": compact_whitespace(
+                        str(decision.get("reason") or "explicit_user_forget")
+                    )[:240],
+                    "sourceEventIds": source_ids,
+                    "confidence": confidence,
+                }
+            )
+            retraction_count += 1
+            for ref in evidence_refs:
+                if ref in evidence_by_ref:
+                    retracted_evidence_refs.add(ref)
+                    confidence_by_evidence_ref[ref] = max(
+                        confidence_by_evidence_ref[ref],
+                        confidence,
+                    )
+                    reason_by_evidence_ref[ref] = "explicit_memory_forget"
             continue
         if action not in {"create", "attach", "update", "supersede", "merge"}:
             warnings.append(f"invalid_atom_action_ignored:{decision_index}:{action or 'empty'}")
             invalid_count += 1
+            invalid_evidence_refs.update(
+                ref for ref in evidence_refs if ref in evidence_by_ref
+            )
             continue
         if action != "merge" and not source_ids:
             warnings.append(f"atom_decision_missing_evidence:{decision_index}")
             invalid_count += 1
+            invalid_evidence_refs.update(
+                ref for ref in evidence_refs if ref in evidence_by_ref
+            )
             continue
 
         target_ref = compact_whitespace(str(decision.get("targetRef") or ""))
@@ -332,6 +408,9 @@ def curation_decisions_to_compile_output(
         if not canonical:
             warnings.append(f"atom_decision_missing_text:{decision_index}")
             invalid_count += 1
+            invalid_evidence_refs.update(
+                ref for ref in evidence_refs if ref in evidence_by_ref
+            )
             continue
         exact_existing = atoms_by_normalized_text.get(normalize_text(canonical))
         if action != "merge" and existing_atom is None and exact_existing is not None:
@@ -346,10 +425,16 @@ def curation_decisions_to_compile_output(
         if action in {"attach", "update", "merge"} and not old_atom_id:
             warnings.append(f"atom_target_not_found:{decision_index}:{target_ref or 'empty'}")
             invalid_count += 1
+            invalid_evidence_refs.update(
+                ref for ref in evidence_refs if ref in evidence_by_ref
+            )
             continue
         if action == "supersede" and not old_atom_id:
             warnings.append(f"supersede_target_not_found:{decision_index}:{target_ref or 'empty'}")
             invalid_count += 1
+            invalid_evidence_refs.update(
+                ref for ref in evidence_refs if ref in evidence_by_ref
+            )
             continue
         if action == "merge" and merge_source_id == old_atom_id:
             warnings.append(f"merge_source_equals_target:{decision_index}:{old_atom_id}")
@@ -475,7 +560,23 @@ def curation_decisions_to_compile_output(
         )
         memory_atoms[atom_id] = {
             "atomId": atom_id,
+            "operation": action,
             "kind": kind,
+            "claimKey": compact_whitespace(
+                str(
+                    (existing_atom or {}).get("claimKey")
+                    or (merge_source_atom or {}).get("claimKey")
+                    or decision.get("claimKey")
+                    or ""
+                )
+            )[:120],
+            "lineageId": compact_whitespace(
+                str(
+                    (existing_atom or {}).get("lineageId")
+                    or (merge_source_atom or {}).get("lineageId")
+                    or ""
+                )
+            )[:200],
             "canonicalText": canonical,
             "summary": compact_whitespace(
                 str(decision.get("summary") or (staged_atom or {}).get("summary") or canonical)
@@ -498,10 +599,22 @@ def curation_decisions_to_compile_output(
                 default=_float(decision.get("confidence"), default=0.75),
             ),
             "status": "active",
+            "curationArchitecture": MEMORY_CURATION_ARCHITECTURE,
         }
         atom_groups[atom_id] = group_ids
         atom_tags[atom_id] = tag_names
         atom_source_ids[atom_id] = combined_source_ids
+        for ref in evidence_refs:
+            if ref not in evidence_by_ref:
+                continue
+            accepted_evidence_refs.add(ref)
+            confidence_by_evidence_ref[ref] = max(
+                confidence_by_evidence_ref[ref],
+                _float(decision.get("confidence"), default=0.75),
+            )
+            reason_by_evidence_ref[ref] = compact_whitespace(
+                str(decision.get("reason") or f"atom_{action}")
+            )[:160]
         for group_id in group_ids:
             if atom_id not in group_atom_ids[group_id]:
                 group_atom_ids[group_id].append(atom_id)
@@ -562,11 +675,58 @@ def curation_decisions_to_compile_output(
     )
     curation_outcome = (
         "changes"
-        if memory_atoms or semantic_groups or semantic_tags or tag_merges or phrase_candidates or negative_phrases
+        if memory_atoms
+        or memory_retractions
+        or semantic_groups
+        or semantic_tags
+        or tag_merges
+        or phrase_candidates
+        or negative_phrases
         else "no_changes"
     )
+    source_decisions: list[dict[str, object]] = []
+    for ref, evidence in evidence_by_ref.items():
+        accepted = ref in accepted_evidence_refs
+        retracted = ref in retracted_evidence_refs
+        ignored = ref in ignored_evidence_refs
+        invalid = ref in invalid_evidence_refs
+        if accepted and not ignored and not invalid:
+            disposition = "remember"
+            reason_code = reason_by_evidence_ref.get(ref) or "durable_atom_evidence"
+        elif retracted and not accepted and not ignored and not invalid:
+            disposition = "not_for_memory"
+            reason_code = "explicit_memory_forget"
+        elif ignored and not accepted and not retracted and not invalid:
+            disposition = "not_for_memory"
+            reason_code = reason_by_evidence_ref.get(ref) or "model_ignored_no_durable_memory"
+        else:
+            disposition = "needs_review"
+            reason_code = (
+                "conflicting_evidence_actions"
+                if (accepted or retracted) and ignored
+                else "invalid_or_missing_atom_decision"
+            )
+        source_decisions.append(
+            {
+                "sourceRef": compact_whitespace(
+                    str(evidence.get("sourceRef") or ref)
+                ),
+                "evidenceRef": ref,
+                "disposition": disposition,
+                "reasonCode": reason_code,
+                "confidence": confidence_by_evidence_ref.get(ref, 0.0),
+            }
+        )
+    conflicting_refs = sorted(
+        (accepted_evidence_refs | retracted_evidence_refs) & ignored_evidence_refs
+    )
+    if conflicting_refs:
+        warnings.append(
+            "conflicting_evidence_actions:" + ",".join(conflicting_refs[:20])
+        )
     return {
         "schemaVersion": MEMORY_CURATION_DECISION_SCHEMA_VERSION,
+        "sourceDecisions": source_decisions,
         "dailyBooks": [],
         "topicBooks": list(topic_books.values()),
         "semanticGroups": list(semantic_groups.values()),
@@ -577,6 +737,7 @@ def curation_decisions_to_compile_output(
         "phraseCandidates": phrase_candidates,
         "negativePhrases": negative_phrases,
         "supersedes": supersedes,
+        "memoryRetractions": memory_retractions,
         "warnings": _unique_strings(warnings, limit=200),
         "provider": compact_whitespace(str(decisions_payload.get("provider") or "")),
         "model": compact_whitespace(str(decisions_payload.get("model") or "")),
@@ -592,6 +753,7 @@ def curation_decisions_to_compile_output(
             "ignoredDecisionCount": ignored_count,
             "invalidDecisionCount": invalid_count,
             "mergedAtomCount": merge_count,
+            "retractionCount": retraction_count,
             "derivedGroupCount": len(semantic_groups),
             "derivedTagCount": len(semantic_tags),
             "derivedBookCount": len(topic_books),
@@ -708,6 +870,36 @@ def _curation_decision_items(
                 }
             )
 
+    for item in _items(payload.get("retract")):
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            evidence_refs = _strings(item[0], limit=80)
+            target_ref = compact_whitespace(str(item[1] or ""))
+            if evidence_refs and target_ref:
+                result.append(
+                    {
+                        "action": "retract",
+                        "evidenceRefs": evidence_refs,
+                        "targetRef": target_ref,
+                        "confidence": (
+                            item[2] if len(item) >= 3 else 0.0
+                        ),
+                    }
+                )
+        elif isinstance(item, Mapping):
+            result.append(
+                {
+                    **dict(item),
+                    "action": "retract",
+                    "evidenceRefs": _strings(
+                        item.get("evidenceRefs") or item.get("e") or item.get("refs"),
+                        limit=80,
+                    ),
+                    "targetRef": compact_whitespace(
+                        str(item.get("targetRef") or item.get("p") or "")
+                    ),
+                }
+            )
+
     ignored_refs: list[str] = []
     for item in _items(payload.get("ignore")):
         ignored_refs.extend(_strings(item, limit=200))
@@ -763,10 +955,18 @@ def _resolve_decision_groups(
         current = semantic_groups.get(group_id)
         semantic_groups[group_id] = {
             "groupId": group_id,
-            "title": title or compact_whitespace(str((current or {}).get("title") or "个人知识")),
+            # A later Atom may refer to a topic created earlier in the same
+            # batch while also creating another topic.  Keep the first stable
+            # title instead of overwriting it with the later Atom's
+            # ``topicTitle`` (which describes only its new topic).
+            "title": (
+                compact_whitespace(str((current or {}).get("title") or ""))
+                or title
+                or "个人知识"
+            ),
             "description": (
-                description
-                or compact_whitespace(str((current or {}).get("description") or ""))
+                compact_whitespace(str((current or {}).get("description") or ""))
+                or description
                 or f"围绕{title or '个人知识'}的长期事实、要求、决定与偏好。"
             ),
             "project": project,
@@ -1388,8 +1588,8 @@ def _normalized_pinyin(value: object) -> str:
 
 
 def _canonical_kind(value: object) -> str:
-    raw = compact_whitespace(str(value or "project_fact")).lower()
-    return _KIND_MAP.get(raw, "project_fact")
+    raw = compact_whitespace(str(value or "personal_fact")).lower()
+    return _KIND_MAP.get(raw, "personal_fact")
 
 
 def _single_app(items: list[Mapping[str, object]]) -> str:

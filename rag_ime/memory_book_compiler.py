@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import re
@@ -11,7 +12,10 @@ from typing import Any
 
 from .db import apply_database_migrations
 from .deepseek_memory_organizer import MEMORY_BOOK_COMPILE_SCHEMA_VERSION
-from .input_event_assembly import reconstruct_input_fragment_run
+from .input_event_assembly import (
+    cumulative_context_snapshots_are_revisions,
+    reconstruct_input_fragment_run,
+)
 from .input_quality import (
     FINALIZED_INPUT_SOURCE,
     RIME_FRAGMENT_SOURCE,
@@ -19,12 +23,18 @@ from .input_quality import (
     source_context_enabled,
 )
 from .memory_ingest import normalize_text, upsert_memory_item
+from .memory_curation import MEMORY_CURATION_ARCHITECTURE
+from .memory_evidence_admission import (
+    admitted_personal_evidence_sql,
+    rollback_evidence_admissions_for_run,
+)
 from .memory_projection import RETRIEVAL_DOCS_PROJECTION, enqueue_memory_projection
 from .memory_projection_consistency import (
     invalidate_superseded_atom_dependencies,
     restore_dependency_invalidation,
 )
 from .memory_purpose import purpose_audit_fields
+from .personal_memory_books import project_personal_memory_books
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, token_terms, truncate_text
 
 
@@ -118,7 +128,8 @@ def build_memory_book_source_bundle(
         else conn.execute(
             f"""
             SELECT e.id, e.created_at_ms, e.source, e.committed_text, e.recent_context,
-                   e.app, e.project, e.tags_json, e.context_group_id, e.context_group_level
+                   e.app, e.project, e.tags_json, e.context_group_id, e.context_group_level,
+                   e.capture_metadata_json
             FROM input_events e
             LEFT JOIN memory_state s ON s.event_id = e.id
             WHERE e.id > ?
@@ -168,6 +179,10 @@ def build_memory_book_source_bundle(
                 "sourceMetadataTags": tags,
                 "contextGroupId": str(row["context_group_id"] or ""),
                 "contextGroupLevel": str(row["context_group_level"] or "app"),
+                # Internal-only: quality gating must validate the same strong
+                # native boundary that created canonical Evidence. This field
+                # is removed before the bundle is exposed to an organizer.
+                "_captureMetadata": _json_object(row["capture_metadata_json"]),
             }
         )
     events, reconstruction = _reconstruct_memory_source_events(raw_events)
@@ -325,6 +340,12 @@ def rime_fragments_belong_together(
         return gap_ms <= 8_000
     if previous_context in current_context or current_context in previous_context:
         return True
+    if cumulative_context_snapshots_are_revisions(
+        previous_context,
+        current_context,
+        gap_ms=gap_ms,
+    ):
+        return True
     overlap_limit = min(len(previous_context), len(current_context), 80)
     for size in range(overlap_limit, 7, -1):
         if previous_context[-size:] == current_context[:size]:
@@ -347,6 +368,16 @@ def collapse_rime_fragment_run(events: list[dict[str, object]]) -> dict[str, obj
         ],
         limit=50_000,
     )
+    evidence_ids = _unique_strings(
+        [
+            evidence_id
+            for event in events
+            for evidence_id in _strings(
+                event.get("evidenceIds") or [event.get("evidenceId")]
+            )
+        ],
+        limit=50_000,
+    )
     reconstructed = reconstruct_input_fragment_run(
         [str(item.get("text") or "") for item in events],
         [str(item.get("recentContext") or "") for item in events],
@@ -361,6 +392,8 @@ def collapse_rime_fragment_run(events: list[dict[str, object]]) -> dict[str, obj
             "eventId": source_event_ids[-1] if source_event_ids else _optional_int(last.get("eventId")),
             "sourceEventIds": source_event_ids,
             "sourceIds": source_ids,
+            "evidenceId": evidence_ids[0] if len(evidence_ids) == 1 else "",
+            "evidenceIds": evidence_ids,
             "source": "reconstructed_user_input",
             "text": reconstructed,
             "recentContext": "",
@@ -412,13 +445,21 @@ def _filter_reconstructed_memory_events(
             ),
             reconstructed=reconstructed,
             tags=_strings(event.get("sourceMetadataTags")),
+            capture_metadata=(
+                event.get("_captureMetadata")
+                if isinstance(event.get("_captureMetadata"), Mapping)
+                else None
+            ),
+            app=compact_whitespace(str(event.get("app") or "")),
         )
         if not quality.memory_eligible or not _evidence_tokens(text):
             dropped_fragment += 1
             for reason in quality.reasons or ("no_evidence_tokens",):
                 quality_reason_counts[reason] = quality_reason_counts.get(reason, 0) + 1
             continue
-        filtered.append({**event, **quality.payload()})
+        public_event = dict(event)
+        public_event.pop("_captureMetadata", None)
+        filtered.append({**public_event, **quality.payload()})
 
     merged: list[dict[str, object]] = []
     duplicate_count = 0
@@ -747,8 +788,18 @@ def memory_book_plan_from_compile_output(
             source_bundle=source_bundle,
         )
         atom_kind = compact_whitespace(str(item.get("kind") or "project_fact"))
-        atom_project = compact_whitespace(str(item.get("project") or project))
-        atom_app = compact_whitespace(str(item.get("app") or ""))
+        personal_v2 = (
+            compact_whitespace(str(item.get("knowledgeDomain") or ""))
+            == "personal_memory"
+            and compact_whitespace(str(item.get("scopeMode") or ""))
+            == "authoritative"
+        )
+        atom_project = (
+            ""
+            if personal_v2
+            else compact_whitespace(str(item.get("project") or project))
+        )
+        atom_app = "" if personal_v2 else compact_whitespace(str(item.get("app") or ""))
         claim_key = _normalized_claim_key(
             item.get("claimKey") or item.get("claim") or atom_id
         )
@@ -807,6 +858,31 @@ def memory_book_plan_from_compile_output(
             "contextGroupId": _group_for_source_ids(source_ids, source_bundle=source_bundle),
             "ownerKind": normalized_owner_kind,
             "ownerId": normalized_owner_id,
+            "evidenceIds": _strings(item.get("evidenceIds")),
+            "curationRunId": compact_whitespace(
+                str(item.get("curationRunId") or "")
+            ),
+            "operation": compact_whitespace(str(item.get("operation") or "")),
+            "knowledgeDomain": compact_whitespace(
+                str(item.get("knowledgeDomain") or "legacy")
+            ),
+            "scopeKind": compact_whitespace(
+                str(item.get("scopeKind") or "legacy")
+            ),
+            "scopeId": compact_whitespace(str(item.get("scopeId") or "")),
+            "visibility": compact_whitespace(
+                str(item.get("visibility") or "legacy")
+            ),
+            "authorizationRevision": compact_whitespace(
+                str(item.get("authorizationRevision") or "")
+            ),
+            "bindingId": compact_whitespace(str(item.get("bindingId") or "")),
+            "scopeMode": compact_whitespace(
+                str(item.get("scopeMode") or "legacy")
+            ),
+            "curationArchitecture": compact_whitespace(
+                str(item.get("curationArchitecture") or "")
+            ),
         }
         diffs.append({"op": "upsert_memory_atom", "targetId": atom_id, "payload": payload, "status": "pending"})
     for item in _list_of_dicts(compile_output.get("tagEdges")):
@@ -947,11 +1023,37 @@ def memory_book_plan_from_compile_output(
                         item.get("confidence"),
                         default=0.0,
                     ),
-                    "project": compact_whitespace(
-                        str(item.get("project") or project)
+                    "project": (
+                        ""
+                        if compact_whitespace(
+                            str(item.get("knowledgeDomain") or "")
+                        )
+                        == "personal_memory"
+                        else compact_whitespace(
+                            str(item.get("project") or project)
+                        )
                     ),
                     "ownerKind": normalized_owner_kind,
                     "ownerId": normalized_owner_id,
+                    "evidenceIds": _strings(item.get("evidenceIds")),
+                    "curationRunId": compact_whitespace(
+                        str(item.get("curationRunId") or "")
+                    ),
+                    "knowledgeDomain": compact_whitespace(
+                        str(item.get("knowledgeDomain") or "legacy")
+                    ),
+                    "scopeKind": compact_whitespace(
+                        str(item.get("scopeKind") or "legacy")
+                    ),
+                    "scopeId": compact_whitespace(
+                        str(item.get("scopeId") or "")
+                    ),
+                    "visibility": compact_whitespace(
+                        str(item.get("visibility") or "legacy")
+                    ),
+                    "scopeMode": compact_whitespace(
+                        str(item.get("scopeMode") or "legacy")
+                    ),
                 },
                 "status": "pending",
             }
@@ -1043,6 +1145,9 @@ def memory_book_plan_from_compile_output(
             "elapsedMs": int(compile_output.get("elapsedMs") or 0),
             "modelDiagnostics": dict(compile_output.get("modelDiagnostics") or {}),
             "modelBundleStats": dict(compile_output.get("modelBundleStats") or {}),
+            "personalCurationV2": dict(
+                compile_output.get("personalCurationV2") or {}
+            ),
             "instruction": _sanitize_text(str(compile_output.get("instruction") or ""), max_chars=600)[0],
             "curationArchitecture": curation_architecture,
             "curationOutcome": curation_outcome,
@@ -1621,6 +1726,7 @@ def apply_stored_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> di
                 conn,
                 run=current,
             )
+        project_personal_memory_books(conn)
     return memory_book_run_payload(conn, run_id=run_id)
 
 
@@ -1660,6 +1766,16 @@ def rollback_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> dict[s
                 run=current,
                 applied=False,
             )
+            rollback_evidence_admissions_for_run(
+                conn,
+                run_id=run_id,
+                created_at_ms=now_ms(),
+            )
+            # Evidence rollback may rewind the owner cursor as part of its
+            # compatibility projection. Restore the frozen pre-run cursor
+            # last so replay sees the exact same source bundle and can reuse
+            # the content-addressed model result.
+            _restore_owner_curation_cursor(conn, run=current)
             enqueue_memory_projection(
                 conn,
                 projection_kind=RETRIEVAL_DOCS_PROJECTION,
@@ -1671,6 +1787,7 @@ def rollback_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> dict[s
                 ),
                 payload={"runId": run_id, "diffCount": len(rows)},
             )
+        project_personal_memory_books(conn)
     return memory_book_run_payload(conn, run_id=run_id)
 
 
@@ -1779,29 +1896,100 @@ def _transition_owner_curation_sources(
             """,
             (timestamp, owner_kind, owner_id, project, run_id),
         )
-    elif rows:
-        earliest_ms = min(int(row["created_at_ms"] or 0) for row in rows)
-        conn.execute(
+
+
+def _restore_owner_curation_cursor(
+    conn: sqlite3.Connection,
+    *,
+    run: dict[str, object],
+) -> None:
+    """Restore the exact pre-run cursor after all rollback projections."""
+
+    run_kind = compact_whitespace(str(run.get("runKind") or ""))
+    if run_kind not in {"daily_curation", "manual_curation"}:
+        return
+    run_id = compact_whitespace(str(run.get("runId") or ""))
+    owner_kind = compact_whitespace(str(run.get("ownerKind") or ""))
+    owner_id = compact_whitespace(str(run.get("ownerId") or ""))
+    metadata = dict(run.get("metadata") or {})
+    project = compact_whitespace(str(metadata.get("project") or ""))
+    source_cursor = dict(metadata.get("sourceCursor") or {})
+    has_exact_cursor = (
+        "fromSourceCreatedAtMs" in source_cursor
+        and "fromSourceId" in source_cursor
+    )
+    try:
+        restored_cursor_ms = max(
+            0,
+            int(source_cursor.get("fromSourceCreatedAtMs") or 0),
+        )
+    except (TypeError, ValueError):
+        has_exact_cursor = False
+        restored_cursor_ms = 0
+    restored_cursor_id = compact_whitespace(
+        str(source_cursor.get("fromSourceId") or "")
+    )
+    if not has_exact_cursor:
+        # Compatibility fallback for runs stored before sourceCursor was
+        # recorded. Resolve all physical source ids without relying on their
+        # post-rollback disposition.
+        source_ids = _unique_strings(
+            metadata.get("sourceIds") or [],
+            limit=50_000,
+        )
+        if not source_ids:
+            return
+        row = conn.execute(
             """
-            UPDATE memory_curation_cursors
-            SET last_source_created_at_ms = ?,
-                last_source_id = '',
-                next_due_at_ms = 0,
-                status = 'idle',
-                last_error = '',
-                updated_at_ms = ?
-            WHERE owner_kind = ? AND owner_id = ? AND project = ?
-              AND lane = 'daily' AND last_run_id = ?
+            WITH selected_source_ids(source_id) AS (
+                SELECT DISTINCT CAST(value AS TEXT)
+                FROM json_each(?)
+            )
+            SELECT MIN(source.created_at_ms) AS earliest_ms
+            FROM agent_memory_sources AS source
+            JOIN selected_source_ids AS selected
+              ON selected.source_id = source.source_id
+            WHERE source.owner_kind = ? AND source.owner_id = ?
             """,
             (
-                max(0, earliest_ms - 1),
-                timestamp,
+                json.dumps(
+                    source_ids,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
                 owner_kind,
                 owner_id,
-                project,
-                run_id,
             ),
-        )
+        ).fetchone()
+        if row is None or row["earliest_ms"] is None:
+            return
+        restored_cursor_ms = max(0, int(row["earliest_ms"] or 0) - 1)
+        restored_cursor_id = ""
+    if not run_id or not owner_kind or not owner_id:
+        return
+    timestamp = now_ms()
+    conn.execute(
+        """
+        UPDATE memory_curation_cursors
+        SET last_source_created_at_ms = ?,
+            last_source_id = ?,
+            next_due_at_ms = 0,
+            status = 'idle',
+            last_error = '',
+            updated_at_ms = ?
+        WHERE owner_kind = ? AND owner_id = ? AND project = ?
+          AND lane = 'daily' AND last_run_id = ?
+        """,
+        (
+            restored_cursor_ms,
+            restored_cursor_id,
+            timestamp,
+            owner_kind,
+            owner_id,
+            project,
+            run_id,
+        ),
+    )
 
 
 def _resolve_owner_curation_review_without_writes(
@@ -2069,6 +2257,10 @@ def _rollback_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) ->
             for tag in rollback.get("previousAtomTags", []) or []:
                 if isinstance(tag, dict):
                     _insert_or_replace_dict(conn, "memory_atom_tags", tag)
+        _rollback_personal_atom_evidence_governance(
+            conn,
+            rollback.get("personalEvidenceGovernance"),
+        )
     elif op == "upsert_tag_edge":
         edge = rollback.get("edge")
         if isinstance(edge, dict):
@@ -2130,6 +2322,10 @@ def _rollback_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) ->
                 "UPDATE memory_tombstones SET active = 0 WHERE id = ?",
                 (tombstone_id,),
             )
+        _rollback_personal_atom_evidence_governance(
+            conn,
+            rollback.get("personalEvidenceGovernance"),
+        )
 
 
 def _apply_semantic_group(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
@@ -2365,6 +2561,38 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
         payload.get("ownerKind") or "user",
         payload.get("ownerId") or "default",
     )
+    knowledge_domain = compact_whitespace(
+        str(payload.get("knowledgeDomain") or "legacy")
+    )
+    scope_kind = compact_whitespace(str(payload.get("scopeKind") or "legacy"))
+    scope_id = compact_whitespace(str(payload.get("scopeId") or ""))
+    visibility = compact_whitespace(str(payload.get("visibility") or "legacy"))
+    authorization_revision = compact_whitespace(
+        str(payload.get("authorizationRevision") or "")
+    )
+    binding_id = compact_whitespace(str(payload.get("bindingId") or ""))
+    scope_mode = compact_whitespace(str(payload.get("scopeMode") or "legacy"))
+    if knowledge_domain == "personal_memory":
+        if (
+            owner_kind != "user"
+            or owner_id != "default"
+            or scope_kind != "user"
+            or scope_id != "default"
+            or visibility != "private"
+            or scope_mode != "authoritative"
+            or project
+            or app
+            or kind
+            not in {
+                "personal_fact",
+                "personal_habit",
+                "durable_preference",
+                "personal_principle",
+            }
+        ):
+            raise ValueError("personal Atom scope is not authoritative global user Memory")
+        if not authorization_revision or not binding_id:
+            raise ValueError("personal Atom authority binding is incomplete")
     claim_key = _normalized_claim_key(payload.get("claimKey"))
     if not claim_key:
         raise ValueError("memory atom claimKey is required")
@@ -2465,10 +2693,12 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
             id, kind, text, canonical_text, source_event_ids_json, source_memory_ids_json,
             scope_app, scope_project, language, confidence, quality_score, echo_risk,
             privacy_level, owner_kind, owner_id, status, created_at_ms, updated_at_ms,
-            last_used_at_ms,
+            last_used_at_ms, knowledge_domain, scope_kind, scope_id, visibility,
+            authorization_revision, binding_id, scope_mode,
             claim_key, lineage_id, claim_state, valid_from_ms, valid_to_ms, supersedes_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'zh', ?, ?, 0.0, 'local', ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'zh', ?, ?, 0.0, 'local', ?, ?, ?, ?, ?, NULL,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             kind = excluded.kind,
             text = excluded.text,
@@ -2486,6 +2716,13 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
             owner_id = excluded.owner_id,
             status = excluded.status,
             updated_at_ms = excluded.updated_at_ms,
+            knowledge_domain = excluded.knowledge_domain,
+            scope_kind = excluded.scope_kind,
+            scope_id = excluded.scope_id,
+            visibility = excluded.visibility,
+            authorization_revision = excluded.authorization_revision,
+            binding_id = excluded.binding_id,
+            scope_mode = excluded.scope_mode,
             claim_key = excluded.claim_key,
             lineage_id = excluded.lineage_id,
             claim_state = excluded.claim_state,
@@ -2509,6 +2746,13 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
             stored_status,
             timestamp,
             timestamp,
+            knowledge_domain,
+            scope_kind,
+            scope_id,
+            visibility,
+            authorization_revision,
+            binding_id,
+            scope_mode,
             claim_key,
             lineage_id,
             claim_state,
@@ -2566,6 +2810,31 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
         and stored_status in {"active", "approved"}
         else {}
     )
+    evidence_governance = (
+        _apply_personal_atom_evidence_governance(
+            conn,
+            payload=payload,
+            atom_id=atom_id,
+            previous_atom=previous,
+            relation=(
+                "corrects"
+                if compact_whitespace(str(payload.get("operation") or ""))
+                == "supersede"
+                or bool(supersedes_id)
+                else "supports"
+            ),
+        )
+        if knowledge_domain == "personal_memory"
+        or (
+            compact_whitespace(
+                str(payload.get("curationArchitecture") or "")
+            )
+            == MEMORY_CURATION_ARCHITECTURE
+            and bool(_strings(payload.get("evidenceIds")))
+            and bool(compact_whitespace(str(payload.get("curationRunId") or "")))
+        )
+        else {}
+    )
     return {
         "table": "memory_atoms",
         "pk": "id",
@@ -2578,8 +2847,257 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
         "autoSupersededBooks": [],
         "dependencyInvalidation": dependency_invalidation,
         "supersessionRollbacks": supersession_rollbacks,
+        "personalEvidenceGovernance": evidence_governance,
         **memberships,
     }
+
+
+def _apply_personal_atom_evidence_governance(
+    conn: sqlite3.Connection,
+    *,
+    payload: Mapping[str, object],
+    atom_id: str,
+    previous_atom: Mapping[str, object],
+    relation: str,
+) -> dict[str, object]:
+    evidence_ids = _unique_strings(_strings(payload.get("evidenceIds")), limit=1_500)
+    run_id = compact_whitespace(str(payload.get("curationRunId") or ""))
+    if not evidence_ids or not run_id:
+        raise ValueError("curated Atom requires canonical Evidence and a curation run")
+    run = conn.execute(
+        """
+        SELECT session_id, provider, model_id, thinking_level
+        FROM memory_curation_model_runs
+        WHERE run_id = ?
+        """,
+        (run_id,),
+    ).fetchone()
+    if run is None or not compact_whitespace(str(run["session_id"] or "")):
+        raise ValueError("curated Atom run has no auditable Session")
+    placeholders = ",".join("?" for _ in evidence_ids)
+    evidence_rows = conn.execute(
+        f"""
+        SELECT evidence_id, content_sha256, origin_kind, boundary_kind,
+               admission_revision
+        FROM agent_memory_evidence AS evidence
+        WHERE evidence.evidence_id IN ({placeholders})
+          AND {admitted_personal_evidence_sql('evidence')}
+        ORDER BY evidence.evidence_id
+        """,
+        tuple(evidence_ids),
+    ).fetchall()
+    if {str(row["evidence_id"]) for row in evidence_rows} != set(evidence_ids):
+        raise ValueError("curated Atom references missing or non-admitted Evidence")
+    if relation not in {"supports", "corrects", "retracts"}:
+        raise ValueError("unsupported curated Atom Evidence relation")
+
+    operation = {
+        "supports": "remember_preview",
+        "corrects": "correct_preview",
+        "retracts": "forget_preview",
+    }[relation]
+    canonical = compact_whitespace(
+        str(payload.get("canonicalText") or previous_atom.get("canonical_text") or "")
+    )
+    proposal_seed = json.dumps(
+        {
+            "runId": run_id,
+            "atomId": atom_id,
+            "relation": relation,
+            "evidenceIds": evidence_ids,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    proposal_id = (
+        "proposal:curation:"
+        + hashlib.sha256(proposal_seed.encode("utf-8")).hexdigest()[:32]
+    )
+    previous_proposal = _row_dict(
+        conn.execute(
+            "SELECT * FROM memory_governance_proposals WHERE proposal_id = ?",
+            (proposal_id,),
+        ).fetchone()
+    )
+    previous_links = [
+        _row_dict(row)
+        for row in conn.execute(
+            """
+            SELECT * FROM memory_atom_evidence_links
+            WHERE proposal_id = ?
+            ORDER BY evidence_id, relation
+            """,
+            (proposal_id,),
+        ).fetchall()
+    ]
+    timestamp = now_ms()
+    evidence_snapshot = [
+        {
+            "evidenceId": str(row["evidence_id"]),
+            "contentSha256": str(row["content_sha256"]),
+            "originKind": str(row["origin_kind"]),
+            "boundaryKind": str(row["boundary_kind"]),
+            "admissionRevision": int(row["admission_revision"] or 0),
+        }
+        for row in evidence_rows
+    ]
+    atom_first = (
+        compact_whitespace(str(payload.get("curationArchitecture") or ""))
+        == MEMORY_CURATION_ARCHITECTURE
+    )
+    action_source = (
+        "memory_curation_atom_first"
+        if atom_first
+        else "personal_memory_curation_v2"
+    )
+    action = {
+        "source": action_source,
+        "runId": run_id,
+        "atomId": atom_id,
+        "relation": relation,
+        "evidenceIds": evidence_ids,
+        "provider": str(run["provider"] or ""),
+        "modelId": str(run["model_id"] or ""),
+        "thinkingLevel": str(run["thinking_level"] or ""),
+    }
+    payload_sha256 = hashlib.sha256(
+        json.dumps(
+            action,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    conn.execute(
+        """
+        INSERT INTO memory_governance_proposals(
+            proposal_id, session_id, project, operation, target_memory_id,
+            memory_kind, proposed_text, reason, evidence_ids_json,
+            evidence_snapshot_json, target_snapshot_json, action_json,
+            payload_sha256, idempotency_key, status, applied_memory_id,
+            receipt_json, created_at_ms, expires_at_ms, updated_at_ms,
+            applied_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'applied', ?, ?,
+                  ?, ?, ?, ?)
+        ON CONFLICT(proposal_id) DO UPDATE SET
+            session_id = excluded.session_id,
+            operation = excluded.operation,
+            target_memory_id = excluded.target_memory_id,
+            memory_kind = excluded.memory_kind,
+            proposed_text = excluded.proposed_text,
+            reason = excluded.reason,
+            evidence_ids_json = excluded.evidence_ids_json,
+            evidence_snapshot_json = excluded.evidence_snapshot_json,
+            target_snapshot_json = excluded.target_snapshot_json,
+            action_json = excluded.action_json,
+            payload_sha256 = excluded.payload_sha256,
+            idempotency_key = excluded.idempotency_key,
+            status = 'applied',
+            applied_memory_id = excluded.applied_memory_id,
+            receipt_json = excluded.receipt_json,
+            updated_at_ms = excluded.updated_at_ms,
+            applied_at_ms = excluded.applied_at_ms
+        """,
+        (
+            proposal_id,
+            str(run["session_id"]),
+            compact_whitespace(str(payload.get("project") or "")),
+            operation,
+            (
+                compact_whitespace(str(payload.get("supersedesId") or atom_id))
+                if relation == "corrects"
+                else atom_id
+                if relation == "retracts"
+                else ""
+            ),
+            compact_whitespace(str(payload.get("kind") or previous_atom.get("kind") or "")),
+            canonical,
+            f"{action_source}:{relation}",
+            json.dumps(evidence_ids, ensure_ascii=False, separators=(",", ":")),
+            json.dumps(evidence_snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            json.dumps(dict(previous_atom), ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            json.dumps(action, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            payload_sha256,
+            f"{action_source}:{payload_sha256}",
+            atom_id,
+            json.dumps(
+                {"applied": True, "runId": run_id, "relation": relation},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            timestamp,
+            timestamp,
+            timestamp,
+            timestamp,
+        ),
+    )
+    conn.execute(
+        "DELETE FROM memory_atom_evidence_links WHERE proposal_id = ?",
+        (proposal_id,),
+    )
+    for row in evidence_rows:
+        conn.execute(
+            """
+            INSERT INTO memory_atom_evidence_links(
+                memory_atom_id, evidence_id, proposal_id, relation,
+                content_sha256, provenance_json, created_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                atom_id,
+                str(row["evidence_id"]),
+                proposal_id,
+                relation,
+                str(row["content_sha256"]),
+                json.dumps(
+                    {
+                        "runId": run_id,
+                        "protocol": (
+                            MEMORY_CURATION_ARCHITECTURE
+                            if atom_first
+                            else "personal-v2"
+                        ),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                timestamp,
+            ),
+        )
+    return {
+        "proposalId": proposal_id,
+        "previousProposal": previous_proposal,
+        "previousLinks": previous_links,
+    }
+
+
+def _rollback_personal_atom_evidence_governance(
+    conn: sqlite3.Connection,
+    rollback: object,
+) -> None:
+    if not isinstance(rollback, Mapping):
+        return
+    proposal_id = compact_whitespace(str(rollback.get("proposalId") or ""))
+    if not proposal_id:
+        return
+    conn.execute(
+        "DELETE FROM memory_atom_evidence_links WHERE proposal_id = ?",
+        (proposal_id,),
+    )
+    previous_proposal = rollback.get("previousProposal")
+    if isinstance(previous_proposal, dict) and previous_proposal:
+        _insert_or_replace_dict(conn, "memory_governance_proposals", previous_proposal)
+        for row in rollback.get("previousLinks") or []:
+            if isinstance(row, dict):
+                _insert_or_replace_dict(conn, "memory_atom_evidence_links", row)
+    else:
+        conn.execute(
+            "DELETE FROM memory_governance_proposals WHERE proposal_id = ?",
+            (proposal_id,),
+        )
 
 
 def _replace_superseded_atoms_in_books(
@@ -3277,11 +3795,25 @@ def _apply_retract_memory_atom(
                 (timestamp, timestamp, str(row["book_id"])),
             )
 
+    evidence_governance = (
+        _apply_personal_atom_evidence_governance(
+            conn,
+            payload=payload,
+            atom_id=target_id,
+            previous_atom=previous,
+            relation="retracts",
+        )
+        if compact_whitespace(str(payload.get("knowledgeDomain") or ""))
+        == "personal_memory"
+        else {}
+    )
+
     return {
         "atom": previous,
         "books": affected_books,
         "tombstoneId": int(tombstone.lastrowid),
         "dependencyInvalidation": dependency_invalidation,
+        "personalEvidenceGovernance": evidence_governance,
     }
 
 
@@ -3909,6 +4441,11 @@ def _ensure_compile_state_table(conn: sqlite3.Connection) -> None:
 
 def _record_draft_compile_state(conn: sqlite3.Connection, *, plan: dict[str, object]) -> None:
     metadata = dict(plan.get("metadata") or {})
+    # ``memory_compile_state`` is the cursor owned by the legacy whole-book
+    # compiler. Owner/daily Atom-first runs have their own audited curation
+    # cursor and must not replay database migrations merely to store a draft.
+    if compact_whitespace(str(metadata.get("runKind") or "legacy")) != "legacy":
+        return
     project = compact_whitespace(str(metadata.get("project") or ""))
     cursor = dict(metadata.get("sourceCursor") or {})
     to_event_id = max(0, int(cursor.get("toEventId") or 0))

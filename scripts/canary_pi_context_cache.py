@@ -40,6 +40,10 @@ def main() -> int:
     parser.add_argument("--workspace-root", type=Path, required=True)
     parser.add_argument("--provider", required=True)
     parser.add_argument("--model", default="")
+    parser.add_argument(
+        "--thinking-level",
+        choices=("off", "minimal", "low", "medium", "high", "xhigh", "max"),
+    )
     parser.add_argument("--provider-env-file", type=Path)
     parser.add_argument("--source-agent-config", type=Path, required=True)
     parser.add_argument("--evidence-output", type=Path)
@@ -67,6 +71,7 @@ def main() -> int:
         model = args.model or provider_env.get("RAG_IME_DEEPSEEK_MODEL", "")
         if not model:
             raise RuntimeError("canary model is not configured")
+        thinking_level = str(args.thinking_level or "").strip()
         env = {
             **os.environ,
             **provider_env,
@@ -94,6 +99,7 @@ def main() -> int:
             "sourceCommit": manifest.get("source", {}).get("commit"),
             "provider": args.provider,
             "model": model,
+            "thinkingLevel": thinking_level or None,
             "lastCompletedStage": "process_started",
             "stableTurns": [],
         }
@@ -286,6 +292,7 @@ def main() -> int:
                     "cwd": str(args.workspace_root.resolve()),
                     "provider": args.provider,
                     "modelId": model,
+                    **({"thinkingLevel": thinking_level} if thinking_level else {}),
                     "systemPrompt": stable_prompt,
                     "noContextFiles": True,
                     "toolManifest": [],
@@ -304,6 +311,7 @@ def main() -> int:
                     "cwd": str(args.workspace_root.resolve()),
                     "provider": args.provider,
                     "modelId": model,
+                    **({"thinkingLevel": thinking_level} if thinking_level else {}),
                     "systemPrompt": f"CHANGED-CONTROL-V2\n{stable_body}",
                     "noContextFiles": True,
                     "toolManifest": [],
@@ -345,6 +353,7 @@ def main() -> int:
                         "sourceCommit": manifest.get("source", {}).get("commit"),
                         "provider": args.provider,
                         "model": model,
+                        "thinkingLevel": thinking_level or None,
                         "stableTurns": stable,
                         "changedPrefixControl": control,
                         "providerCacheFieldsReported": provider_cache_fields_reported,

@@ -206,6 +206,7 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
             "terminalReceiptId": None,
             "activeProfileRef": None,
             "budgetPolicyRef": "budget:limits",
+            "independentReviewRequired": False,
             "createdAtMs": 1,
         }
         for overrides in (
@@ -367,6 +368,7 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
                 "terminalReceiptId": None,
                 "activeProfileRef": None,
                 "budgetPolicyRef": "budget:1",
+                "independentReviewRequired": False,
                 "createdAtMs": 1,
             },
             budget=10,

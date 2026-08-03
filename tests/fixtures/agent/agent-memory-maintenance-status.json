@@ -14,7 +14,75 @@
     "pendingEventCount": 7,
     "lastBundleHash": "sha256:previous"
   },
+  "draftCoverage": {
+    "coveredThroughEventId": 13023,
+    "undraftedEventCount": 0,
+    "coversAllPending": true,
+    "lastDraftRunId": "memory_book_review_1"
+  },
+  "automation": {
+    "minimumNewEvents": 50,
+    "idleThresholdMs": 1200000,
+    "dailyIntervalMs": 43200000,
+    "schedulerPollIntervalMs": 3600000,
+    "enabled": false,
+    "model": "openai-codex/gpt-5.6-luna",
+    "thinkingLevel": "max",
+    "runsPerDay": 2,
+    "autoApply": false,
+    "curationProtocol": "atom-first-v1",
+    "targetSourceCount": 1000,
+    "maximumSourceCount": 1500,
+    "maximumInputTokens": 200000,
+    "reservedContextTokens": 72000
+  },
   "pendingDraftCount": 1,
+  "ownerCuration": {
+    "schemaVersion": "rag-ime.owner-memory-curation-status.v1",
+    "ok": true,
+    "project": "wisdom-weasel-rag-ime",
+    "policy": {},
+    "due": true,
+    "pendingSourceCount": 7,
+    "needsReviewSourceCount": 0,
+    "scopes": []
+  },
+  "modelCuration": {
+    "schemaVersion": "rag-ime.memory-curation-model-status.v1",
+    "ok": true,
+    "profile": "MEMORY_CURATION",
+    "requiredModel": "openai-codex/gpt-5.6-luna",
+    "requiredThinkingLevel": "max",
+    "minimumContextTokens": 272000,
+    "stateCounts": {},
+    "runs": []
+  },
+  "bookProjection": {
+    "schemaVersion": "rag-ime.personal-memory-book-projection-status.v1",
+    "ok": true,
+    "projectionOwner": "personal-memory-book-projector-v1",
+    "currentAtomCount": 0,
+    "desiredBookCount": 0,
+    "activeBookCount": 0,
+    "historicalBookCount": 0,
+    "unbookedAtomCount": 0,
+    "missingBookCount": 0,
+    "staleBookCount": 0,
+    "membershipMismatchCount": 0,
+    "guardedBookCount": 0,
+    "inSync": true
+  },
+  "projection": {
+    "schemaVersion": "rag-ime.memory-projection-runtime.v1",
+    "ok": true,
+    "configured": true,
+    "owner": "gateway",
+    "running": false,
+    "lastRunAtMs": 1783951200000,
+    "lastError": "",
+    "freshness": {},
+    "disabledReason": ""
+  },
   "runs": [
     {
       "runId": "memory_book_review_1",

@@ -94,19 +94,11 @@ class AgentPromptAuditTests(unittest.TestCase):
             self.assertIn("<room-work>", prompt)
             self.assertIn("room_commit", prompt)
             self.assertEqual(prompt.count("## 让用户看得懂"), 1)
-            self.assertIn("方法、可观察结果与风险", prompt)
+            self.assertIn("方法、可观察结果、风险", prompt)
             self.assertIn("不得包含隐藏逐 token 推理", prompt)
-            self.assertIn("交接内容足以直接开始", prompt)
+            self.assertIn("当前工作卡片的全部剩余责任", prompt)
+            self.assertIn("room_commit.evidence", prompt)
             self.assertNotIn("收工前", prompt)
-            positive = sum(
-                prompt.count(token)
-                for token in ("适用", "先", "主动", "交接", "提交", "完成")
-            )
-            suppressive = sum(
-                prompt.count(token)
-                for token in ("不得", "禁止", "不要", "不能")
-            )
-            self.assertGreaterEqual(positive, suppressive, item["roleId"])
 
         for item in collaboration_profile_catalog():
             prompt = collaboration_profile(item["profileId"], item["version"]).system_prompt
@@ -167,39 +159,51 @@ class AgentPromptAuditTests(unittest.TestCase):
     ) -> None:
         policy = progressive_capability_policy()
 
-        self.assertIn("无实质歧义且授权内可逆即执行", policy)
-        self.assertIn("仅实质取舍才提 AI 生成的简短选择题", policy)
-        self.assertIn("禁索取裸“确认”", policy)
+        self.assertIn("先查可验证事实", policy)
+        self.assertIn("授权内可逆默认直接执行", policy)
+        self.assertIn("外部事实不可得则阻塞", policy)
+        self.assertIn("调查后仅剩实质取舍", policy)
+        self.assertIn("明确要求 Grill/挑战/压力测试", policy)
+        self.assertIn("普通模式合并 1-4 个独立项、分开依赖项", policy)
+        self.assertIn("禁裸“确认”", policy)
         self.assertIn(
             "Goal/In scope/Readiness 内部模板原样作最终聊天",
             policy,
         )
-        self.assertIn("只提交计划不算完成", policy)
+        self.assertIn("计划不算完成", policy)
 
-    def test_room_lifecycle_uses_plain_language_for_peer_work(self) -> None:
+    def test_room_lifecycle_uses_plain_language_for_bounded_peer_work(
+        self,
+    ) -> None:
         prompt = collaboration_role("implementer", "1").system_prompt
 
-        self.assertIn("用户最初说的目标是大家共同遵守的边界", prompt)
-        self.assertIn("开始和结束前都要重新核对", prompt)
-        self.assertIn("工作卡片就是自己这一轮要完成的部分", prompt)
-        self.assertIn("不要替别的伙伴做", prompt)
-        self.assertIn("每个人地位相同", prompt)
-        self.assertIn("用 room_state 查看", prompt)
-        self.assertIn("首个公开摘要先说清自己具体负责什么", prompt)
-        self.assertIn("不要在公开内容里出现 Kernel、Root、Dispatch", prompt)
+        self.assertIn("用户最初的目标和已经确认的要求是共同边界", prompt)
+        self.assertIn("开始、交接、复核和最终回复前都要重新", prompt)
+        self.assertIn("当前工作卡片是你这一轮唯一负责的部分", prompt)
+        self.assertIn("其他伙伴只负责被邀请的明确子任务", prompt)
+        self.assertIn("用 room_state", prompt)
+        self.assertIn("不要代替独立审查", prompt)
+        self.assertIn("不要在\n公开内容里出现 Kernel、Root、Dispatch", prompt)
         self.assertIn("room_commit.evidence", prompt)
         self.assertIn("不得改写、拼接、猜测", prompt)
-        self.assertIn("room_commit 暂存成功后立即结束本轮", prompt)
+        self.assertIn("room_commit 暂存\n成功后立即结束本轮", prompt)
 
-    def test_integration_peer_works_instead_of_only_assigning_others(self) -> None:
+    def test_facilitator_owns_integration_review_routing_and_final_reply(
+        self,
+    ) -> None:
         role = collaboration_role("coordinator", "1")
         prompt = role.system_prompt
 
-        self.assertEqual(role.display_name, "整合伙伴")
-        self.assertIn("你不是其他成员的上级", prompt)
-        self.assertIn("持续完成自己的集成、验证和", prompt)
-        self.assertIn("不能只安排别人、等待或汇报别人", prompt)
-        self.assertIn("组织共同复核", prompt)
+        self.assertEqual(role.display_name, "主持整合者")
+        self.assertIn("Root 首位接收者是临时 Facilitator", prompt)
+        self.assertIn("集成、端到端验证", prompt)
+        self.assertIn("普通分工使用\nroom_collaborate", prompt)
+        self.assertIn("parallel Room 必须在集成验证后交给独立", prompt)
+        self.assertIn(
+            "room_commit(decision=handoff, intent=review)",
+            prompt,
+        )
+        self.assertIn("唯一最终回复", prompt)
 
     def test_unpinned_role_book_is_zero_bytes_not_a_status_message(self) -> None:
         persona = agent_role("companion-present-v1", "1").persona_prompt

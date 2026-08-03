@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
-import json
-import sqlite3
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,219 +18,412 @@ CANARY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CANARY)
 
 
+ROOT_ID = "room-root:1"
+TASK_ID = "room-task:1"
+PARTICIPANTS = {"A": "participant-a", "B": "participant-b", "C": "participant-c"}
+SESSIONS = {"A": "session-a", "B": "session-b", "C": "session-c"}
+
+
+def anchor(text: str) -> dict[str, object]:
+    return {
+        "rootId": ROOT_ID,
+        "originalText": text,
+        "originalContentSha256": hashlib.sha256(text.encode()).hexdigest(),
+        "originalByteLength": len(text.encode()),
+        "integrityStatus": "verified",
+    }
+
+
+def base_snapshot() -> dict[str, object]:
+    return {
+        "roots": [{"rootId": ROOT_ID, "facilitatorParticipantId": PARTICIPANTS["A"], "reporterParticipantId": PARTICIPANTS["A"]}],
+        "tasks": [{"rootId": ROOT_ID, "taskId": TASK_ID}],
+        "dispatches": [{
+            "rootId": ROOT_ID,
+            "taskId": TASK_ID,
+            "dispatchId": "dispatch-align",
+            "intentKind": "align",
+            "targetParticipantId": PARTICIPANTS["A"],
+            "targetSessionId": SESSIONS["A"],
+        }],
+        "requirementsByRootId": {ROOT_ID: {"anchors": [anchor(CANARY.OPENING_MESSAGE)]}},
+        "posts": [],
+    }
+
+
 class RoomThreeMemberCanaryTest(unittest.TestCase):
-    def test_public_posts_come_from_the_ui_timeline_and_include_both_sources(
-        self,
-    ) -> None:
-        events = []
-        for index, source in enumerate(
-            ("room_post", "room_commit", "room_post", "room_commit"),
-            start=1,
-        ):
-            events.append(
-                {
-                    "eventType": "room_post",
-                    "payload": {
-                        "post": {
-                            "postId": f"post-{index}",
-                            "rootId": "root-1",
-                            "createdAtMs": index,
-                            "publicationSource": {
-                                "kind": source,
-                                "ref": f"source-{index}",
-                            },
-                        }
-                    },
-                }
+    def test_exact_opening_preservation_and_no_initial_fanout(self) -> None:
+        accepted = {
+            "post": {"content": CANARY.OPENING_MESSAGE},
+            "requirementAnchor": anchor(CANARY.OPENING_MESSAGE),
+            "taskId": TASK_ID,
+            "alignmentDispatches": [base_snapshot()["dispatches"][0]],
+        }
+        checks = CANARY.initial_intake_checks(
+            accepted,
+            base_snapshot(),
+            root_id=ROOT_ID,
+            task_id=TASK_ID,
+            opening=CANARY.OPENING_MESSAGE,
+            facilitator_id=PARTICIPANTS["A"],
+            work_items=[],
+        )
+        self.assertTrue(all(checks.values()), checks)
+        self.assertEqual(CANARY.OPENING_MESSAGE, "写 TUI")
+
+    def test_wait_question_accepts_text_only_or_structured_options(self) -> None:
+        snapshot = base_snapshot()
+        post = {
+            "postId": "post:wait",
+            "rootId": ROOT_ID,
+            "taskId": TASK_ID,
+            "dispatchId": "dispatch-align",
+            "kind": "wait",
+            "publicationSource": {
+                "kind": "room_commit",
+                "ref": "commit:wait",
+            },
+            "question": {
+                "prompt": "这个 TUI 要做什么？",
+                "options": [],
+            },
+        }
+        snapshot["posts"] = [post]
+
+        found = CANARY._find_wait_post(
+            snapshot,
+            root_id=ROOT_ID,
+            seen_post_ids=set(),
+        )
+
+        self.assertEqual(found, post)
+        checks = CANARY.authoritative_wait_post_checks(
+            post,
+            snapshot["dispatches"][0],
+            root_id=ROOT_ID,
+            task_id=TASK_ID,
+        )
+        self.assertTrue(all(checks.values()), checks)
+        post["question"]["options"] = [{"value": "only", "label": "只有一项"}]
+        self.assertIsNone(
+            CANARY._find_wait_post(
+                snapshot,
+                root_id=ROOT_ID,
+                seen_post_ids=set(),
             )
-        events.append(
-            {
-                "eventType": "room_post",
-                "payload": {
-                    "post": {
-                        "postId": "other-root",
-                        "rootId": "root-2",
-                        "createdAtMs": 0,
-                        "publicationSource": {
-                            "kind": "room_post",
-                            "ref": "other",
-                        },
-                    }
-                },
+        )
+
+    def test_initial_execution_fanout_or_work_item_fails(self) -> None:
+        bad = base_snapshot()
+        bad["dispatches"].append({"rootId": ROOT_ID, "taskId": TASK_ID, "dispatchId": "dispatch-execute", "intentKind": "execute"})
+        accepted = {"post": {"content": CANARY.OPENING_MESSAGE}, "requirementAnchor": anchor(CANARY.OPENING_MESSAGE), "taskId": TASK_ID}
+        checks = CANARY.initial_intake_checks(
+            accepted,
+            bad,
+            root_id=ROOT_ID,
+            task_id=TASK_ID,
+            opening=CANARY.OPENING_MESSAGE,
+            facilitator_id=PARTICIPANTS["A"],
+            work_items=[{"rootTurnId": ROOT_ID}],
+        )
+        self.assertFalse(checks["noInitialExecutionFanout"])
+        self.assertFalse(checks["noWorkItemBeforeDefinition"])
+
+    def test_ordinary_answer_stays_in_root_and_creates_one_resume(self) -> None:
+        answer = CANARY.NATURAL_REQUIREMENT_ANSWERS[0]
+        before = base_snapshot()
+        after = base_snapshot()
+        after["dispatches"].append({
+            "rootId": ROOT_ID,
+            "taskId": TASK_ID,
+            "dispatchId": "dispatch-resume",
+            "intentKind": "resume",
+            "targetParticipantId": PARTICIPANTS["A"],
+            "targetSessionId": SESSIONS["A"],
+        })
+        after["requirementsByRootId"][ROOT_ID]["anchors"].append(anchor(answer))
+        after["posts"].append({"rootId": ROOT_ID, "content": answer, "publicationSource": {"kind": "user"}})
+        response = {"accepted": True, "rootId": ROOT_ID, "taskId": TASK_ID}
+        checks = CANARY.clarification_transition_checks(
+            before,
+            response,
+            after,
+            root_id=ROOT_ID,
+            task_id=TASK_ID,
+            waiting_dispatch=before["dispatches"][0],
+            answer=answer,
+            work_items_before=[],
+            work_items_after=[],
+        )
+        self.assertTrue(all(checks.values()), checks)
+        defined_checks = CANARY.clarification_transition_checks(
+            before,
+            response,
+            after,
+            root_id=ROOT_ID,
+            task_id=TASK_ID,
+            waiting_dispatch=before["dispatches"][0],
+            answer=answer,
+            work_items_before=[],
+            work_items_after=[{"rootTurnId": ROOT_ID}],
+            definition_applied=True,
+        )
+        self.assertTrue(all(defined_checks.values()), defined_checks)
+
+    def test_definition_requires_nonempty_criteria_aliases_and_one_root_work_item(self) -> None:
+        criteria = [
+            {"criterionId": "criterion:2", "expectedReceiptTypes": ["evidence"]},
+            {"criterionId": "criterion:1", "expectedReceiptTypes": ["evidence"]},
+        ]
+        projection = {
+            "catalog": {
+                "revision": 2,
+                "items": [{"origin": "room_define", "statement": "标题和输入区可用"}],
+                "acceptanceCriteria": criteria,
+                "acceptanceAliases": {"AC-1": "criterion:1", "AC-2": "criterion:2"},
             }
-        )
-
-        posts = CANARY._public_posts_from_timeline_snapshot(
-            {"events": events},
-            root_id="root-1",
-        )
-
-        self.assertEqual(
-            [item["postId"] for item in posts],
-            ["post-1", "post-2", "post-3", "post-4"],
-        )
-        self.assertEqual(
-            [
-                item["publicationSource"]["kind"]
-                for item in posts
-            ],
-            ["room_post", "room_commit", "room_post", "room_commit"],
-        )
-
-    def test_natural_posts_publish_each_terminal_summary_once(self) -> None:
-        terminal_posts = {
-            member: [
-                {
-                    "postId": f"terminal-{member}",
-                    "kind": "result",
-                    "content": f"{member} 已完成",
-                    "publicationSource": {"kind": "room_commit"},
-                }
-            ]
-            for member in ("A", "B", "C")
         }
-        progress = {
-            "postId": "progress-A",
-            "kind": "progress",
-            "content": "A 仍在继续实现",
-            "publicationSource": {"kind": "room_post"},
+        work = [{"id": "room-work:1", "rootTurnId": ROOT_ID, "rootWorkId": "room-work:1", "accountableParticipantId": PARTICIPANTS["A"], "createdByParticipantId": PARTICIPANTS["A"]}]
+        receipt = [{"toolName": "room_define", "status": "applied", "acceptanceAliases": {"AC-1": "criterion:1", "AC-2": "criterion:2"}}]
+        checks = CANARY.definition_checks(projection, work, receipt, root_id=ROOT_ID, facilitator_id=PARTICIPANTS["A"], implementation_id=PARTICIPANTS["B"])
+        self.assertTrue(all(checks.values()), checks)
+        empty = dict(projection)
+        empty["catalog"] = dict(projection["catalog"])
+        empty["catalog"]["acceptanceCriteria"] = []
+        self.assertFalse(CANARY.definition_checks(empty, work, receipt, root_id=ROOT_ID, facilitator_id=PARTICIPANTS["A"], implementation_id=PARTICIPANTS["B"])["acceptanceCriteriaNonEmpty"])
+        self.assertFalse(CANARY._catalog_is_defined({
+            "revision": 4,
+            "items": [{"origin": "room_user_answer", "statement": "仍在澄清"}],
+            "acceptanceCriteria": criteria,
+        }))
+        self.assertTrue(CANARY._catalog_is_defined(projection["catalog"]))
+        merged_receipts = CANARY._definition_receipts(
+            [{"toolName": "room_define", "status": "", "invocationReceiptId": "invoke:define"}],
+            [{
+                "status": "applied",
+                "details": {
+                    "operation": "room_define",
+                    "invocationReceiptId": "invoke:define",
+                    "acceptanceAliases": {"AC-1": "criterion:1"},
+                },
+            }],
+        )
+        self.assertEqual(len(merged_receipts), 1)
+        self.assertEqual(merged_receipts[0]["status"], "applied")
+
+    def test_required_bounded_child_and_distinct_review_handoff(self) -> None:
+        dispatches = [
+            {"dispatchId": "d-align", "rootId": ROOT_ID, "taskId": TASK_ID, "intentKind": "align", "targetParticipantId": PARTICIPANTS["A"], "targetSessionId": SESSIONS["A"], "hopCount": 0, "depth": 0},
+            {"dispatchId": "d-impl", "rootId": ROOT_ID, "taskId": "task-child", "intentKind": "execute", "parentDispatchId": "d-align", "targetParticipantId": PARTICIPANTS["B"], "targetSessionId": SESSIONS["B"], "hopCount": 1, "depth": 1},
+            {"dispatchId": "d-resume", "rootId": ROOT_ID, "taskId": TASK_ID, "intentKind": "resume", "parentDispatchId": "d-align", "targetParticipantId": PARTICIPANTS["A"], "targetSessionId": SESSIONS["A"], "hopCount": 1, "depth": 0},
+            {"dispatchId": "d-review", "rootId": ROOT_ID, "taskId": "task-review", "intentKind": "review", "parentDispatchId": "d-resume", "targetParticipantId": PARTICIPANTS["C"], "targetSessionId": SESSIONS["C"], "hopCount": 2, "depth": 0},
+        ]
+        tasks = [
+            {"taskId": TASK_ID, "rootId": ROOT_ID, "currentOwnerParticipantId": PARTICIPANTS["A"]},
+            {"taskId": "task-child", "rootId": ROOT_ID, "parentTaskId": TASK_ID},
+            {"taskId": "task-review", "rootId": ROOT_ID, "parentTaskId": TASK_ID, "taskKind": "review", "reviewOfTaskIds": ["task-child"], "reviewAuthorParticipantIds": [PARTICIPANTS["A"], PARTICIPANTS["B"]], "contextEvidenceRefs": ["evidence-implementation"], "currentOwnerParticipantId": PARTICIPANTS["C"], "reviewState": "accepted"},
+        ]
+        checks = CANARY.dispatch_lifecycle_checks(tasks, dispatches, participant_ids=PARTICIPANTS, session_ids=SESSIONS)
+        self.assertTrue(all(checks.values()), checks)
+        self.assertTrue(checks["exactlyOneBoundedImplementationChild"])
+        self.assertTrue(checks["reviewIsDistinctOwnershipHandoff"])
+        self.assertEqual(
+            CANARY._reviewed_context_evidence_refs(
+                tasks,
+                dispatches,
+                reviewer_id=PARTICIPANTS["C"],
+            ),
+            ("evidence-implementation",),
+        )
+
+    def test_reviewer_evidence_gates_reporter_delivery_and_summary(self) -> None:
+        dispatches = {
+            "d-impl": {"intentKind": "execute", "targetParticipantId": PARTICIPANTS["B"]},
+            "d-review": {"intentKind": "review", "targetParticipantId": PARTICIPANTS["C"]},
+            "d-resume": {"intentKind": "resume", "targetParticipantId": PARTICIPANTS["A"]},
         }
-        terminal_posts["A"].insert(0, progress)
-        public_posts = [
-            item
-            for member in ("A", "B", "C")
-            for item in terminal_posts[member]
+        commits = [
+            {
+                "dispatchId": "d-impl",
+                "decision": "deliver",
+                "evidenceRefs": ["evidence-implementation"],
+                "qualityGateReceipt": {"verdict": "ready_to_deliver"},
+            },
+            {
+                "dispatchId": "d-review",
+                "decision": "deliver",
+                "evidenceRefs": ["evidence-review"],
+                "qualityGateReceipt": {"verdict": "ready_to_deliver"},
+            },
+            {
+                "dispatchId": "d-resume",
+                "decision": "deliver",
+                "evidenceRefs": ["evidence-review"],
+                "qualityGateReceipt": {"verdict": "ready_to_deliver"},
+            },
+        ]
+        checks = CANARY.review_delivery_checks(
+            commits,
+            reviewer_id=PARTICIPANTS["C"],
+            facilitator_id=PARTICIPANTS["A"],
+            reviewed_evidence_refs=["evidence-implementation"],
+            dispatches=dispatches,
+        )
+        self.assertTrue(all(checks.values()), checks)
+        bad_dispatches = dict(dispatches)
+        bad_dispatches["d-review"] = {
+            **bad_dispatches["d-review"],
+            "targetParticipantId": PARTICIPANTS["B"],
+        }
+        self.assertFalse(
+            CANARY.review_delivery_checks(
+                commits,
+                reviewer_id=PARTICIPANTS["C"],
+                facilitator_id=PARTICIPANTS["A"],
+                reviewed_evidence_refs=["evidence-implementation"],
+                dispatches=bad_dispatches,
+            )["exactlyOneReviewerRecommendation"]
+        )
+        public = [{"rootId": ROOT_ID, "kind": "result", "content": "最终汇总", "authorActorRef": PARTICIPANTS["A"], "publicationSource": {"kind": "room_commit", "ref": "terminal-1"}}]
+        terminal = CANARY.reporter_terminal_summary_checks(public, reporter_id=PARTICIPANTS["A"], root_id=ROOT_ID, terminal_receipt={"receiptId": "terminal-1", "status": "applied", "receiptKind": "terminal"})
+        self.assertTrue(all(terminal.values()), terminal)
+
+    def test_terminal_receipt_and_quiescence_are_required(self) -> None:
+        good = CANARY.terminal_receipt_checks({"state": "completed", "terminalReceiptId": "terminal-1"}, {"receiptId": "terminal-1", "status": "applied", "receiptKind": "terminal"}, {"passed": True, "remainingTargetSessionIds": []})
+        self.assertTrue(all(good.values()), good)
+        bad = CANARY.terminal_receipt_checks({"state": "completed"}, {}, {"passed": False, "remainingTargetSessionIds": [SESSIONS["A"]]})
+        self.assertFalse(all(bad.values()))
+        self.assertTrue(bad["rootCompleted"])
+        self.assertFalse(bad["terminalReceiptAccepted"])
+        self.assertFalse(bad["rootPointsToTerminalReceipt"])
+        self.assertFalse(bad["runtimeQuiescent"])
+
+    def test_configured_provider_model_thinking_and_workspace_scope(self) -> None:
+        sessions = {member: {"id": SESSIONS[member], "executionMode": "workspace_managed", "workspaceScopeGranted": True, "workspaceRoots": [str(ROOT)]} for member in CANARY.MEMBERS}
+        catalogs = {member: {"selected": {"provider": "configured-provider", "id": "configured-model"}, "thinkingLevel": "high"} for member in CANARY.MEMBERS}
+        checks = CANARY.participant_configuration_checks(sessions, catalogs, expected_provider="configured-provider", expected_model="configured-model", expected_thinking="high", workspace=ROOT)
+        self.assertTrue(all(checks.values()), checks)
+        catalogs["C"]["selected"]["id"] = "wrong-model"
+        self.assertFalse(CANARY.participant_configuration_checks(sessions, catalogs, expected_provider="configured-provider", expected_model="configured-model", expected_thinking="high", workspace=ROOT)["CModelMatches"])
+
+    def test_b_and_c_workspace_receipts_are_bound_to_their_dispatches(self) -> None:
+        rows = [
+            {"toolName": "workspace_read", "dispatchId": "d-b", "sessionId": SESSIONS["B"], "status": "applied", "resultHash": "b" * 64, "command": {"path": "src/app.py"}},
+            {"toolName": "workspace_read", "dispatchId": "d-c", "sessionId": SESSIONS["C"], "status": "applied", "resultHash": "c" * 64, "command": {"path": "tests/test_app.py"}},
+        ]
+        dispatches = {
+            "d-b": {"taskId": "task:b", "targetSessionId": SESSIONS["B"]},
+            "d-c": {"taskId": "task:c", "targetSessionId": SESSIONS["C"]},
+        }
+        tasks = [
+            {"taskId": "task:b", "workspaceBaseRoot": str(ROOT)},
+            {"taskId": "task:c", "workspaceBaseRoot": str(ROOT)},
+        ]
+        checks = CANARY.workspace_receipt_checks(
+            rows,
+            dispatches=dispatches,
+            tasks=tasks,
+            session_ids=SESSIONS,
+            workspace=ROOT,
+        )
+        self.assertTrue(all(checks.values()), checks)
+        rows[1]["sessionId"] = SESSIONS["A"]
+        self.assertFalse(
+            CANARY.workspace_receipt_checks(
+                rows,
+                dispatches=dispatches,
+                tasks=tasks,
+                session_ids=SESSIONS,
+                workspace=ROOT,
+            )["reviewerWorkspaceReceiptObserved"]
+        )
+
+    def test_authoritative_reporter_and_resume_receipts_are_required(self) -> None:
+        receipts = [
+            {
+                "rootId": ROOT_ID,
+                "receiptId": "reporter-receipt",
+                "receiptKind": "accepted",
+                "status": "applied",
+                "details": {
+                    "purpose": "reporter_selection",
+                    "reporterParticipantId": PARTICIPANTS["A"],
+                },
+            },
+            {
+                "rootId": ROOT_ID,
+                "receiptId": "resume-receipt",
+                "receiptKind": "accepted",
+                "status": "applied",
+                "details": {"resumedDispatchId": "dispatch-resume"},
+            },
+        ]
+        checks = CANARY.authoritative_receipt_checks(
+            receipts,
+            root_id=ROOT_ID,
+            reporter_id=PARTICIPANTS["A"],
+            resume_receipt_ids=["resume-receipt"],
+        )
+        self.assertTrue(all(checks.values()), checks)
+        self.assertFalse(
+            CANARY.authoritative_receipt_checks(
+                [receipts[0]],
+                root_id=ROOT_ID,
+                reporter_id=PARTICIPANTS["A"],
+                resume_receipt_ids=["resume-receipt"],
+            )["resumeReceiptAccepted"]
+        )
+
+    def test_tool_receipts_and_natural_language_guard(self) -> None:
+        rows = [{"toolName": name, "dispatchId": f"d-{index}", "status": "applied", "resultHash": "a" * 64} for index, name in enumerate(("room_define", "room_collaborate", "room_commit"))]
+        dispatches = {"d-0": {"intentKind": "define", "targetParticipantId": PARTICIPANTS["A"]}, "d-1": {"intentKind": "resume", "targetParticipantId": PARTICIPANTS["A"]}, "d-2": {"intentKind": "wait", "targetParticipantId": PARTICIPANTS["A"]}}
+        checks = CANARY._tool_receipt_checks(rows, dispatches=dispatches, facilitator_id=PARTICIPANTS["A"])
+        self.assertTrue(all(checks.values()), checks)
+        self.assertEqual([], CANARY.natural_message_leaks([CANARY.OPENING_MESSAGE, *CANARY.NATURAL_REQUIREMENT_ANSWERS]))
+        self.assertEqual(["room_define"], CANARY.natural_message_leaks(["please call room_define"]))
+
+    def test_workspace_receipts_use_each_tasks_authoritative_root(self) -> None:
+        base = Path("/tmp/base-workspace")
+        isolated = Path("/tmp/isolated-worktree")
+        dispatches = {
+            "dispatch:base": {
+                "dispatchId": "dispatch:base",
+                "taskId": "task:base",
+                "targetSessionId": SESSIONS["A"],
+            },
+            "dispatch:child": {
+                "dispatchId": "dispatch:child",
+                "taskId": "task:child",
+                "targetSessionId": SESSIONS["B"],
+            },
+            "dispatch:review": {
+                "dispatchId": "dispatch:review",
+                "taskId": "task:base",
+                "targetSessionId": SESSIONS["C"],
+            },
+        }
+        tasks = [
+            {"taskId": "task:base", "workspaceBaseRoot": str(base)},
+            {"taskId": "task:child", "workspaceRoot": str(isolated)},
+        ]
+        rows = [
+            {"toolName": "workspace_read", "dispatchId": "dispatch:base", "sessionId": SESSIONS["A"], "status": "applied", "resultHash": "a" * 64, "command": {"path": "README.md"}},
+            {"toolName": "workspace_edit", "dispatchId": "dispatch:child", "sessionId": SESSIONS["B"], "status": "applied", "resultHash": "b" * 64, "command": {"path": str(isolated / "calculator.py")}},
+            {"toolName": "workspace_read", "dispatchId": "dispatch:review", "sessionId": SESSIONS["C"], "status": "applied", "resultHash": "c" * 64, "command": {"path": "calculator.py"}},
         ]
 
-        checks = CANARY.natural_public_post_checks(
-            public_posts,
-            posts_by_member=terminal_posts,
-            timeline_truncated=False,
+        checks = CANARY.workspace_receipt_checks(
+            rows,
+            dispatches=dispatches,
+            tasks=tasks,
+            session_ids=SESSIONS,
+            workspace=base,
         )
 
-        self.assertTrue(all(checks.values()))
-        independent_evidence = {
-            "postId": "evidence-B",
-            "kind": "evidence",
-            "content": "B 发现当前实现仍是占位符",
-            "publicationSource": {"kind": "room_post"},
-        }
-        terminal_posts["B"].insert(0, independent_evidence)
-        evidence_checks = CANARY.natural_public_post_checks(
-            [*public_posts, independent_evidence],
-            posts_by_member=terminal_posts,
-            timeline_truncated=False,
-        )
-        self.assertTrue(all(evidence_checks.values()))
+        self.assertTrue(all(checks.values()), checks)
 
-        duplicate_summary = {
-            "postId": "duplicate-C",
-            "kind": "evidence",
-            "content": "C 已完成",
-            "publicationSource": {"kind": "room_post"},
-        }
-        terminal_posts["C"].insert(0, duplicate_summary)
-        duplicate_checks = CANARY.natural_public_post_checks(
-            [*public_posts, independent_evidence, duplicate_summary],
-            posts_by_member=terminal_posts,
-            timeline_truncated=False,
-        )
-        self.assertFalse(
-            duplicate_checks["terminalSummaryNotDoublePosted"]
-        )
-
-    def test_workflow_timeout_is_distinct_from_one_provider_turn(self) -> None:
-        self.assertEqual(
-            CANARY.workflow_timeout_seconds(
-                SimpleNamespace(turn_timeout=300, workflow_timeout=None)
-            ),
-            900,
-        )
-        self.assertEqual(
-            CANARY.workflow_timeout_seconds(
-                SimpleNamespace(turn_timeout=300, workflow_timeout=480)
-            ),
-            480,
-        )
-        with self.assertRaisesRegex(ValueError, "must be positive"):
-            CANARY.workflow_timeout_seconds(
-                SimpleNamespace(turn_timeout=300, workflow_timeout=0)
-            )
-
-    def test_natural_request_does_not_disclose_execution_script(self) -> None:
-        request = CANARY.collaboration_request(
-            CANARY.NATURAL_REQUEST_STYLE,
-            a_name="实现伙伴",
-            b_name="复核伙伴",
-            c_name="验收伙伴",
-            workspace=Path("/private/tmp/project"),
-        )
-
-        self.assertEqual(request.style, "natural")
-        self.assertEqual(CANARY.natural_request_leaks(request), [])
-        self.assertIn("自行选择能力和执行方法", request.message)
-        self.assertNotIn("calculator.py", request.model_visible_text())
-        self.assertNotIn("test_calculator.py", request.model_visible_text())
-
-    def test_natural_request_leak_guard_detects_tool_contract_terms(self) -> None:
-        request = CANARY.CollaborationRequest(
-            style="natural",
-            objective="修复项目",
-            expected_output="测试通过",
-            acceptance_criteria=("调用 workspace_read",),
-            message="然后 room_commit",
-        )
-
-        self.assertEqual(
-            CANARY.natural_request_leaks(request),
-            ["room_commit", "workspace_read"],
-        )
-
-    def test_quiescence_waits_only_for_target_sessions(self) -> None:
-        statuses = iter(
-            [
-                {
-                    "status": "busy",
-                    "activeSessionIds": [
-                        "session-A",
-                        "session-unrelated",
-                    ],
-                },
-                {
-                    "status": "busy",
-                    "activeSessionIds": ["session-unrelated"],
-                },
-            ]
-        )
-
-        result = CANARY.wait_for_sessions_quiescent(
-            "http://127.0.0.1:8768",
-            requester=lambda *_args, **_kwargs: next(statuses),
-            session_ids=["session-A", "session-B"],
-            timeout=1,
-            poll_interval=0.001,
-        )
-
-        self.assertTrue(result["passed"])
-        self.assertEqual(result["pollCount"], 2)
-        self.assertEqual(result["remainingTargetSessionIds"], [])
-        self.assertEqual(result["runtimeStatus"], "busy")
-
-    def test_settlement_waits_while_root_is_waiting_on_running_children(
-        self,
-    ) -> None:
-        snapshots = iter(
-            [
-                self._kernel_snapshot(
-                    root_state="waiting",
-                    dispatch_states=("committed", "running", "running"),
-                ),
-                self._kernel_snapshot(
-                    root_state="waiting",
-                    dispatch_states=("committed", "committed", "committed"),
-                ),
-            ]
-        )
+    def test_runtime_quiescence_uses_canonical_agent_runtime_route(self) -> None:
+        requests: list[tuple[str, str]] = []
 
         def requester(
             _base_url: str,
@@ -241,1053 +431,75 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
             path: str,
             **_kwargs: object,
         ) -> dict[str, object]:
-            self.assertEqual(method, "GET")
-            if path.startswith("/api/agent/approvals"):
-                return {"items": []}
-            self.assertIn("/kernel/snapshot", path)
-            return next(snapshots)
+            requests.append((method, path))
+            return {"status": "ready", "activeSessionIds": []}
 
-        result = CANARY.wait_for_three_member_settlement(
+        result = CANARY.wait_for_sessions_quiescent(
             "http://in-process.invalid",
-            "room-1",
-            "root-1",
             requester=requester,
-            sessions={"A": "session-a", "B": "session-b", "C": "session-c"},
+            session_ids=[SESSIONS["A"]],
             timeout=1,
         )
 
-        self.assertEqual(
-            result["dispatchStates"],
-            ["committed", "committed", "committed"],
-        )
+        self.assertTrue(result["passed"])
+        self.assertEqual(requests, [("GET", "/api/agent/runtime")])
 
-    def test_quiescence_times_out_when_target_session_stays_busy(
-        self,
-    ) -> None:
-        with self.assertRaisesRegex(
-            TimeoutError,
-            "target Pi sessions did not settle",
-        ):
-            CANARY.wait_for_sessions_quiescent(
-                "http://127.0.0.1:8768",
-                requester=lambda *_args, **_kwargs: {
-                    "status": "busy",
-                    "activeSessionIds": [
-                        "session-A",
-                        "session-unrelated",
-                    ],
-                },
-                session_ids=["session-A"],
-                timeout=0.01,
-                poll_interval=0.001,
-            )
-
-    def test_project_memory_check_accepts_meaning_not_one_exact_sentence(self) -> None:
-        self.assertTrue(
-            CANARY._is_useful_project_memory(
-                "代码任务先读测试，只做最小改动，并用测试证据完成交付。"
-            )
-        )
-        self.assertTrue(
-            CANARY._is_useful_project_memory(
-                "代码任务使用最小修改、真实测试和证据化交付。"
-            )
-        )
-        self.assertFalse(
-            CANARY._is_useful_project_memory(
-                "喜欢简洁回答，周末可以整理一次笔记。"
-            )
-        )
-
-    def test_bounded_rag_allows_zero_hit_member_but_rejects_placeholder(self) -> None:
-        useful = (
-            "代码任务先做最小改动，运行真实测试，并以证据完成交付。"
-        )
-        contexts = {
-            "A": {
-                "sessionMemory": {
-                    "blockCount": 1,
-                    "blocks": [useful],
-                    "forbiddenMetadata": [],
+    def test_provider_usage_checks_return_member_receipts(self) -> None:
+        def requester(
+            _base_url: str,
+            _method: str,
+            _path: str,
+            **_kwargs: object,
+        ) -> dict[str, object]:
+            return {
+                "context": {
+                    "providerRequestReceipts": [
+                        {"usage": {"input": 12, "output": 3}}
+                    ]
                 }
-            },
-            "B": {
-                "sessionMemory": {
-                    "blockCount": 0,
-                    "blocks": [],
-                    "forbiddenMetadata": [],
-                }
-            },
-            "C": {
-                "sessionMemory": {
-                    "blockCount": 1,
-                    "blocks": [useful],
-                    "forbiddenMetadata": [],
-                }
-            },
-        }
-
-        self.assertTrue(CANARY.bounded_useful_rag_check(contexts))
-        contexts["B"]["sessionMemory"] = {
-            "blockCount": 1,
-            "blocks": ["没有召回到相关记忆。"],
-            "forbiddenMetadata": [],
-        }
-        self.assertFalse(CANARY.bounded_useful_rag_check(contexts))
-
-    def test_dispatch_chain_requires_collaboration_and_handoff_siblings(self) -> None:
-        tasks = [
-            self._task("t1", None, "pa"),
-            self._task("t2", "t1", "pb"),
-            self._task("t3", "t1", "pc"),
-        ]
-        dispatches = [
-            self._dispatch("d3", "t3", "d1", 1, 0, "close", "pc", "sc"),
-            self._dispatch("d1", "t1", None, 0, 0, "execute", "pa", "sa"),
-            self._dispatch("d2", "t2", "d1", 1, 1, "review", "pb", "sb"),
-        ]
-
-        evidence = CANARY.dispatch_chain_evidence(
-            tasks,
-            dispatches,
-            participant_ids={"A": "pa", "B": "pb", "C": "pc"},
-            session_ids={"A": "sa", "B": "sb", "C": "sc"},
-        )
-
-        self.assertTrue(evidence["passed"])
-        self.assertTrue(all(evidence["checks"].values()))
-
-    def test_dispatch_chain_rejects_direct_or_extra_routing(self) -> None:
-        tasks = [
-            self._task("t1", None, "pa"),
-            self._task("t2", None, "pb"),
-            self._task("t3", "t2", "pc"),
-        ]
-        dispatches = [
-            self._dispatch("d1", "t1", None, 0, 0, "execute", "pa", "sa"),
-            self._dispatch("d2", "t2", None, 0, 0, "execute", "pb", "sb"),
-            self._dispatch("d3", "t3", "d2", 1, 0, "close", "pc", "sc"),
-        ]
-
-        evidence = CANARY.dispatch_chain_evidence(
-            tasks,
-            dispatches,
-            participant_ids={"A": "pa", "B": "pb", "C": "pc"},
-            session_ids={"A": "sa", "B": "sb", "C": "sc"},
-        )
-
-        self.assertFalse(evidence["passed"])
-        self.assertFalse(evidence["checks"]["parents"])
-        self.assertFalse(evidence["checks"]["hops"])
-
-    def test_compaction_expects_each_current_tasks_exact_acceptance_set(self) -> None:
-        tasks = [
-            self._task(
-                "t1",
-                None,
-                "pa",
-                acceptance_criterion_ids=[f"criterion-{index}" for index in range(6)],
-            ),
-            self._task(
-                "t2",
-                "t1",
-                "pb",
-                acceptance_criterion_ids=["criterion-3"],
-            ),
-            self._task(
-                "t3",
-                "t1",
-                "pc",
-                acceptance_criterion_ids=[
-                    f"criterion-{index}" for index in range(6)
-                ],
-            ),
-        ]
-        dispatches = [
-            self._dispatch("d1", "t1", None, 0, 0, "execute", "pa", "sa"),
-            self._dispatch("d2", "t2", "d1", 1, 1, "review", "pb", "sb"),
-            self._dispatch("d3", "t3", "d1", 1, 0, "close", "pc", "sc"),
-        ]
-
-        self.assertEqual(
-            CANARY.task_acceptance_counts(tasks, dispatches),
-            {"A": 6, "B": 1, "C": 6},
-        )
-
-    def test_tool_workload_requires_parallel_review_and_formal_handoff(self) -> None:
-        receipts = {
-            "A": self._tool_set(
-                room_state=["applied"],
-                room_collaborate=["applied"],
-                workspace_list=["applied"],
-                workspace_search=["applied"],
-                workspace_read=["failed", "applied", "applied", "applied"],
-                workspace_edit=["failed", "applied"],
-                workspace_shell=["failed", "applied"],
-                room_post=["applied"],
-                room_commit=["applied"],
-            ),
-            "B": self._tool_set(
-                room_state=["applied"],
-                workspace_read=["applied", "applied"],
-                room_post=["applied"],
-                room_commit=["applied"],
-            ),
-            "C": self._tool_set(
-                room_state=["applied"],
-                workspace_read=["applied", "applied"],
-                workspace_shell=["applied"],
-                room_post=["applied"],
-                room_commit=["applied"],
-            ),
-        }
-
-        checks = CANARY.tool_workload_checks(receipts)
-
-        self.assertTrue(all(checks.values()))
-        receipts["B"]["workspace_edit"] = self._receipt(["applied"])
-        self.assertFalse(CANARY.tool_workload_checks(receipts)["bStayedReadOnly"])
-        receipts["B"]["room_collaborate"] = self._receipt(["failed"])
-        self.assertFalse(
-            CANARY.tool_workload_checks(receipts)[
-                "bDidNotDelegateItsOwnReview"
-            ]
-        )
-
-    def test_tool_workload_rejects_unbounded_executor_retries(self) -> None:
-        receipts = {
-            "A": self._tool_set(
-                room_state=["applied"],
-                room_collaborate=["applied"],
-                workspace_list=["applied"],
-                workspace_search=["applied"],
-                workspace_read=[
-                    "failed",
-                    "applied",
-                    "applied",
-                    "applied",
-                    "applied",
-                ],
-                workspace_edit=["failed", "failed", "applied"],
-                workspace_shell=["failed", "applied"],
-                room_post=["applied"],
-                room_commit=["applied"],
-            ),
-            "B": self._tool_set(
-                room_state=["applied"],
-                workspace_read=["applied", "applied"],
-                room_post=["applied"],
-                room_commit=["applied"],
-            ),
-            "C": self._tool_set(
-                room_state=["applied"],
-                workspace_read=["applied", "applied"],
-                workspace_shell=["applied"],
-                room_commit=["applied"],
-            ),
-        }
-
-        checks = CANARY.tool_workload_checks(receipts)
-
-        self.assertFalse(checks["aReadFailureRecoveredWithoutLoop"])
-        self.assertFalse(checks["aPatchAppliedOnceWithBoundedRepair"])
-
-    def test_tool_workload_accepts_one_settlement_repair_then_delivery(self) -> None:
-        receipts = {
-            "A": self._tool_set(
-                room_state=["applied"],
-                room_collaborate=["applied"],
-                workspace_list=["applied"],
-                workspace_search=["applied"],
-                workspace_read=["failed", "applied", "applied"],
-                workspace_edit=["applied"],
-                workspace_shell=["failed", "applied"],
-                room_post=["applied"],
-                room_commit=["applied"],
-            ),
-            "B": self._tool_set(
-                room_state=["applied"],
-                workspace_read=["applied", "applied"],
-                room_post=["applied"],
-                room_commit=["", "applied"],
-            ),
-            "C": self._tool_set(
-                room_state=["applied", "applied"],
-                workspace_read=["applied", "applied"],
-                workspace_shell=["applied"],
-                room_post=["applied"],
-                room_commit=["", "applied"],
-            ),
-        }
-
-        checks = CANARY.tool_workload_checks(receipts)
-
-        self.assertTrue(all(checks.values()))
-        receipts["B"]["room_commit"] = self._receipt(["", "", "applied"])
-        self.assertTrue(
-            CANARY.tool_workload_checks(receipts)[
-                "bCommitValidationPathBounded"
-            ]
-        )
-        receipts["B"]["room_commit"] = self._receipt(["", "applied"])
-        receipts["C"]["room_commit"] = self._receipt(
-            ["", "", "", "applied"]
-        )
-        self.assertFalse(
-            CANARY.tool_workload_checks(receipts)[
-                "cCommitValidationPathBounded"
-            ]
-        )
-
-    def test_managed_approval_checks_require_policy_owned_receipts(self) -> None:
-        approvals = {
-            "A": [
-                self._approval("workspace_shell", "failed", 1),
-                self._approval("workspace_edit", "applied", 2),
-                self._approval("workspace_shell", "applied", 3),
-            ],
-            "B": [],
-            "C": [self._approval("workspace_shell", "applied", 4)],
-        }
-
-        self.assertTrue(all(CANARY.managed_approval_checks(approvals).values()))
-        approvals["C"][0]["decidedBy"] = "native-control-center"
-        self.assertFalse(
-            CANARY.managed_approval_checks(approvals)["policyOwned"]
-        )
-
-    def test_natural_approval_checks_accept_discovery_and_distinct_failures(
-        self,
-    ) -> None:
-        approvals = {
-            "A": [
-                self._approval(
-                    "workspace_shell",
-                    "applied",
-                    1,
-                    command='rg -n "normalize" .',
-                ),
-                self._approval(
-                    "workspace_shell",
-                    "failed",
-                    2,
-                    command=CANARY.TEST_COMMAND,
-                ),
-                self._approval("workspace_edit", "applied", 3),
-                self._approval(
-                    "workspace_shell",
-                    "failed",
-                    4,
-                    command="git status --short",
-                ),
-                self._approval(
-                    "workspace_shell",
-                    "applied",
-                    5,
-                    command=CANARY.TEST_COMMAND,
-                ),
-            ],
-            "B": [],
-            "C": [
-                self._approval(
-                    "workspace_shell",
-                    "applied",
-                    6,
-                    command="python3 -m unittest -v test_calculator",
-                )
-            ],
-        }
-
-        self.assertTrue(
-            all(CANARY.natural_managed_approval_checks(approvals).values())
-        )
-        approvals["A"][3]["receipt"].pop("networkAllowed")
-        self.assertFalse(
-            CANARY.natural_managed_approval_checks(approvals)[
-                "shellNetworkDenied"
-            ]
-        )
-        approvals["A"][3]["receipt"]["networkAllowed"] = False
-        approvals["C"][0]["receipt"]["networkAllowed"] = True
-        self.assertFalse(
-            CANARY.natural_managed_approval_checks(approvals)[
-                "shellNetworkDenied"
-            ]
-        )
-        approvals["C"][0]["receipt"]["networkAllowed"] = False
-        approvals["C"][0]["preview"]["actionPayload"]["command"] = (
-            "echo all tests passed"
-        )
-        self.assertFalse(
-            CANARY.natural_managed_approval_checks(approvals)[
-                "cFinalTestObserved"
-            ]
-        )
-        approvals["C"][0]["preview"]["actionPayload"]["command"] = (
-            "python3 -m unittest -v test_calculator"
-        )
-        approvals["A"].append(
-            self._approval(
-                "workspace_shell",
-                "failed",
-                7,
-                command="apply_patch <<'PATCH'\nPATCH",
-            )
-        )
-        self.assertFalse(
-            CANARY.natural_managed_approval_checks(approvals)[
-                "noShellPatchWrapper"
-            ]
-        )
-        approvals["A"].pop()
-        approvals["A"].append(
-            self._approval(
-                "workspace_shell",
-                "applied",
-                8,
-                command="sleep 2",
-            )
-        )
-        self.assertFalse(
-            CANARY.natural_managed_approval_checks(approvals)[
-                "noStandaloneSleepPolling"
-            ]
-        )
-
-    def test_natural_tool_workload_checks_outcomes_not_scripted_discovery(
-        self,
-    ) -> None:
-        receipts = {
-            "A": self._tool_set(
-                room_state=["applied"],
-                room_collaborate=["applied"],
-                workspace_read=["applied", "applied"],
-                workspace_edit=["applied"],
-                workspace_shell=["applied", "failed", "applied"],
-                room_commit=["applied"],
-            ),
-            "B": self._tool_set(
-                room_state=["applied"],
-                workspace_read=["applied", "applied"],
-                room_commit=["applied"],
-            ),
-            "C": self._tool_set(
-                room_state=["applied"],
-                workspace_read=["applied", "applied"],
-                workspace_shell=["applied"],
-                room_post=["applied"],
-                room_commit=["applied"],
-            ),
-        }
-        approvals = {
-            "A": [
-                self._approval(
-                    "workspace_shell",
-                    "failed",
-                    1,
-                    command=CANARY.TEST_COMMAND,
-                ),
-                self._approval("workspace_edit", "applied", 2),
-                self._approval(
-                    "workspace_shell",
-                    "applied",
-                    3,
-                    command=CANARY.TEST_COMMAND,
-                ),
-            ],
-            "B": [],
-            "C": [
-                self._approval(
-                    "workspace_shell",
-                    "applied",
-                    4,
-                    command="python3 -m unittest -v test_calculator",
-                )
-            ],
-        }
-
-        checks = CANARY.natural_tool_workload_checks(
-            receipts,
-            approvals=approvals,
-            repeated_failed_commands=[],
-        )
-
-        self.assertTrue(all(checks.values()))
-        approvals["C"][0]["preview"]["actionPayload"]["command"] = (
-            "echo all tests passed"
-        )
-        checks = CANARY.natural_tool_workload_checks(
-            receipts,
-            approvals=approvals,
-            repeated_failed_commands=[],
-        )
-        self.assertFalse(checks["cVerifiedIndependently"])
-        approvals["C"][0]["preview"]["actionPayload"]["command"] = (
-            "python3 -m unittest -v test_calculator"
-        )
-        checks = CANARY.natural_tool_workload_checks(
-            receipts,
-            approvals=approvals,
-            repeated_failed_commands=[
-                {
-                    "member": "A",
-                    "toolName": "workspace_shell",
-                    "commandHash": "same",
-                    "count": 2,
-                }
-            ],
-        )
-        self.assertFalse(checks["noRepeatedFailedToolLoop"])
-
-    def test_agent_window_continuity_uses_same_session_turn_not_copied_posts(
-        self,
-    ) -> None:
-        request = CANARY.collaboration_request(
-            CANARY.NATURAL_REQUEST_STYLE,
-            a_name="实现伙伴",
-            b_name="复核伙伴",
-            c_name="验收伙伴",
-            workspace=Path("/private/tmp/project"),
-        )
-        snapshot = {
-            "items": [
-                {
-                    "role": "assistant",
-                    "blocks": [
-                        {
-                            "type": "text",
-                            "data": {"text": "已交接最终验收。"},
-                        }
-                    ],
-                },
-            ]
-        }
-
-        self.assertTrue(
-            CANARY._room_session_turn_visible(snapshot, request)
-        )
-        self.assertNotIn(request.message, json.dumps(snapshot, ensure_ascii=False))
-        self.assertNotIn("最终验收结论", json.dumps(snapshot, ensure_ascii=False))
-
-        tool_only_snapshot = {
-            "items": [{"role": "user", "blocks": []}],
-            "liveEvents": [
-                {
-                    "eventType": "tool_finished",
-                    "payload": {
-                        "toolName": "room_commit",
-                        "toolCallId": "call-1",
-                    },
-                }
-            ],
-        }
-        self.assertTrue(
-            CANARY._room_session_turn_visible(tool_only_snapshot, request)
-        )
-        tool_only_snapshot["liveEvents"][0]["payload"]["toolName"] = (
-            "workspace_read"
-        )
-        self.assertFalse(
-            CANARY._room_session_turn_visible(tool_only_snapshot, request)
-        )
-
-    def test_repeated_failed_invocations_group_by_exact_command_hash(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory) / "failed-replays.sqlite"
-            with sqlite3.connect(database) as connection:
-                connection.executescript(
-                    """
-                    CREATE TABLE room_v2_capability_manifests(
-                        manifest_id TEXT PRIMARY KEY,
-                        manifest_hash TEXT NOT NULL,
-                        dispatch_id TEXT NOT NULL
-                    );
-                    CREATE TABLE room_v2_capability_runtime_bindings(
-                        manifest_id TEXT NOT NULL,
-                        session_id TEXT NOT NULL
-                    );
-                    CREATE TABLE room_v2_tool_invocation_receipts(
-                        receipt_id TEXT PRIMARY KEY,
-                        manifest_id TEXT NOT NULL,
-                        manifest_hash TEXT NOT NULL,
-                        canonical_tool_name TEXT NOT NULL,
-                        command_hash TEXT NOT NULL
-                    );
-                    CREATE TABLE room_v2_tool_execution_receipts(
-                        invocation_receipt_id TEXT NOT NULL,
-                        status TEXT NOT NULL
-                    );
-                    """
-                )
-                for member in ("A", "B", "C"):
-                    connection.execute(
-                        "INSERT INTO room_v2_capability_manifests VALUES (?, ?, ?)",
-                        (f"manifest-{member}", "hash", f"dispatch-{member}"),
-                    )
-                    connection.execute(
-                        "INSERT INTO room_v2_capability_runtime_bindings VALUES (?, ?)",
-                        (f"manifest-{member}", f"session-{member}"),
-                    )
-                for receipt_id, tool_name, command_hash, status in (
-                    ("invoke-a-1", "workspace_shell", "same-command", "failed"),
-                    ("invoke-a-2", "workspace_shell", "same-command", "failed"),
-                    ("invoke-a-3", "workspace_shell", "evidence-reset", "failed"),
-                    ("invoke-a-4", "workspace_read", "read-command", "applied"),
-                    ("invoke-a-5", "workspace_shell", "evidence-reset", "failed"),
-                    ("invoke-a-6", "workspace_shell", "same-command", "rejected"),
-                ):
-                    connection.execute(
-                        "INSERT INTO room_v2_tool_invocation_receipts "
-                        "VALUES (?, 'manifest-A', 'hash', ?, ?)",
-                        (receipt_id, tool_name, command_hash),
-                    )
-                    connection.execute(
-                        "INSERT INTO room_v2_tool_execution_receipts VALUES (?, ?)",
-                        (receipt_id, status),
-                    )
-
-            repeated = CANARY.repeated_failed_invocation_commands(
-                database,
-                session_ids={
-                    member: f"session-{member}" for member in ("A", "B", "C")
-                },
-                dispatches=[
-                    {"dispatchId": f"dispatch-{member}"}
-                    for member in ("A", "B", "C")
-                ],
-            )
-
-        self.assertEqual(
-            repeated,
-            [
-                {
-                    "member": "A",
-                    "toolName": "workspace_shell",
-                    "commandHash": "same-command",
-                    "count": 2,
-                }
-            ],
-        )
-
-    def test_private_transcript_evidence_rejects_cross_session_tool_ids(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            contexts = {}
-            for member in ("A", "B", "C"):
-                payload = {
-                    "type": "message",
-                    "message": {
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "toolCall",
-                                "toolCallId": f"tool-{member}",
-                            }
-                        ],
-                    },
-                }
-                path = root / f"{member}.jsonl"
-                path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
-                digest = hashlib.sha256(path.read_bytes()).hexdigest()
-                contexts[member] = {"transcript": {"sha256": digest}}
-
-            isolated = CANARY.private_transcript_evidence(root, contexts)
-            self.assertTrue(isolated["passed"])
-
-            b_path = root / "B.jsonl"
-            b_payload = json.loads(b_path.read_text(encoding="utf-8"))
-            leaked_result = {
-                "type": "message",
-                "message": {
-                    "role": "toolResult",
-                    "toolCallId": "tool-A",
-                    "toolName": "workspace_read",
-                    "content": [{"type": "text", "text": "private result leaked"}],
-                },
             }
-            b_path.write_text(
-                "\n".join((json.dumps(b_payload), json.dumps(leaked_result))) + "\n",
-                encoding="utf-8",
-            )
-            contexts["B"]["transcript"]["sha256"] = hashlib.sha256(
-                b_path.read_bytes()
-            ).hexdigest()
 
-            leaked = CANARY.private_transcript_evidence(root, contexts)
-            self.assertFalse(leaked["passed"])
-            self.assertEqual(leaked["leakedAToolCallIds"], ["tool-A"])
-
-    def test_loaded_tool_receipts_include_disclosures_without_invocations(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory) / "room.sqlite"
-            with sqlite3.connect(database) as connection:
-                connection.executescript(
-                    """
-                    CREATE TABLE room_v2_capability_manifests(
-                        manifest_id TEXT PRIMARY KEY,
-                        dispatch_id TEXT NOT NULL
-                    );
-                    CREATE TABLE room_v2_capability_runtime_bindings(
-                        session_id TEXT NOT NULL,
-                        manifest_id TEXT NOT NULL
-                    );
-                    CREATE TABLE room_v2_tool_disclosure_receipts(
-                        receipt_id TEXT PRIMARY KEY,
-                        manifest_id TEXT NOT NULL,
-                        receipt_kind TEXT NOT NULL,
-                        tool_name TEXT NOT NULL,
-                        created_at_ms INTEGER NOT NULL
-                    );
-                    """
-                )
-                for index, member in enumerate(("A", "B", "C"), start=1):
-                    manifest = f"manifest-{member}"
-                    connection.execute(
-                        "INSERT INTO room_v2_capability_manifests VALUES (?, ?)",
-                        (manifest, f"dispatch-{member}"),
-                    )
-                    connection.execute(
-                        "INSERT INTO room_v2_capability_runtime_bindings VALUES (?, ?)",
-                        (f"session-{member}", manifest),
-                    )
-                    connection.execute(
-                        "INSERT INTO room_v2_tool_disclosure_receipts VALUES (?, ?, 'load', ?, ?)",
-                        (f"load-{member}-used", manifest, "room_state", index),
-                    )
-                connection.execute(
-                    "INSERT INTO room_v2_tool_disclosure_receipts VALUES (?, ?, 'load', ?, ?)",
-                    ("load-B-unused", "manifest-B", "room_collaborate", 20),
-                )
-                connection.execute(
-                    "INSERT INTO room_v2_tool_disclosure_receipts VALUES (?, ?, 'search', '', ?)",
-                    ("search-B", "manifest-B", 21),
-                )
-
-            evidence = CANARY.loaded_tool_receipt_evidence(
-                database,
-                session_ids={member: f"session-{member}" for member in ("A", "B", "C")},
-                dispatches=[
-                    {"dispatchId": f"dispatch-{member}"}
-                    for member in ("A", "B", "C")
-                ],
-            )
-
-            self.assertEqual(
-                evidence["B"],
-                [
-                    {
-                        "receiptId": "load-B-used",
-                        "toolName": "room_state",
-                        "createdAtMs": 2,
-                    },
-                    {
-                        "receiptId": "load-B-unused",
-                        "toolName": "room_collaborate",
-                        "createdAtMs": 20,
-                    },
-                ],
-            )
-
-    def test_effective_tool_receipts_keep_latest_model_visible_schema_only(
-        self,
-    ) -> None:
-        loaded = [
-            {"receiptId": "bootstrap-state", "toolName": "room_state"},
-            {"receiptId": "bootstrap-memory", "toolName": "memory"},
-            {"receiptId": "rebind-state", "toolName": "room_state"},
-            {"receiptId": "load-read", "toolName": "workspace_read"},
-            {"receiptId": "load-hidden", "toolName": "workspace_shell"},
-        ]
-
-        effective = CANARY._effective_loaded_tool_receipts(
-            loaded,
-            {"room_state", "workspace_read"},
+        checks, evidence = CANARY._provider_usage_checks(
+            "http://in-process.invalid",
+            requester=requester,
+            session_ids={"A": SESSIONS["A"]},
         )
 
-        self.assertEqual(
-            effective,
-            [
-                {"receiptId": "rebind-state", "toolName": "room_state"},
-                {"receiptId": "load-read", "toolName": "workspace_read"},
-            ],
-        )
+        self.assertEqual(checks, {"AUsageReceiptObserved": True})
+        self.assertEqual(evidence["A"]["providerRequestReceiptCount"], 1)
 
-    def test_quality_gate_commit_evidence_binds_receipts_and_evidence(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory) / "quality.sqlite"
-            tasks = [
-                self._task(
-                    f"task-{member}",
-                    None,
-                    f"participant-{member}",
-                    acceptance_criterion_ids=(
-                        [] if member == "B" else [f"criterion-{member}"]
-                    ),
-                )
-                for member in ("A", "B", "C")
-            ]
-            dispatches = [
-                {
-                    **self._dispatch(
-                        f"dispatch-{member}",
-                        f"task-{member}",
-                        None,
-                        index,
-                        0,
-                        "execute",
-                        f"participant-{member}",
-                        f"session-{member}",
-                    ),
-                    "rootId": "root-1",
-                    "generation": 0,
+
+    def test_provider_usage_checks_fall_back_to_model_call_usage(self) -> None:
+        def requester(
+            _base_url: str,
+            _method: str,
+            _path: str,
+            **_kwargs: object,
+        ) -> dict[str, object]:
+            return {
+                "context": {
+                    "modelCalls": [
+                        {"assistantMessage": {"usage": {"output": 7}}}
+                    ]
                 }
-                for index, member in enumerate(("A", "B", "C"))
-            ]
-            with sqlite3.connect(database) as connection:
-                connection.executescript(
-                    """
-                    CREATE TABLE room_kernel_commits(
-                        dispatch_id TEXT PRIMARY KEY,
-                        payload_json TEXT NOT NULL
-                    );
-                    CREATE TABLE room_kernel_settle_attempt_receipts(
-                        settle_receipt_id TEXT PRIMARY KEY,
-                        dispatch_id TEXT NOT NULL,
-                        kernel_receipt_json TEXT NOT NULL,
-                        created_at_ms INTEGER NOT NULL
-                    );
-                    """
-                )
-                for member in ("A", "B", "C"):
-                    criterion_ids = (
-                        [] if member == "B" else [f"criterion-{member}"]
-                    )
-                    evidence_refs = (
-                        [] if member == "B" else [f"evidence-{member}"]
-                    )
-                    payload = {
-                        "schemaVersion": "wisdom-weasel.room-commit.v3",
-                        "dispatchId": f"dispatch-{member}",
-                        "continuation": {"decision": "complete"},
-                        "evidenceRefs": evidence_refs,
-                        "requirementCoverage": criterion_ids,
-                        "qualityGateReceipt": {
-                            "schemaVersion": (
-                                "wisdom-weasel.room-quality-gate-receipt.v1"
-                            ),
-                            "receiptId": f"quality-{member}",
-                            "rootId": "root-1",
-                            "taskId": f"task-{member}",
-                            "dispatchId": f"dispatch-{member}",
-                            "generation": 0,
-                            "originalRequestChecked": True,
-                            "verdict": "ready_to_deliver",
-                            "items": [
-                                {
-                                    "criterionId": criterion_id,
-                                    "status": "pass",
-                                    "evidenceRefs": evidence_refs,
-                                }
-                                for criterion_id in criterion_ids
-                            ],
-                        },
-                    }
-                    connection.execute(
-                        "INSERT INTO room_kernel_commits VALUES (?, ?)",
-                        (
-                            f"dispatch-{member}",
-                            json.dumps(payload),
-                        ),
-                    )
+            }
 
-            valid = CANARY.quality_gate_commit_evidence(
-                database,
-                tasks=tasks,
-                dispatches=dispatches,
-            )
-            self.assertTrue(valid["passed"])
-
-            with sqlite3.connect(database) as connection:
-                payload = json.loads(
-                    connection.execute(
-                        "SELECT payload_json FROM room_kernel_commits "
-                        "WHERE dispatch_id = 'dispatch-C'"
-                    ).fetchone()[0]
-                )
-                original_items = list(
-                    payload["qualityGateReceipt"]["items"]
-                )
-                payload["qualityGateReceipt"]["items"] = [
-                    *original_items,
-                    dict(original_items[0]),
-                ]
-                connection.execute(
-                    "UPDATE room_kernel_commits SET payload_json = ? "
-                    "WHERE dispatch_id = 'dispatch-C'",
-                    (json.dumps(payload),),
-                )
-
-            duplicate = CANARY.quality_gate_commit_evidence(
-                database,
-                tasks=tasks,
-                dispatches=dispatches,
-            )
-            self.assertFalse(duplicate["passed"])
-            self.assertFalse(
-                duplicate["members"]["C"]["checks"][
-                    "criterionCoverageExact"
-                ]
-            )
-
-            with sqlite3.connect(database) as connection:
-                payload["qualityGateReceipt"]["items"] = original_items
-                payload["evidenceRefs"] = []
-                connection.execute(
-                    "UPDATE room_kernel_commits SET payload_json = ? "
-                    "WHERE dispatch_id = 'dispatch-C'",
-                    (json.dumps(payload),),
-                )
-
-            invalid = CANARY.quality_gate_commit_evidence(
-                database,
-                tasks=tasks,
-                dispatches=dispatches,
-            )
-            self.assertFalse(invalid["passed"])
-            self.assertFalse(
-                invalid["members"]["C"]["checks"][
-                    "passEvidenceCommitted"
-                ]
-            )
-
-    @staticmethod
-    def _dispatch(
-        dispatch_id: str,
-        task_id: str,
-        parent_id: str | None,
-        hop: int,
-        depth: int,
-        intent: str,
-        participant_id: str,
-        session_id: str,
-    ) -> dict[str, object]:
-        return {
-            "dispatchId": dispatch_id,
-            "taskId": task_id,
-            "parentDispatchId": parent_id,
-            "hopCount": hop,
-            "depth": depth,
-            "intentKind": intent,
-            "targetParticipantId": participant_id,
-            "targetSessionId": session_id,
-            "capabilityEpoch": hop + 1,
-            "state": "committed",
-        }
-
-    @staticmethod
-    def _task(
-        task_id: str,
-        parent_id: str | None,
-        participant_id: str,
-        *,
-        acceptance_criterion_ids: list[str] | None = None,
-    ) -> dict[str, object]:
-        return {
-            "taskId": task_id,
-            "parentTaskId": parent_id,
-            "currentOwnerParticipantId": participant_id,
-            "ownershipRevision": 0,
-            "ownershipReceiptId": None,
-            "acceptanceCriterionIds": acceptance_criterion_ids or [],
-            "state": "completed",
-        }
-
-    @staticmethod
-    def _kernel_snapshot(
-        *,
-        root_state: str,
-        dispatch_states: tuple[str, str, str],
-    ) -> dict[str, object]:
-        return {
-            "roots": [{"rootId": "root-1", "state": root_state}],
-            "tasks": [
-                {"rootId": "root-1", "taskId": f"task-{index}"}
-                for index in range(1, 4)
-            ],
-            "dispatches": [
-                {
-                    "rootId": "root-1",
-                    "taskId": f"task-{index}",
-                    "dispatchId": f"dispatch-{index}",
-                    "hopCount": 0 if index == 1 else 1,
-                    "state": state,
-                }
-                for index, state in enumerate(dispatch_states, start=1)
-            ],
-        }
-
-    @staticmethod
-    def _receipt(statuses: list[str]) -> dict[str, object]:
-        return {
-            "invocationCount": len(statuses),
-            "appliedExecutionCount": statuses.count("applied"),
-            "loadReceiptIds": ["load:one"] if statuses else [],
-            "items": [{"status": status} for status in statuses],
-        }
-
-    @staticmethod
-    def _approval(
-        tool: str,
-        state: str,
-        requested_at_ms: int,
-        *,
-        command: str = "",
-        network_allowed: bool = False,
-    ) -> dict[str, object]:
-        unittest_passed = (
-            tool == "workspace_shell"
-            and state == "applied"
-            and " -m unittest" in command
+        checks, evidence = CANARY._provider_usage_checks(
+            "http://in-process.invalid",
+            requester=requester,
+            session_ids={"A": SESSIONS["A"]},
         )
-        return {
-            "approvalId": f"approval:{requested_at_ms}",
-            "toolId": tool,
-            "state": state,
-            "requestedAtMs": requested_at_ms,
-            "decidedBy": "execution-policy:workspace_managed",
-            "preview": {
-                "actionPayload": {
-                    "command": command,
-                }
-            },
-            "receipt": {
-                "summary": "done",
-                "networkAllowed": network_allowed,
-                "exitCode": 0 if state == "applied" else 1,
-                "output": (
-                    "Ran 3 tests in 0.001s\n\nOK\n"
-                    if unittest_passed
-                    else ""
-                ),
-            },
-        }
 
-    @classmethod
-    def _tool_set(cls, **statuses: list[str]) -> dict[str, dict[str, object]]:
-        names = (
-            "room_state",
-            "room_collaborate",
-            "workspace_list",
-            "workspace_search",
-            "workspace_read",
-            "workspace_edit",
-            "workspace_shell",
-            "room_post",
-            "room_commit",
-        )
-        return {name: cls._receipt(statuses.get(name, [])) for name in names}
+        self.assertEqual(checks, {"AUsageReceiptObserved": True})
+        self.assertEqual(evidence["A"]["modelCallUsageCount"], 1)
+
+    def test_public_timeline_and_timeout_helpers(self) -> None:
+        snapshot = {"events": [{"eventType": "room_post", "payload": {"post": {"postId": "p1", "rootId": ROOT_ID, "createdAtMs": 1, "publicationSource": {"kind": "room_commit"}}}}, {"eventType": "room_post", "payload": {"post": {"postId": "other", "rootId": "room-root:2", "publicationSource": {"kind": "room_post"}}}}]}
+        self.assertEqual(["p1"], [item["postId"] for item in CANARY._public_posts_from_timeline_snapshot(snapshot, root_id=ROOT_ID)])
+        self.assertEqual(900, CANARY.workflow_timeout_seconds(SimpleNamespace(turn_timeout=300, workflow_timeout=None)))
+        self.assertEqual(480, CANARY.workflow_timeout_seconds(SimpleNamespace(turn_timeout=300, workflow_timeout=480)))
+        with self.assertRaisesRegex(ValueError, "positive"):
+            CANARY.workflow_timeout_seconds(SimpleNamespace(turn_timeout=300, workflow_timeout=0))
 
 
 if __name__ == "__main__":

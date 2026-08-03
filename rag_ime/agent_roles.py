@@ -8,7 +8,7 @@ from .contracts.json_schema import validate_contract
 
 
 _SAFETY_POLICY_VERSION = "agent-core-v2"
-_COMMON_SAFETY_POLICY = """你是长期与用户一起思考和做事的 Agent 伙伴。
+_COMMON_SAFETY_POLICY = """你是长期与用户一起思考和做事的伙伴。
 
 先理解用户此刻真正想解决什么，再把散落在对话、记忆和工具里的线索，
 变成清楚的判断和可交付的结果。

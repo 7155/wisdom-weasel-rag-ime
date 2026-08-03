@@ -63,6 +63,30 @@ const BACKGROUND_JOB_STATUS_LABELS: Readonly<
   orphaned: '宿主已断开',
 };
 
+const BACKGROUND_JOB_STATUS_PRECEDENCE: Readonly<
+  Record<AgentBackgroundJobV1['status'], number>
+> = {
+  queued: 0,
+  running: 1,
+  cancelling: 2,
+  completed: 3,
+  failed: 3,
+  cancelled: 3,
+  orphaned: 3,
+};
+
+const BACKGROUND_JOB_SORT_ORDER: Readonly<
+  Record<AgentBackgroundJobV1['status'], number>
+> = {
+  running: 0,
+  cancelling: 1,
+  queued: 2,
+  completed: 3,
+  failed: 3,
+  cancelled: 3,
+  orphaned: 3,
+};
+
 export function AgentBackgroundJobsView({
   sessionId,
   jobs: snapshotJobs,
@@ -89,34 +113,23 @@ export function AgentBackgroundJobsView({
       ) {
         throw new Error('后台任务列表回执与当前会话不匹配');
       }
-      const projection = useAgentLiveStore.getState().projections[sessionId];
-      let items = response.items;
-      for (let index = 0; index < response.items.length; index += 1) {
-        const listedJob = response.items[index]!;
-        const liveJob = projection?.backgroundJobsById[listedJob.jobId];
-        if (!liveJob || liveJob.updatedAtMs <= listedJob.updatedAtMs) continue;
-        if (items === response.items) items = [...response.items];
-        items[index] = liveJob;
-      }
-      if (items === response.items) return response;
-      return {
-        ...response,
-        items,
-        activeCount: items.filter((job) => ACTIVE_BACKGROUND_JOB_STATUSES[job.status]).length,
-      };
+      return response;
     },
     enabled: Boolean(sessionId),
     refetchInterval: (query) => (
-      backgroundJobItems(query.state.data, sessionId).some((job) => (
-        ACTIVE_BACKGROUND_JOB_STATUSES[job.status]
-      ))
+      mergeBackgroundJobItems(
+        backgroundJobItems(query.state.data, sessionId),
+        snapshotJobs,
+        sessionId,
+      ).some((job) => ACTIVE_BACKGROUND_JOB_STATUSES[job.status])
         ? 1_000
         : 5_000
     ),
     retry: false,
   });
-  const listedJobs = backgroundJobItems(listing.data, sessionId);
-  const jobs = listing.data ? listedJobs : snapshotJobs;
+  const jobs = listing.data
+    ? mergeBackgroundJobItems(listing.data.items, snapshotJobs, sessionId)
+    : snapshotJobs;
 
   if (listing.isPending && jobs.length === 0) {
     return (
@@ -402,6 +415,53 @@ function useJobElapsed(job: AgentBackgroundJobV1): string {
 
 function backgroundJobListQueryKey(sessionId: string) {
   return ['agent', 'background-jobs', sessionId] as const;
+}
+
+function mergeBackgroundJobItems(
+  listedJobs: readonly AgentBackgroundJobV1[],
+  liveJobs: readonly AgentBackgroundJobV1[],
+  sessionId: string,
+): AgentBackgroundJobV1[] {
+  const byId = new Map<string, AgentBackgroundJobV1>();
+  for (const job of listedJobs) {
+    if (job.sessionId === sessionId) byId.set(job.jobId, job);
+  }
+  for (const job of liveJobs) {
+    if (job.sessionId !== sessionId) continue;
+    const listed = byId.get(job.jobId);
+    if (listed === undefined || isLiveBackgroundJobNewer(job, listed)) {
+      byId.set(job.jobId, job);
+    }
+  }
+  return [...byId.values()]
+    .sort(compareBackgroundJobs)
+    .slice(0, BACKGROUND_JOB_LIST_LIMIT);
+}
+
+function isLiveBackgroundJobNewer(
+  live: AgentBackgroundJobV1,
+  listed: AgentBackgroundJobV1,
+): boolean {
+  if (live.updatedAtMs !== listed.updatedAtMs) {
+    return live.updatedAtMs > listed.updatedAtMs;
+  }
+  return (
+    BACKGROUND_JOB_STATUS_PRECEDENCE[live.status]
+    > BACKGROUND_JOB_STATUS_PRECEDENCE[listed.status]
+  );
+}
+
+function compareBackgroundJobs(
+  left: AgentBackgroundJobV1,
+  right: AgentBackgroundJobV1,
+): number {
+  return (
+    BACKGROUND_JOB_SORT_ORDER[left.status] - BACKGROUND_JOB_SORT_ORDER[right.status]
+    || right.updatedAtMs - left.updatedAtMs
+    || right.createdAtMs - left.createdAtMs
+    || left.jobId.localeCompare(right.jobId)
+  );
+
 }
 
 function backgroundJobItems(

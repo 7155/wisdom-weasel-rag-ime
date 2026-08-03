@@ -206,7 +206,8 @@ class RoomPeerReviewTests(unittest.TestCase):
             {"schemaVersion": ROOT_EXECUTION_SCHEMA_VERSION, "rootId": root_id, "roomId": "room:1", "generation": 0,
              "state": "running", "facilitatorParticipantId": "author", "reporterParticipantId": None,
              "reporterSelectionReceiptId": None, "requirementAnchorRef": "anchor:1", "createdByActorRef": "user:test",
-             "terminalReceiptId": None, "activeProfileRef": None, "budgetPolicyRef": "budget:test", "createdAtMs": 1},
+             "terminalReceiptId": None, "activeProfileRef": None, "budgetPolicyRef": "budget:test",
+             "independentReviewRequired": False, "createdAtMs": 1},
             budget=1, max_hops=1, max_depth=1, acceptance_criteria=("criterion:journey",), now_ms=1,
         )
         kernel.create_task(

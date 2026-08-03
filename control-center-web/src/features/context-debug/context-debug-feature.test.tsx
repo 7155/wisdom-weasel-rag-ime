@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
+import type { ControlRequest } from '@/platform/transport';
 import { MockControlTransport } from '@/test/mock-transport';
 import { ContextDebugFeature } from '.';
 
@@ -56,28 +57,38 @@ describe('ContextDebugFeature', () => {
     renderFeature(transport, '/context-debug?sessionId=session-a');
 
     expect(await screen.findByText('上下文检查')).toBeInTheDocument();
-    expect(screen.getByText('稳定前缀')).toBeInTheDocument();
-    expect(screen.getByText('来源正文默认隐藏。', { exact: false })).toBeInTheDocument();
-    await user.click(screen.getByText('展开原始审计区'));
-    expect(await screen.findByText('记录为并行批次 2 项')).toBeInTheDocument();
-    expect(screen.getByText('memory_search')).toBeInTheDocument();
-    expect(screen.getByText('overview')).toBeInTheDocument();
-
-    const callRail = screen.getByRole('complementary', { name: '模型调用列表' });
-    await user.click(within(callRail).getByRole('button', { name: /模型调用 1/ }));
-    expect(screen.getByText('初始上下文')).toBeInTheDocument();
-    expect(screen.getAllByText('+1').length).toBeGreaterThan(0);
-
-    await user.click(screen.getByRole('tab', { name: '完整上下文' }));
-    expect(screen.getByText('检查缓存')).toBeInTheDocument();
+    const reader = await screen.findByRole('region', { name: '逐次上下文阅读' });
+    expect(within(reader).getByRole('navigation', { name: '对话轮次' })).toBeInTheDocument();
+    expect(within(reader).getByRole('heading', { name: '最早保留轮次' })).toBeInTheDocument();
+    expect(within(reader).getByRole('heading', { name: 'model call 1' })).toBeInTheDocument();
+    expect(within(reader).getByRole('heading', { name: 'model call 2' })).toBeInTheDocument();
+    const callOne = within(reader).getByRole('region', { name: 'model call 1' });
+    expect(within(callOne).getByText('parallel · 2 tools')).toBeInTheDocument();
+    expect(within(callOne).getAllByText(/memory_search/).length).toBeGreaterThan(0);
+    expect(within(callOne).getByText('overview')).toBeInTheDocument();
+    expect(within(callOne).getByText(/initial context/)).toBeInTheDocument();
+    expect(within(callOne).getByText(/\+1 \/ -0/)).toBeInTheDocument();
+    expect(within(callOne).getByText('检查缓存')).toBeInTheDocument();
     expect(screen.queryByText('回合级旧消息')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('tab', { name: '系统指令' }));
+
+    const tree = within(reader).getByRole('complementary', { name: '上下文目录' });
+    expect(within(tree).getByRole('searchbox', { name: '搜索上下文条目' })).toBeInTheDocument();
+    await user.click(within(tree).getByRole('button', { name: '用户' }));
+    expect(within(tree).queryByRole('button', { name: /memory_search/ })).not.toBeInTheDocument();
+    await user.click(within(tree).getByRole('button', { name: '全部' }));
+    const userEntry = within(tree).getByRole('button', { name: /User检查缓存/ });
+    await user.click(userEntry);
+    expect(userEntry).toHaveAttribute('aria-current', 'location');
+    expect(document.activeElement).toHaveAttribute('id', 'context-call-1-message-1');
+
+    await user.click(within(callOne).getByText('Request details'));
+    await user.click(within(callOne).getByText('System prompt'));
     expect(screen.getByText('调用一的真实系统提示词')).toBeInTheDocument();
     expect(screen.queryByText('回合级旧系统提示词')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('tab', { name: '工具定义' }));
+    await user.click(within(callOne).getByText('Tool schemas'));
     expect(screen.getByText(/"description": "逐调用真实工具"/)).toBeInTheDocument();
     expect(screen.queryByText(/回合级旧工具/)).not.toBeInTheDocument();
-    await user.click(screen.getByRole('tab', { name: '模型服务请求' }));
+    await user.click(within(callOne).getByText('Provider exchange'));
     expect(screen.getByText(/"model": "gpt-test"/)).toBeInTheDocument();
     await waitFor(() => expect(transport.requests.some((call) => (
       call.request.pathId === 'agent.session.debugContext.get'
@@ -85,7 +96,7 @@ describe('ContextDebugFeature', () => {
     ))).toBe(true));
   });
 
-  it('opens the frozen per-call HTML inside the installed-host dialog', async () => {
+  it('keeps the frozen per-call HTML report as a secondary action', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({
       routes: {
@@ -110,7 +121,7 @@ describe('ContextDebugFeature', () => {
     expect(createObjectURL).not.toHaveBeenCalled();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
-    await user.click(await screen.findByRole('button', { name: '逐次上下文' }));
+    await user.click(await screen.findByRole('button', { name: 'HTML 报告' }));
 
     const dialog = await screen.findByRole('dialog', { name: '逐次上下文装配' });
     const frame = within(dialog).getByTitle('逐次上下文报告');
@@ -167,13 +178,59 @@ describe('ContextDebugFeature', () => {
     } });
     renderFeature(transport, '/context-debug?sessionId=session-a');
 
-    expect(await screen.findByText('1,200 词元')).toBeVisible();
-    expect(screen.getByText('可用 · 已命中')).toBeVisible();
-    expect(screen.getByText(/sealed \/ ready/)).toBeVisible();
+    expect(await screen.findByRole('heading', { name: '最早保留轮次' })).toBeVisible();
+    expect(screen.getByText('System 与项目指令')).toBeVisible();
     expect(document.body).not.toHaveTextContent(longPrompt);
-    await user.click(screen.getByText('展开原始审计区'));
-    await user.click(screen.getByRole('tab', { name: '本轮输入' }));
-    expect(screen.getByText(longPrompt)).toBeVisible();
+    await user.click(screen.getByText('本轮原始输入'));
+    expect(document.body).toHaveTextContent(longPrompt);
+  });
+
+  it('navigates retained turns and explains initial versus compaction recovery assembly', async () => {
+    const user = userEvent.setup();
+    const initial = debugContextResponse();
+    initial.turnId = 'turn-initial';
+    initial.context.turnId = 'turn-initial';
+    Object.assign(initial.context, { turnOrdinal: 1, assemblyPhase: 'initial' });
+    initial.availableTurns = [
+      Object.assign(
+        { turnId: 'turn-initial', capturedAtMs: 100, updatedAtMs: 180, modelCallCount: 2, providerRequestCount: 2, toolCallCount: 2, runningToolCount: 0 },
+        { turnOrdinal: 1, assemblyPhase: 'initial' as const, summary: '第一次建立上下文' },
+      ),
+      Object.assign(
+        { turnId: 'turn-recovered', capturedAtMs: 200, updatedAtMs: 300, modelCallCount: 2, providerRequestCount: 2, toolCallCount: 2, runningToolCount: 0 },
+        { turnOrdinal: 2, assemblyPhase: 'compaction_recovery' as const, summary: '压缩后恢复方向' },
+      ),
+    ];
+    const recovered = structuredClone(initial);
+    recovered.turnId = 'turn-recovered';
+    recovered.context.turnId = 'turn-recovered';
+    Object.assign(recovered.context, { turnOrdinal: 2, assemblyPhase: 'compaction_recovery' });
+    recovered.context.modelCalls[0].contextDelta.removedMessageCount = 12;
+    recovered.context.modelCalls[0].contextDelta.addedMessages.unshift(Object.assign(
+      { role: 'custom', content: '<compaction-recovery>保留原始愿景和当前方向</compaction-recovery>' },
+      { customType: 'rag-ime-compaction-recovery' },
+    ));
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': { ok: true, sessions: [{ id: 'session-a', title: '多轮上下文', mode: 'assistant', status: 'idle', roleId: 'companion-present-v1', roleVersion: '1', updatedAtMs: 100, workspaceRoots: [] }] },
+        'agent.session.debugContext.get': (request: ControlRequest) => (
+          request.query?.turnId === 'turn-recovered' ? recovered : initial
+        ),
+      },
+    });
+    renderFeature(transport, '/context-debug?sessionId=session-a&turnId=turn-initial');
+
+    expect(await screen.findByRole('heading', { name: '首轮装配' })).toBeInTheDocument();
+    const turnNavigation = screen.getByRole('navigation', { name: '对话轮次' });
+    await user.click(within(turnNavigation).getByRole('button', { name: /压缩后恢复/ }));
+    expect(await screen.findByRole('heading', { name: '压缩后恢复' })).toBeInTheDocument();
+    expect(screen.getByText('旧消息已被低分辨率恢复材料替代', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('压缩恢复与运行时')).toBeInTheDocument();
+    expect(screen.getByText('+2 / -12')).toBeInTheDocument();
+    await waitFor(() => expect(transport.requests.some((call) => (
+      call.request.pathId === 'agent.session.debugContext.get'
+      && call.request.query?.turnId === 'turn-recovered'
+    ))).toBe(true));
   });
 });
 

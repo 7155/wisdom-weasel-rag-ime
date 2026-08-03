@@ -82,7 +82,7 @@ describe('DebugContextInspector', () => {
       </ControlTransportProvider>,
     );
 
-    const providerStage = await screen.findByRole('button', { name: /Provider 请求 1/ });
+    const providerStage = await screen.findByRole('button', { name: '展开Provider 请求 1' });
     expect(providerStage).toHaveTextContent('HTTP 400');
     await user.click(providerStage);
     expect(screen.getByText(/REQUEST_BEFORE_FAILURE/)).toBeVisible();
@@ -107,7 +107,22 @@ describe('DebugContextInspector', () => {
           },
           activeTools: ['read'],
           toolSchemas: [{ name: 'read', parameters: { type: 'object' } }],
-          contextWindows: [{ index: 1, messages: [{ role: 'user', content: 'RAW_CONTEXT' }] }],
+          contextWindows: [{
+            index: 1,
+            messages: [
+              {
+                role: 'custom',
+                customType: 'rag-ime-execution-mode',
+                content: '<execution-mode mode="full_trust">已授权操作直接执行</execution-mode>',
+              },
+              {
+                role: 'custom',
+                customType: 'rag-ime-memory-recall',
+                content: '<rag-ime-context type="memory_recall">实际召回证据</rag-ime-context>',
+              },
+              { role: 'user', content: 'RAW_CONTEXT' },
+            ],
+          }],
           providerRequests: [{ index: 1, payload: { model: 'model-a', messages: ['RAW_PROVIDER_PAYLOAD'] } }],
         },
         telemetry: {
@@ -143,30 +158,42 @@ describe('DebugContextInspector', () => {
       ),
     ).toBeVisible();
     const pipeline = screen.getByRole('list', { name: '模型上下文注入顺序' });
-    const stages = within(pipeline).getAllByRole('button').map((item) => item.textContent ?? '');
+    const stages = within(pipeline)
+      .getAllByRole('button', { name: /^(展开|收起)/ })
+      .map((item) => item.textContent ?? '');
     expect(stages).toEqual(expect.arrayContaining([
       expect.stringContaining('System 基础指令'),
       expect.stringContaining('AGENTS.md'),
       expect.stringContaining('Skills 目录'),
       expect.stringContaining('活动工具定义'),
+      expect.stringContaining('执行模式'),
+      expect.stringContaining('本上下文记忆召回'),
       expect.stringContaining('当前用户输入'),
       expect.stringContaining('Provider 请求 1'),
     ]));
-    await user.click(within(pipeline).getByText('System 基础指令'));
+    const toolIndex = stages.findIndex((value) => value.includes('活动工具定义'));
+    const modeIndex = stages.findIndex((value) => value.includes('执行模式'));
+    const recallIndex = stages.findIndex((value) => value.includes('本上下文记忆召回'));
+    const userIndex = stages.findIndex((value) => value.includes('当前用户输入'));
+    expect(toolIndex).toBeLessThan(modeIndex);
+    expect(modeIndex).toBeLessThan(recallIndex);
+    expect(recallIndex).toBeLessThan(userIndex);
+    expect(screen.getByText('RAW_RUNTIME_INPUT')).toBeVisible();
+    expect(screen.getByText('<rag-ime-context type="memory_recall">实际召回证据</rag-ime-context>')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: '展开System 基础指令' }));
     expect(screen.getByText('BASE_SYSTEM')).toBeVisible();
-    await user.click(within(pipeline).getByText('AGENTS.md'));
+    await user.click(screen.getByRole('button', { name: '展开AGENTS.md' }));
     expect(screen.getByText('PROJECT_RULES')).toBeVisible();
-    expect(screen.queryByText('BASE_SYSTEM')).not.toBeInTheDocument();
-    await user.click(within(pipeline).getByText('Provider 请求 1'));
-    expect(screen.getByLabelText('Provider 请求 1详情')).toBeVisible();
+    expect(screen.getByText('BASE_SYSTEM')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: '展开Provider 请求 1' }));
     expect(screen.getByText(/RAW_PROVIDER_PAYLOAD/)).toBeVisible();
     expect(screen.getByText(/API 线上的 JSON 信封/)).toBeVisible();
-    expect(screen.getByRole('radiogroup', { name: '上下文展示形式' })).toHaveTextContent('模型语义');
-    await user.click(screen.getByRole('radio', { name: '原始 JSON' }));
-    expect(within(pipeline).getByText('传输 JSON')).toBeVisible();
-    expect(screen.getByText(/"messages":/)).toBeVisible();
-    await user.click(screen.getByRole('button', { name: '关闭上下文详情' }));
-    expect(screen.queryByLabelText('Provider 请求 1详情')).not.toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: '上下文展示形式' })).toHaveTextContent('阅读视图');
+    await user.click(screen.getByRole('radio', { name: '原始数据' }));
+    expect(screen.getAllByText(/"messages":/).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole('button', { name: '收起Provider 请求 1' }));
+    expect(screen.queryByText(/RAW_PROVIDER_PAYLOAD/)).not.toBeInTheDocument();
+    expect(screen.getByText(/RAW_RUNTIME_INPUT/)).toBeVisible();
     expect(transport.requests[0]).toEqual(expect.objectContaining({
       pathId: 'agent.session.debugContext.get',
       params: { sessionId: 'session-1' },

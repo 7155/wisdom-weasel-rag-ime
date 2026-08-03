@@ -19,6 +19,7 @@
     "operations": {"type": "array", "items": {"type": "string"}},
     "resultPresentation": {"type": "string", "enum": ["status", "table", "citation", "tool_result", "diff", "approval", "terminal", "media"]},
     "availability": {"type": "string", "enum": ["online", "offline", "disabled", "unconfigured"]},
-    "version": {"type": "string", "minLength": 1}
+    "version": {"type": "string", "minLength": 1},
+    "alwaysAvailable": {"type": "boolean"}
   }
 }

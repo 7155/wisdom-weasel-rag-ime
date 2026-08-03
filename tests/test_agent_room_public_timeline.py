@@ -180,6 +180,12 @@ class RoomPublicTimelineProjectorTests(unittest.TestCase):
             "executionReceipt 已返回。",
             "内部 root_id=root-private。",
             "内部 evidence_ref=proof-private。",
+            "Kernel 已经完成最终汇总。",
+            "Root 已经满足全部条件。",
+            "Dispatch 已经提交。",
+            "Task 已经完成。",
+            "AC 已经通过。",
+            "Receipt ID 已经生成。",
             r"详情位于 C:\Users\private\report.json。",
             "详情位于 ../private/report.json。",
         )
@@ -200,6 +206,9 @@ class RoomPublicTimelineProjectorTests(unittest.TestCase):
             "done",
             "已完成",
             "等待。",
+            "正在处理中……",
+            "我在执行这个任务。",
+            "Working...",
         ):
             with self.subTest(report=report), self.assertRaisesRegex(
                 ValueError,

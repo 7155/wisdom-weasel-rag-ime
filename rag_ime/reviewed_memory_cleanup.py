@@ -103,9 +103,24 @@ def apply_reviewed_memory_cleanup(
             run_id=run_id,
             timestamp=timestamp,
         )
+        retired_books = _retire_books(
+            conn,
+            plan=_objects(plan.get("retireBooks")),
+            project=project,
+            run_id=run_id,
+            timestamp=timestamp,
+        )
         timelines = _rewrite_timelines(
             conn,
             plan=_objects(plan.get("timelines")),
+            project=project,
+            reviewer=reviewer,
+            run_id=run_id,
+            timestamp=timestamp,
+        )
+        retired_timelines = _retire_timelines(
+            conn,
+            plan=_objects(plan.get("retireTimelines")),
             project=project,
             reviewer=reviewer,
             run_id=run_id,
@@ -134,7 +149,8 @@ def apply_reviewed_memory_cleanup(
                SET status = 'applied', metadata_json = json_set(
                    metadata_json, '$.projectionOutboxId', ?,
                    '$.retiredAtomCount', ?, '$.addedAtomCount', ?,
-                   '$.rewrittenBookCount', ?, '$.rewrittenTimelineCount', ?,
+                   '$.rewrittenBookCount', ?, '$.retiredBookCount', ?,
+                   '$.rewrittenTimelineCount', ?, '$.retiredTimelineCount', ?,
                    '$.sourceDispositionChangeCount', ?
                ) WHERE run_id = ?""",
             (
@@ -142,7 +158,9 @@ def apply_reviewed_memory_cleanup(
                 len(retired),
                 len(added),
                 len(books),
+                len(retired_books),
                 len(timelines),
+                len(retired_timelines),
                 int(dispositions["changed"]),
                 run_id,
             ),
@@ -161,7 +179,9 @@ def apply_reviewed_memory_cleanup(
                         "retiredAtoms": retired,
                         "addedAtoms": added,
                         "books": books,
+                        "retiredBooks": retired_books,
                         "timelines": timelines,
+                        "retiredTimelines": retired_timelines,
                         "sourceDispositions": dispositions,
                         "projectionOutboxId": outbox_id,
                     }
@@ -196,7 +216,9 @@ def apply_reviewed_memory_cleanup(
         "retiredAtoms": retired,
         "addedAtoms": added,
         "rewrittenBooks": books,
+        "retiredBooks": retired_books,
         "rewrittenTimelines": timelines,
+        "retiredTimelines": retired_timelines,
         "sourceDispositions": dispositions,
         "tagGraph": tag_graph,
         "projectionOutboxId": outbox_id,
@@ -554,6 +576,65 @@ def _rewrite_books(
     return rewritten
 
 
+def _retire_books(
+    conn: sqlite3.Connection,
+    *,
+    plan: list[dict[str, object]],
+    project: str,
+    run_id: str,
+    timestamp: int,
+) -> list[str]:
+    retired: list[str] = []
+    for item in plan:
+        book_id = compact_whitespace(str(item.get("id") or ""))
+        row = conn.execute(
+            """SELECT * FROM memory_books
+               WHERE book_id = ? AND status IN ('active', 'approved')""",
+            (book_id,),
+        ).fetchone()
+        if row is None:
+            raise ReviewedMemoryCleanupError(f"active book is missing: {book_id}")
+        if compact_whitespace(str(row["project"] or "")) != project:
+            raise ReviewedMemoryCleanupError(
+                f"book belongs to another project: {book_id}"
+            )
+        expected_summary = compact_whitespace(str(item.get("expectedSummary") or ""))
+        if not expected_summary:
+            raise ValueError(f"retired book needs expectedSummary: {book_id}")
+        if compact_whitespace(str(row["summary"] or "")) != expected_summary:
+            raise ReviewedMemoryCleanupError(f"retired book summary drifted: {book_id}")
+        reason = compact_whitespace(
+            str(item.get("reason") or "outside reviewed personal-memory scope")
+        )
+        metadata = _object(row["metadata_json"])
+        metadata.update(
+            {
+                "schemaVersion": REVIEWED_MEMORY_CLEANUP_SCHEMA_VERSION,
+                "source": "reviewed_memory_cleanup",
+                "runId": run_id,
+                "retirementReason": reason,
+                "retiredAtMs": timestamp,
+            }
+        )
+        _record_cleanup_diff(
+            conn,
+            run_id=run_id,
+            op="book_supersede",
+            target_id=book_id,
+            before=dict(row),
+            after={"status": "superseded", "reason": reason},
+            timestamp=timestamp,
+        )
+        conn.execute(
+            """UPDATE memory_books
+               SET status = 'superseded', updated_at_ms = ?, metadata_json = ?
+               WHERE book_id = ?""",
+            (timestamp, _json(metadata), book_id),
+        )
+        retired.append(book_id)
+    return retired
+
+
 def _rewrite_timelines(
     conn: sqlite3.Connection,
     *,
@@ -638,6 +719,79 @@ def _rewrite_timelines(
         )
         rewritten.append(str(row["timeline_id"]))
     return rewritten
+
+
+def _retire_timelines(
+    conn: sqlite3.Connection,
+    *,
+    plan: list[dict[str, object]],
+    project: str,
+    reviewer: str,
+    run_id: str,
+    timestamp: int,
+) -> list[str]:
+    retired: list[str] = []
+    for item in plan:
+        timeline_id = compact_whitespace(str(item.get("id") or ""))
+        row = conn.execute(
+            """SELECT * FROM daily_activity_timelines
+               WHERE timeline_id = ? AND status = 'approved'""",
+            (timeline_id,),
+        ).fetchone()
+        if row is None:
+            raise ReviewedMemoryCleanupError(
+                f"approved timeline is missing: {timeline_id}"
+            )
+        if compact_whitespace(str(row["project"] or "")) != project:
+            raise ReviewedMemoryCleanupError(
+                f"timeline belongs to another project: {timeline_id}"
+            )
+        expected_date = compact_whitespace(str(item.get("expectedDate") or ""))
+        if not expected_date:
+            raise ValueError(f"retired timeline needs expectedDate: {timeline_id}")
+        if compact_whitespace(str(row["timeline_date"] or "")) != expected_date:
+            raise ReviewedMemoryCleanupError(
+                f"retired timeline date drifted: {timeline_id}"
+            )
+        expected_summary = compact_whitespace(str(item.get("expectedSummary") or ""))
+        if not expected_summary:
+            raise ValueError(f"retired timeline needs expectedSummary: {timeline_id}")
+        if compact_whitespace(str(row["summary_text"] or "")) != expected_summary:
+            raise ReviewedMemoryCleanupError(
+                f"retired timeline summary drifted: {timeline_id}"
+            )
+        reason = compact_whitespace(
+            str(item.get("reason") or "outside reviewed personal-memory scope")
+        )
+        metadata = _object(row["metadata_json"])
+        metadata.update(
+            {
+                "schemaVersion": REVIEWED_MEMORY_CLEANUP_SCHEMA_VERSION,
+                "source": "reviewed_memory_cleanup",
+                "runId": run_id,
+                "reviewer": reviewer,
+                "retirementReason": reason,
+                "retiredAtMs": timestamp,
+            }
+        )
+        _record_cleanup_diff(
+            conn,
+            run_id=run_id,
+            op="timeline_supersede",
+            target_id=timeline_id,
+            before=dict(row),
+            after={"status": "superseded", "reason": reason},
+            timestamp=timestamp,
+        )
+        conn.execute(
+            """UPDATE daily_activity_timelines
+               SET status = 'superseded', rejection_reason = ?,
+                   updated_at_ms = ?, metadata_json = ?
+               WHERE timeline_id = ?""",
+            (reason, timestamp, _json(metadata), timeline_id),
+        )
+        retired.append(timeline_id)
+    return retired
 
 
 def _timeline_segment(

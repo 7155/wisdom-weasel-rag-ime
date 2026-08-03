@@ -20,8 +20,8 @@
   "decidedAtMs": null,
   "receipt": null,
   "causalMetadata": {
-    "planId": "",
-    "planRevision": 0,
+    "todoId": "",
+    "todoRevision": 0,
     "goalId": "",
     "goalRevision": 0,
     "turnId": "",
