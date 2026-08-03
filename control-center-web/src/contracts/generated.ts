@@ -136,7 +136,6 @@ import type { RoomRootExecutionV2 } from './generated/room-root-execution.v2';
 import type { RoomRootExecutionV3 } from './generated/room-root-execution.v3';
 import type { RoomSettleReceiptV1 } from './generated/room-settle-receipt.v1';
 import type { RoomSettleResultV1 } from './generated/room-settle-result.v1';
-import type { RoomShadowObservationV1 } from './generated/room-shadow-observation.v1';
 import type { RoomSkillLoadReceiptV1 } from './generated/room-skill-load-receipt.v1';
 import type { RoomSkillPolicyV1 } from './generated/room-skill-policy.v1';
 import type { RoomSkillRecoveryV1 } from './generated/room-skill-recovery.v1';
@@ -290,7 +289,6 @@ export type {
   RoomRootExecutionV3,
   RoomSettleReceiptV1,
   RoomSettleResultV1,
-  RoomShadowObservationV1,
   RoomSkillLoadReceiptV1,
   RoomSkillPolicyV1,
   RoomSkillRecoveryV1,
@@ -445,7 +443,6 @@ export interface ContractTypeMap {
   'room-root-execution.v3': RoomRootExecutionV3;
   'room-settle-receipt.v1': RoomSettleReceiptV1;
   'room-settle-result.v1': RoomSettleResultV1;
-  'room-shadow-observation.v1': RoomShadowObservationV1;
   'room-skill-load-receipt.v1': RoomSkillLoadReceiptV1;
   'room-skill-policy.v1': RoomSkillPolicyV1;
   'room-skill-recovery.v1': RoomSkillRecoveryV1;

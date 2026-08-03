@@ -18983,51 +18983,6 @@ export const contractSchemas = {
       }
     }
   },
-  "room-shadow-observation.v1": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://wisdom-weasel.local/contracts/room-shadow-observation.v1.json",
-    "title": "Room V2 shadow observation envelope",
-    "type": "object",
-    "required": [
-      "schemaVersion",
-      "rootId",
-      "triggerId",
-      "recordKind",
-      "entityId",
-      "payload"
-    ],
-    "properties": {
-      "schemaVersion": {
-        "const": "rag-ime.room-shadow-observation.v1"
-      },
-      "rootId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "taskId": {
-        "type": "string"
-      },
-      "dispatchId": {
-        "type": "string"
-      },
-      "triggerId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "recordKind": {
-        "type": "string",
-        "minLength": 1
-      },
-      "entityId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "payload": {
-        "type": "object"
-      }
-    },
-    "additionalProperties": false
-  },
   "room-skill-load-receipt.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://wisdom-weasel.local/contracts/room-skill-load-receipt.v1.json",
