@@ -89,6 +89,55 @@ class ReviewedMemoryCleanupTests(unittest.TestCase):
             self.assertEqual(json.loads(timeline["source_event_ids_json"]), [1, 2])
             self.assertEqual(timeline["summary_text"], "完成记忆数据库治理整理。")
 
+    def test_reviewed_cleanup_can_retire_derived_books_and_timelines(self) -> None:
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            plan = self._plan(conn)
+            plan["books"] = []
+            plan["timelines"] = []
+            plan["retireBooks"] = [
+                {
+                    "id": "book:memory",
+                    "expectedSummary": "旧摘要",
+                    "reason": "not personal memory",
+                }
+            ]
+            plan["retireTimelines"] = [
+                {
+                    "id": "timeline:day",
+                    "expectedDate": "2026-07-19",
+                    "expectedSummary": "旧时间线",
+                    "reason": "session activity is not personal memory",
+                }
+            ]
+
+            result = apply_reviewed_memory_cleanup(
+                conn,
+                plan=plan,
+                reviewer_id="test-reviewer",
+            )
+
+            self.assertEqual(result["retiredBooks"], ["book:memory"])
+            self.assertEqual(result["retiredTimelines"], ["timeline:day"])
+            self.assertEqual(
+                conn.execute(
+                    "SELECT status FROM memory_books WHERE book_id='book:memory'"
+                ).fetchone()[0],
+                "superseded",
+            )
+            self.assertEqual(
+                tuple(
+                    conn.execute(
+                        """SELECT status, rejection_reason
+                           FROM daily_activity_timelines
+                           WHERE timeline_id='timeline:day'"""
+                    ).fetchone()
+                ),
+                ("superseded", "session activity is not personal memory"),
+            )
+            self.assertEqual(result["verification"]["counts"]["activeBooks"], 0)
+            self.assertEqual(result["verification"]["counts"]["approvedTimelines"], 0)
+
     def test_timeline_identity_drift_fails_closed(self) -> None:
         with closing(sqlite3.connect(self.db_path)) as conn:
             conn.row_factory = sqlite3.Row

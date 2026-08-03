@@ -36,7 +36,7 @@
   "properties": {
     "schemaVersion": {"type": "string", "const": "rag-ime.agent-memory-source.v1"},
     "sourceId": {"type": "string", "minLength": 1},
-    "sessionId": {"type": "string", "minLength": 1},
+    "sessionId": {"type": "string"},
     "piEntryId": {"type": "string", "minLength": 1},
     "inputEventId": {"type": "integer", "minimum": 1},
     "sourceRole": {"type": "string", "enum": ["user", "tool_receipt"]},

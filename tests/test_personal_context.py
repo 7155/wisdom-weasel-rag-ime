@@ -1054,6 +1054,19 @@ class PersonalContextConsolidatorTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "succeeded")
         self.assertEqual(len(organizer.calls), 1)
+        self.assertEqual(
+            [item["event"] for item in organizer.run_events],
+            ["begin", "finish"],
+        )
+        self.assertTrue(
+            str(organizer.run_events[0]["runId"]).startswith(
+                "role-book-curation:"
+            )
+        )
+        self.assertRegex(
+            str(organizer.run_events[0]["frozenInputSha256"]),
+            r"^[0-9a-f]{64}$",
+        )
         bundle = organizer.calls[0]["bundle"]
         self.assertLessEqual(
             len(json.dumps(bundle, ensure_ascii=False, sort_keys=True)),
@@ -1242,6 +1255,32 @@ class _FakeRoleBookOrganizer:
 
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self.run_events: list[dict[str, object]] = []
+
+    def begin_run(
+        self,
+        run_id: str,
+        *,
+        frozen_input_sha256: str = "",
+    ) -> dict[str, object]:
+        self.run_events.append(
+            {
+                "event": "begin",
+                "runId": run_id,
+                "frozenInputSha256": frozen_input_sha256,
+            }
+        )
+        return {}
+
+    def finish_run(self) -> dict[str, object]:
+        self.run_events.append({"event": "finish"})
+        return {}
+
+    def fail_run(self, error: BaseException) -> dict[str, object]:
+        self.run_events.append(
+            {"event": "fail", "errorClass": error.__class__.__name__}
+        )
+        return {}
 
     def curate_role_book(
         self,

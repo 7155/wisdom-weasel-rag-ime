@@ -57,6 +57,9 @@ _ACTIVITY_CONTEXT_MAX_EVENT_IDS = 2_000
 _ACTIVITY_CONTEXT_DEDUPE_WINDOW_MS = 5 * 60 * 1_000
 _STABLE_ATOM_KINDS = frozenset(
     {
+        "personal_fact",
+        "personal_habit",
+        "personal_principle",
         "durable_preference",
         "preference",
         "stable_memory",
@@ -1489,6 +1492,7 @@ class PersonalContextConsolidator:
             )
             active_role_book = AgentRoleBookStore(self.db_path).active(role, version)
             model_proposals, proposal_diagnostics = self._curate_role_book_proposals(
+                run_id=run_id,
                 role_id=role,
                 role_version=version,
                 evidence=evidence,
@@ -1771,6 +1775,7 @@ class PersonalContextConsolidator:
     def _curate_role_book_proposals(
         self,
         *,
+        run_id: str,
         role_id: str,
         role_version: str,
         evidence: Sequence[Mapping[str, object]],
@@ -1813,7 +1818,23 @@ class PersonalContextConsolidator:
                 "acceptedProposalCount": 0,
                 "rejectedProposalCount": 0,
             }
+        model_run_started = False
         try:
+            begin_model_run = getattr(organizer, "begin_run", None)
+            if callable(begin_model_run):
+                frozen_input_sha256 = hashlib.sha256(
+                    json.dumps(
+                        bundle,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+                begin_model_run(
+                    f"role-book-curation:{run_id}",
+                    frozen_input_sha256=frozen_input_sha256,
+                )
+                model_run_started = True
             raw = method(
                 bundle=bundle,
                 project=self.project,
@@ -1829,7 +1850,19 @@ class PersonalContextConsolidator:
                 },
                 active_role_book=active_role_book,
             )
+            if model_run_started:
+                finish_model_run = getattr(organizer, "finish_run", None)
+                if callable(finish_model_run):
+                    finish_model_run()
+                model_run_started = False
         except Exception as exc:
+            if model_run_started:
+                fail_model_run = getattr(organizer, "fail_run", None)
+                if callable(fail_model_run):
+                    try:
+                        fail_model_run(exc)
+                    except Exception:
+                        pass
             return empty, {
                 "status": "failed",
                 "provider": provider,

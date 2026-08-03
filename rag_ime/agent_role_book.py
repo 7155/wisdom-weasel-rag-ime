@@ -51,7 +51,9 @@ _SENSITIVE_PATTERNS = (
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----", re.IGNORECASE),
     re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"),
     re.compile(r"(?<!\d)\d{17}[\dXx](?!\d)"),
-    re.compile(r"(?<!\d)(?:\d[ -]?){16,19}(?!\d)"),
+    # A card-like number must be token-bounded.  Digest/UUID identifiers may
+    # legitimately contain a 16-19 digit run surrounded by hex characters.
+    re.compile(r"(?<![A-Za-z0-9])(?:\d[ -]?){16,19}(?![A-Za-z0-9])"),
     re.compile(r"(?:/Users|/Volumes|/private|/tmp)/[^\s,;，。]+"),
     re.compile(r"[A-Za-z]:\\Users\\[^\s,;，。]+", re.IGNORECASE),
 )

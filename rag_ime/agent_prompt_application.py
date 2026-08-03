@@ -408,7 +408,7 @@ class AgentPromptApplicationService:
         session = self.memory_context.ensure_role_book(
             session_id
         )
-        bootstrap = self.memory_context.refresh_for_turn(
+        bootstrap = self.memory_context.ensure_bootstrap(
             session,
             query_text=checkpoint_text,
         )

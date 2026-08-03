@@ -7,6 +7,7 @@ from typing import Any
 from .agent_context_runtime import (
     compose_runtime_prompt,
     render_context_items,
+    render_provider_context_items,
 )
 from .pi_runtime_values import PiRuntimeTurnConflict
 from .text_utils import compact_whitespace
@@ -122,12 +123,13 @@ class AgentPromptDeliveryService:
         memory_items, async_items = _partition_items(
             materialized["items"]
         )
+        memory_context = render_provider_context_items(memory_items)
         memory_node = self._trace_memory(
             trace_id,
             session_node=session_node,
             memory_items=memory_items,
             async_items=async_items,
-            char_count=int(materialized["charCount"]),
+            char_count=len(memory_context),
         )
         inbox_node = self._trace_inbox(
             trace_id,
@@ -148,7 +150,7 @@ class AgentPromptDeliveryService:
             session_context_prompt="\n\n".join(
                 value
                 for value in (
-                    render_context_items(memory_items),
+                    memory_context,
                     (
                         self.room_public_recovery_context(session_id)
                         if delivery == "prompt"

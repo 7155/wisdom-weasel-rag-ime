@@ -12,7 +12,13 @@
     "dueReason",
     "idleMs",
     "compileState",
+    "draftCoverage",
+    "automation",
     "pendingDraftCount",
+    "ownerCuration",
+    "modelCuration",
+    "bookProjection",
+    "projection",
     "runs"
   ],
   "properties": {
@@ -50,6 +56,41 @@
         "lastBundleHash": {"type": "string"}
       }
     },
+    "draftCoverage": {
+      "type": "object",
+      "required": ["coveredThroughEventId", "undraftedEventCount", "coversAllPending", "lastDraftRunId"],
+      "properties": {
+        "coveredThroughEventId": {"type": "integer", "minimum": 0},
+        "undraftedEventCount": {"type": "integer", "minimum": 0},
+        "coversAllPending": {"type": "boolean"},
+        "lastDraftRunId": {"type": "string"}
+      }
+    },
+    "automation": {
+      "type": "object",
+      "required": [
+        "minimumNewEvents", "idleThresholdMs", "dailyIntervalMs",
+        "schedulerPollIntervalMs", "enabled", "model", "thinkingLevel",
+        "runsPerDay", "autoApply", "curationProtocol", "targetSourceCount",
+        "maximumSourceCount", "maximumInputTokens", "reservedContextTokens"
+      ],
+      "properties": {
+        "minimumNewEvents": {"type": "integer", "minimum": 0},
+        "idleThresholdMs": {"type": "integer", "minimum": 0},
+        "dailyIntervalMs": {"type": "integer", "minimum": 0},
+        "schedulerPollIntervalMs": {"type": "integer", "minimum": 0},
+        "enabled": {"type": "boolean"},
+        "model": {"type": "string"},
+        "thinkingLevel": {"type": "string"},
+        "runsPerDay": {"type": "integer", "minimum": 0},
+        "autoApply": {"type": "boolean"},
+        "curationProtocol": {"type": "string", "const": "atom-first-v1"},
+        "targetSourceCount": {"type": "integer", "minimum": 1},
+        "maximumSourceCount": {"type": "integer", "minimum": 1},
+        "maximumInputTokens": {"type": "integer", "minimum": 1},
+        "reservedContextTokens": {"type": "integer", "minimum": 1}
+      }
+    },
     "pendingDraftCount": {"type": "integer", "minimum": 0},
     "ownerCuration": {
       "type": "object",
@@ -72,6 +113,50 @@
         "pendingSourceCount": {"type": "integer", "minimum": 0},
         "needsReviewSourceCount": {"type": "integer", "minimum": 0},
         "scopes": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "modelCuration": {
+      "type": "object",
+      "required": [
+        "schemaVersion", "ok", "profile", "requiredModel",
+        "requiredThinkingLevel", "minimumContextTokens", "stateCounts", "runs"
+      ],
+      "properties": {
+        "schemaVersion": {"type": "string", "const": "rag-ime.memory-curation-model-status.v1"},
+        "ok": {"type": "boolean", "const": true},
+        "profile": {"type": "string", "const": "MEMORY_CURATION"},
+        "requiredModel": {"type": "string", "const": "openai-codex/gpt-5.6-luna"},
+        "requiredThinkingLevel": {"type": "string", "const": "max"},
+        "minimumContextTokens": {"type": "integer", "minimum": 272000},
+        "stateCounts": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "runs": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "bookProjection": {
+      "type": "object",
+      "required": [
+        "schemaVersion", "ok", "projectionOwner", "currentAtomCount",
+        "desiredBookCount", "activeBookCount", "historicalBookCount",
+        "unbookedAtomCount", "missingBookCount", "staleBookCount",
+        "membershipMismatchCount", "guardedBookCount", "inSync"
+      ],
+      "properties": {
+        "schemaVersion": {"type": "string", "const": "rag-ime.personal-memory-book-projection-status.v1"},
+        "ok": {"type": "boolean"},
+        "projectionOwner": {"type": "string"},
+        "currentAtomCount": {"type": "integer", "minimum": 0},
+        "desiredBookCount": {"type": "integer", "minimum": 0},
+        "activeBookCount": {"type": "integer", "minimum": 0},
+        "historicalBookCount": {"type": "integer", "minimum": 0},
+        "unbookedAtomCount": {"type": "integer", "minimum": 0},
+        "missingBookCount": {"type": "integer", "minimum": 0},
+        "staleBookCount": {"type": "integer", "minimum": 0},
+        "membershipMismatchCount": {"type": "integer", "minimum": 0},
+        "guardedBookCount": {"type": "integer", "minimum": 0},
+        "inSync": {"type": "boolean"}
       }
     },
     "projection": {

@@ -10,7 +10,7 @@ from .settings_store import ManagementSettingsStore
 from .text_utils import compact_whitespace
 
 
-DEFAULT_MAINTENANCE_MODEL = "gpt/gpt-5.6-luna"
+DEFAULT_MAINTENANCE_MODEL = "openai-codex/gpt-5.6-luna"
 DEFAULT_MAINTENANCE_THINKING_LEVEL = "max"
 SECONDS_PER_DAY = 24 * 60 * 60
 
@@ -31,8 +31,16 @@ class MemoryMaintenanceSettings:
     timeline_max_items: int = 2
 
     @classmethod
-    def load(cls, db_path: str | Path) -> "MemoryMaintenanceSettings":
-        settings = ManagementSettingsStore(db_path).get_settings(
+    def load(
+        cls,
+        db_path: str | Path,
+        *,
+        preverified_schema: bool = False,
+    ) -> "MemoryMaintenanceSettings":
+        settings = ManagementSettingsStore(
+            db_path,
+            preverified_schema=preverified_schema,
+        ).get_settings(
             include_sensitive=True
         )
         memory = _mapping(settings.get("memory"))
@@ -111,6 +119,8 @@ def _mapping(value: object) -> Mapping[str, object]:
 
 def _maintenance_model(value: object) -> str:
     model = compact_whitespace(str(value or DEFAULT_MAINTENANCE_MODEL))
+    if model == "gpt/gpt-5.6-luna":
+        return DEFAULT_MAINTENANCE_MODEL
     if "/" not in model:
         if model.casefold().replace("_", "-").startswith("deepseek-v4"):
             return f"deepseek/{model}"

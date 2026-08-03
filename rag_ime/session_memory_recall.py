@@ -64,6 +64,19 @@ _RECALL_DETAIL_PROFILES: dict[str, dict[str, int]] = {
         "atomItems": 10,
     },
 }
+_PREVERIFIED_RECALL_TABLES = frozenset(
+    {
+        "agent_memory_sources",
+        "candidate_feedback",
+        "input_events",
+        "management_settings",
+        "memory_candidate_suppressions",
+        "memory_retrieval_docs",
+        "memory_retrieval_docs_fts",
+        "memory_state",
+        "memory_tombstones",
+    }
+)
 
 
 class SessionMemoryRecallBuilder:
@@ -75,15 +88,24 @@ class SessionMemoryRecallBuilder:
         *,
         project: str = "",
         embedding_provider: EmbeddingProvider | None = None,
+        preverified_schema: bool = False,
     ) -> None:
         self.db_path = Path(db_path)
         self.project = compact_whitespace(project)
         self.embedding_provider = embedding_provider or NullEmbeddingProvider()
+        self.preverified_schema = bool(preverified_schema)
 
     def initialize(self) -> None:
+        if self.preverified_schema and not self.db_path.is_file():
+            raise FileNotFoundError(
+                f"preverified Session recall database does not exist: {self.db_path}"
+            )
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
-            apply_database_migrations(conn)
+            if self.preverified_schema:
+                _require_preverified_recall_schema(conn)
+            else:
+                apply_database_migrations(conn)
 
     @staticmethod
     def dedupe_key(session_id: str) -> str:
@@ -140,7 +162,10 @@ class SessionMemoryRecallBuilder:
             session_id=session,
             room_ids=room_ids,
         )
-        managed = MemoryMaintenanceSettings.load(self.db_path)
+        managed = MemoryMaintenanceSettings.load(
+            self.db_path,
+            preverified_schema=self.preverified_schema,
+        )
         detail_level = managed.recall_detail_level
         detail_profile = _RECALL_DETAIL_PROFILES[detail_level]
         bounded_items = max(
@@ -392,6 +417,23 @@ class SessionMemoryRecallBuilder:
             conn.close()
 
 
+def _require_preverified_recall_schema(conn: sqlite3.Connection) -> None:
+    """Verify the tables consumed by Session recall without replaying DDL."""
+
+    tables = {
+        str(row[0])
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    missing = sorted(_PREVERIFIED_RECALL_TABLES - tables)
+    if missing:
+        raise RuntimeError(
+            "preverified Session recall database is missing required tables: "
+            + ",".join(missing)
+        )
+
+
 def _select_hits(
     value: object,
     *,
@@ -410,6 +452,7 @@ def _select_hits(
     selected: list[dict[str, object]] = []
     seen_sources: set[str] = set()
     selected_book_text_by_atom: dict[str, list[str]] = {}
+    inlined_book_atom_ids: set[str] = set()
     type_counts = {"book": 0, "atom": 0, "timeline": 0}
     used_chars = 0
     eligible_count = 0
@@ -470,15 +513,22 @@ def _select_hits(
             "timeline": profile["timelineChars"],
             "atom": profile["atomChars"],
         }[doc_type]
-        text = (
-            _focused_activity_excerpt(
+        inlined_atom_ids: set[str] = set()
+        if is_activity_timeline:
+            text = _focused_activity_excerpt(
                 str(item.get("text") or ""),
                 query_text=query_text,
                 max_chars=per_item_chars,
             )
-            if is_activity_timeline
-            else truncate_text(str(item.get("text") or ""), per_item_chars)
-        )
+        elif doc_type == "book":
+            text, inlined_atom_ids = _book_recall_text(
+                str(item.get("text") or ""),
+                metadata,
+                max_chars=per_item_chars,
+                already_inlined=inlined_book_atom_ids,
+            )
+        else:
+            text = truncate_text(str(item.get("text") or ""), per_item_chars)
         if not source_id or not text or source_id in seen_sources:
             continue
         type_limit = {
@@ -523,6 +573,7 @@ def _select_hits(
         if doc_type == "book":
             for atom_id in _string_list(metadata.get("memoryAtomIds"), 256):
                 selected_book_text_by_atom.setdefault(atom_id, []).append(text)
+            inlined_book_atom_ids.update(inlined_atom_ids)
         seen_sources.add(source_id)
         type_counts[doc_type] += 1
         used_chars += len(text)
@@ -543,6 +594,50 @@ def _select_hits(
         for rank, item in enumerate(selected, start=1):
             item["rank"] = rank
     return selected, max(0, eligible_count - len(selected))
+
+
+def _book_recall_text(
+    summary_text: str,
+    metadata: Mapping[str, object],
+    *,
+    max_chars: int,
+    already_inlined: set[str],
+) -> tuple[str, set[str]]:
+    """Expand a Book only when every member fits this consumer's budget."""
+
+    summary = truncate_text(summary_text, max_chars)
+    atom_ids = _string_list(metadata.get("memoryAtomIds"), 256)
+    if not atom_ids or metadata.get("inlineAtomsComplete") is not True:
+        return summary, set()
+    inline_rows = [
+        dict(item)
+        for item in metadata.get("inlineAtoms") or []
+        if isinstance(item, Mapping)
+    ]
+    inline_by_id = {
+        compact_whitespace(str(item.get("atomId") or "")): compact_whitespace(
+            str(item.get("text") or "")
+        )
+        for item in inline_rows
+        if compact_whitespace(str(item.get("atomId") or ""))
+        and compact_whitespace(str(item.get("text") or ""))
+    }
+    if any(atom_id not in inline_by_id for atom_id in atom_ids):
+        return summary, set()
+
+    expanded = compact_whitespace(summary_text)
+    newly_inlined: set[str] = set()
+    for atom_id in atom_ids:
+        if atom_id in already_inlined:
+            continue
+        atom_text = inline_by_id[atom_id]
+        newly_inlined.add(atom_id)
+        if _coverage_text(atom_text) in _coverage_text(expanded):
+            continue
+        expanded = compact_whitespace(f"{expanded} 主题事实：{atom_text}")
+    if len(expanded) > max_chars:
+        return summary, set()
+    return expanded, newly_inlined
 
 
 def _atom_text_is_covered_by_selected_book(
@@ -572,6 +667,10 @@ def _human_memory_title(doc_type: str, metadata: Mapping[str, object]) -> str:
     kind = compact_whitespace(str(metadata.get("kind") or "")).casefold()
     labels = {
         "preference": "用户偏好",
+        "durable_preference": "用户偏好",
+        "personal_fact": "个人信息",
+        "personal_habit": "个人习惯",
+        "personal_principle": "个人原则",
         "project_fact": "项目事实",
         "project_requirement": "项目要求",
         "decision": "已确认决定",

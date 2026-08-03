@@ -237,6 +237,32 @@ class ManagementPaginationTests(unittest.TestCase):
         )
         self.assertEqual(source_archive["items"][0]["status"], "source_archive")
 
+    def test_memory_atom_current_status_includes_active_and_approved(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.executemany(
+                """
+                INSERT INTO memory_atoms(
+                    id, kind, text, source_event_ids_json, source_memory_ids_json,
+                    privacy_level, status, created_at_ms, updated_at_ms
+                ) VALUES (?, 'preference', ?, '[]', '[]', 'local', ?, 1, 1)
+                """,
+                (
+                    ("atom:active-current", "自动启用记忆", "active"),
+                    ("atom:approved-current", "用户确认记忆", "approved"),
+                    ("atom:archived-history", "历史归档记忆", "archived"),
+                ),
+            )
+
+        result = self.service.management.memory_page(
+            "atoms",
+            page_request({"limit": 10, "status": "current"}),
+        )
+
+        self.assertEqual(
+            {str(item["id"]) for item in result["items"]},
+            {"atom:active-current", "atom:approved-current"},
+        )
+
     def test_memory_groups_are_paginated_human_readable_and_do_not_return_raw_events(self) -> None:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(

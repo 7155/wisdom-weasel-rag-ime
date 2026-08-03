@@ -141,6 +141,21 @@ class SessionMemoryRecallTests(unittest.TestCase):
         self.assertFalse(role_a_payload["retrieval"]["activityTimelineIncluded"])
         self.assertEqual(role_a["lifecycle"], "persistent")
 
+    def test_preverified_snapshot_initializes_without_replaying_migrations(self) -> None:
+        builder = SessionMemoryRecallBuilder(
+            self.db_path,
+            project=PROJECT,
+            preverified_schema=True,
+        )
+
+        with patch(
+            "rag_ime.session_memory_recall.apply_database_migrations",
+            side_effect=AssertionError("migration replay is forbidden"),
+        ) as migrate:
+            builder.initialize()
+
+        migrate.assert_not_called()
+
     def test_corrected_content_with_same_source_id_changes_refresh_identity(self) -> None:
         def retrieval(text: str) -> dict[str, object]:
             return {
@@ -337,6 +352,137 @@ class SessionMemoryRecallTests(unittest.TestCase):
         )
         self.assertEqual(selected[0]["rank"], 1)
         self.assertEqual(omitted, 1)
+
+    def test_small_book_injects_all_atoms_within_consumer_budget(self) -> None:
+        selected, _ = _select_hits(
+            [
+                {
+                    "doc_type": "book",
+                    "source_id": "book:input-method",
+                    "text": "输入法长期约束。",
+                    "score": 1.2,
+                    "confidence": 1.0,
+                    "tags": ["输入法"],
+                    "metadata": {
+                        "lanes": ["bm25_raw"],
+                        "memoryAtomIds": ["atom:rime", "atom:stale"],
+                        "inlineAtomsComplete": True,
+                        "inlineAtoms": [
+                            {
+                                "atomId": "atom:rime",
+                                "text": "Rime 候选不能被模型候选重排。",
+                            },
+                            {
+                                "atomId": "atom:stale",
+                                "text": "应用切换后必须让旧模型候选失效。",
+                            },
+                        ],
+                    },
+                }
+            ],
+            query_text="输入法候选约束",
+            max_items=8,
+            max_chars=6_400,
+        )
+
+        self.assertIn("Rime 候选不能被模型候选重排", selected[0]["text"])
+        self.assertIn("应用切换后必须让旧模型候选失效", selected[0]["text"])
+
+    def test_large_book_keeps_summary_and_leaves_relevant_atom_selectable(self) -> None:
+        oversized = "完整事实" * 300
+        selected, _ = _select_hits(
+            [
+                {
+                    "doc_type": "book",
+                    "source_id": "book:large",
+                    "text": "大型主题书摘要。",
+                    "score": 1.2,
+                    "confidence": 1.0,
+                    "tags": ["记忆"],
+                    "metadata": {
+                        "lanes": ["bm25_raw"],
+                        "memoryAtomIds": ["atom:large"],
+                        "inlineAtomsComplete": True,
+                        "inlineAtoms": [
+                            {"atomId": "atom:large", "text": oversized}
+                        ],
+                    },
+                },
+                {
+                    "doc_type": "atom",
+                    "source_id": "atom:large",
+                    "text": "当前查询真正相关的独立事实。",
+                    "score": 1.1,
+                    "confidence": 1.0,
+                    "tags": ["记忆"],
+                    "metadata": {"lanes": ["bm25_raw"]},
+                },
+            ],
+            query_text="记忆事实",
+            max_items=8,
+            max_chars=6_400,
+        )
+
+        self.assertEqual(
+            [item["sourceId"] for item in selected],
+            ["book:large", "atom:large"],
+        )
+        self.assertEqual(selected[0]["text"], "大型主题书摘要。")
+
+    def test_overlapping_small_books_inline_shared_atom_only_once(self) -> None:
+        shared = "应用切换后必须让旧模型候选失效。"
+        selected, _ = _select_hits(
+            [
+                {
+                    "doc_type": "book",
+                    "source_id": "book:input-method",
+                    "text": "输入法主题。",
+                    "score": 1.2,
+                    "confidence": 1.0,
+                    "tags": ["输入法"],
+                    "metadata": {
+                        "lanes": ["bm25_raw"],
+                        "memoryAtomIds": ["atom:shared", "atom:rime"],
+                        "inlineAtomsComplete": True,
+                        "inlineAtoms": [
+                            {"atomId": "atom:shared", "text": shared},
+                            {
+                                "atomId": "atom:rime",
+                                "text": "Rime 候选保持原始排序。",
+                            },
+                        ],
+                    },
+                },
+                {
+                    "doc_type": "book",
+                    "source_id": "book:context",
+                    "text": "上下文稳定性主题。",
+                    "score": 1.1,
+                    "confidence": 1.0,
+                    "tags": ["上下文"],
+                    "metadata": {
+                        "lanes": ["bm25_raw"],
+                        "memoryAtomIds": ["atom:shared", "atom:focus"],
+                        "inlineAtomsComplete": True,
+                        "inlineAtoms": [
+                            {"atomId": "atom:shared", "text": shared},
+                            {
+                                "atomId": "atom:focus",
+                                "text": "焦点变化后必须刷新上下文纪元。",
+                            },
+                        ],
+                    },
+                },
+            ],
+            query_text="输入法上下文稳定性",
+            max_items=8,
+            max_chars=6_400,
+        )
+
+        rendered = " ".join(str(item["text"]) for item in selected)
+        self.assertEqual(rendered.count(shared), 1)
+        self.assertIn("Rime 候选保持原始排序", rendered)
+        self.assertIn("焦点变化后必须刷新上下文纪元", rendered)
 
     def test_compaction_refresh_injects_task_plan_and_recent_dialogue_without_debug_metadata(self) -> None:
         event_id = self._record_input("压缩后继续完成 Session RAG 上下文")

@@ -35,6 +35,64 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ManagementWorkContractUnitTests(unittest.TestCase):
+    def test_domain_mutations_enforce_foreign_key_cascades(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-work-foreign-keys-") as tmp:
+            db_path = Path(tmp) / "work.sqlite"
+            ManagementSettingsStore(db_path).initialize()
+            with sqlite3.connect(db_path) as conn:
+                conn.executescript(
+                    """
+                    CREATE TABLE work_contract_parent(id TEXT PRIMARY KEY);
+                    CREATE TABLE work_contract_child(
+                        parent_id TEXT NOT NULL
+                            REFERENCES work_contract_parent(id) ON DELETE CASCADE
+                    );
+                    INSERT INTO work_contract_parent(id) VALUES ('parent:one');
+                    INSERT INTO work_contract_child(parent_id) VALUES ('parent:one');
+                    """
+                )
+
+            contract = ManagementWorkContract(db_path=db_path)
+            domain = {"parentId": "parent:one"}
+            revision = {"runtimeRevision": 1, "subjectRevision": "sha256:before"}
+            preview = contract.create_preview(
+                path_id="test.parent.delete",
+                payload=domain,
+                expected_revision=revision,
+                required_confirm="delete",
+                summary={"title": "删除父记录", "items": [], "risk": "R2"},
+            )
+
+            def delete_parent(conn: sqlite3.Connection) -> WorkExecution:
+                conn.execute(
+                    "DELETE FROM work_contract_parent WHERE id = ?",
+                    (domain["parentId"],),
+                )
+                return WorkExecution(
+                    result={"ok": True},
+                    audit_action="test_parent_delete",
+                    target_type="test_parent",
+                    target_id=str(domain["parentId"]),
+                )
+
+            contract.execute_apply(
+                path_id="test.parent.delete",
+                payload=domain,
+                preview_token=str(preview["previewToken"]),
+                payload_sha256=str(preview["payloadSha256"]),
+                confirm_text="delete",
+                current_revision=lambda _conn: revision,
+                executor=delete_parent,
+            )
+
+            with sqlite3.connect(db_path) as conn:
+                child_count = int(
+                    conn.execute("SELECT COUNT(*) FROM work_contract_child").fetchone()[0]
+                )
+                violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+            self.assertEqual(child_count, 0)
+            self.assertEqual(violations, [])
+
     def test_preview_apply_and_rollback_are_hash_revision_and_token_bound(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-work-contract-") as tmp:
             db_path = Path(tmp) / "work.sqlite"

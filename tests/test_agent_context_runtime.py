@@ -12,6 +12,7 @@ from rag_ime.agent_context_runtime import (
     AgentContextRuntime,
     compose_runtime_prompt,
     render_context_items,
+    render_provider_context_items,
 )
 from rag_ime.agent_memory_context_support import recall_messages
 from rag_ime.agent_sessions import AgentSessionStore
@@ -390,6 +391,67 @@ class AgentContextRuntimeTests(unittest.TestCase):
         self.assertIn("#### 代码任务交付偏好", rendered)
         self.assertIn("先读测试，再做最小改动。", rendered)
         self.assertEqual(rendered.count("代码任务交付偏好"), 1)
+
+    def test_provider_context_keeps_only_recalled_evidence_in_rag_block(self) -> None:
+        rendered = render_provider_context_items(
+            [
+                {
+                    "sourceKind": "memory_bootstrap",
+                    "payload": {
+                        "schemaVersion": "rag-ime.session-memory-recall.v1",
+                        "retrieval": {"temporalIntent": False},
+                        "recentConversation": [
+                            {"role": "user", "text": "不应重复注入的旧输入"}
+                        ],
+                        "task": {
+                            "objective": "修正 Provider 上下文顺序",
+                            "acceptanceCriteria": ["CURRENT-ORDER"],
+                        },
+                        "items": [
+                            {
+                                "sourceType": "memory_atom",
+                                "title": "偏好",
+                                "text": "优先保持缓存前缀稳定。",
+                            }
+                        ],
+                    },
+                }
+            ]
+        )
+
+        self.assertEqual(
+            rendered.count('<rag-ime-context type="memory_recall">'),
+            1,
+        )
+        rag_block = rendered.split(
+            '<rag-ime-context type="memory_recall">',
+            maxsplit=1,
+        )[1].split("</rag-ime-context>", maxsplit=1)[0]
+        self.assertIn("优先保持缓存前缀稳定", rag_block)
+        self.assertNotIn("Provider 上下文顺序", rag_block)
+        self.assertNotIn("CURRENT-ORDER", rag_block)
+        self.assertIn("<work-state>", rendered)
+        self.assertIn("Provider 上下文顺序", rendered)
+        self.assertNotIn("## 最近对话", rendered)
+        self.assertNotIn("不应重复注入的旧输入", rendered)
+
+    def test_provider_context_omits_rag_block_without_recalled_evidence(self) -> None:
+        rendered = render_provider_context_items(
+            [
+                {
+                    "sourceKind": "memory_bootstrap",
+                    "payload": {
+                        "schemaVersion": "rag-ime.session-memory-recall.v1",
+                        "task": {"objective": "保留工作状态"},
+                        "items": [],
+                    },
+                }
+            ]
+        )
+
+        self.assertNotIn("<rag-ime-context", rendered)
+        self.assertIn("<work-state>", rendered)
+        self.assertIn("保留工作状态", rendered)
 
     def test_compaction_history_cannot_override_current_task_or_plan(self) -> None:
         rendered = render_context_items(

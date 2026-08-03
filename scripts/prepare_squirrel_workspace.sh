@@ -107,6 +107,7 @@ install_assistant_overlay_v2_sources() {
     RagImeSuggestionRowView.swift
     RagImeNonActivatingPanel.swift
     RagImeAssistantPanelController.swift
+    RagImeInputCaptureOutbox.swift
   )
   for file in "${files[@]}"; do
     if [[ ! -f "$source_dir/$file" ]]; then
@@ -161,6 +162,22 @@ insert_after(
     '\t\t\t\tB3A778042F330001009D156B /* RagImeSuggestionCardView.swift in Sources */,\n'
     '\t\t\t\tB3A778062F330001009D156B /* RagImeSuggestionRowView.swift in Sources */,\n'
     '\t\t\t\tB3A778082F330001009D156B /* RagImeNonActivatingPanel.swift in Sources */,\n',
+)
+insert_after(
+    '\t\tB3A778082F330001009D156B /* RagImeNonActivatingPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A778072F330001009D156B /* RagImeNonActivatingPanel.swift */; };\n',
+    '\t\tB3A779022F330001009D156B /* RagImeInputCaptureOutbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A779012F330001009D156B /* RagImeInputCaptureOutbox.swift */; };\n',
+)
+insert_after(
+    '\t\tB3A778072F330001009D156B /* RagImeNonActivatingPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RagImeNonActivatingPanel.swift; path = sources/RagImeNonActivatingPanel.swift; sourceTree = "<group>"; };\n',
+    '\t\tB3A779012F330001009D156B /* RagImeInputCaptureOutbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RagImeInputCaptureOutbox.swift; path = sources/RagImeInputCaptureOutbox.swift; sourceTree = "<group>"; };\n',
+)
+insert_after(
+    '\t\t\t\tB3A778072F330001009D156B /* RagImeNonActivatingPanel.swift */,\n',
+    '\t\t\t\tB3A779012F330001009D156B /* RagImeInputCaptureOutbox.swift */,\n',
+)
+insert_after(
+    '\t\t\t\tB3A778082F330001009D156B /* RagImeNonActivatingPanel.swift in Sources */,\n',
+    '\t\t\t\tB3A779022F330001009D156B /* RagImeInputCaptureOutbox.swift in Sources */,\n',
 )
 path.write_text(text, encoding="utf-8")
 PY
@@ -495,7 +512,7 @@ require_patch_text "sources/SquirrelInputController.swift" "mergedRagImePanelCan
 require_patch_text "sources/SquirrelInputController.swift" "ragImePanelForcesHorizontalLayout" "LLM horizontal-lane layout guard"
 require_patch_text "sources/SquirrelInputController.swift" "ragImePanelUsesSideDisplay" "RAG-IME side-display panel marker"
 require_patch_text "sources/SquirrelInputController.swift" "traceRagImeFrontendEvent" "foreground frontend trace hook"
-require_patch_text "sources/SquirrelInputController.swift" "guard ragImeSidecarClient?.frontendTrace == true else { return }" "frontend trace configuration gate"
+require_patch_text "sources/SquirrelInputController.swift" "guard ragImeSidecarClient?.frontendTrace == true || isCaptureDeliveryEvent else { return }" "frontend trace configuration gate"
 require_patch_text "sources/SquirrelInputController.swift" "guard !ragImeSensitiveFieldActive || sensitiveSafeEvents.contains(event) else { return }" "sensitive-field trace suppression"
 require_patch_text "sources/SquirrelInputController.swift" "ragImePrepareFrontendTraceLog" "bounded frontend trace log"
 require_patch_text "sources/SquirrelInputController.swift" ".posixPermissions: 0o600" "private frontend trace permissions"
@@ -613,10 +630,16 @@ if command -v swiftc >/dev/null 2>&1; then
   module_cache="$tmpdir/module-cache"
   mkdir -p "$module_cache"
   printf 'import Foundation\nfinal class SquirrelConfig {\n  func getBool(_ option: String) -> Bool? { nil }\n  func getString(_ option: String) -> String? { nil }\n  func getDouble(_ option: String) -> Double? { nil }\n}\n' > "$stubfile"
+  sidecar_typecheck_sources=(
+    "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift"
+    "$SQUIRREL_WORKDIR/sources/RagImeSidecarClient.swift"
+  )
+  if grep -Fq "RagImeInputCaptureOutbox" "$SQUIRREL_WORKDIR/sources/RagImeSidecarClient.swift"; then
+    sidecar_typecheck_sources+=("$SQUIRREL_WORKDIR/sources/RagImeInputCaptureOutbox.swift")
+  fi
   swiftc -typecheck \
     -module-cache-path "$module_cache" \
-    "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift" \
-    "$SQUIRREL_WORKDIR/sources/RagImeSidecarClient.swift" \
+    "${sidecar_typecheck_sources[@]}" \
     "$stubfile"
   swiftc -typecheck \
     -module-cache-path "$module_cache" \

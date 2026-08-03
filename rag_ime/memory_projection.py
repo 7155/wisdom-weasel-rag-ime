@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import AbstractContextManager
+from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any, Callable
 
+from .db.migration_runner import DEFAULT_MIGRATIONS_DIR
 from .embeddings import EmbeddingProvider
 from .memory_ingest import normalize_text
 from .text_utils import compact_whitespace, now_ms
@@ -199,6 +201,8 @@ def process_memory_projection_outbox(
     max_attempts: int = 5,
     processing_lease_ms: int = DEFAULT_PROCESSING_LEASE_MS,
     current_ms: int | None = None,
+    migrations_dir: str | Path = DEFAULT_MIGRATIONS_DIR,
+    preverified_schema: bool = False,
 ) -> dict[str, object]:
     """Claim and materialize a bounded batch with retry and lease recovery.
 
@@ -263,6 +267,8 @@ def process_memory_projection_outbox(
                 row=row,
                 embedding_provider=embedding_provider,
                 timestamp=timestamp,
+                migrations_dir=migrations_dir,
+                preverified_schema=preverified_schema,
             )
             conn.execute(
                 """
@@ -689,6 +695,8 @@ def _materialize_event(
     row: sqlite3.Row,
     embedding_provider: EmbeddingProvider | None,
     timestamp: int,
+    migrations_dir: str | Path,
+    preverified_schema: bool,
 ) -> dict[str, object]:
     payload = _json_object(row["payload_json"])
     project = compact_whitespace(str(payload.get("project") or ""))
@@ -708,6 +716,8 @@ def _materialize_event(
             include_phrases=True,
             include_legacy_items=False,
             source_refs=source_refs,
+            migrations_dir=migrations_dir,
+            preverified_schema=preverified_schema,
         )
         vector_outbox_id = enqueue_memory_projection(
             conn,

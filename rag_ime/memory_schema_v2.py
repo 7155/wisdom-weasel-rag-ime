@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 from .db import apply_database_migrations
+from .db.migration_runner import DEFAULT_MIGRATIONS_DIR
 from .memory_book_schema import memory_book_table_names
 
 
-def ensure_memory_v2_schema(conn: sqlite3.Connection) -> None:
-    apply_database_migrations(conn)
+def ensure_memory_v2_schema(
+    conn: sqlite3.Connection,
+    *,
+    migrations_dir: str | Path = DEFAULT_MIGRATIONS_DIR,
+) -> None:
+    apply_database_migrations(conn, migrations_dir=migrations_dir)
 
 
 def memory_v2_table_names() -> tuple[str, ...]:

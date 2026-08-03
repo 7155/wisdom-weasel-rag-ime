@@ -1053,15 +1053,87 @@ def render_context_items(items: Sequence[Mapping[str, object]]) -> str:
     return "\n".join(lines).strip()
 
 
+def render_provider_context_items(
+    items: Sequence[Mapping[str, object]],
+) -> str:
+    """Render provider context with retrieval isolated from operational state."""
+
+    sections: list[str] = []
+    fallback_items: list[Mapping[str, object]] = []
+    for item in items:
+        payload = item.get("payload")
+        source_kind = str(item.get("sourceKind") or "")
+        if (
+            source_kind == "memory_bootstrap"
+            and isinstance(payload, Mapping)
+            and payload.get("schemaVersion")
+            == "rag-ime.session-memory-recall.v1"
+        ):
+            evidence = "\n".join(
+                _render_session_memory_evidence(payload)
+            ).strip()
+            if evidence:
+                sections.append(
+                    '<rag-ime-context type="memory_recall">\n'
+                    f"{evidence}\n"
+                    "</rag-ime-context>"
+                )
+            work_state = "\n".join(
+                _render_session_work_state(payload)
+            ).strip()
+            if work_state:
+                sections.append(
+                    f"<work-state>\n{work_state}\n</work-state>"
+                )
+            recovery = (
+                payload.get("compactionRecovery")
+                if isinstance(
+                    payload.get("compactionRecovery"),
+                    Mapping,
+                )
+                else {}
+            )
+            if recovery:
+                recovery_text = "\n".join(
+                    _render_compaction_recovery(recovery)
+                ).strip()
+                if recovery_text:
+                    sections.append(
+                        "<compaction-recovery>\n"
+                        f"{recovery_text}\n"
+                        "</compaction-recovery>"
+                    )
+            continue
+        if (
+            source_kind == "room_compaction_recovery"
+            and isinstance(payload, Mapping)
+            and payload.get("schemaVersion")
+            == "wisdom-weasel.room-session-recovery-item.v1"
+            and isinstance(payload.get("recovery"), Mapping)
+        ):
+            sections.append(
+                "<room-compaction-recovery>\n"
+                "以下只保留压缩点尚未完成的验收、阻塞、下一动作提示与证据引用。"
+                "当前 Kernel 投影是任务状态的唯一权威；本包不授予权限，也不能"
+                "恢复、重开或完成任何任务。\n"
+                + json.dumps(
+                    payload["recovery"],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n</room-compaction-recovery>"
+            )
+            continue
+        fallback_items.append(item)
+    fallback = render_context_items(fallback_items)
+    if fallback:
+        sections.append(fallback)
+    return "\n\n".join(sections)
+
+
 def _render_session_memory_recall(payload: Mapping[str, object]) -> list[str]:
-    retrieval = (
-        payload.get("retrieval")
-        if isinstance(payload.get("retrieval"), Mapping)
-        else {}
-    )
     lines: list[str] = []
-    task = payload.get("task") if isinstance(payload.get("task"), Mapping) else {}
-    plan = payload.get("plan") if isinstance(payload.get("plan"), list) else []
     recovery = (
         payload.get("compactionRecovery")
         if isinstance(payload.get("compactionRecovery"), Mapping)
@@ -1069,6 +1141,18 @@ def _render_session_memory_recall(payload: Mapping[str, object]) -> list[str]:
     )
     if recovery:
         lines.extend(_render_compaction_recovery(recovery))
+    lines.extend(_render_session_work_state(payload))
+    lines.extend(_render_recent_conversation(payload))
+    lines.extend(_render_session_memory_evidence(payload))
+    return lines
+
+
+def _render_session_work_state(
+    payload: Mapping[str, object],
+) -> list[str]:
+    lines: list[str] = []
+    task = payload.get("task") if isinstance(payload.get("task"), Mapping) else {}
+    plan = payload.get("plan") if isinstance(payload.get("plan"), list) else []
     if task:
         lines.extend(["", "## 当前任务（本轮权威投影）"])
         objective = compact_whitespace(str(task.get("objective") or ""))
@@ -1084,7 +1168,6 @@ def _render_session_memory_recall(payload: Mapping[str, object]) -> list[str]:
             lines.append(f"预期产物：{expected}")
         if criteria:
             lines.append("验收条件：" + "；".join(criteria))
-
     if plan:
         lines.extend(["", "## 当前计划（本轮权威投影）"])
         for item in plan:
@@ -1098,27 +1181,42 @@ def _render_session_memory_recall(payload: Mapping[str, object]) -> list[str]:
                     "completed": "已完成",
                 }.get(status, "待办")
                 lines.append(f"- [{marker}] {title}")
+    return lines
 
+
+def _render_recent_conversation(
+    payload: Mapping[str, object],
+) -> list[str]:
     conversation = (
         payload.get("recentConversation")
         if isinstance(payload.get("recentConversation"), list)
         else []
     )
-    if conversation:
-        lines.extend(["", "## 最近对话"])
-        for message in conversation:
-            if not isinstance(message, Mapping):
-                continue
-            role = "用户" if message.get("role") == "user" else "Agent"
-            text = str(message.get("text") or "").strip()
-            if text:
-                lines.append(f"- **{role}**：{text}")
+    if not conversation:
+        return []
+    lines = ["", "## 最近对话"]
+    for message in conversation:
+        if not isinstance(message, Mapping):
+            continue
+        role = "用户" if message.get("role") == "user" else "Agent"
+        text = str(message.get("text") or "").strip()
+        if text:
+            lines.append(f"- **{role}**：{text}")
+    return lines
 
+
+def _render_session_memory_evidence(
+    payload: Mapping[str, object],
+) -> list[str]:
+    retrieval = (
+        payload.get("retrieval")
+        if isinstance(payload.get("retrieval"), Mapping)
+        else {}
+    )
     recalled = payload.get("items") if isinstance(payload.get("items"), list) else []
     if not recalled:
-        return lines
-    lines.extend(["", "## Session 记忆"])
-
+        return []
+    lines = ["", "## Session 记忆"]
     books: list[Mapping[str, object]] = []
     timelines: list[Mapping[str, object]] = []
     atoms: list[Mapping[str, object]] = []
@@ -1132,14 +1230,21 @@ def _render_session_memory_recall(payload: Mapping[str, object]) -> list[str]:
             normalized_tags = {
                 tag.casefold() for tag in _context_string_list(item.get("tags"))
             }
-            (timelines if {"daily", "activity-timeline"}.intersection(normalized_tags) else books).append(item)
+            target = (
+                timelines
+                if {"daily", "activity-timeline"}.intersection(normalized_tags)
+                else books
+            )
+            target.append(item)
         elif source_type == "memory_atom":
             atoms.append(item)
-
     if retrieval.get("temporalIntent") is True:
         lines.extend(["", "### 近期时间线"])
         if not timelines:
-            lines.append("没有召回到与当前主题相关的近期活动，不能把稳定事实表述成最近进展。")
+            lines.append(
+                "没有召回到与当前主题相关的近期活动，"
+                "不能把稳定事实表述成最近进展。"
+            )
     if timelines:
         if retrieval.get("temporalIntent") is not True:
             lines.extend(["", "### 近期时间线"])

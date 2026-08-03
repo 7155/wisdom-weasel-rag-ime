@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import sqlite3
@@ -103,10 +104,44 @@ class LocalSqliteCoreClientTests(unittest.TestCase):
         self.assertEqual(self.db_path.stat().st_mode & 0o777, 0o600)
 
     def test_reset_clears_v2_governance_state_for_deterministic_gates(self) -> None:
-        self.adapter.commit_text(
-            "重置前的真实输入证据",
-            source="manual_commit",
-            privacy_disposition="allowed",
+        text = "重置前的真实输入证据。"
+        self.core.record_event_with_capture_receipt(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_000,
+                source="squirrel_input_segment",
+                committed_text=text,
+                privacy_disposition="allowed",
+                app="com.apple.TextEdit",
+                project="wisdom-weasel-rag-ime",
+                capture_metadata={
+                    "schemaVersion": "rag-ime.input-capture.v2",
+                    "captureId": "capture:reset:1",
+                    "transactionId": "transaction:reset:1",
+                    "sequence": 1,
+                    "channel": "input_method",
+                    "boundaryKind": "host_return",
+                    "boundaryConfidence": "strong",
+                    "nativeCompositionBefore": False,
+                    "rimeHandled": False,
+                    "hostForwarded": True,
+                    "modifiedReturn": False,
+                    "finalCommitted": True,
+                    "controllerEpoch": 1,
+                    "focusEpoch": 1,
+                    "appBundleId": "com.apple.TextEdit",
+                    "fieldIdentitySha256": hashlib.sha256(b"reset-field").hexdigest(),
+                    "privacyRevision": "foreground-privacy.v1",
+                    "occurredStartMs": 1_000,
+                    "occurredEndMs": 1_020,
+                    "contentSha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                    "captureSource": "text_input_client",
+                    "fallbackReason": "",
+                    "fieldContextChars": len(text),
+                    "imeBufferChars": len(text),
+                    "selectionRule": "final_committed_segment",
+                },
+            )
         )
         self.core.add_memory_tombstone(
             target_type="phrase",

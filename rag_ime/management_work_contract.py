@@ -415,6 +415,11 @@ class ManagementWorkContract:
     def _connect(self) -> "_ConnectionContext":
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        # Work-contract executors perform domain writes on this connection,
+        # including rollback of parent rows such as Memory Atoms. Keep the
+        # same referential-integrity contract as LocalSqliteCoreClient so a
+        # management apply/rollback cannot strand child projections.
+        conn.execute("PRAGMA foreign_keys = ON")
         apply_database_migrations(conn)
         return _ConnectionContext(conn)
 

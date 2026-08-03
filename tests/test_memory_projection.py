@@ -269,6 +269,35 @@ class MemoryProjectionTests(unittest.TestCase):
         self.assertEqual(documents["targetSourceCount"], 2)
         self.assertEqual(unrelated_text, "无关来源旧文本")
 
+    def test_preverified_projection_does_not_reopen_the_migration_ledger(self) -> None:
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            self._insert_phrase(
+                conn,
+                memory_id="phrase:preverified-candidate",
+                text="候选库投影只使用已验证模式",
+            )
+            enqueue_memory_projection(
+                conn,
+                projection_kind=RETRIEVAL_DOCS_PROJECTION,
+                aggregate_type="memory_item",
+                aggregate_id="phrase:preverified-candidate",
+                operation="upsert",
+                project="project-a",
+            )
+            with patch(
+                "rag_ime.retrieval_docs.ensure_memory_v2_schema",
+                side_effect=AssertionError("migration ledger reopened"),
+            ):
+                report = process_memory_projection_outbox(
+                    conn,
+                    embedding_provider=self.provider,
+                    max_events=1,
+                    preverified_schema=True,
+                )
+
+        self.assertEqual(len(report["applied"]), 1)
+        self.assertEqual(report["failed"], [])
+
     def test_supersession_run_rebuilds_its_dependent_book_projection(self) -> None:
         first_event_id = self._record_source_event()
         first_plan = memory_book_plan_from_compile_output(

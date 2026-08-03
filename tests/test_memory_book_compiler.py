@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from contextlib import closing, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 import rag_ime.cli as cli_module
 from rag_ime.cli import main
@@ -89,7 +90,7 @@ class MemoryBookCompilerTests(unittest.TestCase):
                 InputEvent(
                     event_id=None,
                     created_at_ms=now_ms(),
-                    source="manual",
+                    source="squirrel_assistant_remember",
                     committed_text="RAG 输入法多路召回方案",
                     privacy_disposition="allowed",
                     recent_context="BM25 向量 TagMemo Time DeepSeek",
@@ -113,6 +114,7 @@ class MemoryBookCompilerTests(unittest.TestCase):
             [
                 {
                     "sourceIds": [f"input-memory:{index}"],
+                    "evidenceIds": [f"evidence:input:{index}"],
                     "sourceEventIds": [index],
                     "text": "片",
                     "recentContext": f"累计上下文{index}",
@@ -124,7 +126,28 @@ class MemoryBookCompilerTests(unittest.TestCase):
 
         self.assertEqual(len(collapsed["sourceIds"]), 300)
         self.assertEqual(collapsed["sourceIds"][-1], "input-memory:300")
+        self.assertEqual(len(collapsed["evidenceIds"]), 300)
+        self.assertEqual(collapsed["evidenceId"], "")
         self.assertEqual(len(collapsed["sourceEventIds"]), 300)
+
+    def test_rime_reconstruction_retains_only_surrounding_ax_context(self) -> None:
+        prefix = "终端中上一条命令与当前目录信息 " * 4
+        collapsed = collapse_rime_fragment_run(
+            [
+                {
+                    "sourceIds": ["input-memory:1"],
+                    "evidenceIds": ["evidence:input:1"],
+                    "sourceEventIds": [1],
+                    "text": "git status",
+                    "recentContext": prefix + "git status",
+                    "createdAtMs": 1,
+                }
+            ]
+        )
+
+        self.assertEqual(collapsed["text"], "git status")
+        self.assertEqual(collapsed["recentContext"], prefix.strip())
+        self.assertNotIn("git status", collapsed["recentContext"])
 
     def test_memory_book_preview_is_dry_run(self) -> None:
         builder_calls: list[
@@ -159,7 +182,7 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(
             builder_calls,
-            [((self.db_path, "gpt/gpt-5.6-luna", "max"), {})],
+            [((self.db_path, "openai-codex/gpt-5.6-luna", "max"), {})],
         )
         self.assertTrue(payload["dryRun"])
         self.assertTrue(payload["validation"]["ok"])
@@ -296,7 +319,7 @@ class MemoryBookCompilerTests(unittest.TestCase):
                 InputEvent(
                     event_id=None,
                     created_at_ms=now_ms(),
-                    source="manual",
+                    source="squirrel_assistant_remember",
                     committed_text="后续证据已经生成并应用新的记忆草案",
                     privacy_disposition="allowed",
                     recent_context="",
@@ -391,8 +414,8 @@ class MemoryBookCompilerTests(unittest.TestCase):
             InputEvent(
                 event_id=None,
                 created_at_ms=now_ms(),
-                source="pi_agent_user",
-                committed_text="请解释 tool_search 和 tool_load 的职责边界。",
+                source="squirrel_assistant_remember",
+                committed_text="我长期希望先解释 tool_search 和 tool_load 的职责边界。",
                 privacy_disposition="allowed",
                 project="wisdom-weasel-rag-ime",
             )
@@ -409,7 +432,7 @@ class MemoryBookCompilerTests(unittest.TestCase):
         texts = [str(item["text"]) for item in bundle["recentEvents"]]
         self.assertNotIn(prompts[0], texts)
         self.assertNotIn(prompts[1], texts)
-        self.assertIn("请解释 tool_search 和 tool_load 的职责边界。", texts)
+        self.assertIn("我长期希望先解释 tool_search 和 tool_load 的职责边界。", texts)
         self.assertEqual(bundle["reconstruction"]["droppedRuntimeProbeCount"], 2)
 
     def test_memory_book_compile_requires_source_event_ids(self) -> None:
@@ -1063,13 +1086,30 @@ class MemoryBookCompilerTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_books").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM memory_atoms").fetchone()[0], 0)
 
+    def test_owner_draft_does_not_replay_legacy_compile_state_migrations(self) -> None:
+        plan = memory_book_plan_from_compile_output(
+            sample_compile_output(self.event_id),
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            run_kind="daily_curation",
+        )
+
+        with self.core._connect() as conn, patch(
+            "rag_ime.memory_book_compiler.apply_database_migrations",
+            side_effect=AssertionError("owner draft must use its existing schema"),
+        ):
+            draft = store_memory_book_plan(conn, plan)
+
+        self.assertEqual(draft["status"], "draft")
+
     def test_owner_run_transitions_every_physical_source_beyond_legacy_cap(self) -> None:
         first_event_id = int(
             self.core.record_event(
                 InputEvent(
                     event_id=None,
                     created_at_ms=10_000,
-                    source="manual_commit",
+                    source="squirrel_assistant_remember",
                     committed_text="一条重建后的长输入",
                     privacy_disposition="allowed",
                     project="wisdom-weasel-rag-ime",

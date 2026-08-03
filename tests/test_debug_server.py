@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -23,10 +24,55 @@ import rag_ime.debug_server as debug_server_module
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.memory_generator import GeneratedMemoryItem, GeneratedMemoryReport
+from rag_ime.memory_evidence_admission import transition_evidence_admission
 from rag_ime.memory_models import ImeQueryContext
-from rag_ime.models import InputSuggestion, MemoryAction, ModelPrediction
+from rag_ime.models import InputEvent, InputSuggestion, MemoryAction, ModelPrediction
 from rag_ime.predictor import OllamaPredictionConfig, OllamaPredictionProvider
 from rag_ime.settings_store import ManagementSettingsStore
+from rag_ime.text_utils import compact_whitespace
+
+
+def _capture_v2(
+    text: str,
+    *,
+    capture_id: str = "capture:debug:1",
+    boundary_kind: str = "host_return",
+    boundary_confidence: str = "strong",
+    native_composition_before: bool = False,
+    rime_handled: bool = False,
+    host_forwarded: bool = True,
+    modified_return: bool = False,
+    final_committed: bool = True,
+) -> dict[str, object]:
+    return {
+        "schemaVersion": "rag-ime.input-capture.v2",
+        "captureId": capture_id,
+        "transactionId": "transaction:debug",
+        "sequence": 1,
+        "channel": "input_method",
+        "boundaryKind": boundary_kind,
+        "boundaryConfidence": boundary_confidence,
+        "nativeCompositionBefore": native_composition_before,
+        "rimeHandled": rime_handled,
+        "hostForwarded": host_forwarded,
+        "modifiedReturn": modified_return,
+        "finalCommitted": final_committed,
+        "controllerEpoch": 7,
+        "focusEpoch": 9,
+        "appBundleId": "com.apple.TextEdit",
+        "fieldIdentitySha256": hashlib.sha256(b"debug-field").hexdigest(),
+        "privacyRevision": "foreground-privacy.v1",
+        "occurredStartMs": 100,
+        "occurredEndMs": 150,
+        "contentSha256": hashlib.sha256(
+            compact_whitespace(text).encode("utf-8")
+        ).hexdigest(),
+        "captureSource": "text_input_client",
+        "fallbackReason": "",
+        "fieldContextChars": len(text),
+        "imeBufferChars": len(text),
+        "selectionRule": "final_committed_segment",
+    }
 
 
 class FakePredictionProvider:
@@ -109,8 +155,8 @@ class EmptyThenDraftMemoryOrganizer:
                 {
                     "canonicalText": "项目必须把显式整理请求中的全部新增证据扫描完，再报告没有变化。",
                     "summary": "显式整理请求必须扫描完新增证据",
-                    "kind": "project_requirement",
-                    "claimKey": "memory:curation:explicit-request-drain",
+                    "kind": "durable_preference",
+                    "claimKey": "user:memory-curation:explicit-request-drain",
                     "sourceEventIds": list(inputs[0]["sourceEventIds"]),
                     "confidence": 0.99,
                     "qualityScore": 0.99,
@@ -368,7 +414,7 @@ class DebugImeServiceTests(unittest.TestCase):
         try:
             session = service.agent.sessions.create(title="memory-drain", created_at_ms=1)
             sources = service.agent.memory_sources
-            sources.checkpoint_user_message(
+            first_source = sources.checkpoint_user_message(
                 session_id=str(session["id"]),
                 pi_entry_id="entry:first-empty",
                 turn_id="turn:first-empty",
@@ -378,12 +424,32 @@ class DebugImeServiceTests(unittest.TestCase):
                 ),
                 created_at_ms=100,
             )
-            sources.checkpoint_user_message(
+            second_source = sources.checkpoint_user_message(
                 session_id=str(session["id"]),
                 pi_entry_id="entry:durable",
                 turn_id="turn:durable",
                 text="项目必须把显式整理请求中的全部新增证据扫描完，再报告没有变化。",
                 created_at_ms=200,
+            )
+            sources.capture_hint(
+                session_id=str(session["id"]),
+                source_id=str(first_source["source"]["sourceId"]),
+                kind="decision",
+                claim="第一段只是这次整理的临时会话背景。",
+                scope="user",
+                basis="explicit_user_statement",
+                future_use="用于验证整理器能够拒绝不应形成长期记忆的临时背景。",
+                created_at_ms=101,
+            )
+            sources.capture_hint(
+                session_id=str(session["id"]),
+                source_id=str(second_source["source"]["sourceId"]),
+                kind="preference",
+                claim="用户要求显式整理扫描完全部新增证据后再报告没有变化。",
+                scope="user",
+                basis="explicit_user_statement",
+                future_use="这会改变未来显式记忆整理的默认扫描行为。",
+                created_at_ms=201,
             )
 
             with patch.object(
@@ -401,6 +467,7 @@ class DebugImeServiceTests(unittest.TestCase):
                         "ownerKind": "user",
                         "ownerId": "default",
                         "instruction": "只生成一份可审阅草案。",
+                        "maxSources": 1,
                     }
                 )
 
@@ -412,10 +479,6 @@ class DebugImeServiceTests(unittest.TestCase):
             self.assertEqual(len(organizer.calls[0]), 1)
             self.assertEqual(len(organizer.calls[1]), 1)
             self.assertGreater(len(result["storedRun"]["diffs"]), 0)
-            self.assertEqual(
-                result["batchSummaries"][0]["deferredModelInputCount"],
-                1,
-            )
         finally:
             service.close()
 
@@ -442,16 +505,32 @@ class DebugImeServiceTests(unittest.TestCase):
     def test_startup_can_backfill_vector_index_when_provider_enabled(self) -> None:
         db_path = Path(self.tmp.name) / "startup-vector.sqlite"
         plain_core = LocalSqliteCoreClient(db_path)
-        InputMethodAdapter(plain_core).commit_text(
-            "赤色星球探索计划",
-            recent_context="航天项目背景",
-            tags=("curated",),
-            privacy_disposition="allowed",
+        event_ref, receipt = plain_core.record_event_with_capture_receipt(
+            InputEvent(
+                event_id=None,
+                created_at_ms=int(time.time() * 1_000),
+                source="squirrel_input_segment",
+                committed_text="赤色星球探索计划",
+                recent_context="航天项目背景",
+                privacy_disposition="allowed",
+                app="com.apple.TextEdit",
+                tags=("curated",),
+                capture_metadata=_capture_v2(
+                    "赤色星球探索计划",
+                    capture_id="capture:debug:retrieval-vector",
+                ),
+            )
         )
         timestamp = int(time.time() * 1_000)
         with plain_core._connect() as conn:
-            event_id = int(
-                conn.execute("SELECT id FROM input_events ORDER BY id DESC LIMIT 1").fetchone()[0]
+            event_id = int(event_ref.split(":", 1)[1])
+            transition_evidence_admission(
+                conn,
+                str(receipt["evidenceId"]),
+                new_state="admitted",
+                reason_code="luna_personal_memory_confirmed",
+                actor_kind="luna",
+                created_at_ms=timestamp + 1,
             )
             conn.execute(
                 """
@@ -492,16 +571,32 @@ class DebugImeServiceTests(unittest.TestCase):
     def test_startup_backfills_missing_retrieval_vectors_even_with_event_vectors(self) -> None:
         db_path = Path(self.tmp.name) / "startup-retrieval-vector.sqlite"
         plain_core = LocalSqliteCoreClient(db_path)
-        InputMethodAdapter(plain_core).commit_text(
-            "赤色星球探索计划",
-            recent_context="航天项目背景",
-            tags=("curated",),
-            privacy_disposition="allowed",
+        event_ref, receipt = plain_core.record_event_with_capture_receipt(
+            InputEvent(
+                event_id=None,
+                created_at_ms=int(time.time() * 1_000),
+                source="squirrel_input_segment",
+                committed_text="赤色星球探索计划",
+                recent_context="航天项目背景",
+                privacy_disposition="allowed",
+                app="com.apple.TextEdit",
+                tags=("curated",),
+                capture_metadata=_capture_v2(
+                    "赤色星球探索计划",
+                    capture_id="capture:debug:retrieval-doc-vector",
+                ),
+            )
         )
         timestamp = int(time.time() * 1_000)
         with plain_core._connect() as conn:
-            event_id = int(
-                conn.execute("SELECT id FROM input_events ORDER BY id DESC LIMIT 1").fetchone()[0]
+            event_id = int(event_ref.split(":", 1)[1])
+            transition_evidence_admission(
+                conn,
+                str(receipt["evidenceId"]),
+                new_state="admitted",
+                reason_code="luna_personal_memory_confirmed",
+                actor_kind="luna",
+                created_at_ms=timestamp + 1,
             )
             conn.execute(
                 """
@@ -1771,6 +1866,123 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertEqual(metadata["selectedTextSha256"], digest)
         self.assertNotIn("rawText", metadata)
         self.assertNotIn("不允许", raw)
+
+    def test_v2_strong_capture_is_idempotent_and_returns_durable_receipt(self) -> None:
+        text = "Return 已由宿主提交的最终文本"
+        before = self.service.core.event_count()
+        payload = {
+            "text": text,
+            "privacyDisposition": "allowed",
+            "source": "squirrel_input_segment",
+            "app": "com.apple.TextEdit",
+            "captureMetadata": _capture_v2(text),
+        }
+
+        first = self.service.commit(payload)
+        replay = self.service.commit(payload)
+
+        self.assertTrue(first["stored"])
+        self.assertEqual(first["captureReceipt"]["outcome"], "stored")
+        self.assertFalse(first["captureReceipt"]["duplicate"])
+        self.assertEqual(replay["eventId"], first["eventId"])
+        self.assertTrue(replay["captureReceipt"]["duplicate"])
+        self.assertEqual(self.service.core.event_count(), before + 1)
+
+    def test_v2_weak_lifecycle_boundary_is_audited_without_input_event(self) -> None:
+        text = "焦点切换时尚未确认提交的缓冲文本"
+        before = self.service.core.event_count()
+        metadata = _capture_v2(
+            text,
+            capture_id="capture:debug:weak",
+            boundary_kind="focus_change",
+            boundary_confidence="weak",
+            host_forwarded=False,
+            final_committed=False,
+        )
+
+        response = self.service.commit(
+            {
+                "text": text,
+                "privacyDisposition": "allowed",
+                "source": "squirrel_input_segment",
+                "app": "com.apple.TextEdit",
+                "captureMetadata": metadata,
+            }
+        )
+
+        self.assertFalse(response["stored"])
+        self.assertTrue(response["noStore"])
+        self.assertEqual(response["captureReceipt"]["outcome"], "quarantined")
+        self.assertEqual(response["captureReceipt"]["eventId"], "")
+        self.assertEqual(self.service.core.event_count(), before)
+
+    def test_v2_privacy_rejection_precedes_weak_boundary_classification(self) -> None:
+        text = "敏感字段中的未提交缓冲文本"
+        metadata = _capture_v2(
+            text,
+            capture_id="capture:debug:weak-sensitive",
+            boundary_kind="focus_change",
+            boundary_confidence="weak",
+            host_forwarded=False,
+            final_committed=False,
+        )
+
+        response = self.service.commit(
+            {
+                "text": text,
+                "privacyDisposition": "sensitive",
+                "sensitiveField": True,
+                "source": "squirrel_input_segment",
+                "app": "com.apple.TextEdit",
+                "captureMetadata": metadata,
+            }
+        )
+
+        self.assertEqual(response["captureReceipt"]["outcome"], "no_store")
+        self.assertNotEqual(
+            response["captureReceipt"]["reason"],
+            "weak_boundary_not_final",
+        )
+
+    def test_v2_privacy_no_store_receipt_wins_over_later_retry(self) -> None:
+        text = "隐私状态未确认的输入"
+        before = self.service.core.event_count()
+        metadata = _capture_v2(text, capture_id="capture:debug:no-store")
+        base = {
+            "text": text,
+            "source": "squirrel_input_segment",
+            "app": "com.apple.TextEdit",
+            "captureMetadata": metadata,
+        }
+
+        first = self.service.commit({**base, "privacyDisposition": "unknown"})
+        retry = self.service.commit({**base, "privacyDisposition": "allowed"})
+
+        self.assertEqual(first["captureReceipt"]["outcome"], "no_store")
+        self.assertEqual(retry["captureReceipt"]["outcome"], "no_store")
+        self.assertTrue(retry["captureReceipt"]["duplicate"])
+        self.assertEqual(self.service.core.event_count(), before)
+
+    def test_v2_candidate_selection_return_cannot_be_recorded(self) -> None:
+        text = "候选选择不是宿主最终提交"
+        metadata = _capture_v2(
+            text,
+            capture_id="capture:debug:candidate-return",
+            native_composition_before=True,
+            rime_handled=True,
+            host_forwarded=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "prior composition"):
+            self.service.commit(
+                {
+                    "text": text,
+                    "privacyDisposition": "allowed",
+                    "source": "squirrel_input_segment",
+                    "app": "com.apple.TextEdit",
+                    "captureMetadata": metadata,
+                }
+            )
 
     def test_commit_rejects_terminal_accessibility_scrollback_as_input(self) -> None:
         before = self.service.core.event_count()

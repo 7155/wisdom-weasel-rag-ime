@@ -32,6 +32,12 @@ from .memory_cleanup import (
 from .memory_dedup import select_diverse
 from .hybrid_rag_models import HybridRagQuery
 from .hybrid_rag_retriever import retrieve_hybrid_rag_memory_hit_objects
+from .input_capture_contract import (
+    capture_contract_from_metadata,
+    find_capture_receipt,
+    read_capture_receipt,
+    record_capture_receipt,
+)
 from .memory_evidence_ledger import checkpoint_input_event_evidence
 from .memory_ingest import sync_event_to_memory_v2
 from .memory_models import CandidateFeedbackV2, CleanupRunPlan, ImeQueryContext, MemoryCandidateV2
@@ -251,6 +257,13 @@ class LocalSqliteCoreClient:
         table_names = tuple(
             dict.fromkeys(
                 (
+                    "memory_evidence_admission_events",
+                    "memory_evidence_input_event_links",
+                    "memory_atom_evidence_links",
+                    "memory_governance_proposals",
+                    "personal_context_consolidation_runs",
+                    "personal_context_consolidation_cursors",
+                    "agent_memory_evidence",
                     *memory_v2_table_names(),
                     "memory_graph_projection_map",
                     "memory_projection_checkpoints",
@@ -258,12 +271,14 @@ class LocalSqliteCoreClient:
                     "memory_vectors",
                     "memory_actions",
                     "memory_state",
+                    "input_capture_receipts",
                     "input_events",
                     "memory_fts",
                     "phrase_stats",
                     "phrase_project_stats",
                     "phrase_app_stats",
                     "memory_source_disposition_events",
+                    "memory_capture_hints",
                     "agent_memory_sources",
                     "memory_curation_cursors",
                     "memory_source_event_links",
@@ -286,6 +301,26 @@ class LocalSqliteCoreClient:
         self._clear_suggestion_cache()
 
     def record_event(self, event: InputEvent) -> str:
+        return self._record_event(event, capture_receipts=None)
+
+    def record_event_with_capture_receipt(
+        self,
+        event: InputEvent,
+    ) -> tuple[str, dict[str, object]]:
+        """Atomically return the event reference and its capture acknowledgement."""
+
+        capture_receipts: list[dict[str, object]] = []
+        event_ref = self._record_event(event, capture_receipts=capture_receipts)
+        if len(capture_receipts) != 1:
+            raise RuntimeError("v2 captured event completed without exactly one receipt")
+        return event_ref, capture_receipts[0]
+
+    def _record_event(
+        self,
+        event: InputEvent,
+        *,
+        capture_receipts: list[dict[str, object]] | None,
+    ) -> str:
         privacy_disposition = compact_whitespace(event.privacy_disposition).lower()
         if privacy_disposition not in {"allowed", "sensitive", "unknown"}:
             raise ValueError("privacy_disposition must be allowed, sensitive, or unknown")
@@ -297,6 +332,14 @@ class LocalSqliteCoreClient:
         text = compact_whitespace(event.committed_text)
         if not text:
             raise ValueError("committed_text must not be empty")
+        capture_contract = capture_contract_from_metadata(
+            event.capture_metadata,
+            text=text,
+            source=event.source,
+            app=event.app,
+        )
+        if capture_contract is not None and not capture_contract.is_strong_final:
+            raise ValueError("weak input capture boundaries cannot create input events")
         created_at = event.created_at_ms or now_ms()
         tags_json = json.dumps(list(event.tags), ensure_ascii=False)
         capture_metadata_json = json.dumps(
@@ -307,6 +350,17 @@ class LocalSqliteCoreClient:
         )
         context_enabled = source_context_enabled(event.source, tags=event.tags)
         with self._connect() as conn:
+            if capture_contract is not None:
+                # Serialize the idempotency check with the write across sidecar
+                # processes. A deferred read followed by INSERT can otherwise
+                # race and surface SQLITE_BUSY instead of the original receipt.
+                conn.execute("BEGIN IMMEDIATE")
+                replay = find_capture_receipt(conn, capture_contract)
+                if replay is not None:
+                    if capture_receipts is not None:
+                        capture_receipts.append(replay)
+                    event_ref = str(replay.get("eventId") or "")
+                    return event_ref or f"skipped:capture_{replay['outcome']}"
             cur = conn.execute(
                 """
                 INSERT INTO input_events (
@@ -407,9 +461,22 @@ class LocalSqliteCoreClient:
                     context_group_level=event.context_group_level,
                     embedding_provider=self.embedding_provider,
                 )
-            # The immutable evidence ledger is independent of the optional
+            capture_receipt: dict[str, object] | None = None
+            if capture_contract is not None:
+                # Persist the capture acknowledgement before evaluating Memory.
+                # The Evidence checkpoint may fail closed without losing a real
+                # foreground commit or its durable, replay-safe receipt.
+                capture_receipt = record_capture_receipt(
+                    conn,
+                    capture_contract,
+                    outcome="stored",
+                    reason_code="strong_final_boundary",
+                    input_event_id=event_id,
+                    created_at_ms=created_at,
+                )
+            # The canonical Evidence checkpoint is independent of the optional
             # derived-memory projection. Its backfill can repair bookkeeping,
-            # so no ledger defect may reject a real foreground commit.
+            # so no Evidence defect may reject a real foreground commit.
             conn.execute("SAVEPOINT input_memory_evidence")
             try:
                 checkpoint_input_event_evidence(
@@ -422,9 +489,20 @@ class LocalSqliteCoreClient:
                     app=event.app,
                     provider_name=event.provider_name,
                     tags=tuple(event.tags),
+                    capture_contract=capture_contract,
                 )
             except Exception:
                 conn.execute("ROLLBACK TO input_memory_evidence")
+                if capture_contract is not None:
+                    conn.execute(
+                        """
+                        UPDATE input_capture_receipts
+                        SET evidence_id = '', evidence_state = 'rejected',
+                            evidence_reason = 'evidence_checkpoint_failed'
+                        WHERE capture_id = ? AND input_event_id = ?
+                        """,
+                        (capture_contract.capture_id, event_id),
+                    )
             finally:
                 conn.execute("RELEASE input_memory_evidence")
             if _event_has_curated_import_signal(event.tags):
@@ -453,8 +531,63 @@ class LocalSqliteCoreClient:
                     )
                 except (sqlite3.Error, ValueError):
                     pass
+            if capture_contract is not None:
+                capture_receipt = read_capture_receipt(
+                    conn,
+                    capture_contract.capture_id,
+                    duplicate=False,
+                )
+                if capture_receipt is None:
+                    raise RuntimeError("stored capture completed without a durable receipt")
+                if capture_receipts is not None:
+                    capture_receipts.append(capture_receipt)
         self._clear_suggestion_cache()
         return f"event:{event_id}"
+
+    def record_capture_outcome(
+        self,
+        *,
+        text: str,
+        source: str,
+        app: str,
+        capture_metadata: dict[str, object],
+        outcome: str,
+        reason_code: str,
+        created_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Persist a text-free no-store/quarantine receipt for a v2 capture."""
+
+        normalized_text = compact_whitespace(text)
+        if not normalized_text:
+            raise ValueError("capture text must not be empty")
+        contract = capture_contract_from_metadata(
+            capture_metadata,
+            text=normalized_text,
+            source=source,
+            app=app,
+        )
+        if contract is None:
+            raise ValueError("captureMetadata must use the v2 contract")
+        if outcome not in {"no_store", "quarantined"}:
+            raise ValueError("capture outcome must be no_store or quarantined")
+        self.initialize()
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            return record_capture_receipt(
+                conn,
+                contract,
+                outcome=outcome,
+                reason_code=reason_code,
+                input_event_id=None,
+                created_at_ms=created_at_ms or now_ms(),
+            )
+
+    def capture_receipt(self, capture_id: str) -> dict[str, object] | None:
+        """Return the text-free durable acknowledgement for one native capture."""
+
+        self.initialize()
+        with self._connect() as conn:
+            return read_capture_receipt(conn, compact_whitespace(capture_id))
 
     def suggest_for_input(
         self,

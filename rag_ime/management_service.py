@@ -19,7 +19,6 @@ from .activity_timeline import (
     activity_timeline_kind,
     activity_timeline_period,
 )
-from .agent_memory_sources import AgentMemorySourceStore
 from .config_portability import (
     apply_user_configuration,
     export_portable_backup,
@@ -42,6 +41,11 @@ from .memory_actions import execute_memory_action
 from .memory_book_lifecycle import archive_inactive_memory_books, set_memory_book_archive_status
 from .memory_graph_read import read_memory_entity, read_memory_graph
 from .memory_ingest import looks_sensitive, normalize_text
+from .memory_evidence_admission import (
+    admitted_personal_evidence_sql,
+    event_has_admitted_personal_evidence_sql,
+    transition_evidence_admission,
+)
 from .memory_ownership import normalize_memory_owner, sql_memory_owner_predicate
 from .memory_projection import memory_projection_freshness
 from .input_quality import FINALIZED_INPUT_SOURCE, RIME_FRAGMENT_SOURCE, assess_input_text
@@ -60,6 +64,62 @@ from .sensitive_content import contains_sensitive_content, is_sensitive_mapping_
 from .settings_store import ManagementSettingsStore, record_management_audit
 from .text_utils import compact_whitespace
 from .voice_control import read_voice_control_status, resolve_voice_support_directory
+
+
+_MEMORY_AGENT_CAPTURE_EXISTS_SQL = """
+EXISTS (
+    SELECT 1
+    FROM memory_capture_hints AS capture_hint
+    WHERE capture_hint.source_id = source.source_id
+      AND capture_hint.status = 'active'
+)
+""".strip()
+_MEMORY_INPUT_CHANNEL_SQL = """
+(
+    LOWER(COALESCE(event.source, '')) LIKE '%rime%'
+    OR LOWER(COALESCE(event.source, '')) = 'squirrel_input_segment'
+)
+""".strip()
+_MEMORY_VOICE_CHANNEL_SQL = """
+(
+    LOWER(COALESCE(event.source, '')) LIKE '%voice%'
+    OR LOWER(COALESCE(event.source, '')) LIKE '%asr%'
+)
+""".strip()
+_MEMORY_SOURCE_PROVENANCE_VISIBLE_SQL = """
+(
+    COALESCE(state.deleted, 0) = 0
+    OR EXISTS (
+        SELECT 1
+        FROM memory_atoms AS supporting_atom
+        JOIN json_each(
+            CASE
+                WHEN json_valid(supporting_atom.source_event_ids_json)
+                THEN supporting_atom.source_event_ids_json
+                ELSE '[]'
+            END
+        ) AS supporting_event
+        WHERE supporting_atom.status IN ('active', 'approved')
+          AND CAST(supporting_event.value AS INTEGER) = event.id
+    )
+)
+""".strip()
+_MEMORY_VISIBLE_SOURCE_SQL = f"""
+(
+    (
+        source.disposition IN ('remember', 'consolidated')
+        OR (
+            source.disposition IN ('pending', 'needs_review')
+            AND {_MEMORY_AGENT_CAPTURE_EXISTS_SQL}
+        )
+    )
+    AND (
+        {_MEMORY_AGENT_CAPTURE_EXISTS_SQL}
+        OR {_MEMORY_INPUT_CHANNEL_SQL}
+        OR {_MEMORY_VOICE_CHANNEL_SQL}
+    )
+)
+""".strip()
 
 
 def _provider_configuration_hash(payload: Mapping[str, object]) -> str:
@@ -1894,89 +1954,183 @@ class ManagementService:
         self,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
+        evidence_id = compact_whitespace(str(payload.get("evidenceId") or ""))
         source_id = compact_whitespace(str(payload.get("sourceId") or ""))
+        identifier = evidence_id or source_id
         disposition = compact_whitespace(
             str(payload.get("disposition") or "")
         ).lower()
-        if not source_id:
-            raise ValueError("memory source id is required")
+        if not identifier:
+            raise ValueError("memory evidence id is required")
         if disposition not in {"pending", "not_for_memory"}:
             raise ValueError(
                 "memory source disposition must be pending or not_for_memory"
             )
         with self._connect() as conn:
+            conn.execute("PRAGMA foreign_keys = ON")
+            resolved_evidence_id = ""
+            if evidence_id:
+                direct = conn.execute(
+                    """
+                    SELECT evidence_id
+                    FROM agent_memory_evidence
+                    WHERE evidence_id = ?
+                    """,
+                    (evidence_id,),
+                ).fetchone()
+                if direct is not None:
+                    resolved_evidence_id = str(direct["evidence_id"])
+            if not resolved_evidence_id and source_id:
+                compatibility = conn.execute(
+                    """
+                    SELECT input_event_id
+                    FROM agent_memory_sources
+                    WHERE source_id = ?
+                    """,
+                    (source_id,),
+                ).fetchone()
+                if compatibility is not None:
+                    linked = conn.execute(
+                        """
+                        SELECT evidence.evidence_id
+                        FROM memory_evidence_input_event_links AS source_link
+                        JOIN agent_memory_evidence AS evidence
+                          ON evidence.evidence_id = source_link.evidence_id
+                        WHERE source_link.input_event_id = ?
+                          AND source_link.relation = 'source'
+                        ORDER BY
+                            CASE
+                                WHEN evidence.evidence_id = ? THEN 0
+                                WHEN evidence.evidence_domain = 'personal_memory' THEN 1
+                                ELSE 2
+                            END,
+                            evidence.recorded_at_ms DESC,
+                            evidence.evidence_id DESC
+                        LIMIT 1
+                        """,
+                        (
+                            int(compatibility["input_event_id"]),
+                            f"evidence:source:{source_id}",
+                        ),
+                    ).fetchone()
+                    if linked is not None:
+                        resolved_evidence_id = str(linked["evidence_id"])
+            if not resolved_evidence_id:
+                raise ValueError(f"memory evidence not found: {identifier}")
             row = conn.execute(
                 """
-                SELECT event.project, event.committed_text,
-                       source.disposition, source.disposition_reason
-                FROM agent_memory_sources AS source
-                JOIN input_events AS event ON event.id = source.input_event_id
-                WHERE source.source_id = ?
+                SELECT evidence.evidence_id, evidence.evidence_domain,
+                       evidence.origin_kind, evidence.admission_state,
+                       evidence.admission_reason, evidence.status,
+                       evidence.content_text, event.project
+                FROM agent_memory_evidence AS evidence
+                JOIN memory_evidence_input_event_links AS source_link
+                  ON source_link.evidence_id = evidence.evidence_id
+                 AND source_link.relation = 'source'
+                JOIN input_events AS event ON event.id = source_link.input_event_id
+                WHERE evidence.evidence_id = ?
+                ORDER BY source_link.ordinal, source_link.input_event_id
+                LIMIT 1
                 """,
-                (source_id,),
+                (resolved_evidence_id,),
             ).fetchone()
-        if row is None:
-            raise ValueError(f"memory source not found: {source_id}")
-        event_project = compact_whitespace(str(row["project"] or ""))
-        if (
-            self.project
-            and event_project
-            and event_project != self.project
-        ):
-            raise ValueError("memory source belongs to another project")
-        previous_disposition = compact_whitespace(
-            str(row["disposition"] or "")
-        )
-        sensitive = (
-            str(row["disposition_reason"] or "") == "sensitive_input"
-            or looks_sensitive(str(row["committed_text"] or ""))
-        )
-        if disposition == "pending":
-            if sensitive:
-                raise ValueError(
-                    "sensitive memory evidence cannot be restored"
-                )
-            allowed_previous = {"pending", "not_for_memory", "expired"}
-        else:
-            allowed_previous = {
-                "pending",
-                "remember",
-                "needs_review",
-                "not_for_memory",
-            }
-        if previous_disposition not in allowed_previous:
-            raise ValueError(
-                "memory source disposition transition is not allowed"
+            if row is None:
+                raise ValueError(f"memory evidence not found: {identifier}")
+            if str(row["evidence_domain"] or "") != "personal_memory":
+                raise ValueError("memory evidence is not personal Memory")
+            event_project = compact_whitespace(str(row["project"] or ""))
+            if self.project and event_project and event_project != self.project:
+                raise ValueError("memory evidence belongs to another project")
+            previous_state = compact_whitespace(
+                str(row["admission_state"] or "")
             )
-
-        action = "restore" if disposition == "pending" else "forget"
-        store = AgentMemorySourceStore(
-            self.db_path,
-            project=self.project,
-        )
-        if previous_disposition == disposition:
-            result = {
-                "schemaVersion": "rag-ime.agent-memory-disposition.v1",
-                "ok": True,
-                "changed": False,
-                "source": store.get(source_id),
-            }
-        else:
-            result = store.set_disposition(
-                source_id,
-                disposition=disposition,
-                reason_code=(
-                    "user_restored"
-                    if disposition == "pending"
-                    else "user_forgotten"
-                ),
+            sensitive = (
+                str(row["admission_reason"] or "") == "sensitive_input"
+                or looks_sensitive(str(row["content_text"] or ""))
+            )
+            action = "restore" if disposition == "pending" else "forget"
+            if action == "restore":
+                if sensitive:
+                    raise ValueError(
+                        "sensitive memory evidence cannot be restored"
+                    )
+                if str(row["status"] or "") != "active":
+                    raise ValueError("tombstoned memory evidence cannot be restored")
+                if previous_state not in {"forgotten", "rejected", "needs_review"}:
+                    raise ValueError(
+                        "memory evidence admission transition is not allowed"
+                    )
+                next_state = "needs_review"
+                reason_code = "user_restored_for_review"
+            else:
+                if previous_state not in {
+                    "candidate",
+                    "admitted",
+                    "needs_review",
+                    "rejected",
+                    "forgotten",
+                }:
+                    raise ValueError(
+                        "memory evidence admission transition is not allowed"
+                    )
+                next_state = "forgotten"
+                reason_code = "user_forgotten"
+            transition = transition_evidence_admission(
+                conn,
+                resolved_evidence_id,
+                new_state=next_state,
+                reason_code=reason_code,
                 actor_kind="user",
+                created_at_ms=int(time.time() * 1000),
                 metadata={"surface": "control_center", "action": action},
             )
+            resolved_source_id = compact_whitespace(
+                str(transition.get("sourceId") or source_id)
+            )
+            source_row = (
+                conn.execute(
+                    """
+                    SELECT source_id, input_event_id, disposition,
+                           disposition_reason, disposition_updated_at_ms
+                    FROM agent_memory_sources
+                    WHERE source_id = ?
+                    """,
+                    (resolved_source_id,),
+                ).fetchone()
+                if resolved_source_id
+                else None
+            )
+            source = (
+                {
+                    "schemaVersion": "rag-ime.memory-source-compatibility.v1",
+                    "sourceId": str(source_row["source_id"]),
+                    "inputEventId": int(source_row["input_event_id"]),
+                    "disposition": str(source_row["disposition"]),
+                    "dispositionReason": str(source_row["disposition_reason"]),
+                    "dispositionUpdatedAtMs": (
+                        int(source_row["disposition_updated_at_ms"])
+                        if source_row["disposition_updated_at_ms"] is not None
+                        else None
+                    ),
+                }
+                if source_row is not None
+                else None
+            )
+        result = {
+            "schemaVersion": "rag-ime.memory-evidence-disposition.v2",
+            "ok": True,
+            **transition,
+            "evidence": {
+                "evidenceId": resolved_evidence_id,
+                "admissionState": str(transition["admissionState"]),
+                "admissionReason": str(transition["reason"]),
+            },
+            "source": source,
+        }
         audit_id = self._audit(
-            f"memory_source_{action}",
-            "memory_source",
-            source_id,
+            f"memory_evidence_{action}",
+            "memory_evidence",
+            resolved_evidence_id,
             dict(payload),
             result,
         )
@@ -1988,7 +2142,8 @@ class ManagementService:
             {
                 "kind": "evidence",
                 "action": action,
-                "sourceId": source_id,
+                "evidenceId": resolved_evidence_id,
+                "sourceId": resolved_source_id,
             },
         )
         return {
@@ -2443,53 +2598,80 @@ class ManagementService:
                 result["pendingCompileEvents"] = int(conn.execute("SELECT COALESCE(SUM(pending_event_count), 0) FROM memory_compile_state").fetchone()[0])
             else:
                 result["pendingCompileEvents"] = 0
-            if "agent_memory_sources" in tables:
-                source_counts = conn.execute(
+            if {
+                "agent_memory_evidence",
+                "memory_evidence_input_event_links",
+                "memory_state",
+                "memory_tombstones",
+            }.issubset(tables):
+                admitted = admitted_personal_evidence_sql("evidence")
+                evidence_counts = conn.execute(
+                    f"""
+                    SELECT
+                        COUNT(*) AS admitted_count,
+                        SUM(CASE WHEN origin_kind = 'capture_v2_input'
+                            THEN 1 ELSE 0 END) AS input_count,
+                        SUM(CASE WHEN origin_kind = 'capture_v2_voice'
+                            THEN 1 ELSE 0 END) AS voice_count,
+                        SUM(CASE WHEN origin_kind IN (
+                            'explicit_user_memory', 'applied_personal_receipt'
+                        ) THEN 1 ELSE 0 END) AS agent_capture_count
+                    FROM agent_memory_evidence AS evidence
+                    WHERE {admitted}
+                      AND (? = '' OR evidence.project IN ('', ?))
+                    """,
+                    (self.project, self.project),
+                ).fetchone()
+                capture_history = conn.execute(
                     """
                     SELECT
-                        COUNT(*) AS evidence_count,
-                        SUM(CASE WHEN disposition = 'not_for_memory' THEN 1 ELSE 0 END)
-                            AS forgotten_count,
-                        SUM(CASE WHEN disposition = 'needs_review' THEN 1 ELSE 0 END)
-                            AS needs_review_count
-                    FROM agent_memory_sources
-                    WHERE status = 'active'
-                    """
+                        SUM(CASE WHEN admission_state = 'forgotten'
+                            THEN 1 ELSE 0 END) AS forgotten_count,
+                        SUM(CASE WHEN admission_state IN ('candidate', 'needs_review')
+                            THEN 1 ELSE 0 END) AS needs_review_count,
+                        SUM(CASE WHEN status = 'tombstoned'
+                            THEN 1 ELSE 0 END) AS tombstoned_count
+                    FROM agent_memory_evidence
+                    WHERE evidence_domain = 'personal_memory'
+                      AND (? = '' OR project IN ('', ?))
+                    """,
+                    (self.project, self.project),
                 ).fetchone()
-                result["evidenceSourceCount"] = int(
-                    source_counts["evidence_count"] or 0
+                admitted_count = int(evidence_counts["admitted_count"] or 0)
+                agent_capture_count = int(
+                    evidence_counts["agent_capture_count"] or 0
                 )
+                result["evidenceSourceCount"] = admitted_count
+                result["inputMethodEvidenceCount"] = int(
+                    evidence_counts["input_count"] or 0
+                )
+                result["voiceEvidenceCount"] = int(
+                    evidence_counts["voice_count"] or 0
+                )
+                result["agentCapturedSourceCount"] = agent_capture_count
                 result["forgottenSourceCount"] = int(
-                    source_counts["forgotten_count"] or 0
+                    capture_history["forgotten_count"] or 0
                 )
                 result["needsReviewSourceCount"] = int(
-                    source_counts["needs_review_count"] or 0
+                    capture_history["needs_review_count"] or 0
                 )
+                result["agentEvidenceCount"] = 0
+                result["agentEvidenceTombstonedCount"] = int(
+                    capture_history["tombstoned_count"] or 0
+                )
+                result["agentCapturedEvidenceCount"] = agent_capture_count
+                result["memoryEvidenceCount"] = admitted_count
             else:
                 result["evidenceSourceCount"] = 0
+                result["inputMethodEvidenceCount"] = 0
+                result["voiceEvidenceCount"] = 0
+                result["agentCapturedSourceCount"] = 0
                 result["forgottenSourceCount"] = 0
                 result["needsReviewSourceCount"] = 0
-            if "agent_memory_evidence" in tables:
-                evidence_rows = conn.execute(
-                    """
-                    SELECT status, COUNT(*) AS item_count
-                    FROM agent_memory_evidence
-                    WHERE project = ?
-                    GROUP BY status
-                    """,
-                    (self.project,),
-                ).fetchall()
-                evidence_counts = {
-                    str(row["status"]): int(row["item_count"] or 0)
-                    for row in evidence_rows
-                }
-                result["agentEvidenceCount"] = evidence_counts.get("active", 0)
-                result["agentEvidenceTombstonedCount"] = evidence_counts.get(
-                    "tombstoned", 0
-                )
-            else:
                 result["agentEvidenceCount"] = 0
                 result["agentEvidenceTombstonedCount"] = 0
+                result["agentCapturedEvidenceCount"] = 0
+                result["memoryEvidenceCount"] = 0
             if "agent_role_book_revisions" in tables:
                 role_rows = conn.execute(
                     """
@@ -2857,6 +3039,7 @@ class ManagementService:
         like = f"%{request.query}%"
         owner_clause, owner_params = _page_owner_filter(request, table_alias="memory_atoms")
         evidence_refs_by_atom: dict[str, list[dict[str, object]]] = {}
+        admitted_evidence = admitted_personal_evidence_sql("evidence")
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
@@ -2873,9 +3056,10 @@ class ManagementService:
                   AND (? = '' OR text LIKE ? OR canonical_text LIKE ? OR kind LIKE ? OR scope_project LIKE ? OR scope_app LIKE ?)
                   AND (
                     ? = ''
+                    OR (? = 'current' AND status IN ('active', 'approved'))
                     OR (? = 'source_archive' AND kind = 'source_event_archive')
                     OR (? = 'hidden' AND status = 'hidden' AND kind != 'source_event_archive')
-                    OR (? NOT IN ('source_archive', 'hidden') AND status = ?)
+                    OR (? NOT IN ('current', 'source_archive', 'hidden') AND status = ?)
                   )
                   AND {owner_clause}
                 ORDER BY rowid DESC LIMIT ?
@@ -2885,7 +3069,8 @@ class ManagementService:
                     request.project, request.project,
                     request.query, like, like, like, like, like,
                     request.status, request.status, request.status,
-                    request.status, request.status, *owner_params, limit + 1,
+                    request.status, request.status, request.status,
+                    *owner_params, limit + 1,
                 ),
             ).fetchall()
             tag_rows = conn.execute(
@@ -2899,20 +3084,23 @@ class ManagementService:
             for row in rows:
                 atom_id = str(row["id"])
                 event_ids = _positive_ints(_json_list(row["source_event_ids_json"]))
-                evidence_refs_by_atom[atom_id] = _event_reference_refs(conn, event_ids)
+                evidence_refs_by_atom[atom_id] = _admitted_event_reference_refs(
+                    conn,
+                    event_ids,
+                )
                 linked_evidence = conn.execute(
-                    """
+                    f"""
                     SELECT evidence.evidence_id, evidence.content_text
                     FROM memory_atom_evidence_links AS link
                     JOIN agent_memory_evidence AS evidence
                       ON evidence.evidence_id = link.evidence_id
                     WHERE link.memory_atom_id = ?
-                      AND evidence.project = ?
-                      AND evidence.status = 'active'
+                      AND {admitted_evidence}
+                      AND (? = '' OR evidence.project IN ('', ?))
                     ORDER BY evidence.occurred_at_ms DESC, evidence.evidence_id DESC
                     LIMIT 40
-                    """,
-                    (atom_id, self.project),
+                    """,  # noqa: S608 - fixed canonical Evidence predicate.
+                    (atom_id, self.project, self.project),
                 ).fetchall()
                 evidence_refs_by_atom[atom_id].extend(
                     _canonical_reference(
@@ -3388,108 +3576,51 @@ class ManagementService:
         limit = request.limit
         offset = _cursor_int(request.cursor)
         like = f"%{request.query}%"
-        source_owner_clause, source_owner_params = _page_owner_filter(
-            request, table_alias="source"
+        owner_clause, owner_params = _page_owner_filter(
+            request, table_alias="evidence"
         )
-        evidence_owner_sql = ""
-        evidence_owner_params: tuple[str, ...] = ()
-        if request.visible_owners:
-            owner_parts: list[str] = []
-            params: list[str] = []
-            for owner_kind, owner_id in request.visible_owners:
-                if owner_kind == "agent":
-                    owner_parts.append("evidence.role_id = ?")
-                    params.append(owner_id)
-                elif owner_kind == "user" and owner_id == "default":
-                    owner_parts.append("evidence.role_id = ''")
-            evidence_owner_sql = (
-                " AND (" + " OR ".join(owner_parts) + ")"
-                if owner_parts
-                else " AND 0 = 1"
-            )
-            evidence_owner_params = tuple(params)
+        admitted = admitted_personal_evidence_sql("evidence")
         with self._connect() as conn:
-            source_rows = conn.execute(
+            rows = conn.execute(
                 f"""
                 SELECT
-                    event.id AS input_event_id,
-                    source.source_id,
-                    source.source_kind,
-                    source.trust_class,
-                    source.disposition,
-                    source.disposition_reason,
-                    source.owner_kind,
-                    source.owner_id,
-                    source.curation_run_id,
-                    source.created_at_ms,
-                    source.disposition_updated_at_ms,
-                    source.metadata_json,
+                    evidence.*,
+                    source_link.input_event_id,
                     event.source AS transport_source,
-                    event.committed_text,
-                    event.project,
                     event.app
-                FROM agent_memory_sources AS source
-                JOIN input_events AS event ON event.id = source.input_event_id
-                LEFT JOIN memory_state AS state ON state.event_id = event.id
-                WHERE source.status = 'active'
-                  AND COALESCE(state.deleted, 0) = 0
+                FROM agent_memory_evidence AS evidence
+                JOIN memory_evidence_input_event_links AS source_link
+                  ON source_link.evidence_id = evidence.evidence_id
+                 AND source_link.relation = 'source'
+                JOIN input_events AS event ON event.id = source_link.input_event_id
+                WHERE {admitted}
                   AND NOT EXISTS (
                       SELECT 1
-                      FROM memory_tombstones AS tombstone
-                      WHERE tombstone.active = 1
+                      FROM memory_evidence_input_event_links AS earlier_link
+                      WHERE earlier_link.evidence_id = evidence.evidence_id
+                        AND earlier_link.relation = 'source'
                         AND (
-                             (tombstone.target_type = 'source_event_id'
-                              AND tombstone.target_value = CAST(event.id AS TEXT))
-                          OR (tombstone.target_type = 'memory_id'
-                              AND tombstone.target_value = ('event:' || event.id))
+                            earlier_link.ordinal < source_link.ordinal
+                            OR (
+                                earlier_link.ordinal = source_link.ordinal
+                                AND earlier_link.input_event_id < source_link.input_event_id
+                            )
                         )
                   )
-                  AND (? = '' OR event.project = ?)
-                  AND (
-                      ? = ''
-                      OR event.committed_text LIKE ?
-                      OR source.source_kind LIKE ?
-                      OR source.disposition_reason LIKE ?
-                      OR event.project LIKE ?
-                      OR event.app LIKE ?
-                  )
-                  AND (? = '' OR source.disposition = ?)
-                  AND {source_owner_clause}
-                ORDER BY source.created_at_ms DESC, source.source_id DESC
-                """,
-                (
-                    request.project,
-                    request.project,
-                    request.query,
-                    like,
-                    like,
-                    like,
-                    like,
-                    like,
-                    request.status,
-                    request.status,
-                    *source_owner_params,
-                ),
-            ).fetchall()
-            agent_rows = conn.execute(
-                f"""
-                SELECT evidence_id, project, role_id, session_id, source_kind,
-                       source_id, content_text, content_sha256,
-                       provenance_json, metadata_json, privacy_class, status,
-                       occurred_at_ms, recorded_at_ms
-                FROM agent_memory_evidence AS evidence
-                WHERE (? = '' OR evidence.project = ?)
+                  AND (? = '' OR evidence.project IN ('', ?))
                   AND (
                       ? = ''
                       OR evidence.content_text LIKE ?
                       OR evidence.source_kind LIKE ?
-                      OR evidence.source_id LIKE ?
-                      OR evidence.role_id LIKE ?
-                      OR evidence.session_id LIKE ?
+                      OR evidence.origin_kind LIKE ?
+                      OR evidence.admission_reason LIKE ?
+                      OR evidence.project LIKE ?
+                      OR event.app LIKE ?
                   )
-                  AND (? = '' OR evidence.status = ?)
-                  {evidence_owner_sql}
+                  AND (? = '' OR ? IN ('active', 'admitted'))
+                  AND {owner_clause}
                 ORDER BY evidence.occurred_at_ms DESC, evidence.evidence_id DESC
+                LIMIT ? OFFSET ?
                 """,
                 (
                     request.project,
@@ -3500,143 +3631,77 @@ class ManagementService:
                     like,
                     like,
                     like,
+                    like,
                     request.status,
                     request.status,
-                    *evidence_owner_params,
+                    *owner_params,
+                    limit + 1,
+                    offset,
                 ),
             ).fetchall()
-            agent_rows = [
-                row
-                for row in agent_rows
-                if _provenance_events_visible(
-                    conn,
-                    _json_mapping(row["provenance_json"]),
-                )
-            ]
-
+        has_more = len(rows) > limit
         items: list[dict[str, object]] = []
-        for row in source_rows:
-            raw_text = compact_whitespace(str(row["committed_text"] or ""))
-            sensitive = _reference_text_is_sensitive(raw_text) or (
-                str(row["disposition_reason"] or "") == "sensitive_input"
-            )
-            display_text = _safe_reference_preview(raw_text)
-            disposition = str(row["disposition"] or "pending")
-            source_id = str(row["source_id"])
-            event_id = int(row["input_event_id"])
-            items.append(
-                {
-                    "id": source_id,
-                    "itemId": source_id,
-                    "type": str(row["source_kind"] or "user_final"),
-                    "transportSource": str(row["transport_source"] or ""),
-                    "title": display_text[:160] or "空输入证据",
-                    "detail": str(row["disposition_reason"] or "")
-                    or _memory_disposition_label(disposition),
-                    "text": "" if sensitive else raw_text,
-                    "textPreview": display_text,
-                    "textHash": _text_hash(raw_text),
-                    "textChars": len(raw_text),
-                    "sensitive": sensitive,
-                    "project": str(row["project"] or ""),
-                    "app": str(row["app"] or ""),
-                    "ownerKind": str(row["owner_kind"] or "user"),
-                    "ownerId": str(row["owner_id"] or "default"),
-                    "status": disposition,
-                    "disposition": disposition,
-                    "dispositionReason": str(
-                        row["disposition_reason"] or ""
-                    ),
-                    "trustClass": str(row["trust_class"] or ""),
-                    "curationRunId": str(row["curation_run_id"] or ""),
-                    "metadata": _sanitize_reference_value(
-                        _json_mapping(row["metadata_json"])
-                    ),
-                    "createdAtMs": int(row["created_at_ms"] or 0),
-                    "updatedAtMs": int(
-                        row["disposition_updated_at_ms"]
-                        or row["created_at_ms"]
-                        or 0
-                    ),
-                    "canForget": disposition
-                    in {"pending", "remember", "needs_review"},
-                    "canRestore": (
-                        disposition in {"not_for_memory", "expired"}
-                        and not sensitive
-                    ),
-                    "source": {
-                        "kind": "input_event",
-                        "id": str(event_id),
-                    },
-                    "ref": _canonical_reference("evidence", source_id),
-                    "evidenceRefs": [
-                        _canonical_reference(
-                            "event",
-                            str(event_id),
-                            label=display_text,
-                        )
-                    ],
-                    "occurredAtMs": int(row["created_at_ms"] or 0),
-                    "catalogSource": "agent_memory_sources",
-                }
-            )
-        for row in agent_rows:
+        for row in rows[:limit]:
             raw_text = compact_whitespace(str(row["content_text"] or ""))
             sensitive = _reference_text_is_sensitive(raw_text)
             evidence_id = str(row["evidence_id"])
-            role_id = str(row["role_id"] or "")
-            provenance = _sanitize_reference_value(
-                _json_mapping(row["provenance_json"])
+            event_id = int(row["input_event_id"])
+            origin_kind = str(row["origin_kind"] or "")
+            source_channel = (
+                "voice"
+                if origin_kind == "capture_v2_voice"
+                else "input_method"
+                if origin_kind == "capture_v2_input"
+                else "agent_capture"
             )
-            event_refs = _event_refs_from_provenance(provenance)
             items.append(
                 {
                     "id": evidence_id,
                     "itemId": evidence_id,
-                    "type": str(row["source_kind"] or "agent_evidence"),
-                    "title": _safe_reference_preview(raw_text)[:160]
-                    or "Agent 证据",
-                    "detail": str(row["source_kind"] or "agent_evidence"),
+                    "type": str(row["source_kind"] or "user_message"),
+                    "transportSource": str(row["transport_source"] or ""),
+                    "sourceChannel": source_channel,
+                    "title": _safe_reference_preview(raw_text)[:160] or "记忆证据",
+                    "detail": "已准入",
                     "text": "" if sensitive else raw_text,
                     "textPreview": _safe_reference_preview(raw_text),
                     "textHash": "sha256:" + str(row["content_sha256"] or "")[:16],
                     "textChars": len(raw_text),
                     "sensitive": sensitive,
                     "project": str(row["project"] or ""),
-                    "app": "",
-                    "ownerKind": "agent" if role_id else "user",
-                    "ownerId": role_id or "default",
-                    "status": str(row["status"] or "active"),
-                    "privacyClass": str(row["privacy_class"] or "local"),
-                    "sessionId": str(row["session_id"] or ""),
-                    "sourceId": _safe_reference_identifier(row["source_id"]),
-                    "provenance": provenance,
+                    "app": str(row["app"] or ""),
+                    "ownerKind": str(row["owner_kind"] or "user"),
+                    "ownerId": str(row["owner_id"] or "default"),
+                    "status": str(row["admission_state"] or "admitted"),
+                    "admissionState": str(row["admission_state"] or "admitted"),
+                    "admissionReason": str(row["admission_reason"] or ""),
+                    "originKind": origin_kind,
+                    "trustClass": str(row["trust_class"] or ""),
                     "metadata": _sanitize_reference_value(
                         _json_mapping(row["metadata_json"])
                     ),
                     "createdAtMs": int(row["recorded_at_ms"] or 0),
-                    "updatedAtMs": int(row["recorded_at_ms"] or 0),
-                    "occurredAtMs": int(row["occurred_at_ms"] or 0),
-                    "source": {
-                        "kind": "agent_memory_evidence",
-                        "id": evidence_id,
-                    },
-                    "ref": _canonical_reference("evidence", evidence_id),
-                    "evidenceRefs": event_refs,
-                    "canForget": False,
+                    "updatedAtMs": int(row["admission_updated_at_ms"] or 0),
+                    "canForget": True,
                     "canRestore": False,
+                    "source": {
+                        "kind": "input_event",
+                        "id": str(event_id),
+                    },
+                    "evidenceRefs": [
+                        _canonical_reference(
+                            "event",
+                            str(event_id),
+                            label=_safe_reference_preview(raw_text),
+                        )
+                    ],
+                    "occurredAtMs": int(row["occurred_at_ms"] or 0),
+                    "ref": _canonical_reference("evidence", evidence_id),
                     "catalogSource": "agent_memory_evidence",
                 }
             )
-        items.sort(
-            key=lambda item: (
-                -int(item.get("occurredAtMs") or item.get("createdAtMs") or 0),
-                str(item.get("id") or ""),
-            )
-        )
-        page = items[offset : offset + limit]
-        next_cursor = str(offset + limit) if offset + limit < len(items) else ""
-        return page, next_cursor
+        next_cursor = str(offset + limit) if has_more else ""
+        return items, next_cursor
 
     def _memory_reference_event(
         self,
@@ -3644,8 +3709,9 @@ class ManagementService:
         reference_id: str,
     ) -> dict[str, object] | None:
         event_id = _event_id_from_reference(reference_id)
+        admitted_event = event_has_admitted_personal_evidence_sql("event")
         row = conn.execute(
-            """
+            f"""
             SELECT event.id, event.created_at_ms, event.source,
                    event.committed_text, event.recent_context, event.preedit,
                    event.app, event.project, event.provider_name, event.tags_json,
@@ -3655,20 +3721,9 @@ class ManagementService:
             LEFT JOIN memory_state AS state ON state.event_id = event.id
             WHERE event.id = ?
               AND (? = '' OR event.project IN ('', ?))
-              AND COALESCE(state.deleted, 0) = 0
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM memory_tombstones AS tombstone
-                  WHERE tombstone.active = 1
-                    AND (
-                         (tombstone.target_type = 'source_event_id'
-                          AND tombstone.target_value = CAST(event.id AS TEXT))
-                      OR (tombstone.target_type = 'memory_id'
-                          AND tombstone.target_value = ('event:' || event.id))
-                    )
-              )
+              AND {admitted_event}
             LIMIT 1
-            """,
+            """,  # noqa: S608 - fixed memory-source provenance policy
             (event_id, self.project, self.project),
         ).fetchone()
         if row is None:
@@ -3737,140 +3792,79 @@ class ManagementService:
         conn: sqlite3.Connection,
         reference_id: str,
     ) -> dict[str, object] | None:
-        agent_row = conn.execute(
-            """
-            SELECT * FROM agent_memory_evidence
-            WHERE evidence_id = ? AND status = 'active'
-              AND (? = '' OR project = ?)
+        admitted = admitted_personal_evidence_sql("evidence")
+        evidence_row = conn.execute(
+            f"""
+            SELECT evidence.*
+            FROM agent_memory_evidence AS evidence
+            WHERE evidence.evidence_id = ?
+              AND {admitted}
+              AND (? = '' OR evidence.project IN ('', ?))
             LIMIT 1
             """,
             (reference_id, self.project, self.project),
         ).fetchone()
-        source_row = conn.execute(
-            """
-            SELECT source.*, event.id AS input_event_id,
-                   event.committed_text, event.source AS transport_source,
-                   event.app, event.project
-            FROM agent_memory_sources AS source
-            JOIN input_events AS event ON event.id = source.input_event_id
-            LEFT JOIN memory_state AS state ON state.event_id = event.id
-            WHERE source.source_id = ?
-              AND source.status = 'active'
-              AND source.disposition NOT IN ('not_for_memory', 'expired')
-              AND COALESCE(state.deleted, 0) = 0
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM memory_tombstones AS tombstone
-                  WHERE tombstone.active = 1
-                    AND (
-                         (tombstone.target_type = 'source_event_id'
-                          AND tombstone.target_value = CAST(event.id AS TEXT))
-                      OR (tombstone.target_type = 'memory_id'
-                          AND tombstone.target_value = ('event:' || event.id))
-                    )
-              )
-              AND (? = '' OR event.project = ?)
-            LIMIT 1
-            """,
-            (reference_id, self.project, self.project),
-        ).fetchone()
-        if agent_row is not None and not _provenance_events_visible(
-            conn,
-            _json_mapping(agent_row["provenance_json"]),
-        ):
-            agent_row = None
-        if agent_row is not None and source_row is not None:
-            raise ValueError("memory evidence reference is ambiguous")
-        if agent_row is not None:
-            raw_text = compact_whitespace(str(agent_row["content_text"] or ""))
-            sensitive = _reference_text_is_sensitive(raw_text)
-            provenance = _sanitize_reference_value(
-                _json_mapping(agent_row["provenance_json"])
-            )
-            role_id = str(agent_row["role_id"] or "")
-            return {
-                "item": {
-                    "id": reference_id,
-                    "title": _safe_reference_preview(raw_text)[:160]
-                    or "Agent 证据",
-                    "text": "" if sensitive else raw_text,
-                    "textPreview": _safe_reference_preview(raw_text),
-                    "textHash": "sha256:"
-                    + str(agent_row["content_sha256"] or "")[:16],
-                    "textChars": len(raw_text),
-                    "sensitive": sensitive,
-                    "sourceKind": str(agent_row["source_kind"] or ""),
-                    "sourceId": _safe_reference_identifier(agent_row["source_id"]),
-                    "sessionId": _safe_reference_identifier(agent_row["session_id"]),
-                    "project": str(agent_row["project"] or ""),
-                    "ownerKind": "agent" if role_id else "user",
-                    "ownerId": role_id or "default",
-                    "privacyClass": str(agent_row["privacy_class"] or "local"),
-                    "status": str(agent_row["status"] or "active"),
-                    "provenance": provenance,
-                    "metadata": _sanitize_reference_value(
-                        _json_mapping(agent_row["metadata_json"])
-                    ),
-                    "occurredAtMs": int(agent_row["occurred_at_ms"] or 0),
-                    "createdAtMs": int(agent_row["recorded_at_ms"] or 0),
-                    "updatedAtMs": int(agent_row["recorded_at_ms"] or 0),
-                },
-                "source": {
-                    "kind": "agent_memory_evidence",
-                    "sourceKind": str(agent_row["source_kind"] or ""),
-                    "id": reference_id,
-                },
-                "ref": _canonical_reference("evidence", reference_id),
-                "evidenceRefs": _event_refs_from_provenance(provenance),
-            }
-        if source_row is None:
+        if evidence_row is None:
             return None
-        raw_text = compact_whitespace(str(source_row["committed_text"] or ""))
-        sensitive = _reference_text_is_sensitive(raw_text) or (
-            str(source_row["disposition_reason"] or "") == "sensitive_input"
+        source_rows = conn.execute(
+            """
+            SELECT source_link.input_event_id, event.committed_text
+            FROM memory_evidence_input_event_links AS source_link
+            JOIN input_events AS event ON event.id = source_link.input_event_id
+            WHERE source_link.evidence_id = ? AND source_link.relation = 'source'
+            ORDER BY source_link.ordinal, source_link.input_event_id
+            LIMIT 60
+            """,
+            (reference_id,),
+        ).fetchall()
+        raw_text = compact_whitespace(str(evidence_row["content_text"] or ""))
+        sensitive = _reference_text_is_sensitive(raw_text)
+        provenance = _sanitize_reference_value(
+            _json_mapping(evidence_row["provenance_json"])
         )
-        event_id = int(source_row["input_event_id"])
         return {
             "item": {
                 "id": reference_id,
-                "title": _safe_reference_preview(raw_text)[:160] or "输入证据",
+                "title": _safe_reference_preview(raw_text)[:160] or "记忆证据",
                 "text": "" if sensitive else raw_text,
                 "textPreview": _safe_reference_preview(raw_text),
-                "textHash": _text_hash(raw_text),
+                "textHash": "sha256:"
+                + str(evidence_row["content_sha256"] or "")[:16],
                 "textChars": len(raw_text),
                 "sensitive": sensitive,
-                "sourceKind": str(source_row["source_kind"] or ""),
-                "transportSource": str(source_row["transport_source"] or ""),
-                "app": str(source_row["app"] or ""),
-                "project": str(source_row["project"] or ""),
-                "ownerKind": str(source_row["owner_kind"] or "user"),
-                "ownerId": str(source_row["owner_id"] or "default"),
-                "status": str(source_row["disposition"] or "pending"),
-                "disposition": str(source_row["disposition"] or "pending"),
-                "dispositionReason": str(source_row["disposition_reason"] or ""),
+                "sourceKind": str(evidence_row["source_kind"] or ""),
+                "sourceId": _safe_reference_identifier(evidence_row["source_id"]),
+                "project": str(evidence_row["project"] or ""),
+                "ownerKind": str(evidence_row["owner_kind"] or "user"),
+                "ownerId": str(evidence_row["owner_id"] or "default"),
+                "status": str(evidence_row["admission_state"] or "admitted"),
+                "admissionState": str(
+                    evidence_row["admission_state"] or "admitted"
+                ),
+                "admissionReason": str(evidence_row["admission_reason"] or ""),
+                "originKind": str(evidence_row["origin_kind"] or ""),
+                "trustClass": str(evidence_row["trust_class"] or ""),
+                "provenance": provenance,
                 "metadata": _sanitize_reference_value(
-                    _json_mapping(source_row["metadata_json"])
+                    _json_mapping(evidence_row["metadata_json"])
                 ),
-                "occurredAtMs": int(source_row["created_at_ms"] or 0),
-                "createdAtMs": int(source_row["created_at_ms"] or 0),
-                "updatedAtMs": int(
-                    source_row["disposition_updated_at_ms"]
-                    or source_row["created_at_ms"]
-                    or 0
-                ),
+                "occurredAtMs": int(evidence_row["occurred_at_ms"] or 0),
+                "createdAtMs": int(evidence_row["recorded_at_ms"] or 0),
+                "updatedAtMs": int(evidence_row["admission_updated_at_ms"] or 0),
             },
             "source": {
-                "kind": "agent_memory_source",
-                "sourceKind": str(source_row["source_kind"] or ""),
+                "kind": "agent_memory_evidence",
+                "sourceKind": str(evidence_row["source_kind"] or ""),
                 "id": reference_id,
             },
             "ref": _canonical_reference("evidence", reference_id),
             "evidenceRefs": [
                 _canonical_reference(
                     "event",
-                    str(event_id),
-                    label=_safe_reference_preview(raw_text),
+                    str(source["input_event_id"]),
+                    label=_safe_reference_preview(str(source["committed_text"] or "")),
                 )
+                for source in source_rows
             ],
         }
 
@@ -3895,18 +3889,19 @@ class ManagementService:
             str(row["canonical_text"] or row["text"] or "")
         )
         sensitive = _reference_text_is_sensitive(raw_text)
-        evidence_refs = _event_reference_refs(
-            conn,
-            _positive_ints(_json_list(row["source_event_ids_json"])),
-        )
+        # Historical Atom rows remain inspectable, but only canonical admitted
+        # Evidence may appear as their provenance. Raw source_event_ids_json is
+        # legacy audit data and must never resurrect rejected input.
+        evidence_refs: list[dict[str, object]] = []
+        admitted = admitted_personal_evidence_sql("evidence")
         linked = conn.execute(
-            """
+            f"""
             SELECT evidence.evidence_id, evidence.content_text
             FROM memory_atom_evidence_links AS link
             JOIN agent_memory_evidence AS evidence
               ON evidence.evidence_id = link.evidence_id
             WHERE link.memory_atom_id = ?
-              AND evidence.status = 'active'
+              AND {admitted}
               AND (? = '' OR evidence.project = ?)
             ORDER BY evidence.occurred_at_ms DESC, evidence.evidence_id DESC
             LIMIT 60
@@ -5437,7 +5432,7 @@ def _event_reference_refs(
         FROM input_events AS event
         LEFT JOIN memory_state AS state ON state.event_id = event.id
         WHERE event.id IN ({placeholders})
-          AND COALESCE(state.deleted, 0) = 0
+          AND {_MEMORY_SOURCE_PROVENANCE_VISIBLE_SQL}
           AND NOT EXISTS (
               SELECT 1
               FROM memory_tombstones AS tombstone
@@ -5460,6 +5455,36 @@ def _event_reference_refs(
             label=_safe_reference_preview(by_id.get(event_id, ""), maximum=180),
         )
         for event_id in event_ids[:80]
+        if event_id in by_id
+    ]
+
+
+def _admitted_event_reference_refs(
+    conn: sqlite3.Connection,
+    event_ids: list[int],
+) -> list[dict[str, object]]:
+    if not event_ids:
+        return []
+    bounded_ids = event_ids[:80]
+    placeholders = ",".join("?" for _ in bounded_ids)
+    admitted_event = event_has_admitted_personal_evidence_sql("event")
+    rows = conn.execute(
+        f"""
+        SELECT event.id, event.committed_text
+        FROM input_events AS event
+        WHERE event.id IN ({placeholders})
+          AND {admitted_event}
+        """,  # noqa: S608 - placeholders and canonical predicate are fixed.
+        bounded_ids,
+    ).fetchall()
+    by_id = {int(row["id"]): str(row["committed_text"] or "") for row in rows}
+    return [
+        _canonical_reference(
+            "event",
+            str(event_id),
+            label=_safe_reference_preview(by_id.get(event_id, ""), maximum=180),
+        )
+        for event_id in bounded_ids
         if event_id in by_id
     ]
 
@@ -5644,6 +5669,19 @@ def _json_mapping(value: object) -> dict[str, object]:
     except (TypeError, ValueError, json.JSONDecodeError):
         return {}
     return dict(parsed) if isinstance(parsed, dict) else {}
+
+
+def _memory_evidence_source_channel(
+    transport_source: str,
+    *,
+    agent_captured: bool,
+) -> str:
+    if agent_captured:
+        return "agent_capture"
+    normalized = compact_whitespace(transport_source).lower()
+    if "voice" in normalized or "asr" in normalized:
+        return "voice"
+    return "input_method"
 
 
 def _memory_disposition_label(value: str) -> str:

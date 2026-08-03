@@ -3,132 +3,316 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import threading
+import time
+import uuid
+from collections.abc import Callable, Mapping
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode, urlparse
+from urllib.request import ProxyHandler, Request, build_opener
 
-from .deepseek_memory_organizer import ManagedPiMemoryOrganizer
-from .embeddings import embedding_provider_from_env
-from .lexicon_organization import run_due_lexicon_organization
-from .memory_maintenance_settings import MemoryMaintenanceSettings
-from .memory_model_executor import build_managed_pi_memory_model_executor
-from .owner_memory_curation import OwnerMemoryCurator
+from .owner_memory_curation import (
+    DEFAULT_MAX_SOURCES,
+    MAX_PERSONAL_V2_SOURCES,
+)
 
 
-def _environment_bool(name: str, *, default: bool) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+_DEFAULT_GATEWAY_URL = "http://127.0.0.1:8768"
+_TERMINAL_JOB_STATES = frozenset({"completed", "failed"})
+
+
+class GatewayMemoryMaintenanceJobs:
+    """One process-local trigger lane; curation truth remains in SQLite."""
+
+    def __init__(
+        self,
+        execute: Callable[[Mapping[str, object]], Mapping[str, object]],
+    ) -> None:
+        self._execute = execute
+        self._lock = threading.RLock()
+        self._jobs: dict[str, dict[str, object]] = {}
+        self._active_job_id = ""
+        self._closed = False
+
+    def trigger(self, payload: Mapping[str, object]) -> dict[str, object]:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Gateway memory maintenance is closed")
+            if self._active_job_id:
+                active = self._jobs.get(self._active_job_id)
+                if active is not None and str(active.get("state")) in {
+                    "queued",
+                    "running",
+                }:
+                    return self._payload(active, reused=True)
+            job_id = f"memory-maintenance:{uuid.uuid4()}"
+            timestamp = int(time.time() * 1_000)
+            job: dict[str, object] = {
+                "jobId": job_id,
+                "state": "queued",
+                "request": dict(payload),
+                "result": {},
+                "error": "",
+                "createdAtMs": timestamp,
+                "updatedAtMs": timestamp,
+                "completedAtMs": 0,
+            }
+            self._jobs[job_id] = job
+            self._active_job_id = job_id
+            thread = threading.Thread(
+                target=self._run,
+                args=(job_id,),
+                name="rag-ime-gateway-memory-maintenance",
+                daemon=True,
+            )
+            job["thread"] = thread
+            thread.start()
+            return self._payload(job, reused=False)
+
+    def status(self, job_id: object) -> dict[str, object]:
+        normalized = str(job_id or "").strip()
+        with self._lock:
+            job = self._jobs.get(normalized)
+            if job is None:
+                raise ValueError(f"memory maintenance job not found: {normalized}")
+            return self._payload(job, reused=False)
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+
+    def _run(self, job_id: str) -> None:
+        with self._lock:
+            job = self._jobs[job_id]
+            job["state"] = "running"
+            job["updatedAtMs"] = int(time.time() * 1_000)
+            request = dict(job["request"])
+        state = "failed"
+        result: dict[str, object] = {}
+        error = ""
+        try:
+            result = dict(self._execute(request))
+            state = "completed" if result.get("ok") is True else "failed"
+            if state == "failed":
+                error = " ".join(str(result.get("error") or "maintenance_failed").split())[:800]
+        except Exception as exc:
+            error = " ".join(str(exc).split())[:800] or exc.__class__.__name__
+        timestamp = int(time.time() * 1_000)
+        with self._lock:
+            job = self._jobs[job_id]
+            job["state"] = state
+            job["result"] = result
+            job["error"] = error
+            job["updatedAtMs"] = timestamp
+            job["completedAtMs"] = timestamp
+            job.pop("thread", None)
+            if self._active_job_id == job_id:
+                self._active_job_id = ""
+            self._prune_locked()
+
+    def _prune_locked(self) -> None:
+        terminal = sorted(
+            (
+                job
+                for job in self._jobs.values()
+                if str(job.get("state")) in _TERMINAL_JOB_STATES
+            ),
+            key=lambda item: int(item.get("completedAtMs") or 0),
+            reverse=True,
+        )
+        for stale in terminal[64:]:
+            self._jobs.pop(str(stale.get("jobId") or ""), None)
+
+    @staticmethod
+    def _payload(
+        job: Mapping[str, object],
+        *,
+        reused: bool,
+    ) -> dict[str, object]:
+        return {
+            "schemaVersion": "rag-ime.gateway-memory-maintenance-job.v1",
+            "ok": str(job.get("state")) != "failed",
+            "jobId": str(job.get("jobId") or ""),
+            "state": str(job.get("state") or ""),
+            "reused": bool(reused),
+            "result": (
+                dict(job.get("result") or {})
+                if isinstance(job.get("result"), Mapping)
+                else {}
+            ),
+            "error": str(job.get("error") or ""),
+            "createdAtMs": int(job.get("createdAtMs") or 0),
+            "updatedAtMs": int(job.get("updatedAtMs") or 0),
+            "completedAtMs": int(job.get("completedAtMs") or 0),
+        }
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run owner-scoped daily memory curation once.",
+        description="Ask the resident Agent Gateway to run Memory maintenance.",
     )
-    parser.add_argument("--db-path", required=True)
+    parser.add_argument(
+        "--gateway-url",
+        default=os.environ.get("RAG_IME_AGENT_GATEWAY_URL", _DEFAULT_GATEWAY_URL),
+    )
     parser.add_argument("--project", default="")
-    parser.add_argument("--model-env-path", default="")
     parser.add_argument("--owner-kind", default="")
     parser.add_argument("--owner-id", default="")
     parser.add_argument("--instruction", default="")
     parser.add_argument("--manual", action="store_true")
-    parser.add_argument("--max-sources", type=int, default=64)
+    parser.add_argument("--max-sources", type=int, default=DEFAULT_MAX_SOURCES)
+    parser.add_argument("--timeout-seconds", type=float, default=3_600.0)
+    parser.add_argument("--poll-interval", type=float, default=0.5)
+    # Accepted only so old manual invocations fail over to the new Gateway
+    # owner without launching a second Runtime Host or reading SQLite here.
+    parser.add_argument("--db-path", default="", help=argparse.SUPPRESS)
+    parser.add_argument("--model-env-path", default="", help=argparse.SUPPRESS)
+    parser.add_argument("--model", default="", help=argparse.SUPPRESS)
     auto_apply = parser.add_mutually_exclusive_group()
-    auto_apply.add_argument("--auto-apply", dest="auto_apply", action="store_true")
-    auto_apply.add_argument("--no-auto-apply", dest="auto_apply", action="store_false")
+    auto_apply.add_argument(
+        "--auto-apply",
+        dest="auto_apply",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    auto_apply.add_argument(
+        "--no-auto-apply",
+        dest="auto_apply",
+        action="store_false",
+        help=argparse.SUPPRESS,
+    )
     parser.set_defaults(auto_apply=None)
-    parser.add_argument("--model", default="")
     return parser
+
+
+def run_gateway_memory_maintenance(
+    gateway_url: object,
+    payload: Mapping[str, object],
+    *,
+    timeout_seconds: float = 3_600.0,
+    poll_interval: float = 0.5,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, object]:
+    endpoint = _gateway_endpoint(gateway_url)
+    timeout = max(1.0, min(7_200.0, float(timeout_seconds)))
+    interval = max(0.05, min(5.0, float(poll_interval)))
+    opener = build_opener(ProxyHandler({}))
+    triggered = _request_json(
+        opener,
+        Request(
+            endpoint,
+            data=json.dumps(
+                dict(payload),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "RagIme-Memory-Maintenance/1",
+            },
+            method="POST",
+        ),
+        timeout=min(30.0, timeout),
+    )
+    job_id = str(triggered.get("jobId") or "").strip()
+    if not job_id:
+        raise RuntimeError("Agent Gateway did not return a Memory maintenance job id")
+    deadline = time.monotonic() + timeout
+    current = triggered
+    while str(current.get("state") or "") not in _TERMINAL_JOB_STATES:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(
+                f"Gateway Memory maintenance job timed out: {job_id}"
+            )
+        sleep(min(interval, remaining))
+        current = _request_json(
+            opener,
+            Request(
+                f"{endpoint}?{urlencode({'jobId': job_id})}",
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": "RagIme-Memory-Maintenance/1",
+                },
+                method="GET",
+            ),
+            timeout=min(30.0, max(1.0, remaining)),
+        )
+    return current
+
+
+def _gateway_endpoint(value: object) -> str:
+    base = str(value or "").strip().rstrip("/")
+    parsed = urlparse(base)
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise ValueError("Memory maintenance Gateway URL must be a loopback HTTP origin")
+    return f"{base}/api/agent/memory-maintenance"
+
+
+def _request_json(opener: object, request: Request, *, timeout: float) -> dict[str, object]:
+    try:
+        with opener.open(request, timeout=timeout) as response:  # type: ignore[attr-defined]
+            raw = response.read()
+    except HTTPError as exc:
+        raw = exc.read()
+        detail = _response_error(raw) or str(exc.reason or "HTTP error")
+        raise RuntimeError(f"Agent Gateway returned HTTP {exc.code}: {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Agent Gateway is unavailable: {exc.reason}") from exc
+    try:
+        decoded = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Agent Gateway returned invalid JSON") from exc
+    if not isinstance(decoded, dict):
+        raise RuntimeError("Agent Gateway returned a non-object JSON response")
+    return decoded
+
+
+def _response_error(raw: bytes) -> str:
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return ""
+    return " ".join(str(payload.get("error") or "").split())[:800] if isinstance(payload, dict) else ""
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    lexicon_organization = run_due_lexicon_organization(
-        args.db_path,
-        project=args.project,
-        force=bool(args.manual),
-    )
-    managed = MemoryMaintenanceSettings.load(args.db_path)
-    if not managed.automatic_organization_enabled:
-        print(
-            json.dumps(
-                {
-                    "schemaVersion": "rag-ime.owner-memory-curation-run.v1",
-                    "ok": lexicon_organization.get("ok") is not False,
-                    "skipped": True,
-                    "reason": "automatic_organization_disabled",
-                    "managedSettings": managed.as_dict(),
-                    "lexiconOrganization": lexicon_organization,
-                    "results": [],
-                },
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-        )
-        return 0 if lexicon_organization.get("ok") is not False else 1
-    env_auto_apply = (
-        _environment_bool("RAG_IME_OWNER_MEMORY_AUTO_APPLY", default=True)
-        if "RAG_IME_OWNER_MEMORY_AUTO_APPLY" in os.environ
-        else True
-    )
-    auto_apply = (
-        False
-        if args.manual
-        else bool(args.auto_apply)
-        if args.auto_apply is not None
-        else env_auto_apply
-    )
-    interval_seconds = managed.automatic_organization_interval_seconds
-    selected_model = str(args.model).strip() or managed.automatic_organization_model
+    payload = {
+        "project": str(args.project or "").strip(),
+        "ownerKind": str(args.owner_kind or "").strip(),
+        "ownerId": str(args.owner_id or "").strip(),
+        "instruction": str(args.instruction or "").strip(),
+        "manual": bool(args.manual),
+        "maxSources": max(1, min(MAX_PERSONAL_V2_SOURCES, int(args.max_sources))),
+    }
     try:
-        executor = build_managed_pi_memory_model_executor(
-            args.db_path,
-            selected_model,
-            managed.automatic_organization_thinking_level,
+        report = run_gateway_memory_maintenance(
+            args.gateway_url,
+            payload,
+            timeout_seconds=args.timeout_seconds,
+            poll_interval=args.poll_interval,
         )
-        organizer = ManagedPiMemoryOrganizer(executor)
     except Exception as exc:
         report = {
-            "schemaVersion": "rag-ime.owner-memory-curation-run.v1",
+            "schemaVersion": "rag-ime.gateway-memory-maintenance-client.v1",
             "ok": False,
+            "state": "failed",
             "error": " ".join(str(exc).split())[:800] or exc.__class__.__name__,
-            "managedSettings": managed.as_dict(),
-            "effectiveModel": selected_model,
-            "effectiveThinkingLevel": managed.automatic_organization_thinking_level,
-            "lexiconOrganization": lexicon_organization,
-            "results": [],
         }
-        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
-        return 1
-    try:
-        curator = OwnerMemoryCurator(
-            args.db_path,
-            organizer=organizer,
-            project=args.project,
-            max_sources=args.max_sources,
-            auto_apply=auto_apply,
-            include_agent_dialogue=managed.include_agent_dialogue,
-            daily_interval_ms=max(60, interval_seconds) * 1_000,
-            embedding_provider=embedding_provider_from_env(),
-        )
-        curator.initialize()
-        report = curator.run_due(
-            manual=bool(args.manual),
-            owner_kind=args.owner_kind,
-            owner_id=args.owner_id,
-            instruction=args.instruction,
-        )
-        report["lexiconOrganization"] = lexicon_organization
-        if lexicon_organization.get("ok") is False:
-            report["ok"] = False
-        report["managedSettings"] = managed.as_dict()
-        report["effectiveModel"] = selected_model
-        report["effectiveThinkingLevel"] = managed.automatic_organization_thinking_level
-        report["effectiveIntervalSeconds"] = max(60, interval_seconds)
-        report["autoApply"] = auto_apply
-        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
-        return 0 if report.get("ok") else 1
-    finally:
-        organizer.close()
+    print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    result = report.get("result")
+    result_ok = isinstance(result, Mapping) and result.get("ok") is True
+    return 0 if report.get("state") == "completed" and result_ok else 1
 
 
 if __name__ == "__main__":

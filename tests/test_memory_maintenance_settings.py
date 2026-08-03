@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from rag_ime.memory_maintenance_settings import MemoryMaintenanceSettings
 from rag_ime.owner_memory_maintenance import main as maintenance_main
@@ -28,15 +28,22 @@ class MemoryMaintenanceSettingsTests(unittest.TestCase):
         settings = MemoryMaintenanceSettings.load(self.db_path)
 
         self.assertTrue(settings.automatic_organization_enabled)
+        self.assertTrue(settings.include_agent_dialogue)
         self.assertTrue(settings.dreaming_enabled)
-        self.assertEqual(settings.automatic_organization_model, "gpt/gpt-5.6-luna")
+        self.assertEqual(
+            settings.automatic_organization_model,
+            "openai-codex/gpt-5.6-luna",
+        )
         self.assertEqual(settings.automatic_organization_thinking_level, "max")
-        self.assertEqual(settings.dreaming_model, "gpt/gpt-5.6-luna")
+        self.assertEqual(settings.dreaming_model, "openai-codex/gpt-5.6-luna")
         self.assertEqual(settings.dreaming_thinking_level, "max")
         self.assertEqual(settings.automatic_organization_interval_seconds, 43_200)
         self.assertEqual(settings.dreaming_interval_seconds, 43_200)
         self.assertEqual(settings.recall_detail_level, "compact")
         self.assertEqual(settings.timeline_max_items, 2)
+        self.assertTrue(
+            settings.as_dict()["automaticOrganization"]["includeAgentDialogue"]
+        )
 
     def test_management_updates_drive_next_maintenance_run(self) -> None:
         self.store.update_settings(
@@ -45,6 +52,7 @@ class MemoryMaintenanceSettingsTests(unittest.TestCase):
                 "memory.automaticOrganization.model": "deepseek/deepseek-v4-pro",
                 "memory.automaticOrganization.thinkingLevel": "high",
                 "memory.automaticOrganization.runsPerDay": 4,
+                "memory.automaticOrganization.includeAgentDialogue": False,
                 "memory.dreaming.model": "gpt/gpt-5.6-sol",
                 "memory.dreaming.thinkingLevel": "low",
                 "memory.dreaming.runsPerDay": 1,
@@ -58,12 +66,35 @@ class MemoryMaintenanceSettingsTests(unittest.TestCase):
         self.assertFalse(settings.automatic_organization_enabled)
         self.assertEqual(settings.automatic_organization_model, "deepseek/deepseek-v4-pro")
         self.assertEqual(settings.automatic_organization_thinking_level, "high")
+        self.assertFalse(settings.include_agent_dialogue)
         self.assertEqual(settings.dreaming_model, "gpt/gpt-5.6-sol")
         self.assertEqual(settings.dreaming_thinking_level, "low")
         self.assertEqual(settings.automatic_organization_interval_seconds, 21_600)
         self.assertEqual(settings.dreaming_interval_seconds, 86_400)
         self.assertEqual(settings.recall_detail_level, "balanced")
         self.assertFalse(settings.timeline_recall_enabled)
+
+    def test_preverified_snapshot_reads_settings_without_replaying_migrations(self) -> None:
+        self.store.update_settings(
+            {"memory.recall.detailLevel": "balanced"}
+        )
+
+        with (
+            patch(
+                "rag_ime.settings_store.apply_database_migrations",
+                side_effect=AssertionError("migration replay is forbidden"),
+            ) as migrate,
+            patch("rag_ime.settings_store._purge_transport_metadata") as purge,
+        ):
+            settings = MemoryMaintenanceSettings.load(
+                self.db_path,
+                preverified_schema=True,
+            )
+
+        self.assertEqual(settings.recall_detail_level, "balanced")
+        migrate.assert_not_called()
+        purge.assert_not_called()
+
     def test_legacy_explicit_deepseek_choice_is_preserved_with_provider_prefix(self) -> None:
         self.store.update_settings(
             {"memory.dreaming.model": "deepseek-v4-flash"}
@@ -82,57 +113,29 @@ class MemoryMaintenanceSettingsTests(unittest.TestCase):
             self.store.update_settings(
                 {"memory.dreaming.model": "deepseek-v3"}
             )
-    def test_manual_run_cannot_shorten_cadence_or_auto_apply(self) -> None:
-        captured: dict[str, object] = {}
-
-        class CapturingCurator:
-            def __init__(self, _db_path: object, **kwargs: object) -> None:
-                captured.update(kwargs)
-
-            def initialize(self) -> None:
-                return None
-
-            def run_due(self, **kwargs: object) -> dict[str, object]:
-                captured["runDue"] = dict(kwargs)
-                return {
-                    "schemaVersion": "rag-ime.owner-memory-curation-run.v1",
-                    "ok": True,
-                    "results": [],
-                }
-
+    def test_legacy_cli_flags_delegate_to_gateway_without_reading_database(self) -> None:
         output = io.StringIO()
         with (
             patch(
-                "rag_ime.owner_memory_maintenance.run_due_lexicon_organization",
-                return_value={"ok": True},
-            ) as lexicon_run,
-            patch(
-                "rag_ime.owner_memory_maintenance.build_managed_pi_memory_model_executor",
-                return_value=Mock(),
-            ),
-            patch(
-                "rag_ime.owner_memory_maintenance.ManagedPiMemoryOrganizer",
-                return_value=Mock(),
-            ),
-            patch(
-                "rag_ime.owner_memory_maintenance.OwnerMemoryCurator",
-                CapturingCurator,
-            ),
-            patch(
-                "rag_ime.owner_memory_maintenance.embedding_provider_from_env",
-                return_value=None,
-            ),
-            patch.dict(
-                "os.environ",
-                {"RAG_IME_OWNER_MEMORY_INTERVAL_SECONDS": "1"},
-                clear=False,
-            ),
+                "rag_ime.owner_memory_maintenance.run_gateway_memory_maintenance",
+                return_value={
+                    "schemaVersion": "rag-ime.gateway-memory-maintenance-job.v1",
+                    "ok": True,
+                    "jobId": "memory-maintenance:test",
+                    "state": "completed",
+                    "result": {"ok": True, "results": []},
+                },
+            ) as gateway_run,
             redirect_stdout(output),
         ):
             exit_code = maintenance_main(
                 [
                     "--db-path",
-                    str(self.db_path),
+                    str(self.db_path.with_name("must-not-be-opened.sqlite")),
+                    "--gateway-url",
+                    "http://127.0.0.1:18768",
+                    "--project",
+                    "sample-project",
                     "--manual",
                     "--auto-apply",
                 ]
@@ -140,16 +143,14 @@ class MemoryMaintenanceSettingsTests(unittest.TestCase):
 
         report = json.loads(output.getvalue())
         self.assertEqual(exit_code, 0)
-        self.assertFalse(captured["auto_apply"])
-        self.assertEqual(captured["daily_interval_ms"], 43_200_000)
-        self.assertTrue(captured["runDue"]["manual"])
-        lexicon_run.assert_called_once_with(
-            str(self.db_path),
-            project="",
-            force=True,
-        )
-        self.assertFalse(report["autoApply"])
-        self.assertEqual(report["effectiveIntervalSeconds"], 43_200)
+        self.assertEqual(report["state"], "completed")
+        gateway_run.assert_called_once()
+        call = gateway_run.call_args
+        self.assertEqual(call.args[0], "http://127.0.0.1:18768")
+        self.assertEqual(call.args[1]["project"], "sample-project")
+        self.assertTrue(call.args[1]["manual"])
+        self.assertNotIn("dbPath", call.args[1])
+        self.assertNotIn("model", call.args[1])
 
 
 if __name__ == "__main__":

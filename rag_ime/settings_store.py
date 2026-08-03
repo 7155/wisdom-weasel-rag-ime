@@ -27,8 +27,14 @@ from .voice_control import normalize_voice_hotwords, voice_hotword_config_from_s
 
 
 class ManagementSettingsStore:
-    def __init__(self, db_path: str | Path):
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        preverified_schema: bool = False,
+    ):
         self.db_path = Path(db_path)
+        self.preverified_schema = bool(preverified_schema)
         self._initialized = False
         self._initialize_lock = RLock()
 
@@ -38,10 +44,17 @@ class ManagementSettingsStore:
         with self._initialize_lock:
             if self._initialized:
                 return
+            if self.preverified_schema and not self.db_path.is_file():
+                raise FileNotFoundError(
+                    f"preverified settings database does not exist: {self.db_path}"
+                )
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
             with self._connect() as conn:
-                ensure_management_tables(conn)
-                _purge_transport_metadata(conn)
+                if self.preverified_schema:
+                    _require_preverified_management_schema(conn)
+                else:
+                    ensure_management_tables(conn)
+                    _purge_transport_metadata(conn)
             self._initialized = True
 
     def get_settings(self, *, include_sensitive: bool = False) -> dict[str, object]:
@@ -60,7 +73,10 @@ class ManagementSettingsStore:
     ) -> dict[str, object]:
         """Read settings through an existing management transaction."""
 
-        ensure_management_tables(conn)
+        if self.preverified_schema:
+            _require_preverified_management_schema(conn)
+        else:
+            ensure_management_tables(conn)
         settings = default_settings()
         rows = conn.execute("SELECT key, value_json FROM management_settings").fetchall()
         for row in rows:
@@ -521,6 +537,29 @@ class ManagementSettingsStore:
 
 def ensure_management_tables(conn: sqlite3.Connection) -> None:
     apply_database_migrations(conn)
+
+
+def _require_preverified_management_schema(conn: sqlite3.Connection) -> None:
+    """Fail closed when a read-only snapshot lacks the settings contract.
+
+    Offline evaluation may use a database whose migration ledger intentionally
+    records an older source checksum.  Such callers must verify the complete
+    snapshot before constructing this store; this guard only proves that the
+    read contract used below exists and never edits the ledger or transport
+    metadata.
+    """
+
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = 'management_settings'
+        """
+    ).fetchone()
+    if row is None:
+        raise RuntimeError(
+            "preverified settings database is missing management_settings"
+        )
 
 
 def record_management_audit(

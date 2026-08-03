@@ -3107,7 +3107,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..bcfdebf0f726e5997c6bc8ecbe3c03a2409b1b9f
 --- /dev/null
 +++ b/sources/RagImeSidecarClient.swift
-@@ -0,0 +1,718 @@
+@@ -0,0 +1,758 @@
 +//
 +//  RagImeSidecarClient.swift
 +//  Squirrel
@@ -3440,19 +3440,22 @@ index 0000000000000000000000000000000000000000..bcfdebf0f726e5997c6bc8ecbe3c03a2
 +    contextGroupId: String,
 +    privacyDisposition: String,
 +    captureMetadata: RagImeFinalizedInputCaptureMetadata
-+  ) throws {
++  ) throws -> RagImeInputCaptureReceipt {
 +    guard privacyDisposition == "allowed" else {
 +      throw RagImeSidecarError.transport("foreground privacy disposition is not allowed")
 +    }
-+    guard let sidecarURL else {
-+      throw RagImeSidecarError.transport("sidecar_url missing; finalized input requires the local sidecar")
-+    }
 +    var captureTags = [
 +      "input-segment",
-+      "finalized",
-+      "complete-input",
++      "capture-v2",
 +      "capture:\(captureMetadata.captureSource)",
++      "boundary:\(captureMetadata.boundaryKind)",
++      "confidence:\(captureMetadata.boundaryConfidence)",
 +    ]
++    if captureMetadata.finalCommitted {
++      captureTags.append(contentsOf: ["finalized", "complete-input"])
++    } else {
++      captureTags.append("boundary-audit-only")
++    }
 +    if !captureMetadata.fallbackReason.isEmpty {
 +      captureTags.append("capture-fallback:\(captureMetadata.fallbackReason)")
 +    }
@@ -3470,7 +3473,7 @@ index 0000000000000000000000000000000000000000..bcfdebf0f726e5997c6bc8ecbe3c03a2
 +      providerName: "squirrel:\(captureMetadata.captureSource)",
 +      captureMetadata: captureMetadata
 +    )
-+    _ = try postJSON(payload, to: endpoint("commit", base: sidecarURL))
++    return try RagImeInputCaptureOutbox.shared.deliver(payload, using: self)
 +  }
 +
 +  func recordSideCandidateCommitLegacy(
@@ -3595,6 +3598,13 @@ index 0000000000000000000000000000000000000000..bcfdebf0f726e5997c6bc8ecbe3c03a2
 +    let data = try postJSON(payload, to: endpoint("assistant-candidate-action", base: sidecarURL))
 +    return try JSONDecoder().decode(RagImeAssistantCandidateActionReceipt.self, from: data)
 +  }
++
++  func postFinalizedInputCapture(
++    _ payload: RagImeCommitPayload,
++    to sidecarURL: URL
++  ) throws -> Data {
++    return try postJSON(payload, to: endpoint("commit", base: sidecarURL))
++  }
 +}
 +
 +struct RagImeSelectionPayload: Encodable {
@@ -3612,12 +3622,31 @@ index 0000000000000000000000000000000000000000..bcfdebf0f726e5997c6bc8ecbe3c03a2
 +  let privacyDisposition: String
 +}
 +
-+struct RagImeFinalizedInputCaptureMetadata: Encodable {
++struct RagImeFinalizedInputCaptureMetadata: Codable {
++  let schemaVersion: String
++  let captureId: String
++  let transactionId: String
++  let sequence: Int
++  let channel: String
++  let boundaryKind: String
++  let boundaryConfidence: String
++  let nativeCompositionBefore: Bool
++  let rimeHandled: Bool
++  let hostForwarded: Bool
++  let modifiedReturn: Bool
++  let finalCommitted: Bool
++  let controllerEpoch: Int
++  let focusEpoch: Int
++  let appBundleId: String
++  let fieldIdentitySha256: String
++  let privacyRevision: String
++  let occurredStartMs: Int
++  let occurredEndMs: Int
++  let contentSha256: String
 +  let captureSource: String
 +  let fallbackReason: String
 +  let fieldContextChars: Int
 +  let imeBufferChars: Int
-+  let selectedTextSha256: String
 +  let selectionRule: String
 +}
 +
@@ -3626,7 +3655,7 @@ index 0000000000000000000000000000000000000000..bcfdebf0f726e5997c6bc8ecbe3c03a2
 +  let metadata: RagImeFinalizedInputCaptureMetadata
 +}
 +
-+struct RagImeCommitPayload: Encodable {
++struct RagImeCommitPayload: Codable {
 +  let text: String
 +  let recentContext: String
 +  let preedit: String
@@ -6363,6 +6392,10 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +  private var ragImePrivacyLease: RagImePrivacyLease?
 +  private var ragImePrivacyLeaseEpoch = 0
 +  private var ragImePrivacyFocusEpoch = 0
++  private let ragImeInputCaptureControllerEpoch = Int(Date().timeIntervalSince1970 * 1_000)
++  private var ragImeInputCaptureTransactionId = ""
++  private var ragImeInputCaptureTransactionStartedAtMs = 0
++  private var ragImeInputCaptureSequence = 0
  
    // swiftlint:disable:next cyclomatic_complexity
    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
@@ -6421,11 +6454,12 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      }
 +
 +      let keyCode = event.keyCode
-+      if [36, 76].contains(keyCode) && !ragImeNativeCompositionActive() {
++      let nativeCompositionBeforeKey = ragImeNativeCompositionActive()
++      if [36, 76].contains(keyCode) && !nativeCompositionBeforeKey {
 +        dismissRagImePostCommitAssistForSubmission(keyCode: keyCode)
 +      }
 +      if keyCode == 53
-+        && !ragImeNativeCompositionActive()
++        && !nativeCompositionBeforeKey
 +        && ragImeAssistantOverlayController.isVisible {
 +        dismissRagImeAssistantOverlay(reason: "escape")
 +        return true
@@ -6485,11 +6519,24 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +          rimeUpdate()
 +        }
 +      }
++      let modifiedReturn = !modifiers.intersection([.shift, .control, .option, .command]).isEmpty
 +      if (keyCode == 36 || keyCode == 76)
-+        && !modifiers.contains(.command)
-+        && !modifiers.contains(.control)
-+        && !modifiers.contains(.option) {
-+        finalizeRagImeActiveInputBuffer(reason: "return_key", app: currentApp)
++        && !modifiedReturn
++        && !nativeCompositionBeforeKey
++        && !handled {
++        finalizeRagImeActiveInputBuffer(
++          reason: "return_key",
++          app: currentApp,
++          boundary: RagImeInputCaptureBoundary(
++            kind: "host_return",
++            confidence: "strong",
++            nativeCompositionBefore: nativeCompositionBeforeKey,
++            rimeHandled: handled,
++            hostForwarded: true,
++            modifiedReturn: modifiedReturn,
++            finalCommitted: true
++          )
++        )
 +      }
 +
 +    default:
@@ -6938,7 +6985,19 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +
 +    let previousApp = currentApp
 +    if !resolvedBundleId.isEmpty && resolvedBundleId != previousApp {
-+      finalizeRagImeActiveInputBuffer(reason: "front_app_changed", app: previousApp)
++      finalizeRagImeActiveInputBuffer(
++        reason: "front_app_changed",
++        app: previousApp,
++        boundary: RagImeInputCaptureBoundary(
++          kind: "app_change",
++          confidence: "weak",
++          nativeCompositionBefore: ragImeNativeCompositionActive(),
++          rimeHandled: false,
++          hostForwarded: false,
++          modifiedReturn: false,
++          finalCommitted: false
++        )
++      )
 +      invalidateRagImeForegroundTransaction(reason: "front_app_changed")
 +      dismissRagImeAssistantOverlay(reason: "front_app_changed")
 +      ragImeChromiumAssistantAnchor = nil
@@ -7042,7 +7101,19 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      self.ragImeDeferredDeactivateWorkItem = nil
 +      self.ragImeDeferredDeactivateApp = ""
 +      self.hidePalettes()
-+      self.finalizeRagImeActiveInputBuffer(reason: "deactivate_server", app: deactivatedApp)
++      self.finalizeRagImeActiveInputBuffer(
++        reason: "deactivate_server",
++        app: deactivatedApp,
++        boundary: RagImeInputCaptureBoundary(
++          kind: "deactivate",
++          confidence: "weak",
++          nativeCompositionBefore: false,
++          rimeHandled: false,
++          hostForwarded: false,
++          modifiedReturn: false,
++          finalCommitted: false
++        )
++      )
 +      self.invalidateRagImeForegroundTransaction(reason: "deactivate_server")
 +      self.ragImeChromiumAssistantAnchor = nil
 +      self.ragImeChromiumAssistantAnchorCapturedAt = .distantPast
@@ -7403,6 +7474,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +    ragImeCommittedContextUpdatedAt = .distantPast
 +    ragImeActiveInputBuffer = ""
 +    ragImeActiveInputBufferUpdatedAt = .distantPast
++    resetRagImeInputCaptureTransaction()
 +    ragImeLastForegroundTextSnapshot = nil
 +    ragImeForegroundCaptureToken = nil
 +    ragImeCommitBurstWorkItem?.cancel()
@@ -7432,6 +7504,26 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +        "maxSideCandidates": sidecarClient.maxSideCandidates,
 +        "frontendTrace": sidecarClient.frontendTrace,
 +      ])
++      DispatchQueue.global(qos: .utility).async { [weak self] in
++        do {
++          let delivered = try RagImeInputCaptureOutbox.shared.retryPending(
++            using: sidecarClient
++          )
++          guard delivered > 0 else { return }
++          DispatchQueue.main.async {
++            self?.traceRagImeFrontendEvent("input_capture_outbox_replayed", fields: [
++              "deliveredCount": delivered,
++              "traceIncludesText": false,
++            ])
++          }
++        } catch {
++          DispatchQueue.main.async {
++            self?.traceRagImeFrontendEvent("input_capture_outbox_retry_deferred", fields: [
++              "traceIncludesText": false,
++            ])
++          }
++        }
++      }
 +    } else {
 +      traceRagImeFrontendEvent("sidecar_not_configured", fields: [
 +        "reason": "rag_ime config missing or disabled",
@@ -12033,14 +12125,23 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 -      if currentCaretPos <= 0 {
 -        return false
 +  func traceRagImeFrontendEvent(_ event: String, fields: [String: Any]) {
-+    guard ragImeSidecarClient?.frontendTrace == true else { return }
++    let captureDeliveryEvents: Set<String> = [
++      "input_segment_recorded",
++      "input_segment_queued_for_retry",
++      "input_segment_capture_failed",
++      "input_capture_outbox_replayed",
++      "input_capture_outbox_retry_deferred",
++    ]
++    let isCaptureDeliveryEvent = captureDeliveryEvents.contains(event)
++    guard ragImeSidecarClient?.frontendTrace == true || isCaptureDeliveryEvent else { return }
 +    let sensitiveSafeEvents: Set<String> = [
 +      "sensitive_field_suppressed",
 +      "sensitive_field_exited",
 +      "sensitive_native_learning_transaction_discarded",
 +    ]
 +    guard !ragImeSensitiveFieldActive || sensitiveSafeEvents.contains(event) else { return }
-+    let includeText = ProcessInfo.processInfo.environment["RAG_IME_TRACE_INCLUDE_TEXT"] == "1"
++    let includeText = !isCaptureDeliveryEvent
++      && ProcessInfo.processInfo.environment["RAG_IME_TRACE_INCLUDE_TEXT"] == "1"
 +    var payload = ragImeSanitizedTraceFields(fields, includeText: includeText)
 +    payload["frontendBuild"] = "rag-ime.foreground-trace.v2"
 +    payload["schemaVersion"] = "rag-ime.squirrel-frontend-trace.v1"
@@ -12423,6 +12524,11 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 -    menu.addItem(update)
 +  func rememberRagImeActiveInputFragment(_ text: String) {
 +    guard !text.isEmpty else { return }
++    if ragImeActiveInputBuffer.isEmpty {
++      ragImeInputCaptureTransactionId = "input:\(UUID().uuidString.lowercased())"
++      ragImeInputCaptureTransactionStartedAtMs = Int(Date().timeIntervalSince1970 * 1_000)
++      ragImeInputCaptureSequence = 0
++    }
 +    let combined = ragImeActiveInputBuffer + text
 +    let normalized = combined.trimmingCharacters(in: .newlines)
 +    ragImeActiveInputBuffer = normalized.count > ragImeActiveInputBufferLimit
@@ -12438,14 +12544,24 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +    value.removeLast()
 +    ragImeActiveInputBuffer = value
 +    ragImeActiveInputBufferUpdatedAt = value.isEmpty ? .distantPast : Date()
++    if value.isEmpty {
++      resetRagImeInputCaptureTransaction()
++    }
    }
  
 -  @objc func deploy() {
 -    NSApp.squirrelAppDelegate.deploy()
-+  func finalizeRagImeActiveInputBuffer(reason: String, app: String) {
++  func finalizeRagImeActiveInputBuffer(
++    reason: String,
++    app: String,
++    boundary: RagImeInputCaptureBoundary
++  ) {
++    let app = app.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "squirrel" : app
 +    let imeText = ragImeCompactWhitespace(ragImeActiveInputBuffer)
++    let captureIdentity = nextRagImeInputCaptureIdentity(app: app)
 +    ragImeActiveInputBuffer = ""
 +    ragImeActiveInputBufferUpdatedAt = .distantPast
++    resetRagImeInputCaptureTransaction()
 +    // Return, app activation and server shutdown can all reach this method.
 +    // AX text is context evidence, not proof that the user submitted text.
 +    // Without a fragment committed by this input method there is no input
@@ -12475,7 +12591,9 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +    }
 +    // Capture IMK text before Return reaches the host app and clears the field.
 +    // Full privacy inspection and AX fallback stay on the dedicated queue.
-+    let imkResult = ragImeFinalizedFieldContextFromInputClient()
++    let imkResult = boundary.finalCommitted
++      ? ragImeFinalizedFieldContextFromInputClient()
++      : (text: "", failureReason: "weak_boundary_audit")
 +    let compactImkText = ragImeCompactWhitespace(imkResult.text)
 +    let captureEpoch = ragImeSelectionEpoch
 +    let fastPrivacyStatusAtFinalize = ragImeSelectedTextProvider.fastSensitiveFieldStatus(
@@ -12497,7 +12615,8 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      var fieldText = compactImkText
 +      var fieldSource = compactImkText.isEmpty ? "" : "text_input_client"
 +      var fieldFailureReason = imkResult.failureReason
-+      if privacyStatus.privacyDisposition == "allowed"
++      if boundary.finalCommitted
++        && privacyStatus.privacyDisposition == "allowed"
 +        && (fieldText.isEmpty || (!imeText.isEmpty && fieldText.count < imeText.count)) {
 +        let axResult = self.ragImeForegroundContextResolver.captureFromAccessibility(
 +          captureEpoch: captureEpoch,
@@ -12527,7 +12646,10 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +        imeText: imeText,
 +        fieldText: fieldText,
 +        fieldSource: fieldSource,
-+        fieldFailureReason: fieldFailureReason
++        fieldFailureReason: fieldFailureReason,
++        app: app,
++        boundary: boundary,
++        identity: captureIdentity
 +      )
 +      DispatchQueue.main.async { [weak self] in
 +        guard let self else { return }
@@ -12599,7 +12721,10 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +    imeText: String,
 +    fieldText: String,
 +    fieldSource: String,
-+    fieldFailureReason: String
++    fieldFailureReason: String,
++    app: String,
++    boundary: RagImeInputCaptureBoundary,
++    identity: RagImeInputCaptureIdentity
 +  ) -> RagImeFinalizedInputCapture? {
 +    let compactImeText = ragImeCompactWhitespace(imeText)
 +    let compactFieldText = ragImeCompactWhitespace(fieldText)
@@ -12631,15 +12756,65 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +    }
 +    guard !selectedText.isEmpty else { return nil }
 +    let metadata = RagImeFinalizedInputCaptureMetadata(
++      schemaVersion: "rag-ime.input-capture.v2",
++      captureId: identity.captureId,
++      transactionId: identity.transactionId,
++      sequence: identity.sequence,
++      channel: "input_method",
++      boundaryKind: boundary.kind,
++      boundaryConfidence: boundary.confidence,
++      nativeCompositionBefore: boundary.nativeCompositionBefore,
++      rimeHandled: boundary.rimeHandled,
++      hostForwarded: boundary.hostForwarded,
++      modifiedReturn: boundary.modifiedReturn,
++      finalCommitted: boundary.finalCommitted,
++      controllerEpoch: identity.controllerEpoch,
++      focusEpoch: identity.focusEpoch,
++      appBundleId: app,
++      fieldIdentitySha256: identity.fieldIdentitySha256,
++      privacyRevision: "foreground-privacy.v1",
++      occurredStartMs: identity.occurredStartMs,
++      occurredEndMs: identity.occurredEndMs,
++      contentSha256: ragImeFullTextSHA256(selectedText)
++        .replacingOccurrences(of: "sha256:", with: ""),
 +      captureSource: captureSource,
 +      fallbackReason: fallbackReason,
 +      fieldContextChars: compactFieldText.count,
 +      imeBufferChars: compactImeText.count,
-+      selectedTextSha256: ragImeFullTextSHA256(selectedText),
-+      selectionRule: "field_context_if_not_shorter_else_ime_buffer"
++      selectionRule: "final_committed_segment"
 +    )
 +    return RagImeFinalizedInputCapture(text: selectedText, metadata: metadata)
    }
++
++  func nextRagImeInputCaptureIdentity(app: String) -> RagImeInputCaptureIdentity {
++    if ragImeInputCaptureTransactionId.isEmpty {
++      ragImeInputCaptureTransactionId = "input:\(UUID().uuidString.lowercased())"
++      ragImeInputCaptureTransactionStartedAtMs = Int(Date().timeIntervalSince1970 * 1_000)
++    }
++    ragImeInputCaptureSequence += 1
++    let sequence = ragImeInputCaptureSequence
++    let transactionId = ragImeInputCaptureTransactionId
++    let endMs = Int(Date().timeIntervalSince1970 * 1_000)
++    let fieldIdentity = ragImeFullTextSHA256(
++      "\(app)\u{001f}\(ragImePrivacyFocusEpoch)"
++    ).replacingOccurrences(of: "sha256:", with: "")
++    return RagImeInputCaptureIdentity(
++      captureId: "\(transactionId):\(sequence)",
++      transactionId: transactionId,
++      sequence: sequence,
++      controllerEpoch: ragImeInputCaptureControllerEpoch,
++      focusEpoch: ragImePrivacyFocusEpoch,
++      occurredStartMs: max(0, ragImeInputCaptureTransactionStartedAtMs),
++      occurredEndMs: max(0, endMs),
++      fieldIdentitySha256: fieldIdentity
++    )
++  }
++
++  func resetRagImeInputCaptureTransaction() {
++    ragImeInputCaptureTransactionId = ""
++    ragImeInputCaptureTransactionStartedAtMs = 0
++    ragImeInputCaptureSequence = 0
++  }
  
 -  @objc func openRimeFolder() {
 -    NSApp.squirrelAppDelegate.openRimeFolder()
@@ -12680,8 +12855,10 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +    let recentContext = boundedRagImeCommittedContext(ragImeCommittedContext)
 +    // The submitted field value becomes the next generation's authoritative
 +    // context, including paste or voice text that never crossed Rime.
-+    ragImeCommittedContext = boundedRagImeCommittedContext(text)
-+    ragImeCommittedContextUpdatedAt = Date()
++    if capture.metadata.finalCommitted {
++      ragImeCommittedContext = boundedRagImeCommittedContext(text)
++      ragImeCommittedContextUpdatedAt = Date()
++    }
 +    let groupId = ragImeContextGroupId(prefix: "app", values: [app])
 +    traceRagImeFrontendEvent("input_segment_finalized", fields: [
 +      "reason": reason,
@@ -12696,7 +12873,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +    ])
 +    DispatchQueue.global(qos: .utility).async { [weak self] in
 +      do {
-+        try sidecarClient.recordFinalizedInputSegment(
++        let receipt = try sidecarClient.recordFinalizedInputSegment(
 +          text: text,
 +          recentContext: recentContext,
 +          app: app,
@@ -12712,15 +12889,25 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +            "fallbackReason": capture.metadata.fallbackReason,
 +            "frontAppBundleId": app,
 +            "contextGroupId": groupId,
++            "captureId": receipt.captureId,
++            "captureOutcome": receipt.outcome,
++            "duplicate": receipt.duplicate,
 +          ])
 +        }
 +      } catch {
++        let queued = RagImeInputCaptureOutbox.shared.contains(
++          captureId: capture.metadata.captureId
++        )
++        let event = queued
++          ? "input_segment_queued_for_retry"
++          : "input_segment_capture_failed"
 +        DispatchQueue.main.async {
-+          self?.traceRagImeFrontendEvent("input_segment_record_failed", fields: [
++          self?.traceRagImeFrontendEvent(event, fields: [
 +            "reason": reason,
 +            "textChars": text.count,
 +            "frontAppBundleId": app,
-+            "error": String(describing: error),
++            "captureId": capture.metadata.captureId,
++            "queued": queued,
 +          ])
 +        }
 +      }
@@ -12862,6 +13049,19 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      let previousApp = currentApp
        updateAppOptions()
 +      if !previousApp.isEmpty && previousApp != currentApp {
++        finalizeRagImeActiveInputBuffer(
++          reason: "front_app_changed",
++          app: previousApp,
++          boundary: RagImeInputCaptureBoundary(
++            kind: "app_change",
++            confidence: "weak",
++            nativeCompositionBefore: false,
++            rimeHandled: false,
++            hostForwarded: false,
++            modifiedReturn: false,
++            finalCommitted: false
++          )
++        )
 +        invalidateRagImeForegroundTransaction(reason: "front_app_changed")
 +      }
 +      configureRagImeSidecar()

@@ -381,6 +381,7 @@ def _checkpoint(
     label: str,
     text: str,
     created_at_ms: int,
+    capture_candidate: bool,
 ) -> str:
     result = store.checkpoint_user_message(
         session_id=session_id,
@@ -389,7 +390,20 @@ def _checkpoint(
         text=text,
         created_at_ms=created_at_ms,
     )
-    return str(dict(result.get("source") or {}).get("sourceId") or "")
+    source = dict(result.get("source") or {})
+    source_id = str(source.get("sourceId") or "")
+    if capture_candidate and source_id:
+        store.capture_hint(
+            session_id=session_id,
+            source_id=source_id,
+            kind="decision",
+            claim=text[:800],
+            scope="project",
+            basis="explicit_user_statement",
+            future_use="评估该用户声明是否构成跨 Session 持续的项目约束。",
+            created_at_ms=created_at_ms + 1,
+        )
+    return source_id
 
 
 def _deterministic_noise_text(index: int) -> str:
@@ -450,6 +464,7 @@ def _add_wave(
             label=f"{created_at_ms}:{label}",
             text=text,
             created_at_ms=created_at_ms,
+            capture_candidate=kind != "deterministic-noise",
         )
         created_at_ms += 1
         if kind == "update":
@@ -764,7 +779,6 @@ def run(profile: str, model_env_path: Path) -> dict[str, object]:
             initial_settle_ms=0,
             auto_apply=True,
             max_sources=64,
-            include_agent_dialogue=False,
         )
         curator.initialize()
         _seed_current_memory(db_path, scenarios)

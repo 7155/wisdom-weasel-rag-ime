@@ -802,6 +802,51 @@ class AgentSessionStore:
                 raise AgentSessionNotFound(session_id)
         return self.get(session_id)
 
+    def retire_system_internal(
+        self,
+        session_id: str,
+        *,
+        tool_profile_version: str,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Retire one product-owned hidden Session after its durable run ends."""
+
+        expected_profile = str(tool_profile_version or "").strip()
+        if not expected_profile:
+            raise ValueError("internal Session tool profile is required")
+        timestamp = _timestamp(updated_at_ms)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT session_kind, tool_profile_version
+                FROM agent_sessions
+                WHERE id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                raise AgentSessionNotFound(session_id)
+            if (
+                str(row["session_kind"]) != "subagent_runtime"
+                or str(row["tool_profile_version"]) != expected_profile
+            ):
+                raise ValueError("only the matching system-internal Session can be retired")
+            conn.execute(
+                "DELETE FROM agent_runtime_bindings WHERE session_id = ?",
+                (session_id,),
+            )
+            conn.execute(
+                """
+                UPDATE agent_sessions
+                SET status = 'archived', pi_session_id = '', session_file = '',
+                    workspace_roots_json = '[]', last_message_preview = '',
+                    archived_at_ms = ?, updated_at_ms = ?
+                WHERE id = ?
+                """,
+                (timestamp, timestamp, session_id),
+            )
+        return self.get(session_id)
+
     def destroy_internal(self, session_id: str) -> dict[str, object]:
         """Delete an expired delegated Session while leaving its run projection intact."""
 

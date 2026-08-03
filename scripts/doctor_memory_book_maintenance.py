@@ -7,9 +7,9 @@ import os
 import plistlib
 import re
 import subprocess
-import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 
 def main() -> int:
@@ -37,13 +37,12 @@ def main() -> int:
     parser.add_argument("--max-age-hours", type=float, default=48.0)
     parser.add_argument("--require-run", action="store_true")
     parser.add_argument("--require-loaded", action="store_true")
+    parser.add_argument("--gateway-url", default="")
     parser.add_argument("--report-path", default="")
     args = parser.parse_args()
 
     app_root = Path(args.app_root).expanduser().resolve()
     plist_path = Path(args.plist_path).expanduser()
-    runs_dir = Path(args.runs_dir).expanduser()
-    db_path = Path(args.db_path).expanduser()
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -56,9 +55,14 @@ def main() -> int:
     runner = app_root / "scripts/run_memory_book_maintenance_once.sh"
     package = app_root / "rag_ime/cli.py"
     marker = app_root / "rag-ime-install-marker.json"
-    for required in (wrapper, runner, package, marker):
+    for required in (wrapper, marker):
         if not required.is_file():
             errors.append(f"installed runtime artifact missing: {required}")
+    for obsolete in (runner, package):
+        if obsolete.exists():
+            errors.append(
+                f"obsolete database/runtime payload must be removed: {obsolete}"
+            )
     resolved_program_paths = {
         str(Path(item).expanduser().resolve())
         for item in program_args
@@ -76,25 +80,34 @@ def main() -> int:
         errors.append("installed code marker is missing or invalid")
     elif not str(marker_payload.get("sourceCommit") or ""):
         errors.append("installed code marker has no sourceCommit")
+    elif marker_payload.get("component") != "memory-maintenance-trigger":
+        errors.append("installed marker still describes the retired maintenance runtime")
 
-    db_parent = db_path.parent
-    db_writable = os.access(db_path, os.W_OK) if db_path.exists() else db_parent.is_dir() and os.access(db_parent, os.W_OK)
-    if not db_writable:
-        errors.append(f"Memory Book DB is not writable: {db_path}")
-
-    latest = _latest_run(runs_dir)
-    if latest is None:
-        message = (
-            "no owner-curation or legacy Memory Book validation output found "
-            f"in {runs_dir}"
+    environment = plist.get("EnvironmentVariables")
+    environment = environment if isinstance(environment, dict) else {}
+    gateway_url = str(
+        args.gateway_url
+        or environment.get("RAG_IME_AGENT_GATEWAY_URL")
+        or ""
+    ).strip()
+    if not _is_loopback_origin(gateway_url):
+        errors.append("maintenance trigger has no valid loopback Agent Gateway origin")
+    forbidden_environment = sorted(
+        key
+        for key in environment
+        if key == "RAG_IME_DB_PATH"
+        or "DEEPSEEK" in key
+        or key in {"RAG_IME_MODEL_ENV", "RAG_IME_ROOT"}
+    )
+    if forbidden_environment:
+        errors.append(
+            "maintenance trigger still owns database/model runtime settings: "
+            + ", ".join(forbidden_environment)
         )
-        (errors if args.require_run else warnings).append(message)
-    else:
-        if not latest["validationOk"]:
-            errors.append(f"latest Memory Book validation failed: {latest['validatePath']}")
-        if latest["ageHours"] > max(0.0, args.max_age_hours):
-            message = f"latest successful validation is stale: {latest['ageHours']:.1f}h"
-            (errors if args.require_run else warnings).append(message)
+    if args.require_run:
+        warnings.append(
+            "--require-run is retired; curation receipts are owned by the Gateway database"
+        )
 
     launchd = _launchd_status(args.label)
     if not launchd["loaded"]:
@@ -104,14 +117,14 @@ def main() -> int:
         errors.append(f"LaunchAgent last exit code is {launchd['lastExitCode']}")
 
     report: dict[str, Any] = {
-        "schemaVersion": "rag-ime.memory-book-maintenance-doctor.v1",
+        "schemaVersion": "rag-ime.memory-book-maintenance-doctor.v2",
         "ok": not errors,
         "appRoot": str(app_root),
         "plistPath": str(plist_path),
-        "dbPath": str(db_path),
-        "dbWritable": db_writable,
+        "gatewayUrl": gateway_url,
+        "schedulerReadsDatabase": False,
+        "schedulerStartsRuntimeHost": False,
         "installMarker": marker_payload or {},
-        "latestRun": latest or {},
         "launchd": launchd,
         "errors": errors,
         "warnings": warnings,
@@ -141,62 +154,17 @@ def _load_json(path: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _latest_run(runs_dir: Path) -> dict[str, Any] | None:
-    validations = sorted(runs_dir.glob("memory-book-*.validate.json"), key=lambda item: item.stat().st_mtime)
-    owner_runs = sorted(
-        runs_dir.glob("owner-memory-*.json"),
-        key=lambda item: item.stat().st_mtime,
+def _is_loopback_origin(value: str) -> bool:
+    parsed = urlparse(str(value or "").strip().rstrip("/"))
+    return bool(
+        parsed.scheme == "http"
+        and parsed.hostname in {"127.0.0.1", "localhost", "::1"}
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.path in {"", "/"}
+        and not parsed.query
+        and not parsed.fragment
     )
-    latest_validation = validations[-1] if validations else None
-    latest_owner = owner_runs[-1] if owner_runs else None
-    if latest_validation is None and latest_owner is None:
-        return None
-    if (
-        latest_owner is not None
-        and (
-            latest_validation is None
-            or latest_owner.stat().st_mtime >= latest_validation.stat().st_mtime
-        )
-    ):
-        owner = _load_json(latest_owner) or {}
-        age_hours = max(
-            0.0,
-            (time.time() - latest_owner.stat().st_mtime) / 3600.0,
-        )
-        results = [
-            item
-            for item in owner.get("results", [])
-            if isinstance(item, dict)
-        ]
-        return {
-            "mode": "owner_scoped",
-            "ownerCurationPath": str(latest_owner),
-            "validationOk": bool(owner.get("ok")),
-            "reviewRequired": any(
-                bool(item.get("reviewRequired"))
-                for item in results
-            ),
-            "ranScopeCount": int(owner.get("ranScopeCount") or 0),
-            "ageHours": round(age_hours, 3),
-        }
-
-    assert latest_validation is not None
-    validate_path = latest_validation
-    stem = validate_path.name.removesuffix(".validate.json")
-    plan_path = runs_dir / f"{stem}.json"
-    preview_path = runs_dir / f"{stem}.preview.json"
-    validate = _load_json(validate_path) or {}
-    age_hours = max(0.0, (time.time() - validate_path.stat().st_mtime) / 3600.0)
-    return {
-        "mode": "legacy",
-        "planPath": str(plan_path),
-        "previewPath": str(preview_path),
-        "validatePath": str(validate_path),
-        "planExists": plan_path.is_file(),
-        "previewExists": preview_path.is_file(),
-        "validationOk": bool(validate.get("ok")) and plan_path.is_file() and preview_path.is_file(),
-        "ageHours": round(age_hours, 3),
-    }
 
 
 def _launchd_status(label: str) -> dict[str, Any]:

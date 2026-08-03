@@ -272,8 +272,19 @@ def scope_sql_predicate(
     table_alias: str = "",
 ) -> tuple[str, tuple[str, ...]]:
     prefix = f"{table_alias}." if table_alias else ""
+    personal_profile = (
+        f"({prefix}scope_mode = 'authoritative' "
+        f"AND {prefix}knowledge_domain = 'user_profile_preference' "
+        f"AND {prefix}owner_kind = 'user' "
+        f"AND {prefix}scope_kind = 'user' "
+        f"AND {prefix}scope_id = {prefix}owner_id "
+        f"AND {prefix}visibility = 'private')"
+    )
     if caller is None:
-        return f"{prefix}scope_mode = 'legacy'", ()
+        # The owner predicate at the retrieval boundary selects which local
+        # user's private profile is visible.  Room/session knowledge still
+        # requires a caller binding and remains hidden on this branch.
+        return f"({prefix}scope_mode = 'legacy' OR {personal_profile})", ()
     domain_marks = ", ".join("?" for _ in caller.allowed_domains)
     scope_clause = " OR ".join(
         f"({prefix}scope_kind = ? AND {prefix}scope_id = ?)"
@@ -284,7 +295,7 @@ def scope_sql_predicate(
         *(value for scope in caller.allowed_scopes for value in scope),
     )
     return (
-        f"({prefix}scope_mode = 'legacy' OR ("
+        f"({prefix}scope_mode = 'legacy' OR {personal_profile} OR ("
         f"{prefix}scope_mode = 'authoritative' "
         f"AND {prefix}knowledge_domain IN ({domain_marks}) "
         f"AND ({scope_clause})))",
@@ -299,13 +310,25 @@ def scope_visible(
     mode = compact_whitespace(str(metadata.get("scopeMode") or "legacy"))
     if mode == "legacy":
         return True
-    if mode != "authoritative" or caller is None:
+    if mode != "authoritative":
         return False
     domain = compact_whitespace(str(metadata.get("knowledgeDomain") or ""))
     scope = (
         compact_whitespace(str(metadata.get("scopeKind") or "")),
         compact_whitespace(str(metadata.get("scopeId") or "")),
     )
+    if (
+        domain == "user_profile_preference"
+        and compact_whitespace(str(metadata.get("ownerKind") or "")) == "user"
+        and scope == (
+            "user",
+            compact_whitespace(str(metadata.get("ownerId") or "")),
+        )
+        and compact_whitespace(str(metadata.get("visibility") or "")) == "private"
+    ):
+        return True
+    if caller is None:
+        return False
     return domain in caller.allowed_domains and scope in caller.allowed_scopes
 
 

@@ -251,6 +251,29 @@ class AgentRoleBookTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(count, 1)
 
+    def test_digest_identifier_is_not_mistaken_for_a_card_number(self) -> None:
+        self._seed()
+        draft = self.store.propose_revision(
+            "companion-present-v1",
+            "1",
+            {
+                "activeCommitments": [
+                    _item(
+                        "commitment:evidence",
+                        "完成声明必须附真实验收证据",
+                        source_id="daily-digest:ebd9fa3145321657372676f1",
+                        evidence_ids=["evidence:receipt:1"],
+                    )
+                ]
+            },
+            change_summary=(
+                "Daily review-only proposals; "
+                "digest=daily-digest:ebd9fa3145321657372676f1"
+            ),
+        )
+
+        self.assertEqual(draft["status"], "draft")
+
     def test_activation_and_rollback_keep_exactly_one_active_revision(self) -> None:
         seed = self._seed()
         draft = self.store.propose_revision(

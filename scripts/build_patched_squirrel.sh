@@ -217,7 +217,8 @@ ensure_assistant_overlay_v2_sources() {
     RagImeSuggestionCardView.swift \
     RagImeSuggestionRowView.swift \
     RagImeNonActivatingPanel.swift \
-    RagImeAssistantPanelController.swift; do
+    RagImeAssistantPanelController.swift \
+    RagImeInputCaptureOutbox.swift; do
     [[ -f "$source_dir/$file" ]] || continue
     cp "$source_dir/$file" "$SQUIRREL_WORKDIR/sources/$file"
   done
@@ -392,7 +393,7 @@ require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "privacyD
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImePanelForcesHorizontalLayout" "mixed LLM horizontal-lane guard"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImePanelUsesSideDisplay" "RAG-IME side-display panel marker"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "traceRagImeFrontendEvent" "foreground frontend trace hook"
-require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "guard ragImeSidecarClient?.frontendTrace == true else { return }" "frontend trace configuration gate"
+require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "guard ragImeSidecarClient?.frontendTrace == true || isCaptureDeliveryEvent else { return }" "frontend trace configuration gate"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "guard !ragImeSensitiveFieldActive || sensitiveSafeEvents.contains(event) else { return }" "sensitive-field trace suppression"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "ragImePrepareFrontendTraceLog" "bounded frontend trace log"
 require_text "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" ".posixPermissions: 0o600" "private frontend trace permissions"
