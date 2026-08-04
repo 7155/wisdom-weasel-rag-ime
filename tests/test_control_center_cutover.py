@@ -236,11 +236,26 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("RAG_IME_SQUIRREL_RESET=0", installer)
         self.assertIn("RAG_IME_SQUIRREL_BUILD_DRY_RUN=0", installer)
         self.assertIn(
-            'run_with_stack_squirrel_workspace "$ROOT/scripts/prepare_squirrel_workspace.sh"',
+            'SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE="${RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE:-0}"',
             installer,
         )
         self.assertIn(
-            'run_with_stack_squirrel_workspace "$ROOT/scripts/build_patched_squirrel.sh" install',
+            'RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE="$allow_source_root_change"',
+            installer,
+        )
+        self.assertNotIn("RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE=0 \\", installer)
+        self.assertIn(
+            'run_with_stack_squirrel_workspace 0 "$ROOT/scripts/prepare_squirrel_workspace.sh"',
+            installer,
+        )
+        self.assertIn(
+            "\n".join(
+                (
+                    "  run_with_stack_squirrel_workspace \\",
+                    '    "$SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE" \\',
+                    '    "$ROOT/scripts/build_patched_squirrel.sh" install',
+                )
+            ),
             installer,
         )
         self.assertLess(

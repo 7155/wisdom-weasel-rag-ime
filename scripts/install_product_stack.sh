@@ -17,6 +17,12 @@ SQUIRREL_DERIVED_DATA_OVERRIDE=""
 SQUIRREL_STACK_TEMP_ROOT=""
 SQUIRREL_STACK_WORKDIR=""
 SQUIRREL_STACK_DERIVED_DATA=""
+SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE="${RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE:-0}"
+if [[ "$SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE" != "0" &&
+  "$SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE" != "1" ]]; then
+  echo "RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE must be 0 or 1" >&2
+  exit 2
+fi
 if [[ "${RAG_IME_SQUIRREL_WORKDIR+x}" == "x" ]]; then
   SQUIRREL_WORKDIR_OVERRIDE_SET=1
   SQUIRREL_WORKDIR_OVERRIDE="$RAG_IME_SQUIRREL_WORKDIR"
@@ -48,6 +54,8 @@ RAG_IME_ALLOW_DIRTY_INSTALL=1 only for an explicitly marked development build.
 With --include-squirrel, an explicit RAG_IME_SQUIRREL_WORKDIR or
 RAG_IME_SQUIRREL_DERIVED_DATA must be an absolute path that does not exist yet.
 The release installer never resets or silently reuses an existing checkout.
+Set RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE=1 only when intentionally handing
+the installed Squirrel owner marker to this clean checkout.
 EOF
 }
 
@@ -75,6 +83,8 @@ require_fresh_squirrel_path() {
 }
 
 run_with_stack_squirrel_workspace() {
+  local allow_source_root_change="$1"
+  shift
   env \
     RAG_IME_SQUIRREL_WORKDIR="$SQUIRREL_STACK_WORKDIR" \
     RAG_IME_SQUIRREL_PROJECT="$SQUIRREL_STACK_WORKDIR/Squirrel.xcodeproj" \
@@ -84,7 +94,7 @@ run_with_stack_squirrel_workspace() {
     RAG_IME_SQUIRREL_DRY_RUN=0 \
     RAG_IME_SQUIRREL_BUILD_DRY_RUN=0 \
     RAG_IME_SQUIRREL_SKIP_POSTINSTALL=0 \
-    RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE=0 \
+    RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE="$allow_source_root_change" \
     "$@"
 }
 
@@ -117,7 +127,7 @@ prepare_stack_squirrel_workspace() {
     exit 73
   fi
 
-  run_with_stack_squirrel_workspace "$ROOT/scripts/prepare_squirrel_workspace.sh"
+  run_with_stack_squirrel_workspace 0 "$ROOT/scripts/prepare_squirrel_workspace.sh"
   echo "Prepared current-source Squirrel workspace: $SQUIRREL_STACK_WORKDIR"
 }
 
@@ -274,7 +284,9 @@ if [[ "$INCLUDE_VOICE" == "1" ]]; then
 fi
 
 if [[ "$INCLUDE_SQUIRREL" == "1" ]]; then
-  run_with_stack_squirrel_workspace "$ROOT/scripts/build_patched_squirrel.sh" install
+  run_with_stack_squirrel_workspace \
+    "$SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE" \
+    "$ROOT/scripts/build_patched_squirrel.sh" install
 fi
 
 # Install the user-visible app last so its marker becomes the canonical product

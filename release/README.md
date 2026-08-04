@@ -119,6 +119,19 @@ scripts/install_product_stack.sh \
   --pi-worktree ../pi
 ```
 
+If this deliberately transfers the installed Squirrel marker from another
+checkout to the current clean checkout, make that one owner handoff explicit:
+
+```bash
+RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE=1 \
+  scripts/install_product_stack.sh \
+  --include-squirrel \
+  --include-pi \
+  --pi-worktree ../pi
+```
+
+Do not set the handoff flag for routine reinstalls from the same checkout.
+
 For an existing installation that should keep its current Squirrel and skip an
 optional local MLX predictor:
 
