@@ -3014,6 +3014,54 @@ class DebugManagementApiTests(unittest.TestCase):
         )
         self.assertTrue(health["ok"])
 
+    def test_agent_messages_http_route_forwards_bounded_history_query(self) -> None:
+        session_id = "agent:http-history"
+        snapshot = {
+            "schemaVersion": "rag-ime.agent-session-snapshot.v1",
+            "ok": True,
+            "session": {"id": session_id},
+            "messages": [],
+            "liveEvents": [],
+        }
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        try:
+            with patch.object(
+                self.service.agent,
+                "messages",
+                return_value=snapshot,
+            ) as messages:
+                with urlopen(
+                    f"{base_url}/api/agent/sessions/{quote(session_id, safe='')}/messages"
+                    "?eventLimit=80&beforeEventId=event%3Afirst"
+                    "&turnLimit=100&beforeMessageId=message%3Afirst",
+                    timeout=5,
+                ) as response:
+                    status = response.status
+                    payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload, snapshot)
+        messages.assert_called_once_with(
+            session_id,
+            event_limit=80,
+            before_event_id="event:first",
+            turn_limit=100,
+            before_message_id="message:first",
+        )
+
     def test_agent_tool_validation_error_is_non_retryable(self) -> None:
         class Handler(DebugRequestHandler):
             pass

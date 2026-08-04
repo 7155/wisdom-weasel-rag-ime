@@ -7220,7 +7220,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if agent_session_id and agent_action == "messages":
             event_limit_text = _query_first(query, "eventLimit")
             event_limit = (
-                _integer(
+                _bounded_int(
                     event_limit_text,
                     default=80,
                     minimum=1,
@@ -7231,7 +7231,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             )
             turn_limit_text = _query_first(query, "turnLimit")
             turn_limit = (
-                _integer(
+                _bounded_int(
                     turn_limit_text,
                     default=100,
                     minimum=1,
