@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +13,108 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ControlCenterCutoverTests(unittest.TestCase):
+    def test_control_center_builds_use_the_declared_pnpm_version(self) -> None:
+        runner = (ROOT / "scripts" / "run_control_center_pnpm.sh").read_text(
+            encoding="utf-8"
+        )
+        build = (ROOT / "scripts" / "build_control_center_web.sh").read_text(
+            encoding="utf-8"
+        )
+        qa = (ROOT / "scripts" / "run_control_center_web_qa.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('payload.get("packageManager")', runner)
+        self.assertIn('exec corepack "$PNPM_SPEC"', runner)
+        self.assertIn('ACTUAL_VERSION="$("$PNPM_BIN" --version)"', runner)
+        self.assertIn('cd "$WEB"', runner)
+        self.assertNotIn("pm-on-fail", runner)
+        for script in (build, qa):
+            self.assertIn("run_control_center_pnpm.sh", script)
+            self.assertNotIn('pnpm --dir "$WEB"', script)
+
+        for entrypoint in (
+            ROOT / "CONTRIBUTING.md",
+            ROOT / "release" / "README.md",
+            ROOT / "scripts" / "generate_control_center_contracts.mjs",
+        ):
+            text = entrypoint.read_text(encoding="utf-8")
+            self.assertIn("scripts/run_control_center_pnpm.sh", text)
+            self.assertNotIn("pnpm --dir control-center-web", text)
+
+    def test_control_center_pnpm_runner_normalizes_corepack_working_directory(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-pnpm-corepack-") as tmp:
+            tmp_path = Path(tmp)
+            fake_bin = tmp_path / "bin"
+            fake_bin.mkdir()
+            log_path = tmp_path / "corepack.log"
+            fake_corepack = fake_bin / "corepack"
+            fake_corepack.write_text(
+                "#!/bin/sh\n"
+                'printf "%s\\n" "$PWD" > "$RAG_IME_TEST_COREPACK_LOG"\n'
+                'printf "%s\\n" "$@" >> "$RAG_IME_TEST_COREPACK_LOG"\n',
+                encoding="utf-8",
+            )
+            fake_corepack.chmod(0o755)
+            hostile_cwd = tmp_path / "hostile-cwd"
+            hostile_cwd.mkdir()
+            (hostile_cwd / "package.json").write_text(
+                '{"packageManager":"npm@99.0.0"}\n', encoding="utf-8"
+            )
+
+            result = subprocess.run(
+                ["bash", str(ROOT / "scripts" / "run_control_center_pnpm.sh"), "--version"],
+                cwd=hostile_cwd,
+                env={
+                    **os.environ,
+                    "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+                    "RAG_IME_TEST_COREPACK_LOG": str(log_path),
+                },
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                log_path.read_text(encoding="utf-8").splitlines(),
+                [
+                    str(ROOT / "control-center-web"),
+                    "pnpm@11.9.0",
+                    "--version",
+                ],
+            )
+
+    def test_control_center_pnpm_runner_rejects_mismatched_fallback(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-pnpm-fallback-") as tmp:
+            tmp_path = Path(tmp)
+            fake_bin = tmp_path / "bin"
+            fake_bin.mkdir()
+            python_link = fake_bin / "python3"
+            dirname_link = fake_bin / "dirname"
+            python_link.symlink_to(sys.executable)
+            dirname = shutil.which("dirname")
+            self.assertIsNotNone(dirname)
+            dirname_link.symlink_to(str(dirname))
+            fake_pnpm = fake_bin / "pnpm"
+            fake_pnpm.write_text(
+                "#!/bin/sh\n"
+                'if [ "$1" = "--version" ]; then echo 11.18.0; exit 0; fi\n'
+                "exit 99\n",
+                encoding="utf-8",
+            )
+            fake_pnpm.chmod(0o755)
+
+            result = subprocess.run(
+                ["/bin/bash", str(ROOT / "scripts" / "run_control_center_pnpm.sh"), "test"],
+                cwd=tmp_path,
+                env={**os.environ, "PATH": str(fake_bin)},
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("pnpm 11.9.0 is required; found 11.18.0", result.stderr)
+
     def test_full_stack_installer_refuses_existing_explicit_squirrel_workspace(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-product-stack-") as tmp:
             tmp_path = Path(tmp)

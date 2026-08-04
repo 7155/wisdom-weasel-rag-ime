@@ -21,7 +21,7 @@ change can therefore cross privacy or lifecycle boundaries.
 uv sync --locked --python 3.12
 corepack enable
 corepack prepare pnpm@11.9.0 --activate
-pnpm --dir control-center-web install --frozen-lockfile
+scripts/run_control_center_pnpm.sh install --frozen-lockfile
 ```
 
 Do not add local API keys, model weights, personal input history, databases,
@@ -52,9 +52,9 @@ uvx --from mypy==2.3.0 mypy
 uv run --locked python scripts/check_product_status.py --json
 uv run --locked python scripts/check_public_release.py --repository-only
 uv run --locked python -m unittest discover -s tests
-pnpm --dir control-center-web typecheck
-pnpm --dir control-center-web test
-pnpm --dir control-center-web build
+scripts/run_control_center_pnpm.sh typecheck
+scripts/run_control_center_pnpm.sh test
+scripts/run_control_center_pnpm.sh build
 ```
 
 Native or input-method changes also require the relevant build and an attended

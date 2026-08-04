@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WEB="$ROOT/control-center-web"
+PNPM="$ROOT/scripts/run_control_center_pnpm.sh"
 CONTROL_TRANSPORT="${RAG_IME_CONTROL_TRANSPORT:-mock}"
 BUILD_CHANNEL="${RAG_IME_CONTROL_BUILD_CHANNEL:-preview}"
 
@@ -22,15 +23,15 @@ if [[ "$BUILD_CHANNEL" == "production" \
 fi
 
 if [[ "${RAG_IME_SKIP_WEB_INSTALL:-0}" != "1" ]]; then
-  CI=true pnpm --dir "$WEB" install --frozen-lockfile
+  CI=true "$PNPM" install --frozen-lockfile
 fi
 
 node "$ROOT/scripts/generate_control_center_contracts.mjs" --check
-pnpm --dir "$WEB" typecheck
-pnpm --dir "$WEB" test
+"$PNPM" typecheck
+"$PNPM" test
 VITE_CONTROL_TRANSPORT="$CONTROL_TRANSPORT" \
 VITE_BUILD_CHANNEL="$BUILD_CHANNEL" \
-  pnpm --dir "$WEB" build
+  "$PNPM" build
 
 [[ -f "$WEB/dist/index.html" ]] || {
   echo "missing control-center-web/dist/index.html" >&2

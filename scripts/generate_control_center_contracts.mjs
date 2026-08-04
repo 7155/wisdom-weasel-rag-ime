@@ -22,7 +22,7 @@ try {
   ({ default: standaloneCode } = requireFromWeb('ajv/dist/standalone/index.js'));
 } catch (error) {
   console.error(
-    'json-schema-to-typescript is unavailable. Run pnpm --dir control-center-web install --frozen-lockfile first.',
+    'json-schema-to-typescript is unavailable. Run scripts/run_control_center_pnpm.sh install --frozen-lockfile first.',
   );
   throw error;
 }

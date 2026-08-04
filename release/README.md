@@ -47,7 +47,7 @@ npm ci
 
 cd ../personal-agent-workbench
 uv sync --frozen
-pnpm --dir control-center-web install --frozen-lockfile
+scripts/run_control_center_pnpm.sh install --frozen-lockfile
 ```
 
 The product contract rejects a Pi source tree that does not contain the pinned
@@ -94,10 +94,10 @@ python3 scripts/check_public_release.py --repository-only
 Frontend verification:
 
 ```bash
-pnpm --dir control-center-web typecheck
-pnpm --dir control-center-web test
-pnpm --dir control-center-web build
-pnpm --dir control-center-web test:e2e
+scripts/run_control_center_pnpm.sh typecheck
+scripts/run_control_center_pnpm.sh test
+scripts/run_control_center_pnpm.sh build
+scripts/run_control_center_pnpm.sh test:e2e
 ```
 
 ## Local Installation
