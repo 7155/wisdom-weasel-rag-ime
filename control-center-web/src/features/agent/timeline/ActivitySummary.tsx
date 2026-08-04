@@ -9,6 +9,7 @@ import {
   Copy,
   Database,
   ExternalLink,
+  FileDiff,
   GitBranch,
   MessageSquareText,
   Search,
@@ -49,6 +50,15 @@ import {
 } from './disclosure-anchor';
 import { publicToolResultView, safeSourceLabels, type PublicToolResultView } from './public-tool-result';
 import { publicAgentErrorText } from '../public-error';
+
+const codeMutationToolIds = new Set([
+  'edit',
+  'edit_file',
+  'workspace_edit',
+  'workspace_edit_file',
+  'workspace_patch',
+  'apply_patch',
+]);
 
 export function ActivitySummary({
   activities,
@@ -282,11 +292,18 @@ function ActivityRow({
   const Icon = presentation.icon;
   const isToolActivity = ['tool_started', 'tool_progress', 'tool_finished'].includes(displayActivity.kind);
   const toolView = isToolActivity ? publicToolResultView(displayActivity) : null;
+  const editing = Boolean(toolView && codeMutationToolIds.has(toolView.toolId));
+  const progressHistory = isToolActivity ? agentToolProgressHistory(payload.progressHistory) : [];
+  const editStarted = displayActivity.kind === 'tool_started'
+    || progressHistory.some((entry) => entry.kind === 'tool_started');
+  const editActive = editing
+    && activity.status === 'running'
+    && editStarted
+    && ['tool_started', 'tool_progress'].includes(displayActivity.kind);
   const visibleSummary = activity.kind === 'turn_failed'
     ? publicAgentErrorText(activity.summary, '模型服务请求失败，请重试或切换模型。')
     : publicActivitySummary(activity.summary, presentation.title);
   const canDecide = activity.status === 'waiting' && approvalNeedsHumanDecision(payload) && approvalId && hash && onApprovalDecision;
-  const progressHistory = isToolActivity ? agentToolProgressHistory(payload.progressHistory) : [];
   const [rowOpen, setRowOpen] = useState(Boolean(boundToTool && activity.status === 'waiting'));
   const nowMs = useActivityClock(activity.status === 'running');
   const duration = activityDuration(activity, nowMs);
@@ -294,7 +311,9 @@ function ActivityRow({
     <details
       className="agent-activity-row"
       data-kind={presentation.kind}
+      data-edit-active={editActive || undefined}
       data-state={activity.status}
+      data-tool-kind={editing ? 'edit' : 'standard'}
       open={rowOpen}
     >
       <summary
@@ -308,6 +327,11 @@ function ActivityRow({
           <small>
             {toolView?.error ?? toolView?.summary ?? visibleSummary}
           </small>
+          {editActive ? <span
+            aria-label="正在接收文件编辑进度"
+            className="agent-activity-row__edit-progress"
+            role="status"
+          ><i /><i /><i /></span> : null}
         </span>
         <i data-status={activity.status}>
           {toolView?.sources.length ? `来源 ${toolView.sources.length} · ` : ''}
@@ -679,10 +703,15 @@ export function PublicToolOutput({ view }: { view: PublicToolResultView }) {
   const outputText = view.output?.text ?? '';
   const { copy, state } = useCopyableText(outputText);
   if (!view.output) return null;
+  const diff = codeMutationToolIds.has(view.toolId);
   return (
-    <section className="agent-tool-result-panel" aria-label="工具返回片段">
+    <section
+      className="agent-tool-result-panel"
+      data-output-kind={diff ? 'diff' : 'text'}
+      aria-label={diff ? '文件变更' : '工具返回片段'}
+    >
       <header className="agent-tool-result-panel__header">
-        <strong><TerminalSquare size={13} />返回片段</strong>
+        <strong>{diff ? <FileDiff size={13} /> : <TerminalSquare size={13} />}{diff ? '代码变更' : '返回片段'}</strong>
         <Button
           aria-live="polite"
           leadingIcon={state === 'copied' ? <Check size={13} /> : <Copy size={13} />}
@@ -693,7 +722,18 @@ export function PublicToolOutput({ view }: { view: PublicToolResultView }) {
           {state === 'copied' ? '已复制结果' : '复制结果'}
         </Button>
       </header>
-      <pre aria-label="工具返回内容" tabIndex={0}>{outputText}</pre>
+      <pre aria-label={diff ? '文件变更内容' : '工具返回内容'} tabIndex={0}>
+        {diff ? outputText.split('\n').map((line, index) => <span
+          data-diff-line={line.startsWith('+') && !line.startsWith('+++')
+            ? 'addition'
+            : line.startsWith('-') && !line.startsWith('---')
+              ? 'deletion'
+              : line.startsWith('@@')
+                ? 'hunk'
+                : undefined}
+          key={`${index}:${line}`}
+        >{line}{index < outputText.split('\n').length - 1 ? '\n' : ''}</span>) : outputText}
+      </pre>
       {view.output.truncated ? (
         <small>此处显示安全截断片段；完整结果仍由本机工具回执保留。</small>
       ) : null}
@@ -702,7 +742,7 @@ export function PublicToolOutput({ view }: { view: PublicToolResultView }) {
   );
 }
 
-function SemanticToolPreview({ preview }: { preview: NonNullable<PublicToolResultView['preview']> }) {
+export function SemanticToolPreview({ preview }: { preview: NonNullable<PublicToolResultView['preview']> }) {
   return (
     <section className="agent-tool-preview" data-kind={preview.kind} aria-label={`${preview.title}内容`}>
       <header>

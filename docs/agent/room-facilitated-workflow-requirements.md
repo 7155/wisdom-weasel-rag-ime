@@ -3,7 +3,7 @@
 - Document class: sole tracked authority for current Room product behavior and acceptance status
 - Approved vision window: user decisions made on or after 2026-08-02
 - Contract revision: 2026-08-04
-- Acceptance state: source implementation passed final regression and independent P0/P1 review; coherent install and native foreground acceptance remain open
+- Acceptance state: source remediation passed current full regression and independent Sol max review with no remaining P0/P1/P2; coherent install plus native foreground acceptance remain open
 - Status rule: source, test, installed, and foreground evidence are reported separately
 
 Older handoffs, ignored local notes under `docs/`, screenshots, prototypes, tests,
@@ -19,6 +19,11 @@ missing choices, splits genuinely independent work among peer companions, keeps
 their bounded private subagents beneath the owning work item, integrates the
 result, requests independent review when policy requires it, and returns one
 final report.
+
+Room is also a long-running work system, not only a sequence of short chat
+turns. In full-auto mode a bounded goal may keep making real progress across
+many model turns, process restarts, and one or more days without asking the user
+to operate each failed Tool step.
 
 The conversation is the primary interaction surface. The Tasks surface is a
 read-only projection for progress, division of work, dependencies, Todo,
@@ -62,10 +67,15 @@ repository and runtime, then chooses one of two branches.
    the answer.
 7. Only after that answer appears may the Facilitator ask the next dependent
    question.
-8. After the last necessary answer, the Facilitator summarizes the aligned goal
-   and asks `现在开始行动吗？`. The one-shot `开始行动` control exists only on
+8. Before defining work, the companion must be able to name the concrete entry
+   or surface, what the user will do and see, the real deliverables, and an
+   observable completion check. `端到端可用`, `完整`, and `可运行闭环` describe
+   scope but do not replace those specifics; `当前项目`, `规定入口`, `核心操作`,
+   and `真实结果` are placeholders and must not release execution.
+9. After the last necessary answer, the Facilitator summarizes what she now
+   understands and asks `现在开始行动吗？`. The one-shot `开始行动` control exists only on
    this clarification branch.
-9. Clicking it appends an ordinary user message such as `开始行动`. That message
+10. Clicking it appends an ordinary user message such as `开始行动`. That message
    is durably ordered before the fresh execute Dispatch is released; a crash or
    retry cannot begin a Worker or Reviewer without the visible authorization.
 
@@ -79,7 +89,7 @@ Canonical ordering:
 澄·今：首版最重要的交付边界是什么？
         [选项]
 用户：先完成可运行闭环
-澄·今：已经对齐……现在开始行动吗？
+澄·今：我明白了……现在开始行动吗？
         [开始行动]
 用户：开始行动
 澄·今：我把工作拆成两项并行任务……
@@ -99,7 +109,9 @@ Clarification copy is conversation, not an audit report. The companion first
 acknowledges the user's goal, explains briefly why the one current choice
 matters, and asks it. Public copy does not announce that a work card was read,
 declare the request insufficient, or recite goal/deliverable/acceptance
-categories.
+categories. It also does not tell an ordinary user that the system is “对齐”、
+“澄清” or passing a “门禁”; it says naturally what is understood and what one
+remaining choice would change.
 
 ## Roles and execution ownership
 
@@ -198,6 +210,38 @@ continuations are upcast before recovery; an old record with no safe child
 continuation stays non-runnable and emits one recoverable failure signal instead
 of looping forever.
 
+## Long-running autonomy and recovery
+
+- Ordinary code errors, command failures, invalid Tool arguments, and transient
+  Provider failures are owned by the companion doing the work. She reads the
+  useful error, changes the code, command, or arguments, and retries without
+  interrupting the user. A recoverable child failure does not block or settle
+  the Room.
+- Every companion has durable Todo, a current checkpoint, owned WorkItem and
+  workspace binding, latest meaningful action, produced artifacts, verification
+  state, and remaining work. A model turn or process may end without losing
+  these facts; the next authorized run resumes from the checkpoint instead of
+  starting the task again or relying on chat prose.
+- The Facilitator supervises recovery. Within configured policy she may retry
+  the same step, revise its approach, reassign unfinished work, turn unsafe
+  parallel work into ordered work, rebind a retained workspace, select another
+  allowed model, and then continue integration, review, and final delivery.
+  Every recovery changes durable state and keeps its attempt lineage.
+- The user is asked only when progress truly requires a new user-owned decision,
+  permission, credential, or external action, or when multiple bounded recovery
+  attempts have produced evidence that no safe path remains. The Room then asks
+  one natural, decision-changing question or reports one consolidated blocker;
+  it never delegates routine debugging to the user.
+- The conversation surface defaults to `正在恢复`, `已恢复`, and the next useful
+  action. Exact attempts, safe command output, errors, and recovery decisions
+  remain available inside the expandable Tool record. Repeated attempts are one
+  chronological record with truthful lineage, not repeated failure cards or
+  fake progress animation.
+- Retry budgets, backoff, model choices, capability leases, cancellation,
+  context compaction, checkpoints, and workspace cleanup are runtime-owned.
+  React may display them but cannot invent a retry, keep a dead run alive, or
+  decide that recovery succeeded.
+
 ## Parallel workspaces and permanent ledger
 
 - A small coherent single-writer task may use the governed current workspace.
@@ -236,6 +280,19 @@ because a client timer pretends work happened.
   `+N/-N`; repeated plumbing, long arguments, and raw output stay collapsed.
   Each row may expand in place to bounded input, output, diff, or safe failure
   details without opening another column or nested card stack.
+- Repository work uses first-class semantic rows for search, read, edit/create,
+  command, test, and diff instead of the generic label `工具操作`. A compact
+  sequence may read `已搜索 …`, `已读取 RoomTurn.tsx`, and
+  `已编辑 RoomTurn.tsx +46 -1`; expanding it reveals matched locations, the
+  bounded command/output, or the attributed patch. File manipulation must be
+  strong enough to support repeated edits and verification during a day-scale
+  run, not only report that an opaque Tool returned.
+- A long-running edit has its own truthful active treatment: the file and
+  current edit stage remain visible, real progress events update the row, and a
+  restrained edit indicator continues only while that Tool call is active.
+  Completion settles into the file/diff summary; failure settles into one
+  expandable error with recovery attempts. A client timer, heartbeat, or
+  elapsed-time repaint must never animate an edit that is not actually running.
 - A companion's real conversational update remains visually separate from the
   activity rows. Private reasoning, internal protocol steps, and duplicate
   status paraphrases are never promoted into public companion speech.
@@ -315,12 +372,13 @@ Current product scope is voice input only. Room companions do not produce TTS.
 
 | Area | Source/test state | Installed foreground state |
 | --- | --- | --- |
-| opening Facilitator, conditional clarification, crash-safe chronological answers and typed start | implemented; Web 933/933, Room backend 590/590, command receipts 5/5, answer/native-route and injected-crash gates passed | open |
-| fresh execute Dispatch, peer work, nested delegation, integration, review, one report | implemented; Room backend 590/590 and prior focused settlement gates passed | open |
+| opening Facilitator, conditional clarification, crash-safe chronological answers and typed start | implemented; current Web 950/950, Room Kernel 98/98, and Runtime/public projection 104/104 passed; prior command receipt and injected-crash gates also passed | open |
+| fresh execute Dispatch, peer work, nested delegation, integration, review, one report | implemented; current Room Kernel 98/98 and prior focused settlement gates passed | open |
 | stage Skills and capability receipts | implemented; Skill 25/25 and Pi runtime 70/70 passed | open |
 | permanent workspace ledger, same-baseline isolation, integration-before-cleanup, red retention | implemented; settlement and canary 18/18 passed | open |
-| continuous conversation activity and lower-density Tasks projection | implemented; Web 933/933 passed | open |
+| continuous conversation activity and lower-density Tasks projection | implemented; current Web 950/950 passed | open |
 | Session Todo, per-owner result/diff, subagent grouping | implemented; source projections and Web regression passed | open |
+| day-scale full-auto recovery, durable checkpoints, automatic repair/retry/reassignment/model fallback | partially implemented; durable Dispatch attempts, Todo, workspace ledger, reconnect state, direct failed-Tool retry lineage, and Provider retry projection exist and passed source regression; restart-resume plus injected native recovery acceptance remain open | open |
 | historical continuation recovery and Report-stat filtering | implemented; historical upcast 7/7 and settlement regression passed | open |
 | tracked authority portability | implemented by `docs/agent/room-facilitated-workflow-requirements.md` | not applicable |
 | coherent App/Web/Python/managed-Pi provenance | production Web build passed; coherent install pending | open |
@@ -340,7 +398,7 @@ Use one coherent installed build and one fresh Room in the foreground
 2. Submit a natural bounded request such as `我要完成 TUI`; do not include
    protocol instructions or canned answers.
 3. If real ambiguity exists, answer the inline option-first questions and click
-   `开始行动` only after the aligned summary. Also preserve the direct path for a
+   `开始行动` only after the natural understanding summary. Also preserve the direct path for a
    fully specified request.
 4. Observe distinct Facilitator and peer ownership, at least two real parallel
    WorkItems when appropriate, each owner's Todo and attributed result/diff,
@@ -354,6 +412,13 @@ Use one coherent installed build and one fresh Room in the foreground
 7. Correlate the visible flow with durable receipts and installed provenance.
    Any fake activity, skipped implementation, missing integration/review,
    incomplete artifact, duplicate final, or mismatch keeps acceptance open.
+8. In full-auto mode, inject at least one recoverable command or Tool-argument
+   failure and one transient Provider failure. Confirm the owning companion
+   repairs or retries it, the Facilitator continues the plan, the user is not
+   asked to handle the intermediate error, the expanded Tool row preserves the
+   attempt details, and the Room still reaches verified delivery. Restart once
+   after a durable checkpoint and confirm work resumes without duplicating
+   completed Todo, workspaces, messages, or the final report.
 
 ## Explicit non-goals
 

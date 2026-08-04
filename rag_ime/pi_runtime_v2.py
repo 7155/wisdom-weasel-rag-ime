@@ -44,6 +44,7 @@ from .pi_runtime_public import (
     public_fork_candidate_text,
     public_pi_model,
     public_reasoning_summaries,
+    public_tool_error_text,
     public_usage,
     public_usage_evidence,
     redact_mapping,
@@ -51,6 +52,7 @@ from .pi_runtime_public import (
 )
 from .pi_runtime_values import (
     PiRuntimeTurnConflict,
+    ToolRetryLineageTracker,
     effective_thinking_level,
     as_integer,
     path_is_within,
@@ -491,6 +493,7 @@ class _HostedSessionState:
     client_message_id: str = ""
     stream_pi_message_id: str = ""
     tool_blocks: AgentToolBlockBuffer = field(default_factory=AgentToolBlockBuffer)
+    tool_retries: ToolRetryLineageTracker = field(default_factory=ToolRetryLineageTracker)
     last_agent_messages: list[object] = field(default_factory=list)
     final_error: str = ""
     had_tool_activity: bool = False
@@ -1079,6 +1082,7 @@ class PiRuntimeHostManager:
             self._cancel_idle_locked()
             state.stream_pi_message_id = ""
             state.tool_blocks.clear()
+            state.tool_retries.reset()
             state.last_agent_messages = []
             state.final_error = ""
             state.had_tool_activity = False
@@ -2949,6 +2953,23 @@ class PiRuntimeHostManager:
                 "args": redact_mapping(raw_args),
                 "isError": bool(raw.get("isError")),
             }
+            explicit_retry_parent = str(
+                raw.get("retryOfToolCallId")
+                or raw.get("retry_of_tool_call_id")
+                or ""
+            ).strip()
+            with self._lock:
+                retry_of_tool_call_id = state.tool_retries.observe(
+                    event_type=event_type,
+                    turn_id=turn_id,
+                    tool_call_id=str(payload["toolCallId"]),
+                    tool_name=tool_name,
+                    arguments=raw_args,
+                    is_error=bool(raw.get("isError")),
+                    explicit_parent_id=explicit_retry_parent,
+                )
+            if retry_of_tool_call_id:
+                payload["retryOfToolCallId"] = retry_of_tool_call_id
             result_key = "partialResult" if event_type == "tool_execution_update" else "result"
             raw_result = raw.get(result_key)
             public_result = public_code_tool_activity(
@@ -2963,6 +2984,14 @@ class PiRuntimeHostManager:
                 public_result["error"] = public_result["outputPreview"]
             if public_result:
                 payload["publicResult"] = public_result
+            if bool(raw.get("isError")):
+                public_error = (
+                    public_tool_error_text(raw_result)
+                    or public_tool_error_text(raw.get("error"))
+                    or public_tool_error_text(raw.get("errorMessage"))
+                )
+                if public_error:
+                    payload["error"] = public_error
             if raw_result is not None:
                 # The public projection is the bounded client contract for
                 # coding tools. Do not send a second, larger raw carrier.
@@ -3745,6 +3774,7 @@ def _pi_tool_history_events(
     current_turn_id = ""
     activity_order: list[str] = []
     tool_names: dict[str, str] = {}
+    tool_retries = ToolRetryLineageTracker()
     for raw_value in raw_messages:
         if not isinstance(raw_value, Mapping):
             continue
@@ -3799,6 +3829,21 @@ def _pi_tool_history_events(
                     "args": redact_mapping(raw_args),
                     "isError": False,
                 }
+                explicit_retry_parent = str(
+                    item.get("retryOfToolCallId")
+                    or item.get("retry_of_tool_call_id")
+                    or ""
+                ).strip()
+                retry_of_tool_call_id = tool_retries.observe(
+                    event_type="tool_execution_start",
+                    turn_id=turn_id,
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    arguments=raw_args,
+                    explicit_parent_id=explicit_retry_parent,
+                )
+                if retry_of_tool_call_id:
+                    payload["retryOfToolCallId"] = retry_of_tool_call_id
                 public_result = public_code_tool_activity(tool_name, raw_args)
                 if public_result:
                     payload["publicResult"] = public_result
@@ -3831,6 +3876,21 @@ def _pi_tool_history_events(
             "result": _pi_tool_result(raw),
             "isError": bool(raw.get("isError") or raw.get("is_error")),
         }
+        retry_of_tool_call_id = tool_retries.observe(
+            event_type="tool_execution_end",
+            turn_id=turn_id,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            arguments={},
+            is_error=bool(payload["isError"]),
+            explicit_parent_id=str(
+                raw.get("retryOfToolCallId")
+                or raw.get("retry_of_tool_call_id")
+                or ""
+            ),
+        )
+        if retry_of_tool_call_id:
+            payload["retryOfToolCallId"] = retry_of_tool_call_id
         events.append((tool_call_id, "tool_finished", turn_id, created_at_ms, payload))
 
     allowed_ids = set(activity_order[-max(1, maximum_tools) :])

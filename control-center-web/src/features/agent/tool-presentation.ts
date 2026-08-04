@@ -25,8 +25,12 @@ const toolNames: Record<string, string> = {
   workspace_read: '读取项目文件',
   workspace_search: '搜索项目内容',
   workspace_patch: '修改项目文件',
+  apply_patch: '修改项目文件',
+  workspace_write: '写入项目文件',
+  workspace_edit: '编辑项目文件',
   workspace_shell: '运行项目命令',
   workspace_lsp: '代码智能',
+  control_api: '调用控制服务',
   read: '读取文件',
   read_file: '读取文件',
   write: '写入文件',
@@ -60,6 +64,9 @@ const toolIntents: Record<string, string> = {
   workspace_read: '帮我读取这个项目文件',
   workspace_search: '帮我在项目里搜索',
   workspace_patch: '帮我修改这个项目文件',
+  apply_patch: '帮我修改这个项目文件',
+  workspace_write: '帮我写入这个项目文件',
+  workspace_edit: '帮我编辑这个项目文件',
   workspace_shell: '帮我运行这条项目命令',
 };
 

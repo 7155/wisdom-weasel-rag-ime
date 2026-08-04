@@ -93,6 +93,40 @@ describe('Agent chat rendering', () => {
     expect(entries[0]).not.toHaveTextContent('读取完成');
   });
 
+  it('renders a terminal provider failure once with one recovery action set', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId)],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'idle',
+    });
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(1, 'turn_failed', {
+        error: '400 Error from provider (Console Go): Upstream request failed',
+      }),
+    ]);
+
+    const { container } = render(
+      <AgentTurn
+        sessionId={sessionId}
+        turnId={turnId}
+        modelSelectionAvailable
+        onApprovalDecision={() => {}}
+        onRetryTurn={() => true}
+        onSwitchModel={() => {}}
+      />,
+    );
+
+    expect(screen.getAllByText('本轮未完成')).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: '重试本轮' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: '切换模型' })).toHaveLength(1);
+    expect(container.querySelectorAll('[data-timeline-kind="activity"]')).toHaveLength(0);
+    expect(container).not.toHaveTextContent('操作记录');
+  });
+
   it('aggregates Provider usage once after the whole Tool Loop settles', () => {
     const sessionId = 'session-1';
     const turnId = 'turn-1';

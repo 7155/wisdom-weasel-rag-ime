@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import time
 import uuid
@@ -46,6 +47,130 @@ from .agent_session_mode_gate import AgentSessionModeGate
 DEFAULT_ROOT_BUDGET = 32
 DEFAULT_MAX_HOPS = 6
 DEFAULT_MAX_DEPTH = 3
+
+
+_UNRESOLVED_DEFINITION_PLACEHOLDER = re.compile(
+    r"(?:当前项目|规定入口|核心操作|真实结果|某个具体(?:界面|流程|功能)|"
+    r"相关(?:界面|流程|功能)|现有(?:界面|流程|功能|\s*TUI))",
+    re.IGNORECASE,
+)
+_VAGUE_DEFINITION_ONLY = re.compile(
+    r"^(?:我要|请)?\s*(?:完成|实现|做好|补全|完善)?\s*"
+    r"(?:一个|一套)?\s*(?:当前项目的?)?\s*"
+    r"(?:TUI|终端(?:界面|页面|程序)?|界面|页面|程序)?\s*"
+    r"(?:端到端可用(?:版本)?|可运行闭环|完整(?:版本)?|可用(?:版本)?|完成)?"
+    r"[。.!！?？]*$",
+    re.IGNORECASE,
+)
+_GENERIC_DEFINITION_FRAGMENT = re.compile(
+    r"(?:我要|请|完成|实现|做好|补全|完善|一个|一套|当前项目的?|"
+    r"TUI|终端(?:界面|页面|程序)?|界面|页面|程序|端到端可用(?:版本)?|"
+    r"可运行闭环|完整(?:版本)?|可用(?:版本)?|具体|相关|现有|规定|"
+    r"核心|真实|入口|操作|结果|交付)",
+    re.IGNORECASE,
+)
+_GENERIC_ENTRY_SURFACE = re.compile(
+    r"^(?:(?:当前|默认|主要|规定|相关|现有)?(?:项目|应用|系统|产品)?的?)?"
+    r"(?:首页|页面|界面|入口|模块|功能|位置|地方)$",
+    re.IGNORECASE,
+)
+_GENERIC_PRIMARY_INTERACTION = re.compile(
+    r"^(?:执行|完成|进行|操作|体验|使用|run|execute|complete)"
+    r"(?:主要|核心|相关|完整|main|core)?"
+    r"(?:流程|操作|功能|任务|flow|action|feature|task)$",
+    re.IGNORECASE,
+)
+_GENERIC_OBSERVABLE_COMPLETION = re.compile(
+    r"^(?:看到|显示|获得|返回|得到|see|show|return)?"
+    r"(?:成功|正确|最终|真实|预期|successful|correct|expected)?"
+    r"(?:提示|结果|状态|反馈|产品|result|status|output|feedback)$",
+    re.IGNORECASE,
+)
+_ENTRY_SURFACE_SIGNAL = re.compile(
+    r"(?:任务页|页面|界面|视图|窗口|菜单|按钮|命令|终端|文件|模块|接口|API|"
+    r"服务|脚本|测试|工作区|仓库|目录|路径|应用|page|view|window|menu|"
+    r"button|command|terminal|file|module|endpoint|service|script|test|"
+    r"workspace|repository|directory|path|app|[A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,8})",
+    re.IGNORECASE,
+)
+_PRIMARY_INTERACTION_SIGNAL = re.compile(
+    r"(?:点击|输入|选择|按下|按|打开|启动|运行|执行|提交|发送|编辑|修改|"
+    r"创建|添加|删除|标记|停止|退出|展开|切换|调用|读取|检查|核对|"
+    r"点名|接手|实施|"
+    r"click|type|select|press|open|start|run|submit|send|edit|update|"
+    r"create|add|delete|mark|stop|exit|expand|switch|call|read|check)",
+    re.IGNORECASE,
+)
+_OBSERVABLE_COMPLETION_SIGNAL = re.compile(
+    r"(?:看到|显示|出现|输出|返回|生成|创建|保存|更新|通过|失败|错误|"
+    r"状态|反馈|退出码|文件|记录|列表|结果|see|show|appear|output|return|"
+    r"generate|create|save|update|pass|fail|error|status|feedback|exit code|"
+    r"file|record|list|result)",
+    re.IGNORECASE,
+)
+
+
+def _definition_specific_remainder(value: str) -> str:
+    without_placeholders = _UNRESOLVED_DEFINITION_PLACEHOLDER.sub(
+        " ", value
+    )
+    without_generic = _GENERIC_DEFINITION_FRAGMENT.sub(
+        " ", without_placeholders
+    )
+    return re.sub(r"[^0-9A-Za-z\u3400-\u9fff]+", "", without_generic)
+
+
+def _assert_specific_definition_field(value: str, *, field: str) -> None:
+    normalized = re.sub(r"\s+", "", value.strip())
+    generic_pattern = {
+        "entry": _GENERIC_ENTRY_SURFACE,
+        "interaction": _GENERIC_PRIMARY_INTERACTION,
+        "completion": _GENERIC_OBSERVABLE_COMPLETION,
+    }[field]
+    required_signal = {
+        "entry": _ENTRY_SURFACE_SIGNAL,
+        "interaction": _PRIMARY_INTERACTION_SIGNAL,
+        "completion": _OBSERVABLE_COMPLETION_SIGNAL,
+    }[field]
+    if (
+        not normalized
+        or _VAGUE_DEFINITION_ONLY.fullmatch(value.strip())
+        or generic_pattern.fullmatch(normalized)
+        or required_signal.search(value) is None
+        or len(_definition_specific_remainder(value)) < 4
+    ):
+        raise ValueError(
+            "还不能开始：请把具体入口或页面、关键操作，以及完成后能观察到的"
+            "结果分别说明清楚。"
+        )
+
+
+def _assert_concrete_room_definition(
+    *,
+    objective: str,
+    expected_output: str,
+    entry_surface: str,
+    primary_interaction: str,
+    observable_completion: str,
+    requirements: Sequence[str],
+    criteria: Sequence[Mapping[str, object]],
+) -> None:
+    """Reject definitions that still hide the decision-changing specifics."""
+
+    del requirements, criteria
+    if not objective.strip() or not expected_output.strip():
+        raise ValueError(
+            "还不能开始：请说明这次要完成什么，以及最后会交付什么。"
+        )
+    # Objective and output may intentionally stay concise (for example
+    # “完成终端原生 TUI 的可运行闭环”). The three dedicated fields carry the
+    # decision-changing specifics and therefore own the strict validation.
+    for field, value in (
+        ("entry", entry_surface),
+        ("interaction", primary_interaction),
+        ("completion", observable_completion),
+    ):
+        _assert_specific_definition_field(value, field=field)
 
 
 def _resolve_room_answer_display(
@@ -453,6 +578,15 @@ class RoomApplicationService:
 
         objective = str(arguments.get("objective") or "").strip()
         expected_output = str(arguments.get("expectedOutput") or "").strip()
+        entry_surface = " ".join(
+            str(arguments.get("entrySurface") or "").split()
+        )
+        primary_interaction = " ".join(
+            str(arguments.get("primaryInteraction") or "").split()
+        )
+        observable_completion = " ".join(
+            str(arguments.get("observableCompletion") or "").split()
+        )
         raw_requirements = arguments.get("requirements")
         raw_criteria = arguments.get("acceptanceCriteria")
         if not objective or not expected_output:
@@ -529,6 +663,17 @@ class RoomApplicationService:
                         dict.fromkeys(normalized_receipt_types)
                     ),
                 }
+            )
+
+        if prior_definition is None:
+            _assert_concrete_room_definition(
+                objective=objective,
+                expected_output=expected_output,
+                entry_surface=entry_surface,
+                primary_interaction=primary_interaction,
+                observable_completion=observable_completion,
+                requirements=requirements,
+                criteria=criteria_input,
             )
 
         fence_id = f"room-definition-fence:{_stable_digest(invocation_receipt_id)}"
@@ -755,6 +900,9 @@ class RoomApplicationService:
                 "requirementItemIds": list(task_payload["requirementItemIds"]),
                 "acceptanceCriterionIds": criterion_ids,
                 "acceptanceAliases": aliases,
+                "entrySurface": entry_surface,
+                "primaryInteraction": primary_interaction,
+                "observableCompletion": observable_completion,
                 "implementationParticipantId": implementation_id,
                 "implementationParticipantRef": implementation_ref,
                 "workItemId": work_item["id"],
@@ -2618,21 +2766,29 @@ def _alignment_task(
         "parentTaskId": None,
         "currentOwnerParticipantId": str(target["id"]),
         "objective": (
-            f"需求对齐由 Root Facilitator {display_name} 先完成。"
-            "当前只判断和收束需求，不搜索、不改文件、不运行实现任务。"
-            "先调用 room_state 读取原始请求和当前工作卡片，再判断是否存在会改变"
-            "实现的实质歧义。请求完整时不要索要确认，也不要发布单独的确认消息；"
-            "直接用 room_define 一次写入目标、交付物、需求、可观察验收条件和禁区。"
-            "有实质歧义时用 room_commit wait 一次只提出一个最小必要问题，先问影响"
-            "最大的一个决定，不得把入口、交互和验收边界合并成一问；每一问必须提供"
-            "2–5 个可点选项，界面会另行提供“其他”文本入口；每个"
-            "用户回答按时间进入对话，问题全部收束后再调用 room_define。只有这条"
-            "澄清路径会询问用户是否开始行动。不得把计划或执行结果冒充需求定义。"
+            f"{display_name} 作为本轮主持伙伴，先弄清用户到底要完成什么。"
+            "此阶段只读取请求与已有信息，不搜索、不改文件、不运行实现任务。"
+            "先调用 room_state 读取原始请求。在调用 room_define 前，必须能用普通"
+            "用户听得懂的话具体说出：（1）具体入口或页面；（2）用户会做什么并看到"
+            "什么；（3）要交付哪些真实产物；（4）怎样从界面或运行结果判断完成。"
+            "“端到端可用、完整、可运行闭环”只能说明范围，不能替代具体目标；"
+            "“当前项目、规定入口、核心操作、真实结果”都是未完成的占位说法。"
+            "请求已经足够具体时，不要再问用户确认，也不要发布单独的确认消息；"
+            "直接用 room_define 一次写入具体目标、交付物、要求、可观察验收条件和"
+            "禁区。如果仍缺少一个会改变做法的决定，用 room_commit wait 一次只问"
+            "一个问题，先问影响最大的决定，不得把入口、交互和验收边界合成一问；"
+            "每一问提供 2–5 个可点选项，每个选项都要有简短标题和一段说明，界面会"
+            "另外提供“其他”文本入口。每个用户回答按时间进入对话；前一个回答写入"
+            "后再问下一个。问题全部问完后再调用 room_define；只有走过提问路径才"
+            "询问“现在开始行动吗？”。公开消息里不要使用“对齐、澄清、需求不足、"
+            "工作卡片、门禁”，应自然说明“我明白了”或“还差一个会影响做法的问题”。"
+            "如果 room_define 拒绝了占位定义，就继续问下一个具体问题，不要把工具"
+            "失败当作本轮结论。不得把计划或执行结果冒充具体定义。"
             f" 原始请求：{message[:2_000]}"
         )[:4_000],
         "expectedOutput": (
-            "一个已定义的可执行目标；仅在确有歧义时出现按时间追加的问题、回答、"
-            "对齐摘要和开始行动。定义后由 Facilitator 先执行，并只把真正独立的"
+            "一个具体且可执行的目标；仅在确实缺少决定时，按时间追加问题、回答、"
+            "自然总结和开始行动。定义后由 Facilitator 先执行，并只把真正独立的"
             "工作通过 room_collaborate 分配给伙伴。"
         ),
         "acceptanceCriterionIds": [criterion_id],

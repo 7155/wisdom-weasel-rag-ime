@@ -184,7 +184,8 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
   const carrierResult = record(carrier.result);
   const domain = Object.keys(envelopeResult).length > 0 ? envelopeResult : carrierResult;
   const publicResult = record(payload.publicResult);
-  const layers = [domain, envelope, carrier, publicResult, payload];
+  const publicArguments = record(payload.args);
+  const layers = [domain, envelope, carrier, publicResult, publicArguments, payload];
   const toolId = firstText(
     [payload, envelope, carrier],
     ['toolId', 'toolName', 'tool'],
@@ -341,10 +342,14 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
   if (writePolicy) append('writePolicy', '写入保护', writePolicy);
 
   const codeResult = publicCodeToolResult(toolId, record(payload.args), publicResult, envelope, carrier);
+  const codeSummary = publicCodeActivitySummary(toolId, activity.status, codeResult);
+  const activitySummary = codeSummary && (!summary || summary === codeResult.summary)
+    ? codeSummary
+    : summary;
   if (codeResult.file) append('file', '文件', codeResult.file);
   if (codeResult.lines !== undefined) append('lineCount', '行数', `${codeResult.lines} 行`);
   if (codeResult.additions !== undefined || codeResult.deletions !== undefined) {
-    append('changes', '变更', `+${codeResult.additions ?? 0} / -${codeResult.deletions ?? 0}`);
+    append('changes', '变更', `+${codeResult.additions ?? 0} -${codeResult.deletions ?? 0}`);
   }
 
   const sources = toolId === 'knowledge'
@@ -360,7 +365,7 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
     toolId,
     toolLabel,
     operation,
-    summary: summary || codeResult.summary || `${toolLabel} ${activity.status === 'running' ? '正在处理' : activity.status === 'failed' ? '执行失败' : activity.status === 'aborted' ? '已停止' : '已完成'}`,
+    summary: activitySummary || codeResult.summary || `${toolLabel} ${activity.status === 'running' ? '正在处理' : activity.status === 'failed' ? '执行失败' : activity.status === 'aborted' ? '已停止' : '已完成'}`,
     fields,
     request: codeResult.request,
     ...(codeResult.output ? { output: codeResult.output } : {}),
@@ -377,6 +382,8 @@ function semanticToolPreview(
   operation: string,
   layers: Record<string, unknown>[],
 ): PublicToolSemanticPreview | undefined {
+  const roomPreview = roomToolPreview(toolId, layers);
+  if (roomPreview) return roomPreview;
   if (toolId === 'agent_role_book') return roleBookToolPreview(operation, layers);
   if (toolId !== 'memory') return undefined;
 
@@ -527,6 +534,125 @@ function semanticToolPreview(
   return undefined;
 }
 
+function roomToolPreview(
+  toolId: string,
+  layers: Record<string, unknown>[],
+): PublicToolSemanticPreview | undefined {
+  if (toolId === 'room_state') {
+    const current = firstRecord(layers, ['currentResponsibility']);
+    const objective = publicLongText(current.objective);
+    const expectedOutput = publicLongText(current.expectedOutput);
+    const state = publicStatusLabel(text(current.state));
+    const acceptance = firstArray(layers, ['acceptanceAliases'])
+      .map(record)
+      .filter((item) => publicLongText(item.statement));
+    const participants = firstArray(layers, ['participants'])
+      .map(record)
+      .filter((item) => publicDisplayText(item.displayName, ''));
+    const changes = firstArray(layers, ['recentPublicChanges'])
+      .map(record)
+      .filter((item) => publicLongText(item.content));
+    const integrations = firstArray(layers, ['pendingIntegrations'])
+      .map(record)
+      .filter((item) => publicLongText(item.objective));
+    if (!objective && !expectedOutput && !acceptance.length && !participants.length && !changes.length && !integrations.length) {
+      return undefined;
+    }
+    const verified = acceptance.filter((item) => item.verified === true).length;
+    const canSettle = firstBoolean(layers, ['canSettle']);
+    const items: PublicToolSemanticPreview['items'] = [];
+    if (expectedOutput) {
+      items.push({ id: 'room:expected-output', label: '要交付', text: expectedOutput });
+    }
+    acceptance.slice(0, 6).forEach((item, index) => items.push({
+      id: `room:acceptance:${index}`,
+      label: item.verified === true ? '已验证' : '待验证',
+      text: publicLongText(item.statement),
+    }));
+    participants.slice(0, 6).forEach((item, index) => {
+      const name = publicDisplayText(item.displayName, '协作伙伴');
+      const capability = publicLongText(item.capabilitySummary);
+      const availability = roomAvailabilityLabel(text(item.availability));
+      items.push({
+        id: `room:participant:${index}`,
+        label: availability,
+        text: capability ? `${name} · ${capability}` : name,
+      });
+    });
+    changes.slice(0, 4).forEach((item, index) => items.push({
+      id: `room:change:${index}`,
+      label: '最近进展',
+      text: publicLongText(item.content),
+    }));
+    integrations.slice(0, 4).forEach((item, index) => items.push({
+      id: `room:integration:${index}`,
+      label: '等待集成',
+      text: publicLongText(item.objective),
+    }));
+    return {
+      kind: 'timeline',
+      title: '当前协作状态',
+      ...(objective ? { description: objective } : {}),
+      badges: [
+        ...(state ? [state] : []),
+        ...(acceptance.length ? [`已验证 ${verified}/${acceptance.length}`] : []),
+        ...(integrations.length ? [`${integrations.length} 项等待集成`] : []),
+        ...(canSettle === true ? ['可以收束结果'] : []),
+      ],
+      items: items.slice(0, 16),
+    };
+  }
+  if (toolId === 'room_commit') {
+    const decision = text(firstText(layers, ['decision'])).toLowerCase();
+    const publicSummary = firstPublicText(layers, ['publicSummary', 'summary']);
+    const question = firstPublicText(layers, ['question']);
+    const questionOptions = firstArray(layers, ['questionOptions']).map(record);
+    const items: PublicToolSemanticPreview['items'] = [];
+    if (publicSummary) items.push({ id: 'room:commit:summary', label: '公开说明', text: publicSummary });
+    if (question) items.push({ id: 'room:commit:question', label: '等待回答', text: question });
+    questionOptions.slice(0, 5).forEach((option, index) => {
+      const label = publicDisplayText(option.label, `选项 ${index + 1}`);
+      const description = publicLongText(option.description);
+      if (!description) return;
+      items.push({
+        id: `room:commit:option:${index}`,
+        label: option.recommended === true ? '推荐选项' : '可选答案',
+        text: `${label} · ${description}`,
+      });
+    });
+    if (!items.length) return undefined;
+    return {
+      kind: 'timeline',
+      title: decision === 'wait' ? '等待用户回答后继续' : '已提交这一步的结果',
+      badges: [],
+      items,
+    };
+  }
+  if (toolId === 'room_collaborate') {
+    const objective = firstPublicText(layers, ['objective']);
+    const expectedOutput = firstPublicText(layers, ['expectedOutput']);
+    if (!objective && !expectedOutput) return undefined;
+    return {
+      kind: 'timeline',
+      title: '已安排并行工作',
+      ...(objective ? { description: objective } : {}),
+      badges: [],
+      items: expectedOutput
+        ? [{ id: 'room:collaborate:output', label: '等待交付', text: expectedOutput }]
+        : [],
+    };
+  }
+  return undefined;
+}
+
+function roomAvailabilityLabel(value: string): string {
+  return ({
+    current: '当前负责',
+    busy: '正在工作',
+    available: '可以加入',
+  } as Record<string, string>)[value.toLowerCase()] ?? '协作伙伴';
+}
+
 function roleBookToolPreview(
   operation: string,
   layers: Record<string, unknown>[],
@@ -584,6 +710,43 @@ interface PublicCodeToolResult {
   deletions?: number;
 }
 
+function publicCodeActivitySummary(
+  toolId: string,
+  status: PublicToolActivityProjection['status'],
+  result: PublicCodeToolResult,
+): string {
+  if (!result.summary) return '';
+  const running = status === 'running';
+  const completed = status === 'completed';
+  if (!running && !completed) return result.summary;
+  if (['edit', 'edit_file', 'workspace_edit', 'workspace_edit_file', 'workspace_patch', 'apply_patch'].includes(toolId)) {
+    return `${running ? '正在编辑' : '已编辑'} ${result.summary}`;
+  }
+  if (['write', 'write_file', 'workspace_write', 'workspace_write_file'].includes(toolId)) {
+    return `${running ? '正在写入' : '已写入'} ${result.summary.replace(/\s已写入$/u, '')}`;
+  }
+  if (['read', 'read_file', 'workspace_read'].includes(toolId)) {
+    return `${running ? '正在读取' : '已读取'} ${result.summary.replace(/\s已读取$/u, '')}`;
+  }
+  if (['grep', 'workspace_search'].includes(toolId)) {
+    const searchMatch = /^在\s+(.+?)\s+中搜索\s+(.+)$/u.exec(result.summary);
+    if (searchMatch) {
+      const [, location, query] = searchMatch;
+      return running
+        ? `正在搜索 ${location} 中的 ${query}`
+        : `已在 ${location} 中搜索 ${query}`;
+    }
+    return `${running ? '正在' : '已'}${result.summary}`;
+  }
+  if (['find', 'ls', 'workspace_list'].includes(toolId)) {
+    return `${running ? '正在' : '已'}${result.summary}`;
+  }
+  if (['bash', 'workspace_shell'].includes(toolId)) {
+    return `${running ? '正在' : '已'}${result.summary}`;
+  }
+  return result.summary;
+}
+
 function publicCodeToolResult(
   toolId: string,
   args: Record<string, unknown>,
@@ -595,6 +758,7 @@ function publicCodeToolResult(
     'read', 'read_file', 'workspace_read',
     'write', 'write_file', 'workspace_write', 'workspace_write_file',
     'edit', 'edit_file', 'workspace_edit', 'workspace_edit_file',
+    'workspace_patch', 'apply_patch',
   ]);
   const searchTools = new Set(['grep', 'workspace_search']);
   const listTools = new Set(['find', 'ls', 'workspace_list']);
@@ -625,13 +789,21 @@ function publicCodeToolResult(
   const pattern = firstText(requestLayers, ['pattern']);
   const glob = firstText(requestLayers, ['glob']);
   const command = firstText(requestLayers, ['command']);
+  const protectedCommand = commandTools.has(toolId) && commandReferencesSensitiveFile(command);
   if (operation) addRequest('op', '动作', operation, true);
   if (query) addRequest('query', '查询', query, true);
   if (pattern) addRequest('pattern', '模式', pattern, true);
   if (glob) addRequest('glob', '文件范围', glob, true);
   if (mode) addRequest('mode', '搜索方式', mode, true);
   if (patternKind) addRequest('patternKind', '模式类型', patternKind, true);
-  if (command) addRequest('command', '命令', command, true);
+  if (command) {
+    addRequest(
+      'command',
+      '命令',
+      protectedCommand ? '已运行受保护命令' : command,
+      true,
+    );
+  }
   for (const [key, label] of [
     ['offset', '起始行'],
     ['limit', '上限'],
@@ -644,7 +816,9 @@ function publicCodeToolResult(
     }
   }
 
-  const outputText = managedEvidence?.summary ?? publicToolOutputText(rawOutputText);
+  const outputText = protectedCommand
+    ? ''
+    : managedEvidence?.summary ?? publicToolOutputText(rawOutputText);
   const output = outputText
     ? {
         text: outputText,
@@ -667,13 +841,23 @@ function publicCodeToolResult(
       summary: file ? `${file}${lines !== undefined ? ` +${lines}` : ' 已写入'}` : '文件已写入',
     };
   }
-  if (['edit', 'edit_file', 'workspace_edit', 'workspace_edit_file'].includes(toolId)) {
+  if (['edit', 'edit_file', 'workspace_edit', 'workspace_edit_file', 'workspace_patch', 'apply_patch'].includes(toolId)) {
     const diff = firstText([envelope, carrier], ['diff', 'patch']);
-    const changes = publicDiffCounts(diff);
+    const additions = firstFiniteNumber([publicResult], ['additions']);
+    const deletions = firstFiniteNumber([publicResult], ['deletions']);
+    const changes = additions !== undefined || deletions !== undefined
+      ? { additions, deletions }
+      : publicDiffCounts(diff);
     const changeLabel = changes.additions !== undefined || changes.deletions !== undefined
-      ? ` +${changes.additions ?? 0} / -${changes.deletions ?? 0}`
+      ? ` +${changes.additions ?? 0} -${changes.deletions ?? 0}`
       : ' 已更新';
-    return { file, request, summary: file ? `${file}${changeLabel}` : '文件已更新', ...changes };
+    return {
+      file,
+      request,
+      ...(output ? { output } : {}),
+      summary: file ? `${file}${changeLabel}` : '文件已更新',
+      ...changes,
+    };
   }
   if (['read', 'read_file', 'workspace_read'].includes(toolId)) {
     const truncation = firstRecord([envelope, carrier], ['truncation']);
@@ -694,7 +878,7 @@ function publicCodeToolResult(
       request,
       ...(output ? { output } : {}),
       summary: needle
-        ? `在 ${file || '工作区'} 搜索 “${needle.slice(0, 100)}”`
+        ? `在 ${file || '工作区'} 中搜索 “${needle.slice(0, 100)}”`
         : '搜索项目内容',
     };
   }
@@ -712,7 +896,9 @@ function publicCodeToolResult(
     };
   }
   if (commandTools.has(toolId)) {
-    const firstLine = command.split('\n', 1)[0]?.slice(0, 140) ?? '';
+    const firstLine = protectedCommand
+      ? '受保护命令'
+      : command.split('\n', 1)[0]?.slice(0, 140) ?? '';
     return {
       file,
       request,
@@ -721,6 +907,34 @@ function publicCodeToolResult(
     };
   }
   return { file: '', request: [], summary: '' };
+}
+
+function commandReferencesSensitiveFile(value: string): boolean {
+  if (!value) return false;
+  const fixedBasenames = new Set([
+    'credentials', 'id_rsa', 'id_ed25519', '.npmrc', '.pypirc', '.netrc',
+  ]);
+  return value
+    .split(/[\s"'`|;&<>()]+/u)
+    .flatMap((token) => token.split('='))
+    .some((part) => {
+      const candidate = part.replace(/^[\[\]{}:,$]+|[\[\]{}:,$]+$/gu, '');
+      if (!candidate) return false;
+      const basename = candidate
+        .replace(/\\/gu, '/')
+        .replace(/\/+$/gu, '')
+        .split('/')
+        .at(-1)
+        ?.toLocaleLowerCase('en-US') ?? '';
+      const looksLikeFile = candidate.includes('/')
+        || basename.includes('.')
+        || fixedBasenames.has(basename);
+      if (!looksLikeFile) return false;
+      return basename.startsWith('.env')
+        || fixedBasenames.has(basename)
+        || /(?:^|[._-])(?:auth|credentials?|secrets?|tokens?|passwords?|cookies?|api[_-]?keys?|authorization)(?:$|[._-])/iu.test(basename)
+        || /\.(?:pem|key|p12|pfx)$/iu.test(basename);
+    });
 }
 
 function managedEvidencePreview(value: string): {
@@ -763,7 +977,10 @@ function publicToolOutputText(value: string): string {
   const redacted = value
     .replace(/\r\n?/gu, '\n')
     .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/gu, '[REDACTED_SECRET]')
-    .replace(/\b([A-Za-z0-9_]*(?:api[_-]?key|access[_-]?token|password|secret|authorization))(\s*(?:=|:)\s*)([^\s;'"\\]+|"[^"]*"|'[^']*')/giu, '$1$2[REDACTED_SECRET]')
+    .replace(
+      /(^|[^A-Za-z0-9_-])(["']?)([A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?token|password|secret|authorization|token|cookie|bearer))\2(\s*(?:=|:)\s*)(?:(?:Bearer|Basic|Token)\s+)?("[^"\r\n]*"|'[^'\r\n]*'|[^\s'"&,}]+)/gimu,
+      '$1$2$3$2$4[REDACTED_SECRET]',
+    )
     .replace(/(--(?:api[_-]?key|token|password|secret)\s+)([^\s;'"\\]+|"[^"]*"|'[^']*')/giu, '$1[REDACTED_SECRET]')
     .replace(/\/Users\/[^/\s]+\//gu, '~/')
     .replace(/\/Volumes\/[^/]+\//gu, '/…/')

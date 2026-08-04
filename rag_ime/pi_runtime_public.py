@@ -61,6 +61,7 @@ __all__ = [
     "provider_retry_status",
     "public_code_tool_activity",
     "public_reasoning_summaries",
+    "public_tool_error_text",
     "public_file_name",
     "public_fork_candidate_text",
     "public_pi_model",
@@ -92,6 +93,87 @@ _GROUPED_QUESTION_KEYS = frozenset(
 )
 _GROUPED_OPTION_KEYS = frozenset({"label", "description", "preview"})
 _GROUPED_ANSWER_KEYS = frozenset({"selected", "custom"})
+
+
+def public_tool_error_text(value: object, *, maximum: int = 1_000) -> str:
+    """Extract one safe, useful tool failure reason from Pi's loose result carrier."""
+
+    fragments: list[str] = []
+
+    def visit(candidate: object, depth: int = 0) -> None:
+        if depth > 4 or len(fragments) >= 8 or candidate is None:
+            return
+        if isinstance(candidate, str):
+            normalized = candidate.strip()
+            if not normalized:
+                return
+            if normalized[:1] in {"{", "["}:
+                try:
+                    decoded = json.loads(normalized)
+                except (TypeError, ValueError):
+                    decoded = None
+                if decoded is not None:
+                    visit(decoded, depth + 1)
+                    return
+            fragments.append(normalized)
+            return
+        if isinstance(candidate, Mapping):
+            for key in (
+                "error",
+                "errorMessage",
+                "reason",
+                "message",
+                "outputPreview",
+                "summary",
+            ):
+                if candidate.get(key) is not None:
+                    visit(candidate.get(key), depth + 1)
+                    if fragments:
+                        return
+            for key in ("content", "details", "result"):
+                if candidate.get(key) is not None:
+                    visit(candidate.get(key), depth + 1)
+                    if fragments:
+                        return
+            return
+        if isinstance(candidate, (list, tuple)):
+            for item in candidate[:16]:
+                visit(item, depth + 1)
+                if fragments:
+                    return
+
+    visit(value)
+    normalized = redact_runtime_text(" ".join(fragments))
+    # A failure reason is an untrusted scalar, but key-shaped assignments can
+    # still occur inside that scalar (for example ``API_KEY=...``). Reuse the
+    # mapping redactor so the key name, not only ``sk-*`` token syntax, owns
+    # the safety decision.
+    redacted = redact_mapping({"error": normalized}).get("error")
+    safe = str(redacted or "")[:maximum].strip()
+    if not safe:
+        return ""
+    if re.search(r"questionOptions|answerKind|questionKind", safe, re.IGNORECASE):
+        return "这个问题的选项没有准备完整，伙伴会修正后重新发送。"
+    if re.search(
+        r"(?:验收短名|acceptanceAliases?).*(?:不一致|之外|unknown|mismatch)",
+        safe,
+        re.IGNORECASE,
+    ):
+        return "提交的完成条件与当前任务不一致，伙伴会读取最新进度后重试。"
+    if re.search(
+        r"(?:room_commit\.evidence|evidenceRefs?|验证依据).*(?:缺少|无效|invalid|missing|required)",
+        safe,
+        re.IGNORECASE,
+    ):
+        return "还缺少能证明任务完成的验证结果，伙伴会先完成对应检查。"
+    if re.search(
+        r"(?:工作卡片|room_(?:state|define|collaborate|integrate|post|commit)|"
+        r"acceptanceAliases?|\bKernel\b|\bRoot\b|\bDispatch\b|\bReceipt\b)",
+        safe,
+        re.IGNORECASE,
+    ):
+        return "这一步没有通过任务检查，伙伴会读取最新进度后继续处理。"
+    return safe
 
 
 def _bounded_grouped_string(
@@ -343,9 +425,54 @@ def public_file_name(value: str) -> str:
     file_name = normalized.rsplit("/", 1)[-1].strip()
     if not file_name or len(file_name) > 240 or any(ord(character) < 32 for character in file_name):
         return ""
-    if re.search(r"token|secret|password|api.?key|authorization|cookie", file_name, re.IGNORECASE):
+    if _public_sensitive_file_path(normalized):
         return ""
     return file_name
+
+
+def _public_sensitive_file_path(value: object) -> bool:
+    normalized = str(value or "").replace("\\", "/").lower().rstrip("/")
+    basename = normalized.rsplit("/", 1)[-1]
+    if not basename:
+        return False
+    return (
+        basename.startswith(".env")
+        or basename in {
+            ".npmrc", ".pypirc", ".netrc", "auth.json", "credentials",
+            "credentials.json", "id_rsa", "id_ed25519",
+        }
+        or bool(re.search(
+            r"(?:^|[._-])(?:auth|credentials?|secrets?|tokens?|passwords?|"
+            r"cookies?|api[_-]?keys?|authorization)(?:$|[._-])",
+            basename,
+            re.IGNORECASE,
+        ))
+        or basename.endswith((".pem", ".key", ".p12", ".pfx"))
+    )
+
+
+def _public_command_references_sensitive_file(value: object) -> bool:
+    command = str(value or "")
+    if not command:
+        return False
+    fixed_basenames = {
+        "credentials", "id_rsa", "id_ed25519", ".npmrc", ".pypirc",
+        ".netrc",
+    }
+    for token in re.split(r"[\s\"'`|;&<>()]+", command):
+        for part in token.split("="):
+            candidate = part.strip("[]{}:,$")
+            if not candidate:
+                continue
+            basename = candidate.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].lower()
+            looks_like_file = (
+                "/" in candidate
+                or "." in basename
+                or basename in fixed_basenames
+            )
+            if looks_like_file and _public_sensitive_file_path(candidate):
+                return True
+    return False
 
 
 def supported_thinking_levels(raw: Mapping[str, object]) -> list[str]:
@@ -691,7 +818,7 @@ def public_code_tool_activity(
         "read", "read_file", "workspace_read",
         "write", "write_file", "workspace_write_file", "workspace_write",
         "edit", "edit_file", "workspace_edit_file", "workspace_edit",
-        "workspace_patch",
+        "workspace_patch", "apply_patch",
     }
     search_tools = {"grep", "workspace_search"}
     list_tools = {"find", "ls", "workspace_list"}
@@ -761,8 +888,17 @@ def public_code_tool_activity(
         ):
             result[key] = numeric_value
 
+    raw_command = effective_args.get("command") or effective_args.get("cmd")
+    protected_command = (
+        normalized_tool in command_tools
+        and _public_command_references_sensitive_file(raw_command)
+    )
     if normalized_tool in command_tools:
-        command = _public_tool_text(effective_args.get("command"), maximum=2_000)
+        command = (
+            "已运行受保护命令"
+            if protected_command
+            else _public_tool_text(raw_command, maximum=2_000)
+        )
         if command:
             result["command"] = command
 
@@ -777,12 +913,19 @@ def public_code_tool_activity(
             result.update({"lineCount": line_count, "additions": line_count})
             if file_name:
                 result["summary"] = f"{file_name} +{line_count}"
+    if normalized_tool in {
+        "edit", "edit_file", "workspace_edit_file", "workspace_edit",
+        "workspace_patch", "apply_patch",
+    }:
+        edit = _public_edit_projection(raw_result, fallback_path=raw_path)
+        if edit:
+            result.update(edit)
     preview_tools = (
         file_tools
         - {
             "write", "write_file", "workspace_write_file", "workspace_write",
             "edit", "edit_file", "workspace_edit_file", "workspace_edit",
-            "workspace_patch",
+            "workspace_patch", "apply_patch",
         }
         | search_tools
         | list_tools
@@ -791,7 +934,11 @@ def public_code_tool_activity(
     )
     if (
         normalized_tool in preview_tools
-        and _public_tool_output_allowed(normalized_tool, raw_path)
+        and _public_tool_output_allowed(
+            normalized_tool,
+            raw_path,
+            command=raw_command,
+        )
     ):
         preview, truncated = _public_tool_output_preview(
             raw_result,
@@ -807,6 +954,126 @@ def public_code_tool_activity(
         result["automatic"] = True
 
     return result
+
+
+def _public_edit_projection(
+    raw_result: object,
+    *,
+    fallback_path: str = "",
+) -> dict[str, object]:
+    """Return a bounded semantic edit result with a safe diff preview.
+
+    OMP edit results place the authoritative unified diff in ``details.diff``
+    (and multi-file edits in ``details.perFileResults``). Keeping that shape at
+    the runtime boundary lets both Session and Room show real file work instead
+    of a generic successful Tool row, without persisting mutation bodies.
+    """
+
+    root = as_mapping(raw_result)
+    nested_result = as_mapping(root.get("result"))
+    layers = (
+        root,
+        as_mapping(root.get("details")),
+        nested_result,
+        as_mapping(nested_result.get("details")),
+    )
+    raw_files: list[tuple[str, str]] = []
+    for layer in layers:
+        per_file = layer.get("perFileResults")
+        if not isinstance(per_file, list):
+            continue
+        for item in per_file[:64]:
+            entry = as_mapping(item)
+            path = str(
+                entry.get("path")
+                or entry.get("fileName")
+                or fallback_path
+                or ""
+            )
+            diff = entry.get("diff")
+            if isinstance(diff, str):
+                raw_files.append((path, diff))
+    if not raw_files:
+        for layer in layers:
+            diff = layer.get("diff")
+            if not isinstance(diff, str):
+                continue
+            path = str(
+                layer.get("path")
+                or layer.get("fileName")
+                or fallback_path
+                or ""
+            )
+            raw_files.append((path, diff))
+            break
+    if not raw_files:
+        return {}
+
+    changed_files: list[dict[str, object]] = []
+    preview_chunks: list[str] = []
+    total_additions = 0
+    total_deletions = 0
+    source_truncated = False
+    for path, diff in raw_files:
+        # Refuse mutation previews for credential-bearing files just as the
+        # read projection does. Counts are also withheld because a secret-file
+        # mutation should not become a public Room artifact.
+        if not _public_tool_output_allowed("edit", path):
+            continue
+        bounded_source = diff[:4_000_000]
+        source_truncated = source_truncated or len(diff) > len(bounded_source)
+        additions, deletions = _public_diff_counts(bounded_source)
+        total_additions += additions
+        total_deletions += deletions
+        workspace_path = _public_workspace_path(path)
+        file_name = public_file_name(path)
+        changed_files.append(
+            {
+                **({"path": workspace_path} if workspace_path else {}),
+                **({"fileName": file_name} if file_name else {}),
+                "additions": additions,
+                "deletions": deletions,
+            }
+        )
+        safe_diff = _public_tool_text(bounded_source, maximum=6_000)
+        if safe_diff:
+            preview_chunks.append(safe_diff)
+
+    if not changed_files:
+        return {}
+    preview_source = "\n".join(preview_chunks)
+    preview_lines = preview_source.splitlines()
+    preview = "\n".join(preview_lines[:80])[:6_000]
+    output_truncated = (
+        source_truncated
+        or len(preview_source) > 6_000
+        or len(preview_lines) > 80
+    )
+    primary = changed_files[0]
+    summary_target = (
+        str(primary.get("fileName") or "")
+        if len(changed_files) == 1
+        else f"{len(changed_files)} 个文件"
+    )
+    return {
+        "additions": total_additions,
+        "deletions": total_deletions,
+        "changedFiles": changed_files,
+        "summary": f"{summary_target} +{total_additions} -{total_deletions}",
+        **({"outputPreview": preview} if preview else {}),
+        **({"outputTruncated": True} if output_truncated else {}),
+    }
+
+
+def _public_diff_counts(diff: str) -> tuple[int, int]:
+    additions = 0
+    deletions = 0
+    for line in diff.splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            additions += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            deletions += 1
+    return additions, deletions
 
 def _public_approval_model_decision(
     raw_result: object,
@@ -847,6 +1114,7 @@ def _public_workspace_path(value: object) -> str:
         not normalized
         or len(normalized) > 1_000
         or any(ord(character) < 32 for character in normalized)
+        or _public_sensitive_file_path(normalized)
         or re.search(
             r"token|secret|password|api.?key|authorization|cookie",
             normalized,
@@ -881,10 +1149,15 @@ def _public_tool_text(value: object, *, maximum: int) -> str:
         return ""
     text = re.sub(r"\bsk-[A-Za-z0-9_-]{6,}\b", "[REDACTED_SECRET]", text)
     text = re.sub(
-        r"(?i)\b([a-z0-9_]*(?:api[_-]?key|access[_-]?token|password|secret|authorization))"
-        r"(\s*(?:=|:)\s*)([^\s'\";]+|\"[^\"]*\"|'[^']*')",
-        r"\1\2[REDACTED_SECRET]",
+        r"(?<![A-Za-z0-9_-])(?P<quote>[\"']?)"
+        r"(?P<key>[A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?token|password|secret|"
+        r"authorization|token|cookie|bearer))(?P=quote)"
+        r"(?P<separator>\s*(?:=|:)\s*)"
+        r"(?:(?:Bearer|Basic|Token)\s+)?"
+        r"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s'\"&,}]+)",
+        r"\g<quote>\g<key>\g<quote>\g<separator>[REDACTED_SECRET]",
         text,
+        flags=re.IGNORECASE,
     )
     text = re.sub(
         r"(?i)(--(?:api[_-]?key|token|password|secret)\s+)"
@@ -902,19 +1175,15 @@ def _public_tool_text(value: object, *, maximum: int) -> str:
     return text[:maximum]
 
 
-def _public_tool_output_allowed(tool_name: str, raw_path: str) -> bool:
-    if tool_name in {"bash", "workspace_shell"}:
-        return True
-    normalized = raw_path.replace("\\", "/").lower()
-    basename = normalized.rsplit("/", 1)[-1]
-    return not (
-        basename in {
-            ".env", ".env.local", ".env.production", ".npmrc", ".pypirc",
-            ".netrc", "auth.json", "credentials", "credentials.json",
-            "id_rsa", "id_ed25519",
-        }
-        or basename.endswith((".pem", ".key", ".p12", ".pfx"))
-    )
+def _public_tool_output_allowed(
+    tool_name: str,
+    raw_path: str,
+    *,
+    command: object = "",
+) -> bool:
+    if tool_name in {"bash", "workspace_shell", "workspace_job"}:
+        return not _public_command_references_sensitive_file(command)
+    return not _public_sensitive_file_path(raw_path)
 
 
 def _public_tool_evidence_envelope(raw_result: object) -> dict[str, object]:

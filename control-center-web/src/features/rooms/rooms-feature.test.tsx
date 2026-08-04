@@ -2695,7 +2695,7 @@ describe('Rooms experience', () => {
       onAbortTurn={onAbortTurn}
     />);
 
-    const toolTitle = screen.getByText('在 …/project/rag_ime 搜索 “协作记录”');
+    const toolTitle = screen.getByText('正在搜索 …/project/rag_ime 中的 “协作记录”');
     expect(toolTitle).toBeInTheDocument();
     const toolSummary = toolTitle.closest('summary')!;
     expect(toolSummary).toHaveTextContent('运行记录 · 搜索文本 · 进行中');
@@ -2868,7 +2868,7 @@ describe('Rooms experience', () => {
 
     const row = container.querySelector<HTMLDetailsElement>('.room-agent-activity--tool')!;
     expect(row).not.toHaveAttribute('open');
-    expect(row).toHaveTextContent('…/project/src/runtime.ts 已读取');
+    expect(row).toHaveTextContent('已读取 …/project/src/runtime.ts');
     expect(row).not.toHaveTextContent('settleRoom');
     await user.click(row.querySelector('summary')!);
 
@@ -2881,7 +2881,7 @@ describe('Rooms experience', () => {
     ));
   });
 
-  it('keeps humane Room receipt semantics while hiding protocol identifiers', async () => {
+  it('keeps concrete Room results while dropping opaque receipt filler', async () => {
     const room = roomSummary('room-a', 'Room 状态回执');
     const identity = {
       turnId: 'room-a:turn-1',
@@ -2957,15 +2957,12 @@ describe('Rooms experience', () => {
     expect(request).not.toHaveTextContent('room-a:p2');
     expect(request).not.toHaveTextContent('expectedOutput');
     expect(request).not.toHaveTextContent('waitingFor');
-    const returned = within(row).getByLabelText('工具结果明细');
-    expect(returned).toHaveTextContent('成功');
-    expect(returned).toHaveTextContent('可用');
-    expect(returned).toHaveTextContent('无变更');
-    expect(returned).toHaveTextContent('状态版本');
-    expect(returned).toHaveTextContent('第 12 版');
-    expect(returned).toHaveTextContent('验证依据已保留');
-    expect(returned).toHaveTextContent('当前职责');
-    expect(returned).toHaveTextContent('状态：进行中');
+    const returned = within(row).getByLabelText('当前协作状态内容');
+    expect(returned).toHaveTextContent('继续核对 Room 状态');
+    expect(returned).toHaveTextContent('运行中');
+    expect(returned).not.toHaveTextContent('状态版本');
+    expect(returned).not.toHaveTextContent('第 12 版');
+    expect(returned).not.toHaveTextContent('验证依据已保留');
     expect(returned).not.toHaveTextContent('safe-room-receipt-42');
     expect(returned).not.toHaveTextContent('executionPerformed');
     expect(returned).not.toHaveTextContent('stateRevision');

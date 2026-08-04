@@ -48,6 +48,7 @@ from .pi_runtime_public import (
     public_fork_candidate_text,
     public_pi_model,
     public_reasoning_summaries,
+    public_tool_error_text,
     public_usage,
     public_usage_evidence,
     redact_mapping,
@@ -59,6 +60,7 @@ from .pi_runtime_public import (
 from .pi_runtime_values import (
     PiRuntimeError,
     PiRuntimeTurnConflict,
+    ToolRetryLineageTracker,
     effective_thinking_level,
     as_integer,
     path_is_within,
@@ -963,6 +965,7 @@ class PiRuntimeManager:
         # presents those messages as one Agent turn, not as a stack of avatars.
         self._stream_pi_message_id = ""
         self._tool_blocks = AgentToolBlockBuffer()
+        self._tool_retries = ToolRetryLineageTracker()
 
     @property
     def runtime_kind(self) -> str:
@@ -1186,6 +1189,7 @@ class PiRuntimeManager:
             self._active_client_message_id = str(client_message_id).strip()
             self._stream_pi_message_id = ""
             self._tool_blocks.clear()
+            self._tool_retries.reset(turn_id)
             self._status = "busy"
             self._cancel_idle_locked()
         self.sessions.set_status(session_id, "busy", last_message_preview=text)
@@ -1979,6 +1983,23 @@ class PiRuntimeManager:
                 "args": redact_mapping(raw_args),
                 "isError": bool(raw.get("isError")),
             }
+            explicit_retry_parent = str(
+                raw.get("retryOfToolCallId")
+                or raw.get("retry_of_tool_call_id")
+                or ""
+            ).strip()
+            with self._lock:
+                retry_of_tool_call_id = self._tool_retries.observe(
+                    event_type=event_type,
+                    turn_id=turn_id,
+                    tool_call_id=str(payload["toolCallId"]),
+                    tool_name=tool_name,
+                    arguments=raw_args,
+                    is_error=bool(raw.get("isError")),
+                    explicit_parent_id=explicit_retry_parent,
+                )
+            if retry_of_tool_call_id:
+                payload["retryOfToolCallId"] = retry_of_tool_call_id
             result_key = "partialResult" if event_type == "tool_execution_update" else "result"
             raw_result = raw.get(result_key)
             public_result = public_code_tool_activity(
@@ -1993,6 +2014,14 @@ class PiRuntimeManager:
                 public_result["error"] = public_result["outputPreview"]
             if public_result:
                 payload["publicResult"] = public_result
+            if bool(raw.get("isError")):
+                public_error = (
+                    public_tool_error_text(raw_result)
+                    or public_tool_error_text(raw.get("error"))
+                    or public_tool_error_text(raw.get("errorMessage"))
+                )
+                if public_error:
+                    payload["error"] = public_error
             if raw_result is not None:
                 # Coding tools already have a bounded semantic projection.
                 # Duplicating their raw carrier made every tool event heavier

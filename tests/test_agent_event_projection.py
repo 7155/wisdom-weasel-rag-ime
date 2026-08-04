@@ -1237,14 +1237,42 @@ class AgentEventProjectionTests(unittest.TestCase):
                             "status": "ready",
                             "currentResponsibility": {
                                 "state": "running",
-                                "objective": "private objective",
-                                "expectedOutput": "private output",
+                                "objective": "完成终端原生 TUI 的可运行闭环",
+                                "expectedOutput": "可启动、可操作、可验证的终端界面",
+                                "workspacePolicy": "shared_readonly",
                             },
-                            "participants": [
+                            "acceptanceAliases": [
                                 {
-                                    "displayName": "private participant",
+                                    "acceptance": "AC-1",
+                                    "statement": "从规定入口启动并完成核心操作",
+                                    "verified": False,
+                                    "evidenceRefs": ["private-receipt"],
                                 },
                             ],
+                            "participants": [
+                                {
+                                    "participantRef": "P-1",
+                                    "displayName": "澄·今",
+                                    "availability": "current",
+                                    "capabilitySummary": "主持与集成",
+                                },
+                            ],
+                            "recentPublicChanges": [
+                                {
+                                    "kind": "progress",
+                                    "content": "启动入口已经确认",
+                                    "authorParticipantRef": "P-1",
+                                },
+                            ],
+                            "pendingIntegrations": [
+                                {
+                                    "childTaskId": "private-task",
+                                    "objective": "合并终端界面实现",
+                                    "ownerParticipantRef": "P-2",
+                                },
+                            ],
+                            "canSettle": True,
+                            "pendingCancellationTargets": 1,
                             "privateDiagnostics": "must-not-project",
                         },
                     },
@@ -1266,15 +1294,108 @@ class AgentEventProjectionTests(unittest.TestCase):
                 "evidenceRef": "evidence:room-state",
                 "unchanged": False,
                 "stateRevision": "sha256:" + ("a" * 64),
-                "currentResponsibility": {"state": "running"},
+                "currentResponsibility": {
+                    "objective": "完成终端原生 TUI 的可运行闭环",
+                    "expectedOutput": "可启动、可操作、可验证的终端界面",
+                    "state": "running",
+                    "workspacePolicy": "shared_readonly",
+                },
+                "acceptanceAliases": [
+                    {
+                        "statement": "从规定入口启动并完成核心操作",
+                        "verified": False,
+                    },
+                ],
+                "participants": [
+                    {
+                        "displayName": "澄·今",
+                        "availability": "current",
+                        "capabilitySummary": "主持与集成",
+                    },
+                ],
+                "recentPublicChanges": [
+                    {"kind": "progress", "content": "启动入口已经确认"},
+                ],
+                "pendingIntegrations": [
+                    {"objective": "合并终端界面实现"},
+                ],
+                "canSettle": True,
+                "pendingCancellationTargets": 1,
                 "summary": "Room 状态已读取",
                 "status": "ready",
             },
         )
         self.assertNotIn("privateModelContext", repr(finished_data))
         self.assertNotIn("privateDiagnostics", repr(finished_data))
-        self.assertNotIn("private participant", repr(finished_data))
-        self.assertNotIn("private objective", repr(finished_data))
+        self.assertNotIn("private-receipt", repr(finished_data))
+        self.assertNotIn("private-task", repr(finished_data))
+        self.assertNotIn("P-1", repr(finished_data))
+        self.assertNotIn("ownerParticipantRef", repr(finished_data))
+        self.assertNotIn("participantRef", repr(finished_data))
+
+        failed = AgentEventEnvelope(
+            event_id="event:room-state:failed",
+            session_id="session:1",
+            turn_id="turn:1",
+            sequence=3,
+            created_at_ms=3,
+            event_type="tool_finished",
+            payload={
+                "toolName": "room_commit",
+                "toolCallId": "call:room-commit:failed",
+                "args": {"decision": "wait"},
+                "isError": True,
+                "error": "questionOptions[0].value is required",
+            },
+            resume_token="event:room-commit:failed",
+        )
+
+        _, failed_data = room_event_projection(failed)
+        self.assertEqual(
+            failed_data["error"],
+            "questionOptions[0].value is required",
+        )
+
+    def test_room_define_projects_concrete_user_visible_scope_fields(
+        self,
+    ) -> None:
+        event_type, data = room_event_projection(
+            AgentEventEnvelope(
+                event_id="event:room-define:start",
+                session_id="session:1",
+                turn_id="turn:1",
+                sequence=1,
+                created_at_ms=1,
+                event_type="tool_started",
+                payload={
+                    "toolName": "room_define",
+                    "toolCallId": "call:room-define",
+                    "args": {
+                        "objective": "完成终端原生 TUI 的可运行闭环",
+                        "expectedOutput": "可启动、可操作、可验证的终端界面",
+                        "entrySurface": "从仓库根目录运行 python -m rag_ime.tui",
+                        "primaryInteraction": "在终端输入任务并查看流式状态更新",
+                        "observableCompletion": "命令退出码为 0，界面显示最终结果",
+                        "privateModelContext": "must-not-project",
+                    },
+                    "isError": False,
+                },
+                resume_token="event:room-define:start",
+            )
+        )
+
+        self.assertEqual(event_type, "participant_activity")
+        self.assertEqual(
+            data["arguments"],
+            {
+                "objective": "完成终端原生 TUI 的可运行闭环",
+                "expectedOutput": "可启动、可操作、可验证的终端界面",
+                "entrySurface": "从仓库根目录运行 python -m rag_ime.tui",
+                "primaryInteraction": "在终端输入任务并查看流式状态更新",
+                "observableCompletion": "命令退出码为 0，界面显示最终结果",
+            },
+        )
+        self.assertNotIn("privateModelContext", repr(data))
 
     def test_room_tool_result_allowlist_covers_other_owned_tools(
         self,

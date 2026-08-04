@@ -337,7 +337,7 @@ function GoalMode({
         <div className="agent-goal-empty">
           <strong>直接在对话中描述你想完成的事</strong>
           <p>伙伴会逐项询问目标、交付物、验收方式与禁区，并提供可选择的答案；你只需选择或回复。</p>
-          <small>澄清完成后，确认结果会显示在这里，不需要填写表单。</small>
+          <small>目标说明清楚后，确认结果会显示在这里，不需要填写表单。</small>
         </div>
       ) : (
         <div className="agent-goal-summary" data-state={goal.status}>

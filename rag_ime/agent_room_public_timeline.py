@@ -134,8 +134,8 @@ def canonical_room_alignment_content(
         field_name="expectedOutput",
     )
     content = (
-        f"已经对齐：目标是“{normalized_objective}”，"
-        f"交付边界是“{normalized_output}”。"
+        f"我明白了：这次要“{normalized_objective}”，"
+        f"完成后你会得到“{normalized_output}”。"
     )
     if len(content) > PUBLIC_ROOM_REPORT_MAX_CHARS:
         raise ValueError(
@@ -326,7 +326,7 @@ class RoomPublicTimelineProjector:
                     "status": "queued",
                     "reason": str(decision.get("reason") or "")[:160],
                     "summary": (
-                        f"{display_name} 正在判断是否需要澄清"
+                        f"{display_name} 正在看看是否还缺一个会影响做法的决定"
                         if decision.get("phase") == "alignment"
                         else f"{display_name} 已进入执行队列"
                     ),

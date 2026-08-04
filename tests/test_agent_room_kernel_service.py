@@ -27,7 +27,10 @@ from rag_ime.agent_room_kernel import RoomKernelFenceError
 from rag_ime.agent_room_skills import RoomSkillEpochRevoked
 from rag_ime.agent_blocks import normalize_trusted_agent_blocks
 from rag_ime.agent_room_capabilities import ToolAuthorizationError
-from rag_ime.agent_room_application import _resolve_room_answer_display
+from rag_ime.agent_room_application import (
+    _assert_concrete_room_definition,
+    _resolve_room_answer_display,
+)
 from rag_ime.agent_room_kernel_application import _collaboration_tool_result
 from rag_ime.agent_room_settlement import RoomCommitProposalError
 from rag_ime.agent_room_runtime_coordinator import _effective_dispatch_role_id
@@ -751,14 +754,15 @@ class RoomKernelServiceTests(unittest.TestCase):
             str(alignment_dispatch["taskId"])
         )
         self.assertIn(
-            "请求完整时不要索要确认",
+            "请求已经足够具体时，不要再问用户确认",
             alignment_task["objective"],
         )
         self.assertIn("直接用 room_define", alignment_task["objective"])
         self.assertIn(
-            "有实质歧义时用 room_commit wait 一次只提出一个最小必要问题",
+            "公开消息里不要使用“对齐、澄清、需求不足、工作卡片、门禁”",
             alignment_task["objective"],
         )
+        self.assertIn("具体入口或页面", alignment_task["objective"])
         self.assertIn(
             "定义后由 Facilitator 先执行",
             alignment_task["expectedOutput"],
@@ -1034,8 +1038,11 @@ class RoomKernelServiceTests(unittest.TestCase):
             ),
             invocation_receipt_id="invoke:explicit-reviewer-default-job",
             arguments={
-                "objective": "完成被点名的任务",
-                "expectedOutput": "由开场点名伙伴负责的可验证结果",
+                "objective": "由开场点名伙伴在协作任务页完成首轮实施",
+                "expectedOutput": "任务页显示被点名伙伴进入实施并返回核验结果",
+                "entrySurface": "协作任务页的开场消息入口",
+                "primaryInteraction": "用户点名伙伴后，由该伙伴接手并开始实施",
+                "observableCompletion": "任务页显示被点名伙伴的实施状态和核验结果",
                 "requirements": ["开场点名决定本轮接手人"],
                 "acceptanceCriteria": [
                     {
@@ -1647,7 +1654,7 @@ class RoomKernelServiceTests(unittest.TestCase):
             [
                 *[
                     f"{participant_names[str(item['participantId'])]} "
-                    "正在判断是否需要澄清"
+                    "正在看看是否还缺一个会影响做法的决定"
                     for item in accepted["alignmentDispatches"]
                 ],
                 f"{self.participant['displayName']} 已进入执行队列",
@@ -1661,7 +1668,7 @@ class RoomKernelServiceTests(unittest.TestCase):
             str(alignment_dispatch["taskId"])
         )
         self.assertIn(
-            "请求完整时不要索要确认",
+            "请求已经足够具体时，不要再问用户确认",
             alignment_task["objective"],
         )
         self.assertIn("直接用 room_define", alignment_task["objective"])
@@ -7453,8 +7460,11 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.service.room_kernel_worker.run_once()
         target = self.service.rooms.get(self.room_id)["participants"][2]
         arguments = {
-            "objective": "完成最终实现",
-            "expectedOutput": "可验证的实现结果",
+            "objective": "在协作任务页完成目标实现并运行验证命令",
+            "expectedOutput": "任务页显示实现结果和验证命令的通过状态",
+            "entrySurface": "协作任务页中的目标实现工作区",
+            "primaryInteraction": "伙伴修改目标实现并运行对应验证命令",
+            "observableCompletion": "任务页显示实现产物以及验证命令通过",
             "requirements": ["保留用户原始需求", "实现最终行为"],
             "acceptanceCriteria": [
                 {
@@ -7542,6 +7552,101 @@ class RoomKernelServiceTests(unittest.TestCase):
             )
         self.assertEqual(close_count, 0)
 
+    def test_room_define_rejects_placeholder_delivery_before_mutating_root(
+        self,
+    ) -> None:
+        accepted = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": "我要完成 TUI。",
+                "clientMessageId": "client:define-placeholder",
+            },
+        )
+        alignment = accepted["alignmentDispatches"][0]
+        self.service.room_kernel_worker.run_once()
+
+        with self.assertRaisesRegex(ValueError, "具体入口"):
+            self.service.room_application.define_room(
+                self.room_id,
+                dispatch_id=alignment["dispatchId"],
+                invocation_receipt_id="invoke:define-placeholder",
+                arguments={
+                    "objective": "完成当前项目的 TUI 端到端可用版本",
+                    "expectedOutput": (
+                        "从规定入口启动并完成核心操作，获得真实结果"
+                    ),
+                    "entrySurface": "规定入口",
+                    "primaryInteraction": "完成核心操作",
+                    "observableCompletion": "看到真实结果",
+                    "requirements": ["补全现有 TUI"],
+                    "acceptanceCriteria": [
+                        {
+                            "statement": (
+                                "从规定入口完成核心操作并看到真实结果"
+                            ),
+                            "fullNameZh": "端到端结果可见",
+                            "expectedReceiptTypes": ["evidence"],
+                        }
+                    ],
+                },
+            )
+
+        self.assertIsNone(
+            self.service.room_kernel.definition_fence(
+                root_id=str(accepted["rootId"]),
+                dispatch_id=alignment["dispatchId"],
+            )
+        )
+        with sqlite3.connect(self.service.db_path) as conn:
+            execute_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM room_kernel_dispatches "
+                    "WHERE root_id=? AND intent_kind='execute'",
+                    (str(accepted["rootId"]),),
+                ).fetchone()[0]
+            )
+        self.assertEqual(execute_count, 0)
+
+    def test_room_definition_accepts_concrete_details_even_with_current_project_copy(
+        self,
+    ) -> None:
+        _assert_concrete_room_definition(
+            objective="在当前项目的任务页补全终端启动与结果展示",
+            expected_output="当前项目会显示可交互终端、运行状态和失败反馈",
+            entry_surface="任务页的“终端任务”详情视图",
+            primary_interaction="用户点击启动后输入命令，并可停止正在运行的进程",
+            observable_completion="界面显示命令输出、退出状态和失败原因",
+            requirements=["保留已有任务记录"],
+            criteria=[{"statement": "真实命令输出可见"}],
+        )
+
+    def test_room_definition_accepts_concise_scope_with_concrete_journey(
+        self,
+    ) -> None:
+        _assert_concrete_room_definition(
+            objective="完成终端原生 TUI 的可运行闭环",
+            expected_output="可启动、可操作、可验证的终端界面",
+            entry_surface="从仓库根目录运行 python -m rag_ime.tui",
+            primary_interaction="用户在终端输入任务并查看流式状态更新",
+            observable_completion="命令退出码为 0，界面显示最终结果",
+            requirements=["保留真实命令执行"],
+            criteria=[{"statement": "真实结果在终端可见"}],
+        )
+
+    def test_room_definition_rejects_generic_dedicated_fields(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(ValueError, "具体入口"):
+            _assert_concrete_room_definition(
+                objective="完成终端原生 TUI 的可运行闭环",
+                expected_output="可启动、可操作、可验证的终端界面",
+                entry_surface="应用默认首页",
+                primary_interaction="执行主要流程",
+                observable_completion="看到成功提示",
+                requirements=["完成现有功能"],
+                criteria=[{"statement": "看到成功提示"}],
+            )
+
     def test_room_define_defaults_to_facilitator_without_fake_peer(self) -> None:
         accepted = self.service.post_room_message(
             self.room_id,
@@ -7557,8 +7662,11 @@ class RoomKernelServiceTests(unittest.TestCase):
             dispatch_id=alignment["dispatchId"],
             invocation_receipt_id="invoke:define-facilitator-only",
             arguments={
-                "objective": "完成小型单写任务",
-                "expectedOutput": "主持伙伴直接给出可验证结果",
+                "objective": "在协作任务页完成一项小型单写检查",
+                "expectedOutput": "任务页显示主持伙伴的检查结论和证据",
+                "entrySurface": "协作任务页中的单写检查项",
+                "primaryInteraction": "主持伙伴读取检查项并运行核对步骤",
+                "observableCompletion": "任务页显示检查结论和对应证据",
                 "requirements": ["不创建虚假的 Worker 分工"],
                 "acceptanceCriteria": [
                     {
@@ -7604,8 +7712,11 @@ class RoomKernelServiceTests(unittest.TestCase):
             dispatch_id=alignment["dispatchId"],
             invocation_receipt_id="invoke:define-explicit-facilitator",
             arguments={
-                "objective": "完成只读核对",
-                "expectedOutput": "主持伙伴的核对结果",
+                "objective": "在协作任务页完成只读边界核对",
+                "expectedOutput": "任务页显示主持伙伴的只读核对结果",
+                "entrySurface": "协作任务页中的只读核对入口",
+                "primaryInteraction": "主持伙伴读取边界信息并执行核对",
+                "observableCompletion": "任务页显示核对结论且没有写入变更",
                 "requirements": ["不分配无意义的并行工作"],
                 "acceptanceCriteria": [
                     {
@@ -7654,8 +7765,11 @@ class RoomKernelServiceTests(unittest.TestCase):
             session_id,
             "room_define",
             {
-                "objective": "实现完整目标",
-                "expectedOutput": "可验证的实现结果",
+                "objective": "在协作任务页实现目标并运行验证步骤",
+                "expectedOutput": "任务页显示实现产物和验证通过结果",
+                "entrySurface": "协作任务页中的目标实现入口",
+                "primaryInteraction": "实现伙伴修改目标代码并运行验证步骤",
+                "observableCompletion": "任务页显示实现产物与验证通过状态",
                 "requirements": ["保留完整目标", "提供验证结果"],
                 "acceptanceCriteria": [
                     {
@@ -7808,6 +7922,9 @@ class RoomKernelServiceTests(unittest.TestCase):
             {
                 "objective": "并行核对实现与边界后交付一个已验证结果",
                 "expectedOutput": "两位伙伴的独立结果、私有核验和最终汇总",
+                "entrySurface": "协作任务页中的双工作线入口",
+                "primaryInteraction": "两位伙伴分别核对实现和边界并提交证据",
+                "observableCompletion": "任务页显示两条工作线证据和唯一最终汇总",
                 "requirements": ["两位伙伴独立工作", "最终只发布一个结果"],
                 "acceptanceCriteria": [
                     {
@@ -8198,8 +8315,11 @@ class RoomKernelServiceTests(unittest.TestCase):
             dispatch_id=str(alignment["dispatchId"]),
             invocation_receipt_id="invoke:definition-review-policy",
             arguments={
-                "objective": "完成实现并经过独立复核",
-                "expectedOutput": "可验证的最终结果",
+                "objective": "在协作任务页完成实现并提交独立复核",
+                "expectedOutput": "任务页显示实现证据和独立复核结论",
+                "entrySurface": "协作任务页中的实现与复核入口",
+                "primaryInteraction": "实现伙伴提交产物后由 Reviewer 独立检查",
+                "observableCompletion": "任务页显示实现证据与独立复核结论",
                 "requirements": ["实现与复核责任分离"],
                 "acceptanceCriteria": [
                     {
@@ -8514,8 +8634,11 @@ class RoomKernelServiceTests(unittest.TestCase):
             dispatch_id=resumed_dispatch_id,
             invocation_receipt_id="invoke:resumed-room-define",
             arguments={
-                "objective": "按用户回答完成最终实现",
-                "expectedOutput": "可验证的实现结果",
+                "objective": "在协作任务页按用户回答完成目标实现",
+                "expectedOutput": "任务页显示实现结果和验证通过状态",
+                "entrySurface": "协作任务页中的已回答目标入口",
+                "primaryInteraction": "伙伴读取用户答案后修改实现并运行验证",
+                "observableCompletion": "任务页显示实现结果以及验证通过状态",
                 "requirements": ["保留原请求和澄清回答"],
                 "acceptanceCriteria": [
                     {
@@ -8826,6 +8949,9 @@ class RoomKernelServiceTests(unittest.TestCase):
         define_arguments = {
             "objective": "完成实现并附验证记录",
             "expectedOutput": "实现结果和验证记录",
+            "entrySurface": "协作任务页中的已确认实现入口",
+            "primaryInteraction": "伙伴按用户回答修改实现并运行验证步骤",
+            "observableCompletion": "任务页显示实现结果以及验证记录通过",
             "requirements": ["实现目标行为", "保留验证记录"],
             "acceptanceCriteria": [
                 {
@@ -8866,8 +8992,8 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         self.assertEqual(
             alignment_post["content"],
-            "已经对齐：目标是“完成实现并附验证记录”，"
-            "交付边界是“实现结果和验证记录”。",
+            "我明白了：这次要“完成实现并附验证记录”，"
+            "完成后你会得到“实现结果和验证记录”。",
         )
         self.assertNotRegex(
             alignment_post["content"],

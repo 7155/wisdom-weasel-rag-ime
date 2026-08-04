@@ -159,6 +159,56 @@ describe('Agent tool activity details', () => {
     expect(within(group).getByLabelText('操作记录详情')).toBeInTheDocument();
   });
 
+  it('gives a long-running edit its own progress motion until the real result arrives', () => {
+    const activity = toolActivity('tool_started', 'running', {
+      toolCallId: 'call-edit-motion',
+      toolName: 'workspace_edit',
+      args: { path: 'src/RoomTurn.tsx' },
+    });
+    const view = render(<ActivitySummary activities={[activity]} inline />);
+    const group = view.container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    fireEvent.click(group.querySelector('summary')!);
+    const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+
+    expect(row).toHaveAttribute('data-tool-kind', 'edit');
+    expect(within(row).getByRole('status', { name: '正在接收文件编辑进度' })).toBeInTheDocument();
+
+    view.rerender(<ActivitySummary activities={[{
+      ...activity,
+      kind: 'tool_finished',
+      status: 'completed',
+      payload: {
+        ...activity.payload,
+        publicResult: {
+          fileName: 'RoomTurn.tsx',
+          additions: 8,
+          deletions: 2,
+          summary: 'RoomTurn.tsx +8 -2',
+        },
+      },
+      updatedAtMs: activity.updatedAtMs + 1_000,
+    }]} inline />);
+
+    expect(row).toHaveAttribute('data-state', 'completed');
+    expect(within(row).queryByRole('status', { name: '正在接收文件编辑进度' })).not.toBeInTheDocument();
+    expect(row).toHaveTextContent('RoomTurn.tsx +8 -2');
+  });
+
+  it('does not animate an orphan edit progress event without a recorded start', () => {
+    const activity = toolActivity('tool_progress', 'running', {
+      toolCallId: 'call-edit-orphan-progress',
+      toolName: 'workspace_edit',
+      args: { path: 'src/RoomTurn.tsx' },
+    });
+    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    fireEvent.click(group.querySelector('summary')!);
+    const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+
+    expect(row).not.toHaveAttribute('data-edit-active');
+    expect(within(row).queryByRole('status', { name: '正在接收文件编辑进度' })).not.toBeInTheDocument();
+  });
+
   it('keeps a failed inline group collapsed until the user asks for evidence', () => {
     const activity = toolActivity('tool_finished', 'failed', {
       toolCallId: 'call-failed-disclosure',
@@ -232,7 +282,7 @@ describe('Agent tool activity details', () => {
     const { container } = render(<ActivitySummary activities={[activity]} inline />);
     const dialog = openInlineActivity(container);
     const row = dialog.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
-    expect(row.querySelector('summary')).toHaveTextContent('在 …/project/rag_ime 搜索 “rime_lexicon_review”');
+    expect(row.querySelector('summary')).toHaveTextContent('已在 …/project/rag_ime 中搜索 “rime_lexicon_review”');
     expect(within(row.querySelector('summary')!).getByText('搜索文本', { selector: 'strong' })).toBeInTheDocument();
     fireEvent.click(row.querySelector('summary')!);
 
@@ -255,7 +305,12 @@ describe('Agent tool activity details', () => {
       toolCallId: 'call-bounded-output',
       toolName: 'grep',
       publicResult: {
-        outputPreview: '/Users/private/project/output apiKey=secret-value --token raw-token safe-output-line\n'.repeat(700),
+        outputPreview: [
+          '/Users/private/project/output apiKey=secret-value TOKEN=plain-token',
+          '--token raw-token "token": "json-token"',
+          'Authorization: Bearer header-token https://example.test/run?token=url-token&mode=1',
+          'token 用量 safe-output-line',
+        ].join(' ') + '\n' + 'safe-output-line\n'.repeat(700),
         outputTruncated: false,
       },
     });
@@ -279,14 +334,52 @@ describe('Agent tool activity details', () => {
     expect(visibleOutput).not.toHaveTextContent('/Users/private');
     expect(visibleOutput).not.toHaveTextContent('secret-value');
     expect(visibleOutput).not.toHaveTextContent('raw-token');
+    expect(visibleOutput).not.toHaveTextContent('plain-token');
+    expect(visibleOutput).not.toHaveTextContent('json-token');
+    expect(visibleOutput).not.toHaveTextContent('header-token');
+    expect(visibleOutput).not.toHaveTextContent('url-token');
     expect(output).toHaveTextContent('完整结果仍由本机工具回执保留');
     expect(visibleOutput).toHaveTextContent('apiKey=[REDACTED_SECRET]');
+    expect(visibleOutput).toHaveTextContent('mode=1');
+    expect(visibleOutput).toHaveTextContent('token 用量');
     expect(visibleOutput).toHaveAttribute('tabindex', '0');
     fireEvent.click(within(output).getByRole('button', { name: '复制结果' }));
 
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(visibleOutput.textContent));
     expect(scrollport.scrollTop).toBe(180);
     expect(within(output).getByRole('button', { name: '已复制结果' })).toBeInTheDocument();
+  });
+
+  it('hides shell output when the command reads a credential-bearing file', () => {
+    const protectedCommands = [
+      ['.env.staging', 'cat ./config/.env.staging'],
+      ['secrets.yaml', 'source ./config/secrets.yaml'],
+      ['tokens.json', 'grep token ./config/tokens.json'],
+      ['.env.local', 'sed -n 1p ./config/.env.local'],
+    ] as const;
+    for (const [sensitiveName, command] of protectedCommands) {
+      const activity = toolActivity('tool_finished', 'completed', {
+        toolCallId: `call-protected-${sensitiveName}`,
+        toolName: 'workspace_shell',
+        args: { command },
+        publicResult: {
+          outputPreview: 'DATABASE_URL=postgres://private-password-value',
+          outputTruncated: false,
+        },
+      });
+      const { container, unmount } = render(
+        <ActivitySummary activities={[activity]} inline />,
+      );
+      const group = openInlineActivity(container);
+      const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+      fireEvent.click(row.querySelector('summary')!);
+
+      expect(row).toHaveTextContent('已运行受保护命令');
+      expect(row).not.toHaveTextContent(sensitiveName);
+      expect(row).not.toHaveTextContent('private-password-value');
+      expect(within(row).queryByLabelText('工具返回片段')).not.toBeInTheDocument();
+      unmount();
+    }
   });
 
   it('unwraps legacy managed evidence JSON without exposing its internal envelope', () => {
@@ -311,7 +404,7 @@ describe('Agent tool activity details', () => {
 
     const { container } = render(<ActivitySummary activities={[activity]} inline />);
     const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
-    expect(group).toHaveTextContent('在 rag_ime 搜索 “todo”');
+    expect(group).toHaveTextContent('已在 rag_ime 中搜索 “todo”');
     const dialog = openInlineActivity(container);
     const row = dialog.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
     fireEvent.click(row.querySelector('summary')!);
@@ -791,7 +884,7 @@ describe('Agent tool activity details', () => {
     expect(dialog).toHaveTextContent('写入文件');
     expect(dialog).toHaveTextContent('report.ts +335');
     expect(dialog).toHaveTextContent('335 行');
-    expect(dialog).toHaveTextContent('+335 / -0');
+    expect(dialog).toHaveTextContent('+335 -0');
     expect(dialog).not.toHaveTextContent('/Users/private/project');
     expect(dialog).not.toHaveTextContent('line 1');
     expect(dialog).not.toHaveTextContent('Successfully wrote');

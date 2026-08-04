@@ -519,12 +519,33 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
         "required": [
             "objective",
             "expectedOutput",
+            "entrySurface",
+            "primaryInteraction",
+            "observableCompletion",
             "requirements",
             "acceptanceCriteria",
         ],
         "properties": {
             "objective": {"type": "string", "minLength": 1, "maxLength": 8000},
             "expectedOutput": {"type": "string", "minLength": 1, "maxLength": 8000},
+            "entrySurface": {
+                "type": "string",
+                "minLength": 4,
+                "maxLength": 1000,
+                "description": "具体从哪个页面、命令、文件、接口或其他真实入口开始。",
+            },
+            "primaryInteraction": {
+                "type": "string",
+                "minLength": 4,
+                "maxLength": 2000,
+                "description": "用户或系统实际要完成的关键操作，不能只写‘核心操作’。",
+            },
+            "observableCompletion": {
+                "type": "string",
+                "minLength": 4,
+                "maxLength": 2000,
+                "description": "完成后能看到、运行或检查到的具体结果。",
+            },
             "requirements": {
                 "type": "array",
                 "minItems": 1,

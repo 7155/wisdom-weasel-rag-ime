@@ -489,7 +489,12 @@ export function AgentTurn({
   const showWorking = turn.status === 'queued' || turn.status === 'running';
   const turnSettled = turn.status === 'completed' || turn.status === 'failed' || turn.status === 'aborted';
   const presence: PersonaPresence = turn.status === 'failed' ? 'warning' : turn.status === 'running' || turn.status === 'waiting' ? 'thinking' : 'done';
-  const timelineEntries = interleavedTurnEntries(assistantMessages, activities);
+  // The terminal card below owns the one public failure conclusion and its
+  // recovery controls. Keep the durable turn_failed activity in state for
+  // diagnostics, but do not render it again as an "operation" in the same
+  // conversation turn.
+  const timelineActivities = activities.filter((activity) => activity.kind !== 'turn_failed');
+  const timelineEntries = interleavedTurnEntries(assistantMessages, timelineActivities);
   const streamingMessageId = activeStreamingMessageId(turn.status, assistantMessages);
   return (
     <article className="agent-turn" data-turn-status={turn.status}>

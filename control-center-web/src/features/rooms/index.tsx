@@ -1486,11 +1486,11 @@ export function RoomsFeature() {
     </main>
     <Dialog open={createOpen} onOpenChange={(open) => { if (!creating) { setCreateOpen(open); if (!open) setCreateError(''); } }}>
       <DialogContent className="room-create-dialog">
-        <DialogHeader><DialogTitle>开始一起做事</DialogTitle><DialogDescription>先选这次是要完成任务，还是只想和几位伙伴聊聊。任务会先对齐目标，再开始执行。</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>开始一起做事</DialogTitle><DialogDescription>先选这次是要完成任务，还是只想和几位伙伴聊聊。任务会先确认目标和完成标准，再开始执行。</DialogDescription></DialogHeader>
         <form id="room-create-form" className="room-create-form" onSubmit={(event) => { event.preventDefault(); void createRoom(); }}>
           {createError ? <p className="room-dialog-error" role="alert">{createError}</p> : null}
           <fieldset><legend>这次想怎么一起</legend><div className="room-kind-options">
-            <label><input type="radio" name="room-kind" checked={createRoomKind === 'collaboration'} onChange={() => updateCreateRoomKind('collaboration')} /><span><BriefcaseBusiness size={17} /><strong>一起完成任务</strong><small>对齐目标后，伙伴可以分工、交接和验收</small></span></label>
+            <label><input type="radio" name="room-kind" checked={createRoomKind === 'collaboration'} onChange={() => updateCreateRoomKind('collaboration')} /><span><BriefcaseBusiness size={17} /><strong>一起完成任务</strong><small>目标和完成标准说明清楚后，伙伴可以分工、交接和验收</small></span></label>
             <label><input type="radio" name="room-kind" checked={createRoomKind === 'roleplay'} onChange={() => updateCreateRoomKind('roleplay')} /><span><Sparkles size={17} /><strong>一起聊聊</strong><small>只共享对话背景，不会访问项目文件</small></span></label>
           </div></fieldset>
           <label className="room-create-field"><span>取个名字 <small>必填</small></span><input maxLength={120} value={createTitle} onChange={(event) => { setCreateTitle(event.target.value); setCreateError(''); }} placeholder={createRoomKind === 'roleplay' ? '例如：深夜茶话会' : '例如：发布前检查'} aria-label="协作空间名称" /></label>

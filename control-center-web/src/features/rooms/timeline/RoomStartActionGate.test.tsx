@@ -96,7 +96,7 @@ describe('RoomStartActionGate', () => {
       sourceSessionId: 'session-a',
       role: 'assistant',
       status: 'completed',
-      text: '已经对齐：目标是“完成实现”，交付边界是“实现与验证记录”。',
+      text: '我明白了：这次要“完成实现”，完成后你会得到“实现与验证记录”。',
       projectionKind: 'post',
       postKind: 'alignment',
       rootId: 'root-a',

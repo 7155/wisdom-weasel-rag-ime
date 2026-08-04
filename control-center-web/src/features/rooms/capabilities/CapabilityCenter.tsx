@@ -64,7 +64,7 @@ function stateLabel(value: CapabilityStateName): string {
 }
 
 function layerLabel(value: CapabilityProjection['narrowedBy'][number]['layer']): string {
-  return ({ authorization: '授权边界', 'agent-template': 'Agent 模板', 'collaboration-role': '协作岗位', 'collaboration-profile': '角色书', revocation: '撤销门禁' } as const)[value];
+  return ({ authorization: '授权边界', 'agent-template': 'Agent 模板', 'collaboration-role': '协作岗位', 'collaboration-profile': '角色书', revocation: '撤销条件' } as const)[value];
 }
 
 function shortHash(value: string): string { return `${value.slice(0, 13)}…${value.slice(-7)}`; }

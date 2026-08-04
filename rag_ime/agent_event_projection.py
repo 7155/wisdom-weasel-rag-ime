@@ -568,6 +568,7 @@ def room_event_projection(
             "toolName",
             "displayName",
             "toolCallId",
+            "retryOfToolCallId",
             "callId",
             "approvalId",
             "requestId",
@@ -904,6 +905,7 @@ _ROOM_TOOL_RESULT_KEYS = (
     "lineCount",
     "additions",
     "deletions",
+    "changedFiles",
     "decisionMode",
     "approvalModelDecision",
     "automatic",
@@ -927,9 +929,17 @@ _ROOM_REQUEST_TEXT_LIMITS = {
     "intent": 120,
     "objective": 1_000,
     "expectedOutput": 1_000,
+    "entrySurface": 1_000,
+    "primaryInteraction": 2_000,
+    "observableCompletion": 2_000,
     "kind": 120,
     "action": 120,
     "summary": 500,
+    "decision": 80,
+    "publicSummary": 1_000,
+    "question": 500,
+    "questionKind": 80,
+    "resumeCondition": 1_000,
     "waitingFor": 120,
     "blocker": 1_000,
 }
@@ -949,6 +959,12 @@ _ROOM_RESULT_KEYS_BY_TOOL = {
         "unchanged",
         "stateRevision",
         "currentResponsibility",
+        "acceptanceAliases",
+        "participants",
+        "recentPublicChanges",
+        "pendingIntegrations",
+        "canSettle",
+        "pendingCancellationTargets",
         "summary",
         "status",
     ),
@@ -1000,6 +1016,7 @@ _ROOM_RESULT_BOOLEAN_KEYS = frozenset(
         "executionPerformed",
         "settlementStaged",
         "terminalForModelTurn",
+        "canSettle",
     }
 )
 
@@ -1020,9 +1037,15 @@ _ROOM_RESULT_TEXT_LIMITS = {
 
 def _room_tool_request_projection(
     raw_args: Mapping[str, object],
+    *,
+    tool_name: str,
 ) -> dict[str, object]:
     projected: dict[str, object] = {}
     for key, maximum in _ROOM_REQUEST_TEXT_LIMITS.items():
+        if tool_name == "room_commit" and key == "summary":
+            # room_commit.summary is explicitly private model-to-kernel data;
+            # publicSummary owns what the user may inspect.
+            continue
         value = raw_args.get(key)
         if not isinstance(value, str):
             continue
@@ -1041,6 +1064,34 @@ def _room_tool_request_projection(
         ]
         if values:
             projected[key] = values
+    raw_options = raw_args.get("questionOptions")
+    if isinstance(raw_options, list):
+        options: list[dict[str, object]] = []
+        for raw_option in raw_options[:5]:
+            if not isinstance(raw_option, Mapping):
+                continue
+            value = _redacted_room_text(raw_option.get("value"), maximum=80)
+            label = _redacted_room_text(raw_option.get("label"), maximum=120)
+            description = _redacted_room_text(
+                raw_option.get("description"),
+                maximum=500,
+            )
+            if not value or not label or not description:
+                continue
+            options.append(
+                {
+                    "value": value,
+                    "label": label,
+                    "description": description,
+                    **(
+                        {"recommended": True}
+                        if raw_option.get("recommended") is True
+                        else {}
+                    ),
+                }
+            )
+        if options:
+            projected["questionOptions"] = options
     return projected
 
 
@@ -1069,13 +1120,87 @@ def _room_current_responsibility(
     value: object,
 ) -> dict[str, str] | str | None:
     if isinstance(value, Mapping):
-        state = _redacted_room_text(
-            value.get("state"),
-            maximum=160,
-        )
-        return {"state": state} if state else None
+        projected: dict[str, str] = {}
+        for key, maximum in (
+            ("objective", 1_000),
+            ("expectedOutput", 1_000),
+            ("state", 160),
+            ("workspacePolicy", 120),
+        ):
+            text = _redacted_room_text(value.get(key), maximum=maximum)
+            if text:
+                projected[key] = text
+        return projected or None
     text = _redacted_room_text(value, maximum=500)
     return text or None
+
+
+def _room_acceptance_projection(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, object]] = []
+    for item in value[:32]:
+        if not isinstance(item, Mapping):
+            continue
+        statement = _redacted_room_text(item.get("statement"), maximum=1_000)
+        if not statement:
+            continue
+        result.append(
+            {
+                "statement": statement,
+                "verified": item.get("verified") is True,
+            }
+        )
+    return result
+
+
+def _room_participant_projection(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, str]] = []
+    for item in value[:16]:
+        if not isinstance(item, Mapping):
+            continue
+        projected: dict[str, str] = {}
+        for key, maximum in (
+            ("displayName", 160),
+            ("availability", 80),
+            ("capabilitySummary", 320),
+        ):
+            text = _redacted_room_text(item.get(key), maximum=maximum)
+            if text:
+                projected[key] = text
+        if projected.get("displayName"):
+            result.append(projected)
+    return result
+
+
+def _room_recent_change_projection(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, str]] = []
+    for item in value[:8]:
+        if not isinstance(item, Mapping):
+            continue
+        content = _redacted_room_text(item.get("content"), maximum=500)
+        if not content:
+            continue
+        kind = _redacted_room_text(item.get("kind"), maximum=80)
+        result.append({**({"kind": kind} if kind else {}), "content": content})
+    return result
+
+
+def _room_pending_integration_projection(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, str]] = []
+    for item in value[:16]:
+        if not isinstance(item, Mapping):
+            continue
+        objective = _redacted_room_text(item.get("objective"), maximum=1_000)
+        if objective:
+            result.append({"objective": objective})
+    return result
 
 
 def _room_tool_result_projection(
@@ -1106,6 +1231,30 @@ def _room_tool_result_projection(
             current = _room_current_responsibility(value)
             if current is not None:
                 projected[key] = current
+            continue
+        if key == "acceptanceAliases":
+            acceptance = _room_acceptance_projection(value)
+            if acceptance:
+                projected[key] = acceptance
+            continue
+        if key == "participants":
+            participants = _room_participant_projection(value)
+            if participants:
+                projected[key] = participants
+            continue
+        if key == "recentPublicChanges":
+            changes = _room_recent_change_projection(value)
+            if changes:
+                projected[key] = changes
+            continue
+        if key == "pendingIntegrations":
+            integrations = _room_pending_integration_projection(value)
+            if integrations:
+                projected[key] = integrations
+            continue
+        if key == "pendingCancellationTargets":
+            if isinstance(value, int) and not isinstance(value, bool):
+                projected[key] = max(0, min(value, 1_000))
             continue
         if key in _ROOM_RESULT_BOOLEAN_KEYS:
             if isinstance(value, bool):
@@ -1246,7 +1395,10 @@ def _room_tool_disclosure(
         )
     )
     if is_room_tool:
-        arguments = _room_tool_request_projection(raw_args)
+        arguments = _room_tool_request_projection(
+            raw_args,
+            tool_name=tool_name,
+        )
     elif public_result:
         arguments = {
             key: public_result[key]

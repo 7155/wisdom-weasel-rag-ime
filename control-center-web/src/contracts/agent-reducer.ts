@@ -295,10 +295,14 @@ export function reduceAgentEvent(
       break;
     }
     case 'tool_started':
-    case 'tool_progress':
+    case 'tool_progress': {
+      const activityId = agentActivityId(event, payload);
+      const existing = next.activitiesById[activityId];
+      if (existing && ['completed', 'failed', 'aborted'].includes(existing.status)) break;
       upsertActivity(next, event, payload, payload.isError === true ? 'failed' : 'running');
       next.status = payload.isError === true ? 'failed' : 'working';
       break;
+    }
     case 'tool_finished': {
       const correlatedPayload = mergeLegacyApprovalIntoTool(next, event, payload);
       const expectedNoop = expectedToolNoop(correlatedPayload);
@@ -1205,9 +1209,7 @@ function upsertActivity(
   payload: Record<string, unknown>,
   status: AgentActivityProjection['status'],
 ): void {
-  const id =
-    text(payload.toolCallId ?? payload.approvalId ?? payload.requestId) ||
-    `${event.turnId}:${event.eventType}`;
+  const id = agentActivityId(event, payload);
   const previous = state.activitiesById[id];
   if (previous && previous.turnId !== event.turnId) {
     const previousTurn = writableTurn(state, previous.turnId);
@@ -1237,6 +1239,11 @@ function upsertActivity(
   updateAgentTodoFromActivity(state, activityPayload);
   const turn = ensureTurn(state, event.turnId, event.createdAtMs);
   if (!turn.activityIds.includes(id)) turn.activityIds.push(id);
+}
+
+function agentActivityId(event: UiAgentEvent, payload: Record<string, unknown>): string {
+  return text(payload.toolCallId ?? payload.approvalId ?? payload.requestId)
+    || `${event.turnId}:${event.eventType}`;
 }
 
 function upsertApprovalActivity(

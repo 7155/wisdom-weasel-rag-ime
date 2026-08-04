@@ -26,7 +26,7 @@ describe('RoomTurn canonical conversation chronology', () => {
       '终端原生 TUI',
       '首版交付边界是什么？',
       '可运行闭环',
-      '已经对齐：先完成终端原生 TUI 的可运行闭环。',
+      '我明白了：先完成终端原生 TUI 的可运行闭环。',
       '开始行动',
     ]);
     expect(messageOrder(view.container)).toEqual([
@@ -61,6 +61,10 @@ describe('RoomTurn canonical conversation chronology', () => {
       'b-middle',
       'a-last',
     ]);
+    expect(view.container.querySelectorAll('.agent-persona-avatar')).toHaveLength(2);
+    expect(
+      view.container.querySelector('[data-room-message-id="a-last"]'),
+    ).toHaveAttribute('data-continuation', 'true');
   });
 
   it('interleaves a public handoff between earlier and later role activity', () => {
@@ -88,6 +92,22 @@ describe('RoomTurn canonical conversation chronology', () => {
     expect(handoff.compareDocumentPosition(laterActivity) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it('uses one role identity when activity is followed by the same role public reply', () => {
+    const projection = liveProjection([
+      userEvent(1, 'opening', '请完成这个入口'),
+      activityEvent(2, '正在检查现有入口', 'participant-a', 'dispatch-a'),
+      postEvent(3, 'reply', 'progress', '入口已经找到，我继续处理', 'participant-a', 'dispatch-a'),
+    ]);
+    const view = render(roomTurn(projection));
+
+    expect(view.container.querySelectorAll('.agent-persona-avatar')).toHaveLength(1);
+    expect(view.container.querySelector('.room-participant-message')).toHaveAttribute(
+      'data-continuation',
+      'true',
+    );
+    expect(view.container).toHaveTextContent('入口已经找到，我继续处理');
+  });
+
   it('keeps parallel lane segments and public messages in one server-ordered stream', () => {
     const projection = liveProjection([
       userEvent(1, 'opening', '请并行完成两个部分'),
@@ -110,6 +130,29 @@ describe('RoomTurn canonical conversation chronology', () => {
       '澄·今完成收尾',
     ]);
     expect(view.container.querySelectorAll('.room-agent-lane[data-continuation="true"]')).toHaveLength(2);
+    expect(view.container.querySelectorAll('.room-agent-lane .agent-persona-avatar')).toHaveLength(2);
+  });
+
+  it('stops live motion when a companion is waiting for the user', () => {
+    const projection = liveProjection([
+      userEvent(1, 'opening', '请完成这个入口'),
+      activityEvent(2, '正在检查入口', 'participant-a', 'dispatch-a'),
+      postEvent(3, 'wait-user', 'wait', '请选择要继续的入口', 'participant-a', 'dispatch-a'),
+    ]);
+    const view = render(roomTurn(projection));
+    const lane = view.container.querySelector<HTMLElement>('.room-agent-lane')!;
+
+    expect(lane).toHaveAttribute('data-state', 'waiting');
+    expect(lane).toHaveAttribute('data-motion', 'settled');
+    expect(lane).not.toHaveAttribute('data-live');
+    expect(lane.querySelector('.room-agent-lane__live-indicator')).toHaveAttribute(
+      'data-active',
+      'false',
+    );
+    expect(lane.querySelector('.agent-persona-avatar')).not.toHaveAttribute(
+      'data-presence',
+      'thinking',
+    );
   });
 
   it('uses authoritative sequence when a message and activity share a timestamp', () => {
@@ -200,7 +243,7 @@ describe('RoomTurn canonical conversation chronology', () => {
       '终端原生 TUI',
       '首版交付边界是什么？',
       '可运行闭环',
-      '已经对齐：先完成终端原生 TUI 的可运行闭环。',
+      '我明白了：先完成终端原生 TUI 的可运行闭环。',
       '开始行动',
     ]);
     const liveOrder = messageOrder(liveView.container);
@@ -213,7 +256,7 @@ describe('RoomTurn canonical conversation chronology', () => {
       '终端原生 TUI',
       '首版交付边界是什么？',
       '可运行闭环',
-      '已经对齐：先完成终端原生 TUI 的可运行闭环。',
+      '我明白了：先完成终端原生 TUI 的可运行闭环。',
       '开始行动',
     ]);
     expect(messageOrder(replayedView.container)).toEqual(liveOrder);
@@ -244,7 +287,7 @@ describe('RoomTurn canonical conversation chronology', () => {
     }));
     const alignment = textElement(
       view.container,
-      '已经对齐：先完成终端原生 TUI 的可运行闭环。',
+      '我明白了：先完成终端原生 TUI 的可运行闭环。',
     );
     const gate = screen.getByRole('group', { name: '确认开始行动' });
 
@@ -427,7 +470,7 @@ function alignmentEvents() {
     userEvent(3, 'answer-1', '终端原生 TUI', 'question-1'),
     questionEvent(4, 'question-2', '首版交付边界是什么？', ['可运行闭环', '完整插件生态']),
     userEvent(5, 'answer-2', '可运行闭环', 'question-2'),
-    postEvent(6, 'alignment', 'alignment', '已经对齐：先完成终端原生 TUI 的可运行闭环。'),
+    postEvent(6, 'alignment', 'alignment', '我明白了：先完成终端原生 TUI 的可运行闭环。'),
     userEvent(7, 'start', '开始行动'),
   ];
 }

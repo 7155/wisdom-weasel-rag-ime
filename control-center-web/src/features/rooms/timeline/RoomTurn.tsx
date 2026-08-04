@@ -14,7 +14,13 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import { Fragment, useEffect, useRef, useState } from 'react';
+import {
+  Fragment,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 
 import { Button } from '@/components/primitives';
 import {
@@ -38,6 +44,7 @@ import {
   PublicToolFields,
   PublicToolOutput,
   PublicToolRequest,
+  SemanticToolPreview,
 } from '@/features/agent/timeline/ActivitySummary';
 import {
   toggleDisclosureOnKeyPreservingAnchor,
@@ -68,7 +75,10 @@ import {
   type RoomKernelSyncProjection,
 } from '../state/live-store';
 import { RoomStartActionGate, roomRootRequiresStartAction } from './RoomStartActionGate';
-import { roomPublicToolResultView } from './room-tool-presentation';
+import {
+  roomPublicActivityText,
+  roomPublicToolResultView,
+} from './room-tool-presentation';
 
 interface TimelineParticipant {
   id: string;
@@ -433,7 +443,10 @@ export function RoomTurn({
         starting={startingRootIds.has(rootId)}
       />
     : null;
-  const renderConversationMessage = (message: RoomMessageProjection) => {
+  const renderConversationMessage = (
+    message: RoomMessageProjection,
+    continuation = false,
+  ) => {
     if (message.role === 'user') {
       return <RoomUserPost key={message.id} message={message} roomId={projection.roomId} />;
     }
@@ -471,6 +484,7 @@ export function RoomTurn({
         participants={room?.participants ?? []}
         pendingQuestion={pendingQuestion?.postId === message.id ? pendingQuestion : undefined}
         persona={persona}
+        continuation={continuation}
         showEvidence={Boolean(roomTerminalPostLabels[message.postKind ?? ''])}
         turnStartedAtMs={turn.createdAtMs}
       />
@@ -481,6 +495,23 @@ export function RoomTurn({
     visibleLanes,
     conversationMessages,
   );
+  // A role owns one visual identity for the whole turn. Chronology may split
+  // one role into A/B/A segments, but a later segment is still a continuation
+  // instead of a second introduction with another avatar.
+  const identityContinuationByItemKey = new Map<string, boolean>();
+  const seenIdentityKeys = new Set<string>();
+  for (const item of chronologicalStream) {
+    const identityKey = item.kind === 'lane'
+      ? item.lane.participantId || item.lane.sourceSessionId || item.lane.key
+      : item.message.role === 'user'
+        ? ''
+        : item.message.participantId
+          || lanes.find((candidate) => candidate.messageIds.includes(item.message.id))?.participantId
+          || item.message.sourceSessionId;
+    if (!identityKey) continue;
+    identityContinuationByItemKey.set(item.key, seenIdentityKeys.has(identityKey));
+    seenIdentityKeys.add(identityKey);
+  }
   const firstLaneIndex = chronologicalStream.findIndex((item) => item.kind === 'lane');
   const streamBeforeWork = firstLaneIndex < 0
     ? chronologicalStream
@@ -490,7 +521,12 @@ export function RoomTurn({
     : chronologicalStream.slice(firstLaneIndex);
   return <article className="room-turn" data-turn-status={turn.status}>
     {streamBeforeWork.map((item) => (
-      item.kind === 'message' ? renderConversationMessage(item.message) : null
+      item.kind === 'message'
+        ? renderConversationMessage(
+            item.message,
+            identityContinuationByItemKey.get(item.key) ?? false,
+          )
+        : null
     ))}
     {rootBlocked ? <div className="room-turn__root-control" data-state="blocked" role="alert">
       <span><CircleAlert size={14} /><small>这轮协作因伙伴运行失败而暂停；继续会只重做失败的部分，并保留已完成的工作。</small></span>
@@ -522,7 +558,12 @@ export function RoomTurn({
       >{rootStopping ? '正在停止' : '停止本轮任务'}</Button>
     </div> : null}
     {streamAfterWork.map((streamItem) => {
-      if (streamItem.kind === 'message') return renderConversationMessage(streamItem.message);
+      if (streamItem.kind === 'message') {
+        return renderConversationMessage(
+          streamItem.message,
+          identityContinuationByItemKey.get(streamItem.key) ?? false,
+        );
+      }
       const { activities: segmentActivities, includePersistentDetails, lane } = streamItem;
       const participant = room?.participants.find((item) => item.id === lane.participantId);
       const persona = personas.find((item) => (
@@ -575,14 +616,17 @@ export function RoomTurn({
         roomSyncState,
         laneTaskId ? kernelTaskUpdatedAtMsById?.[laneTaskId] : undefined,
       );
-      const laneMotionActive = laneActive
-        && !laneAction
-        && laneFreshness.state === 'fresh';
       const laneOutcome = visibleMessages.reduce((outcome, message) => (
         roomTerminalPostLabels[message.postKind ?? '']
           ? message.postKind ?? outcome
           : outcome
       ), '');
+      const laneOperationallyActive = laneActive
+        && !laneAction
+        && laneOutcome !== 'wait'
+        && laneOutcome !== 'blocked';
+      const laneMotionActive = laneOperationallyActive
+        && laneFreshness.state === 'fresh';
       const laneComplete = (laneTerminal || Boolean(laneOutcome)) && !laneFailed && !laneAborted;
       const authoritativeStatusLabel = laneAction
         ? '等待审阅'
@@ -624,16 +668,18 @@ export function RoomTurn({
       );
       const laneTask = laneTaskId ? kernelTasksById?.[laneTaskId] : undefined;
       const laneSubagents = laneTaskId ? subagentsByTaskId[laneTaskId] ?? [] : [];
-      return <section
-        className="room-agent-lane"
-        data-continuation={streamItem.continuation || undefined}
-        data-motion={laneActive && !laneAction ? laneFreshness.state : 'settled'}
+      const identityContinuation = identityContinuationByItemKey.get(streamItem.key) ?? false;
+      return <RoomLaneDisclosure
+        active={laneMotionActive}
+        defaultOpen={laneActive && !visibleMessages.length}
+        data-continuation={identityContinuation || undefined}
+        data-motion={laneOperationallyActive ? laneFreshness.state : 'settled'}
         data-outcome={laneOutcome || undefined}
         data-state={laneState}
         key={streamItem.key}
-      >
-        <header>
-          {participant
+        participantName={participant?.displayName ?? '协作伙伴'}
+        summary={<>
+          {!identityContinuation && participant
             ? <PersonaAvatar
                 persona={persona}
                 presence={laneState === 'running' && laneMotionActive
@@ -644,11 +690,18 @@ export function RoomTurn({
                       ? 'done'
                       : 'warning'}
               />
-            : <span className="room-agent-lane__route"><Route size={15} /></span>}
+            : !identityContinuation
+              ? <span className="room-agent-lane__route"><Route size={15} /></span>
+              : null}
           <span className="room-agent-lane__work">
             <span className="room-agent-lane__identity">
               <strong>{participant?.displayName ?? '正在选择伙伴'}</strong>
               <small>{statusLabel}</small>
+              <span
+                aria-label={laneMotionActive ? '正在接收实时进展' : '实时进展已暂停'}
+                className="room-agent-lane__live-indicator"
+                data-active={laneMotionActive}
+              ><i /><i /><i /></span>
             </span>
             <strong className="room-agent-lane__task">{laneWork.title}</strong>
             <small className="room-agent-lane__progress">{laneWork.detail}</small>
@@ -659,12 +712,13 @@ export function RoomTurn({
             startedAtMs={turn.createdAtMs}
             endedAtMs={laneActive && !laneAction ? undefined : turn.updatedAtMs}
           />
-        </header>
+        </>}
+      >
         {segmentActivities.length || (
           includePersistentDetails && laneTask && roomTaskWorkspaceLifecycleView(laneTask)
         ) ? <ActivityLog
           activities={segmentActivities}
-          active={laneActive && !laneAction}
+          active={laneOperationallyActive}
           motionActive={laneMotionActive}
           updatesFresh={laneFreshness.state === 'fresh'}
           participantName={participant?.displayName}
@@ -694,7 +748,7 @@ export function RoomTurn({
               : '这位伙伴的任务已经停止。'}
           </p>
         ) : null}
-      </section>;
+      </RoomLaneDisclosure>;
     })}
     {outcome ? <section
       className="room-turn__terminal"
@@ -735,12 +789,14 @@ function RoomParticipantPost({
   participant,
   persona,
   motionFresh,
+  continuation,
   ...postProps
 }: {
   message: RoomMessageProjection;
   participant?: TimelineParticipant;
   persona?: AgentPersonaV1;
   motionFresh: boolean;
+  continuation: boolean;
   evidence?: RoomResponseEvidence;
   showEvidence: boolean;
   participants: readonly TimelineParticipant[];
@@ -762,22 +818,23 @@ function RoomParticipantPost({
   return <article
     className="room-participant-message room-conversation-post"
     data-motion={motionFresh ? 'fresh' : 'paused'}
+    data-continuation={continuation || undefined}
     data-room-message-id={message.id}
     data-status={message.status}
   >
-    <PersonaAvatar
-      fallbackName={displayName}
-      persona={persona}
-      presence={presence}
-      size="small"
-    />
+    {!continuation ? <PersonaAvatar
+        fallbackName={displayName}
+        persona={persona}
+        presence={presence}
+        size="small"
+      /> : null}
     <div>
-      <header>
+      {!continuation ? <header>
         <strong>{displayName}</strong>
         {message.status === 'streaming'
           ? <small>{motionFresh ? '正在回复' : '状态可能过期'}</small>
           : null}
-      </header>
+      </header> : null}
       <RoomLanePost
         {...postProps}
         message={message}
@@ -785,6 +842,56 @@ function RoomParticipantPost({
       />
     </div>
   </article>;
+}
+
+interface RoomLaneDisclosureProps {
+  active: boolean;
+  defaultOpen: boolean;
+  participantName: string;
+  summary: ReactNode;
+  children: ReactNode;
+  'data-continuation'?: boolean;
+  'data-motion'?: string;
+  'data-outcome'?: string;
+  'data-state'?: string;
+}
+
+function RoomLaneDisclosure({
+  active,
+  defaultOpen,
+  participantName,
+  summary,
+  children,
+  ...attributes
+}: RoomLaneDisclosureProps) {
+  const [open, setOpen] = useState(defaultOpen);
+  const userControlled = useRef(false);
+  useEffect(() => {
+    if (!userControlled.current) setOpen(defaultOpen);
+  }, [defaultOpen]);
+  return <details
+    {...attributes}
+    className="room-agent-lane"
+    data-live={active || undefined}
+    onToggle={(event) => setOpen(event.currentTarget.open)}
+    open={open}
+  >
+    <summary
+      aria-expanded={open}
+      aria-label={`${open ? '收起' : '展开'}${participantName}的实时进展`}
+      onClick={() => {
+        userControlled.current = true;
+        setOpen((current) => !current);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') userControlled.current = true;
+      }}
+    >
+      {summary}
+      <ChevronRight aria-hidden="true" className="room-agent-lane__disclosure" size={16} />
+    </summary>
+    <div className="room-agent-lane__body">{children}</div>
+  </details>;
 }
 
 function RoomUserPost({
@@ -861,6 +968,69 @@ function roomLaneWorkSummary(
   return { title, detail: '尚未收到公开工作进度' };
 }
 
+interface RoomActivityFeedEntry {
+  key: string;
+  activity: RoomActivityProjection;
+  toolAttempts?: RoomActivityProjection[];
+}
+
+function roomActivityIsToolLifecycle(activity: RoomActivityProjection): boolean {
+  return ['tool_started', 'tool_progress', 'tool_finished'].includes(
+    textValue(activity.payload.sourceEventType),
+  );
+}
+
+function roomToolAttemptIdentity(activity: RoomActivityProjection): string {
+  return textValue(activity.payload.toolCallId) || activity.id;
+}
+
+function roomToolRetryParentIdentity(activity: RoomActivityProjection): string {
+  const parent = textValue(activity.payload.retryOfToolCallId);
+  return parent && parent !== roomToolAttemptIdentity(activity) ? parent : '';
+}
+
+/**
+ * One provider retry sequence is one user-visible action. Lifecycle updates
+ * for the same call replace each other, while distinct calls with the same
+ * tool and public arguments remain available as attempt detail.
+ */
+function roomActivityFeedEntries(
+  activities: RoomActivityProjection[],
+): RoomActivityFeedEntry[] {
+  const entries: RoomActivityFeedEntry[] = [];
+  const toolEntryIndexByCallId = new Map<string, number>();
+  for (const activity of activities) {
+    if (!roomActivityIsToolLifecycle(activity)) {
+      entries.push({ key: activity.id, activity });
+      continue;
+    }
+    const attemptId = roomToolAttemptIdentity(activity);
+    const retryParentId = roomToolRetryParentIdentity(activity);
+    const existingIndex = toolEntryIndexByCallId.get(attemptId)
+      ?? (retryParentId ? toolEntryIndexByCallId.get(retryParentId) : undefined);
+    const existing = existingIndex === undefined ? undefined : entries[existingIndex];
+    if (existingIndex === undefined || !existing?.toolAttempts) {
+      entries.push({ key: `tool:${activity.id}`, activity, toolAttempts: [activity] });
+      toolEntryIndexByCallId.set(attemptId, entries.length - 1);
+      continue;
+    }
+    const attempts = existing.toolAttempts.some((attempt) => (
+      roomToolAttemptIdentity(attempt) === attemptId
+    ))
+      ? existing.toolAttempts.map((attempt) => (
+          roomToolAttemptIdentity(attempt) === attemptId ? activity : attempt
+      ))
+      : [...existing.toolAttempts, activity];
+    entries[existingIndex] = {
+      key: existing.key,
+      activity,
+      toolAttempts: attempts,
+    };
+    toolEntryIndexByCallId.set(attemptId, existingIndex);
+  }
+  return entries;
+}
+
 function ActivityLog({
   activities,
   active,
@@ -892,6 +1062,7 @@ function ActivityLog({
     if (textValue(activity.payload.sourceEventType) !== 'reasoning_summary') return true;
     return textValue(activity.payload.source) === 'provider_reasoning_summary';
   });
+  const feedEntries = roomActivityFeedEntries(publicActivities);
   const activityContentKey = publicActivities.map((activity) => (
     `${activity.id}:${activity.status}:${activity.updatedAtMs ?? activity.createdAtMs}:${activity.summary}`
   )).join('\u001f');
@@ -957,12 +1128,22 @@ function ActivityLog({
     <div
       className="room-agent-lane__activity-feed"
       data-layout="continuous"
-    >{publicActivities.map((activity) => {
+    >{feedEntries.map((entry) => {
+      const { activity } = entry;
       const displayStatus = roomActivityDisplayStatus(activity);
       const sourceEventType = textValue(activity.payload.sourceEventType);
-      const arriving = updatesFresh && arrivingActivityIds.has(activity.id);
-      if (['tool_started', 'tool_progress', 'tool_finished'].includes(sourceEventType)) {
-        return <RoomToolActivity activity={activity} arriving={arriving} key={activity.id} />;
+      const arriving = updatesFresh && (
+        arrivingActivityIds.has(activity.id)
+        || entry.toolAttempts?.some((attempt) => arrivingActivityIds.has(attempt.id)) === true
+      );
+      if (entry.toolAttempts) {
+        return <RoomToolActivity
+          activity={activity}
+          arriving={arriving}
+          attempts={entry.toolAttempts}
+          recovering={active && activity.status === 'failed'}
+          key={entry.key}
+        />;
       }
       if (sourceEventType === 'reasoning_summary') {
         const summary = roomReasoningSummary(activity);
@@ -1053,29 +1234,39 @@ function roomChangedFileSummary(
     ) continue;
     const args = objectValue(activity.payload.arguments);
     const result = objectValue(activity.payload.result);
-    const rawName = textValue(args.fileName || args.path || result.fileName || result.path);
-    const normalizedPath = rawName.trim().replace(/\\/gu, '/').replace(/\/{2,}/gu, '/').replace(/\/+$/u, '');
-    const pathSegments = normalizedPath.split('/').filter((segment) => (
-      Boolean(segment) && segment !== '.' && segment !== '..'
-    ));
-    const name = pathSegments.at(-1) ?? '';
-    const identity = pathSegments.join('/');
-    if (!name || !identity) continue;
-    const additions = nonNegativeCount(result.additions);
-    const deletions = nonNegativeCount(result.deletions);
-    const hasCounts = additions !== null || deletions !== null;
-    const existing = files.get(identity) ?? {
-      name,
-      identity,
-      displaySegments: publicRoomFileSegments(normalizedPath, pathSegments),
-      additions: 0,
-      deletions: 0,
-      hasCounts: false,
-    };
-    existing.additions += additions ?? 0;
-    existing.deletions += deletions ?? 0;
-    existing.hasCounts ||= hasCounts;
-    files.set(identity, existing);
+    const changedFiles = Array.isArray(result.changedFiles)
+      ? result.changedFiles.map(objectValue).filter((item) => Object.keys(item).length > 0)
+      : [];
+    const candidates = changedFiles.length ? changedFiles : [result];
+    for (const candidate of candidates) {
+      const rawName = textValue(
+        candidate.fileName
+        || candidate.path
+        || (changedFiles.length ? '' : args.fileName || args.path),
+      );
+      const normalizedPath = rawName.trim().replace(/\\/gu, '/').replace(/\/{2,}/gu, '/').replace(/\/+$/u, '');
+      const pathSegments = normalizedPath.split('/').filter((segment) => (
+        Boolean(segment) && segment !== '.' && segment !== '..'
+      ));
+      const name = pathSegments.at(-1) ?? '';
+      const identity = pathSegments.join('/');
+      if (!name || !identity) continue;
+      const additions = nonNegativeCount(candidate.additions);
+      const deletions = nonNegativeCount(candidate.deletions);
+      const hasCounts = additions !== null || deletions !== null;
+      const existing = files.get(identity) ?? {
+        name,
+        identity,
+        displaySegments: publicRoomFileSegments(normalizedPath, pathSegments),
+        additions: 0,
+        deletions: 0,
+        hasCounts: false,
+      };
+      existing.additions += additions ?? 0;
+      existing.deletions += deletions ?? 0;
+      existing.hasCounts ||= hasCounts;
+      files.set(identity, existing);
+    }
   }
   const summaries = [...files.values()];
   const sameBasename = new Map<string, RoomChangedFileSummary[]>();
@@ -1736,7 +1927,8 @@ function roomActivityProvenanceLabel(activity: RoomActivityProjection): '实时�
 function roomActivityDigest(
   activities: RoomActivityProjection[],
 ): { title: string; detail: string } {
-  const labels = activities.flatMap((activity) => {
+  const displayActivities = roomActivityFeedEntries(activities).map((entry) => entry.activity);
+  const labels = displayActivities.flatMap((activity) => {
     const sourceEventType = textValue(activity.payload.sourceEventType);
     if (sourceEventType.startsWith('tool_')) {
       const toolId = textValue(activity.payload.toolName);
@@ -1754,7 +1946,7 @@ function roomActivityDigest(
   const title = uniqueLabels.length
     ? `${uniqueLabels.slice(0, 3).join('、')}${uniqueLabels.length > 3 ? '等' : ''}`
     : '协作过程';
-  const counts = activities.reduce((result, activity) => {
+  const counts = displayActivities.reduce((result, activity) => {
     const status = roomActivityDisplayStatus(activity);
     result[status] += 1;
     return result;
@@ -1772,7 +1964,7 @@ function roomActivityDigest(
   ].filter(Boolean);
   return {
     title,
-    detail: `${activities.length} 个步骤 · ${states.join(' · ')}`,
+    detail: `${displayActivities.length} 个步骤 · ${states.join(' · ')}`,
   };
 }
 
@@ -1780,9 +1972,13 @@ function roomActivityDigest(
 function RoomToolActivity({
   activity,
   arriving,
+  attempts,
+  recovering,
 }: {
   activity: RoomActivityProjection;
   arriving: boolean;
+  attempts: RoomActivityProjection[];
+  recovering: boolean;
 }) {
   const payload = activity.payload;
   const approvalId = textValue(payload.approvalId);
@@ -1825,11 +2021,43 @@ function RoomToolActivity({
     ],
   });
   const approvalDescription = approvalId ? describeRoomActivity(activity) : null;
+  const retryCount = Math.max(0, attempts.length - 1);
+  const toolId = textValue(payload.toolName).toLocaleLowerCase('en-US');
+  const editing = roomMutationTools.has(toolId);
+  const editStarted = sourceEventType === 'tool_started'
+    || (Array.isArray(payload.progressHistory) && payload.progressHistory.some((entry) => (
+      textValue(objectValue(entry).kind) === 'tool_started'
+    )));
+  const editActive = editing
+    && activity.status === 'running'
+    && Boolean(textValue(payload.toolCallId))
+    && editStarted
+    && ['tool_started', 'tool_progress'].includes(sourceEventType);
+  const targetFile = detailView.request.find((field) => (
+    field.id === 'path' || field.id === 'file'
+  ))?.value || detailView.fields.find((field) => field.id === 'file')?.value || '';
+  const summary = recovering
+    ? `正在恢复：${detailView.toolLabel}`
+    : retryCount
+    ? activity.status === 'completed'
+      ? `${detailView.toolLabel}重试 ${retryCount} 次后成功`
+      : activity.status === 'running'
+        ? `${detailView.toolLabel}正在第 ${attempts.length} 次尝试`
+        : `${detailView.toolLabel}已尝试 ${attempts.length} 次，仍未完成`
+    : editActive
+      ? `正在编辑${targetFile ? ` ${targetFile}` : '文件'}`
+      : activity.status === 'failed'
+      ? `${detailView.toolLabel}执行失败`
+      : activity.status === 'aborted'
+        ? `${detailView.toolLabel}已停止`
+        : detailView.summary || detailView.toolLabel;
   return (
     <details
       className="room-agent-activity room-agent-activity--tool"
       data-arriving={arriving || undefined}
-      data-state={activity.status}
+      data-edit-active={editActive || undefined}
+      data-state={recovering ? 'waiting' : activity.status}
+      data-tool-kind={editing ? 'edit' : 'standard'}
       open={open}
     >
       <summary
@@ -1838,8 +2066,10 @@ function RoomToolActivity({
         onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setOpen)}
       >
         <span className="room-agent-activity__state" aria-hidden="true">
-          {activity.status === 'running'
-            ? <LoaderCircle size={14} />
+          {recovering
+            ? <Clock3 size={14} />
+            : activity.status === 'running'
+            ? editActive ? <Braces size={14} /> : <LoaderCircle size={14} />
             : activity.status === 'failed'
               ? <X size={14} />
               : activity.status === 'waiting'
@@ -1849,23 +2079,52 @@ function RoomToolActivity({
                   : <CheckCircle2 size={14} />}
         </span>
         <span>
-          <strong>{activity.status === 'failed'
-            ? `${detailView.toolLabel}执行失败`
-            : activity.status === 'aborted'
-              ? `${detailView.toolLabel}已停止`
-              : detailView.summary}</strong>
-          <small><span className="room-activity-provenance">运行记录</span> · {detailView.toolLabel} · {roomToolStatusLabel(activity.status)}{roomToolProgressCount(payload) > 1 ? ` · ${roomToolProgressCount(payload)} 次更新` : ''} · <RoomActivityTimestamp activity={activity} /></small>
+          <strong>{summary}</strong>
+          <small><span className="room-activity-provenance">运行记录</span> · {detailView.toolLabel} · {recovering ? '伙伴正在修正并准备重试' : roomToolStatusLabel(activity.status)}{retryCount ? ` · ${attempts.length} 次尝试` : roomToolProgressCount(payload) > 1 ? ` · ${roomToolProgressCount(payload)} 次更新` : ''} · <RoomActivityTimestamp activity={activity} /></small>
+          {editActive ? <span
+            aria-label="正在接收文件编辑进度"
+            className="room-agent-edit-progress"
+            role="status"
+          ><i /><i /><i /></span> : null}
         </span>
         <ChevronRight aria-hidden="true" size={14} />
       </summary>
       {open ? (
         <div className="room-agent-activity__details">
-          {!detailView.request.length ? (
-            <p className="room-agent-activity__unavailable">这个步骤没有需要展示的公开参数。</p>
-          ) : null}
+          {retryCount ? <section
+            aria-label={`${detailView.toolLabel}尝试记录`}
+            className="room-agent-tool-attempts"
+          >
+            <strong>尝试记录</strong>
+            {attempts.map((attempt, index) => {
+              const attemptError = roomPublicActivityText(textValue(attempt.payload.error));
+              const finalAttempt = index === attempts.length - 1;
+              return <article
+                className="room-agent-tool-attempt"
+                data-state={attempt.status}
+                key={`${roomToolAttemptIdentity(attempt)}:${index}`}
+              >
+                {attempt.status === 'completed'
+                  ? <CheckCircle2 aria-hidden="true" size={13} />
+                  : attempt.status === 'failed'
+                    ? <X aria-hidden="true" size={13} />
+                    : attempt.status === 'running'
+                      ? <LoaderCircle aria-hidden="true" size={13} />
+                      : <Clock3 aria-hidden="true" size={13} />}
+                <span>
+                  <strong>{finalAttempt ? '最终尝试' : `第 ${index + 1} 次尝试`}</strong>
+                  <small>{attempt.status === 'completed'
+                    ? '最终提交成功'
+                    : attemptError || '这次尝试没有完成，系统随后自动重试。'}</small>
+                </span>
+                <RoomActivityTimestamp activity={attempt} />
+              </article>;
+            })}
+          </section> : null}
           {detailView.request.length ? <PublicToolRequest view={detailView} /> : null}
           {detailView.output ? <PublicToolOutput view={detailView} /> : null}
-          <PublicToolFields view={detailView} />
+          {detailView.preview ? <SemanticToolPreview preview={detailView.preview} /> : null}
+          {detailView.fields.length ? <PublicToolFields view={detailView} /> : null}
           {detailView.error ? <PublicToolError reason={detailView.error} /> : null}
           {approvalDescription ? (
             <section className="room-agent-activity__approval" aria-label="Tool 审批状态">
@@ -1880,8 +2139,6 @@ function RoomToolActivity({
             <p className="room-agent-activity__unavailable">工具尚未返回结果。</p>
           ) : activity.status === 'aborted' && safeResult === undefined ? (
             <p className="room-agent-activity__unavailable">这个步骤已随本轮任务停止，没有返回公开结果。</p>
-          ) : activity.status !== 'running' && safeResult === undefined && !detailView.output && !detailView.fields.length && !detailView.error ? (
-            <p className="room-agent-activity__unavailable">这个步骤没有可展示的公开返回内容。</p>
           ) : null}
         </div>
       ) : null}
@@ -1895,6 +2152,9 @@ const roomToolFieldLabels: Record<string, string> = {
   intent: '协作意图',
   objective: '任务目标',
   expectedOutput: '预期交付',
+  entrySurface: '具体入口',
+  primaryInteraction: '关键操作',
+  observableCompletion: '完成标志',
   acceptance: '验收条件',
   kind: '消息类型',
   mentions: '提醒伙伴',
@@ -1905,6 +2165,10 @@ const roomToolFieldLabels: Record<string, string> = {
   status: '状态',
   state: '状态',
   summary: '摘要',
+  decision: '下一步',
+  publicSummary: '给用户的说明',
+  question: '询问内容',
+  resumeCondition: '继续条件',
   unchanged: '变更状态',
   stateRevision: '状态版本',
   evidenceRef: '验证依据',
@@ -2158,7 +2422,8 @@ function describeRoomActivity(
   const payload = activity.payload;
   const status = textValue(payload.status);
   const sourceEventType = textValue(payload.sourceEventType);
-  const toolName = textValue(payload.displayName) || textValue(payload.toolName) || '工具';
+  const rawToolName = textValue(payload.toolName);
+  const toolName = publicToolName(rawToolName, textValue(payload.displayName));
   const approvalDecision = approvalDecisionView(payload);
   if (activity.status === 'aborted') {
     return sourceEventType.startsWith('tool_')

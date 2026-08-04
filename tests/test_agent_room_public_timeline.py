@@ -228,8 +228,8 @@ class RoomPublicTimelineProjectorTests(unittest.TestCase):
 
         self.assertEqual(
             content,
-            "已经对齐：目标是“完成终端原生 TUI 的可运行闭环”，"
-            "交付边界是“可运行实现与聚焦验证记录”。",
+            "我明白了：这次要“完成终端原生 TUI 的可运行闭环”，"
+            "完成后你会得到“可运行实现与聚焦验证记录”。",
         )
         self.assertNotRegex(
             content,

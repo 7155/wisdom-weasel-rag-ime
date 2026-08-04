@@ -1026,6 +1026,38 @@ describe('AgentEventReducer', () => {
     });
   });
 
+  it('keeps a terminal tool result when late progress arrives for the same call', () => {
+    const started = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      agentEvent(1, 'tool_started', {
+        toolCallId: 'tool-terminal-edit',
+        toolName: 'workspace_edit',
+        args: { path: 'src/RoomTurn.tsx' },
+      }),
+    ).state;
+    const finished = reduceAgentEvent(
+      started,
+      agentEvent(2, 'tool_finished', {
+        toolCallId: 'tool-terminal-edit',
+        toolName: 'workspace_edit',
+        result: { additions: 2, deletions: 1 },
+      }),
+    ).state;
+    const late = reduceAgentEvent(
+      finished,
+      agentEvent(3, 'tool_progress', {
+        toolCallId: 'tool-terminal-edit',
+        toolName: 'workspace_edit',
+        partialResult: { summary: '迟到的进度' },
+      }),
+    ).state;
+
+    expect(late.activitiesById['tool-terminal-edit']).toEqual(
+      finished.activitiesById['tool-terminal-edit'],
+    );
+    expect(late.status).toBe(finished.status);
+  });
+
   it('projects an Act Gate refusal as a safe no-op instead of a failed Tool', () => {
     const state = reduceAgentEvent(
       createAgentProjection('session-1'),

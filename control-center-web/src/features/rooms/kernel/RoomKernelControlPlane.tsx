@@ -573,7 +573,7 @@ function collaborationStage(
   }
   return {
     step: '第 1 步',
-    title: '需求对齐与分工',
+    title: '说明目标与分工',
     description: '主持者正在确认目标、验收条件和可并行的任务边界。',
   };
 }

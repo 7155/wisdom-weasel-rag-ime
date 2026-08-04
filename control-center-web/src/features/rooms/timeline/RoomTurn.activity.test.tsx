@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RoomDispatchEnvelopeV2 } from '@/contracts/generated/room-dispatch-envelope.v2';
@@ -47,6 +47,227 @@ describe('RoomTurn public activity detail', () => {
     expect(activityFeed).not.toHaveAttribute('aria-live');
     expect(activityFeed).not.toHaveAttribute('tabindex');
     expect(screen.queryByRole('button', { name: '回到最新' })).not.toBeInTheDocument();
+  });
+
+  it('groups automatic retries into one clickable tool result without losing attempt details', () => {
+    const projection = roomProjection();
+    const attempts = [
+      ['commit-failed-1', 'call-1', '', 'failed', '第一个选项缺少值', { decision: 'wait', question: '这次要完成哪个具体入口？' }, 2_000],
+      ['commit-failed-2', 'call-2', 'call-1', 'failed', '选项值格式不正确', { decision: 'wait', question: '这次要完成哪个具体入口？', options: ['终端'] }, 2_500],
+      ['commit-completed', 'call-3', 'call-2', 'completed', '', { decision: 'wait', question: '这次要完成哪个具体入口？', options: [{ value: 'terminal', label: '终端' }] }, 3_000],
+    ] as const;
+    for (const [id, toolCallId, retryOfToolCallId, status, error, args, atMs] of attempts) {
+      projection.activitiesById[id] = {
+        id,
+        turnId: 'turn-a',
+        participantId: 'participant-a',
+        sourceSessionId: 'session-a',
+        kind: 'participant_activity',
+        status,
+        summary: status === 'completed' ? '问题已经发出' : '提交没有成功',
+        payload: {
+          rootId: 'root-a',
+          dispatchId: 'dispatch-a',
+          sourceEventType: 'tool_finished',
+          toolName: 'room_commit',
+          toolCallId,
+          ...(retryOfToolCallId ? { retryOfToolCallId } : {}),
+          arguments: args,
+          ...(error ? { error } : { result: { accepted: true } }),
+        },
+        createdAtMs: atMs,
+        updatedAtMs: atMs,
+      };
+    }
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: ['route-a', ...attempts.map(([id]) => id)],
+      updatedAtMs: 3_000,
+    };
+
+    const view = render(roomTurn(projection));
+    const tools = view.container.querySelectorAll<HTMLDetailsElement>(
+      '.room-agent-activity--tool',
+    );
+    expect(tools).toHaveLength(1);
+    expect(tools[0]).toHaveTextContent('重试 2 次后成功');
+
+    fireEvent.click(tools[0]!.querySelector('summary')!);
+    expect(tools[0]).toHaveAttribute('open');
+    expect(tools[0]!.querySelectorAll('.room-agent-tool-attempt')).toHaveLength(3);
+    expect(tools[0]).toHaveTextContent('第一个选项缺少值');
+    expect(tools[0]).toHaveTextContent('选项值格式不正确');
+    expect(tools[0]).toHaveTextContent('最终提交成功');
+  });
+
+  it('shows a recoverable Tool failure as quiet recovery while the companion turn continues', () => {
+    const projection = roomProjection();
+    projection.activitiesById['edit-recovering'] = {
+      id: 'edit-recovering',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'failed',
+      summary: '编辑没有完成',
+      payload: {
+        sourceEventType: 'tool_finished',
+        toolName: 'edit',
+        toolCallId: 'edit-recovering-call',
+        arguments: { path: 'src/RoomTurn.tsx' },
+        error: '没有找到要替换的原文',
+      },
+      createdAtMs: 3_500,
+      updatedAtMs: 3_500,
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: ['route-a', 'edit-recovering'],
+      updatedAtMs: 3_500,
+    };
+
+    const view = render(roomTurn(projection));
+    const tool = view.container.querySelector<HTMLDetailsElement>('.room-agent-activity--tool')!;
+
+    expect(tool).toHaveAttribute('data-state', 'waiting');
+    expect(tool).toHaveTextContent('正在恢复');
+    expect(tool).toHaveTextContent('伙伴正在修正并准备重试');
+    expect(within(tool).queryByRole('status', { name: '正在接收文件编辑进度' })).not.toBeInTheDocument();
+    fireEvent.click(tool.querySelector('summary')!);
+    expect(tool).toHaveTextContent('没有找到要替换的原文');
+  });
+
+  it('keeps independent identical tool calls separate without explicit retry lineage', () => {
+    const projection = roomProjection();
+    for (const [index, id] of ['state-first', 'state-second'].entries()) {
+      projection.activitiesById[id] = {
+        id,
+        turnId: 'turn-a',
+        participantId: 'participant-a',
+        sourceSessionId: 'session-a',
+        kind: 'participant_activity',
+        status: 'completed',
+        summary: '查看当前协作状态',
+        payload: {
+          sourceEventType: 'tool_finished',
+          toolName: 'room_state',
+          toolCallId: `state-call-${index + 1}`,
+          arguments: {},
+          result: { objective: '核对当前任务' },
+        },
+        createdAtMs: 2_000 + index,
+      };
+    }
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: ['state-first', 'state-second'],
+    };
+
+    const view = render(roomTurn(projection));
+
+    expect(view.container.querySelectorAll('.room-agent-activity--tool')).toHaveLength(2);
+    expect(view.container).not.toHaveTextContent('重试');
+  });
+
+  it('renders Room state as concrete work, people, and remaining checks instead of protocol metadata', () => {
+    const projection = roomProjection();
+    projection.activitiesById['tool-a'] = {
+      ...projection.activitiesById['tool-a']!,
+      summary: '查看当前协作状态',
+      payload: {
+        ...projection.activitiesById['tool-a']!.payload,
+        toolName: 'room_state',
+        result: {
+          stateRevision: 'sha256:' + 'a'.repeat(64),
+          currentResponsibility: {
+            objective: '完成终端原生 TUI 的可运行闭环',
+            expectedOutput: '可启动、可操作、可验证的终端界面',
+            state: 'running',
+          },
+          acceptanceAliases: [
+            { statement: '从真实入口启动并完成核心操作', verified: false },
+          ],
+          participants: [
+            { displayName: '澄·今', availability: 'current', capabilitySummary: '主持与集成' },
+            { displayName: '澄·远', availability: 'available', capabilitySummary: '界面实现' },
+          ],
+          recentPublicChanges: [
+            { kind: 'progress', content: '启动入口已经确认' },
+          ],
+          pendingIntegrations: [{ objective: '合并终端界面实现' }],
+          canSettle: false,
+          pendingCancellationTargets: 0,
+        },
+      },
+    };
+
+    const view = render(roomTurn(projection));
+    const tool = view.container.querySelector<HTMLDetailsElement>('.room-agent-activity--tool')!;
+    fireEvent.click(tool.querySelector('summary')!);
+
+    expect(tool).toHaveTextContent('完成终端原生 TUI 的可运行闭环');
+    expect(tool).toHaveTextContent('可启动、可操作、可验证的终端界面');
+    expect(tool).toHaveTextContent('从真实入口启动并完成核心操作');
+    expect(tool).toHaveTextContent('澄·远 · 界面实现');
+    expect(tool).toHaveTextContent('启动入口已经确认');
+    expect(tool).toHaveTextContent('合并终端界面实现');
+    expect(tool).not.toHaveTextContent('第 256 版');
+    expect(tool).not.toHaveTextContent('sha256');
+  });
+
+  it('lets the whole role activity collapse while keeping every tool independently clickable', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(4_200);
+    const projection = roomProjection();
+    projection.activitiesById['wait-a'] = {
+      ...projection.activitiesById['wait-a']!,
+      status: 'completed',
+    };
+    const view = render(roomTurn(projection));
+    const lane = view.container.querySelector<HTMLDetailsElement>('.room-agent-lane')!;
+    const laneSummary = lane.querySelector<HTMLElement>(':scope > summary')!;
+
+    expect(lane.tagName).toBe('DETAILS');
+    expect(lane).toHaveAttribute('open');
+    expect(laneSummary).toHaveAttribute('aria-label', '收起澄·今的实时进展');
+    expect(lane.querySelector('.room-agent-lane__live-indicator')).toHaveAttribute(
+      'data-active',
+      'true',
+    );
+
+    fireEvent.click(laneSummary);
+    expect(lane).not.toHaveAttribute('open');
+    expect(laneSummary).toHaveAttribute('aria-label', '展开澄·今的实时进展');
+
+    projection.activitiesById['progress-after-collapse'] = {
+      id: 'progress-after-collapse',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'running',
+      summary: '折叠后仍在继续处理',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'current_progress',
+      },
+      createdAtMs: 4_100,
+      updatedAtMs: 4_100,
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: [
+        ...projection.turnsById['turn-a']!.activityIds,
+        'progress-after-collapse',
+      ],
+      updatedAtMs: 4_100,
+    };
+    view.rerender(roomTurn(projection));
+
+    expect(lane).not.toHaveAttribute('open');
+    expect(laneSummary).toHaveAttribute('aria-label', '展开澄·今的实时进展');
+    expect(laneSummary).toHaveTextContent('折叠后仍在继续处理');
   });
 
   it('marks a changed public event once and does not replay arrival on a fresh snapshot', () => {
@@ -184,6 +405,127 @@ describe('RoomTurn public activity detail', () => {
     expect(files).not.toHaveTextContent('Volumes');
   });
 
+  it('shows a distinct live edit treatment and renders the resulting diff', () => {
+    const projection = roomProjection();
+    projection.activitiesById['edit-live'] = {
+      id: 'edit-live',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'running',
+      summary: '编辑文件',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'tool_started',
+        toolName: 'edit',
+        toolCallId: 'edit-live',
+        arguments: { path: 'src/RoomTurn.tsx' },
+        result: {
+          fileName: 'RoomTurn.tsx',
+          path: 'src/RoomTurn.tsx',
+          additions: 2,
+          deletions: 1,
+          outputPreview: [
+            '@@ -1,2 +1,3 @@',
+            '-const oldValue = true;',
+            '+const newValue = true;',
+            '+const ready = true;',
+          ].join('\n'),
+          outputTruncated: false,
+        },
+      },
+      createdAtMs: 3_500,
+      updatedAtMs: 3_600,
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: [...projection.turnsById['turn-a']!.activityIds, 'edit-live'],
+      updatedAtMs: 3_600,
+    };
+
+    const view = render(roomTurn(projection));
+    const edit = [...view.container.querySelectorAll<HTMLDetailsElement>('.room-agent-activity--tool')]
+      .find((item) => item.dataset.toolKind === 'edit')!;
+
+    expect(edit).toHaveAttribute('data-state', 'running');
+    expect(edit.querySelector('summary')).toHaveTextContent('正在编辑 RoomTurn.tsx');
+    expect(within(edit).getByRole('status', { name: '正在接收文件编辑进度' })).toBeInTheDocument();
+    fireEvent.click(edit.querySelector('summary')!);
+    const diff = within(edit).getByLabelText('文件变更');
+    expect(diff).toHaveTextContent('代码变更');
+    expect(within(diff).getByLabelText('文件变更内容')).toHaveTextContent('+const ready = true;');
+    expect(within(diff).getByText('+const ready = true;')).toHaveAttribute(
+      'data-diff-line',
+      'addition',
+    );
+
+    projection.activitiesById['edit-live'] = {
+      ...projection.activitiesById['edit-live']!,
+      payload: {
+        ...projection.activitiesById['edit-live']!.payload,
+        sourceEventType: 'tool_progress',
+        progressHistory: [{
+          eventId: 'edit-live:start',
+          kind: 'tool_started',
+          status: 'running',
+          summary: '开始编辑文件',
+          createdAtMs: 3_500,
+        }],
+      },
+      updatedAtMs: 3_650,
+    };
+    view.rerender(roomTurn(projection));
+    expect(edit).toHaveAttribute('data-edit-active', 'true');
+    expect(within(edit).getByRole('status', { name: '正在接收文件编辑进度' })).toBeInTheDocument();
+
+    projection.activitiesById['edit-live'] = {
+      ...projection.activitiesById['edit-live']!,
+      status: 'completed',
+      payload: {
+        ...projection.activitiesById['edit-live']!.payload,
+        sourceEventType: 'tool_finished',
+      },
+      updatedAtMs: 3_700,
+    };
+    view.rerender(roomTurn(projection));
+
+    expect(edit).toHaveAttribute('data-state', 'completed');
+    expect(edit).not.toHaveAttribute('data-edit-active');
+    expect(edit.querySelector('summary')).toHaveTextContent('已编辑 RoomTurn.tsx +2 -1');
+    expect(within(edit).queryByRole('status', { name: '正在接收文件编辑进度' })).not.toBeInTheDocument();
+  });
+
+  it('does not animate an edit label without a real tool lifecycle event', () => {
+    const projection = roomProjection();
+    projection.activitiesById['edit-label-only'] = {
+      id: 'edit-label-only',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'running',
+      summary: '准备文件变更',
+      payload: {
+        sourceEventType: 'tool_progress',
+        toolName: 'edit',
+        toolCallId: 'edit-label-only',
+        arguments: { path: 'src/RoomTurn.tsx' },
+      },
+      createdAtMs: 3_500,
+      updatedAtMs: 3_600,
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: [...projection.turnsById['turn-a']!.activityIds, 'edit-label-only'],
+    };
+
+    const view = render(roomTurn(projection));
+    expect(view.container.querySelector('[data-edit-active="true"]')).not.toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: '正在接收文件编辑进度' })).not.toBeInTheDocument();
+  });
+
   it('keeps the final activity in the shared outer stream when the same snapshot settles the lane', () => {
     vi.useFakeTimers();
     vi.setSystemTime(5_000);
@@ -218,7 +560,7 @@ describe('RoomTurn public activity detail', () => {
     };
     view.rerender(roomTurn(projection, {}, undefined, kernelSync('synced', 4_500)));
 
-    expect(activityFeed.closest('details')).toBeNull();
+    expect(activityFeed.closest('details')).not.toHaveAttribute('open');
     expect(activityFeed).toHaveTextContent('最终验证已经完成');
     expect(activityFeed).not.toHaveAttribute('aria-live');
     expect(

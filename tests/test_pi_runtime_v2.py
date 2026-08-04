@@ -26,6 +26,7 @@ from rag_ime.pi_runtime_v2 import (
     _pi_durable_branch_messages,
     _pi_tool_history_events,
 )
+from rag_ime.pi_runtime_values import redact_runtime_text
 
 
 FAKE_HOST = r'''#!/usr/bin/env python3
@@ -2527,6 +2528,40 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(write["summary"], "new_file.py +2")
         self.assertNotIn("content", write)
 
+    def test_edit_projection_keeps_safe_diff_and_per_file_counts(self) -> None:
+        result = public_code_tool_activity(
+            "edit",
+            {"path": "/Users/private/project/src/main.py"},
+            {
+                "details": {
+                    "diff": (
+                        "--- a/src/main.py\n"
+                        "+++ b/src/main.py\n"
+                        "@@ -1,2 +1,3 @@\n"
+                        "-print('old')\n"
+                        "+print('new')\n"
+                        "+print('ready')\n"
+                    ),
+                    "path": "/Users/private/project/src/main.py",
+                }
+            },
+        )
+
+        self.assertEqual(result["summary"], "main.py +2 -1")
+        self.assertEqual(result["additions"], 2)
+        self.assertEqual(result["deletions"], 1)
+        self.assertEqual(
+            result["changedFiles"],
+            [{
+                "path": "…/project/src/main.py",
+                "fileName": "main.py",
+                "additions": 2,
+                "deletions": 1,
+            }],
+        )
+        self.assertIn("+print('ready')", result["outputPreview"])
+        self.assertNotIn("/Users/private", json.dumps(result, ensure_ascii=False))
+
     def test_coding_tool_projection_unwraps_managed_evidence_receipts(self) -> None:
         evidence_summary = (
             "wisdom-weasel-rag-ime/rag_ime/agent_tools.py:41: "
@@ -2573,8 +2608,10 @@ class PiRuntimeV2Tests(unittest.TestCase):
             "bash",
             {
                 "command": (
-                    "OPENAI_API_KEY=plain-secret python scripts/probe.py "
-                    "--token bearer-secret"
+                    "TOKEN=plain-secret OPENAI_API_KEY=api-secret "
+                    "python scripts/probe.py --token cli-secret "
+                    "'https://example.test/run?token=url-secret&mode=1' "
+                    "-H 'Authorization: Bearer header-secret' echo token 用量"
                 ),
                 "timeout": 30,
             },
@@ -2587,16 +2624,88 @@ class PiRuntimeV2Tests(unittest.TestCase):
         )
 
         self.assertEqual(command["timeout"], 30)
-        self.assertEqual(
-            command["command"],
-            (
-                "OPENAI_API_KEY=[REDACTED_SECRET] python scripts/probe.py "
-                "--token [REDACTED_SECRET]"
-            ),
-        )
+        serialized_command = str(command["command"])
+        for secret in (
+            "plain-secret", "api-secret", "cli-secret", "url-secret",
+            "header-secret",
+        ):
+            self.assertNotIn(secret, serialized_command)
+        self.assertIn("TOKEN=[REDACTED_SECRET]", serialized_command)
+        self.assertIn("token 用量", serialized_command)
+        self.assertIn("mode=1", serialized_command)
         self.assertEqual(command["outputPreview"], "probe complete")
         self.assertNotIn("outputPreview", secret_file)
         self.assertNotIn("do-not-show", json.dumps(secret_file))
+
+        for sensitive_name in (".env.staging", "secrets.yaml", "tokens.json"):
+            sensitive_edit = public_code_tool_activity(
+                "edit",
+                {"path": f"/Users/private/project/{sensitive_name}"},
+                {
+                    "details": {
+                        "path": f"/Users/private/project/{sensitive_name}",
+                        "diff": (
+                            f"--- a/{sensitive_name}\n+++ b/{sensitive_name}\n"
+                            "@@ -1 +1 @@\n-token=old-secret\n+token=new-secret\n"
+                        ),
+                    }
+                },
+            )
+            sensitive_serialized = json.dumps(sensitive_edit, ensure_ascii=False)
+            self.assertNotIn("outputPreview", sensitive_edit)
+            self.assertNotIn("changedFiles", sensitive_edit)
+            self.assertNotIn("old-secret", sensitive_serialized)
+            self.assertNotIn("new-secret", sensitive_serialized)
+
+            shell_commands = (
+                f"cat ./config/{sensitive_name}",
+                f"source ./config/{sensitive_name}",
+                f"grep DATABASE ./config/{sensitive_name}",
+                f"sed -n 1p ./config/{sensitive_name}",
+            )
+            for shell_tool in ("bash", "workspace_shell"):
+                for shell_command in shell_commands:
+                    protected_shell = public_code_tool_activity(
+                        shell_tool,
+                        {"command": shell_command},
+                        {
+                            "content": [{
+                                "type": "text",
+                                "text": "DATABASE_URL=postgres://private-password-value",
+                            }],
+                        },
+                    )
+                    self.assertEqual(
+                        protected_shell.get("command"),
+                        "已运行受保护命令",
+                    )
+                    self.assertNotIn("outputPreview", protected_shell)
+                    protected_serialized = json.dumps(
+                        protected_shell,
+                        ensure_ascii=False,
+                    )
+                    self.assertNotIn(sensitive_name, protected_serialized)
+                    self.assertNotIn(
+                        "private-password-value",
+                        protected_serialized,
+                    )
+
+    def test_runtime_secret_redaction_covers_headers_json_and_url_queries(self) -> None:
+        redacted = redact_runtime_text(
+            "TOKEN=plain-secret "
+            '"token": "json-secret" '
+            "cookie: session-secret "
+            "Authorization: Bearer header-secret "
+            "https://example.test/run?token=url-secret&mode=1 token 用量"
+        )
+
+        for secret in (
+            "plain-secret", "json-secret", "session-secret", "header-secret",
+            "url-secret",
+        ):
+            self.assertNotIn(secret, redacted)
+        self.assertIn("mode=1", redacted)
+        self.assertIn("token 用量", redacted)
 
     def test_host_coding_tool_event_sends_one_bounded_result_projection(self) -> None:
         session_id = str(self.first["id"])
@@ -2640,6 +2749,181 @@ class PiRuntimeV2Tests(unittest.TestCase):
             "rag_ime/pi_runtime.py:100:def provider_payload():",
         )
         self.assertNotIn("result", event.payload)
+
+    def test_host_failed_room_tool_preserves_a_bounded_public_reason(self) -> None:
+        session_id = str(self.first["id"])
+        turn_id = "turn-room-tool-error"
+        self.runtime._handle_host_event(  # noqa: SLF001 - protocol boundary
+            {
+                "protocolVersion": "2",
+                "event": "agent.event",
+                "sessionId": session_id,
+                "turnId": turn_id,
+                "payload": {
+                    "type": "tool_execution_end",
+                    "toolCallId": "call-room-commit-error",
+                    "toolName": "room_commit",
+                    "args": {"decision": "wait"},
+                    "result": (
+                        "questionOptions[0].value is required; "
+                        "API_KEY=must-not-leak"
+                    ),
+                    "isError": True,
+                },
+            }
+        )
+
+        events, gap = self.events.replay(session_id)
+        self.assertFalse(gap)
+        event = next(
+            item
+            for item in events
+            if item.event_type == "tool_finished"
+            and item.payload.get("toolCallId") == "call-room-commit-error"
+        )
+        self.assertEqual(
+            event.payload["error"],
+            "这个问题的选项没有准备完整，伙伴会修正后重新发送。",
+        )
+        self.assertNotIn("must-not-leak", json.dumps(event.payload))
+
+    def test_host_marks_only_the_direct_failed_tool_recovery_as_one_lineage(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        turn_id = "turn-tool-recovery-lineage"
+
+        def emit(payload: dict[str, object]) -> None:
+            self.runtime._handle_host_event(  # noqa: SLF001 - protocol boundary
+                {
+                    "protocolVersion": "2",
+                    "event": "agent.event",
+                    "sessionId": session_id,
+                    "turnId": turn_id,
+                    "payload": payload,
+                }
+            )
+
+        emit({
+            "type": "tool_execution_start",
+            "toolCallId": "commit-1",
+            "toolName": "room_commit",
+            "args": {"decision": "wait"},
+        })
+        emit({
+            "type": "tool_execution_end",
+            "toolCallId": "commit-1",
+            "toolName": "room_commit",
+            "result": {"error": "missing question options"},
+            "isError": True,
+        })
+        emit({
+            "type": "tool_execution_start",
+            "toolCallId": "commit-2",
+            "toolName": "room_commit",
+            "args": {"decision": "ask", "question": "请选择目标范围"},
+        })
+        emit({
+            "type": "tool_execution_end",
+            "toolCallId": "commit-2",
+            "toolName": "room_commit",
+            "result": {"status": "waiting"},
+            "isError": False,
+        })
+        # A later successful call with no pending failure is an independent
+        # action even when the Tool name is identical.
+        emit({
+            "type": "tool_execution_start",
+            "toolCallId": "commit-3",
+            "toolName": "room_commit",
+            "args": {"decision": "continue"},
+        })
+        # A failed edit followed by a different file is also independent.
+        emit({
+            "type": "tool_execution_start",
+            "toolCallId": "edit-a",
+            "toolName": "edit",
+            "args": {"path": "src/a.ts"},
+        })
+        emit({
+            "type": "tool_execution_end",
+            "toolCallId": "edit-a",
+            "toolName": "edit",
+            "result": {"error": "old text not found"},
+            "isError": True,
+        })
+        emit({
+            "type": "tool_execution_start",
+            "toolCallId": "edit-b",
+            "toolName": "edit",
+            "args": {"path": "src/b.ts"},
+        })
+        # Upstream lineage is advisory: it cannot turn a successful unrelated
+        # operation into a retry merely by naming it as a parent.
+        emit({
+            "type": "tool_execution_start",
+            "toolCallId": "read-a",
+            "toolName": "read",
+            "args": {"path": "src/a.ts"},
+        })
+        emit({
+            "type": "tool_execution_end",
+            "toolCallId": "read-a",
+            "toolName": "read",
+            "result": {"content": "a"},
+            "isError": False,
+        })
+        emit({
+            "type": "tool_execution_start",
+            "toolCallId": "edit-explicit-unrelated",
+            "toolName": "edit",
+            "retryOfToolCallId": "read-a",
+            "args": {"path": "src/b.ts"},
+        })
+        # Commands share an executable but not necessarily a target. Different
+        # command text must remain two rows even when calls are adjacent.
+        emit({
+            "type": "tool_execution_start",
+            "toolCallId": "command-a",
+            "toolName": "bash",
+            "args": {"cwd": "/workspace", "command": "python tests/a.py"},
+        })
+        emit({
+            "type": "tool_execution_end",
+            "toolCallId": "command-a",
+            "toolName": "bash",
+            "result": {"error": "failed"},
+            "isError": True,
+        })
+        emit({
+            "type": "tool_execution_start",
+            "toolCallId": "command-b",
+            "toolName": "bash",
+            "args": {"cwd": "/workspace", "command": "python tests/b.py"},
+        })
+
+        events, gap = self.events.replay(session_id)
+        self.assertFalse(gap)
+        lifecycle = {
+            (str(event.payload.get("toolCallId")), event.event_type): event.payload
+            for event in events
+            if event.event_type in {"tool_started", "tool_finished"}
+        }
+        self.assertEqual(
+            lifecycle[("commit-2", "tool_started")]["retryOfToolCallId"],
+            "commit-1",
+        )
+        self.assertEqual(
+            lifecycle[("commit-2", "tool_finished")]["retryOfToolCallId"],
+            "commit-1",
+        )
+        self.assertNotIn("retryOfToolCallId", lifecycle[("commit-3", "tool_started")])
+        self.assertNotIn("retryOfToolCallId", lifecycle[("edit-b", "tool_started")])
+        self.assertNotIn(
+            "retryOfToolCallId",
+            lifecycle[("edit-explicit-unrelated", "tool_started")],
+        )
+        self.assertNotIn("retryOfToolCallId", lifecycle[("command-b", "tool_started")])
 
     def test_host_projects_codex_thinking_end_as_public_work_summary(self) -> None:
         session_id = str(self.first["id"])
@@ -3065,6 +3349,85 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn("top-secret", serialized)
         self.assertNotIn("/Users/private", serialized)
         self.assertIn("[REDACTED_SECRET]", serialized)
+
+    def test_transcript_rebuild_keeps_direct_failed_tool_recovery_lineage(self) -> None:
+        raw_messages = [
+            {
+                "id": "user-recovery",
+                "role": "user",
+                "timestamp": 100,
+                "content": [{"type": "text", "text": "完成任务"}],
+            },
+            {
+                "id": "assistant-recovery-1",
+                "role": "assistant",
+                "timestamp": 101,
+                "content": [{
+                    "type": "toolCall",
+                    "id": "commit-history-1",
+                    "name": "room_commit",
+                    "arguments": {"decision": "wait"},
+                }],
+            },
+            {
+                "role": "toolResult",
+                "timestamp": 102,
+                "toolCallId": "commit-history-1",
+                "toolName": "room_commit",
+                "isError": True,
+                "content": [{"type": "text", "text": "missing question options"}],
+            },
+            {
+                "id": "assistant-recovery-2",
+                "role": "assistant",
+                "timestamp": 103,
+                "content": [{
+                    "type": "toolCall",
+                    "id": "commit-history-2",
+                    "name": "room_commit",
+                    "arguments": {"decision": "ask", "question": "请选择目标范围"},
+                }],
+            },
+            {
+                "role": "toolResult",
+                "timestamp": 104,
+                "toolCallId": "commit-history-2",
+                "toolName": "room_commit",
+                "isError": False,
+                "content": [{"type": "text", "text": "ok"}],
+            },
+            {
+                "id": "assistant-independent",
+                "role": "assistant",
+                "timestamp": 105,
+                "content": [{
+                    "type": "toolCall",
+                    "id": "commit-history-3",
+                    "name": "room_commit",
+                    "arguments": {"decision": "continue"},
+                }],
+            },
+        ]
+
+        events = _pi_tool_history_events(raw_messages, session_id="session-recovery")
+        lifecycle = {
+            (str(event["payload"].get("toolCallId")), str(event["eventType"])):
+                event["payload"]
+            for event in events
+            if event["eventType"] in {"tool_started", "tool_finished"}
+        }
+        self.assertEqual(
+            lifecycle[("commit-history-2", "tool_started")]["retryOfToolCallId"],
+            "commit-history-1",
+        )
+        self.assertEqual(
+            lifecycle[("commit-history-2", "tool_finished")]["retryOfToolCallId"],
+            "commit-history-1",
+        )
+        self.assertNotIn(
+            "retryOfToolCallId",
+            lifecycle[("commit-history-3", "tool_started")],
+        )
 
     def test_host_tool_artifact_is_carried_to_the_final_assistant_message(self) -> None:
         session_id = str(self.first["id"])
