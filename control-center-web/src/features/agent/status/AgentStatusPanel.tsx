@@ -23,7 +23,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { forwardRef, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { forwardRef, useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import {
   Button,
@@ -38,11 +38,17 @@ import type {
   CapabilityPreference,
 } from '@/features/plugins/capability-policy';
 import { useAgentLiveStore } from '../state/live-store';
-import type { AgentCommand, ToolManifest } from '../types';
+import type { ToolManifest } from '../types';
 import { publicToolResultView } from '../timeline/public-tool-result';
 import { ContextRuntimeSections } from './ContextRuntimePanel';
-import { AgentBackgroundJobsView } from './AgentBackgroundJobsView';
-import { AgentWorkflowPanel } from './AgentWorkflowPanel';
+import {
+  AgentBackgroundJobsView,
+  type AgentBackgroundJobsPresentationState,
+} from './AgentBackgroundJobsView';
+import {
+  AgentWorkflowPanel,
+  type AgentWorkflowPresentationState,
+} from './AgentWorkflowPanel';
 import { ContextXraySections } from './ContextXrayPanel';
 import { CapabilitySessionView } from './CapabilitySessionView';
 import { WorkspaceLspStatusView } from './WorkspaceLspStatusView';
@@ -64,7 +70,6 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
   open: boolean;
   modal?: boolean;
   onClose: () => void;
-  commands: AgentCommand[];
   tools: ToolManifest[];
   toolCatalogStatus: 'loading' | 'ready' | 'failed';
   capabilityCatalog?: CapabilityCatalog;
@@ -94,6 +99,14 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
   const projection = useAgentLiveStore((state) => state.projections[sessionId]);
   const view = useMemo(() => projectStatusPanel(projection), [projection]);
   const [resolvedWorkflow, setResolvedWorkflow] = useState<AgentWorkflowStateV1>();
+  const [workflowPresentation, setWorkflowPresentation] = useState<{
+    sessionId: string;
+    state: AgentWorkflowPresentationState;
+  }>({ sessionId: '', state: 'loading' });
+  const [backgroundJobsPresentation, setBackgroundJobsPresentation] = useState<{
+    sessionId: string;
+    state: AgentBackgroundJobsPresentationState;
+  }>({ sessionId: '', state: 'loading' });
   const resolvedTodo = resolvedWorkflow?.sessionId === sessionId
     ? resolvedWorkflow.todo
     : undefined;
@@ -124,6 +137,43 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
     retry: false,
   });
   const runs = useMemo(() => subagentRuns(subagents.data), [subagents.data]);
+  const workflowState = projectionHasWorkflow(projection)
+    ? 'content'
+    : workflowPresentation.sessionId === sessionId
+      ? workflowPresentation.state
+      : 'loading';
+  const backgroundJobsState = backgroundJobs.length > 0
+    ? 'content'
+    : backgroundJobsPresentation.sessionId === sessionId
+      ? backgroundJobsPresentation.state
+      : 'loading';
+  const messageQueueCount = (projection?.messageQueue.steering.length ?? 0)
+    + (projection?.messageQueue.followUp.length ?? 0);
+  const artifactCount = view.artifacts.length + runs.filter((run) => run.artifact).length;
+  const hasPrimaryContent = workflowState === 'content'
+    || lifecycleCancellationAudits.length > 0
+    || Boolean(view.turn)
+    || backgroundJobsState === 'content'
+    || messageQueueCount > 0
+    || view.tools.length > 0
+    || view.files.length + view.attachmentCount > 0
+    || artifactCount > 0
+    || runs.length > 0;
+  const showCombinedEmpty = !hasPrimaryContent
+    && workflowState === 'empty'
+    && backgroundJobsState === 'empty'
+    && !subagents.isPending
+    && !subagents.error;
+  const handleWorkflowPresentation = useCallback((state: AgentWorkflowPresentationState) => {
+    setWorkflowPresentation((current) => current.sessionId === sessionId && current.state === state
+      ? current
+      : { sessionId, state });
+  }, [sessionId]);
+  const handleBackgroundJobsPresentation = useCallback((state: AgentBackgroundJobsPresentationState) => {
+    setBackgroundJobsPresentation((current) => current.sessionId === sessionId && current.state === state
+      ? current
+      : { sessionId, state });
+  }, [sessionId]);
 
   return (
     <aside
@@ -149,9 +199,10 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
           fallbackGoal={projection?.goal}
           fallbackActGate={projection?.actGate}
           onWorkflowResolved={setResolvedWorkflow}
+          onPresentationStateChange={handleWorkflowPresentation}
         />
         {lifecycleCancellationAudits.length ? (
-          <StatusSection icon={CircleDashed} title="取消与暂停回执" count={lifecycleCancellationAudits.length}>
+          <StatusSection key="lifecycle" icon={CircleDashed} title="取消与暂停回执" count={lifecycleCancellationAudits.length}>
             <LifecycleCancellationView audits={lifecycleCancellationAudits} />
           </StatusSection>
         ) : null}
@@ -160,86 +211,56 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
             <TurnStateIcon status={view.turn.status} />
             <span><strong>当前回合 · {turnStatusLabel(view.turn.status)}</strong><small>{turnProgressLabel(view)}</small></span>
           </div>
-        ) : !projection ? (
-          <StatusSection icon={ListChecks} title="执行进度" count={view.tasks.length}>
-            <EmptyLine>还没有可展示的回合状态</EmptyLine>
+        ) : null}
+
+        <StatusSection
+          key={`background:${sessionId}`}
+          icon={SquareTerminal}
+          title="后台任务"
+          count={backgroundJobs.length}
+          hidden={backgroundJobsState === 'empty'}
+        >
+          <AgentBackgroundJobsView
+            sessionId={sessionId}
+            jobs={backgroundJobs}
+            onPresentationStateChange={handleBackgroundJobsPresentation}
+          />
+        </StatusSection>
+
+        {messageQueueCount > 0 ? (
+          <StatusSection key="messages" icon={MessagesSquare} title="消息队列" count={messageQueueCount}>
+            <MessageQueueView projection={projection} />
           </StatusSection>
         ) : null}
 
-        <StatusSection icon={SquareTerminal} title="后台任务" count={backgroundJobs.length}>
-          <AgentBackgroundJobsView sessionId={sessionId} jobs={backgroundJobs} />
-        </StatusSection>
-
-        <StatusSection icon={MessagesSquare} title="消息队列" count={(projection?.messageQueue.steering.length ?? 0) + (projection?.messageQueue.followUp.length ?? 0)}>
-          <MessageQueueView projection={projection} />
-        </StatusSection>
-
-        <StatusSection icon={Gauge} title="上下文与用量" count={projection?.telemetry?.compactionCount ?? 0}>
-          <SessionTelemetryView projection={projection} />
-        </StatusSection>
-        <ContextXraySections sessionId={sessionId} open={open} />
-
-        <StatusSection
-          icon={Sparkles}
-          title="当前对话工具与技能"
-          count={capabilityCatalog?.items.length ?? 0}
-          defaultOpen={false}
-        >
-          <CapabilitySessionView
-            busy={busy}
-            catalog={capabilityCatalog}
-            error={capabilityCatalogError}
-            mutation={capabilityPolicyMutation}
-            status={toolCatalogStatus}
-            onPreferenceChange={onCapabilityPreferenceChange}
-            onRetryCatalog={onCapabilityCatalogRetry}
-            onRetryMutation={onCapabilityPolicyRetry}
-          />
-        </StatusSection>
-
-        <StatusSection
-          icon={Code2}
-          title="代码智能"
-          count={tools.some((tool) => tool.id === 'workspace_lsp') ? 1 : 0}
-          defaultOpen={false}
-        >
-          <WorkspaceLspStatusView
-            capabilityCatalog={capabilityCatalog}
-            catalogStatus={toolCatalogStatus}
-            onRefresh={onCapabilityCatalogRetry}
-            projection={projection}
-            tools={tools}
-          />
-        </StatusSection>
-
-        <StatusSection icon={Wrench} title="关键步骤" count={view.tools.length}>
-          {view.tools.length ? (
+        {view.tools.length ? (
+          <StatusSection key="tools" icon={Wrench} title="关键步骤" count={view.tools.length}>
             <div className="agent-status-tools">
               {view.tools.map((tool) => <ToolStep key={tool.id} activity={tool} />)}
             </div>
-          ) : <EmptyLine>本轮还没有工具步骤</EmptyLine>}
-        </StatusSection>
+          </StatusSection>
+        ) : null}
 
-        <StatusSection icon={Paperclip} title="附件与文件" count={view.files.length + view.attachmentCount}>
-          {view.files.length || view.attachmentCount ? (
+        {view.files.length || view.attachmentCount ? (
+          <StatusSection key="files" icon={Paperclip} title="附件与文件" count={view.files.length + view.attachmentCount}>
             <div className="agent-status-files">
               {view.attachmentCount ? <StatusRow icon={Paperclip} title={`${view.attachmentCount} 个受管附件`} detail="随会话消息保存" /> : null}
               {view.files.map((file) => <StatusRow key={file.id} icon={FileText} title={file.name} detail={file.kind} />)}
             </div>
-          ) : <EmptyLine>当前会话没有附件或文件</EmptyLine>}
-        </StatusSection>
+          </StatusSection>
+        ) : null}
 
-        <StatusSection icon={FolderKanban} title="产物" count={view.artifacts.length + runs.filter((run) => run.artifact).length}>
-          {view.artifacts.length || runs.some((run) => run.artifact) ? (
+        {artifactCount > 0 ? (
+          <StatusSection key="artifacts" icon={FolderKanban} title="产物" count={artifactCount}>
             <div className="agent-status-files">
               {view.artifacts.map((artifact) => <StatusRow key={artifact.id} icon={FolderKanban} title={artifact.name} detail={artifact.kind} />)}
               {runs.filter((run) => run.artifact).map((run) => <StatusRow key={`artifact:${run.id}`} icon={FolderKanban} title={`${templateLabel(run.templateId)}协作产物`} detail={subagentStateLabel(run, 'result')} />)}
             </div>
-          ) : <EmptyLine>本轮还没有可交付产物</EmptyLine>}
-        </StatusSection>
+          </StatusSection>
+        ) : null}
 
-        <StatusSection icon={Bot} title="子智能体" count={runs.length}>
-          {subagents.isPending ? <EmptyLine animated>正在读取协作状态</EmptyLine> : null}
+        {subagents.error || runs.length ? (
+          <StatusSection key="subagents" icon={Bot} title="子智能体" count={runs.length}>
           {subagents.error ? (
             <div className="agent-status-query-error" role="alert">
               <span>
@@ -255,7 +276,6 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
               </Button>
             </div>
           ) : null}
-          {!subagents.isPending && !subagents.error && runs.length === 0 ? <EmptyLine>当前会话没有委派任务</EmptyLine> : null}
           {runs.length ? (
             <div className="agent-status-subagents">
               {runs.map((run) => (
@@ -263,17 +283,63 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
               ))}
             </div>
           ) : null}
-        </StatusSection>
-        <ContextRuntimeSections sessionId={sessionId} open={open} />
+          </StatusSection>
+        ) : null}
 
-        <a
-          className="agent-status-observation-link"
-          href={`#/observability?sessionId=${encodeURIComponent(sessionId)}`}
+        {showCombinedEmpty ? (
+          <div className="agent-status-combined-empty" role="status">
+            <ListChecks size={18} />
+            <span>
+              <strong>这段对话还没有正在执行的任务</strong>
+              <small>直接在对话里告诉伙伴你想完成什么；Todo、工具、协作和交付结果会在这里同步出现。</small>
+            </span>
+          </div>
+        ) : null}
+
+        <StatusSection
+          key={`technical:${sessionId}`}
+          icon={Gauge}
+          title="技术详情"
+          count={0}
+          defaultOpen={false}
         >
-          <Radar size={16} />
-          <span><strong>运行记录</strong><small>回看这次对话用过的工具、检索和记忆</small></span>
-          <ChevronRight size={15} />
-        </a>
+          <div className="agent-status-technical">
+            <TechnicalDetail icon={Gauge} title="上下文与用量">
+              <SessionTelemetryView projection={projection} />
+            </TechnicalDetail>
+            <TechnicalDetail icon={Sparkles} title="工具与技能">
+              <CapabilitySessionView
+                busy={busy}
+                catalog={capabilityCatalog}
+                error={capabilityCatalogError}
+                mutation={capabilityPolicyMutation}
+                status={toolCatalogStatus}
+                onPreferenceChange={onCapabilityPreferenceChange}
+                onRetryCatalog={onCapabilityCatalogRetry}
+                onRetryMutation={onCapabilityPolicyRetry}
+              />
+            </TechnicalDetail>
+            <TechnicalDetail icon={Code2} title="代码智能">
+              <WorkspaceLspStatusView
+                capabilityCatalog={capabilityCatalog}
+                catalogStatus={toolCatalogStatus}
+                onRefresh={onCapabilityCatalogRetry}
+                projection={projection}
+                tools={tools}
+              />
+            </TechnicalDetail>
+            <ContextXraySections sessionId={sessionId} open={open} />
+            <ContextRuntimeSections sessionId={sessionId} open={open} />
+            <a
+              className="agent-status-observation-link"
+              href={`#/observability?sessionId=${encodeURIComponent(sessionId)}`}
+            >
+              <Radar size={16} />
+              <span><strong>运行记录</strong><small>回看这次对话用过的工具、检索和记忆</small></span>
+              <ChevronRight size={15} />
+            </a>
+          </div>
+        </StatusSection>
       </div> : <div aria-hidden="true" className="agent-status-panel__body agent-status-panel__body--pending" />}
     </aside>
   );
@@ -475,17 +541,19 @@ function StatusSection({
   count,
   children,
   defaultOpen = true,
+  hidden = false,
 }: {
   icon: LucideIcon;
   title: string;
   count: number;
   children: ReactNode;
   defaultOpen?: boolean;
+  hidden?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const contentId = useId();
   return (
-    <section className="agent-status-section" data-open={open}>
+    <section className="agent-status-section" data-open={open} hidden={hidden}>
       <header>
         <button aria-controls={contentId} aria-expanded={open} onClick={() => setOpen((value) => !value)} type="button">
           <Icon size={15} />
@@ -497,6 +565,23 @@ function StatusSection({
       <div aria-hidden={!open} className="agent-status-section__content" id={contentId} inert={!open ? true : undefined}>
         <div>{children}</div>
       </div>
+    </section>
+  );
+}
+
+function TechnicalDetail({
+  icon: Icon,
+  title,
+  children,
+}: {
+  icon: LucideIcon;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="agent-status-technical__item">
+      <header><Icon size={15} /><strong>{title}</strong></header>
+      <div>{children}</div>
     </section>
   );
 }
@@ -583,13 +668,6 @@ function TurnStateIcon({ status }: { status: AgentTurnStatus }) {
   if (status === 'waiting') return <CircleDashed size={15} />;
   if (status === 'failed') return <TriangleAlert size={15} />;
   return <Check size={15} />;
-}
-
-function TaskStateIcon({ status }: { status: string }) {
-  if (status === 'running') return <LoaderCircle size={13} />;
-  if (status === 'completed') return <Check size={13} />;
-  if (status === 'failed') return <TriangleAlert size={13} />;
-  return <CircleDashed size={13} />;
 }
 
 function SubagentStateIcon({ state }: { state: ReturnType<typeof subagentPresentationState> }) {
@@ -706,6 +784,17 @@ function isSubagentRun(value: unknown): value is AgentSubagentRunV1 {
     && Number.isFinite(usage.turnCount)
     && Number.isFinite(usage.toolCount)
     && Number.isFinite(usage.totalTokens);
+}
+
+function projectionHasWorkflow(projection?: AgentProjectionState): boolean {
+  const todo = projection?.todo;
+  return Boolean(
+    projection?.goal?.configured
+    || (todo && (
+      todo.counts.total > 0
+      || todo.phases.some((phase) => phase.tasks.length > 0)
+    )),
+  );
 }
 
 function statusPanelLabel(

@@ -503,6 +503,7 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             {
                 "value": "fast",
                 "label": "快速方案",
+                "description": "缩小首轮范围以更快得到可运行结果",
             },
         ]
         validate_contract({**base, "questionOptions": options}, schema)
@@ -564,6 +565,17 @@ class RoomCapabilityManifestTests(unittest.TestCase):
                 **base,
                 "questionOptions": [
                     {**options[0], "description": "d" * 501},
+                    options[1],
+                ],
+            },
+            {
+                **base,
+                "questionOptions": [
+                    {
+                        key: value
+                        for key, value in options[0].items()
+                        if key != "description"
+                    },
                     options[1],
                 ],
             },

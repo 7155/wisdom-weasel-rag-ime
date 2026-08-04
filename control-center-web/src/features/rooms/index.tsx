@@ -112,6 +112,28 @@ const ROOM_QUESTION_ROOT_STATES: ReadonlySet<RootProjection['state']> = new Set(
   'waiting',
 ]);
 
+interface RoomQuestionAnswerAttempt {
+  clientMessageId: string;
+  questionPostId: string;
+  questionRootId: string;
+  roomId: string;
+}
+
+function roomQuestionAnswerAttemptKey(
+  roomId: string,
+  question: PendingRoomQuestion,
+  answerKind: RoomQuestionAnswerKind | undefined,
+  message: string,
+): string {
+  return JSON.stringify([
+    roomId,
+    question.postId,
+    question.rootId,
+    answerKind ?? 'custom',
+    message,
+  ]);
+}
+
 function answerableRoomQuestion(
   question: PendingRoomQuestion | undefined,
   rootsById: Readonly<Record<string, RootProjection>>,
@@ -234,6 +256,9 @@ export function RoomsFeature() {
     source: 'connection' | 'operation';
   }>());
   const roomSendLocksRef = useRef(new Set<string>());
+  const roomQuestionAnswerAttemptsRef = useRef(
+    new Map<string, RoomQuestionAnswerAttempt>(),
+  );
   const selectedRoomIdRef = useRef('');
   const roomComposerRef = useRef<HTMLTextAreaElement>(null);
   const roomRailTriggerRef = useRef<HTMLButtonElement>(null);
@@ -316,6 +341,17 @@ export function RoomsFeature() {
     pendingQuestion,
     kernelRootsById,
   );
+
+  useEffect(() => {
+    for (const [key, attempt] of roomQuestionAnswerAttemptsRef.current) {
+      if (
+        attempt.roomId === selectedId
+        && attempt.questionPostId !== answerablePendingQuestion?.postId
+      ) {
+        roomQuestionAnswerAttemptsRef.current.delete(key);
+      }
+    }
+  }, [answerablePendingQuestion?.postId, selectedId]);
   const kernelDispatchesById = useRoomLiveStore((state) => (
     state.kernelProjections[selectedId]?.dispatchesById ?? emptyKernelDispatches
   ));
@@ -687,7 +723,27 @@ export function RoomsFeature() {
     const addressedParticipants = pendingQuestionAnswer
       ? []
       : roomMentionedParticipants(activeParticipants, message);
-    const clientMessageId = `room-web-${crypto.randomUUID()}`;
+    const answerAttemptKey = pendingQuestionAnswer && authoritativeQuestion
+      ? roomQuestionAnswerAttemptKey(
+          room.id,
+          authoritativeQuestion,
+          options.answerKind,
+          message,
+        )
+      : '';
+    const existingAnswerAttempt = answerAttemptKey
+      ? roomQuestionAnswerAttemptsRef.current.get(answerAttemptKey)
+      : undefined;
+    const clientMessageId = existingAnswerAttempt?.clientMessageId
+      ?? `room-web-${crypto.randomUUID()}`;
+    if (answerAttemptKey && authoritativeQuestion && !existingAnswerAttempt) {
+      roomQuestionAnswerAttemptsRef.current.set(answerAttemptKey, {
+        clientMessageId,
+        questionPostId: authoritativeQuestion.postId,
+        questionRootId: authoritativeQuestion.rootId,
+        roomId: room.id,
+      });
+    }
     roomSendLocksRef.current.add(room.id);
     setSendingRoomIds((current) => new Set(current).add(room.id));
     useRoomLiveStore.getState().appendOptimistic(
@@ -728,6 +784,17 @@ export function RoomsFeature() {
         },
       });
       useRoomLiveStore.getState().acceptMessage(room.id, response);
+      if (pendingQuestionAnswer && authoritativeQuestion) {
+        for (const [key, attempt] of roomQuestionAnswerAttemptsRef.current) {
+          if (
+            attempt.roomId === room.id
+            && attempt.questionPostId === authoritativeQuestion.postId
+            && attempt.questionRootId === authoritativeQuestion.rootId
+          ) {
+            roomQuestionAnswerAttemptsRef.current.delete(key);
+          }
+        }
+      }
       const workItem = record(response).workItem;
       if (isRoomWorkItem(workItem) && workItem.roomId === room.id) {
         setRooms((current) => current.map((item) => item.id === room.id

@@ -266,13 +266,17 @@ _REVIEW_FINDING_RESPONSE_INPUT_SCHEMA = {
 
 _QUESTION_OPTIONS_INPUT_SCHEMA = {
     "type": "array",
+    "description": (
+        "提供 2–5 个真正不同的选择。每项必须有短 label 和一段 description；"
+        "description 用自然语言说明选中后的范围、投入或取舍，不能只重复 label。"
+    ),
     "anyOf": [
         {"maxItems": 0},
         {"minItems": 2, "maxItems": 5},
     ],
     "items": {
         "type": "object",
-        "required": ["value", "label"],
+        "required": ["value", "label", "description"],
         "properties": {
             "value": {
                 "type": "string",
@@ -675,7 +679,10 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                             "岗位说明结果或进度、已经做了什么、为什么这样做、怎样验证、"
                             "问题或风险、尚未验证的边界和下一步；省略不适用项，不输出通用"
                             "状态填充；不输出私下推理、内部协议字段、引用 ID 或工具流水。"
-                            "handoff 要点明交接双方、内容和原因，wait 要点明阻塞与恢复条件。主张不"
+                            "handoff 要点明交接双方、内容和原因。wait-for-user 先自然接住"
+                            "用户目标，再用一两句说明为什么只需确认当前这件事；不要宣读"
+                            "已读取工作卡片、信息不足或目标/交付物/验收边界等审计套话。"
+                            "其他 wait 要点明阻塞与恢复条件。主张不"
                             "得强于实际观察。服务端会拒绝内部 Room 标识、原始回执、哈希和"
                             "机器绝对路径，并把它作为本轮唯一的完成、交接、等待或阻塞回复"
                             "发布；不要再用 room_post 重复发布。"
@@ -751,7 +758,14 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                         "type": "string",
                         "minLength": 1,
                     },
-                    "question": {"type": "string", "minLength": 1},
+                    "question": {
+                        "description": (
+                            "仅 wait-for-user：用用户的语言提出一个简短、自然的问题；"
+                            "不要复述内部检查过程或堆叠项目管理术语。"
+                        ),
+                        "type": "string",
+                        "minLength": 1,
+                    },
                     "questionKind": {
                         "description": (
                             "仅 wait-for-user question：bounded 表示存在诚实的 2–5 个"

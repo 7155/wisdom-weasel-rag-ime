@@ -63,6 +63,129 @@ describe('RoomTurn canonical conversation chronology', () => {
     ]);
   });
 
+  it('interleaves a public handoff between earlier and later role activity', () => {
+    const projection = liveProjection([
+      userEvent(1, 'opening', '请一起完成 TUI'),
+      postEvent(2, 'accepted', 'progress', '我已经接手，先核对现有入口', 'participant-a', 'dispatch-a'),
+      toolActivityEvent(3, '读取并更新了 TUI 入口', 'participant-a', 'dispatch-a'),
+      postEvent(4, 'result', 'work_result', '入口与验证已经完成', 'participant-a', 'dispatch-a'),
+      activityEvent(5, '继续完成交接后的验证', 'participant-a', 'dispatch-a'),
+    ]);
+
+    const view = render(roomTurn(projection));
+    const opening = textElement(view.container, '请一起完成 TUI');
+    const accepted = textElement(view.container, '我已经接手，先核对现有入口');
+    const activity = view.container.querySelector<HTMLElement>('.room-agent-activity--tool')!;
+    const handoff = textElement(view.container, '入口与验证已经完成');
+    const laterActivity = [...view.container.querySelectorAll<HTMLElement>('.room-agent-activity strong')]
+      .find((element) => element.textContent === '继续完成交接后的验证')!
+      .closest('.room-agent-activity')!;
+
+    expect(activity).toBeInTheDocument();
+    expect(opening.compareDocumentPosition(accepted) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(accepted.compareDocumentPosition(activity) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(activity.compareDocumentPosition(handoff) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(handoff.compareDocumentPosition(laterActivity) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('keeps parallel lane segments and public messages in one server-ordered stream', () => {
+    const projection = liveProjection([
+      userEvent(1, 'opening', '请并行完成两个部分'),
+      activityEvent(2, '澄·今开始实现', 'participant-a', 'dispatch-a'),
+      activityEvent(3, '澄·初开始复核', 'participant-b', 'dispatch-b'),
+      postEvent(4, 'b-handoff', 'handoff', '澄·初先交回复核线索', 'participant-b', 'dispatch-b'),
+      postEvent(5, 'a-update', 'progress', '澄·今补充实现说明', 'participant-a', 'dispatch-a'),
+      activityEvent(6, '澄·初继续验证', 'participant-b', 'dispatch-b'),
+      activityEvent(7, '澄·今完成收尾', 'participant-a', 'dispatch-a'),
+    ]);
+    const view = render(roomTurn(projection));
+
+    expectTextOrder(view.container, [
+      '请并行完成两个部分',
+      '澄·今开始实现',
+      '澄·初开始复核',
+      '澄·初先交回复核线索',
+      '澄·今补充实现说明',
+      '澄·初继续验证',
+      '澄·今完成收尾',
+    ]);
+    expect(view.container.querySelectorAll('.room-agent-lane[data-continuation="true"]')).toHaveLength(2);
+  });
+
+  it('uses authoritative sequence when a message and activity share a timestamp', () => {
+    const message = postEvent(
+      2,
+      'same-time-message',
+      'progress',
+      '先公开这条说明',
+      'participant-a',
+      'dispatch-a',
+    );
+    message.createdAtMs = 3_000;
+    const post = (message.payload as { post: { createdAtMs: number; chronology: { createdAtMs: number } } }).post;
+    post.createdAtMs = 3_000;
+    post.chronology.createdAtMs = 3_000;
+    const activity = activityEvent(3, '随后记录工具进展', 'participant-a', 'dispatch-a');
+    activity.createdAtMs = 3_000;
+    const projection = liveProjection([
+      userEvent(1, 'opening', '核对同一时间的顺序'),
+      message,
+      activity,
+    ]);
+    const view = render(roomTurn(projection));
+
+    expectTextOrder(view.container, [
+      '核对同一时间的顺序',
+      '先公开这条说明',
+      '随后记录工具进展',
+    ]);
+  });
+
+  it('uses authoritative sequence across lanes when every update shares a timestamp', () => {
+    const facilitatorActivity = activityEvent(
+      2,
+      '澄·今先完成状态模型',
+      'participant-a',
+      'dispatch-a',
+    );
+    facilitatorActivity.createdAtMs = 4_000;
+    const reviewerActivity = activityEvent(
+      3,
+      '澄·初随后开始独立复核',
+      'participant-b',
+      'dispatch-b',
+    );
+    reviewerActivity.createdAtMs = 4_000;
+    const reviewerPost = postEvent(
+      4,
+      'same-time-review',
+      'review_result',
+      '澄·初最后提交复核结果',
+      'participant-b',
+      'dispatch-b',
+    );
+    reviewerPost.createdAtMs = 4_000;
+    const post = (reviewerPost.payload as {
+      post: { createdAtMs: number; chronology: { createdAtMs: number } };
+    }).post;
+    post.createdAtMs = 4_000;
+    post.chronology.createdAtMs = 4_000;
+    const projection = liveProjection([
+      userEvent(1, 'opening', '同一时刻并行完成并复核'),
+      facilitatorActivity,
+      reviewerActivity,
+      reviewerPost,
+    ]);
+    const view = render(roomTurn(projection));
+
+    expectTextOrder(view.container, [
+      '同一时刻并行完成并复核',
+      '澄·今先完成状态模型',
+      '澄·初随后开始独立复核',
+      '澄·初最后提交复核结果',
+    ]);
+  });
+
   it('renders live reduction and reconnect replay with the same canonical order', () => {
     const events = alignmentEvents();
     const live = liveProjection(events);
@@ -365,6 +488,39 @@ function postEvent(
       publicationSource: { kind: 'room_commit', ref: `commit:${postId}` },
       createdAtMs: sequence * 1_000,
     },
+  }, participantId, participantId === 'participant-b' ? 'session-b' : 'session-a');
+}
+
+function activityEvent(
+  sequence: number,
+  summary: string,
+  participantId: string,
+  dispatchId: string,
+) {
+  return event(sequence, 'participant_activity', {
+    rootId: 'root-a',
+    dispatchId,
+    sourceEventType: 'current_progress',
+    requestId: `progress-${sequence}`,
+    summary,
+    status: 'completed',
+  }, participantId, participantId === 'participant-b' ? 'session-b' : 'session-a');
+}
+
+function toolActivityEvent(
+  sequence: number,
+  summary: string,
+  participantId: string,
+  dispatchId: string,
+) {
+  return event(sequence, 'participant_activity', {
+    rootId: 'root-a',
+    dispatchId,
+    sourceEventType: 'tool_finished',
+    toolName: 'edit',
+    toolCallId: `tool-${sequence}`,
+    summary,
+    status: 'completed',
   }, participantId, participantId === 'participant-b' ? 'session-b' : 'session-a');
 }
 

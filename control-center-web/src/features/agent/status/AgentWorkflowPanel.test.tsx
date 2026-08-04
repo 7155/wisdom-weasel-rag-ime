@@ -28,6 +28,7 @@ describe('AgentWorkflowPanel', () => {
     expect(todo).toHaveTextContent('完成前端状态同步');
     expect(todo).toHaveTextContent('进行中');
     expect(screen.getByRole('region', { name: '长期目标' })).toHaveTextContent('完成 Agent 工作流并验证');
+    expect(screen.queryByText('当前请求可以继续')).not.toBeInTheDocument();
     expect(transport.requests.filter((request) => request.pathId === 'agent.session.goal.mutate')).toHaveLength(0);
   });
 
@@ -70,7 +71,7 @@ describe('AgentWorkflowPanel', () => {
     expect(attempts).toBe(2);
   });
 
-  it('treats an absent participant workflow as Room-managed instead of a sync failure', async () => {
+  it('keeps an absent workflow silent so the task center can own the combined empty state', async () => {
     const absent = Object.assign(new Error('workflow not found'), { status: 404 });
     const transport = new StubControlTransport('mock', {
       'agent.session.workflow.get': () => {
@@ -78,13 +79,44 @@ describe('AgentWorkflowPanel', () => {
       },
       'agent.session.goal.mutate': workflowState(),
     });
-    renderWorkflow(transport);
+    const onPresentationStateChange = vi.fn();
+    renderWorkflow(transport, { onPresentationStateChange });
 
-    expect(await screen.findByText(
-      '当前没有 Todo。如果这段工作来自协作空间，分工、公开进度和最终回复会继续在那里显示。',
-    )).toBeVisible();
-    expect(screen.getByRole('status')).toBeVisible();
+    await waitFor(() => expect(onPresentationStateChange).toHaveBeenLastCalledWith('empty'));
+    expect(screen.queryByLabelText('Todo 与长期目标')).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('does not render separate empty Todo, gate, or Goal blocks', async () => {
+    const empty = workflowState();
+    empty.todo.phases = [];
+    empty.todo.counts = { total: 0, pending: 0, inProgress: 0, completed: 0, abandoned: 0 };
+    empty.goal = {
+      ...empty.goal,
+      configured: false,
+      goalId: '',
+      revision: 0,
+      objective: '',
+      successCriteria: '',
+      evidenceExpectations: [],
+      status: 'cleared',
+    };
+    empty.actGate = {
+      allowed: false,
+      reason: 'goal_completed',
+      message: '当前没有需要执行的任务。',
+      todoRevision: empty.todo.revision,
+      goalRevision: empty.goal.revision,
+    };
+    const onPresentationStateChange = vi.fn();
+    const transport = transportFor(empty);
+
+    renderWorkflow(transport, { onPresentationStateChange });
+
+    await waitFor(() => expect(onPresentationStateChange).toHaveBeenLastCalledWith('empty'));
+    expect(screen.queryByRole('region', { name: 'Todo' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: '长期目标' })).not.toBeInTheDocument();
+    expect(screen.queryByText('执行条件未满足')).not.toBeInTheDocument();
   });
 
   it('keeps a live Todo visible while the persisted workflow is temporarily absent', async () => {

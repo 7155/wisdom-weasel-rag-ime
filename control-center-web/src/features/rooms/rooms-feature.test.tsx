@@ -272,17 +272,27 @@ describe('Rooms experience', () => {
     expect(questionRegion).toHaveAttribute('aria-live', 'polite');
     expect(questionCard.getByText('这次采用哪一种发布方式？')).toBeInTheDocument();
     expect(questionCard.getByText('推荐')).toBeInTheDocument();
+    expect(questionCard.getByText('先发布预览版本')).toBeInTheDocument();
+    expect(questionCard.getByText('直接发布稳定版本')).toBeInTheDocument();
+    expect(questionRegion).not.toHaveTextContent('等待原因：');
+    expect(questionRegion).not.toHaveTextContent('恢复条件：');
     expect(screen.queryByRole('textbox', { name: '协作消息' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '发送问题回答' })).not.toBeInTheDocument();
     expect(questionCard.getByRole('button', { name: '其他' })).toBeInTheDocument();
     expect(questionCard.queryByRole('button', { name: '发送回答' })).not.toBeInTheDocument();
+    expect(questionCard.getByRole('button', { name: '确认并发送' })).toBeDisabled();
 
     const optionA = questionCard.getByRole('radio', { name: /方案 A/ });
     await waitFor(() => expect(optionA).toHaveFocus());
     const optionB = questionCard.getByRole('radio', { name: '方案 B' });
     fireEvent.click(optionB);
-    fireEvent.click(optionB);
     expect(questionCard.getByRole('radio', { name: '方案 B' })).toBeChecked();
+    expect(transport.requests.filter(({ request }) => (
+      request.pathId === 'agent.room.message'
+    ))).toHaveLength(0);
+    const confirmAnswer = questionCard.getByRole('button', { name: '确认并发送' });
+    expect(confirmAnswer).toBeEnabled();
+    await user.click(confirmAnswer);
 
     await waitFor(() => expect(
       transport.requests.filter(({ request }) => request.pathId === 'agent.room.message'),
@@ -392,6 +402,86 @@ describe('Rooms experience', () => {
       answerToPostId: 'room-a:question-1',
       answerToRootId: 'room-a:turn-1',
     });
+  });
+
+  it('reuses the same answer identity when delivery becomes uncertain and the user confirms again', async () => {
+    let sendAttempts = 0;
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '回答恢复 Room')] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot('room-a', [
+        roomQuestionEvent('room-a', 1, {
+          content: '先确认首版范围，我们再继续。',
+          prompt: '首版先做到哪一步？',
+          options: [
+            {
+              value: 'loop',
+              label: '先跑通闭环',
+              description: '先交付可以真实运行和验收的主流程，扩展能力放到下一轮。',
+            },
+            {
+              value: 'ecosystem',
+              label: '一次补齐生态',
+              description: '同时覆盖插件和扩展接口，范围更大，首轮交付时间也会更长。',
+            },
+          ],
+        }),
+      ]),
+      'agent.room.message': (request: ControlRequest) => {
+        sendAttempts += 1;
+        if (sendAttempts === 1) {
+          throw new Error('connection closed after the server prepared the answer');
+        }
+        const body = request.body as Record<string, unknown>;
+        return {
+          ok: true,
+          timelineEvents: [
+            roomUserPostEvent(
+              'room-a',
+              2,
+              'room-a:turn-1',
+              String(body.clientMessageId),
+              String(body.message),
+            ),
+          ],
+        };
+      },
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    const question = within(await screen.findByRole('region', {
+      name: '需要回答：首版先做到哪一步？',
+    }));
+    await user.click(question.getByRole('radio', { name: '先跑通闭环' }));
+    await user.click(question.getByRole('button', { name: '确认并发送' }));
+
+    expect(await question.findByText('这次还没有送达，请稍后再确认一次。')).toBeInTheDocument();
+    expect(question.getByRole('radio', { name: '先跑通闭环' })).toBeChecked();
+    await user.click(question.getByRole('button', { name: '确认并发送' }));
+
+    await waitFor(() => expect(
+      transport.requests.filter(({ request }) => request.pathId === 'agent.room.message'),
+    ).toHaveLength(2));
+    const answerRequests = transport.requests
+      .filter(({ request }) => request.pathId === 'agent.room.message')
+      .map(({ request }) => request.body as Record<string, unknown>);
+    expect(answerRequests[0]).toMatchObject({
+      answerKind: 'option',
+      answerToPostId: 'room-a:question-1',
+      answerToRootId: 'room-a:turn-1',
+      message: 'loop',
+    });
+    expect(answerRequests[1]).toMatchObject({
+      answerKind: 'option',
+      answerToPostId: 'room-a:question-1',
+      answerToRootId: 'room-a:turn-1',
+      message: 'loop',
+    });
+    expect(answerRequests[1]?.clientMessageId).toBe(answerRequests[0]?.clientMessageId);
+    await waitFor(() => expect(
+      screen.queryByRole('button', { name: '确认并发送' }),
+    ).not.toBeInTheDocument());
   });
 
   it('restores the ordinary composer when the Kernel terminates before the pending question event clears', async () => {
@@ -613,6 +703,7 @@ describe('Rooms experience', () => {
     expect(reloadedCard.getByText('推荐')).toBeInTheDocument();
     expect(reloadedCard.getByRole('button', { name: '其他' })).toBeInTheDocument();
     expect(reloadedCard.queryByRole('button', { name: '发送回答' })).not.toBeInTheDocument();
+    expect(reloadedCard.getByRole('button', { name: '确认并发送' })).toBeDisabled();
   });
 
   it('does not reopen a resolved question or fabricate choices for a legacy wait post', async () => {
@@ -2136,7 +2227,8 @@ describe('Rooms experience', () => {
     await screen.findByText('还没有公开消息');
     await user.click(screen.getByRole('button', { name: '看看协作进展' }));
     expect(screen.getByRole('complementary', { name: '协作进展' })).toHaveAttribute('data-open', 'true');
-    expect(screen.getByText('伙伴状态')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '当前协作阶段' })).toHaveTextContent('等待开始');
+    expect(screen.queryByText('伙伴状态')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '收起进展面板' })).toBeInTheDocument();
   });
 
@@ -2913,6 +3005,21 @@ describe('Rooms experience', () => {
         dispatchId: 'dispatch-progress',
         sourceEventType: 'reasoning_summary',
         source: 'provider_reasoning_summary',
+        publicSummaryVersion: 'room-work-summary.v1',
+        publicSummaryKind: 'implementation',
+        updateCount: 2,
+        reasoningHistory: [
+          {
+            sourceEventId: 'reasoning-progress-1',
+            summary: 'private provider heading one',
+            createdAtMs: 1,
+          },
+          {
+            sourceEventId: 'reasoning-progress-2',
+            summary: 'private provider heading two',
+            createdAtMs: 2,
+          },
+        ],
       },
     };
     projection.activitiesById['read-a'] = {
@@ -2953,10 +3060,13 @@ describe('Rooms experience', () => {
     expect(work).toHaveTextContent('3 个步骤');
     expect(rows).toHaveLength(3);
     expect(work).toHaveTextContent('工作摘要');
-    expect(rows[0]).toHaveTextContent('先确认调用链，再修改入口');
-    expect(rows[0]).toHaveTextContent('伙伴自述 · 工作摘要');
+    expect(rows[0]).toHaveTextContent('当前任务推进有新进展');
+    expect(rows[0]).toHaveTextContent('实时进展 · 工作摘要');
+    expect(rows[0]).toHaveTextContent('已更新 2 次');
+    expect(within(rows[0] as HTMLElement).queryByRole('list', { name: '最近工作进展' })).not.toBeInTheDocument();
+    expect(rows[0]).not.toHaveTextContent('private provider heading');
     expect(rows[1]).toHaveTextContent('运行记录');
-    expect(rows[2]).toHaveTextContent('伙伴自述');
+    expect(rows[2]).toHaveTextContent('实时进展');
     expect(rows[1]).toHaveTextContent('runtime.ts');
     expect(rows[2]).toHaveTextContent('入口已修改，正在核对调用方');
   });
@@ -2997,8 +3107,8 @@ describe('Rooms experience', () => {
     expect(cards[0]).toHaveTextContent('file-1.ts');
     expect(cards[1]).toHaveTextContent('file-2.ts');
     expect(container.querySelector('.room-agent-activity--tool-group')).not.toBeInTheDocument();
-    expect(container.querySelector('.room-agent-lane__activity > summary')).toHaveTextContent('读取文件');
-    expect(container.querySelector('.room-agent-lane__activity > summary')).toHaveTextContent('2 个步骤 · 所有步骤已返回');
+    expect(container.querySelector('.room-agent-lane__activity-heading')).toHaveTextContent('读取文件');
+    expect(container.querySelector('.room-agent-lane__activity-heading')).toHaveTextContent('2 个步骤 · 所有步骤已返回');
   });
 
   it('separates returned steps from a stopped Root and exposes the concrete step list', () => {
@@ -3049,10 +3159,10 @@ describe('Rooms experience', () => {
     const { container } = render(
       <RoomTurn turnId="turn-stopped" room={room} projection={projection} personas={previewPersonas} />,
     );
-    const activity = container.querySelector<HTMLDetailsElement>('.room-agent-lane__activity')!;
+    const activity = container.querySelector<HTMLElement>('.room-agent-lane__activity')!;
 
-    expect(activity).toHaveAttribute('open');
-    expect(activity.querySelector('summary')).toHaveTextContent('2 个步骤 · 所有步骤已返回');
+    expect(activity.tagName).toBe('SECTION');
+    expect(activity.querySelector('.room-agent-lane__activity-heading')).toHaveTextContent('2 个步骤 · 所有步骤已返回');
     expect(activity).toHaveTextContent('file-1.ts');
     expect(activity).toHaveTextContent('file-2.ts');
     expect(container.querySelector('.room-agent-lane')).toHaveAttribute('data-state', 'aborted');
@@ -3107,7 +3217,7 @@ describe('Rooms experience', () => {
     );
     const activityLog = turnView.container.querySelector('.room-agent-lane__activity')!;
     const toolCard = turnView.container.querySelector('.room-agent-activity--tool')!;
-    expect(activityLog.querySelector('summary')).toHaveTextContent('1 个步骤 · 1 个已停止');
+    expect(activityLog.querySelector('.room-agent-lane__activity-heading')).toHaveTextContent('1 个步骤 · 1 个已停止');
     expect(toolCard).toHaveAttribute('data-state', 'aborted');
     expect(toolCard).toHaveTextContent('已停止');
     expect(toolCard).not.toHaveTextContent('进行中');
@@ -3116,10 +3226,10 @@ describe('Rooms experience', () => {
     const statusView = render(
       <TooltipProvider><RoomStatusPanel room={room} projection={projection} open onClose={() => undefined} /></TooltipProvider>,
     );
-    const statusActivity = statusView.container.querySelector('.room-status-activity')!;
-    expect(statusActivity).toHaveAttribute('data-state', 'aborted');
-    expect(statusActivity).toHaveTextContent('已停止');
-    expect(statusActivity).not.toHaveTextContent('进行中');
+    const statusPhase = statusView.container.querySelector('.room-status-phase')!;
+    expect(statusPhase).toHaveAttribute('data-phase', 'aborted');
+    expect(statusPhase).toHaveTextContent('已停止');
+    expect(statusView.container.querySelector('.room-status-activity')).not.toBeInTheDocument();
   });
 
   it('reconciles a transient resume lane after its Root completes', () => {
@@ -3220,7 +3330,7 @@ describe('Rooms experience', () => {
 
     expect(view.container.querySelector('.room-turn')).toHaveAttribute('data-turn-status', 'running');
     expect(view.container.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'thinking');
-    expect(view.container.querySelector('.room-agent-lane__activity')).toHaveAttribute('open');
+    expect(view.container.querySelector('.room-agent-lane__activity')).toHaveAttribute('data-state', 'running');
     expect(view.container.querySelector('.room-agent-lane__work')).toHaveTextContent('已接手');
     projection.turnsById['turn-live'] = {
       ...projection.turnsById['turn-live'],
@@ -3233,12 +3343,12 @@ describe('Rooms experience', () => {
 
     expect(view.container.querySelector('.room-turn__terminal')).toHaveAttribute('data-arriving', 'true');
     expect(view.container.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'done');
-    expect(view.container.querySelector('.room-agent-lane__activity')).toHaveAttribute('open');
+    expect(view.container.querySelector('.room-agent-lane__activity')).toHaveAttribute('data-state', 'settled');
     view.unmount();
 
     const settled = render(roomTurn());
     expect(settled.container.querySelector('.room-turn__terminal')).not.toHaveAttribute('data-arriving');
-    expect(settled.container.querySelector('.room-agent-lane__activity')).not.toHaveAttribute('open');
+    expect(settled.container.querySelector('.room-agent-lane__activity')).toHaveAttribute('data-state', 'settled');
   });
 
   it('keeps a committed lane completed without showing a failed read as successful', () => {
@@ -3597,7 +3707,7 @@ describe('Rooms experience', () => {
     expect(container).not.toHaveTextContent('route_decision');
   });
 
-  it('shows WorkItem responsibility, owner, and review state in the Room status panel', () => {
+  it('keeps WorkItem responsibility details on the task page instead of duplicating them in the Room rail', () => {
     const room = roomSummary('room-a', '责任 Room');
     room.workItems = [{
       id: 'room-work:1',
@@ -3627,25 +3737,30 @@ describe('Rooms experience', () => {
       completedAtMs: null,
     }];
 
-    render(<TooltipProvider><RoomStatusPanel room={room} projection={createRoomProjection(room.id)} open onClose={() => undefined} /></TooltipProvider>);
+    const projection = createRoomProjection(room.id);
+    projection.turnOrder.push('turn-a');
+    projection.turnsById['turn-a'] = {
+      id: 'turn-a', status: 'running', messageIds: [], activityIds: [],
+      participantIds: ['room-a:p1'], createdAtMs: 1, updatedAtMs: 2,
+    };
+    const onOpenProgress = vi.fn();
+    render(<TooltipProvider><RoomStatusPanel
+      room={room}
+      projection={projection}
+      open
+      onClose={() => undefined}
+      onOpenProgress={onOpenProgress}
+    /></TooltipProvider>);
 
-    expect(screen.getByText('任务分工')).toBeInTheDocument();
-    const workRow = screen.getAllByText('核对多端网关回放边界')
-      .map((element) => element.closest<HTMLElement>('.room-status-work__item'))
-      .find(Boolean)!;
-    expect(within(workRow).getAllByText('一起检查')).not.toHaveLength(0);
-    expect(within(workRow).getByText('澄·初')).toBeInTheDocument();
-    expect(within(workRow).getByText('澄')).toBeInTheDocument();
-    expect(within(workRow).getByText('第 1 次')).toBeInTheDocument();
-    expect(within(workRow).getByText('测试与风险说明')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /协作规则/ })).not.toBeInTheDocument();
-    expect(screen.queryByText('一起检查的人始终明确')).not.toBeInTheDocument();
-    expect(screen.queryByText('不会无限循环')).not.toBeInTheDocument();
-    expect(screen.getByText('调研与证据 · 已加入')).toBeInTheDocument();
-    expect(screen.queryByText(/只读调研/)).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '当前协作阶段' })).toHaveTextContent('协作中');
+    expect(screen.queryByText('核对多端网关回放边界')).not.toBeInTheDocument();
+    expect(screen.queryByText('测试与风险说明')).not.toBeInTheDocument();
+    expect(screen.queryByText('伙伴状态')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '打开任务页' }));
+    expect(onOpenProgress).toHaveBeenCalledTimes(1);
   });
 
-  it('collapses repeated Room status updates into one readable sidebar step', () => {
+  it('does not duplicate repeated Room status updates in the compact sidebar', () => {
     const room = roomSummary('room-a', '状态聚合 Room');
     const projection = createRoomProjection(room.id);
     projection.turnOrder.push('turn-a');
@@ -3675,9 +3790,8 @@ describe('Rooms experience', () => {
       <TooltipProvider><RoomStatusPanel room={room} projection={projection} open onClose={() => undefined} /></TooltipProvider>,
     );
 
-    expect(container.querySelectorAll('.room-status-activity')).toHaveLength(1);
-    expect(container.querySelector('.room-status-activity')).toHaveTextContent('状态同步');
-    expect(container.querySelector('.room-status-activity')).toHaveTextContent('合并 3 次更新');
+    expect(container.querySelectorAll('.room-status-activity')).toHaveLength(0);
+    expect(screen.getByRole('region', { name: '当前协作阶段' })).toHaveTextContent('已完成');
   });
 
   it('keeps the 765x1568 status panel in normal top-to-bottom flow while a review waits', () => {
@@ -3752,12 +3866,12 @@ describe('Rooms experience', () => {
       </TooltipProvider>,
     );
 
-    expect(container.querySelector('.agent-status-turn')).toHaveAttribute('data-state', 'running');
+    expect(screen.getByRole('region', { name: '当前协作阶段' })).toHaveAttribute('data-phase', 'running');
     expect(screen.getAllByText('协作中')).not.toHaveLength(0);
-    expect(container.querySelector('.room-status-activity')).toHaveAttribute('data-state', 'failed');
+    expect(container.querySelector('.room-status-activity')).not.toBeInTheDocument();
   });
 
-  it('shows each partner work summary in an independently scrollable status feed', () => {
+  it('keeps partner activity in the conversation stream instead of a duplicate sidebar feed', () => {
     const room = roomSummary('room-a', '公开进度 Room');
     const projection = createRoomProjection(room.id);
     projection.activityOrder.push('reasoning-a', 'tool-b');
@@ -3769,7 +3883,12 @@ describe('Rooms experience', () => {
       kind: 'participant_activity',
       status: 'running',
       summary: '正在核对恢复后的任务边界',
-      payload: { rootId: 'root-a', sourceEventType: 'reasoning_summary' },
+      payload: {
+        rootId: 'root-a',
+        sourceEventType: 'reasoning_summary',
+        publicSummaryVersion: 'room-work-summary.v1',
+        publicSummaryKind: 'alignment',
+      },
       createdAtMs: 2,
       updatedAtMs: 2,
     };
@@ -3785,24 +3904,22 @@ describe('Rooms experience', () => {
       createdAtMs: 3,
       updatedAtMs: 3,
     };
+    projection.turnOrder.push('root-a');
+    projection.turnsById['root-a'] = {
+      id: 'root-a', status: 'running', messageIds: [], activityIds: ['reasoning-a', 'tool-b'],
+      participantIds: ['room-a:p1', 'room-a:p2'], createdAtMs: 1, updatedAtMs: 3,
+    };
 
     const { container } = render(
       <TooltipProvider>
         <RoomStatusPanel room={room} projection={projection} open onClose={() => undefined} />
       </TooltipProvider>,
     );
-    const feed = screen.getByLabelText('伙伴自述与运行记录');
-    const lanes = feed.querySelectorAll('.room-status-public-lane');
-    expect(lanes).toHaveLength(2);
-    expect([...lanes].every((lane) => lane.className === 'room-status-public-lane')).toBe(true);
-    expect(lanes[0]).toHaveTextContent('伙伴自述 · 工作摘要');
-    expect(lanes[1]).toHaveTextContent('运行记录 · 工具进度');
-    expect(feed).toHaveAttribute('tabindex', '0');
-    expect(feed).toHaveAttribute('aria-live', 'polite');
-    expect(getComputedStyle(feed).overflowY).toBe('auto');
-    expect(container).toHaveTextContent('正在核对恢复后的任务边界');
-    expect(container).toHaveTextContent('正在读取公开检查记录');
-    expect(container).toHaveTextContent('工作摘要');
+    expect(screen.queryByLabelText('实时进展与运行记录')).not.toBeInTheDocument();
+    expect(container.querySelectorAll('.room-status-public-lane')).toHaveLength(0);
+    expect(container).not.toHaveTextContent('需求与交付边界梳理有新进展');
+    expect(container).not.toHaveTextContent('正在读取公开检查记录');
+    expect(screen.getByRole('region', { name: '当前协作阶段' })).toHaveTextContent('协作中');
   });
 
   it('selects the newest hydrated task when snapshot update timestamps are absent', () => {
@@ -3931,16 +4048,9 @@ describe('Rooms experience', () => {
     expect(summary).toHaveTextContent('分工完成1 / 2');
     expect(summary).toHaveTextContent('伙伴执行等待开始');
     expect(phase).not.toHaveTextContent('最终回复');
-    const review = screen.getByRole('button', { name: /独立复核/ })
-      .closest<HTMLElement>('.agent-status-section')!;
-    expect(review).toHaveTextContent('澄·初');
-    expect(review).toHaveTextContent('第 2 轮');
-    expect(review).toHaveTextContent('重新复核');
-    expect(review).toHaveTextContent('Finding-17');
-    expect(review).toHaveTextContent('阻断');
-    expect(review).toHaveTextContent('网关断线重连后仍显示旧结果');
-    expect(review).toHaveTextContent('修正回应');
-    expect(review).toHaveTextContent('已刷新重连后的投影并补充验证');
+    expect(screen.queryByRole('button', { name: /独立复核/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('Finding-17')).not.toBeInTheDocument();
+    expect(screen.queryByText('网关断线重连后仍显示旧结果')).not.toBeInTheDocument();
   });
 
   it('keeps the internal Report task and dispatch out of peer progress', () => {
@@ -3985,7 +4095,7 @@ describe('Rooms experience', () => {
     expect(phase).not.toHaveTextContent('1 / 2');
   });
 
-  it('labels active work after requested review changes as revision work', () => {
+  it('keeps review correction detail on the task page while the rail stays phase-only', () => {
     const room = roomSummary('room-a', '返修状态 Room');
     const kernel = createRoomKernelProjection(room.id);
     kernel.rootsById['root-a'] = roomKernelRoot(room.id, 'running', false, 5);
@@ -4006,14 +4116,13 @@ describe('Rooms experience', () => {
       </TooltipProvider>,
     );
 
-    const review = screen.getByRole('button', { name: /独立复核/ })
-      .closest<HTMLElement>('.agent-status-section')!;
-    expect(review).toHaveTextContent('返修中');
-    expect(review).toHaveTextContent('负责人正在按复核意见返修');
-    expect(review).not.toHaveTextContent('重新复核');
+    const phase = screen.getByRole('region', { name: '当前协作阶段' });
+    expect(phase).toHaveTextContent('一起检查');
+    expect(screen.queryByRole('button', { name: /独立复核/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('负责人正在按复核意见返修')).not.toBeInTheDocument();
   });
 
-  it('keeps the final public Room reply visible after peer checks complete', () => {
+  it('keeps the final phase in the rail without duplicating the public reply', () => {
     const room = roomSummary('room-a', '最终回复 Room');
     const kernel = createRoomKernelProjection(room.id);
     kernel.rootsById['root-a'] = roomKernelRoot(room.id, 'completed', true, 6);
@@ -4048,15 +4157,14 @@ describe('Rooms experience', () => {
     );
 
     const phase = screen.getByRole('region', { name: '当前协作阶段' });
-    const reply = container.querySelector<HTMLElement>('.room-status-final-reply')!;
     expect(phase).toHaveTextContent('各自工作');
     expect(phase).toHaveTextContent('一起检查');
     expect(phase).toHaveTextContent('最终回复');
-    expect(reply).toHaveTextContent('每位伙伴的结果都已互相检查，这是最终公开回复。');
-    expect(phase.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.querySelector('.room-status-final-reply')).not.toBeInTheDocument();
+    expect(container).not.toHaveTextContent('每位伙伴的结果都已互相检查，这是最终公开回复。');
   });
 
-  it('keeps only the latest public reply in the status rail when work ends without a success receipt', () => {
+  it('keeps failure posts in the conversation instead of duplicating them in the status rail', () => {
     const room = roomSummary('room-a', '未完成回复 Room');
     const kernel = createRoomKernelProjection(room.id);
     kernel.rootsById['root-a'] = roomKernelRoot(room.id, 'failed', false, 8);
@@ -4092,8 +4200,8 @@ describe('Rooms experience', () => {
       </TooltipProvider>,
     );
 
-    expect(container.querySelectorAll('.room-status-final-reply')).toHaveLength(1);
-    expect(container).toHaveTextContent('本轮未完成，伙伴已经给出可复核的最后说明。');
+    expect(container.querySelectorAll('.room-status-final-reply')).toHaveLength(0);
+    expect(container).not.toHaveTextContent('本轮未完成，伙伴已经给出可复核的最后说明。');
     expect(container).not.toHaveTextContent('较早的公开进度');
     expect(screen.getByRole('region', { name: '当前协作阶段' })).toHaveTextContent('最终回复');
   });

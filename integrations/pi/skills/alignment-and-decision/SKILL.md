@@ -55,10 +55,10 @@ weakens the requirements.
 
 - After inspection, use native `ask` for each remaining material user choice,
   not free-text confirmation, another question Tool, or a status update.
-- Group 1-4 independent questions; separate a dependent one. Each has 2-5
-  unique options and no hand-written `Other`; `multi` is only for independent choices.
-- Recommend one zero-based `recommended` index only when evidence supports it.
-  Explain tradeoffs; never treat recommendation, custom text, or cancellation as approval.
+- Group 1-4 independent questions; separate dependent ones. Each has 2-5 unique
+  options, no hand-written `Other`; `multi` is only for independent choices.
+- Recommend one zero-based `recommended` index only with evidence. Explain
+  tradeoffs; recommendation, custom text, and cancellation are not approval.
 - Never invent an answer or continue past an unanswered material choice.
 
 ## Managed Room Intake
@@ -70,10 +70,9 @@ weakens the requirements.
 - Use `room_commit` with `decision="wait"`,
   `waitingFor="user"`, `questionKind="bounded"`,
   `question="<one prompt>"`, and `questionOptions=[...]` containing 2-5
-  unique, genuinely different options with at most one `recommended`. The
-  interface supplies `Other` for custom text, so never write an Other option and
-  never replace the options with an open text box. This is not a second
+  unique, genuinely different options with at most one `recommended`. Each needs a short `label` and one-paragraph `description` of scope, effort, or tradeoff instead of repeating the label. The interface supplies `Other`; never write an Other option or replace choices with an open text box. This is not a second
   question Tool.
+- Keep `publicSummary` and `question` a natural continuation of the user's message: acknowledge the goal and briefly explain why this choice matters. Never announce a work-card read, declare the request insufficient, or recite goal/deliverable/acceptance categories.
 - The next ordinary Room message answers the wait: append its source span to the
   RequirementAnchor and make one new resume Dispatch under the same Root; never
   reuse the alignment Dispatch.
@@ -85,15 +84,14 @@ weakens the requirements.
   non-overlapping implementation work, never intake or review.
 - `room_post` is not a second clarification channel; it carries material progress.
   Only the facilitator/reporter emits the final public summary.
-- Filesystem roots are not participant identity. Require receipts; do not claim
-  automatic Git worktree cloning or isolation without proof.
+- Filesystem roots prove neither participant identity nor worktree isolation;
+  require receipts.
 
 ## Explicit Grill Mode
 
-In explicit Grill Mode, explore every material decision-tree branch in
-dependency order, including nonblocking tradeoffs. Ask one question at a time,
-recommend an answer, and wait. Investigate facts yourself. Do not stop merely
-because planning could begin; stop only after the user confirms shared understanding.
+In explicit Grill Mode, explore every material decision-tree branch in dependency
+order, including nonblocking tradeoffs. Ask one question at a time, recommend, wait and
+investigate facts yourself. Stop only after the user confirms shared understanding.
 
 ## Output Contract
 
@@ -114,17 +112,16 @@ Status | Next stage
 Status is `needs_user_answer`, `blocked_by_external_fact`, or
 `ready_for_planning`.
 Do not dump the packet into the public reply; give context, a recommendation
-and one smallest question group, or proceed with the settled decision.
+and one smallest question group, or proceed.
 
 ## Self-Check
 
-- Are request and vision byte-preserved above AI text?
-- Is acceptance observable, and did I investigate before asking?
-- Does the chosen route meet locked requirements and direct authorization?
+- Are source bytes preserved, acceptance observable, facts investigated, and the
+  route within requirements and authority?
 
 ## Boundaries
 
-Do not ask for inspectable facts, invent alternatives, widen scope, weaken
-acceptance, persist guesses, expose private Room state, plan tasks, modify
-behavior, route an Agent, or claim completion. Redact credentials explicitly
-without changing other user text. Documentation approval grants no execution.
+Do not ask inspectable facts, invent choices, weaken scope or acceptance, persist
+guesses, expose private Room state, plan or execute work, route Agents, or claim
+completion. Redact credentials without changing other user text; documentation
+approval grants no execution.

@@ -865,7 +865,7 @@ describe('Agent experience', () => {
 
     await user.click(await screen.findByRole('button', { name: '展开任务中心' }));
     const statusPanel = await screen.findByLabelText('当前对话任务中心');
-    const sectionToggle = await within(statusPanel).findByRole('button', { name: /子智能体/ });
+    const sectionToggle = await within(statusPanel).findByRole('button', { name: /^子智能体/ });
     const section = sectionToggle.closest('section')!;
 
     expect(await within(section).findByRole('alert')).toHaveTextContent('子智能体状态读取失败');
@@ -875,8 +875,8 @@ describe('Agent experience', () => {
     await user.click(retry);
 
     await waitFor(() => expect(attempts).toBe(2));
-    expect(within(section).queryByRole('alert')).not.toBeInTheDocument();
-    expect(within(section).getByText('当前会话没有委派任务')).toBeVisible();
+    await waitFor(() => expect(within(statusPanel).queryByRole('button', { name: /^子智能体/ })).not.toBeInTheDocument());
+    expect(screen.queryByText('当前会话没有委派任务')).not.toBeInTheDocument();
   });
 
   it('shows the full capability catalog while keeping Runtime authorization and native Skills distinct', async () => {
@@ -894,9 +894,8 @@ describe('Agent experience', () => {
 
     await user.click(await screen.findByRole('button', { name: '展开任务中心' }));
     const statusPanel = await screen.findByLabelText('当前对话任务中心');
-    const capabilityToggle = await within(statusPanel).findByRole('button', { name: /当前对话工具与技能/ });
-    const capabilitySection = capabilityToggle.closest('section')!;
-    await user.click(capabilityToggle);
+    await user.click(await within(statusPanel).findByRole('button', { name: /技术详情/ }));
+    const capabilitySection = within(statusPanel).getByText('工具与技能').closest('section')!;
     await user.click(within(capabilitySection).getByRole('button', { name: '管理当前对话的工具与技能' }));
 
     const dialog = screen.getByRole('dialog', { name: '管理当前对话的工具与技能' });
@@ -924,9 +923,8 @@ describe('Agent experience', () => {
 
     await user.click(await screen.findByRole('button', { name: '展开任务中心' }));
     const statusPanel = await screen.findByLabelText('当前对话任务中心');
-    const capabilityToggle = await within(statusPanel).findByRole('button', { name: /当前对话工具与技能/ });
-    const capabilitySection = capabilityToggle.closest('section')!;
-    await user.click(capabilityToggle);
+    await user.click(await within(statusPanel).findByRole('button', { name: /技术详情/ }));
+    const capabilitySection = within(statusPanel).getByText('工具与技能').closest('section')!;
     expect(within(capabilitySection).getByRole('alert')).toHaveTextContent('后端返回 rag-ime.control-tool-list.v1');
     expect(within(capabilitySection).queryByText('旧输入工具')).not.toBeInTheDocument();
 
@@ -979,9 +977,8 @@ describe('Agent experience', () => {
 
     await user.click(await screen.findByRole('button', { name: '展开任务中心' }));
     const statusPanel = await screen.findByLabelText('当前对话任务中心');
-    const capabilityToggle = await within(statusPanel).findByRole('button', { name: /当前对话工具与技能/ });
-    const capabilitySection = capabilityToggle.closest('section')!;
-    await user.click(capabilityToggle);
+    await user.click(await within(statusPanel).findByRole('button', { name: /技术详情/ }));
+    const capabilitySection = within(statusPanel).getByText('工具与技能').closest('section')!;
     await user.click(within(capabilitySection).getByRole('button', { name: '管理当前对话的工具与技能' }));
     await user.click(screen.getByRole('combobox', { name: '输入法的当前对话临时设置' }));
     await user.click(await screen.findByRole('option', { name: '不向伙伴披露' }));
@@ -1014,9 +1011,8 @@ describe('Agent experience', () => {
 
     await user.click(await screen.findByRole('button', { name: '展开任务中心' }));
     const statusPanel = await screen.findByLabelText('当前对话任务中心');
-    const capabilityToggle = await within(statusPanel).findByRole('button', { name: /当前对话工具与技能/ });
-    const capabilitySection = capabilityToggle.closest('section')!;
-    await user.click(capabilityToggle);
+    await user.click(await within(statusPanel).findByRole('button', { name: /技术详情/ }));
+    const capabilitySection = within(statusPanel).getByText('工具与技能').closest('section')!;
     await user.click(within(capabilitySection).getByRole('button', { name: '管理当前对话的工具与技能' }));
     await user.click(screen.getByRole('combobox', { name: '输入法的当前对话临时设置' }));
     await user.click(await screen.findByRole('option', { name: '不向伙伴披露' }));
@@ -1150,9 +1146,8 @@ describe('Agent experience', () => {
     await user.click(await screen.findByRole('button', { name: '展开任务中心' }));
     const statusPanel = await screen.findByLabelText('当前对话任务中心');
     await within(statusPanel).findByRole('button', { name: /构建工作区索引/ });
-    const capabilityToggle = await within(statusPanel).findByRole('button', { name: /当前对话工具与技能/ });
-    const capabilitySection = capabilityToggle.closest('section')!;
-    await user.click(capabilityToggle);
+    await user.click(await within(statusPanel).findByRole('button', { name: /技术详情/ }));
+    const capabilitySection = within(statusPanel).getByText('工具与技能').closest('section')!;
     await user.click(within(capabilitySection).getByRole('button', { name: '管理当前对话的工具与技能' }));
     await user.click(screen.getByRole('combobox', { name: '后台任务的当前对话临时设置' }));
     await user.click(await screen.findByRole('option', { name: '不向伙伴披露' }));

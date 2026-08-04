@@ -24,6 +24,20 @@ describe('RoomKernelLivePanel production adapter', () => {
     vi.useRealTimers();
   });
 
+  it('shows a useful task-page body while the first snapshot is still loading', async () => {
+    const pending = deferred<ReturnType<typeof kernelSnapshot>>();
+    const transport = mockTransport({ snapshot: () => pending.promise });
+
+    renderPanel(transport);
+
+    expect(screen.getByRole('region', { name: '协作任务状态' })).toHaveTextContent('正在同步');
+    expect(screen.getByText('正在读取任务进度')).toBeInTheDocument();
+    expect(screen.getByText('公开对话已经保留，任务状态连接完成后会自动显示在这里。')).toBeInTheDocument();
+
+    pending.resolve(kernelSnapshot(1));
+    expect(await screen.findByText('进度已同步')).toBeInTheDocument();
+  });
+
   it('loads canonical snapshot, resumes SSE and sends authorized typed Stop', async () => {
     const command = vi.fn((request) => kernelReceipt({
       commandId: (request.body as Record<string, unknown>).commandId as string,

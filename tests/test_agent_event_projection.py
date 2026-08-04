@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -285,36 +287,190 @@ class AgentEventProjectionTests(unittest.TestCase):
             },
         )
 
-    def test_room_reasoning_projection_is_public_and_bounded(
+    def test_room_reasoning_projection_is_public_safe_and_stage_bound(
         self,
     ) -> None:
-        event_type, projected = room_event_projection(
+        raw_summary = "Confirming room_commit as sole final response"
+        raw_items = [
+            "Planning room_state retrieval",
+            "Inspecting Dispatch and Receipt IDs",
+        ]
+        expected = {
+            "align": ("alignment", "需求与交付边界梳理有新进展"),
+            "execute": ("implementation", "当前任务推进有新进展"),
+            "review": ("review", "结果与验收条件复核有新进展"),
+            "close": ("closure", "本轮结果整理有新进展"),
+            "": ("general", "当前工作有新进展"),
+        }
+        for intent_kind, (summary_kind, safe_summary) in expected.items():
+            with self.subTest(intent_kind=intent_kind or "fallback"):
+                event_type, projected = room_event_projection(
+                    AgentEventEnvelope(
+                        event_id=f"event:reasoning:{intent_kind or 'fallback'}",
+                        session_id="session:1",
+                        turn_id="turn:1",
+                        sequence=1,
+                        created_at_ms=1,
+                        event_type="reasoning_summary",
+                        payload={
+                            "status": "Dispatch Receipt",
+                            "state": "Planning room_state and room_commit",
+                            "requestId": "reasoning:private-message:0",
+                            "summary": raw_summary,
+                            "source": "provider_reasoning_summary",
+                            "items": raw_items,
+                        },
+                        resume_token="event:reasoning",
+                    ),
+                    room_intent_kind=intent_kind,
+                )
+
+                self.assertEqual(event_type, "participant_activity")
+                self.assertNotIn("status", projected)
+                self.assertNotIn("state", projected)
+                self.assertEqual(projected["summary"], safe_summary)
+                self.assertEqual(
+                    projected["publicSummaryVersion"],
+                    "room-work-summary.v1",
+                )
+                self.assertEqual(
+                    projected["publicSummaryKind"],
+                    summary_kind,
+                )
+                self.assertEqual(
+                    projected["source"],
+                    "provider_reasoning_summary",
+                )
+                self.assertNotIn("items", projected)
+                self.assertNotIn("requestId", projected)
+                public_json = repr(projected)
+                for private_fragment in (
+                    raw_summary,
+                    *raw_items,
+                    "room_commit",
+                    "room_state",
+                    "Dispatch",
+                    "Receipt",
+                    "Planning room_state and room_commit",
+                ):
+                    self.assertNotIn(private_fragment, public_json)
+
+    def test_managed_room_reasoning_uses_dispatch_intent_copy(self) -> None:
+        class Kernel:
+            mode = "kernel_only"
+
+            @staticmethod
+            def session_binding(_session_id: str) -> dict[str, object]:
+                return {
+                    "roomId": "room:1",
+                    "rootId": "root:1",
+                    "dispatchId": "dispatch:review",
+                    "taskId": "task:review",
+                    "intentKind": "review",
+                    "generation": 1,
+                    "state": "running",
+                    "runtimeTurnId": "turn:review",
+                    "attempt": 0,
+                }
+
+        class Rooms(_Rooms):
+            @staticmethod
+            def get(_room_id: str) -> dict[str, object]:
+                return {"activeTopicId": "topic:1"}
+
+        class Timeline:
+            def __init__(self) -> None:
+                self.public_data: dict[str, object] = {}
+
+            def publish_runtime(self, **values: object) -> None:
+                self.public_data = dict(values["public_data"])  # type: ignore[arg-type]
+
+        class KernelProjection:
+            @staticmethod
+            def sync_room(_room_id: str, *, now_ms: int) -> None:
+                if now_ms != 10:
+                    raise AssertionError("reasoning timestamp was not preserved")
+
+        timeline = Timeline()
+        service = AgentEventProjectionService(
+            sessions=None,
+            room_kernel=Kernel(),
+            rooms=Rooms(),
+            agent_blocks=None,
+            observations=_Observations(),
+            room_kernel_projection=KernelProjection(),
+            room_events=None,
+            public_timeline=timeline,  # type: ignore[arg-type]
+            room_turns=_ForbiddenLegacyTurns(),
+            append_recent_message=lambda *_args: None,
+            record_assistant_evidence=lambda _event: {},
+            notify_intercom=lambda: None,
+        )
+
+        service.mirror_to_room(
             AgentEventEnvelope(
-                event_id="event:reasoning",
+                event_id="event:review-reasoning",
+                session_id="session:1",
+                turn_id="turn:review",
+                sequence=1,
+                created_at_ms=10,
+                event_type="reasoning_summary",
+                payload={
+                    "summary": "Confirming room_commit as sole final response",
+                    "items": ["Inspecting Review Dispatch"],
+                    "source": "provider_reasoning_summary",
+                    "state": "completed",
+                },
+                resume_token="event:review-reasoning",
+            )
+        )
+
+        self.assertEqual(
+            timeline.public_data["summary"],
+            "结果与验收条件复核有新进展",
+        )
+        self.assertNotIn("items", timeline.public_data)
+
+    def test_reasoning_runtime_projection_uses_versioned_identity(self) -> None:
+        class Events:
+            def __init__(self) -> None:
+                self.projection_key = ""
+
+            def publish_projection(self, **values: object) -> dict[str, object]:
+                self.projection_key = str(values["projection_key"])
+                return dict(values)
+
+        events = Events()
+        projector = RoomPublicTimelineProjector(events)  # type: ignore[arg-type]
+        projector.publish_runtime(
+            event=AgentEventEnvelope(
+                event_id="event:reasoning:legacy-replay",
                 session_id="session:1",
                 turn_id="turn:1",
                 sequence=1,
                 created_at_ms=1,
                 event_type="reasoning_summary",
-                payload={
-                    "status": "running",
-                    "summary": "结" * 700,
-                    "source": "runtime-" * 20,
-                    "items": [f"{index}:" + ("步" * 300) for index in range(13)],
-                },
-                resume_token="event:reasoning",
-            )
+                payload={},
+                resume_token="event:reasoning:legacy-replay",
+            ),
+            binding={
+                "roomId": "room:1",
+                "rootId": "root:1",
+                "dispatchId": "dispatch:1",
+            },
+            participant={"id": "participant:1"},
+            event_type="participant_activity",
+            public_data={
+                "summary": "当前任务推进有新进展",
+                "publicSummaryVersion": "room-work-summary.v1",
+                "publicSummaryKind": "implementation",
+            },
         )
 
-        self.assertEqual(event_type, "participant_activity")
-        self.assertEqual(projected["status"], "running")
-        self.assertEqual(len(str(projected["summary"])), 500)
-        self.assertLessEqual(len(str(projected["source"])), 80)
-        self.assertEqual(len(projected["items"]), 12)  # type: ignore[arg-type]
-        self.assertTrue(all(
-            len(str(item)) <= 240
-            for item in projected["items"]  # type: ignore[union-attr]
-        ))
+        self.assertEqual(
+            events.projection_key,
+            "room-runtime-public-summary-v1:event:reasoning:legacy-replay",
+        )
 
     def test_runtime_retry_and_missing_commit_recovery_stay_nonterminal(
         self,
@@ -1577,6 +1733,160 @@ class AgentEventProjectionTests(unittest.TestCase):
                 "never-project",
                 repr(snapshot_events),
             )
+
+    def test_legacy_room_reasoning_replay_drops_provider_text_and_items(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="rag-ime-room-reasoning-upcast-",
+        ) as tmp:
+            root = Path(tmp)
+            db_path = root / "rag-ime.sqlite"
+            sessions = AgentSessionStore(db_path)
+            sessions.initialize()
+            room_store = AgentRoomStore(
+                db_path,
+                room_dir=root / "rooms",
+            )
+            room_store.initialize()
+
+            def participant(
+                role_id: str,
+                display_name: str,
+            ) -> dict[str, str]:
+                session = sessions.create(
+                    title=f"{display_name} Room Session",
+                    role_id=role_id,
+                    role_version="1",
+                )
+                return {
+                    "sessionId": str(session["id"]),
+                    "roleId": role_id,
+                    "roleVersion": "1",
+                    "displayName": display_name,
+                }
+
+            room = room_store.create(
+                title="Legacy reasoning Room",
+                routing_policy="manual_mentions",
+                participants=[
+                    participant("companion-present-v1", "澄·远"),
+                    participant("companion-firstlight-v1", "澄·初"),
+                ],
+                created_at_ms=1,
+            )
+            owner = room["participants"][0]
+            unsafe_payload = {
+                "sourceEventId": "event:legacy-reasoning",
+                "sourceEventType": "reasoning_summary",
+                "data": {
+                    "rootId": "root:1",
+                    "dispatchId": "dispatch:1",
+                    "summary": "Planning room_state retrieval",
+                    "items": [
+                        "Confirming room_commit as sole final response",
+                        "Inspecting Dispatch Receipt IDs",
+                    ],
+                    "source": "provider_reasoning_summary",
+                    "status": "Dispatch Receipt",
+                    "state": "Planning room_state and room_commit",
+                },
+            }
+            event, created = room_store.append_projected_event(
+                projection_key="room-runtime:event:legacy-reasoning",
+                room_id=str(room["id"]),
+                event_type="participant_activity",
+                payload=unsafe_payload,
+                turn_id="root:1",
+                participant_id=str(owner["id"]),
+                source_session_id=str(owner["sessionId"]),
+                topic_id=str(room["activeTopicId"]),
+                created_at_ms=2,
+            )
+            self.assertTrue(created)
+            self.assertIsNotNone(event)
+            assert event is not None
+            persisted_payload = event["payload"]
+            self.assertIsInstance(persisted_payload, Mapping)
+            persisted_data = persisted_payload["data"]  # type: ignore[index]
+            self.assertEqual(
+                persisted_data["summary"],
+                "当前工作有新进展",
+            )
+            self.assertNotIn("items", persisted_data)
+
+            # Simulate a row persisted by a build from before the write-side
+            # public-summary fence.  Replay must upcast it without changing
+            # the durable event identity or chronology.
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    "UPDATE agent_room_events SET payload_json=? WHERE event_id=?",
+                    (
+                        json.dumps(unsafe_payload, ensure_ascii=False),
+                        str(event["eventId"]),
+                    ),
+                )
+
+            replay = room_store.list_events(str(room["id"]), limit=20)
+            self.assertEqual(len(replay), 1)
+            self.assertEqual(replay[0]["eventId"], event["eventId"])
+            self.assertEqual(replay[0]["sequence"], event["sequence"])
+            self.assertEqual(replay[0]["createdAtMs"], 2)
+            payload = replay[0]["payload"]
+            self.assertIsInstance(payload, Mapping)
+            data = payload["data"]  # type: ignore[index]
+            self.assertEqual(data["summary"], "当前工作有新进展")
+            self.assertEqual(
+                data["publicSummaryVersion"],
+                "room-work-summary.v1",
+            )
+            self.assertEqual(data["publicSummaryKind"], "general")
+            self.assertNotIn("items", data)
+            public_json = repr(payload)
+            for private_fragment in (
+                "Planning room_state retrieval",
+                "Confirming room_commit",
+                "Dispatch",
+                "Receipt",
+                "Planning room_state and room_commit",
+            ):
+                self.assertNotIn(private_fragment, public_json)
+
+            malformed, malformed_created = room_store.append_projected_event(
+                projection_key="room-runtime:event:malformed-reasoning",
+                room_id=str(room["id"]),
+                event_type="participant_activity",
+                payload={
+                    "sourceEventId": "event:malformed-reasoning",
+                    "sourceEventType": "reasoning_summary",
+                    "summary": "Dispatch Receipt",
+                    "data": "Planning room_state and room_commit",
+                },
+                turn_id="root:1",
+                participant_id=str(owner["id"]),
+                source_session_id=str(owner["sessionId"]),
+                topic_id=str(room["activeTopicId"]),
+                created_at_ms=3,
+            )
+            self.assertTrue(malformed_created)
+            self.assertIsNotNone(malformed)
+            assert malformed is not None
+            self.assertEqual(
+                malformed["payload"],
+                {
+                    "sourceEventId": "event:malformed-reasoning",
+                    "sourceEventType": "reasoning_summary",
+                    "data": {
+                        "summary": "当前工作有新进展",
+                        "publicSummaryVersion": "room-work-summary.v1",
+                        "publicSummaryKind": "general",
+                    },
+                },
+            )
+            malformed_public_json = repr(malformed["payload"])
+            self.assertNotIn("Dispatch Receipt", malformed_public_json)
+            self.assertNotIn("room_state", malformed_public_json)
+            self.assertNotIn("room_commit", malformed_public_json)
 
 
 if __name__ == "__main__":

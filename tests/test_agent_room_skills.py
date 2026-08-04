@@ -207,6 +207,9 @@ class RoomNativeSkillTests(unittest.TestCase):
             r"unique, genuinely different options",
         )
         self.assertIn("at most one `recommended`", skill)
+        self.assertIn("one-paragraph `description`", skill)
+        self.assertIn("instead of repeating the label", skill)
+        self.assertIn("natural continuation of the user's", skill)
         self.assertIn("one user-owned decision at a time", skill)
         self.assertRegex(skill, r"The\s+interface supplies `Other`")
         self.assertNotIn('`questionKind="unbounded"`', skill)

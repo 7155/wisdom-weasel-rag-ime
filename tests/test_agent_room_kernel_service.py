@@ -8353,6 +8353,11 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertIsNotNone(pending_wait)
         assert pending_wait is not None
         question_post_id = str(pending_wait["questionPostId"])
+        self.assertEqual(
+            question_post_id,
+            "room-post:"
+            + hashlib.sha256(b"commit:test-user-wait").hexdigest()[:32],
+        )
         with self.assertRaisesRegex(
             RoomKernelFenceError,
             "does not match an active question and Root",
@@ -8610,8 +8615,26 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "question": "最终结果需要包含实现和验证记录吗？",
                 "questionKind": "bounded",
                 "questionOptions": [
-                    {"label": "需要", "value": "yes"},
-                    {"label": "不需要", "value": "no"},
+                    {
+                        "label": "需要",
+                        "value": "yes",
+                        "description": "最终结果同时包含实现内容与对应验证记录。",
+                    },
+                    {
+                        "label": "不需要",
+                        "value": "no",
+                        "description": "最终结果只保留实现结论，不展开验证记录。",
+                    },
+                ],
+                "blocks": [
+                    {
+                        "id": "alignment-context",
+                        "type": "card",
+                        "data": {
+                            "title": "当前要确认的范围",
+                            "body": "这个选择会决定最终汇报保留哪些内容。",
+                        },
+                    }
                 ],
             },
             tool_call_id="call:typed-start:wait",
@@ -8640,10 +8663,30 @@ class RoomKernelServiceTests(unittest.TestCase):
         pending = self.service.room_kernel.pending_user_wait(self.room_id)
         self.assertIsNotNone(pending)
         assert pending is not None
+        public_question_events = [
+            event
+            for event in self.service.rooms.list_events(
+                self.room_id,
+                limit=500,
+            )
+            if event["eventType"] == "room_post"
+            and isinstance(event["payload"].get("post"), Mapping)
+            and event["payload"]["post"].get("kind") == "wait"
+        ]
+        self.assertEqual(len(public_question_events), 1)
+        public_question_post_id = str(
+            public_question_events[0]["payload"]["post"]["postId"]
+        )
+        self.assertEqual(
+            pending["questionPostId"],
+            public_question_post_id,
+        )
         answer_payload = {
             "message": "yes",
             "clientMessageId": "client:typed-start-answer",
-            "answerToPostId": pending["questionPostId"],
+            # Reproduce the native client: it answers the Post identity that
+            # was actually rendered on the public timeline.
+            "answerToPostId": public_question_post_id,
             "answerToRootId": pending["rootId"],
             "answerKind": "option",
         }

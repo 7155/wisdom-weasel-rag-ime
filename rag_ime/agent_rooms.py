@@ -62,6 +62,18 @@ ROOM_COLLABORATION_ROLES = frozenset(
 # it disabled; this keeps a direct API call from doing what the UI refuses.
 ASSIGNABLE_COLLABORATION_ROLES = ROOM_COLLABORATION_ROLES - {"specialist"}
 
+_ROOM_WORK_SUMMARY_VERSION = "room-work-summary.v1"
+_ROOM_WORK_SUMMARY_COPY = {
+    "alignment": "需求与交付边界梳理有新进展",
+    "implementation": "当前任务推进有新进展",
+    "review": "结果与验收条件复核有新进展",
+    "closure": "本轮结果整理有新进展",
+    "general": "当前工作有新进展",
+}
+_ROOM_PUBLIC_ACTIVITY_STATES = frozenset(
+    {"queued", "running", "completed", "failed", "aborted"}
+)
+
 
 class AgentRoomNotFound(KeyError):
     pass
@@ -1509,7 +1521,13 @@ class AgentRoomStore:
         if event_type not in ROOM_EVENT_TYPES:
             raise ValueError(f"unsupported agent room event type: {event_type}")
         timestamp = _timestamp(created_at_ms)
-        safe_payload = dict(payload)
+        normalized_payload = _upcast_public_room_event_payload(
+            event_type,
+            dict(payload),
+        )
+        if not isinstance(normalized_payload, Mapping):
+            raise ValueError("Room event payload must be an object")
+        safe_payload = dict(normalized_payload)
         payload_json = json.dumps(safe_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         projection_hash = room_projection_hash(
             room_id=room_id,
@@ -2110,22 +2128,83 @@ def _workspace_roots(values: Sequence[str]) -> list[str]:
 
 
 def _room_event_payload(row: sqlite3.Row) -> dict[str, object]:
+    event_type = str(row["event_type"])
+    persisted_payload = json.loads(str(row["payload_json"] or "{}"))
+    public_payload = _upcast_public_room_event_payload(
+        event_type,
+        persisted_payload,
+    )
     payload: dict[str, object] = {
         "schemaVersion": "rag-ime.agent-room-event.v1",
         "eventId": str(row["event_id"]),
         "roomId": str(row["room_id"]),
         "sequence": int(row["sequence"]),
         "turnId": str(row["turn_id"] or ""),
-        "eventType": str(row["event_type"]),
+        "eventType": event_type,
         "participantId": str(row["participant_id"]) if row["participant_id"] is not None else None,
         "sourceSessionId": str(row["source_session_id"] or ""),
         "topicId": str(row["topic_id"] or ""),
         "createdAtMs": int(row["created_at_ms"]),
-        "payload": json.loads(str(row["payload_json"] or "{}")),
+        "payload": public_payload,
         "resumeToken": str(row["event_id"]),
     }
     validate_contract(payload, "agent-room-event.v1.json")
     return payload
+
+
+def _upcast_public_room_event_payload(
+    event_type: str,
+    payload: object,
+) -> object:
+    """Fail closed when replaying historical public reasoning summaries.
+
+    Older builds persisted Provider-authored headings and step lists in the
+    Room timeline.  Keep their immutable event identity and chronology, but
+    expose only the same stage-neutral public progress fact used by the current
+    projection boundary.  New payloads are canonicalized too, so a forged
+    version marker cannot smuggle arbitrary summary copy back into replay.
+    """
+
+    if event_type != "participant_activity" or not isinstance(
+        payload,
+        Mapping,
+    ):
+        return payload
+    if str(payload.get("sourceEventType") or "") != "reasoning_summary":
+        return payload
+    raw_data = payload.get("data")
+    if not isinstance(raw_data, Mapping):
+        raw_data = {}
+    summary_kind = str(raw_data.get("publicSummaryKind") or "").strip()
+    if summary_kind not in _ROOM_WORK_SUMMARY_COPY:
+        summary_kind = "general"
+    safe_data: dict[str, object] = {}
+    for field in ("rootId", "dispatchId"):
+        value = raw_data.get(field)
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            if value not in (None, ""):
+                safe_data[field] = value
+    for field in ("status", "state"):
+        value = str(raw_data.get(field) or "").strip()
+        if value in _ROOM_PUBLIC_ACTIVITY_STATES:
+            safe_data[field] = value
+    if raw_data.get("source") == "provider_reasoning_summary":
+        safe_data["source"] = "provider_reasoning_summary"
+    safe_data.update(
+        {
+            "summary": _ROOM_WORK_SUMMARY_COPY[summary_kind],
+            "publicSummaryVersion": _ROOM_WORK_SUMMARY_VERSION,
+            "publicSummaryKind": summary_kind,
+        }
+    )
+    safe_payload: dict[str, object] = {
+        "sourceEventType": "reasoning_summary",
+        "data": safe_data,
+    }
+    source_event_id = payload.get("sourceEventId")
+    if isinstance(source_event_id, str) and source_event_id.strip():
+        safe_payload["sourceEventId"] = source_event_id
+    return safe_payload
 
 
 def _room_event_sse(event: Mapping[str, object]) -> bytes:

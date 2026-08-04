@@ -90,9 +90,11 @@ const BACKGROUND_JOB_SORT_ORDER: Readonly<
 export function AgentBackgroundJobsView({
   sessionId,
   jobs: snapshotJobs,
+  onPresentationStateChange,
 }: {
   sessionId: string;
   jobs: AgentBackgroundJobV1[];
+  onPresentationStateChange?: (state: AgentBackgroundJobsPresentationState) => void;
 }) {
   const transport = useControlTransport();
   const listing = useQuery({
@@ -130,6 +132,16 @@ export function AgentBackgroundJobsView({
   const jobs = listing.data
     ? mergeBackgroundJobItems(listing.data.items, snapshotJobs, sessionId)
     : snapshotJobs;
+  const presentationState: AgentBackgroundJobsPresentationState = listing.isPending && jobs.length === 0
+    ? 'loading'
+    : listing.error && jobs.length === 0
+      ? 'error'
+      : jobs.length > 0
+        ? 'content'
+        : 'empty';
+  useEffect(() => {
+    onPresentationStateChange?.(presentationState);
+  }, [onPresentationStateChange, presentationState]);
 
   if (listing.isPending && jobs.length === 0) {
     return (
@@ -200,6 +212,8 @@ export function AgentBackgroundJobsView({
     </div>
   );
 }
+
+export type AgentBackgroundJobsPresentationState = 'loading' | 'empty' | 'content' | 'error';
 
 function BackgroundJobRow({ job, sessionId }: { job: AgentBackgroundJobV1; sessionId: string }) {
   const transport = useControlTransport();

@@ -69,8 +69,12 @@ partner 缺少决定时应等待正在工作的 Facilitator，或把结构化 bl
 交回 Facilitator；不得直接向用户发布问题。Facilitator 恢复后再判断是否确实需要询问用户。
 需求对齐一次只问一个会改变实现的决定，按依赖顺序先问影响最大的一项，不得把目标入口、关键交互和验收边界
 合并成一问；必须声明 questionKind=bounded 并提供 2–5 个诚实、互斥的 questionOptions
-（至多一个推荐）。前端会自动提供“其他”文本入口，不要手写“其他”选项，也不要在需求对齐时
-使用 unbounded。nested child 不得调用任何 Room Tool，只把 blocker 返回 parent。只有
+（至多一个推荐）。每个选项用短 label 表明选择，再用一段自然的 description 说明选中后
+范围、投入或取舍会怎样；description 不得只重复 label。公开说明和问题要像伙伴直接交谈，
+先接住用户的目标，再简短说明为什么只需要确认这一件事；不要用“我已读取当前工作卡片”、
+“仅凭当前信息无法确定”或罗列“目标、交付物、验收边界”作为开场。前端会自动提供“其他”
+文本入口，不要手写“其他”选项，也不要在需求对齐时使用 unbounded。nested child 不得调用
+任何 Room Tool，只把 blocker 返回 parent。只有
 standalone parent Session 才可按 work-policy 一次 native Ask 1-4 个材料问题。
 
 workspace_lsp：只读角色仅用 status/symbols/hover/definition/references/diagnostics；可写 worker

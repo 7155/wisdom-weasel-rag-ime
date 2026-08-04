@@ -9,7 +9,6 @@ from rag_ime.agent_room_context import RoomContextLedgerStore
 from rag_ime.agent_room_kernel import (
     RoomKernelFenceError,
     RoomKernelStore,
-    _stable_id,
 )
 from rag_ime.agent_room_kernel_contracts import ROOM_POST_SCHEMA_VERSION
 from rag_ime.agent_room_kernel_projection import RoomKernelProjection
@@ -114,7 +113,9 @@ class RoomKernelInvariantRepairTests(unittest.TestCase):
             now_ms=3,
         )
         commit_id = "commit:user-wait"
-        question_post_id = _stable_id("room-post", commit_id)
+        # The public question identity is owned by the durable Commit/Post,
+        # not by the Kernel module's generic stable-ID helper.
+        question_post_id = "room-post:durable-user-wait-question"
         proposal = {
             **post_proposal(
                 commit_id,
@@ -124,6 +125,14 @@ class RoomKernelInvariantRepairTests(unittest.TestCase):
             ),
             "postId": question_post_id,
             "idempotencyKey": f"post:{question_post_id}",
+            "kind": "wait",
+            "question": {
+                "prompt": "Continue?",
+                "options": [
+                    {"label": "Continue", "value": "yes"},
+                    {"label": "Stop", "value": "no"},
+                ],
+            },
         }
         waiting = {
             **commit(commit_id, "dispatch:user-wait-parent"),

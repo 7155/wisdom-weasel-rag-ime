@@ -2338,6 +2338,9 @@ class RoomKernelStore:
                 "rootId": str(row["root_id"]),
                 "dispatchId": str(row["dispatch_id"]),
                 "taskId": str(dispatch_payload.get("taskId") or ""),
+                "intentKind": str(
+                    dispatch_payload.get("intentKind") or ""
+                ),
                 "generation": int(row["generation"]),
                 "state": str(row["state"]),
                 "runtimeTurnId": str(
@@ -11762,9 +11765,8 @@ class RoomKernelStore:
                 if payload.get("waitingFor") != "user":
                     continue
                 candidate_root_id = str(row["root_id"])
-                candidate_question_post_id = _stable_id(
-                    "room-post",
-                    str(row["commit_id"]),
+                candidate_question_post_id = (
+                    _room_continuation_question_post_id(conn, row)
                 )
                 if expected_root_id and (
                     candidate_root_id != expected_root_id
@@ -11829,9 +11831,8 @@ class RoomKernelStore:
                 str(continuation["parent_dispatch_id"]),
             )
             root = self._root_row(conn, str(continuation["root_id"]))
-            expected_question_post_id = _stable_id(
-                "room-post",
-                str(continuation["commit_id"]),
+            expected_question_post_id = (
+                _room_continuation_question_post_id(conn, continuation)
             )
             if (
                 _required(question_post_id, "question_post_id")
@@ -12154,9 +12155,8 @@ class RoomKernelStore:
             conn,
             continuation,
         )
-        expected_question_post_id = _stable_id(
-            "room-post",
-            str(continuation["commit_id"]),
+        expected_question_post_id = (
+            _room_continuation_question_post_id(conn, continuation)
         )
         if (
             str(continuation["state"]) != "applied"
@@ -14557,6 +14557,147 @@ def _room_continuation_payload(
             "Room continuation decision does not match its Commit"
         )
     return result
+
+
+def _room_continuation_question_post_id(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+) -> str:
+    """Return the durable public question identity for one user wait.
+
+    The settlement and Kernel modules intentionally have different generic
+    stable-ID widths.  A question answer must therefore follow the immutable
+    RoomCommit/Post identity that was actually persisted and shown to the
+    user, never reconstruct that identity with a module-local hash helper.
+    """
+
+    commit_id = str(row["commit_id"] or "").strip()
+    if not commit_id:
+        raise RoomKernelFenceError(
+            "Room continuation Commit identity is missing"
+        )
+    commit_row = conn.execute(
+        "SELECT payload_json FROM room_kernel_commits WHERE commit_id=?",
+        (commit_id,),
+    ).fetchone()
+    if commit_row is None:
+        raise RoomKernelFenceError(
+            "Room continuation has no authoritative Commit"
+        )
+    try:
+        raw_commit = json.loads(str(commit_row["payload_json"]))
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RoomKernelFenceError("Room Commit is corrupt") from exc
+    if not isinstance(raw_commit, Mapping):
+        raise RoomKernelFenceError("Room Commit is corrupt")
+    commit = _room_commit_payload(conn, commit_row["payload_json"])
+    proposal = commit.get("postProposal")
+    publication_source = (
+        proposal.get("publicationSource")
+        if isinstance(proposal, Mapping)
+        else None
+    )
+    question = (
+        proposal.get("question")
+        if isinstance(proposal, Mapping)
+        else None
+    )
+    if commit.get("action") == "wait" and proposal is None:
+        # Builds predating durable question Posts exposed the Kernel's own
+        # deterministic 32-character identity directly from a materialized
+        # wait continuation.  Those immutable rows cannot be rewritten, and
+        # changing the identity strands a Room that is already waiting for an
+        # answer.  Recover only that exact historical shape; current `post`
+        # commits must pass the strict durable-Post fence below.
+        raw_continuation = raw_commit.get("continuation")
+        canonical_continuation = commit.get("continuation")
+        if (
+            raw_commit.get("action") == "wait"
+            and raw_commit.get("postProposal") is None
+            and isinstance(raw_continuation, Mapping)
+            and isinstance(canonical_continuation, Mapping)
+            and raw_continuation.get("decision") == "wait"
+            and raw_continuation.get("waitingFor") == "user"
+            and canonical_continuation.get("decision") == "wait"
+            and canonical_continuation.get("waitingFor") == "user"
+            and bool(str(canonical_continuation.get("question") or "").strip())
+        ):
+            return _stable_id("room-post", commit_id)
+        raise RoomKernelFenceError(
+            "legacy user wait has no authoritative question identity"
+        )
+    if (
+        commit.get("action") != "post"
+        or not isinstance(proposal, Mapping)
+        or str(proposal.get("rootId") or "") != str(row["root_id"])
+        or str(proposal.get("taskId") or "") != str(row["task_id"])
+        or proposal.get("kind") != "wait"
+        or not isinstance(question, Mapping)
+        or not isinstance(publication_source, Mapping)
+        or publication_source.get("kind") != "room_commit"
+        or str(publication_source.get("ref") or "") != commit_id
+    ):
+        raise RoomKernelFenceError(
+            "user wait has no authoritative question Post"
+        )
+    post_id = str(proposal.get("postId") or "").strip()
+    if not post_id:
+        raise RoomKernelFenceError(
+            "user wait question Post identity is missing"
+        )
+    stored_row = conn.execute(
+        "SELECT payload_json FROM room_kernel_posts WHERE post_id=?",
+        (post_id,),
+    ).fetchone()
+    if stored_row is None:
+        raise RoomKernelFenceError(
+            "user wait question Post is not durable"
+        )
+    try:
+        stored_post = json.loads(str(stored_row["payload_json"]))
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RoomKernelFenceError(
+            "user wait question Post is corrupt"
+        ) from exc
+    if not isinstance(stored_post, Mapping):
+        raise RoomKernelFenceError(
+            "user wait question Post is corrupt"
+        )
+    try:
+        validate_kernel_contract("roomPost", stored_post)
+    except ValueError as exc:
+        raise RoomKernelFenceError(
+            "user wait question Post is invalid"
+        ) from exc
+    # Authorized rich blocks are normalized between the immutable Tool
+    # proposal and the durable Post.  Bind only the immutable question and
+    # publication semantics here; whole-object equality would reject that
+    # legitimate normalization.
+    identity_fields = (
+        "schemaVersion",
+        "postId",
+        "roomId",
+        "rootId",
+        "generation",
+        "taskId",
+        "dispatchId",
+        "authorActorRef",
+        "kind",
+        "visibility",
+        "content",
+        "idempotencyKey",
+        "publicationSource",
+        "createdAtMs",
+        "question",
+    )
+    if any(
+        stored_post.get(field) != proposal.get(field)
+        for field in identity_fields
+    ):
+        raise RoomKernelFenceError(
+            "user wait question Post does not match its Commit"
+        )
+    return post_id
 
 
 def _participant_wait_runtime_authorized(

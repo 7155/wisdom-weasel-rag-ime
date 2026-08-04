@@ -5,12 +5,12 @@ export const ROOM_PUBLIC_PROGRESS_KIND_LABELS: Record<
   RoomParticipantPublicProgressProjection['kind'],
   string
 > = {
-  reasoning: '伙伴自述 · 工作摘要',
-  progress: '伙伴自述 · 工作进度',
+  reasoning: '实时进展 · 工作摘要',
+  progress: '实时进展 · 工作进度',
   tool: '运行记录 · 工具进度',
   dispatch: '运行记录 · 协作安排',
   status: '运行记录 · 伙伴状态',
-  post: '伙伴自述 · 公开回复',
+  post: '伙伴回复 · 公开消息',
   activity: '运行记录 · 协作动态',
 };
 
@@ -18,7 +18,15 @@ export function roomParticipantPublicProgressSummary(
   update: RoomParticipantPublicProgressProjection,
 ): string {
   const summary = update.summary.trim();
-  if (update.kind !== 'tool') return summary || '公开进度已经更新';
+  if (update.kind !== 'tool') {
+    const updateCount = Number(update.data?.updateCount);
+    const suffix = update.kind === 'reasoning'
+      && Number.isInteger(updateCount)
+      && updateCount > 1
+      ? ` · 已更新 ${updateCount} 次`
+      : '';
+    return `${summary || '公开进度已经更新'}${suffix}`;
+  }
   const rawToolName = text(update.data?.toolName);
   const toolName = publicToolName(rawToolName, text(update.data?.displayName));
   if (

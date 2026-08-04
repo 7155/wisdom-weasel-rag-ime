@@ -1,5 +1,4 @@
 import {
-  ArrowDown,
   CheckCircle2,
   Braces,
   CircleAlert,
@@ -43,7 +42,6 @@ import {
 import {
   toggleDisclosureOnKeyPreservingAnchor,
   toggleDisclosurePreservingAnchor,
-  useAutoFollowScroll,
 } from '@/features/agent/timeline/disclosure-anchor';
 import { publicToolResultView } from '@/features/agent/timeline/public-tool-result';
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
@@ -146,7 +144,127 @@ function roomVisibleConversationMessages(
   ));
 }
 
-const roomActiveEventFreshnessMs = 15_000;
+type RoomTurnChronologicalItem =
+  | { kind: 'message'; key: string; message: RoomMessageProjection }
+  | {
+      kind: 'lane';
+      key: string;
+      lane: RoomExecutionLane;
+      activities: RoomActivityProjection[];
+      continuation: boolean;
+      includePersistentDetails: boolean;
+    };
+
+type RoomTurnChronologicalAtom =
+  | { kind: 'message'; message: RoomMessageProjection; sourceIndex: number }
+  | {
+      kind: 'activity';
+      activity: RoomActivityProjection;
+      lane: RoomExecutionLane;
+      sourceIndex: number;
+    };
+
+function roomTurnChronologicalStream(
+  lanes: RoomExecutionLane[],
+  messages: RoomMessageProjection[],
+): RoomTurnChronologicalItem[] {
+  if (!lanes.length) {
+    return messages.map((message) => ({
+      kind: 'message',
+      key: `message:${message.id}`,
+      message,
+    }));
+  }
+  const atoms: RoomTurnChronologicalAtom[] = messages.map((message, sourceIndex) => ({
+    kind: 'message',
+    message,
+    sourceIndex,
+  }));
+  let activityIndex = 0;
+  for (const lane of lanes) {
+    for (const activity of lane.activities) {
+      atoms.push({ kind: 'activity', activity, lane, sourceIndex: activityIndex });
+      activityIndex += 1;
+    }
+  }
+  atoms.sort(compareRoomTurnChronologicalAtoms);
+
+  const result: RoomTurnChronologicalItem[] = [];
+  const laneSegmentCounts = new Map<string, number>();
+  for (const atom of atoms) {
+    if (atom.kind === 'message') {
+      result.push({
+        kind: 'message',
+        key: `message:${atom.message.id}`,
+        message: atom.message,
+      });
+      continue;
+    }
+    const previous = result.at(-1);
+    if (previous?.kind === 'lane' && previous.lane.key === atom.lane.key) {
+      previous.activities.push(atom.activity);
+      continue;
+    }
+    const segment = laneSegmentCounts.get(atom.lane.key) ?? 0;
+    laneSegmentCounts.set(atom.lane.key, segment + 1);
+    result.push({
+      kind: 'lane',
+      key: `${atom.lane.key}:segment:${segment}:${atom.activity.id}`,
+      lane: atom.lane,
+      activities: [atom.activity],
+      continuation: segment > 0,
+      includePersistentDetails: false,
+    });
+  }
+  for (const lane of lanes) {
+    if (lane.activities.length || result.some((item) => (
+      item.kind === 'lane' && item.lane.key === lane.key
+    ))) continue;
+    result.push({
+      kind: 'lane',
+      key: `${lane.key}:segment:empty`,
+      lane,
+      activities: [],
+      continuation: false,
+      includePersistentDetails: false,
+    });
+  }
+  const lastLaneItemByKey = new Map<string, Extract<RoomTurnChronologicalItem, { kind: 'lane' }>>();
+  for (const item of result) {
+    if (item.kind === 'lane') lastLaneItemByKey.set(item.lane.key, item);
+  }
+  for (const item of lastLaneItemByKey.values()) item.includePersistentDetails = true;
+  return result;
+}
+
+function compareRoomTurnChronologicalAtoms(
+  left: RoomTurnChronologicalAtom,
+  right: RoomTurnChronologicalAtom,
+): number {
+  const leftSequence = left.kind === 'message'
+    ? left.message.chronology?.roomEventSequence ?? left.message.sequence
+    : left.activity.sequence;
+  const rightSequence = right.kind === 'message'
+    ? right.message.chronology?.roomEventSequence ?? right.message.sequence
+    : right.activity.sequence;
+  if (leftSequence !== undefined && rightSequence !== undefined && leftSequence !== rightSequence) {
+    return leftSequence - rightSequence;
+  }
+  const leftAtMs = left.kind === 'message' ? left.message.createdAtMs : left.activity.createdAtMs;
+  const rightAtMs = right.kind === 'message' ? right.message.createdAtMs : right.activity.createdAtMs;
+  if (leftAtMs !== rightAtMs) return leftAtMs - rightAtMs;
+  if (leftSequence !== undefined || rightSequence !== undefined) {
+    if (leftSequence === undefined) return 1;
+    if (rightSequence === undefined) return -1;
+  }
+  if (left.kind !== right.kind) return left.kind === 'message' ? -1 : 1;
+  if (left.sourceIndex !== right.sourceIndex) return left.sourceIndex - right.sourceIndex;
+  const leftId = left.kind === 'message' ? left.message.id : left.activity.id;
+  const rightId = right.kind === 'message' ? right.message.id : right.activity.id;
+  return leftId.localeCompare(rightId);
+}
+
+const roomActiveEventFreshnessMs = 60_000;
 
 function roomPostReportLabel(message: RoomMessageProjection): string {
   if (message.projectionKind === 'execution') return '';
@@ -315,51 +433,65 @@ export function RoomTurn({
         starting={startingRootIds.has(rootId)}
       />
     : null;
+  const renderConversationMessage = (message: RoomMessageProjection) => {
+    if (message.role === 'user') {
+      return <RoomUserPost key={message.id} message={message} roomId={projection.roomId} />;
+    }
+    const lane = lanes.find((candidate) => candidate.messageIds.includes(message.id));
+    const participant = room?.participants.find((item) => item.id === message.participantId);
+    const persona = personas.find((item) => (
+      item.roleId === participant?.roleId && item.version === participant.roleVersion
+    ));
+    const taskId = lane?.dispatchId
+      ? kernelDispatchesById?.[lane.dispatchId]?.taskId ?? ''
+      : '';
+    const freshness = lane
+      ? roomLaneFreshness(
+          lane,
+          projection,
+          turn,
+          nowMs,
+          kernelSync,
+          roomSyncState,
+          taskId ? kernelTaskUpdatedAtMsById?.[taskId] : undefined,
+        )
+      : roomFallbackFreshness(message.createdAtMs, nowMs, kernelSync, roomSyncState);
+    return <Fragment key={message.id}>
+      <RoomParticipantPost
+        activeWait={
+          message.postKind === 'wait'
+          && !rootTerminal
+          && (!message.question || pendingQuestion?.postId === message.id)
+        }
+        evidence={roomResponseEvidenceForPost(message, responseUsageActivities)}
+        message={message}
+        motionFresh={freshness.state === 'fresh'}
+        onAnswerQuestion={onAnswerQuestion}
+        participant={participant}
+        participants={room?.participants ?? []}
+        pendingQuestion={pendingQuestion?.postId === message.id ? pendingQuestion : undefined}
+        persona={persona}
+        showEvidence={Boolean(roomTerminalPostLabels[message.postKind ?? ''])}
+        turnStartedAtMs={turn.createdAtMs}
+      />
+      {message.id === finalAlignmentId ? startActionGate : null}
+    </Fragment>;
+  };
+  const chronologicalStream = roomTurnChronologicalStream(
+    visibleLanes,
+    conversationMessages,
+  );
+  const firstLaneIndex = chronologicalStream.findIndex((item) => item.kind === 'lane');
+  const streamBeforeWork = firstLaneIndex < 0
+    ? chronologicalStream
+    : chronologicalStream.slice(0, firstLaneIndex);
+  const streamAfterWork = firstLaneIndex < 0
+    ? []
+    : chronologicalStream.slice(firstLaneIndex);
   return <article className="room-turn" data-turn-status={turn.status}>
-    {conversationMessages.map((message) => {
-      if (message.role === 'user') {
-        return <RoomUserPost key={message.id} message={message} roomId={projection.roomId} />;
-      }
-      const lane = lanes.find((candidate) => candidate.messageIds.includes(message.id));
-      const participant = room?.participants.find((item) => item.id === message.participantId);
-      const persona = personas.find((item) => (
-        item.roleId === participant?.roleId && item.version === participant.roleVersion
-      ));
-      const taskId = lane?.dispatchId
-        ? kernelDispatchesById?.[lane.dispatchId]?.taskId ?? ''
-        : '';
-      const freshness = lane
-        ? roomLaneFreshness(
-            lane,
-            projection,
-            turn,
-            nowMs,
-            kernelSync,
-            roomSyncState,
-            taskId ? kernelTaskUpdatedAtMsById?.[taskId] : undefined,
-          )
-        : roomFallbackFreshness(message.createdAtMs, nowMs, kernelSync, roomSyncState);
-      return <Fragment key={message.id}>
-        <RoomParticipantPost
-          activeWait={
-            message.postKind === 'wait'
-            && !rootTerminal
-            && (!message.question || pendingQuestion?.postId === message.id)
-          }
-          evidence={roomResponseEvidenceForPost(message, responseUsageActivities)}
-          message={message}
-          motionFresh={freshness.state === 'fresh'}
-          onAnswerQuestion={onAnswerQuestion}
-          participant={participant}
-          participants={room?.participants ?? []}
-          pendingQuestion={pendingQuestion?.postId === message.id ? pendingQuestion : undefined}
-          persona={persona}
-          showEvidence={Boolean(roomTerminalPostLabels[message.postKind ?? ''])}
-          turnStartedAtMs={turn.createdAtMs}
-        />
-        {message.id === finalAlignmentId ? startActionGate : null}
-      </Fragment>;
-    })}
+    {streamBeforeWork.map((item) => (
+      item.kind === 'message' ? renderConversationMessage(item.message) : null
+    ))}
     {rootBlocked ? <div className="room-turn__root-control" data-state="blocked" role="alert">
       <span><CircleAlert size={14} /><small>这轮协作因伙伴运行失败而暂停；继续会只重做失败的部分，并保留已完成的工作。</small></span>
       <div className="room-turn__root-actions">
@@ -389,7 +521,9 @@ export function RoomTurn({
         onClick={() => onAbortTurn(rootId)}
       >{rootStopping ? '正在停止' : '停止本轮任务'}</Button>
     </div> : null}
-    {visibleLanes.map((lane) => {
+    {streamAfterWork.map((streamItem) => {
+      if (streamItem.kind === 'message') return renderConversationMessage(streamItem.message);
+      const { activities: segmentActivities, includePersistentDetails, lane } = streamItem;
       const participant = room?.participants.find((item) => item.id === lane.participantId);
       const persona = personas.find((item) => (
         item.roleId === participant?.roleId && item.version === participant.roleVersion
@@ -466,7 +600,7 @@ export function RoomTurn({
       const statusLabel = laneActive && !laneAction && laneFreshness.state === 'disconnected'
         ? '状态可能过期'
         : laneActive && !laneAction && laneFreshness.state === 'stale'
-          ? '等待新进展'
+          ? authoritativeStatusLabel
           : authoritativeStatusLabel;
       const laneState = laneFailed
         ? 'failed'
@@ -484,7 +618,7 @@ export function RoomTurn({
                     ? 'completed'
                     : 'waiting';
       const laneWork = roomLaneWorkSummary(
-        lane.activities,
+        segmentActivities,
         participant?.displayName,
         laneState,
       );
@@ -492,10 +626,11 @@ export function RoomTurn({
       const laneSubagents = laneTaskId ? subagentsByTaskId[laneTaskId] ?? [] : [];
       return <section
         className="room-agent-lane"
+        data-continuation={streamItem.continuation || undefined}
         data-motion={laneActive && !laneAction ? laneFreshness.state : 'settled'}
         data-outcome={laneOutcome || undefined}
         data-state={laneState}
-        key={lane.key}
+        key={streamItem.key}
       >
         <header>
           {participant
@@ -525,23 +660,25 @@ export function RoomTurn({
             endedAtMs={laneActive && !laneAction ? undefined : turn.updatedAtMs}
           />
         </header>
-        {lane.activities.length || (laneTask && roomTaskWorkspaceLifecycleView(laneTask)) ? <ActivityLog
-          activities={lane.activities}
+        {segmentActivities.length || (
+          includePersistentDetails && laneTask && roomTaskWorkspaceLifecycleView(laneTask)
+        ) ? <ActivityLog
+          activities={segmentActivities}
           active={laneActive && !laneAction}
           motionActive={laneMotionActive}
           updatesFresh={laneFreshness.state === 'fresh'}
           participantName={participant?.displayName}
           attention={laneState === 'failed' || laneState === 'aborted'}
-          workspaceTask={laneTask}
+          workspaceTask={includePersistentDetails ? laneTask : undefined}
           workspaceUpdatedAtMs={laneTaskId
             ? kernelTaskUpdatedAtMsById?.[laneTaskId]
             : undefined}
         /> : null}
-        {laneSubagents.length ? <RoomTaskSubagentRuns
+        {includePersistentDetails && laneSubagents.length ? <RoomTaskSubagentRuns
           heading={laneTask?.objective || `${participant?.displayName ?? '这位伙伴'}的临时协作者`}
           runs={laneSubagents}
         /> : null}
-        {!lane.activities.length && laneActive && !messages.length ? <div className="room-agent-lane__waiting">
+        {includePersistentDetails && !lane.activities.length && laneActive && !messages.length ? <div className="room-agent-lane__waiting">
           {laneMotionActive ? <LoaderCircle size={14} /> : <Clock3 size={14} />}
           <span>{laneMotionActive
             ? participant
@@ -550,7 +687,7 @@ export function RoomTurn({
             : laneFreshness.detail}
           </span>
         </div> : null}
-        {!terminalIssue && (laneFailed || laneAborted) && !visibleMessages.length ? (
+        {includePersistentDetails && !terminalIssue && (laneFailed || laneAborted) && !visibleMessages.length ? (
           <p className="room-agent-lane__failure">
             {laneFailed
               ? publicFailure
@@ -747,11 +884,9 @@ function ActivityLog({
     ? roomTaskWorkspaceLifecycleView(workspaceTask)
     : undefined;
   const effectiveAttention = attention || workspaceView?.attention === true;
-  const [open, setOpen] = useState(active || effectiveAttention);
   const [arrivingActivityIds, setArrivingActivityIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const previousActive = useRef(active);
   const previousActivitySignatures = useRef<Map<string, string> | null>(null);
   const publicActivities = activities.filter((activity) => {
     if (textValue(activity.payload.sourceEventType) !== 'reasoning_summary') return true;
@@ -764,10 +899,6 @@ function ActivityLog({
     ? `workspace:${workspaceTask.taskId}:${workspaceTask.revision}:${workspaceTask.workspaceLifecycleState}:${workspaceTask.workspaceAttentionRequired ?? ''}`
     : '';
   const contentKey = `${activityContentKey}\u001f${workspaceContentKey}`;
-  const { following, onScroll, scrollRef, scrollToLatest } = useAutoFollowScroll<HTMLDivElement>(
-    contentKey,
-    open,
-  );
   useEffect(() => {
     const nextSignatures = new Map(publicActivities.map((activity) => [
       activity.id,
@@ -792,49 +923,40 @@ function ActivityLog({
     const timer = window.setTimeout(() => setArrivingActivityIds(new Set()), 280);
     return () => window.clearTimeout(timer);
   }, [contentKey]);
-  useEffect(() => {
-    const wasActive = previousActive.current;
-    previousActive.current = active;
-    if (active && !wasActive) {
-      setOpen(true);
-    } else if (effectiveAttention) {
-      setOpen(true);
-    }
-  }, [active, effectiveAttention]);
   if (!publicActivities.length && !workspaceView) return null;
   const digest = publicActivities.length
     ? roomActivityDigest(publicActivities)
     : {
         title: workspaceView?.title ?? '工作区进展',
         detail: '1 条权威任务更新',
-      };
-  return <details
+  };
+  const changedFiles = roomChangedFileSummary(publicActivities);
+  return <section
+    aria-label={`实时进展与运行记录：${participantName ?? '协作成员'}`}
     className="room-agent-lane__activity"
     data-motion={motionActive ? 'fresh' : 'paused'}
     data-state={effectiveAttention ? 'attention' : active ? 'running' : 'settled'}
-    open={open}
   >
-    <summary
-      aria-expanded={open}
-      onClick={(event) => toggleDisclosurePreservingAnchor(event, setOpen)}
-      onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setOpen)}
-    >
+    <header className="room-agent-lane__activity-heading">
       <Wrench size={14} />
       <span>
         <strong>{digest.title}</strong>
         <small>{digest.detail}</small>
       </span>
-      <ChevronRight aria-hidden="true" size={14} />
-    </summary>
+    </header>
+    {changedFiles.length ? <ul
+      aria-label={`${participantName ?? '协作成员'}改动的文件`}
+      className="room-agent-lane__changed-files"
+    >{changedFiles.map((file) => <li key={file.name}>
+      <code>{file.name}</code>
+      {file.hasCounts ? <span>
+        <b>+{file.additions}</b>
+        <i>−{file.deletions}</i>
+      </span> : <small>已更新</small>}
+    </li>)}</ul> : null}
     <div
-      aria-label={`伙伴自述与运行记录：${participantName ?? '协作成员'}`}
-      aria-live={updatesFresh ? 'polite' : 'off'}
       className="room-agent-lane__activity-feed"
       data-layout="continuous"
-      onScroll={onScroll}
-      ref={scrollRef}
-      role="log"
-      tabIndex={0}
     >{publicActivities.map((activity) => {
       const displayStatus = roomActivityDisplayStatus(activity);
       const sourceEventType = textValue(activity.payload.sourceEventType);
@@ -843,15 +965,8 @@ function ActivityLog({
         return <RoomToolActivity activity={activity} arriving={arriving} key={activity.id} />;
       }
       if (sourceEventType === 'reasoning_summary') {
-        const reasoningItems = Array.isArray(activity.payload.items)
-          ? activity.payload.items
-              .filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
-              .slice(0, 12)
-          : [];
-        const summary = publicActivitySummary(activity.summary, activity.kind)
-          || reasoningItems.at(-1)
-          || '';
-        if (!summary) return null;
+        const summary = roomReasoningSummary(activity);
+        const updateCount = roomReasoningUpdateCount(activity);
         return <article
           className="room-reasoning-summary"
           data-arriving={arriving || undefined}
@@ -860,16 +975,8 @@ function ActivityLog({
         >
           <Sparkles aria-hidden="true" size={14} />
           <span>
-            <small><span className="room-activity-provenance">伙伴自述</span> · 工作摘要 · <RoomActivityTimestamp activity={activity} /></small>
+            <small><span className="room-activity-provenance">实时进展</span> · 工作摘要{updateCount > 1 ? ` · 已更新 ${updateCount} 次` : ''} · <RoomActivityTimestamp activity={activity} /></small>
             <strong>{summary}</strong>
-            {reasoningItems.length ? <details className="room-reasoning-summary__details">
-              <summary>查看工作要点</summary>
-              <ol>
-                {reasoningItems.map((item, index) => (
-                  <li key={`${activity.id}:reasoning:${index}`}>{item}</li>
-                ))}
-              </ol>
-            </details> : null}
           </span>
         </article>;
       }
@@ -908,12 +1015,138 @@ function ActivityLog({
       updatedAtMs={workspaceUpdatedAtMs}
       view={workspaceView}
     /> : null}
-    {!following ? <button
-      className="room-agent-lane__activity-latest"
-      onClick={scrollToLatest}
-      type="button"
-    ><ArrowDown aria-hidden="true" size={13} />回到最新</button> : null}</div>
-  </details>;
+    </div>
+  </section>;
+}
+
+interface RoomChangedFileSummary {
+  name: string;
+  identity: string;
+  displaySegments: string[];
+  additions: number;
+  deletions: number;
+  hasCounts: boolean;
+}
+
+const roomMutationTools = new Set([
+  'write',
+  'write_file',
+  'workspace_write_file',
+  'workspace_write',
+  'edit',
+  'edit_file',
+  'workspace_edit_file',
+  'workspace_edit',
+  'workspace_patch',
+  'apply_patch',
+]);
+
+function roomChangedFileSummary(
+  activities: RoomActivityProjection[],
+): RoomChangedFileSummary[] {
+  const files = new Map<string, RoomChangedFileSummary>();
+  for (const activity of activities) {
+    if (
+      textValue(activity.payload.sourceEventType) !== 'tool_finished'
+      || activity.status !== 'completed'
+      || !roomMutationTools.has(textValue(activity.payload.toolName).toLocaleLowerCase('en-US'))
+    ) continue;
+    const args = objectValue(activity.payload.arguments);
+    const result = objectValue(activity.payload.result);
+    const rawName = textValue(args.fileName || args.path || result.fileName || result.path);
+    const normalizedPath = rawName.trim().replace(/\\/gu, '/').replace(/\/{2,}/gu, '/').replace(/\/+$/u, '');
+    const pathSegments = normalizedPath.split('/').filter((segment) => (
+      Boolean(segment) && segment !== '.' && segment !== '..'
+    ));
+    const name = pathSegments.at(-1) ?? '';
+    const identity = pathSegments.join('/');
+    if (!name || !identity) continue;
+    const additions = nonNegativeCount(result.additions);
+    const deletions = nonNegativeCount(result.deletions);
+    const hasCounts = additions !== null || deletions !== null;
+    const existing = files.get(identity) ?? {
+      name,
+      identity,
+      displaySegments: publicRoomFileSegments(normalizedPath, pathSegments),
+      additions: 0,
+      deletions: 0,
+      hasCounts: false,
+    };
+    existing.additions += additions ?? 0;
+    existing.deletions += deletions ?? 0;
+    existing.hasCounts ||= hasCounts;
+    files.set(identity, existing);
+  }
+  const summaries = [...files.values()];
+  const sameBasename = new Map<string, RoomChangedFileSummary[]>();
+  for (const summary of summaries) {
+    sameBasename.set(summary.name, [...(sameBasename.get(summary.name) ?? []), summary]);
+  }
+  return summaries.map((summary) => ({
+    ...summary,
+    name: shortestUniqueFileSuffix(summary, sameBasename.get(summary.name) ?? [summary]),
+  }));
+}
+
+function shortestUniqueFileSuffix(
+  file: RoomChangedFileSummary,
+  peers: RoomChangedFileSummary[],
+): string {
+  for (let depth = 1; depth <= file.displaySegments.length; depth += 1) {
+    const suffix = file.displaySegments.slice(-depth).join('/');
+    if (peers.every((peer) => (
+      peer.identity === file.identity
+      || peer.displaySegments.slice(-depth).join('/') !== suffix
+    ))) return suffix;
+  }
+  return `${file.displaySegments.join('/')} · ${nonSensitiveFileDisambiguator(file.identity)}`;
+}
+
+const roomPublicFileAnchors = new Set([
+  'control-center-web',
+  'dataset',
+  'docs',
+  'eval',
+  'integrations',
+  'macos',
+  'rag_ime',
+  'release',
+  'scripts',
+  'squirrel-patches',
+  'src',
+  'test',
+  'tests',
+]);
+
+function publicRoomFileSegments(
+  normalizedPath: string,
+  pathSegments: string[],
+): string[] {
+  const absolute = normalizedPath.startsWith('/') || /^[A-Za-z]:\//u.test(normalizedPath);
+  if (!absolute) return pathSegments;
+  const anchorIndex = pathSegments.findIndex((segment) => roomPublicFileAnchors.has(segment));
+  return anchorIndex >= 0 ? pathSegments.slice(anchorIndex) : pathSegments.slice(-1);
+}
+
+function nonSensitiveFileDisambiguator(identity: string): string {
+  let hash = 2_166_136_261;
+  for (let index = 0; index < identity.length; index += 1) {
+    hash ^= identity.charCodeAt(index);
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return (hash >>> 0).toString(36).padStart(6, '0').slice(0, 6);
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function nonNegativeCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+    ? value
+    : null;
 }
 
 function RoomTaskWorkspaceActivity({
@@ -964,6 +1197,31 @@ function RoomActivityTimestamp({ activity }: { activity: RoomActivityProjection 
   return <time dateTime={new Date(atMs).toISOString()}>
     {roomActivityTimeFormatter.format(new Date(atMs))}
   </time>;
+}
+
+const roomPublicWorkSummaries = {
+  alignment: '需求与交付边界梳理有新进展',
+  implementation: '当前任务推进有新进展',
+  review: '结果与验收条件复核有新进展',
+  closure: '本轮结果整理有新进展',
+  general: '当前工作有新进展',
+} as const;
+
+function roomReasoningSummary(activity: RoomActivityProjection): string {
+  const requestedKind = textValue(activity.payload.publicSummaryKind);
+  const summaryKind = (
+    activity.payload.publicSummaryVersion === 'room-work-summary.v1'
+    && requestedKind in roomPublicWorkSummaries
+  ) ? requestedKind as keyof typeof roomPublicWorkSummaries : 'general';
+  return roomPublicWorkSummaries[summaryKind];
+}
+
+function roomReasoningUpdateCount(activity: RoomActivityProjection): number {
+  const count = Number(activity.payload.updateCount);
+  const historyCount = Array.isArray(activity.payload.reasoningHistory)
+    ? activity.payload.reasoningHistory.length
+    : 0;
+  return Number.isInteger(count) && count > 0 ? count : Math.max(1, historyCount);
 }
 
 function roomActivityWaitDetails(
@@ -1125,7 +1383,10 @@ function RoomPostLifecycle({
     const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, [activeWait]);
-  if (!['handoff', 'wait', 'blocked'].includes(message.postKind ?? '')) return null;
+  if (
+    !['handoff', 'wait', 'blocked'].includes(message.postKind ?? '')
+    || (message.postKind === 'wait' && Boolean(message.question))
+  ) return null;
   const targetNames = (message.mentionedParticipantIds ?? [])
     .map((participantId) => (
       participants.find((participant) => participant.id === participantId)?.displayName
@@ -1462,13 +1723,13 @@ function usePrevious<T>(value: T): T | undefined {
   return current.current;
 }
 
-function roomActivityProvenanceLabel(activity: RoomActivityProjection): '伙伴自述' | '运行记录' {
+function roomActivityProvenanceLabel(activity: RoomActivityProjection): '实时进展' | '运行记录' {
   const sourceEventType = textValue(activity.payload.sourceEventType);
   const activityKind = textValue(activity.payload.activityKind);
   if (
     ['reasoning_summary', 'current_progress', 'progress'].includes(sourceEventType)
     || ['intercom', 'work'].includes(activityKind)
-  ) return '伙伴自述';
+  ) return '实时进展';
   return '运行记录';
 }
 
@@ -1799,7 +2060,7 @@ function roomFallbackFreshness(
     return {
       state: 'stale',
       updatedAtMs,
-      detail: '最近没有新的权威进展，状态可能过期',
+      detail: '最近一分钟没有新的公开进展，实时连接仍正常',
     };
   }
   return { state: 'fresh', updatedAtMs, detail: '实时进展已同步' };
@@ -1956,7 +2217,7 @@ function describeRoomActivity(
     };
   }
   if (sourceEventType === 'reasoning_summary') {
-    const summary = publicActivitySummary(activity.summary, activity.kind);
+    const summary = roomReasoningSummary(activity);
     return {
       title: summary || `${participantName} 正在整理下一步`,
       detail: activity.status === 'running' ? '工作摘要仍在更新' : '工作摘要已同步',

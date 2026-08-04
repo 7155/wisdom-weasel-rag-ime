@@ -99,7 +99,11 @@ function sanitizeField(field: PublicToolResultField): PublicToolResultField[] {
 }
 
 function sanitizeRequestField(field: PublicToolRequestField): PublicToolRequestField[] {
-  if (field.id === 'command' || isTechnicalField(field)) return [];
+  if (field.id === 'command') {
+    const value = sanitizeText(field.value);
+    return value ? [{ ...field, value }] : [];
+  }
+  if (isTechnicalField(field)) return [];
   const value = semanticReferenceFieldIds[field.id] === true
     ? semanticReferenceValue(field.id, field.value)
     : field.id === 'file' || field.id === 'path'
@@ -148,6 +152,15 @@ function sanitizeText(value: string): string {
   const normalized = value.trim();
   if (!normalized || technicalLine.test(normalized) || isRawJson(normalized)) return '';
   return normalized
+    .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/gu, '[已隐藏的密钥]')
+    .replace(
+      /\b([a-z0-9_]*(?:api[_-]?key|access[_-]?token|password|secret|authorization))(\s*(?:=|:)\s*)([^\s'";]+|"[^"]*"|'[^']*')/giu,
+      '$1$2[已隐藏的密钥]',
+    )
+    .replace(
+      /(--(?:api[_-]?key|token|password|secret)\s+)([^\s'";]+|"[^"]*"|'[^']*')/giu,
+      '$1[已隐藏的密钥]',
+    )
     .replace(absolutePosixPath, (_match, prefix: string) => `${prefix}…/${fileName(_match.slice(prefix.length))}`)
     .replace(absoluteWindowsPath, (match) => `…/${fileName(match)}`)
     .replace(contentHash, '已隐藏的校验值')

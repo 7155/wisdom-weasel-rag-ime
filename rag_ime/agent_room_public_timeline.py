@@ -368,8 +368,13 @@ class RoomPublicTimelineProjector:
             "rootId": root_id,
             "dispatchId": dispatch_id,
         }
+        projection_namespace = (
+            "room-runtime-public-summary-v1"
+            if event.event_type == "reasoning_summary"
+            else "room-runtime"
+        )
         return self.events.publish_projection(
-            projection_key=f"room-runtime:{event.event_id}",
+            projection_key=f"{projection_namespace}:{event.event_id}",
             room_id=str(binding["roomId"]),
             event_type=event_type,
             payload={

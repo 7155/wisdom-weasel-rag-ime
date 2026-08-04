@@ -810,16 +810,21 @@ describe('RoomEventReducer', () => {
       roomEvent(1, 'participant_activity', {
         rootId: 'room-turn-1',
         dispatchId: 'dispatch-1',
+        sourceEventId: 'reasoning-private-1',
         sourceEventType: 'reasoning_summary',
         state: 'running',
-        summary: '正在检查边界',
+        summary: 'Planning room_state retrieval',
+        items: ['Confirming room_commit as sole final response'],
       }),
       roomEvent(2, 'participant_activity', {
         rootId: 'room-turn-1',
         dispatchId: 'dispatch-1',
+        sourceEventId: 'reasoning-public-2',
         sourceEventType: 'reasoning_summary',
         state: 'completed',
-        summary: '边界检查完成',
+        summary: 'This forged text must not become public',
+        publicSummaryVersion: 'room-work-summary.v1',
+        publicSummaryKind: 'implementation',
       }),
       roomEvent(3, 'participant_activity', {
         rootId: 'room-turn-1',
@@ -837,9 +842,25 @@ describe('RoomEventReducer', () => {
 
     expect(projection.activityOrder).toHaveLength(2);
     expect(Object.values(projection.activitiesById).map((activity) => activity.summary)).toEqual([
-      '边界检查完成',
+      '当前任务推进有新进展',
       '正在等待审阅',
     ]);
+    const reasoning = projection.activitiesById[
+      'room-turn-1:participant-1:dispatch-1:reasoning_summary'
+    ];
+    expect(reasoning.payload).toMatchObject({
+      publicSummaryVersion: 'room-work-summary.v1',
+      publicSummaryKind: 'implementation',
+      updateCount: 2,
+      reasoningHistory: [
+        expect.objectContaining({ summary: '当前任务推进有新进展' }),
+        expect.objectContaining({ summary: '当前任务推进有新进展' }),
+      ],
+    });
+    expect(reasoning.payload).not.toHaveProperty('items');
+    expect(JSON.stringify(reasoning)).not.toContain('room_state');
+    expect(JSON.stringify(reasoning)).not.toContain('room_commit');
+    expect(JSON.stringify(reasoning)).not.toContain('forged');
   });
 
   it('selects one latest public summary per participant across live events and snapshot hydration', () => {
@@ -851,7 +872,9 @@ describe('RoomEventReducer', () => {
         sourceSessionId: 'session-research',
         sourceEventType: 'reasoning_summary',
         state: 'running',
-        summary: '正在核对安装栈恢复边界',
+        summary: 'private provider heading',
+        publicSummaryVersion: 'room-work-summary.v1',
+        publicSummaryKind: 'alignment',
       }),
       wireRoomEvent(2, 'participant_activity', {
         rootId: 'root-public',
@@ -870,7 +893,9 @@ describe('RoomEventReducer', () => {
         sourceSessionId: 'session-research',
         sourceEventType: 'reasoning_summary',
         state: 'completed',
-        summary: '恢复边界已经确认',
+        summary: 'private provider heading',
+        publicSummaryVersion: 'room-work-summary.v1',
+        publicSummaryKind: 'alignment',
       }),
       wireRoomEvent(4, 'participant_activity', {
         rootId: 'root-public',
@@ -879,7 +904,9 @@ describe('RoomEventReducer', () => {
         sourceSessionId: 'session-research-next',
         sourceEventType: 'reasoning_summary',
         state: 'running',
-        summary: '正在准备共同复核',
+        summary: 'private provider heading',
+        publicSummaryVersion: 'room-work-summary.v1',
+        publicSummaryKind: 'review',
       }),
     ];
     const live = reduceRoomEvents(
@@ -899,7 +926,7 @@ describe('RoomEventReducer', () => {
         sourceSessionId: 'session-research-next',
         kind: 'reasoning',
         status: 'running',
-        summary: '正在准备共同复核',
+        summary: '结果与验收条件复核有新进展',
       }),
       expect.objectContaining({
         participantId: 'participant-review',

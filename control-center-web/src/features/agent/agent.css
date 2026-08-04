@@ -257,7 +257,6 @@
 .agent-workflow-actions .ui-button { min-width: 0; }
 .agent-workflow-confirm { flex: 1 1 100%; color: var(--color-text-secondary); font-size: var(--font-size-caption); line-height: var(--line-height-ui); text-align: right; }
 .agent-act-gate { display: grid; min-height: 45px; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 8px; margin: 0 14px 14px; padding: 8px 9px; border-left: 3px solid var(--color-warning); background: color-mix(in srgb, var(--color-warning-soft) 54%, transparent); color: var(--color-warning); }
-.agent-act-gate[data-open] { border-left-color: var(--color-success); background: color-mix(in srgb, var(--color-success-soft) 48%, transparent); color: var(--color-success); }
 .agent-act-gate > span { display: grid; min-width: 0; gap: 2px; }
 .agent-act-gate strong { color: var(--color-text); font-size: 12px; }
 .agent-act-gate small { color: var(--color-text-secondary); font-size: 12px; line-height: 1.35; }
@@ -1389,6 +1388,7 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 .agent-status-panel > header small { color: var(--color-text-tertiary); font-size: 13px; }
 .agent-status-panel__body { min-height: 0; overflow-y: auto; }
 .agent-status-section { padding: 5px 14px; border-bottom: 1px solid var(--color-border); }
+.agent-status-section[hidden] { display: none; }
 .agent-status-section > header { margin: 0; }
 .agent-status-section > header > button { display: grid; width: 100%; min-height: 38px; grid-template-columns: 18px minmax(0, 1fr) auto 14px; align-items: center; gap: 6px; padding: 0; border: 0; background: transparent; color: var(--color-text-secondary); text-align: left; cursor: pointer; }
 .agent-status-section > header > button:hover strong { color: var(--color-accent-strong); }
@@ -1400,6 +1400,25 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 .agent-status-section__content { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: grid-template-rows var(--duration-normal) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard), visibility 0s linear var(--duration-normal); }
 .agent-status-section__content > div { min-height: 0; padding-bottom: 9px; overflow: hidden; }
 .agent-status-section[data-open='true'] .agent-status-section__content { grid-template-rows: 1fr; opacity: 1; visibility: visible; transition-delay: 0s; }
+.agent-status-combined-empty { display: grid; min-width: 0; grid-template-columns: 28px minmax(0, 1fr); align-items: start; gap: 10px; padding: 18px 14px; border-bottom: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-surface-subtle) 45%, transparent); color: var(--color-text-secondary); }
+.agent-status-combined-empty > svg { margin-top: 1px; padding: 5px; border-radius: var(--radius-2); background: var(--color-accent-soft); color: var(--color-accent); }
+.agent-status-combined-empty > span { display: grid; min-width: 0; gap: 4px; }
+.agent-status-combined-empty strong { color: var(--color-text); font-size: 13px; line-height: 1.4; }
+.agent-status-combined-empty small { color: var(--color-text-tertiary); font-size: 12px; line-height: 1.5; }
+.agent-status-technical { display: grid; min-width: 0; }
+.agent-status-technical__item,
+.agent-status-technical > .agent-status-section,
+.agent-status-technical > .agent-status-observation-link { min-width: 0; padding: 10px 0; border: 0; border-top: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent); }
+.agent-status-technical > :first-child { border-top: 0; }
+.agent-status-technical__item { display: grid; gap: 8px; }
+.agent-status-technical__item > header,
+.agent-status-technical > .agent-status-section > header { display: flex; min-height: 24px; align-items: center; gap: 7px; margin: 0; }
+.agent-status-technical__item > header > svg,
+.agent-status-technical > .agent-status-section > header > svg { color: var(--color-text-tertiary); }
+.agent-status-technical__item > header strong,
+.agent-status-technical > .agent-status-section > header strong { color: var(--color-text-secondary); font-size: 12px; }
+.agent-status-technical__item > div { min-width: 0; }
+.agent-status-technical > .agent-status-observation-link { min-height: 50px; }
 .agent-lifecycle-audits { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
 .agent-lifecycle-audits > li { display: grid; gap: var(--space-2); padding: var(--space-2); border-left: var(--space-1) solid var(--color-border-strong); background: var(--color-surface-subtle); }
 .agent-lifecycle-audits > li[data-state='pending'] { border-left-color: var(--color-accent); }
@@ -1549,13 +1568,6 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 .agent-status-turn strong { font-size: 13px; }
 .agent-status-turn small { color: var(--color-text-tertiary); font-size: 13px; line-height: 1.35; }
 .agent-todo-turn-summary { padding: 8px 14px 10px; border-bottom: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-surface-subtle) 28%, transparent); }
-.agent-status-tasks { display: grid; gap: 5px; margin: 7px 0 0; padding: 0; list-style: none; }
-.agent-status-tasks li { display: grid; grid-template-columns: 17px minmax(0, 1fr); align-items: start; gap: 6px; color: var(--color-text-secondary); font-size: 13px; line-height: 1.4; }
-.agent-status-tasks li > svg { margin-top: 2px; color: var(--color-text-tertiary); }
-.agent-status-tasks li[data-state='running'] > svg { color: var(--color-accent); animation: agent-status-spin 1.2s linear infinite; }
-.agent-status-tasks li[data-state='completed'] { color: var(--color-text-tertiary); }
-.agent-status-tasks li[data-state='completed'] > svg { color: var(--color-success); }
-.agent-status-tasks li[data-state='failed'] > svg { color: var(--color-danger); }
 .agent-status-tools, .agent-status-files, .agent-status-subagents { display: grid; gap: 1px; }
 .agent-background-jobs { display: grid; gap: var(--space-2); }
 .agent-background-jobs__toolbar { display: flex; min-height: var(--control-height-sm); align-items: center; justify-content: space-between; gap: var(--space-2); border-bottom: 1px solid var(--color-border-soft); }
@@ -2275,7 +2287,6 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
   .agent-status-turn[data-state='running'] > svg,
   .agent-background-job[data-state='running'] .agent-background-job__state svg,
   .agent-background-job[data-state='cancelling'] .agent-background-job__state svg,
-  .agent-status-tasks li[data-state='running'] > svg,
   .agent-status-subagent[data-state='running'] .agent-status-subagent__state svg,
   .agent-status-subagent[data-state='queued'] .agent-status-subagent__state svg,
   .agent-status-empty[data-animated] > svg,
@@ -2314,7 +2325,6 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 :root[data-reduce-motion='true'] .agent-status-turn[data-state='running'] > svg,
 :root[data-reduce-motion='true'] .agent-background-job[data-state='running'] .agent-background-job__state svg,
 :root[data-reduce-motion='true'] .agent-background-job[data-state='cancelling'] .agent-background-job__state svg,
-:root[data-reduce-motion='true'] .agent-status-tasks li[data-state='running'] > svg,
 :root[data-reduce-motion='true'] .agent-status-subagent[data-state='running'] .agent-status-subagent__state svg,
 :root[data-reduce-motion='true'] .agent-status-subagent[data-state='queued'] .agent-status-subagent__state svg,
 :root[data-reduce-motion='true'] .agent-status-empty[data-animated] > svg,

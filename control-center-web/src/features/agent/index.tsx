@@ -1723,7 +1723,6 @@ function AgentWorkspace() {
         open={statusOpen}
         capabilityCatalogError={capabilityCatalogError}
         modal={statusModal}
-        commands={commands}
         tools={tools}
         toolCatalogStatus={toolCatalogStatus}
         capabilityCatalog={capabilityCatalog}

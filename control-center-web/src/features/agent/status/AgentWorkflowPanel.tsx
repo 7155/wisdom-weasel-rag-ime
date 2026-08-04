@@ -33,12 +33,14 @@ export function AgentWorkflowPanel({
   fallbackGoal,
   fallbackActGate,
   onWorkflowResolved,
+  onPresentationStateChange,
 }: {
   sessionId: string;
   fallbackTodo?: AgentTodoProjection;
   fallbackGoal?: Goal;
   fallbackActGate?: ActGate;
   onWorkflowResolved?: (workflow: AgentWorkflowStateV1) => void;
+  onPresentationStateChange?: (state: AgentWorkflowPresentationState) => void;
 }) {
   const transport = useControlTransport();
   const queryClient = useQueryClient();
@@ -89,6 +91,24 @@ export function AgentWorkflowPanel({
   useEffect(() => {
     onWorkflowResolved?.(workflow);
   }, [onWorkflowResolved, workflow]);
+  const hasTodo = workflow.todo.counts.total > 0
+    || workflow.todo.phases.some((phase) => phase.tasks.length > 0);
+  const hasGoal = workflow.goal.configured;
+  const hasWorkflowContent = hasTodo || hasGoal;
+  const missingAuthoritativeWorkflow = !workflowQuery.data && !hasLiveWorkflow;
+  const presentationState: AgentWorkflowPresentationState = workflowQuery.isPending
+    && missingAuthoritativeWorkflow
+    ? 'loading'
+    : workflowQuery.error
+      && missingAuthoritativeWorkflow
+      && !isAbsentWorkflow(workflowQuery.error)
+      ? 'error'
+      : hasWorkflowContent
+        ? 'content'
+        : 'empty';
+  useEffect(() => {
+    onPresentationStateChange?.(presentationState);
+  }, [onPresentationStateChange, presentationState]);
   const mutation = useMutation({
     mutationFn: async ({ sessionId: ownerSessionId, body }: MutationInput) => {
       const next = await transport.request<AgentWorkflowStateV1>({
@@ -143,16 +163,10 @@ export function AgentWorkflowPanel({
     && !hasLiveWorkflow
     && isAbsentWorkflow(workflowQuery.error)
   ) {
-    return (
-      <div className="agent-workflow-panel" aria-label="Todo 与长期目标">
-        <section className="agent-workflow-section">
-          <div className="agent-workflow-recovery" data-state="room-managed" role="status">
-            <span>当前没有 Todo。如果这段工作来自协作空间，分工、公开进度和最终回复会继续在那里显示。</span>
-          </div>
-        </section>
-      </div>
-    );
+    return null;
   }
+
+  if (!hasWorkflowContent) return null;
 
   return (
     <div className="agent-workflow-panel" aria-label="Todo 与长期目标">
@@ -172,18 +186,22 @@ export function AgentWorkflowPanel({
           </Button>
         </div>
       ) : null}
-      <TodoProgress todo={workflow.todo} />
+      {hasTodo ? <TodoProgress todo={workflow.todo} /> : null}
       <ExecutionGate gate={workflow.actGate} />
-      <GoalMode
-        key={`goal:${sessionId}`}
-        goal={workflow.goal}
-        pending={mutation.isPending && mutation.variables?.sessionId === sessionId}
-        error={mutation.variables?.sessionId === sessionId ? mutation.error : null}
-        mutate={(body) => mutation.mutateAsync({ sessionId, body })}
-      />
+      {hasGoal ? (
+        <GoalMode
+          key={`goal:${sessionId}`}
+          goal={workflow.goal}
+          pending={mutation.isPending && mutation.variables?.sessionId === sessionId}
+          error={mutation.variables?.sessionId === sessionId ? mutation.error : null}
+          mutate={(body) => mutation.mutateAsync({ sessionId, body })}
+        />
+      ) : null}
     </div>
   );
 }
+
+export type AgentWorkflowPresentationState = 'loading' | 'empty' | 'content' | 'error';
 
 function TodoProgress({ todo }: { todo: Todo }) {
   const settled = todo.counts.completed + todo.counts.abandoned;
@@ -240,11 +258,12 @@ function TodoProgress({ todo }: { todo: Todo }) {
 }
 
 function ExecutionGate({ gate }: { gate: ActGate }) {
+  if (gate.allowed) return null;
   return (
-    <div className="agent-act-gate" data-open={gate.allowed || undefined}>
-      {gate.allowed ? <ShieldCheck size={15} /> : <CirclePause size={15} />}
+    <div className="agent-act-gate">
+      <CirclePause size={15} />
       <span>
-        <strong>{gate.allowed ? '当前请求可以继续' : '执行条件未满足'}</strong>
+        <strong>执行条件未满足</strong>
         <small>{gate.message}</small>
       </span>
     </div>

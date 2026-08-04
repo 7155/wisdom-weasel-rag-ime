@@ -61,6 +61,8 @@ export interface RoomActivityProjection {
   status: 'running' | 'waiting' | 'completed' | 'failed' | 'aborted';
   summary: string;
   payload: Record<string, unknown>;
+  /** Authoritative server event order for cross-message chronology. */
+  sequence?: number;
   createdAtMs: number;
   updatedAtMs?: number;
 }
@@ -170,6 +172,14 @@ export interface OptimisticRoomMessageInput {
 }
 
 const diagnosticLimit = 50;
+const ROOM_PUBLIC_WORK_SUMMARY_VERSION = 'room-work-summary.v1';
+const ROOM_PUBLIC_WORK_SUMMARIES = {
+  alignment: '需求与交付边界梳理有新进展',
+  implementation: '当前任务推进有新进展',
+  review: '结果与验收条件复核有新进展',
+  closure: '本轮结果整理有新进展',
+  general: '当前工作有新进展',
+} as const;
 
 export function createRoomProjection(roomId: string): RoomProjectionState {
   return {
@@ -459,7 +469,12 @@ export function selectRoomParticipantPublicProgress(
       dispatchId: text(activity.payload.dispatchId),
       kind: roomParticipantProgressKind(activity.kind, sourceEventType, activityKind),
       status: activity.status,
-      summary: roomParticipantProgressSummary(activity.summary, sourceEventType, activity.kind),
+      summary: roomParticipantProgressSummary(
+        activity.summary,
+        sourceEventType,
+        activity.kind,
+        activity.payload,
+      ),
       data: activity.payload,
       updatedAtMs: activity.updatedAtMs ?? activity.createdAtMs,
     });
@@ -1417,10 +1432,11 @@ function upsertActivity(
     status,
     summary: staleToolStreamingUpdate
       ? existing!.summary
-      : text(payload.summary ?? payload.message ?? payload.label ?? payload.toolName)
+      : text(activityPayload.summary ?? activityPayload.message ?? activityPayload.label ?? activityPayload.toolName)
         || sourceEventType
         || event.eventType,
     payload: activityPayload,
+    sequence: existing?.sequence ?? event.sequence,
     createdAtMs: existing?.createdAtMs ?? event.createdAtMs,
     updatedAtMs: staleToolStreamingUpdate ? existing!.updatedAtMs : event.createdAtMs,
   };
@@ -1490,6 +1506,54 @@ function mergeRoomActivityPayload(
 ): Record<string, unknown> {
   const previousPayload = previous?.payload ?? {};
   const sourceEventType = text(payload.sourceEventType);
+  if (sourceEventType === 'reasoning_summary') {
+    const requestedKind = text(payload.publicSummaryKind);
+    const summaryKind = (
+      payload.publicSummaryVersion === ROOM_PUBLIC_WORK_SUMMARY_VERSION
+      && requestedKind in ROOM_PUBLIC_WORK_SUMMARIES
+    ) ? requestedKind as keyof typeof ROOM_PUBLIC_WORK_SUMMARIES : 'general';
+    const summary = ROOM_PUBLIC_WORK_SUMMARIES[summaryKind];
+    const sourceEventId = text(payload.sourceEventId) || event.eventId;
+    const priorHistory = Array.isArray(previousPayload.reasoningHistory)
+      ? previousPayload.reasoningHistory.flatMap((entry) => {
+          const item = record(entry);
+          const entrySourceEventId = text(item.sourceEventId);
+          const createdAtMs = Number(item.createdAtMs);
+          return entrySourceEventId && Number.isFinite(createdAtMs)
+            ? [{ sourceEventId: entrySourceEventId, summary, createdAtMs }]
+            : [];
+        })
+      : [];
+    const alreadyRecorded = priorHistory.some((entry) => (
+      entry.sourceEventId === sourceEventId
+    ));
+    const reasoningHistory = alreadyRecorded
+      ? priorHistory
+      : [...priorHistory, {
+          sourceEventId,
+          summary,
+          createdAtMs: event.createdAtMs,
+        }].slice(-8);
+    const previousUpdateCount = Number(previousPayload.updateCount);
+    const updateCount = alreadyRecorded
+      ? Number.isInteger(previousUpdateCount) && previousUpdateCount > 0
+        ? previousUpdateCount
+        : reasoningHistory.length
+      : Number.isInteger(previousUpdateCount) && previousUpdateCount > 0
+        ? previousUpdateCount + 1
+        : reasoningHistory.length;
+    const merged: Record<string, unknown> = {
+      ...previousPayload,
+      ...payload,
+      summary,
+      publicSummaryVersion: ROOM_PUBLIC_WORK_SUMMARY_VERSION,
+      publicSummaryKind: summaryKind,
+      reasoningHistory,
+      updateCount,
+    };
+    delete merged.items;
+    return merged;
+  }
   if (!['tool_started', 'tool_progress', 'tool_finished'].includes(sourceEventType)) {
     return { ...previousPayload, ...payload };
   }
@@ -1985,7 +2049,16 @@ function roomParticipantProgressSummary(
   value: string,
   sourceEventType: string,
   eventKind: string,
+  payload: Record<string, unknown>,
 ): string {
+  if (sourceEventType === 'reasoning_summary') {
+    const requestedKind = text(payload.publicSummaryKind);
+    const summaryKind = (
+      payload.publicSummaryVersion === ROOM_PUBLIC_WORK_SUMMARY_VERSION
+      && requestedKind in ROOM_PUBLIC_WORK_SUMMARIES
+    ) ? requestedKind as keyof typeof ROOM_PUBLIC_WORK_SUMMARIES : 'general';
+    return ROOM_PUBLIC_WORK_SUMMARIES[summaryKind];
+  }
   const summary = value.trim();
   if (
     summary
@@ -1993,7 +2066,6 @@ function roomParticipantProgressSummary(
     && summary !== eventKind
     && !/\b(?:participant|route|tool|turn)_[a-z_]+\b/iu.test(summary)
   ) return summary;
-  if (sourceEventType === 'reasoning_summary') return '工作摘要已更新';
   if (['current_progress', 'progress'].includes(sourceEventType)) return '工作进度已更新';
   if (sourceEventType.startsWith('tool_')) return '工具进度已更新';
   if (eventKind === 'route_decision') return '已确认本轮分工';

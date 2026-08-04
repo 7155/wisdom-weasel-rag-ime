@@ -365,6 +365,14 @@ export function RoomKernelLivePanel({
       description="当前连接没有读取这个协作空间任务进度的权限；已有对话和工作文件不会受影响。"
       icon={CircleAlert}
       title="当前不可查看任务进度"
+    /> : !projection ? <EmptyState
+      description={['loading', 'reconnecting', 'recovering'].includes(liveState)
+        ? '公开对话已经保留，任务状态连接完成后会自动显示在这里。'
+        : '任务状态还没有建立；可以回到对话继续当前请求，或重新读取进度。'}
+      icon={Workflow}
+      title={['loading', 'reconnecting', 'recovering'].includes(liveState)
+        ? '正在读取任务进度'
+        : '任务进度尚未就绪'}
     /> : projection ? <EmptyState
       description="发送任务后，每位伙伴的接手、工具执行、交接和验收会在这里持续更新。"
       icon={Workflow}

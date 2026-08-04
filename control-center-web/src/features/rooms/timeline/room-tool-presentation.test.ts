@@ -17,7 +17,12 @@ describe('roomPublicToolResultView', () => {
       ],
       request: [
         { id: 'path', label: '目标', value: '/Users/alice/project/src/Report.tsx', code: true },
-        { id: 'command', label: '命令', value: 'cat /Users/alice/project/src/Report.tsx', code: true },
+        {
+          id: 'command',
+          label: '命令',
+          value: 'cat /Users/alice/project/src/Report.tsx --token sk-private-secret',
+          code: true,
+        },
         { id: 'query', label: '查询', value: '任务汇报' },
       ],
       output: {
@@ -36,12 +41,19 @@ describe('roomPublicToolResultView', () => {
     ]);
     expect(view.request).toEqual([
       { id: 'path', label: '目标', value: 'Report.tsx', code: true },
+      {
+        id: 'command',
+        label: '命令',
+        value: 'cat …/Report.tsx --token [已隐藏的密钥]',
+        code: true,
+      },
       { id: 'query', label: '查询', value: '任务汇报' },
     ]);
     expect(view.output?.text).toBe('已更新 …/Report.tsx\n任务协作记录已完成');
     expect(JSON.stringify(view)).not.toContain('receipt-room-82');
     expect(JSON.stringify(view)).not.toContain('/Volumes/undo 4t');
     expect(JSON.stringify(view)).not.toContain('/Users/alice');
+    expect(JSON.stringify(view)).not.toContain('sk-private-secret');
   });
 
   it('keeps semantic Room references readable without exposing their raw values', () => {

@@ -64,8 +64,7 @@ export function RoomQuestionDialog({
     setSubmitError('');
     const accepted = await onSubmit(value, answerKind).catch(() => false);
     if (!accepted) {
-      setSubmitError('回答没有发送，请检查连接后重试。');
-      setSelectedValue('');
+      setSubmitError('这次还没有送达，请稍后再确认一次。');
       submittingRef.current = false;
       setSubmitting(false);
     }
@@ -73,7 +72,10 @@ export function RoomQuestionDialog({
 
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    void submitValue(answerValue, 'custom');
+    void submitValue(
+      answerValue,
+      hasOptions && !customAnswer ? 'option' : 'custom',
+    );
   }
 
   return <section
@@ -88,7 +90,7 @@ export function RoomQuestionDialog({
       <span><MessageSquareText size={16} aria-hidden="true" /></span>
       <span>
         <small>{question.status === 'pending' && !stale
-          ? hasOptions ? '选择后继续' : '等待你的回答'
+          ? hasOptions ? '选择后确认' : '等待你的回答'
           : stale
             ? '问题已失效'
             : question.status === 'answered'
@@ -123,7 +125,7 @@ export function RoomQuestionDialog({
             data-pending={submitting && selectedValue === option.value ? 'true' : undefined}
             onClick={() => {
               setSelectedValue(option.value);
-              void submitValue(option.value, 'option');
+              setSubmitError('');
             }}
             key={option.value}
             ref={index === 0 ? firstOptionRef : undefined}
@@ -177,13 +179,13 @@ export function RoomQuestionDialog({
           type="button"
           variant="quiet"
         >{customAnswer ? '返回选项' : '其他'}</Button> : <span />}
-        {!hasOptions || customAnswer ? <Button
+        <Button
           disabled={!answerValue.trim() || submitting}
           loading={submitting}
           size="small"
           type="submit"
           variant="primary"
-        >发送回答</Button> : null}
+        >{hasOptions && !customAnswer ? '确认并发送' : '发送回答'}</Button>
       </footer>
     </form> : null}
   </section>;

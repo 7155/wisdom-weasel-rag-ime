@@ -2035,23 +2035,27 @@ def _canonical_question_options(
                 "questionOptions values must be unique after normalization"
             )
         seen_values.add(option_value)
+        raw_description = item.get("description")
+        if not isinstance(raw_description, str):
+            raise RoomCommitProposalError(
+                f"questionOptions[{index}].description must be a string"
+            )
+        description = " ".join(raw_description.split())
+        if not description or len(description) > 500:
+            raise RoomCommitProposalError(
+                f"questionOptions[{index}].description must contain "
+                "1-500 characters"
+            )
+        if description == label:
+            raise RoomCommitProposalError(
+                f"questionOptions[{index}].description must explain the "
+                "choice instead of repeating its label"
+            )
         option: dict[str, object] = {
             "value": option_value,
             "label": label,
+            "description": description,
         }
-        if "description" in item:
-            raw_description = item["description"]
-            if not isinstance(raw_description, str):
-                raise RoomCommitProposalError(
-                    f"questionOptions[{index}].description must be a string"
-                )
-            description = " ".join(raw_description.split())
-            if not description or len(description) > 500:
-                raise RoomCommitProposalError(
-                    f"questionOptions[{index}].description must contain "
-                    "1-500 characters"
-                )
-            option["description"] = description
         if "recommended" in item:
             recommended = item["recommended"]
             if not isinstance(recommended, bool):

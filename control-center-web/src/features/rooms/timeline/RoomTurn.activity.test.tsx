@@ -14,7 +14,7 @@ describe('RoomTurn public activity detail', () => {
     cleanup();
   });
 
-  it('shows activity time, wait recovery, tool output, and nested helpers from the shared task', () => {
+  it('shows one continuous activity stream with expandable tool output and nested helpers', () => {
     const projection = roomProjection();
     const view = render(roomTurn(projection));
     const activityFeed = view.container.querySelector('.room-agent-lane__activity-feed');
@@ -43,15 +43,9 @@ describe('RoomTurn public activity detail', () => {
     expect(view.container.textContent).not.toMatch(
       /Kernel|Root|Dispatch|Receipt|schemaVersion|root-a|dispatch-a|task-a/,
     );
-
-    Object.defineProperty(activityFeed, 'scrollHeight', { configurable: true, value: 600 });
-    Object.defineProperty(activityFeed, 'clientHeight', { configurable: true, value: 200 });
-    Object.defineProperty(activityFeed, 'scrollTop', { configurable: true, value: 100, writable: true });
-    fireEvent.scroll(activityFeed!);
-    const latest = screen.getByRole('button', { name: '回到最新' });
-    fireEvent.click(latest);
-    expect(activityFeed).toHaveProperty('scrollTop', 600);
-    expect(activityFeed).toHaveFocus();
+    expect(activityFeed).not.toHaveAttribute('role', 'log');
+    expect(activityFeed).not.toHaveAttribute('aria-live');
+    expect(activityFeed).not.toHaveAttribute('tabindex');
     expect(screen.queryByRole('button', { name: '回到最新' })).not.toBeInTheDocument();
   });
 
@@ -97,7 +91,100 @@ describe('RoomTurn public activity detail', () => {
     expect(fresh.container.querySelector('[data-arriving="true"]')).not.toBeInTheDocument();
   });
 
-  it('auto-follows the final activity even when that same snapshot settles the lane', () => {
+  it('summarizes each role file changes without merging same-basename paths', () => {
+    const projection = roomProjection();
+    projection.activitiesById['edit-a'] = {
+      id: 'edit-a',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'completed',
+      summary: '更新 RoomTurn.tsx',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'tool_finished',
+        toolName: 'apply_patch',
+        toolCallId: 'edit-a',
+        arguments: { path: '/private/worktree/src/RoomTurn.tsx' },
+        result: { additions: 18, deletions: 7 },
+      },
+      createdAtMs: 3_200,
+      updatedAtMs: 3_300,
+    };
+    projection.activitiesById['edit-b'] = {
+      ...projection.activitiesById['edit-a']!,
+      id: 'edit-b',
+      summary: '更新 RoomTurn 测试',
+      payload: {
+        ...projection.activitiesById['edit-a']!.payload,
+        toolCallId: 'edit-b',
+        arguments: { path: '/private/worktree/tests/RoomTurn.tsx' },
+        result: { additions: 4, deletions: 2 },
+      },
+      createdAtMs: 3_250,
+      updatedAtMs: 3_350,
+    };
+    projection.activitiesById['edit-c'] = {
+      ...projection.activitiesById['edit-a']!,
+      id: 'edit-c',
+      summary: '更新应用入口',
+      payload: {
+        ...projection.activitiesById['edit-a']!.payload,
+        toolCallId: 'edit-c',
+        arguments: { path: '/Users/alice/project/src/index.ts' },
+        result: { additions: 3, deletions: 1 },
+      },
+      createdAtMs: 3_275,
+      updatedAtMs: 3_375,
+    };
+    projection.activitiesById['edit-d'] = {
+      ...projection.activitiesById['edit-a']!,
+      id: 'edit-d',
+      summary: '更新另一个工作区入口',
+      payload: {
+        ...projection.activitiesById['edit-a']!.payload,
+        toolCallId: 'edit-d',
+        arguments: { path: '/Volumes/secret/project/src/index.ts' },
+        result: { additions: 6, deletions: 2 },
+      },
+      createdAtMs: 3_300,
+      updatedAtMs: 3_400,
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: [
+        ...projection.turnsById['turn-a']!.activityIds,
+        'edit-a',
+        'edit-b',
+        'edit-c',
+        'edit-d',
+      ],
+      updatedAtMs: 3_400,
+    };
+
+    render(roomTurn(projection));
+
+    const files = screen.getByRole('list', { name: '澄·今改动的文件' });
+    expect(files).toHaveTextContent('src/RoomTurn.tsx');
+    expect(files).toHaveTextContent('tests/RoomTurn.tsx');
+    expect(files).toHaveTextContent('+18');
+    expect(files).toHaveTextContent('−7');
+    expect(files).toHaveTextContent('+4');
+    expect(files).toHaveTextContent('−2');
+    const fileLabels = [...files.querySelectorAll('code')].map((item) => item.textContent ?? '');
+    expect(fileLabels.filter((label) => label.startsWith('src/index.ts · '))).toHaveLength(2);
+    expect(new Set(fileLabels).size).toBe(4);
+    expect(files.querySelectorAll('li')).toHaveLength(4);
+    expect(files).not.toHaveTextContent('/private/worktree');
+    expect(files).not.toHaveTextContent('alice');
+    expect(files).not.toHaveTextContent('secret');
+    expect(files).not.toHaveTextContent('Users');
+    expect(files).not.toHaveTextContent('Volumes');
+  });
+
+  it('keeps the final activity in the shared outer stream when the same snapshot settles the lane', () => {
     vi.useFakeTimers();
     vi.setSystemTime(5_000);
     const projection = roomProjection();
@@ -105,15 +192,6 @@ describe('RoomTurn public activity detail', () => {
     const activityFeed = view.container.querySelector<HTMLElement>(
       '.room-agent-lane__activity-feed',
     )!;
-    let scrollHeight = 600;
-    Object.defineProperty(activityFeed, 'scrollHeight', {
-      configurable: true,
-      get: () => scrollHeight,
-    });
-    Object.defineProperty(activityFeed, 'clientHeight', { configurable: true, value: 200 });
-    Object.defineProperty(activityFeed, 'scrollTop', { configurable: true, value: 400, writable: true });
-    fireEvent.scroll(activityFeed);
-
     projection.activitiesById['final-result'] = {
       id: 'final-result',
       turnId: 'turn-a',
@@ -138,13 +216,11 @@ describe('RoomTurn public activity detail', () => {
       terminalParticipantIds: ['participant-a'],
       updatedAtMs: 4_000,
     };
-    scrollHeight = 800;
     view.rerender(roomTurn(projection, {}, undefined, kernelSync('synced', 4_500)));
 
-    expect(activityFeed.closest('details')).toHaveAttribute('open');
-    expect(activityFeed).toHaveProperty('scrollTop', 800);
+    expect(activityFeed.closest('details')).toBeNull();
     expect(activityFeed).toHaveTextContent('最终验证已经完成');
-    expect(activityFeed).toHaveAttribute('aria-live', 'polite');
+    expect(activityFeed).not.toHaveAttribute('aria-live');
     expect(
       screen.getByText('最终验证已经完成').closest('.room-agent-activity'),
     ).toHaveAttribute('data-arriving', 'true');
@@ -186,7 +262,7 @@ describe('RoomTurn public activity detail', () => {
       }));
 
       const lane = view.container.querySelector('.room-agent-lane')!;
-      const activityDisclosure = lane.querySelector<HTMLDetailsElement>(
+      const activityDisclosure = lane.querySelector<HTMLElement>(
         '.room-agent-lane__activity',
       )!;
       const workspaceActivity = activityDisclosure.querySelector(
@@ -292,9 +368,9 @@ describe('RoomTurn public activity detail', () => {
     act(() => vi.advanceTimersByTime(2_000));
     expect(lane).toHaveTextContent(/最近更新 .* · 3 秒前/);
 
-    act(() => vi.advanceTimersByTime(14_000));
+    act(() => vi.advanceTimersByTime(58_000));
     expect(lane).toHaveAttribute('data-motion', 'stale');
-    expect(lane).toHaveTextContent('状态可能过期');
+    expect(lane).toHaveTextContent('最近一分钟没有新的公开进展，实时连接仍正常');
     expect(lane.querySelector('.agent-persona-avatar')).not.toHaveAttribute('data-presence', 'thinking');
     expect(lane.querySelector('.room-agent-lane__activity')).toHaveAttribute('data-state', 'running');
     expect(lane.querySelector('.room-agent-lane__activity')).toHaveAttribute('data-motion', 'paused');

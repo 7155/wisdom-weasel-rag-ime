@@ -25,6 +25,26 @@ _TRANSIENT_RUNTIME_EVENT_TYPES = frozenset(
     }
 )
 
+_ROOM_WORK_SUMMARY_VERSION = "room-work-summary.v1"
+_ROOM_WORK_SUMMARY_BY_INTENT = {
+    "align": ("alignment", "需求与交付边界梳理有新进展"),
+    "review": ("review", "结果与验收条件复核有新进展"),
+    "close": ("closure", "本轮结果整理有新进展"),
+}
+_ROOM_IMPLEMENTATION_INTENTS = frozenset(
+    {
+        "execute",
+        "revise",
+        "retry",
+        "resume",
+        "wake",
+        "callback",
+    }
+)
+_ROOM_PUBLIC_ACTIVITY_STATES = frozenset(
+    {"queued", "running", "completed", "failed", "aborted"}
+)
+
 
 class AgentEventProjectionService:
     """Persist private Agent events and project bounded Room events."""
@@ -150,7 +170,10 @@ class AgentEventProjectionService:
             )
             if not runtime_turn_id or event.turn_id != runtime_turn_id:
                 return
-            mapped_type, public_data = room_event_projection(event)
+            mapped_type, public_data = room_event_projection(
+                event,
+                room_intent_kind=str(binding.get("intentKind") or ""),
+            )
             if event.event_type == "message_completed":
                 mapped_type = "participant_activity"
                 dispatch_id = str(binding["dispatchId"])
@@ -463,6 +486,8 @@ class AgentEventProjectionService:
 
 def room_event_projection(
     event: AgentEventEnvelope,
+    *,
+    room_intent_kind: str = "",
 ) -> tuple[str, dict[str, object]]:
     payload = event.payload
     if event.event_type == "text_delta":
@@ -506,6 +531,33 @@ def room_event_projection(
         )
     if event.event_type == "turn_failed":
         return "turn_failed", _public_turn_failure(event)
+    if event.event_type == "reasoning_summary":
+        # Provider reasoning summaries remain useful inside the participant's
+        # private Session.  A Room, however, is an accountable public surface:
+        # it may show that a bound work stage advanced, but it must not publish
+        # Provider-authored headings, protocol vocabulary, or a list of
+        # reasoning steps.  Derive this copy only from the authoritative
+        # Dispatch intent so it cannot invent files, findings, or completion.
+        summary_kind, summary = _public_room_work_summary(
+            room_intent_kind
+        )
+        data: dict[str, object] = {}
+        for field in ("status", "state"):
+            value = str(payload.get(field) or "").strip()
+            if value in _ROOM_PUBLIC_ACTIVITY_STATES:
+                data[field] = value
+        if payload.get("source") == "provider_reasoning_summary":
+            # This machine provenance is intentionally retained for existing
+            # clients; it is not user-facing copy and carries no Provider text.
+            data["source"] = "provider_reasoning_summary"
+        data.update(
+            {
+                "summary": summary,
+                "publicSummaryVersion": _ROOM_WORK_SUMMARY_VERSION,
+                "publicSummaryKind": summary_kind,
+            }
+        )
+        return "participant_activity", data
     data = _room_scalar_projection(
         payload,
         (
@@ -533,17 +585,6 @@ def room_event_projection(
     for flag in ("ok", "isError", "due"):
         if isinstance(payload.get(flag), bool):
             data[flag] = bool(payload[flag])
-    if event.event_type == "reasoning_summary":
-        source = bounded_text(payload.get("source"), maximum=80)
-        if source:
-            data["source"] = source
-        items = payload.get("items")
-        if isinstance(items, list):
-            data["items"] = [
-                bounded_text(item, maximum=240)
-                for item in items[:12]
-                if bounded_text(item, maximum=240)
-            ]
     if event.event_type in {"approval_required", "approval_resolved"}:
         if isinstance(payload.get("automatic"), bool):
             data["automatic"] = bool(payload["automatic"])
@@ -572,6 +613,16 @@ def room_event_projection(
         data.update(references)
         data.update(_room_tool_disclosure(payload, event.event_type))
     return "participant_activity", data
+
+
+def _public_room_work_summary(intent_kind: str) -> tuple[str, str]:
+    normalized = str(intent_kind or "").strip().lower()
+    selected = _ROOM_WORK_SUMMARY_BY_INTENT.get(normalized)
+    if selected is not None:
+        return selected
+    if normalized in _ROOM_IMPLEMENTATION_INTENTS:
+        return "implementation", "当前任务推进有新进展"
+    return "general", "当前工作有新进展"
 
 
 def _public_turn_failure(

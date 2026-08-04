@@ -1665,8 +1665,16 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             question="是否继续？",
             questionKind="bounded",
             questionOptions=[
-                {"value": "yes", "label": "继续"},
-                {"value": "no", "label": "停止"},
+                {
+                    "value": "yes",
+                    "label": "继续",
+                    "description": "保留当前目标并继续后续工作。",
+                },
+                {
+                    "value": "no",
+                    "label": "停止",
+                    "description": "结束当前目标，不再进入后续工作。",
+                },
             ],
         )
         worker_root = {
@@ -1753,6 +1761,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             {
                 "value": "fast",
                 "label": "快速方案",
+                "description": "缩小本轮范围并优先得到可运行结果",
                 "recommended": False,
             },
         ]
@@ -1766,6 +1775,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             {
                 "value": "fast",
                 "label": "快速方案",
+                "description": "缩小本轮范围并优先得到可运行结果",
                 "recommended": False,
             },
         ]
@@ -1800,8 +1810,16 @@ class RoomSettleLifecycleTests(unittest.TestCase):
 
     def test_structured_question_validator_fails_closed(self) -> None:
         options = [
-            {"value": "safe", "label": "稳妥方案"},
-            {"value": "fast", "label": "快速方案"},
+            {
+                "value": "safe",
+                "label": "稳妥方案",
+                "description": "保留当前边界并降低变更风险",
+            },
+            {
+                "value": "fast",
+                "label": "快速方案",
+                "description": "缩小范围并优先得到可运行结果",
+            },
         ]
         with self.assertRaisesRegex(
             RoomCommitProposalError,
@@ -1882,7 +1900,11 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             {
                 "value": [
                     options[0],
-                    {"value": " safe ", "label": "重复方案"},
+                    {
+                        "value": " safe ",
+                        "label": "重复方案",
+                        "description": "使用与首项相同的内部值",
+                    },
                 ],
                 "decision": "wait",
                 "waiting_for": "user",
@@ -1900,6 +1922,34 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 "question": "采用哪个方案？",
                 "question_kind": "bounded",
                 "message": "at most one recommended",
+            },
+            {
+                "value": [
+                    {
+                        "value": "safe",
+                        "label": "稳妥方案",
+                    },
+                    options[1],
+                ],
+                "decision": "wait",
+                "waiting_for": "user",
+                "question": "采用哪个方案？",
+                "question_kind": "bounded",
+                "message": "description must be a string",
+            },
+            {
+                "value": [
+                    {
+                        **options[0],
+                        "description": "稳妥方案",
+                    },
+                    options[1],
+                ],
+                "decision": "wait",
+                "waiting_for": "user",
+                "question": "采用哪个方案？",
+                "question_kind": "bounded",
+                "message": "instead of repeating its label",
             },
         )
         for case in cases:
