@@ -255,6 +255,7 @@ class RoomPublicTimelineProjector:
         dispatches: Sequence[Mapping[str, object]],
         answer_to_post_id: str = "",
         answer_display_text: str = "",
+        answer_kind: str = "",
         chronology_after_post_id: str = "",
     ) -> list[dict[str, object]]:
         room_id = str(post["roomId"])
@@ -283,6 +284,7 @@ class RoomPublicTimelineProjector:
                     and answer_display_text != str(post["content"])
                     else {}
                 ),
+                **({"answerKind": answer_kind} if answer_kind else {}),
                 **(
                     {"afterPostId": chronology_after_post_id}
                     if chronology_after_post_id

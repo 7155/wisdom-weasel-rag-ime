@@ -293,7 +293,7 @@ describe('selectRoomTurnExecution', () => {
     });
   });
 
-  it('keeps generic and plan-review waiting actions in their owning Session lane', () => {
+  it('keeps historical native input in its lane while only plan review owns a Session action', () => {
     const projection = createRoomProjection('room-1');
     projection.turnOrder.push('root-1');
     projection.activityOrder.push('plan-review', 'select-input');
@@ -357,6 +357,8 @@ describe('selectRoomTurnExecution', () => {
       participantId: 'participant-1',
       sourceSessionId: 'session-owner',
     });
+    expect(roomActivityNeedsSessionAction(projection.activitiesById['plan-review']!)).toBe(true);
+    expect(roomActivityNeedsSessionAction(projection.activitiesById['select-input']!)).toBe(false);
   });
   it('keeps model arbitration in the Room lane without creating a Session review action', () => {
     const base = {
@@ -389,6 +391,34 @@ describe('selectRoomTurnExecution', () => {
         payloadSha256: 'e'.repeat(64),
       },
     })).toBe(true);
+  });
+  it('never gives native participant clarification a second Room answer owner', () => {
+    const base = {
+      id: 'native-question-1',
+      turnId: 'root-1',
+      participantId: 'participant-1',
+      sourceSessionId: 'session-owner',
+      kind: 'participant_activity',
+      status: 'waiting' as const,
+      summary: '选择部署环境',
+      createdAtMs: 1,
+      payload: {
+        requestKind: 'user_input_required',
+        sourceEventType: 'user_input_required',
+        method: 'select',
+        options: [{ id: 'staging', label: '预发布' }],
+      },
+    };
+
+    expect(roomActivityNeedsSessionAction(base)).toBe(false);
+    expect(roomActivityNeedsSessionAction({
+      ...base,
+      id: 'native-grouped-1',
+      payload: {
+        requestKind: 'grouped_questions',
+        sourceEventType: 'user_input_required',
+      },
+    })).toBe(false);
   });
   it('keeps governed progress interleaved with read and write tools while filtering noise', () => {
     const projection = createRoomProjection('room-1');

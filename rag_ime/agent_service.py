@@ -1311,7 +1311,12 @@ class AgentService:
         dispatch = self.room_kernel.dispatch(str(manifest["dispatchId"]))
         root_limits = self.room_kernel.resource_limits(str(dispatch["rootId"]))
         skill_selection = self.room_skill_policy.select_stage(
-            _room_skill_stage(dispatch)
+            _room_skill_stage(
+                dispatch,
+                alignment_chain=self.room_kernel.dispatch_is_runtime_alignment(
+                    str(dispatch["dispatchId"])
+                ),
+            )
         )
         room_skill_policy: dict[str, object]
         if skill_selection["selection"] == "required":
@@ -2830,12 +2835,19 @@ class AgentService:
         work_item_id = _optional_work_item_id(payload.get("workItemId"))
         answer_to_post_id = str(payload.get("answerToPostId") or "").strip()
         answer_to_root_id = str(payload.get("answerToRootId") or "").strip()
+        answer_kind = str(payload.get("answerKind") or "").strip()
         if bool(answer_to_post_id) != bool(answer_to_root_id):
             raise ValueError(
                 "Room clarification answers require answerToPostId and answerToRootId"
             )
         if len(answer_to_post_id) > 320 or len(answer_to_root_id) > 320:
             raise ValueError("Room clarification answer identity is too long")
+        if answer_kind not in {"", "option", "custom"}:
+            raise ValueError("answerKind must be option or custom")
+        if answer_kind and not (answer_to_post_id and answer_to_root_id):
+            raise ValueError(
+                "answerKind requires answerToPostId and answerToRootId"
+            )
         attachment_ids = _room_attachment_ids(payload.get("attachmentIds"))
         requested_ids = payload.get("participantIds")
         if requested_ids is None:
@@ -2858,6 +2870,7 @@ class AgentService:
                 attachment_ids=attachment_ids,
                 answer_to_post_id=answer_to_post_id,
                 answer_to_root_id=answer_to_root_id,
+                answer_kind=answer_kind,
             )
         claim = self.command_receipts.begin(
             command_scope="room_message",
@@ -2870,6 +2883,7 @@ class AgentService:
                 "attachmentIds": attachment_ids,
                 "answerToPostId": answer_to_post_id,
                 "answerToRootId": answer_to_root_id,
+                "answerKind": answer_kind,
             },
         )
         if claim.replay_response is not None:
@@ -2884,6 +2898,7 @@ class AgentService:
                 attachment_ids=attachment_ids,
                 answer_to_post_id=answer_to_post_id,
                 answer_to_root_id=answer_to_root_id,
+                answer_kind=answer_kind,
             )
         except Exception as exc:
             self.command_receipts.fail(
@@ -3046,6 +3061,7 @@ class AgentService:
         attachment_ids: Sequence[str],
         answer_to_post_id: str,
         answer_to_root_id: str,
+        answer_kind: str,
     ) -> dict[str, object]:
         if kernel_owns_room_execution(self.room_kernel.mode):
             room = self.rooms.get(room_id)
@@ -3080,6 +3096,7 @@ class AgentService:
                 attachment_ids=attachment_ids,
                 answer_to_post_id=answer_to_post_id,
                 answer_to_root_id=answer_to_root_id,
+                answer_kind=answer_kind,
             )
         if answer_to_post_id or answer_to_root_id:
             raise ValueError(
@@ -4965,9 +4982,15 @@ def _room_artifact_hash_provider_from_environment() -> Callable[[str], str] | No
     return current_hash
 
 
-def _room_skill_stage(dispatch: Mapping[str, object]) -> str:
+def _room_skill_stage(
+    dispatch: Mapping[str, object],
+    *,
+    alignment_chain: bool = False,
+) -> str:
     """Map a Kernel-owned intent to policy selection without letting Skills route."""
 
+    if alignment_chain:
+        return "requirements"
     return {
         "align": "requirements",
         "execute": "implementation",

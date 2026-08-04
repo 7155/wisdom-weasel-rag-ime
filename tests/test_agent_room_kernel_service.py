@@ -26,8 +26,10 @@ from rag_ime.agent_room_kernel import RoomKernelFenceError
 from rag_ime.agent_room_skills import RoomSkillEpochRevoked
 from rag_ime.agent_blocks import normalize_trusted_agent_blocks
 from rag_ime.agent_room_capabilities import ToolAuthorizationError
+from rag_ime.agent_room_application import _resolve_room_answer_display
 from rag_ime.agent_room_kernel_application import _collaboration_tool_result
 from rag_ime.agent_room_settlement import RoomCommitProposalError
+from rag_ime.agent_room_runtime_coordinator import _effective_dispatch_role_id
 from rag_ime.agent_room_kernel_contracts import (
     DISPATCH_ENVELOPE_SCHEMA_VERSION,
     KERNEL_COMMAND_SCHEMA_VERSION,
@@ -63,6 +65,7 @@ class KernelRuntime:
             policy_root / "skills",
         )
         self.omit_required_skill = False
+        self.active_alignment_classifier = None
 
     def runtime_status(self):
         return {
@@ -96,6 +99,11 @@ class KernelRuntime:
             "callback": "handoff",
             "close": "closure",
         }.get(intent, "implementation")
+        if (
+            self.active_alignment_classifier is not None
+            and self.active_alignment_classifier(str(payload["dispatchId"]))
+        ):
+            stage = "requirements"
         selection = self.skill_policy.select_stage(stage)
         receipt = {
             "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
@@ -289,6 +297,9 @@ class RoomKernelServiceTests(unittest.TestCase):
             room_kernel_poll_seconds=60,
         )
         self.service.room_kernel_worker_loop.close()
+        self.factory.runtime.active_alignment_classifier = (
+            self.service.room_kernel.dispatch_is_runtime_alignment
+        )
         room = self.service.create_room(
             {
                 "title": "Kernel cohort",
@@ -950,6 +961,184 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         self.assertEqual(dispatch["targetParticipantId"], requested["id"])
 
+    def test_single_opening_mention_can_select_the_companion_whose_default_job_is_reviewer(
+        self,
+    ) -> None:
+        room = self.service.create_room(
+            {
+                "title": "开场点名覆盖默认接手人",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {
+                        "roleId": "companion-future-v1",
+                        "roleVersion": "1",
+                        "collaborationRole": "coordinator",
+                    },
+                    {
+                        "roleId": "companion-present-v1",
+                        "roleVersion": "1",
+                        "collaborationRole": "implementer",
+                    },
+                    {
+                        "roleId": "companion-firstlight-v1",
+                        "roleVersion": "1",
+                        "collaborationRole": "reviewer",
+                    },
+                ],
+            }
+        )["room"]
+        requested = next(
+            participant
+            for participant in room["participants"]
+            if participant["collaborationRole"] == "reviewer"
+        )
+
+        accepted = self.service.post_room_message(
+            str(room["id"]),
+            {
+                "message": f"@{requested['displayName']} 请接手这个任务。",
+                "clientMessageId": "client:explicit-reviewer-default-job",
+                "participantIds": [str(requested["id"])],
+            },
+        )
+
+        self.assertEqual(
+            accepted["root"]["facilitatorParticipantId"],
+            requested["id"],
+        )
+        self.assertEqual(
+            accepted["alignmentDispatches"][0]["participantId"],
+            requested["id"],
+        )
+        self.assertTrue(self.service.room_kernel_worker.run_once())
+        with sqlite3.connect(self.service.db_path) as conn:
+            binding_payload = json.loads(
+                str(
+                    conn.execute(
+                        "SELECT participant_binding_json "
+                        "FROM room_v2_capability_runtime_bindings "
+                        "WHERE session_id=?",
+                        (str(requested["sessionId"]),),
+                    ).fetchone()[0]
+                )
+            )
+        self.assertIn(
+            "/coordinator?",
+            str(binding_payload["collaborationRoleRef"]),
+        )
+        defined = self.service.room_application.define_room(
+            str(room["id"]),
+            dispatch_id=str(
+                accepted["alignmentDispatches"][0]["dispatchId"]
+            ),
+            invocation_receipt_id="invoke:explicit-reviewer-default-job",
+            arguments={
+                "objective": "完成被点名的任务",
+                "expectedOutput": "由开场点名伙伴负责的可验证结果",
+                "requirements": ["开场点名决定本轮接手人"],
+                "acceptanceCriteria": [
+                    {
+                        "statement": "被点名伙伴进入实施阶段",
+                        "fullNameZh": "开场点名伙伴完成接手",
+                        "expectedReceiptTypes": ["evidence"],
+                    }
+                ],
+            },
+        )
+        self.assertEqual(
+            defined["executionDispatch"]["targetParticipantId"],
+            requested["id"],
+        )
+
+    def test_dispatch_job_overrides_roster_defaults_after_opening_facilitator_changes(
+        self,
+    ) -> None:
+        root = {"facilitatorParticipantId": "firstlight"}
+        self.assertEqual(
+            _effective_dispatch_role_id(
+                dispatch={
+                    "intentKind": "align",
+                    "targetParticipantId": "firstlight",
+                },
+                task={"taskKind": "work"},
+                root=root,
+            ),
+            "coordinator",
+        )
+        self.assertEqual(
+            _effective_dispatch_role_id(
+                dispatch={
+                    "intentKind": "execute",
+                    "targetParticipantId": "future-default-coordinator",
+                },
+                task={
+                    "taskKind": "work",
+                    "workspacePolicy": "isolated_writable",
+                },
+                root=root,
+            ),
+            "implementer",
+        )
+        self.assertEqual(
+            _effective_dispatch_role_id(
+                dispatch={
+                    "intentKind": "execute",
+                    "targetParticipantId": "present",
+                },
+                task={"taskKind": "work", "workspacePolicy": "read_only"},
+                root=root,
+            ),
+            "researcher",
+        )
+        self.assertEqual(
+            _effective_dispatch_role_id(
+                dispatch={
+                    "intentKind": "review",
+                    "targetParticipantId": "present",
+                },
+                task={"taskKind": "review", "workspacePolicy": "read_only"},
+                root=root,
+            ),
+            "reviewer",
+        )
+
+    def test_default_companion_is_initial_facilitator_without_a_mention(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "默认主持伙伴",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        future = next(
+            participant
+            for participant in room["participants"]
+            if participant["roleId"] == "companion-future-v1"
+        )
+        self.assertEqual(future["displayName"], "澄·远")
+        self.assertEqual(future["collaborationRole"], "coordinator")
+
+        accepted = self.service.post_room_message(
+            str(room["id"]),
+            {
+                "message": "我要完成一个终端工具。",
+                "clientMessageId": "client:default-facilitator",
+            },
+        )
+
+        self.assertEqual(
+            accepted["root"]["facilitatorParticipantId"],
+            future["id"],
+        )
+        self.assertEqual(
+            accepted["alignmentDispatches"][0]["participantId"],
+            future["id"],
+        )
+
     def test_explicit_multi_participant_request_still_aligns_once(self) -> None:
         room = self.service.create_room(
             {
@@ -981,9 +1170,14 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertNotIn("workItem", accepted)
         self.assertEqual(len(accepted["alignmentDispatches"]), 1)
         self.assertEqual(accepted["dispatches"], [])
+        default_facilitator = next(
+            participant
+            for participant in participants
+            if participant["roleId"] == "companion-future-v1"
+        )
         self.assertEqual(
             accepted["alignmentDispatches"][0]["participantId"],
-            str(participants[0]["id"]),
+            str(default_facilitator["id"]),
         )
         self.assertEqual(
             [item["routingPolicy"] for item in accepted["routeDecisions"]],
@@ -993,15 +1187,19 @@ class RoomKernelServiceTests(unittest.TestCase):
     def test_auto_managed_root_cannot_claim_delivery_without_partner_receipts(
         self,
     ) -> None:
-        moderator_id = str(
-            self.service.rooms.get(self.room_id)[
-                "moderatorParticipantId"
-            ]
+        default_facilitator_id = str(
+            next(
+                participant
+                for participant in self.service.rooms.get(self.room_id)[
+                    "participants"
+                ]
+                if participant["roleId"] == "companion-future-v1"
+            )["id"]
         )
         work_item = self._create_work_item(
             "managed-receipt-fence",
             objective="并行拆分实现和复核。",
-            owner_participant_id=moderator_id,
+            owner_participant_id=default_facilitator_id,
             client_message_id=(
                 "managed-room-ingress:v2:natural:2:"
                 "managed-receipt-fence"
@@ -6115,6 +6313,90 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         self.assertIn("立即结束本轮", staged["modelInstruction"])
 
+    def test_kernel_rejects_non_facilitator_wait_for_user(self) -> None:
+        room = self.service.rooms.get(self.room_id)
+        facilitator = next(
+            item
+            for item in room["participants"]
+            if str(item["id"]) != str(self.participant["id"])
+        )
+        with sqlite3.connect(self.service.db_path) as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM room_kernel_roots WHERE root_id=?",
+                ("root:service",),
+            ).fetchone()
+            assert row is not None
+            root_payload = json.loads(str(row[0]))
+            root_payload["facilitatorParticipantId"] = str(
+                facilitator["id"]
+            )
+            conn.execute(
+                """UPDATE room_kernel_roots
+                   SET facilitator_participant_id=?,payload_json=?
+                   WHERE root_id=?""",
+                (
+                    str(facilitator["id"]),
+                    json.dumps(
+                        root_payload,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                    "root:service",
+                ),
+            )
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.assertTrue(self.service.room_kernel_worker.run_once())
+        commit_id = "commit:non-facilitator-user-wait"
+
+        with self.assertRaisesRegex(
+            RoomKernelFenceError,
+            "only the Root Facilitator may wait for user input",
+        ):
+            self.service.room_kernel.apply_commit(
+                {
+                    "schemaVersion": ROOM_COMMIT_SCHEMA_VERSION,
+                    "commitId": commit_id,
+                    "dispatchId": "dispatch:service",
+                    "action": "wait",
+                    "contentHash": "sha256:non-facilitator-user-wait",
+                    "postProposal": None,
+                    "continuation": {
+                        "decision": "wait",
+                        "waitingFor": "user",
+                        "resumeCondition": "用户回答当前问题",
+                        "question": "是否继续？",
+                        "questionOptions": [
+                            {"value": "yes", "label": "继续"},
+                            {"value": "no", "label": "停止"},
+                        ],
+                    },
+                    "qualityGateReceipt": {
+                        "schemaVersion": (
+                            "wisdom-weasel.room-quality-gate-receipt.v1"
+                        ),
+                        "receiptId": "quality:non-facilitator-user-wait",
+                        "rootId": "root:service",
+                        "taskId": "task:service",
+                        "dispatchId": "dispatch:service",
+                        "generation": 0,
+                        "originalRequestChecked": True,
+                        "verdict": "not_ready",
+                        "items": [],
+                        "residualRisks": ["等待用户输入"],
+                        "createdAtMs": 10,
+                    },
+                    "evidenceRefs": [],
+                    "requirementCoverage": [],
+                    "createdAtMs": 10,
+                },
+                generation=0,
+                now_ms=10,
+            )
+        self.assertIsNone(
+            self.service.room_kernel.pending_user_wait(self.room_id)
+        )
+
     def test_managed_dispatch_preparation_replays_after_crash_before_lease(self) -> None:
         dispatch = self._dispatch()
         self.service.room_kernel.enqueue_dispatch(dispatch, now_ms=3)
@@ -8120,6 +8402,7 @@ class RoomKernelServiceTests(unittest.TestCase):
             {
                 "message": "continue",
                 "clientMessageId": "client:wait-answer",
+                "answerKind": "option",
                 "answerToPostId": question_post_id,
                 "answerToRootId": root_id,
             },
@@ -8140,15 +8423,33 @@ class RoomKernelServiceTests(unittest.TestCase):
             answer_event["payload"]["answerToPostId"],
             question_post_id,
         )
+        self.assertEqual(answer_event["payload"]["text"], "继续执行")
+        self.assertNotIn("displayText", answer_event["payload"])
+        self.assertEqual(answered["post"]["content"], "继续执行")
         self.assertEqual(
-            answer_event["payload"]["displayText"],
+            answered["requirementCatalog"]["items"][-1]["statement"],
             "继续执行",
+        )
+        self.assertEqual(
+            answered["requirementAnchor"]["provenance"]["answerValue"],
+            "continue",
+        )
+        self.assertEqual(
+            answered["requirementAnchor"]["provenance"][
+                "answerDisplayText"
+            ],
+            "继续执行",
+        )
+        self.assertEqual(
+            answered["requirementAnchor"]["provenance"]["answerKind"],
+            "option",
         )
         replay = self.service.post_room_message(
             self.room_id,
             {
                 "message": "continue",
                 "clientMessageId": "client:wait-answer",
+                "answerKind": "option",
                 "answerToPostId": question_post_id,
                 "answerToRootId": root_id,
             },
@@ -8181,6 +8482,26 @@ class RoomKernelServiceTests(unittest.TestCase):
                 resumed_dispatch_id
             )
         )
+        resumed_session_id = str(
+            self.service.room_kernel.dispatch(resumed_dispatch_id)[
+                "targetSessionId"
+            ]
+        )
+        resumed_skill = self.service.room_skill_receipts.latest_for_session(
+            resumed_session_id
+        )
+        self.assertIsNotNone(resumed_skill)
+        assert resumed_skill is not None
+        self.assertEqual(resumed_skill["skillId"], "alignment-and-decision")
+        runtime_manifest = self.service.room_capabilities.manifest_for_runtime(
+            resumed_session_id
+        )
+        self.assertIsNotNone(runtime_manifest)
+        assert runtime_manifest is not None
+        self.assertEqual(
+            {str(tool["name"]) for tool in runtime_manifest[0]["tools"]},
+            {"room_state", "room_post", "room_commit", "room_define"},
+        )
         target = self.service.rooms.get(self.room_id)["participants"][2]
         defined = self.service.room_application.define_room(
             self.room_id,
@@ -8205,6 +8526,50 @@ class RoomKernelServiceTests(unittest.TestCase):
             defined["workItem"]["accountableParticipantId"],
             accepted["root"]["facilitatorParticipantId"],
         )
+
+    def test_answer_kind_preserves_custom_text_that_matches_option_value(
+        self,
+    ) -> None:
+        options = [
+            {"value": "continue", "label": "继续执行"},
+            {"value": "stop", "label": "停止"},
+        ]
+        self.assertEqual(
+            _resolve_room_answer_display(
+                "continue",
+                answer_kind="custom",
+                question_options=options,
+            ),
+            ("continue", "custom"),
+        )
+        self.assertEqual(
+            _resolve_room_answer_display(
+                "continue",
+                answer_kind="option",
+                question_options=options,
+            ),
+            ("继续执行", "option"),
+        )
+        with self.assertRaisesRegex(ValueError, "does not match a presented option"):
+            _resolve_room_answer_display(
+                "missing",
+                answer_kind="option",
+                question_options=options,
+            )
+
+    def test_answer_kind_requires_clarification_identity(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "answerKind requires answerToPostId and answerToRootId",
+        ):
+            self.service.post_room_message(
+                self.room_id,
+                {
+                    "message": "custom answer",
+                    "clientMessageId": "client:answer-kind-without-question",
+                    "answerKind": "custom",
+                },
+            )
 
     def test_clarified_definition_waits_for_one_typed_start_action(
         self,

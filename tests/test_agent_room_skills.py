@@ -201,11 +201,15 @@ class RoomNativeSkillTests(unittest.TestCase):
             "`questionOptions=[...]`",
         ):
             self.assertIn(exact_field, skill)
-        self.assertIn("containing 2-5\n  unique options", skill)
+        self.assertRegex(
+            skill,
+            r"questionOptions=\[\.\.\.\]` containing 2-5\s+"
+            r"unique, genuinely different options",
+        )
         self.assertIn("at most one `recommended`", skill)
-        self.assertIn('explicitly use `questionKind="unbounded"`', skill)
-        self.assertIn("omit\n  `questionOptions`", skill)
-        self.assertIn("rather than inventing choices", skill)
+        self.assertIn("one user-owned decision at a time", skill)
+        self.assertRegex(skill, r"The\s+interface supplies `Other`")
+        self.assertNotIn('`questionKind="unbounded"`', skill)
         self.assertIn("not a second\n  question Tool", skill)
 
     def test_work_document_archive_is_progressive_adapter_not_room_stage(

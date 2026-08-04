@@ -2809,6 +2809,16 @@ class RoomKernelStore:
                     "RoomCommit Task is missing"
                 )
             task_payload = json.loads(str(task_row["payload_json"]))
+            if (
+                decision == "wait"
+                and isinstance(continuation, Mapping)
+                and continuation.get("waitingFor") == "user"
+                and str(dispatch["target_participant_id"])
+                != str(root["facilitator_participant_id"] or "")
+            ):
+                raise RoomKernelFenceError(
+                    "only the Root Facilitator may wait for user input"
+                )
             existing = conn.execute(
                 "SELECT commit_id FROM room_kernel_commits WHERE dispatch_id = ?",
                 (payload["dispatchId"],),
@@ -10573,6 +10583,37 @@ class RoomKernelStore:
                 root,
             )
 
+    def dispatch_is_preparable_alignment(self, dispatch_id: str) -> bool:
+        """Classify a queued Dispatch before its Runtime capability is prepared.
+
+        Preparation happens before the Kernel leases the Dispatch, so the leaf
+        is still pending. The stricter active classifier intentionally remains
+        running-only for Tool and settlement fences.
+        """
+
+        with self._connect() as conn:
+            dispatch = self._dispatch_row(conn, dispatch_id)
+            root = self._root_row(conn, str(dispatch["root_id"]))
+            return self._is_alignment_dispatch_chain(
+                conn,
+                dispatch,
+                root,
+                leaf_states=("pending",),
+            )
+
+    def dispatch_is_runtime_alignment(self, dispatch_id: str) -> bool:
+        """Classify the leased-to-running Runtime delivery window."""
+
+        with self._connect() as conn:
+            dispatch = self._dispatch_row(conn, dispatch_id)
+            root = self._root_row(conn, str(dispatch["root_id"]))
+            return self._is_alignment_dispatch_chain(
+                conn,
+                dispatch,
+                root,
+                leaf_states=("leased", "running"),
+            )
+
 
     def active_capability_peer_dispatch_ids(
         self,
@@ -11709,6 +11750,7 @@ class RoomKernelStore:
                 JOIN room_kernel_roots r ON r.root_id = c.root_id
                 JOIN room_kernel_dispatches d ON d.dispatch_id = c.parent_dispatch_id
                 WHERE r.room_id = ? AND c.decision = 'wait'
+                  AND d.target_participant_id = r.facilitator_participant_id
                   AND {state_fence}
                 ORDER BY c.created_at_ms DESC, c.continuation_id DESC
                 """,
@@ -13433,6 +13475,24 @@ class RoomKernelStore:
     ) -> bool:
         """Fence room_define to one live facilitator chain rooted at intent=align."""
 
+        return cls._is_alignment_dispatch_chain(
+            conn,
+            dispatch,
+            root,
+            leaf_states=("running",),
+        )
+
+    @classmethod
+    def _is_alignment_dispatch_chain(
+        cls,
+        conn: sqlite3.Connection,
+        dispatch: sqlite3.Row,
+        root: sqlite3.Row,
+        *,
+        leaf_states: Sequence[str],
+    ) -> bool:
+        """Verify immutable alignment lineage at one explicit lifecycle state."""
+
         root_id = str(root["root_id"])
         task_id = str(dispatch["task_id"])
         generation = int(root["generation"])
@@ -13451,7 +13511,7 @@ class RoomKernelStore:
                 or int(current["generation"]) != generation
                 or str(current["target_participant_id"]) != facilitator_id
                 or str(current["state"])
-                != ("running" if is_leaf else "committed")
+                not in (leaf_states if is_leaf else ("committed",))
             ):
                 return False
             intent = str(current["intent_kind"])

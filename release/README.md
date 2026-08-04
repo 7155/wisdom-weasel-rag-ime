@@ -1,5 +1,10 @@
 # Build, Install, And Release
 
+The tracked [Room product contract](room-product-contract.md) is the sole
+authority for current Room behavior and native acceptance status. This build
+guide explains how to produce evidence for that contract; it does not override
+it.
+
 This directory separates three different claims that must not be confused:
 
 | Scope | What it proves | Current gate |

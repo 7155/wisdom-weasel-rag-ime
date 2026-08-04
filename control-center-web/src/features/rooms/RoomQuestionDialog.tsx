@@ -1,9 +1,10 @@
 import * as RadioGroup from '@radix-ui/react-radio-group';
 import { Check, MessageSquareText, PencilLine } from 'lucide-react';
-import { useEffect, useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 
 import { Button, Field, TextArea } from '@/components/primitives';
 import type { RoomMessageQuestionProjection } from '@/contracts/room-reducer';
+import type { RoomQuestionAnswerKind } from './room-question';
 
 export function RoomQuestionDialog({
   active,
@@ -12,7 +13,7 @@ export function RoomQuestionDialog({
 }: {
   active?: boolean;
   question: RoomMessageQuestionProjection;
-  onSubmit?: (value: string) => Promise<boolean>;
+  onSubmit?: (value: string, answerKind: RoomQuestionAnswerKind) => Promise<boolean>;
 }) {
   const optionIdPrefix = useId();
   const answerId = useId();
@@ -21,34 +22,65 @@ export function RoomQuestionDialog({
   const [customAnswer, setCustomAnswer] = useState(question.options.length === 0);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const submittingRef = useRef(false);
+  const firstOptionRef = useRef<HTMLButtonElement>(null);
+  const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const hasOptions = question.options.length > 0;
   const authoritative = active ?? Boolean(onSubmit);
   const stale = question.status === 'pending' && !authoritative;
   const interactive = question.status === 'pending' && authoritative && Boolean(onSubmit);
   const answerValue = customAnswer || !hasOptions ? freeformValue : selectedValue;
+  const questionFocusKey = `${question.prompt}\u001f${question.options
+    .map((option) => option.value)
+    .join('\u001f')}`;
 
   useEffect(() => {
     setSelectedValue('');
     setFreeformValue('');
     setCustomAnswer(question.options.length === 0);
     setSubmitting(false);
+    submittingRef.current = false;
     setSubmitError('');
   }, [question.prompt, question.status, question.options.length]);
 
-  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (!interactive || !onSubmit || !answerValue.trim() || submitting) return;
+  useEffect(() => {
+    if (!interactive) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      (hasOptions && !customAnswer
+        ? firstOptionRef.current
+        : textAreaRef.current
+      )?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [customAnswer, hasOptions, interactive, questionFocusKey]);
+
+  async function submitValue(
+    value: string,
+    answerKind: RoomQuestionAnswerKind,
+  ): Promise<void> {
+    if (!interactive || !onSubmit || !value.trim() || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     setSubmitError('');
-    const accepted = await onSubmit(answerValue).catch(() => false);
+    const accepted = await onSubmit(value, answerKind).catch(() => false);
     if (!accepted) {
       setSubmitError('回答没有发送，请检查连接后重试。');
+      setSelectedValue('');
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }
 
+  function submit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    void submitValue(answerValue, 'custom');
+  }
+
   return <section
     aria-label={`需要回答：${question.prompt}`}
+    aria-live={interactive ? 'polite' : undefined}
+    aria-atomic={interactive || undefined}
+    aria-busy={submitting || undefined}
     className="room-question-card"
     data-state={stale ? 'stale' : question.status}
   >
@@ -56,7 +88,7 @@ export function RoomQuestionDialog({
       <span><MessageSquareText size={16} aria-hidden="true" /></span>
       <span>
         <small>{question.status === 'pending' && !stale
-          ? '等待你的回答'
+          ? hasOptions ? '选择后继续' : '等待你的回答'
           : stale
             ? '问题已失效'
             : question.status === 'answered'
@@ -68,7 +100,7 @@ export function RoomQuestionDialog({
     {question.status === 'answered' ? <QuestionAnsweredNotice /> : null}
     {question.status === 'superseded' ? <p className="room-question-card__superseded">这项问题已由后续问题替代。</p> : null}
     {stale ? <p className="room-question-card__stale">这项问题已不再是当前可回答的问题。</p> : null}
-    {interactive ? <form className="room-question-card__form" onSubmit={(event) => void submit(event)}>
+    {interactive ? <form className="room-question-card__form" onSubmit={submit}>
       {hasOptions && !customAnswer ? <RadioGroup.Root
         aria-label="可选回答"
         className="room-question-card__options"
@@ -88,7 +120,13 @@ export function RoomQuestionDialog({
             aria-describedby={descriptionId}
             aria-labelledby={labelId}
             className="room-question-card__option"
+            data-pending={submitting && selectedValue === option.value ? 'true' : undefined}
+            onClick={() => {
+              setSelectedValue(option.value);
+              void submitValue(option.value, 'option');
+            }}
             key={option.value}
+            ref={index === 0 ? firstOptionRef : undefined}
             value={option.value}
           >
             <span className="room-question-card__control" aria-hidden="true">
@@ -102,7 +140,7 @@ export function RoomQuestionDialog({
         })}
       </RadioGroup.Root> : <Field
         className="room-question-card__answer"
-        description={hasOptions ? '填写不同于以上选项的回答。' : '用自己的话回答，伙伴会继续同一项任务。'}
+        description={hasOptions ? '以上选项都不合适时，用自己的话补充。' : '用自己的话回答，伙伴会继续同一项任务。'}
         htmlFor={answerId}
         label="你的回答"
         required
@@ -111,6 +149,7 @@ export function RoomQuestionDialog({
           aria-describedby={`${answerId}-description`}
           disabled={submitting}
           id={answerId}
+          ref={textAreaRef}
           maxLength={8_000}
           onChange={(event) => {
             setFreeformValue(event.target.value);
@@ -127,20 +166,24 @@ export function RoomQuestionDialog({
           disabled={submitting}
           leadingIcon={<PencilLine size={14} />}
           onClick={() => {
-            setCustomAnswer((current) => !current);
+            const showCustomAnswer = !customAnswer;
+            setCustomAnswer(showCustomAnswer);
             setSubmitError('');
+            if (showCustomAnswer) {
+              window.requestAnimationFrame(() => textAreaRef.current?.focus());
+            }
           }}
           size="small"
           type="button"
           variant="quiet"
-        >{customAnswer ? '返回选项' : '自己填写'}</Button> : <span />}
-        <Button
+        >{customAnswer ? '返回选项' : '其他'}</Button> : <span />}
+        {!hasOptions || customAnswer ? <Button
           disabled={!answerValue.trim() || submitting}
           loading={submitting}
           size="small"
           type="submit"
           variant="primary"
-        >发送回答</Button>
+        >发送回答</Button> : null}
       </footer>
     </form> : null}
   </section>;

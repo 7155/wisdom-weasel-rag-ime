@@ -1,4 +1,5 @@
 import {
+  ArrowDown,
   CheckCircle2,
   Braces,
   CircleAlert,
@@ -58,7 +59,10 @@ import {
   type RoomTaskSubagentRun,
 } from '../kernel/RoomTaskFlowGraph';
 import { RoomTaskUpdatedAt, useRoomTaskUpdateClock } from '../kernel/RoomTaskUpdatedAt';
-import type { PendingRoomQuestion } from '../room-question';
+import type {
+  PendingRoomQuestion,
+  RoomQuestionAnswerKind,
+} from '../room-question';
 import { RoomQuestionDialog } from '../RoomQuestionDialog';
 import {
   roomProjection,
@@ -105,6 +109,7 @@ interface RoomTurnProps {
   onAnswerQuestion?: (
     question: PendingRoomQuestion,
     value: string,
+    answerKind: RoomQuestionAnswerKind,
   ) => Promise<boolean>;
 }
 
@@ -200,11 +205,22 @@ export function RoomTurn({
   const responseUsageActivities = turn.activityIds
     .map((activityId) => projection.activitiesById[activityId])
     .filter((activity): activity is RoomActivityProjection => Boolean(activity));
-  const rootTerminal = ['completed', 'failed', 'aborted'].includes(turn.status);
+  const rootId = turn.rootId || turnId;
+  const kernelRoot = kernelRootsById?.[rootId];
+  const kernelRootState = kernelRoot?.state;
+  const kernelRootFailed = kernelRootState === 'failed';
+  const kernelRootAborted = ['cancelled', 'cancelled_with_unknowns'].includes(
+    kernelRootState ?? '',
+  );
+  const rootTerminal = (
+    ['completed', 'failed', 'aborted'].includes(turn.status)
+    || ['completed', 'failed', 'cancelled', 'cancelled_with_unknowns'].includes(
+      kernelRootState ?? '',
+    )
+  );
   const pendingAction = rootTerminal
     ? undefined
     : pendingRoomSessionAction(activities, projection, lanes, room);
-  const rootId = turn.rootId || turnId;
   const rootHasActiveLane = lanes.length === 0
     ? ['queued', 'running'].includes(turn.status)
     : lanes.some((lane) => {
@@ -216,15 +232,21 @@ export function RoomTurn({
             : ['completed', 'failed', 'aborted'].includes(turn.status);
         return !terminal && !lane.activities.some(roomActivityNeedsSessionAction);
       });
-  const kernelRoot = kernelRootsById?.[rootId];
   const requiresStartAction = roomRootRequiresStartAction(
     kernelRoot,
     Object.values(kernelReceiptsById ?? {}),
   );
-  const pendingQuestion = projection.pendingUserQuestion?.rootId === rootId
+  const kernelCanOwnQuestion = !kernelRootState
+    || ['pending', 'running', 'waiting'].includes(kernelRootState);
+  const pendingQuestion = !rootTerminal
+    && kernelCanOwnQuestion
+    && projection.pendingUserQuestion?.rootId === rootId
     ? projection.pendingUserQuestion
     : undefined;
-  const kernelRootState = kernelRoot?.state;
+  // While the Room is asking the user, the chronological message and its
+  // choices are the whole interaction. Keep every role lane in the projection,
+  // but do not stack current or earlier activity panels beneath the form.
+  const visibleLanes = pendingQuestion ? [] : lanes;
   const reporterSummaryRequired = Boolean(
     rootTerminal && kernelRoot?.reporterParticipantId,
   );
@@ -256,7 +278,8 @@ export function RoomTurn({
       ? ['pending', 'running', 'waiting'].includes(kernelRootState)
       : ['queued', 'running'].includes(turn.status) && rootHasActiveLane)
     && !pendingAction
-    && !requiresStartAction;
+    && !requiresStartAction
+    && !pendingQuestion;
   const rootStopping = abortingTurnIds.has(rootId);
   const rootRetrying = retryingRootIds.has(rootId);
   const terminalIssue = turn.status === 'failed' || turn.status === 'aborted'
@@ -366,7 +389,7 @@ export function RoomTurn({
         onClick={() => onAbortTurn(rootId)}
       >{rootStopping ? '正在停止' : '停止本轮任务'}</Button>
     </div> : null}
-    {lanes.map((lane) => {
+    {visibleLanes.map((lane) => {
       const participant = room?.participants.find((item) => item.id === lane.participantId);
       const persona = personas.find((item) => (
         item.roleId === participant?.roleId && item.version === participant.roleVersion
@@ -391,14 +414,14 @@ export function RoomTurn({
           : participantId
             ? (turn.failedParticipantIds ?? []).includes(participantId)
             : false
-      ) || (!explicitlyTerminal && turn.status === 'failed');
+      ) || (!explicitlyTerminal && (turn.status === 'failed' || kernelRootFailed));
       const laneAborted = (
         lane.dispatchId
           ? (turn.abortedDispatchIds ?? []).includes(lane.dispatchId)
           : participantId
             ? (turn.abortedParticipantIds ?? []).includes(participantId)
             : false
-      ) || (!explicitlyTerminal && turn.status === 'aborted');
+      ) || (!explicitlyTerminal && (turn.status === 'aborted' || kernelRootAborted));
       // A terminal Root is authoritative even when a transient resume Dispatch
       // never appeared in the terminal-id lists.
       const laneTerminal = rootTerminal || explicitlyTerminal;
@@ -428,7 +451,7 @@ export function RoomTurn({
       ), '');
       const laneComplete = (laneTerminal || Boolean(laneOutcome)) && !laneFailed && !laneAborted;
       const authoritativeStatusLabel = laneAction
-        ? roomInteractionStatusLabel(laneAction)
+        ? '等待审阅'
         : laneOutcome === 'blocked'
           ? '已阻塞'
           : laneFailed
@@ -506,6 +529,7 @@ export function RoomTurn({
           activities={lane.activities}
           active={laneActive && !laneAction}
           motionActive={laneMotionActive}
+          updatesFresh={laneFreshness.state === 'fresh'}
           participantName={participant?.displayName}
           attention={laneState === 'failed' || laneState === 'aborted'}
           workspaceTask={laneTask}
@@ -589,6 +613,7 @@ function RoomParticipantPost({
   onAnswerQuestion?: (
     question: PendingRoomQuestion,
     value: string,
+    answerKind: RoomQuestionAnswerKind,
   ) => Promise<boolean>;
 }) {
   const displayName = participant?.displayName ?? persona?.displayName ?? '协作伙伴';
@@ -650,33 +675,18 @@ function RoomUserPost({
 
 interface RoomSessionAction {
   sessionId: string;
-  kind: 'review' | 'select' | 'clarify';
 }
 
 function SessionActionLink({ action }: { action: RoomSessionAction }) {
-  const copy = action.kind === 'review'
-    ? {
-        title: '这轮协作正在等待审阅',
-        detail: '伙伴已暂停；打开对应对话审阅计划或请求后会自动继续。',
-        action: '立即审阅',
-      }
-    : action.kind === 'select'
-      ? {
-          title: '这轮协作正在等待选择',
-          detail: '打开对应伙伴对话，选择一个明确选项后继续。',
-          action: '立即选择',
-        }
-      : {
-          title: '这轮协作正在等待补充信息',
-          detail: '打开对应伙伴对话回答问题后继续。',
-          action: '立即回答',
-        };
   return <a
     className="room-review-link room-review-link--turn"
     href={agentSessionHref(action.sessionId)}
   >
-    <span><strong>{copy.title}</strong><small>{copy.detail}</small></span>
-    <span>{copy.action} <ExternalLink size={13} /></span>
+    <span>
+      <strong>这轮协作正在等待审阅</strong>
+      <small>伙伴已暂停；打开对应对话审阅计划或请求后会自动继续。</small>
+    </span>
+    <span>立即审阅 <ExternalLink size={13} /></span>
   </a>;
 }
 
@@ -718,6 +728,7 @@ function ActivityLog({
   activities,
   active,
   motionActive,
+  updatesFresh,
   attention,
   participantName,
   workspaceTask,
@@ -726,6 +737,7 @@ function ActivityLog({
   activities: RoomActivityProjection[];
   active: boolean;
   motionActive: boolean;
+  updatesFresh: boolean;
   attention: boolean;
   participantName?: string;
   workspaceTask?: RoomTaskV3;
@@ -752,9 +764,9 @@ function ActivityLog({
     ? `workspace:${workspaceTask.taskId}:${workspaceTask.revision}:${workspaceTask.workspaceLifecycleState}:${workspaceTask.workspaceAttentionRequired ?? ''}`
     : '';
   const contentKey = `${activityContentKey}\u001f${workspaceContentKey}`;
-  const { onScroll, scrollRef } = useAutoFollowScroll<HTMLDivElement>(
+  const { following, onScroll, scrollRef, scrollToLatest } = useAutoFollowScroll<HTMLDivElement>(
     contentKey,
-    motionActive && open,
+    open,
   );
   useEffect(() => {
     const nextSignatures = new Map(publicActivities.map((activity) => [
@@ -785,8 +797,6 @@ function ActivityLog({
     previousActive.current = active;
     if (active && !wasActive) {
       setOpen(true);
-    } else if (!active && wasActive) {
-      setOpen(effectiveAttention);
     } else if (effectiveAttention) {
       setOpen(true);
     }
@@ -818,8 +828,9 @@ function ActivityLog({
     </summary>
     <div
       aria-label={`伙伴自述与运行记录：${participantName ?? '协作成员'}`}
-      aria-live={motionActive ? 'polite' : 'off'}
+      aria-live={updatesFresh ? 'polite' : 'off'}
       className="room-agent-lane__activity-feed"
+      data-layout="continuous"
       onScroll={onScroll}
       ref={scrollRef}
       role="log"
@@ -827,7 +838,7 @@ function ActivityLog({
     >{publicActivities.map((activity) => {
       const displayStatus = roomActivityDisplayStatus(activity);
       const sourceEventType = textValue(activity.payload.sourceEventType);
-      const arriving = motionActive && arrivingActivityIds.has(activity.id);
+      const arriving = updatesFresh && arrivingActivityIds.has(activity.id);
       if (['tool_started', 'tool_progress', 'tool_finished'].includes(sourceEventType)) {
         return <RoomToolActivity activity={activity} arriving={arriving} key={activity.id} />;
       }
@@ -892,11 +903,16 @@ function ActivityLog({
       </div>;
     })}
     {workspaceTask && workspaceView ? <RoomTaskWorkspaceActivity
-      arriving={arrivingActivityIds.has(`workspace:${workspaceTask.taskId}`)}
+      arriving={updatesFresh && arrivingActivityIds.has(`workspace:${workspaceTask.taskId}`)}
       task={workspaceTask}
       updatedAtMs={workspaceUpdatedAtMs}
       view={workspaceView}
-    /> : null}</div>
+    /> : null}
+    {!following ? <button
+      className="room-agent-lane__activity-latest"
+      onClick={scrollToLatest}
+      type="button"
+    ><ArrowDown aria-hidden="true" size={13} />回到最新</button> : null}</div>
   </details>;
 }
 
@@ -1010,6 +1026,7 @@ function RoomLanePost({
   onAnswerQuestion?: (
     question: PendingRoomQuestion,
     value: string,
+    answerKind: RoomQuestionAnswerKind,
   ) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
@@ -1031,7 +1048,11 @@ function RoomLanePost({
           active={questionIsAuthoritative}
           question={message.question}
           onSubmit={questionIsAuthoritative && pendingQuestion && onAnswerQuestion
-            ? (value) => onAnswerQuestion(pendingQuestion, value)
+            ? (value, answerKind) => onAnswerQuestion(
+                pendingQuestion,
+                value,
+                answerKind,
+              )
             : undefined}
         />
       </div>
@@ -2024,28 +2045,6 @@ function roomApprovalModelLabel(model: string): string {
   return model.split('/').at(-1)?.slice(0, 80) || '审批模型';
 }
 
-function roomInteractionKind(
-  activity: RoomActivityProjection,
-): RoomSessionAction['kind'] {
-  const requestKind = textValue(activity.payload.requestKind);
-  if (
-    requestKind === 'plan_review'
-    || requestKind === 'memory_review'
-    || Boolean(textValue(activity.payload.approvalId))
-  ) return 'review';
-  return textValue(activity.payload.method) === 'select'
-    || Array.isArray(activity.payload.options)
-    ? 'select'
-    : 'clarify';
-}
-
-function roomInteractionStatusLabel(activity: RoomActivityProjection): string {
-  const kind = roomInteractionKind(activity);
-  if (kind === 'review') return '等待审阅';
-  if (kind === 'select') return '等待选择';
-  return '等待回答';
-}
-
 function pendingRoomSessionAction(
   activities: RoomActivityProjection[],
   projection: RoomProjectionState,
@@ -2057,7 +2056,7 @@ function pendingRoomSessionAction(
     const sessionId = activity.sourceSessionId
       || room?.participants.find((item) => item.id === activity.participantId)?.sessionId
       || '';
-    if (sessionId) return { sessionId, kind: roomInteractionKind(activity) };
+    if (sessionId) return { sessionId };
   }
   for (const lane of [...lanes].reverse()) {
     for (const messageId of [...lane.messageIds].reverse()) {
@@ -2072,7 +2071,7 @@ function pendingRoomSessionAction(
         (item) => item.id === lane.participantId,
       )?.sessionId;
       const sessionId = message?.sourceSessionId || lane.sourceSessionId || participantSessionId || '';
-      if (sessionId) return { sessionId, kind: 'review' };
+      if (sessionId) return { sessionId };
     }
   }
   return undefined;

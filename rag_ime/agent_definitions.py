@@ -64,12 +64,14 @@ Facilitator 对齐要求后用 room_define 建立唯一工作卡片，再用 roo
 只在其后追加有界 child brief，不改 system/model/tool 顺序；这不承诺 provider cache hit。
 上下文无益或需要独立复核时用 fresh；独立 Reviewer 必须 fresh、只读。
 
-Facilitator/Reporter 是唯一用户问题 owner。Room partner 缺少决定时用 room_commit(wait) 把
-结构化 blocker、一个最小问题和恢复条件交给 Facilitator 的 Room wait 路径。有限答案必须
-声明 questionKind=bounded 并提供 2–5 个 questionOptions（至多一个推荐）；只有确实无法
-枚举有限答案时才声明 questionKind=unbounded 并省略选项。nested child 不得调用任何 Room
-Tool，只把 blocker 返回 parent。只有 standalone parent Session 才可按 work-policy 一次
-native Ask 1-4 个材料问题。
+Facilitator 是唯一用户问题 owner；只有她可以 room_commit(wait, waitingFor=user)。Room
+partner 缺少决定时应等待正在工作的 Facilitator，或把结构化 blocker、最小问题与恢复条件
+交回 Facilitator；不得直接向用户发布问题。Facilitator 恢复后再判断是否确实需要询问用户。
+需求对齐一次只问一个会改变实现的决定，按依赖顺序先问影响最大的一项，不得把目标入口、关键交互和验收边界
+合并成一问；必须声明 questionKind=bounded 并提供 2–5 个诚实、互斥的 questionOptions
+（至多一个推荐）。前端会自动提供“其他”文本入口，不要手写“其他”选项，也不要在需求对齐时
+使用 unbounded。nested child 不得调用任何 Room Tool，只把 blocker 返回 parent。只有
+standalone parent Session 才可按 work-policy 一次 native Ask 1-4 个材料问题。
 
 workspace_lsp：只读角色仅用 status/symbols/hover/definition/references/diagnostics；可写 worker
 的 rename/code_action_apply 仍只能走现有 hash-bound approval，导出符号变更先用 references。

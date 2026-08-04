@@ -696,6 +696,62 @@ class PiRuntimeV2Tests(unittest.TestCase):
             {required.turn_id},
         )
 
+    def test_managed_room_rejects_competing_native_question(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        with self.runtime._lock:
+            state = self.runtime._states[session_id]
+            state.turn_id = "turn:room-question-owner"
+            state.room_skill_policy = {
+                "selection": "required",
+                "skillId": "alignment-and-decision",
+                "skillHash": "a" * 64,
+            }
+
+        self.runtime._handle_ui_request(
+            session_id,
+            "turn:room-question-owner",
+            {
+                "id": "ui-room-question-1",
+                "method": "editor",
+                "title": "RAG-IME-QUESTIONS:room-question-1",
+                "prefill": json.dumps({
+                    "schemaVersion": "rag-ime.grouped-questions.v2",
+                    "questions": [],
+                }),
+            },
+        )
+
+        self.assertEqual(self.runtime.pending_ui_requests(session_id), [])
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        resolution = next(
+            request
+            for request in reversed(requests)
+            if request["method"] == "ui.resolve"
+        )
+        self.assertEqual(
+            resolution["params"],
+            {
+                "sessionId": session_id,
+                "requestId": "ui-room-question-1",
+                "response": {"cancelled": True},
+            },
+        )
+        events, _ = self.events.replay(session_id)
+        rejected = next(
+            event
+            for event in events
+            if event.payload.get("requestKind")
+            == "room_native_question_rejected"
+        )
+        self.assertEqual(rejected.payload["resolutionState"], "cancelled")
+        self.assertEqual(rejected.turn_id, "turn:room-question-owner")
+
     def test_stateless_completion_does_not_open_or_persist_a_session(self) -> None:
         deltas: list[str] = []
         result = self.runtime.complete_once(

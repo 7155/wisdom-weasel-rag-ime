@@ -527,7 +527,7 @@ def _find_wait_post(snapshot: Mapping[str, Any], *, root_id: str, seen_post_ids:
     for post in reversed(posts):
         question, source, post_id = post.get("question"), post.get("publicationSource"), str(post.get("postId") or "")
         options = question.get("options") if isinstance(question, Mapping) else None
-        if post_id and post_id not in seen_post_ids and str(post.get("rootId") or "") == root_id and str(post.get("kind") or "") == "wait" and isinstance(source, Mapping) and str(source.get("kind") or "") == "room_commit" and isinstance(question, Mapping) and str(question.get("prompt") or "").strip() and isinstance(options, list) and len(options) in {0, 2, 3, 4, 5}:
+        if post_id and post_id not in seen_post_ids and str(post.get("rootId") or "") == root_id and str(post.get("kind") or "") == "wait" and isinstance(source, Mapping) and str(source.get("kind") or "") == "room_commit" and isinstance(question, Mapping) and str(question.get("prompt") or "").strip() and isinstance(options, list) and len(options) in {2, 3, 4, 5}:
             return post
     return None
 
@@ -539,7 +539,29 @@ def authoritative_wait_post_checks(post: Mapping[str, Any], dispatch: Mapping[st
         "canonicalCommitSource": isinstance(source, Mapping) and str(source.get("kind") or "") == "room_commit" and bool(str(source.get("ref") or "")),
         "sameRootAndTask": str(post.get("rootId") or "") == root_id and str(post.get("taskId") or "") in {"", task_id} and str(dispatch.get("rootId") or "") == root_id and str(dispatch.get("taskId") or "") == task_id,
         "alignmentDispatchWaitsForUser": str(dispatch.get("intentKind") or "") in {"align", "resume"} and str(dispatch.get("waitingFor") or dispatch.get("waitingForParticipant") or "") in {"user", "waitingForUser", ""},
-        "questionAndOptionsPublished": isinstance(question, Mapping) and bool(str(question.get("prompt") or "").strip()) and isinstance(question.get("options"), list) and len(question["options"]) in {0, 2, 3, 4, 5},
+        "questionAndOptionsPublished": isinstance(question, Mapping) and bool(str(question.get("prompt") or "").strip()) and isinstance(question.get("options"), list) and len(question["options"]) in {2, 3, 4, 5},
+    }
+
+
+def clarification_answer_body(
+    *,
+    answer: str,
+    stamp: int,
+    index: int,
+    post: Mapping[str, Any],
+    root_id: str,
+) -> dict[str, str]:
+    post_id = str(post.get("postId") or "").strip()
+    if not post_id or not str(root_id).strip():
+        raise RuntimeError(
+            "clarification answer requires its question Post and Root identity"
+        )
+    return {
+        "message": answer,
+        "clientMessageId": f"room-full-auto-answer:{stamp}:{index}",
+        "answerKind": "custom",
+        "answerToPostId": post_id,
+        "answerToRootId": root_id,
     }
 
 
@@ -857,7 +879,19 @@ def run(args: argparse.Namespace, *, requester: JsonRequester = request_json) ->
         answer, before = NATURAL_REQUIREMENT_ANSWERS[index], progress["snapshot"]
         before_work = _work_items(_room_work_items(args.base_url, room_id, requester=requester))
         if before_work: raise RuntimeError("WorkItem exists while a wait-for-user clarification is pending")
-        response = requester(args.base_url, "POST", f"/api/agent/rooms/{encoded(room_id)}/messages", {"message": answer, "clientMessageId": f"room-full-auto-answer:{stamp}:{index}"}, timeout=30)
+        response = requester(
+            args.base_url,
+            "POST",
+            f"/api/agent/rooms/{encoded(room_id)}/messages",
+            clarification_answer_body(
+                answer=answer,
+                stamp=stamp,
+                index=index,
+                post=post,
+                root_id=root_id,
+            ),
+            timeout=30,
+        )
         if accepted_root_id(dict(response)) != root_id: raise RuntimeError("ordinary clarification answer created a new Root")
         resume_receipt = response.get("resumeReceipt")
         if isinstance(resume_receipt, Mapping):

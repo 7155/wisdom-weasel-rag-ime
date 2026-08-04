@@ -588,7 +588,7 @@ class RoomLifecycleService:
         room_kind: str,
         coordinator_role_id: str,
     ) -> tuple[RoomParticipantPlan, ...]:
-        participants: list[RoomParticipantPlan] = []
+        resolved: list[tuple[Mapping[str, object], PersonaManifest]] = []
         seen: set[tuple[str, str]] = set()
         required_mode = (
             "coordinator"
@@ -616,14 +616,42 @@ class RoomLifecycleService:
                     "in the first room version"
                 )
             seen.add(key)
+            resolved.append((raw, role))
+
+        explicit_coordinator_ordinal = next(
+            (
+                index
+                for index, (raw, _role) in enumerate(resolved)
+                if raw.get("collaborationRole")
+                and normalize_collaboration_role(raw.get("collaborationRole"))
+                == "coordinator"
+            ),
+            None,
+        )
+        default_coordinator_ordinal = next(
+            (
+                index
+                for index, (_raw, role) in enumerate(resolved)
+                if coordinator_role_id and role.role_id == coordinator_role_id
+            ),
+            explicit_coordinator_ordinal,
+        )
+        if default_coordinator_ordinal is None:
+            default_coordinator_ordinal = next(
+                (
+                    index
+                    for index, (_raw, role) in enumerate(resolved)
+                    if role.runtime_characteristics.is_default
+                ),
+                0,
+            )
+
+        participants: list[RoomParticipantPlan] = []
+        for index, (raw, role) in enumerate(resolved):
             default_role = (
                 "coordinator"
                 if room_kind == "collaboration"
-                and (
-                    role.role_id == coordinator_role_id
-                    or not coordinator_role_id
-                    and index == 0
-                )
+                and index == default_coordinator_ordinal
                 else "implementer"
             )
             participants.append(

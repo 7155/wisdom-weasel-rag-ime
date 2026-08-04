@@ -65,12 +65,14 @@ weakens the requirements.
 
 - The facilitator/reporter owns one alignment Root/Task/Dispatch. Inspect
   `room_state`; never fan out work before requirements are settled.
-- For a bounded choice, use `room_commit` with `decision="wait"`,
+- Ask about one user-owned decision at a time, in dependency order. Never bundle
+  the target surface, required interactions, and acceptance boundary into one prompt.
+- Use `room_commit` with `decision="wait"`,
   `waitingFor="user"`, `questionKind="bounded"`,
   `question="<one prompt>"`, and `questionOptions=[...]` containing 2-5
-  unique options with at most one `recommended`. If no honest bounded set
-  exists, explicitly use `questionKind="unbounded"` and omit
-  `questionOptions` rather than inventing choices. This is not a second
+  unique, genuinely different options with at most one `recommended`. The
+  interface supplies `Other` for custom text, so never write an Other option and
+  never replace the options with an open text box. This is not a second
   question Tool.
 - The next ordinary Room message answers the wait: append its source span to the
   RequirementAnchor and make one new resume Dispatch under the same Root; never

@@ -149,6 +149,73 @@ describe('RoomTurn canonical conversation chronology', () => {
     expect(screen.queryByRole('group', { name: '确认开始行动' })).not.toBeInTheDocument();
   });
 
+  it('keeps a pending clarification in the message flow without duplicate lane controls', () => {
+    const projection = liveProjection([
+      userEvent(1, 'opening', '@澄·今 我准备写 TUI'),
+      questionEvent(2, 'question-1', '目标界面是什么？', ['终端原生 TUI', '网页界面']),
+      userEvent(3, 'answer-1', '终端原生 TUI', 'question-1'),
+      questionEvent(
+        4,
+        'question-2',
+        '首版交付边界是什么？',
+        ['可运行闭环', '完整插件生态'],
+        'dispatch-resume',
+      ),
+    ]);
+    const view = render(roomTurn(projection, {
+      kernelRootsById: { 'root-a': root('waiting') },
+      onAbortTurn: () => undefined,
+    }));
+
+    expect(screen.getByRole('region', { name: '需要回答：首版交付边界是什么？' })).toBeInTheDocument();
+    expect(view.container).toHaveTextContent('终端原生 TUI');
+    expect(screen.queryByRole('button', { name: '停止本轮任务' })).not.toBeInTheDocument();
+    expect(view.container.querySelector('.room-agent-lane')).not.toBeInTheDocument();
+  });
+
+  it('locks a pending question when the Kernel terminal snapshot arrives first', () => {
+    const projection = liveProjection([
+      userEvent(1, 'opening', '请先澄清交付边界'),
+      postEvent(2, 'progress', 'progress', '我先核对当前范围', 'participant-a', 'dispatch-a'),
+      questionEvent(3, 'question-terminal', '首版交付边界是什么？', ['可运行闭环', '完整插件生态']),
+    ]);
+    projection.turnsById['root-a'] = {
+      ...projection.turnsById['root-a']!,
+      terminalParticipantIds: [],
+      terminalDispatchIds: [],
+    };
+    const view = render(roomTurn(projection, {
+      kernelRootsById: { 'root-a': root('cancelled') },
+      onAnswerQuestion: async () => true,
+    }));
+
+    expect(screen.getByText('这项问题已不再是当前可回答的问题。')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '可运行闭环' })).not.toBeInTheDocument();
+    expect(view.container.querySelector('.room-agent-lane')).toHaveAttribute('data-state', 'aborted');
+    expect(view.container).toHaveTextContent('我先核对当前范围');
+    expect(view.container).toHaveTextContent('已停止');
+    expect(view.container).not.toHaveTextContent('已完成');
+  });
+
+  it('keeps a lane failed when the Kernel failure arrives before the Room turn terminal event', () => {
+    const projection = liveProjection([
+      userEvent(1, 'opening', '请完成当前任务'),
+      postEvent(2, 'progress', 'progress', '我正在核对实现范围', 'participant-a', 'dispatch-a'),
+    ]);
+    projection.turnsById['root-a'] = {
+      ...projection.turnsById['root-a']!,
+      terminalParticipantIds: [],
+      terminalDispatchIds: [],
+    };
+    const view = render(roomTurn(projection, {
+      kernelRootsById: { 'root-a': root('failed') },
+    }));
+
+    expect(view.container.querySelector('.room-agent-lane')).toHaveAttribute('data-state', 'failed');
+    expect(view.container).toHaveTextContent('未完成');
+    expect(view.container).not.toHaveTextContent('已完成');
+  });
+
   it('keeps a clear request on the direct path without a confirmation gate', () => {
     const projection = liveProjection([
       userEvent(1, 'opening', '把已确认的标题改成新标题并运行现有聚焦测试'),
@@ -251,8 +318,14 @@ function userEvent(sequence: number, messageId: string, text: string, answerToPo
   }, null, '');
 }
 
-function questionEvent(sequence: number, postId: string, prompt: string, labels: string[]) {
-  return postEvent(sequence, postId, 'wait', prompt, 'participant-a', 'dispatch-align', {
+function questionEvent(
+  sequence: number,
+  postId: string,
+  prompt: string,
+  labels: string[],
+  dispatchId = 'dispatch-align',
+) {
+  return postEvent(sequence, postId, 'wait', prompt, 'participant-a', dispatchId, {
     prompt,
     options: labels.map((label, index) => ({ value: `choice-${index}`, label })),
   });

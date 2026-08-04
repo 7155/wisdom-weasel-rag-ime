@@ -242,6 +242,40 @@ struct NativeRoutePolicyTests {
         expect(roomSnapshot.request.url?.absoluteString.contains("room:alpha/snapshot") == true, "room snapshot route")
         expect(roomSnapshot.request.httpMethod == "GET", "room snapshot method")
 
+        let roomAnswer = try policy.resolveRequest(
+            pathId: "agent.room.message",
+            parameters: ["roomId": "room:alpha"],
+            query: [:],
+            body: [
+                "message": "终端原生 TUI",
+                "clientMessageId": "message:answer-alpha",
+                "answerKind": "option",
+                "answerToPostId": "room-post:question-alpha",
+                "answerToRootId": "room-root:alpha",
+            ]
+        )
+        expect(roomAnswer.request.url?.path == "/api/agent/rooms/room:alpha/messages", "Room answer route accepts question identity")
+        expect(roomAnswer.request.httpMethod == "POST", "Room answer method")
+        let roomAnswerBody = try JSONSerialization.jsonObject(
+            with: roomAnswer.request.httpBody ?? Data()
+        ) as? [String: Any]
+        expect(roomAnswerBody?["answerToPostId"] as? String == "room-post:question-alpha", "Room answer post identity is preserved")
+        expect(roomAnswerBody?["answerToRootId"] as? String == "room-root:alpha", "Room answer Root identity is preserved")
+        expect(roomAnswerBody?["answerKind"] as? String == "option", "Room answer kind is preserved")
+        expectThrows("Room answer still rejects unknown identity fields") {
+            _ = try policy.resolveRequest(
+                pathId: "agent.room.message",
+                parameters: ["roomId": "room:alpha"],
+                query: [:],
+                body: [
+                    "message": "终端原生 TUI",
+                    "answerToPostId": "room-post:question-alpha",
+                    "answerToRootId": "room-root:alpha",
+                    "answerToDispatchId": "dispatch:spoofed",
+                ]
+            )
+        }
+
         let roomCreate = try policy.resolveRequest(
             pathId: "agent.rooms.create",
             parameters: [:],

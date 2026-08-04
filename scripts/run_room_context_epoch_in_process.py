@@ -1151,17 +1151,17 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
                     else (
                         [
                             {
-                                "roleId": "companion-present-v1",
+                                "roleId": "companion-future-v1",
                                 "roleVersion": "1",
                                 "collaborationRole": "coordinator",
                             },
                             {
-                                "roleId": "companion-firstlight-v1",
+                                "roleId": "companion-present-v1",
                                 "roleVersion": "1",
                                 "collaborationRole": "implementer",
                             },
                             {
-                                "roleId": "companion-future-v1",
+                                "roleId": "companion-firstlight-v1",
                                 "roleVersion": "1",
                                 "collaborationRole": "reviewer",
                             },

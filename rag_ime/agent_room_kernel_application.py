@@ -855,11 +855,6 @@ class RoomKernelApplicationService:
             raise RoomKernelFenceError(
                 "final independent review target has no active Session"
             )
-        if str(target.get("collaborationRole") or "") != "reviewer":
-            raise RoomKernelFenceError(
-                "final independent review requires a Reviewer participant"
-            )
-
         children = self.kernel.collaboration_children(str(root["rootId"]))
         active_states = {"pending", "leased", "running", "waiting"}
         if any(
@@ -989,12 +984,8 @@ class RoomKernelApplicationService:
             ),
             None,
         )
-        if (
-            caller is None
-            or canonical_collaboration_role_id(
-                caller.get("collaborationRole")
-            )
-            != "reviewer"
+        if caller is None or caller_id != str(
+            parent_task.get("currentOwnerParticipantId") or ""
         ):
             raise RoomKernelFenceError(
                 "only the active Reviewer may return a revision handoff"

@@ -3235,6 +3235,36 @@ class PiRuntimeHostManager:
                 turn_id=turn_id,
             )
             return
+        if state.room_skill_policy:
+            # A managed Room has exactly one public question owner:
+            # Facilitator room_commit(wait). Native Pi Ask would create a
+            # competing, non-durable answer path, so cancel it at the Runtime
+            # boundary and let the stage Skill recover through Room tools.
+            if request_id:
+                self._require_client().send(
+                    "ui.resolve",
+                    {
+                        "sessionId": session_id,
+                        "requestId": request_id,
+                        "response": {"cancelled": True},
+                    },
+                )
+            self.events.publish(
+                session_id,
+                "user_input_required",
+                {
+                    "requestId": request_id,
+                    "requestKind": "room_native_question_rejected",
+                    "method": method,
+                    "resolutionState": "cancelled",
+                    "resolutionSource": "runtime_cancelled",
+                    "message": (
+                        "Room 中的问题必须由当前主持伙伴按对话顺序提出。"
+                    ),
+                },
+                turn_id=turn_id,
+            )
+            return
         if method == "editor" and title.startswith(GROUPED_QUESTIONS_TITLE_PREFIX):
             try:
                 questions = grouped_questions_from_wire(raw.get("prefill"))

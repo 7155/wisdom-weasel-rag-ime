@@ -140,7 +140,7 @@ describe('RoomComposer macOS input methods', () => {
     expect(onAttachmentsChange).toHaveBeenCalledWith([]);
   });
 
-  it('opens only the authoritative pending-answer send path while a managed task is busy', () => {
+  it('keeps the ordinary composer locked while a managed task is busy', () => {
     const onSend = vi.fn();
     const common = {
       room: {
@@ -168,23 +168,8 @@ describe('RoomComposer macOS input methods', () => {
 
     expect(screen.getByRole('button', { name: '等待当前任务完成' })).toBeDisabled();
     expect(screen.getByText(/完成或停止后才能发送下一项任务/)).toBeInTheDocument();
-
-    view.rerender(
-      <TooltipProvider>
-        <RoomComposer
-          {...common}
-          pendingUserAnswer
-          taskBusyState="running"
-        />
-      </TooltipProvider>,
-    );
-
-    const answer = screen.getByRole('button', { name: '发送问题回答' });
-    expect(answer).toBeEnabled();
-    expect(screen.getByRole('button', { name: '添加图片' })).toBeDisabled();
-    expect(screen.queryByRole('button', { name: '点名一位伙伴' })).not.toBeInTheDocument();
-    fireEvent.click(answer);
-    expect(onSend).toHaveBeenCalledTimes(1);
-    expect(onSend).toHaveBeenCalledWith('补充发布边界');
+    fireEvent.click(screen.getByRole('button', { name: '等待当前任务完成' }));
+    expect(onSend).not.toHaveBeenCalled();
+    view.unmount();
   });
 });

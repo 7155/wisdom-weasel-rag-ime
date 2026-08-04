@@ -625,12 +625,26 @@ function RoomParallelWorkPhase({
         const hasOwnWork = ownedTasks.length > 0 || ownedDispatches.length > 0 || Boolean(publicUpdate);
         const state = participantLaneState(ownedTasks, ownedDispatches, publicUpdate);
         const ownsReview = ownedTasks.some((task) => task.taskKind === 'review');
+        const currentRole: RoomCollaborationRole | undefined = participantId === root.facilitatorParticipantId
+          ? 'coordinator'
+          : ownsReview || ownedDispatches.some((dispatch) => dispatch.intentKind === 'review')
+            ? 'reviewer'
+            : ownedTasks.some((task) => task.workspacePolicy && task.workspacePolicy !== 'read_only')
+              ? 'implementer'
+              : ownedTasks.some((task) => task.workspacePolicy === 'read_only')
+                ? 'researcher'
+                : participantRoles[participantId];
+        const roleLabel = currentRole
+          ? roomCollaborationRoleLabel(currentRole)
+          : '';
         const roleSummary = [
-          participantRoles[participantId]
-            ? roomCollaborationRoleLabel(participantRoles[participantId])
-            : '',
+          roleLabel && (hasOwnWork || participantId === root.facilitatorParticipantId)
+            ? roleLabel
+            : roleLabel
+              ? `默认岗位：${roleLabel}`
+              : '',
           participantId === (root.reporterParticipantId ?? root.facilitatorParticipantId) ? '唯一最终回复' : '',
-          ownsReview && participantRoles[participantId] !== 'reviewer'
+          ownsReview && currentRole !== 'reviewer'
             ? '独立复核'
             : '',
           hasOwnWork ? '已有本角色分工' : '等待本角色分工',

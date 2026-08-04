@@ -48,6 +48,49 @@ DEFAULT_MAX_HOPS = 6
 DEFAULT_MAX_DEPTH = 3
 
 
+def _resolve_room_answer_display(
+    message: str,
+    *,
+    answer_kind: str,
+    question_options: object,
+) -> tuple[str, str]:
+    """Resolve public answer text without guessing when the client is explicit."""
+
+    normalized_kind = str(answer_kind or "").strip()
+    if normalized_kind not in {"", "option", "custom"}:
+        raise ValueError("answerKind must be option or custom")
+    options = [
+        option
+        for option in question_options
+        if isinstance(option, Mapping)
+    ] if isinstance(question_options, list) else []
+    matching_option = next(
+        (
+            option
+            for option in options
+            if str(option.get("value") or "") == message
+        ),
+        None,
+    )
+    if normalized_kind == "custom":
+        return message, "custom"
+    if normalized_kind == "option":
+        if matching_option is None:
+            raise ValueError(
+                "Room clarification option answer does not match a presented option"
+            )
+        return (
+            str(matching_option.get("label") or "").strip() or message,
+            "option",
+        )
+    if matching_option is not None:
+        return (
+            str(matching_option.get("label") or "").strip() or message,
+            "option",
+        )
+    return message, "custom"
+
+
 class RoomApplicationService:
     """Product-facing Room commands backed by the canonical Kernel.
 
@@ -108,6 +151,7 @@ class RoomApplicationService:
         attachment_ids: Sequence[str] = (),
         answer_to_post_id: str = "",
         answer_to_root_id: str = "",
+        answer_kind: str = "",
     ) -> dict[str, object]:
         room = self.rooms.get(room_id)
         self.restore_participant_sessions(room)
@@ -132,6 +176,7 @@ class RoomApplicationService:
                 attachment_ids=attachment_ids,
                 answer_to_post_id=answer_to_post_id,
                 answer_to_root_id=answer_to_root_id,
+                answer_kind=answer_kind,
             )
 
     def start_execution(
@@ -346,9 +391,13 @@ class RoomApplicationService:
             raise RoomKernelFenceError(
                 "room_define implementation participant is not active"
             )
-        if canonical_collaboration_role_id(
-            target.get("collaborationRole")
-        ) == "reviewer":
+        if (
+            implementation_id != str(root["facilitatorParticipantId"])
+            and canonical_collaboration_role_id(
+                target.get("collaborationRole")
+            )
+            == "reviewer"
+        ):
             raise RoomKernelFenceError(
                 "room_define implementation participant cannot be the Reviewer; "
                 "Reviewer enters only after integration"
@@ -914,6 +963,7 @@ class RoomApplicationService:
         requested_participant_ids: Sequence[str],
         attachment_ids: Sequence[str],
         pending: Mapping[str, object],
+        answer_kind: str,
     ) -> dict[str, object]:
         """Append one answer and resume the waiting participant once."""
 
@@ -934,20 +984,19 @@ class RoomApplicationService:
         anchor_id = f"requirement-anchor:{identity}"
         post_id = f"room-post:user:{identity}"
         timestamp = self.clock_ms()
-        answer_display_text = message
         pending_payload = pending.get("payload")
-        if isinstance(pending_payload, Mapping):
-            question_options = pending_payload.get("questionOptions")
-            if isinstance(question_options, list):
-                for option in question_options:
-                    if (
-                        isinstance(option, Mapping)
-                        and str(option.get("value") or "") == message
-                    ):
-                        answer_display_text = (
-                            str(option.get("label") or "").strip() or message
-                        )
-                        break
+        question_options = (
+            pending_payload.get("questionOptions")
+            if isinstance(pending_payload, Mapping)
+            else []
+        )
+        answer_display_text, normalized_answer_kind = (
+            _resolve_room_answer_display(
+                message,
+                answer_kind=answer_kind,
+                question_options=question_options,
+            )
+        )
         context = self.requirements.dispatch_context(parent_dispatch_id)
         binding = context.get("binding") if isinstance(context, Mapping) else {}
         current_catalog_id = str(
@@ -974,18 +1023,22 @@ class RoomApplicationService:
             "roomId": room_id,
             "clientMessageId": client_message_id,
             "answerToContinuationId": str(pending["continuationId"]),
+            "questionPostId": str(pending["questionPostId"]),
+            "answerValue": message,
+            "answerDisplayText": answer_display_text,
+            "answerKind": normalized_answer_kind,
         }
         answer_item = {
             "itemId": answer_item_id,
             "kind": "explicit_user_requirement",
-            "statement": message,
+            "statement": answer_display_text,
             "origin": "room_user_answer",
             "state": "active",
             "sourceSpans": [
                 {
                     "anchorId": anchor_id,
                     "startByte": 0,
-                    "endByte": len(message.encode("utf-8")),
+                    "endByte": len(answer_display_text.encode("utf-8")),
                 }
             ],
             "confirmation": "captured_from_user",
@@ -1003,7 +1056,7 @@ class RoomApplicationService:
             "authorActorRef": "user:local",
             "kind": "request",
             "visibility": "room",
-            "content": message,
+            "content": answer_display_text,
             "idempotencyKey": f"user-message:{identity}",
             "publicationSource": {
                 "kind": "user",
@@ -1042,7 +1095,7 @@ class RoomApplicationService:
                 transaction,
                 anchor_id=anchor_id,
                 root_id=root_id,
-                original_content=message,
+                original_content=answer_display_text,
                 created_by="user:local",
                 provenance=answer_anchor_provenance,
                 created_at_ms=timestamp,
@@ -1102,7 +1155,7 @@ class RoomApplicationService:
                 entry_kind="requirement_anchor",
                 source_ref=anchor_id,
                 dedupe_key=f"requirement-anchor:{anchor_id}",
-                content=message,
+                content=answer_display_text,
                 created_at_ms=timestamp,
             )
             resumed = self.kernel.resume_user_wait_in_transaction(
@@ -1145,6 +1198,7 @@ class RoomApplicationService:
             dispatches=[dispatch_result],
             answer_to_post_id=str(pending["questionPostId"]),
             answer_display_text=answer_display_text,
+            answer_kind=normalized_answer_kind,
         )
         self.projection.sync_room(room_id, now_ms=timestamp)
         self.wake_worker()
@@ -1188,6 +1242,7 @@ class RoomApplicationService:
         attachment_ids: Sequence[str],
         answer_to_post_id: str,
         answer_to_root_id: str,
+        answer_kind: str,
     ) -> dict[str, object]:
         if not kernel_owns_room_execution(self.kernel.mode):
             raise RoomKernelFenceError("canonical Room ingress requires a managed Kernel")
@@ -1231,6 +1286,7 @@ class RoomApplicationService:
                 requested_participant_ids=requested_participant_ids,
                 attachment_ids=attachment_ids,
                 pending=pending_user_wait,
+                answer_kind=answer_kind,
             )
         timestamp = self.clock_ms()
         identity = _message_identity(room_id, client_message_id)
@@ -2063,10 +2119,6 @@ def _opening_facilitator(
                     isinstance(participant, Mapping)
                     and str(participant.get("id") or "") == requested_id
                     and participant.get("status") == "active"
-                    and canonical_collaboration_role_id(
-                        participant.get("collaborationRole")
-                    )
-                    != "reviewer"
                 ):
                     return requested_id
     return _root_facilitator(room, targets)
@@ -2124,7 +2176,9 @@ def _alignment_task(
             "先调用 room_state 读取原始请求和当前工作卡片，再判断是否存在会改变"
             "实现的实质歧义。请求完整时不要索要确认，也不要发布单独的确认消息；"
             "直接用 room_define 一次写入目标、交付物、需求、可观察验收条件和禁区。"
-            "有实质歧义时用 room_commit wait 一次只提出一个最小必要问题；每个"
+            "有实质歧义时用 room_commit wait 一次只提出一个最小必要问题，先问影响"
+            "最大的一个决定，不得把入口、交互和验收边界合并成一问；每一问必须提供"
+            "2–5 个可点选项，界面会另行提供“其他”文本入口；每个"
             "用户回答按时间进入对话，问题全部收束后再调用 room_define。只有这条"
             "澄清路径会询问用户是否开始行动。不得把计划或执行结果冒充需求定义。"
             f" 原始请求：{message[:2_000]}"

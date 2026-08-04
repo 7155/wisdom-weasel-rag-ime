@@ -36,7 +36,6 @@ from .agent_roles import PersonaManifest
 from .agent_templates import agent_template
 from .agent_definitions import (
     CollaborationProfileManifest,
-    canonical_collaboration_role_id,
     collaboration_role,
 )
 
@@ -163,22 +162,16 @@ class RoomKernelRuntimeCoordinator:
         role_book_prompt = self.role_book_prompt_resolver(session_id)
         session = self.session_resolver(session_id)
         intent_kind = str(dispatch.get("intentKind") or "")
-        is_alignment = intent_kind == "align"
+        is_alignment = self.kernel.dispatch_is_preparable_alignment(dispatch_id)
         is_report = intent_kind == "close"
-        is_root_coordinator = (
-            not is_alignment
-            and str(dispatch.get("targetParticipantId") or "")
-            == str(root.get("facilitatorParticipantId") or "")
-            and not task.get("parentTaskId")
-        )
-        role_id = canonical_collaboration_role_id(
-            participant.get("collaborationRole")
+        role_id = _effective_dispatch_role_id(
+            dispatch=dispatch,
+            task=task,
+            root=root,
         )
         role = collaboration_role(role_id)
         template_id = (
-            "planner"
-            if is_root_coordinator
-            else {
+            {
                 "coordinator": "planner",
                 "researcher": "researcher",
                 "reviewer": "reviewer",
@@ -489,7 +482,10 @@ class RoomKernelRuntimeCoordinator:
                     expected_generation=int(dispatch["generation"]),
                     created_at_ms=now_ms,
                 )
-        stage = _room_skill_stage(dispatch)
+        stage = _room_skill_stage(
+            dispatch,
+            alignment_chain=self.kernel.dispatch_is_active_alignment(dispatch_id),
+        )
         selection = self.skill_policy.select_stage(stage)
         loaded = runtime_receipt.get("roomSkillLoad")
         if selection["selection"] == "required" and not isinstance(
@@ -628,6 +624,32 @@ class RoomKernelRuntimeCoordinator:
         self.runtime_capabilities.revoke(session_id, now_ms)
 
 
+def _effective_dispatch_role_id(
+    *,
+    dispatch: Mapping[str, object],
+    task: Mapping[str, object],
+    root: Mapping[str, object],
+) -> str:
+    """Derive the current job from Kernel ownership, never a roster default."""
+
+    intent_kind = str(dispatch.get("intentKind") or "")
+    target_id = str(dispatch.get("targetParticipantId") or "")
+    facilitator_id = str(root.get("facilitatorParticipantId") or "")
+    if intent_kind == "align":
+        if not facilitator_id or target_id != facilitator_id:
+            raise RoomKernelFenceError(
+                "alignment Dispatch must target the Root Facilitator"
+            )
+        return "coordinator"
+    if intent_kind == "review" or str(task.get("taskKind") or "") == "review":
+        return "reviewer"
+    if intent_kind == "close" or (facilitator_id and target_id == facilitator_id):
+        return "coordinator"
+    if str(task.get("workspacePolicy") or "") == "read_only":
+        return "researcher"
+    return "implementer"
+
+
 def _prompt_layers(
     *,
     persona: PersonaManifest,
@@ -729,7 +751,13 @@ def _profile_overlay_prompt(
     return "\n".join(parts)
 
 
-def _room_skill_stage(dispatch: Mapping[str, object]) -> str:
+def _room_skill_stage(
+    dispatch: Mapping[str, object],
+    *,
+    alignment_chain: bool = False,
+) -> str:
+    if alignment_chain:
+        return "requirements"
     return {
         "align": "requirements",
         "execute": "implementation",

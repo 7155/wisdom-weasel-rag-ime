@@ -572,11 +572,11 @@ class HistoricalMaterializedContinuationReplayTests(unittest.TestCase):
             "no authoritative Commit",
         ):
             self.store.continuation("commit:missing")
-        with self.assertRaisesRegex(
-            RoomKernelFenceError,
-            "no authoritative Commit",
-        ):
-            self.store.pending_user_wait("room:1")
+        self.assertIsNone(
+            self.store.pending_user_wait("room:1"),
+            "an orphan continuation must never become the public pending "
+            "question or capture the Room composer",
+        )
 
     def _seed_parent_and_peer(self, *, separate_task: bool) -> None:
         peer_task_id = "task:legacy-peer" if separate_task else "task:1"

@@ -249,23 +249,64 @@
 .room-agent-lane__activity[open] > summary > svg:last-child { transform: rotate(90deg); }
 .room-agent-lane__activity-feed {
   --room-public-activity-max-block-size: min(24rem, 48dvh);
+  --room-activity-stream-bg: color-mix(in srgb, var(--color-paper) 84%, transparent);
+  position: relative;
   display: grid;
   max-block-size: var(--room-public-activity-max-block-size);
-  padding: 0 var(--space-2) var(--space-2);
+  padding: 6px 10px 12px;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  background: color-mix(in srgb, var(--color-paper) 72%, transparent);
+  background: var(--room-activity-stream-bg);
   scrollbar-gutter: stable;
 }
 .room-agent-lane__activity-feed:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
-.room-agent-activity { display: grid; min-width: 0; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 7px; padding: 7px 2px; border-top: 1px solid color-mix(in srgb, var(--color-border) 64%, transparent); }
-.room-agent-activity:first-child { border-top: 0; }
-.room-agent-activity > svg { margin-top: 2px; color: var(--color-success); }
+.room-agent-lane__activity-feed > .room-agent-activity,
+.room-agent-lane__activity-feed > .room-reasoning-summary {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--color-border-strong) 54%, transparent),
+    color-mix(in srgb, var(--color-border-strong) 54%, transparent)
+  );
+  background-position: 13px 0;
+  background-repeat: no-repeat;
+  background-size: 1px 100%;
+}
+.room-agent-lane__activity-latest {
+  position: sticky;
+  z-index: 3;
+  bottom: 4px;
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-self: center;
+  gap: 5px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: var(--color-paper);
+  box-shadow: var(--shadow-2);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: var(--font-weight-semibold);
+}
+.room-agent-lane__activity-latest:hover { color: var(--color-text); }
+.room-agent-lane__activity-latest:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.room-agent-activity { display: grid; min-width: 0; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 9px; padding: 9px 4px; }
+.room-agent-activity > svg {
+  position: relative;
+  z-index: 1;
+  margin-top: 2px;
+  border-radius: 50%;
+  background: var(--room-activity-stream-bg);
+  box-shadow: 0 0 0 4px var(--room-activity-stream-bg);
+  color: var(--color-success);
+}
 .room-agent-activity[data-state='running'] > svg { color: var(--color-accent); }
 .room-agent-activity[data-state='failed'] > svg { color: var(--color-danger); }
 .room-agent-activity[data-state='aborted'] > svg { color: var(--color-text-tertiary); }
-.room-agent-activity--workspace { background: color-mix(in srgb, var(--color-surface-subtle) 52%, transparent); }
-.room-agent-activity--workspace[data-state='failed'] { background: color-mix(in srgb, var(--color-danger-soft) 38%, transparent); }
+.room-agent-activity--workspace { background: transparent; }
+.room-agent-activity--workspace[data-state='failed'] { border-radius: var(--radius-1); background: color-mix(in srgb, var(--color-danger-soft) 38%, transparent); }
 .room-agent-activity--workspace strong,
 .room-agent-activity--workspace small { overflow-wrap: anywhere; }
 .room-task-updated-at { color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -291,25 +332,30 @@
   min-width: 0;
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: start;
-  gap: var(--space-2);
-  margin: 6px 0;
-  border: 1px solid color-mix(in srgb, var(--color-accent) 24%, var(--color-border));
-  border-left: 3px solid var(--color-accent);
-  border-radius: var(--radius-2);
-  padding: var(--space-2);
-  background: color-mix(in srgb, var(--color-accent-subtle) 24%, var(--color-paper));
+  gap: 9px;
+  margin: 0;
+  padding: 9px 4px;
+  background: transparent;
 }
-.room-reasoning-summary > svg { margin-top: 2px; color: var(--color-accent); }
+.room-reasoning-summary > svg {
+  position: relative;
+  z-index: 1;
+  margin-top: 2px;
+  border-radius: 50%;
+  background: var(--room-activity-stream-bg);
+  box-shadow: 0 0 0 4px var(--room-activity-stream-bg);
+  color: var(--color-accent);
+}
 .room-reasoning-summary > span { display: grid; min-width: 0; gap: 2px; }
 .room-reasoning-summary small { color: var(--color-accent); font-size: 11px; font-weight: var(--font-weight-semibold); }
 .room-reasoning-summary strong { font-size: 12px; font-weight: var(--font-weight-semibold); line-height: 1.5; overflow-wrap: anywhere; }
 .room-reasoning-summary > span > span { color: var(--color-text-tertiary); font-size: 11px; }
-.room-reasoning-summary[data-state='failed'] { border-left-color: var(--color-danger); }
-.room-reasoning-summary[data-state='aborted'] { border-left-color: var(--color-border-strong); }
+.room-reasoning-summary[data-state='failed'] > svg { color: var(--color-danger); }
+.room-reasoning-summary[data-state='aborted'] > svg { color: var(--color-text-tertiary); }
 .room-reasoning-summary__details { min-width: 0; margin-top: 3px; color: var(--color-text-tertiary); font-size: 11px; }
 .room-reasoning-summary__details > summary { cursor: pointer; list-style-position: inside; }
 .room-reasoning-summary__details > ol { display: grid; gap: 3px; margin: 5px 0 0; padding-left: 18px; }
-.room-agent-activity--tool { display: block; padding: 0 2px; }
+.room-agent-activity--tool { display: block; padding: 0 4px; }
 .room-agent-activity--tool > summary {
   display: grid;
   min-height: 44px;
@@ -327,7 +373,16 @@
 .room-agent-activity--tool > summary small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .room-agent-activity--tool > summary > svg:last-child { color: var(--color-text-tertiary); transition: transform var(--motion-disclose) var(--ease-standard); }
 .room-agent-activity--tool[open] > summary > svg:last-child { transform: rotate(90deg); }
-.room-agent-activity__state { display: grid; place-items: center; color: var(--color-success); }
+.room-agent-activity__state {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  border-radius: 50%;
+  background: var(--room-activity-stream-bg);
+  box-shadow: 0 0 0 4px var(--room-activity-stream-bg);
+  place-items: center;
+  color: var(--color-success);
+}
 .room-agent-activity--tool[data-state='running'] .room-agent-activity__state { color: var(--color-accent); }
 .room-agent-activity--tool[data-state='failed'] .room-agent-activity__state { color: var(--color-danger); }
 .room-agent-activity--tool[data-state='aborted'] .room-agent-activity__state { color: var(--color-text-tertiary); }
@@ -515,7 +570,7 @@
 .room-topics-dialog { width: min(600px, calc(100vw - 32px)); }
 .room-policy-dialog { width: min(620px, calc(100vw - 32px)); }
 .room-question-post { display: grid; min-width: 0; gap: var(--space-3); }
-.room-question-card { display: grid; min-width: 0; gap: var(--space-3); border: 1px solid var(--color-accent); border-radius: var(--radius-2); padding: var(--space-3); background: color-mix(in srgb, var(--color-accent-soft) 48%, var(--color-paper)); }
+.room-question-card { display: grid; width: 100%; min-width: 0; max-width: 44rem; gap: var(--space-3); border: 1px solid var(--color-border); border-inline-start: 3px solid var(--color-accent); border-radius: var(--radius-2); padding: var(--space-3); background: var(--color-paper); box-shadow: var(--shadow-1); }
 .room-question-card > header { display: grid; min-width: 0; grid-template-columns: 28px minmax(0, 1fr); align-items: start; gap: var(--space-2); }
 .room-question-card > header > span:first-child { display: grid; width: 28px; height: 28px; place-items: center; border-radius: var(--radius-1); background: var(--color-accent-soft); color: var(--color-accent); }
 .room-question-card > header > span:last-child { display: grid; min-width: 0; gap: 2px; }
@@ -523,10 +578,10 @@
 .room-question-card > header strong { color: var(--color-text-primary); font-size: var(--text-ui); line-height: var(--text-ui-lh); overflow-wrap: anywhere; }
 .room-question-card__form { display: grid; min-width: 0; gap: var(--space-3); }
 .room-question-card__options { display: grid; min-width: 0; gap: var(--space-2); }
-.room-question-card__option { display: grid; width: 100%; min-width: 0; grid-template-columns: var(--space-5) minmax(0, 1fr); align-items: center; gap: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-2); padding: var(--space-2) var(--space-3); background: var(--color-paper); color: var(--color-text-primary); font: inherit; text-align: left; cursor: pointer; transition: border-color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard); }
-.room-question-card__option:hover { border-color: var(--color-border-strong); background: var(--color-surface-subtle); }
+.room-question-card__option { display: grid; width: 100%; min-width: 0; min-height: 48px; grid-template-columns: var(--space-5) minmax(0, 1fr); align-items: center; gap: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-2); padding: var(--space-2) var(--space-3); background: var(--color-surface); color: var(--color-text-primary); font: inherit; text-align: left; cursor: pointer; transition: border-color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard); }
+.room-question-card__option:hover { border-color: var(--color-accent); background: var(--color-accent-soft); transform: translateY(-1px); }
 .room-question-card__option:focus-visible { border-color: var(--color-focus); outline: 0; box-shadow: var(--shadow-focus); }
-.room-question-card__option[data-state='checked'] { border-color: var(--color-accent); background: var(--color-accent-soft); }
+.room-question-card__option[data-state='checked'], .room-question-card__option[data-pending='true'] { border-color: var(--color-accent); background: var(--color-accent-soft); }
 .room-question-card__option:disabled { cursor: wait; }
 .room-question-card__control { display: grid; width: var(--space-5); height: var(--space-5); place-items: center; border: 1px solid var(--color-border-strong); border-radius: var(--radius-round); background: var(--color-surface); color: transparent; }
 .room-question-card__option[data-state='checked'] .room-question-card__control { border-color: var(--color-accent); background: var(--color-accent); color: var(--color-accent-text); }
@@ -545,7 +600,7 @@
 .room-question-card__resolved > span { display: grid; min-width: 0; gap: 1px; }
 .room-question-card__resolved small { color: var(--color-text-tertiary); font-size: var(--text-label); line-height: var(--text-label-lh); }
 .room-question-card__resolved strong { color: var(--color-text-primary); font-size: var(--text-label); line-height: var(--text-label-lh); overflow-wrap: anywhere; }
-.room-question-card[data-state='answered'] { border-color: var(--color-success); background: color-mix(in srgb, var(--color-success-soft) 44%, var(--color-paper)); }
+.room-question-card[data-state='answered'] { border-color: var(--color-border); border-inline-start-color: var(--color-success); background: var(--color-paper); }
 .room-question-card[data-state='superseded'], .room-question-card[data-state='stale'] { border-color: var(--color-border); background: var(--color-surface-subtle); }
 .room-policy-loading { margin: 0; padding: 24px 0; color: var(--color-text-tertiary); font-size: 13px; text-align: center; }
 .room-policy-form { display: grid; gap: 15px; }
@@ -1484,7 +1539,7 @@
 .room-agent-activity[data-arriving='true'],
 .room-reasoning-summary[data-arriving='true'],
 .room-turn__terminal[data-arriving='true'] {
-  animation: room-activity-arrival 240ms var(--ease-standard) both;
+  animation: room-activity-arrival 210ms var(--ease-standard) both;
 }
 
 @keyframes room-activity-arrival {
@@ -1529,15 +1584,19 @@
   .room-status-phase li,
   .room-status-final-reply,
   .room-status-public-lane,
+  .room-question-card__option,
   .room-agent-activity[data-arriving='true'],
   .room-reasoning-summary[data-arriving='true'],
   .room-turn__terminal[data-arriving='true'] {
     animation: none;
     transition: none;
   }
+  .room-question-card__option:hover { transform: none; }
 }
 :root[data-reduce-motion='true'] .room-user-message,
 :root[data-reduce-motion='true'] .room-participant-message { animation: none; transition: none; }
 :root[data-reduce-motion='true'] .room-agent-activity[data-arriving='true'],
 :root[data-reduce-motion='true'] .room-reasoning-summary[data-arriving='true'],
 :root[data-reduce-motion='true'] .room-turn__terminal[data-arriving='true'] { animation: none; transition: none; }
+:root[data-reduce-motion='true'] .room-question-card__option { transition: none; }
+:root[data-reduce-motion='true'] .room-question-card__option:hover { transform: none; }

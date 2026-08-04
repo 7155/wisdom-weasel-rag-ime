@@ -1657,6 +1657,58 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             {"prompt": "请补充必要信息。", "options": []},
         )
 
+    def test_non_facilitator_cannot_publish_a_user_question(self) -> None:
+        self._invoke_commit(
+            "wait",
+            waitingFor="user",
+            resumeCondition="用户回答当前问题",
+            question="是否继续？",
+            questionKind="bounded",
+            questionOptions=[
+                {"value": "yes", "label": "继续"},
+                {"value": "no", "label": "停止"},
+            ],
+        )
+        worker_root = {
+            **self.service.room_kernel.root("root:settle"),
+            "facilitatorParticipantId": str(self.target["id"]),
+        }
+
+        with patch.object(
+            self.service.room_kernel,
+            "root",
+            return_value=worker_root,
+        ):
+            settled = self._settle()
+
+        self.assertEqual(settled["state"], "repair_commit")
+        self.assertIn(
+            "only the Root Facilitator may wait for user input",
+            settled["reason"],
+        )
+
+    def test_alignment_wait_requires_bounded_options(self) -> None:
+        self._invoke_commit(
+            "wait",
+            waitingFor="user",
+            resumeCondition="用户回答当前澄清问题",
+            question="首版更看重哪个交付边界？",
+            questionKind="unbounded",
+        )
+
+        with patch.object(
+            self.service.room_kernel,
+            "dispatch_is_active_alignment",
+            return_value=True,
+        ):
+            settled = self._settle()
+
+        self.assertEqual(settled["state"], "repair_commit")
+        self.assertIn(
+            "alignment questions must be bounded",
+            settled["reason"],
+        )
+
     def test_user_wait_preserves_completed_acceptance_evidence(self) -> None:
         self._invoke_commit(
             "wait",
@@ -1782,6 +1834,18 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 question_kind="unbounded",
             )
         )
+        with self.assertRaisesRegex(
+            RoomCommitProposalError,
+            "alignment questions must be bounded",
+        ):
+            settlement._canonical_question_options(
+                None,
+                decision="wait",
+                waiting_for="user",
+                question="请描述你的目标。",
+                question_kind="unbounded",
+                require_bounded=True,
+            )
         cases = (
             {
                 "value": options,
@@ -2877,6 +2941,7 @@ class ReviewerHandoffAuthorityTests(unittest.TestCase):
                 "rootId": "root:review",
                 "taskKind": "review",
                 "parentTaskId": "task:root",
+                "currentOwnerParticipantId": self.reviewer_id,
                 "reviewTargetRevision": f"sha256:{'a' * 64}",
                 "reviewOfTaskIds": ["task:root"],
                 "reviewEvidenceNotBeforeMs": 10,

@@ -16,6 +16,11 @@ The input path remains deliberately conservative: ordinary Pinyin composition
 is still Rime's job, and remote generation is never used for passive
 per-keystroke prediction.
 
+The tracked [Room product contract](release/room-product-contract.md) is the
+sole authority for the current multi-companion workflow and its acceptance
+status. Local `docs/` handoffs and older prototypes are supporting evidence
+only.
+
 > [!WARNING]
 > The tracked source repository can be audited and built locally, but the
 > project does **not** yet publish a release-ready macOS binary. Foreground
@@ -251,10 +256,11 @@ the cost. A fork reuses the exact managed prefix and appends the bounded child
 brief; it does not reorder system, model, or Tool prompts merely to personalize
 the branch. Both modes keep the child Session private.
 
-Room partners and nested children do not open competing native Ask prompts. A
-Room partner uses `room_commit(wait)` for its assigned Room work; a nested
+Room partners and nested children do not open competing native Ask prompts.
+Only the Root Facilitator may publish `room_commit(wait, waitingFor=user)`.
+Other Room partners return a structured blocker to the Facilitator; a nested
 child has no Room authority and returns only a structured blocker to its
-parent. The Facilitator/Reporter decides whether to publish a Room wait.
+parent. The Facilitator decides whether a user question is actually needed.
 Outside a Room, a standalone parent Session may combine one to four independent
 material questions into one native Ask; questions with dependencies are asked
 separately.

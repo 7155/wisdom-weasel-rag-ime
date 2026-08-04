@@ -2,6 +2,7 @@ import {
   useCallback,
   useLayoutEffect,
   useRef,
+  useState,
   type Dispatch,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -78,20 +79,34 @@ export function useAutoFollowScroll<T extends HTMLElement>(
 ) {
   const scrollRef = useRef<T>(null);
   const followingRef = useRef(true);
+  const [following, setFollowing] = useState(true);
   const onScroll = useCallback((event: ReactUIEvent<T>) => {
     const scrollport = event.currentTarget;
-    followingRef.current = (
+    const nextFollowing = (
       scrollport.scrollHeight - scrollport.clientHeight - scrollport.scrollTop
     ) <= 24;
-    scrollport.dataset.following = String(followingRef.current);
+    followingRef.current = nextFollowing;
+    setFollowing(nextFollowing);
+    scrollport.dataset.following = String(nextFollowing);
+  }, []);
+
+  const scrollToLatest = useCallback(() => {
+    const scrollport = scrollRef.current;
+    if (!scrollport) return;
+    scrollport.scrollTop = scrollport.scrollHeight;
+    followingRef.current = true;
+    setFollowing(true);
+    scrollport.dataset.following = 'true';
+    scrollport.focus({ preventScroll: true });
   }, []);
 
   useLayoutEffect(() => {
     const scrollport = scrollRef.current;
     if (!scrollport || !enabled || !followingRef.current) return;
     scrollport.scrollTop = scrollport.scrollHeight;
+    setFollowing(true);
     scrollport.dataset.following = 'true';
   }, [contentKey, enabled]);
 
-  return { onScroll, scrollRef };
+  return { following, onScroll, scrollRef, scrollToLatest };
 }

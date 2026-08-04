@@ -475,6 +475,7 @@ export const CONTROL_ROUTES = {
       'participantIds',
       'workItemId',
       'attachmentIds',
+      'answerKind',
       'answerToPostId',
       'answerToRootId',
     ],

@@ -17,10 +17,13 @@ describe('RoomTurn public activity detail', () => {
   it('shows activity time, wait recovery, tool output, and nested helpers from the shared task', () => {
     const projection = roomProjection();
     const view = render(roomTurn(projection));
+    const activityFeed = view.container.querySelector('.room-agent-lane__activity-feed');
     const activityRows = view.container.querySelectorAll(
       '.room-agent-activity, .room-reasoning-summary',
     );
 
+    expect(activityFeed).toHaveAttribute('data-layout', 'continuous');
+    expect([...activityRows].every((row) => row.parentElement === activityFeed)).toBe(true);
     expect(activityRows).toHaveLength(3);
     expect([...activityRows].every((row) => row.querySelector('time[datetime]'))).toBe(true);
     expect(view.container).toHaveTextContent('等待原因：上游服务正在恢复');
@@ -40,6 +43,16 @@ describe('RoomTurn public activity detail', () => {
     expect(view.container.textContent).not.toMatch(
       /Kernel|Root|Dispatch|Receipt|schemaVersion|root-a|dispatch-a|task-a/,
     );
+
+    Object.defineProperty(activityFeed, 'scrollHeight', { configurable: true, value: 600 });
+    Object.defineProperty(activityFeed, 'clientHeight', { configurable: true, value: 200 });
+    Object.defineProperty(activityFeed, 'scrollTop', { configurable: true, value: 100, writable: true });
+    fireEvent.scroll(activityFeed!);
+    const latest = screen.getByRole('button', { name: '回到最新' });
+    fireEvent.click(latest);
+    expect(activityFeed).toHaveProperty('scrollTop', 600);
+    expect(activityFeed).toHaveFocus();
+    expect(screen.queryByRole('button', { name: '回到最新' })).not.toBeInTheDocument();
   });
 
   it('marks a changed public event once and does not replay arrival on a fresh snapshot', () => {
@@ -82,6 +95,59 @@ describe('RoomTurn public activity detail', () => {
 
     const fresh = render(roomTurn(projection));
     expect(fresh.container.querySelector('[data-arriving="true"]')).not.toBeInTheDocument();
+  });
+
+  it('auto-follows the final activity even when that same snapshot settles the lane', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(5_000);
+    const projection = roomProjection();
+    const view = render(roomTurn(projection, {}, undefined, kernelSync('synced', 4_500)));
+    const activityFeed = view.container.querySelector<HTMLElement>(
+      '.room-agent-lane__activity-feed',
+    )!;
+    let scrollHeight = 600;
+    Object.defineProperty(activityFeed, 'scrollHeight', {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+    Object.defineProperty(activityFeed, 'clientHeight', { configurable: true, value: 200 });
+    Object.defineProperty(activityFeed, 'scrollTop', { configurable: true, value: 400, writable: true });
+    fireEvent.scroll(activityFeed);
+
+    projection.activitiesById['final-result'] = {
+      id: 'final-result',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'completed',
+      summary: '最终验证已经完成',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'current_progress',
+      },
+      createdAtMs: 4_000,
+      updatedAtMs: 4_000,
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      status: 'completed',
+      activityIds: [...projection.turnsById['turn-a']!.activityIds, 'final-result'],
+      terminalDispatchIds: ['dispatch-a'],
+      terminalParticipantIds: ['participant-a'],
+      updatedAtMs: 4_000,
+    };
+    scrollHeight = 800;
+    view.rerender(roomTurn(projection, {}, undefined, kernelSync('synced', 4_500)));
+
+    expect(activityFeed.closest('details')).toHaveAttribute('open');
+    expect(activityFeed).toHaveProperty('scrollTop', 800);
+    expect(activityFeed).toHaveTextContent('最终验证已经完成');
+    expect(activityFeed).toHaveAttribute('aria-live', 'polite');
+    expect(
+      screen.getByText('最终验证已经完成').closest('.room-agent-activity'),
+    ).toHaveAttribute('data-arriving', 'true');
   });
 
   it.each([

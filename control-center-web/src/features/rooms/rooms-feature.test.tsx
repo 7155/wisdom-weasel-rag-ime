@@ -265,19 +265,24 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    const questionCard = within(await screen.findByRole('region', {
+    const questionRegion = await screen.findByRole('region', {
       name: '需要回答：这次采用哪一种发布方式？',
-    }));
+    });
+    const questionCard = within(questionRegion);
+    expect(questionRegion).toHaveAttribute('aria-live', 'polite');
     expect(questionCard.getByText('这次采用哪一种发布方式？')).toBeInTheDocument();
     expect(questionCard.getByText('推荐')).toBeInTheDocument();
-    expect(screen.getByText(/当前任务正在等待你的回答/)).toBeInTheDocument();
-    expect(questionCard.getByRole('button', { name: '发送回答' })).toBeDisabled();
+    expect(screen.queryByRole('textbox', { name: '协作消息' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '发送问题回答' })).not.toBeInTheDocument();
+    expect(questionCard.getByRole('button', { name: '其他' })).toBeInTheDocument();
+    expect(questionCard.queryByRole('button', { name: '发送回答' })).not.toBeInTheDocument();
 
-    await user.click(questionCard.getByRole('radio', { name: '方案 B' }));
+    const optionA = questionCard.getByRole('radio', { name: /方案 A/ });
+    await waitFor(() => expect(optionA).toHaveFocus());
+    const optionB = questionCard.getByRole('radio', { name: '方案 B' });
+    fireEvent.click(optionB);
+    fireEvent.click(optionB);
     expect(questionCard.getByRole('radio', { name: '方案 B' })).toBeChecked();
-    const submit = questionCard.getByRole('button', { name: '发送回答' });
-    fireEvent.click(submit);
-    fireEvent.click(submit);
 
     await waitFor(() => expect(
       transport.requests.filter(({ request }) => request.pathId === 'agent.room.message'),
@@ -288,8 +293,14 @@ describe('Rooms experience', () => {
     expect(request.body).toMatchObject({
       message: 'B',
       attachmentIds: [],
+      answerKind: 'option',
+      answerToPostId: 'room-a:question-1',
+      answerToRootId: 'room-a:turn-1',
     });
     expect(request.body).not.toHaveProperty('participantIds');
+    const optimisticAnswer = document.querySelector('.room-user-message');
+    expect(optimisticAnswer).toHaveTextContent('方案 B');
+    expect(optimisticAnswer).not.toHaveTextContent(/^B(?:正在发送)?$/);
     expect(screen.getByRole('region', { name: '需要回答：这次采用哪一种发布方式？' })).toBeInTheDocument();
 
     const clientMessageId = String((request.body as Record<string, unknown>).clientMessageId);
@@ -307,7 +318,7 @@ describe('Rooms experience', () => {
     });
     await waitFor(() => expect(
       within(screen.getByRole('region', { name: '需要回答：这次采用哪一种发布方式？' }))
-        .queryByRole('button', { name: '发送回答' }),
+        .queryByRole('button', { name: '其他' }),
     ).not.toBeInTheDocument());
     const resolvedQuestion = within(screen.getByRole('region', { name: '需要回答：这次采用哪一种发布方式？' }));
     const resolvedPrompt = resolvedQuestion.getByText('这次采用哪一种发布方式？');
@@ -322,6 +333,104 @@ describe('Rooms experience', () => {
     expect(document.querySelectorAll('.room-user-message')).toHaveLength(1);
     expect(screen.getByRole('button', { name: '等待当前任务完成' })).toBeDisabled();
     await waitFor(() => expect(screen.getByRole('textbox', { name: '协作消息' })).toHaveFocus());
+  });
+
+  it('opens free text only after Other and keeps the answer on the same question', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '其他回答 Room')] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot('room-a', [
+        roomQuestionEvent('room-a', 1, {
+          content: '请选择首版交付边界。',
+          prompt: '首版最重要的交付边界是什么？',
+          options: [
+            { value: 'loop', label: '可运行闭环' },
+            { value: 'ecosystem', label: '完整插件生态' },
+          ],
+        }),
+      ]),
+      'agent.room.message': (request: ControlRequest) => ({
+        ok: true,
+        timelineEvents: [
+          roomUserPostEvent(
+            'room-a',
+            2,
+            'room-a:turn-1',
+            String((request.body as Record<string, unknown>).clientMessageId),
+            String((request.body as Record<string, unknown>).message),
+          ),
+        ],
+      }),
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    const questionCard = within(await screen.findByRole('region', {
+      name: '需要回答：首版最重要的交付边界是什么？',
+    }));
+    expect(questionCard.queryByRole('textbox', { name: /你的回答/ })).not.toBeInTheDocument();
+    expect(questionCard.queryByRole('button', { name: '发送回答' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: '协作消息' })).not.toBeInTheDocument();
+
+    await user.click(questionCard.getByRole('button', { name: '其他' }));
+
+    expect(questionCard.queryByRole('radio')).not.toBeInTheDocument();
+    expect(questionCard.getByRole('button', { name: '返回选项' })).toBeInTheDocument();
+    const answer = questionCard.getByRole('textbox', { name: /你的回答/ });
+    await waitFor(() => expect(answer).toHaveFocus());
+    await user.type(answer, 'loop');
+    await user.click(questionCard.getByRole('button', { name: '发送回答' }));
+
+    await waitFor(() => expect(
+      transport.requests.filter(({ request }) => request.pathId === 'agent.room.message'),
+    ).toHaveLength(1));
+    expect(transport.requests.find(
+      ({ request }) => request.pathId === 'agent.room.message',
+    )?.request.body).toMatchObject({
+      message: 'loop',
+      answerKind: 'custom',
+      answerToPostId: 'room-a:question-1',
+      answerToRootId: 'room-a:turn-1',
+    });
+  });
+
+  it('restores the ordinary composer when the Kernel terminates before the pending question event clears', async () => {
+    const kernelSnapshot = roomKernelSnapshot('room-a');
+    kernelSnapshot.roots = [{
+      ...kernelSnapshot.roots[0],
+      rootId: 'room-a:turn-1',
+      state: 'failed',
+    }];
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '终态恢复 Room')] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot('room-a', [
+        roomQuestionEvent('room-a', 1, {
+          content: '请选择首版交付边界。',
+          prompt: '首版最重要的交付边界是什么？',
+          options: [
+            { value: 'loop', label: '可运行闭环' },
+            { value: 'ecosystem', label: '完整插件生态' },
+          ],
+        }),
+      ]),
+      'agent.room.kernel.snapshot': kernelSnapshot,
+    } });
+
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider><RoomsFeature /></TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    const question = within(await screen.findByRole('region', {
+      name: '需要回答：首版最重要的交付边界是什么？',
+    }));
+    await waitFor(() => expect(
+      question.getByText('这项问题已不再是当前可回答的问题。'),
+    ).toBeInTheDocument());
+    expect(question.queryByRole('radio')).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '协作消息' })).toBeEnabled();
   });
 
 
@@ -373,6 +482,7 @@ describe('Rooms experience', () => {
     expect(answerRequest).toMatchObject({
       message: '请保留现有 API，并补充错误状态。',
       attachmentIds: [],
+      answerKind: 'custom',
       answerToPostId: 'room-a:question-1',
       answerToRootId: 'room-a:turn-1',
     });
@@ -414,7 +524,7 @@ describe('Rooms experience', () => {
     );
     await waitFor(() => expect(
       within(screen.getByRole('region', { name: '需要回答：采用哪一种发布方式？' }))
-        .getByRole('button', { name: '发送回答' }),
+        .getByRole('button', { name: '其他' }),
     ).toBeInTheDocument());
 
     transport.emit(
@@ -430,13 +540,13 @@ describe('Rooms experience', () => {
     );
     await waitFor(() => expect(
       within(screen.getByRole('region', { name: '需要回答：采用哪一种发布方式？' }))
-        .queryByRole('button', { name: '发送回答' }),
+        .queryByRole('button', { name: '其他' }),
     ).not.toBeInTheDocument());
     expect(within(screen.getByRole('region', { name: '需要回答：采用哪一种发布方式？' })).getByText('回答保留在下一条用户消息中')).toBeInTheDocument();
     expect(screen.getByText('稳定版').closest('.room-user-message')).toBeInTheDocument();
     expect(document.querySelectorAll('.room-user-message')).toHaveLength(3);
   });
-  it('answers grouped participant clarification in Room and waits for the durable resolution event', async () => {
+  it('never exposes a historical native participant question as a second Room answer surface', async () => {
     const groupedRequest = roomEvent('room-a', 1, 'participant_activity', {
       rootId: 'room-a:turn-1',
       dispatchId: 'room-a:dispatch-1',
@@ -460,54 +570,17 @@ describe('Rooms experience', () => {
       'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '协作确认')] },
       'agent.roles.list': { ok: true, items: previewPersonas },
       'agent.room.snapshot': roomSnapshot('room-a', [groupedRequest]),
-      'agent.session.ui.resolve': { ok: true },
     } });
-    const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    const cardElement = await screen.findByRole('region', { name: '需要你做几个选择' });
-    const card = within(cardElement);
-    expect(cardElement.parentElement).toHaveClass('room-composer-dock');
-    expect(document.querySelector('.room-composer')).not.toBeInTheDocument();
+    await waitFor(() => expect(document.querySelector('.room-composer')).toBeInTheDocument());
+    expect(screen.queryByRole('region', { name: '需要你做几个选择' })).not.toBeInTheDocument();
     expect(screen.queryByRole('dialog', { name: '需要你做几个选择' })).not.toBeInTheDocument();
-    expect(card.getByRole('group', { name: '1. 先覆盖哪一部分？' })).toBeInTheDocument();
-    expect(card.getByRole('group', { name: '2. 如何复核？' })).toBeInTheDocument();
-    await user.click(card.getByRole('radio', { name: '核心流程' }));
-    await user.click(card.getByRole('radio', { name: '伙伴互查' }));
-    await user.click(card.getByRole('button', { name: '一起提交' }));
-
-    await waitFor(() => expect(
-      transport.requests.filter(({ request }) => request.pathId === 'agent.session.ui.resolve'),
-    ).toHaveLength(1));
-    expect(transport.requests.find(({ request }) => request.pathId === 'agent.session.ui.resolve')?.request).toMatchObject({
-      params: { sessionId: 'room-a:s1' },
-      body: {
-        requestId: 'input:grouped-1',
-        value: JSON.stringify({ answers: { scope: '核心流程', review: '伙伴互查' } }),
-        resolutionSource: 'direct_user',
-      },
-    });
-    expect(screen.getByRole('region', { name: '需要你做几个选择' })).toBeInTheDocument();
-    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.room.message')).toHaveLength(0);
-
-    transport.emit('agent.room.events', roomEvent('room-a', 2, 'participant_activity', {
-      rootId: 'room-a:turn-1',
-      dispatchId: 'room-a:dispatch-1',
-      sourceEventId: 'room-a:s1:input:grouped-1:resolved',
-      sourceEventType: 'user_input_required',
-      requestId: 'input:grouped-1',
-      requestKind: 'grouped_questions',
-      method: 'editor',
-      resolutionState: 'resolved',
-      resolutionSource: 'direct_user',
-    }, {
-      turnId: 'room-a:turn-1',
-      participantId: 'room-a:p1',
-      sourceSessionId: 'room-a:s1',
-    }));
-    await waitFor(() => expect(
-      screen.queryByRole('region', { name: '需要你做几个选择' }),
-    ).not.toBeInTheDocument());
+    expect(screen.queryByRole('link', { name: /立即选择|立即回答/ })).not.toBeInTheDocument();
+    expect(transport.requests.filter(({ request }) => (
+      request.pathId === 'agent.session.ui.resolve'
+      || request.pathId === 'agent.room.message'
+    ))).toHaveLength(0);
   });
 
   it('keeps an inline question visible across Escape and a full reload', async () => {
@@ -538,7 +611,8 @@ describe('Rooms experience', () => {
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
     const reloadedCard = within(await screen.findByRole('region', { name: questionName }));
     expect(reloadedCard.getByText('推荐')).toBeInTheDocument();
-    expect(reloadedCard.getByRole('button', { name: '发送回答' })).toBeDisabled();
+    expect(reloadedCard.getByRole('button', { name: '其他' })).toBeInTheDocument();
+    expect(reloadedCard.queryByRole('button', { name: '发送回答' })).not.toBeInTheDocument();
   });
 
   it('does not reopen a resolved question or fabricate choices for a legacy wait post', async () => {
@@ -573,7 +647,7 @@ describe('Rooms experience', () => {
     const answeredCard = within(timeline.getByRole('region', { name: '需要回答：选择发布方式' }));
     expect(answeredCard.getByText('回答保留在下一条用户消息中')).toBeInTheDocument();
     expect(timeline.getByText('方案 B').closest('.room-user-message')).toBeInTheDocument();
-    expect(answeredCard.queryByRole('button', { name: '发送回答' })).not.toBeInTheDocument();
+    expect(answeredCard.queryByRole('button', { name: '其他' })).not.toBeInTheDocument();
     expect(answeredCard.queryAllByRole('radio')).toHaveLength(0);
     expect(document.querySelectorAll('.room-question-option')).toHaveLength(0);
   });
@@ -1061,7 +1135,7 @@ describe('Rooms experience', () => {
     const latestCard = within(await screen.findByRole('region', { name: '需要回答：最新的问题' }));
     const supersededCard = within(screen.getByRole('region', { name: '需要回答：较早的问题' }));
     expect(latestCard.getAllByRole('radio')).toHaveLength(2);
-    expect(latestCard.getByRole('button', { name: '发送回答' })).toBeInTheDocument();
+    expect(latestCard.getByRole('button', { name: '其他' })).toBeInTheDocument();
     expect(supersededCard.getByText('这项问题已由后续问题替代。')).toBeInTheDocument();
     expect(supersededCard.queryByRole('radio')).not.toBeInTheDocument();
   });
@@ -2416,7 +2490,7 @@ describe('Rooms experience', () => {
     expect(screen.queryByRole('button', { name: /停止/ })).not.toBeInTheDocument();
   });
 
-  it('opens a generic selectable clarification in the owning Session', () => {
+  it('does not expose a stale native selectable clarification as a second answer owner', () => {
     const room = roomSummary('room-a', '选择 Room');
     const projection = createRoomProjection(room.id);
     projection.turnOrder.push('turn-a');
@@ -2437,11 +2511,10 @@ describe('Rooms experience', () => {
     };
 
     render(<RoomTurn turnId="turn-a" room={room} projection={projection} personas={previewPersonas} />);
-    expect(screen.getByText('等待选择')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /立即选择/ })).toHaveAttribute('href', '#/agent?session=room-a%3As1');
+    expect(screen.queryByRole('link', { name: /立即选择/ })).not.toBeInTheDocument();
   });
 
-  it('routes grouped clarification to the owning participant without merging answers into the Room timeline', () => {
+  it('does not expose stale grouped clarification outside the canonical Room question', () => {
     const room = roomSummary('room-a', '协作确认');
     const projection = createRoomProjection(room.id);
     projection.turnOrder.push('turn-a');
@@ -2464,8 +2537,7 @@ describe('Rooms experience', () => {
     };
 
     render(<RoomTurn turnId="turn-a" room={room} projection={projection} personas={previewPersonas} />);
-    expect(screen.getByText('等待回答')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /立即回答/ })).toHaveAttribute('href', '#/agent?session=room-a%3As1');
+    expect(screen.queryByRole('link', { name: /立即回答/ })).not.toBeInTheDocument();
     expect(screen.queryByText('核心流程')).not.toBeInTheDocument();
     expect(screen.queryByText('伙伴互查')).not.toBeInTheDocument();
   });
@@ -3161,11 +3233,12 @@ describe('Rooms experience', () => {
 
     expect(view.container.querySelector('.room-turn__terminal')).toHaveAttribute('data-arriving', 'true');
     expect(view.container.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'done');
-    expect(view.container.querySelector('.room-agent-lane__activity')).not.toHaveAttribute('open');
+    expect(view.container.querySelector('.room-agent-lane__activity')).toHaveAttribute('open');
     view.unmount();
 
     const settled = render(roomTurn());
     expect(settled.container.querySelector('.room-turn__terminal')).not.toHaveAttribute('data-arriving');
+    expect(settled.container.querySelector('.room-agent-lane__activity')).not.toHaveAttribute('open');
   });
 
   it('keeps a committed lane completed without showing a failed read as successful', () => {

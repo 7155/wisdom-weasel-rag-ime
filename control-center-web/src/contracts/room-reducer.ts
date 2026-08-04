@@ -1704,6 +1704,11 @@ function completeTurn(
   failure = '',
 ): void {
   const turn = ensureTurn(state, turnId, nowMs);
+  if (state.pendingUserQuestion?.rootId === turnId) {
+    // Keep the historical question Post, but release its one interactive
+    // owner. Replays and aborts must never leave a terminal Root answerable.
+    state.pendingUserQuestion = undefined;
+  }
   const settledParticipants = new Set(turn.terminalParticipantIds ?? []);
   const settledDispatches = new Set(turn.terminalDispatchIds ?? []);
   const failedParticipants = new Set(turn.failedParticipantIds ?? []);

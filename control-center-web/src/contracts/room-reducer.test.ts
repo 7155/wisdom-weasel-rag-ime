@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  abortRoomTurn,
   appendOptimisticRoomMessage,
   createRoomProjection,
   parseRoomEventPage,
@@ -1544,8 +1545,19 @@ describe('RoomEventReducer', () => {
     rootTerminal.participantId = null;
     rootTerminal.sourceSessionId = '';
     terminalState = reduceRoomEvent(terminalState, parseRoomEvent(rootTerminal)).state;
-    expect(terminalState.pendingUserQuestion?.postId).toBe('wait-post-1');
+    expect(terminalState.pendingUserQuestion).toBeUndefined();
     expect(terminalState.messagesById['wait-post-1']?.question).toMatchObject({
+      status: 'pending',
+    });
+
+    let abortedState = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      parseRoomEvent(question),
+    ).state;
+    abortedState = abortRoomTurn(abortedState, 'room-turn-1', 31);
+    expect(abortedState.pendingUserQuestion).toBeUndefined();
+    expect(abortedState.turnsById['room-turn-1']?.status).toBe('aborted');
+    expect(abortedState.messagesById['wait-post-1']?.question).toMatchObject({
       status: 'pending',
     });
 

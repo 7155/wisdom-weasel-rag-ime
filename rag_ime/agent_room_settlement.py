@@ -1337,12 +1337,8 @@ class RoomSettleLifecycleService:
                 ),
                 None,
             )
-            if (
-                caller is None
-                or canonical_collaboration_role_id(
-                    caller.get("collaborationRole")
-                )
-                != "reviewer"
+            if caller is None or str(dispatch.get("targetParticipantId") or "") != str(
+                task.get("currentOwnerParticipantId") or ""
             ):
                 raise RoomCommitProposalError(
                     "only the active Reviewer may return a revision handoff"
@@ -1387,6 +1383,16 @@ class RoomSettleLifecycleService:
         ):
             raise RoomCommitProposalError(
                 "需求对齐只能确认需求或等待用户澄清"
+            )
+        if (
+            decision == "wait"
+            and str(arguments.get("waitingFor") or "").strip() == "user"
+            and str(dispatch.get("targetParticipantId") or "")
+            != str(root.get("facilitatorParticipantId") or "")
+        ):
+            raise RoomCommitProposalError(
+                "only the Root Facilitator may wait for user input; "
+                "return the blocker to the Facilitator instead"
             )
         self._assert_managed_collaboration_ready(
             decision=decision,
@@ -1564,6 +1570,9 @@ class RoomSettleLifecycleService:
             waiting_for=str(arguments.get("waitingFor") or "").strip(),
             question=arguments.get("question"),
             question_kind=arguments.get("questionKind"),
+            require_bounded=self.kernel.dispatch_is_active_alignment(
+                str(dispatch["dispatchId"])
+            ),
         )
         try:
             public_content = public_room_report_content(
@@ -1935,6 +1944,7 @@ def _canonical_question_options(
     waiting_for: str,
     question: object,
     question_kind: object,
+    require_bounded: bool = False,
 ) -> list[dict[str, object]] | None:
     normalized_question = (
         question.strip() if isinstance(question, str) else ""
@@ -1961,6 +1971,11 @@ def _canonical_question_options(
     if normalized_kind not in {"bounded", "unbounded"}:
         raise RoomCommitProposalError(
             "questionKind must be bounded or unbounded"
+        )
+    if require_bounded and normalized_kind != "bounded":
+        raise RoomCommitProposalError(
+            "alignment questions must be bounded and include between 2 and 5 "
+            "questionOptions; the interface supplies Other for custom text"
         )
     if normalized_kind == "unbounded":
         if value is not None:

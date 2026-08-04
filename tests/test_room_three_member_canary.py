@@ -71,7 +71,7 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
         self.assertTrue(all(checks.values()), checks)
         self.assertEqual(CANARY.OPENING_MESSAGE, "写 TUI")
 
-    def test_wait_question_accepts_text_only_or_structured_options(self) -> None:
+    def test_wait_question_requires_structured_options(self) -> None:
         snapshot = base_snapshot()
         post = {
             "postId": "post:wait",
@@ -85,7 +85,10 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
             },
             "question": {
                 "prompt": "这个 TUI 要做什么？",
-                "options": [],
+                "options": [
+                    {"value": "terminal", "label": "终端原生 TUI"},
+                    {"value": "control", "label": "控制中心界面"},
+                ],
             },
         }
         snapshot["posts"] = [post]
@@ -112,6 +115,35 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
                 seen_post_ids=set(),
             )
         )
+
+    def test_clarification_answer_binds_the_exact_question_and_root(self) -> None:
+        self.assertEqual(
+            CANARY.clarification_answer_body(
+                answer="终端原生 TUI",
+                stamp=20260804,
+                index=1,
+                post={"postId": "post:wait-2"},
+                root_id="root:tui",
+            ),
+            {
+                "message": "终端原生 TUI",
+                "clientMessageId": "room-full-auto-answer:20260804:1",
+                "answerKind": "custom",
+                "answerToPostId": "post:wait-2",
+                "answerToRootId": "root:tui",
+            },
+        )
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "question Post and Root identity",
+        ):
+            CANARY.clarification_answer_body(
+                answer="终端原生 TUI",
+                stamp=20260804,
+                index=1,
+                post={},
+                root_id="root:tui",
+            )
 
     def test_initial_execution_fanout_or_work_item_fails(self) -> None:
         bad = base_snapshot()
