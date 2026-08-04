@@ -181,7 +181,11 @@ describe('RoomTaskFlowGraph dependency proof', () => {
     expect(reviewNode).toHaveAttribute('title', expect.stringContaining('等待 1 项真实前置任务'));
     expect(reviewNode).toHaveTextContent('负责人澄·远');
     expect(reviewNode).toHaveTextContent('等待前置任务');
-    expect(graph).not.toHaveTextContent(/当前动作|下一步|验证状态|临时协作者/);
+    expect(dataNode).toHaveTextContent('已交付');
+    expect(interfaceNode).toHaveTextContent('已交付');
+    expect(integrationNode).toHaveTextContent('正在做');
+    expect(reviewNode).toHaveTextContent('下一步等待 1 项前置任务完成');
+    expect(graph).not.toHaveTextContent(/验证状态|临时协作者/);
 
     const workList = screen.getByRole('region', { name: '每项工作的详细进展' });
     const interfaceCard = [...workList.querySelectorAll('.room-task-work-card')].find((card) => (
@@ -571,6 +575,7 @@ describe('RoomTaskWorkList participant authority projection', () => {
     expect(todoRegion).toHaveTextContent('实现权威 Todo 投影');
     expect(todoRegion).toHaveTextContent('完成交付清单');
     expect(todoRegion).toHaveTextContent('1 / 2 已收束');
+    expect(card.querySelector('.room-task-work-card__body')?.lastElementChild).toBe(todoRegion);
 
     const deliveryRegion = within(card).getByRole('region', { name: '澄·今 的交付结果' });
     expect(deliveryRegion.querySelector('.room-task-delivery__summary')).toHaveTextContent(

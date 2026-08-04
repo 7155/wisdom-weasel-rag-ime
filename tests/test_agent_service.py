@@ -810,6 +810,65 @@ class AgentServiceTests(unittest.TestCase):
             self.service.sessions.get_approval(str(approval["approvalId"]))["decidedAtMs"]
         )
 
+    def test_full_automation_bounded_workspace_write_uses_policy_without_luna(self) -> None:
+        session = self.service.create_session({"title": "全自动普通写入"})["session"]
+        session_id = str(session["id"])
+        session = self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "workspaceRoots": [self.root.as_posix()],
+                "toolProfileVersion": "control-center-auto-approve-v1",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+            },
+        )["session"]
+        target = self.root / "test_tui.py"
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="workspace_write",
+            operation="apply",
+            payload_sha256="c" * 64,
+            preview={
+                "title": "创建普通测试文件",
+                "summary": "在已授权工作区创建 test_tui.py",
+                "actionPayload": {
+                    "path": target.as_posix(),
+                    "resourceRevision": "missing",
+                    "content": "def test_tui(): pass\n",
+                },
+                "baseState": {
+                    "workspaceRootSha256": session["workspaceScopeSha256"],
+                    "preimageSha256": "0" * 64,
+                    "postimageSha256": "1" * 64,
+                },
+            },
+            risk_level="R2",
+        )
+        self.service.bind_approval_executor(
+            lambda decided: {
+                "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+                "mutationApplied": True,
+                "approvalId": decided["approvalId"],
+                "toolId": decided["toolId"],
+                "operation": decided["operation"],
+                "summary": "已创建 test_tui.py",
+            }
+        )
+
+        with patch.object(
+            self.service.approval_model,
+            "decide",
+            side_effect=AssertionError("ordinary workspace write reached Luna"),
+        ) as decide:
+            result = self.service.auto_approve_pending(approval)
+
+        decide.assert_not_called()
+        self.assertTrue(result["autoApproved"])
+        self.assertEqual(result["decisionMode"], "policy")
+        stored = self.service.sessions.get_approval(str(approval["approvalId"]))
+        self.assertEqual(stored["state"], "applied")
+        self.assertEqual(stored["decidedBy"], "execution-policy:full_trust")
+
     def test_full_automation_model_rejection_is_terminal_without_human_approval(self) -> None:
         session = self.service.create_session(
             {"title": "模型拒绝测试"}
@@ -3376,6 +3435,119 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual([event["createdAtMs"] for event in tool_events], [550, 690])
         self.assertEqual(tool_events[0]["payload"]["args"], {"path": "README.md"})
         self.assertEqual(tool_events[1]["payload"]["result"], {"summary": "读取完成"})
+
+    def test_message_snapshot_pages_live_history_before_a_stable_event(self) -> None:
+        session = self.service.create_session({"title": "运行记录分页"})["session"]
+        session_id = str(session["id"])
+        history = [
+            AgentEventEnvelope(
+                event_id=f"{session_id}:history:{index}",
+                session_id=session_id,
+                turn_id="history:user-1",
+                sequence=index + 1,
+                created_at_ms=100 + index,
+                event_type="reasoning_summary",
+                payload={"summary": f"进展 {index}"},
+                resume_token=f"{session_id}:history:{index}",
+            ).to_payload()
+            for index in range(5)
+        ]
+        with patch.object(
+            self.service.runtime,
+            "session_snapshot",
+            create=True,
+            return_value={
+                "messages": [],
+                "toolHistoryEvents": history,
+                "telemetry": None,
+                "messageQueue": None,
+            },
+        ):
+            newest = self.service.messages(session_id, event_limit=2)
+            older = self.service.messages(
+                session_id,
+                event_limit=2,
+                before_event_id=str(newest["historyPage"]["olderBeforeEventId"]),
+            )
+            oldest = self.service.messages(
+                session_id,
+                event_limit=2,
+                before_event_id=str(older["historyPage"]["olderBeforeEventId"]),
+            )
+
+        self.assertEqual(
+            [event["eventId"] for event in newest["liveEvents"]],
+            [f"{session_id}:history:3", f"{session_id}:history:4"],
+        )
+        self.assertEqual(
+            [event["eventId"] for event in older["liveEvents"]],
+            [f"{session_id}:history:1", f"{session_id}:history:2"],
+        )
+        self.assertEqual(
+            [event["eventId"] for event in oldest["liveEvents"]],
+            [f"{session_id}:history:0"],
+        )
+        self.assertEqual(newest["historyPage"]["totalLiveEvents"], 5)
+        self.assertTrue(newest["historyPage"]["hasOlderLiveEvents"])
+        self.assertTrue(older["historyPage"]["hasOlderLiveEvents"])
+        self.assertFalse(oldest["historyPage"]["hasOlderLiveEvents"])
+
+    def test_message_snapshot_pages_complete_turns_without_lowering_total_count(self) -> None:
+        session = self.service.create_session({"title": "对话正文分页"})["session"]
+        session_id = str(session["id"])
+        messages = [
+            {
+                "schemaVersion": "rag-ime.agent-message.v1",
+                "id": f"message:{index}",
+                "sessionId": session_id,
+                "turnId": f"turn:{index}",
+                "role": "user",
+                "status": "completed",
+                "blocks": [{
+                    "id": f"message:{index}:text",
+                    "type": "text",
+                    "status": "completed",
+                    "presentationKind": "markdown",
+                    "data": {"text": f"消息 {index}"},
+                }],
+                "attachments": [],
+                "citations": [],
+                "createdAtMs": index + 1,
+                "completedAtMs": index + 1,
+            }
+            for index in range(5)
+        ]
+        with patch.object(
+            self.service.runtime,
+            "session_snapshot",
+            create=True,
+            return_value={
+                "messages": messages,
+                "toolHistoryEvents": [],
+                "telemetry": None,
+                "messageQueue": None,
+            },
+        ):
+            newest = self.service.messages(session_id, turn_limit=2)
+            older = self.service.messages(
+                session_id,
+                turn_limit=2,
+                before_message_id=str(
+                    newest["historyPage"]["olderBeforeMessageId"]
+                ),
+            )
+
+        self.assertEqual(
+            [message["id"] for message in newest["items"]],
+            ["message:3", "message:4"],
+        )
+        self.assertEqual(
+            [message["id"] for message in older["items"]],
+            ["message:1", "message:2"],
+        )
+        self.assertEqual(newest["historyPage"]["totalMessages"], 5)
+        self.assertTrue(newest["historyPage"]["hasOlderMessages"])
+        self.assertEqual(self.service.sessions.get(session_id)["messageCount"], 5)
 
     def test_message_snapshot_treats_open_transcript_as_idle_without_a_live_turn(self) -> None:
         session = self.service.create_session({"title": "旧会话恢复"})["session"]

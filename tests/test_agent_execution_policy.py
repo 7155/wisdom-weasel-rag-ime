@@ -215,6 +215,84 @@ class AgentExecutionPolicyTests(unittest.TestCase):
             APPROVAL_MODEL,
         )
 
+    def test_full_auto_skips_model_review_for_hash_bound_scoped_text_changes(self) -> None:
+        roots = ["/workspace/project"]
+        session = {
+            "executionMode": FULL_TRUST_EXECUTION_MODE,
+            "toolProfileVersion": "control-center-v1",
+            "workspaceRoots": roots,
+            "workspaceScopeSha256": workspace_scope_sha256(roots),
+            "workspaceScopeGrantedAtMs": 100,
+        }
+        base_state = {
+            "workspaceRootSha256": session["workspaceScopeSha256"],
+            "preimageSha256": "a" * 64,
+            "postimageSha256": "b" * 64,
+        }
+        for tool, action_payload in (
+            (
+                "workspace_write",
+                {
+                    "path": "/workspace/project/test_tui.py",
+                    "resourceRevision": "missing",
+                    "content": "def test_tui(): pass\n",
+                },
+            ),
+            (
+                "workspace_patch",
+                {
+                    "path": "/workspace/project/tui.py",
+                    "oldText": "before",
+                    "newText": "after",
+                    "expectedOccurrences": 1,
+                },
+            ),
+            (
+                "workspace_edit",
+                {
+                    "path": "/workspace/project/tui.py",
+                    "resourceRevision": "sha256:" + "a" * 64,
+                    "edits": [{"oldText": "before", "newText": "after"}],
+                },
+            ),
+        ):
+            self.assertEqual(
+                approval_strategy(
+                    session,
+                    tool=tool,
+                    operation="apply",
+                    preview={
+                        "actionPayload": action_payload,
+                        "baseState": base_state,
+                    },
+                    risk_level="R2",
+                ),
+                APPROVAL_AUTO,
+            )
+
+        for path, risk_level in (
+            ("/workspace/project/.env", "R2"),
+            ("/workspace/outside.py", "R2"),
+            ("/workspace/project/tui.py", "R3"),
+        ):
+            self.assertEqual(
+                approval_strategy(
+                    session,
+                    tool="workspace_write",
+                    operation="apply",
+                    preview={
+                        "actionPayload": {
+                            "path": path,
+                            "resourceRevision": "missing",
+                            "content": "bounded\n",
+                        },
+                        "baseState": base_state,
+                    },
+                    risk_level=risk_level,
+                ),
+                APPROVAL_MODEL,
+            )
+
     def test_full_trust_routes_every_approval_gate_to_the_model_arbiter(self) -> None:
         session = {
             "executionMode": FULL_TRUST_EXECUTION_MODE,
@@ -288,7 +366,10 @@ class AgentExecutionPolicyTests(unittest.TestCase):
         self.assertIn("全自动", trusted_without_scope)
         self.assertIn("工作区边界尚未确认", trusted_without_scope)
         self.assertIn("工作区变更会失败关闭", trusted_without_scope)
-        self.assertIn("所有原本需要审批的操作都由独立的 Luna Max 模型判定", trusted)
+        self.assertIn("普通文本修改", trusted)
+        self.assertIn("由确定性策略和哈希边界直接放行", trusted)
+        self.assertIn("仍需判断的高风险操作", trusted)
+        self.assertNotIn("所有原本需要审批的操作", trusted)
         self.assertIn("不接收本 Agent 的输出或推理", trusted)
         self.assertIn("不要原样重试，也不要转为人工审批", trusted)
         self.assertIn("删库、灾难性破坏和敏感数据外传由代码硬阻止", trusted)

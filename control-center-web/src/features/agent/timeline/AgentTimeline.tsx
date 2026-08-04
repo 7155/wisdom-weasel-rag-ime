@@ -30,6 +30,11 @@ export function AgentTimeline({
   sessionId,
   persona,
   modelSelectionAvailable,
+  historyStatus = 'ready',
+  expectedMessageCount = 0,
+  hasOlderHistory = false,
+  loadingOlderHistory = false,
+  onLoadOlderHistory,
   turnRecoveryDisabled = false,
   onSuggestion,
   onRetryTurn,
@@ -49,6 +54,11 @@ export function AgentTimeline({
   sessionId: string;
   persona?: AgentPersonaV1;
   modelSelectionAvailable: boolean;
+  historyStatus?: 'loading' | 'ready' | 'failed';
+  expectedMessageCount?: number;
+  hasOlderHistory?: boolean;
+  loadingOlderHistory?: boolean;
+  onLoadOlderHistory?: () => void;
   turnRecoveryDisabled?: boolean;
   onSuggestion: (value: string) => void;
   onRetryTurn: (
@@ -125,9 +135,15 @@ export function AgentTimeline({
     : activeTurnIndex;
   const timelineComponents = useMemo(() => ({
     ScrollSeekPlaceholder: AgentTurnTombstone,
-    Header: AgentTimelineScrollHeader,
+    Header: () => (
+      <AgentTimelineScrollHeader
+        hasOlderHistory={hasOlderHistory}
+        loading={loadingOlderHistory}
+        onLoad={onLoadOlderHistory}
+      />
+    ),
     Footer: AgentTimelineScrollFooter,
-  }), []);
+  }), [hasOlderHistory, loadingOlderHistory, onLoadOlderHistory]);
   useEffect(() => {
     liveFollowIntentRef.current = true;
     const lastIndex = Math.max(0, turnOrder.length - 1);
@@ -252,6 +268,12 @@ export function AgentTimeline({
     };
   }, [jumpRequest?.messageId, jumpRequest?.requestId, sessionId]);
   if (turnOrder.length === 0) {
+    if (historyStatus === 'loading') {
+      return <AgentHistoryRecovery expectedMessageCount={expectedMessageCount} />;
+    }
+    if (historyStatus === 'failed') {
+      return <AgentHistoryUnavailable />;
+    }
     return <AgentWelcome assistantName={assistantName} persona={persona} onSuggestion={onSuggestion} />;
   }
   return (
@@ -381,8 +403,31 @@ function AgentTimelineScrollFooter() {
   return <div className="agent-timeline__footer-space" aria-hidden="true" />;
 }
 
-function AgentTimelineScrollHeader() {
-  return <div className="agent-timeline__header-space" aria-hidden="true" />;
+function AgentTimelineScrollHeader({
+  hasOlderHistory,
+  loading,
+  onLoad,
+}: {
+  hasOlderHistory: boolean;
+  loading: boolean;
+  onLoad?: () => void;
+}) {
+  return (
+    <div className="agent-timeline__header-space">
+      {hasOlderHistory ? (
+        <Button
+          aria-label="加载更早的运行记录"
+          disabled={loading}
+          leadingIcon={<CircleDashed aria-hidden="true" size={14} />}
+          onClick={onLoad}
+          size="small"
+          variant="quiet"
+        >
+          {loading ? '正在读取更早记录' : '加载更早记录'}
+        </Button>
+      ) : null}
+    </div>
+  );
 }
 
 function AgentTurnTombstone({
@@ -883,6 +928,51 @@ function AgentWelcome({
           <Button key={title} variant="quiet" leadingIcon={<Sparkles size={15} />} trailingIcon={<ArrowUpRight size={14} />} onClick={() => onSuggestion(prompt)}>{title}</Button>
         ))}
       </div>
+    </div>
+  );
+}
+
+function AgentHistoryRecovery({ expectedMessageCount }: { expectedMessageCount: number }) {
+  const message = expectedMessageCount > 0
+    ? `正在读取最近的 ${expectedMessageCount} 条消息，已有记录不会丢失。`
+    : '正在读取这段对话最近的消息与运行记录。';
+  return (
+    <div
+      aria-label="正在恢复对话"
+      aria-live="polite"
+      className="agent-history-state"
+      role="status"
+    >
+      <span className="agent-history-state__icon" aria-hidden="true">
+        <CircleDashed size={18} />
+      </span>
+      <span className="agent-history-state__copy">
+        <strong>正在恢复这段对话</strong>
+        <small>{message}</small>
+      </span>
+      <span className="agent-history-state__skeleton" aria-hidden="true">
+        <i />
+        <i />
+        <i />
+      </span>
+    </div>
+  );
+}
+
+function AgentHistoryUnavailable() {
+  return (
+    <div
+      aria-label="对话尚未恢复"
+      className="agent-history-state agent-history-state--failed"
+      role="status"
+    >
+      <span className="agent-history-state__icon" aria-hidden="true">
+        <TriangleAlert size={18} />
+      </span>
+      <span className="agent-history-state__copy">
+        <strong>这段对话暂时没有恢复出来</strong>
+        <small>原记录仍然保留；恢复后会在这里继续显示。</small>
+      </span>
     </div>
   );
 }

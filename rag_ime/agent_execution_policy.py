@@ -90,6 +90,13 @@ _ALWAYS_MANUAL_EFFECTS = frozenset(
 # hash-bound preview proves that it remains an ordinary, in-scope command.
 # The workspace harness remains the authoritative executor-side hard fence.
 _SAFE_FULL_AUTO_EFFECT = ("workspace_shell", "run")
+_SAFE_FULL_AUTO_TEXT_EFFECTS = frozenset(
+    {
+        ("workspace_edit", "apply"),
+        ("workspace_patch", "apply"),
+        ("workspace_write", "apply"),
+    }
+)
 _DESTRUCTIVE_PREVIEW = re.compile(
     r"(?i)(?:\brm\s+[^\n]*(?:-[^\n]*r|--recursive)|"
     r"\bgit\s+(?:reset\s+--hard|clean\s+-[^\n]*f)|"
@@ -250,6 +257,42 @@ def safe_full_auto_command(
     )
 
 
+def _safe_full_auto_text_change(
+    session: Mapping[str, object],
+    preview: Mapping[str, object] | None,
+    *,
+    risk_level: object,
+) -> bool:
+    """Return whether a prepared text mutation stays inside the granted scope.
+
+    The workspace harness has already resolved symlinks, rejected sensitive or
+    non-text targets, bounded the payload, and produced a hash-bound preview.
+    This policy check independently verifies the trust-boundary facts needed to
+    skip a redundant model decision; apply-time revalidation remains owned by
+    the harness.
+    """
+
+    if str(risk_level or "").strip().upper() == "R3":
+        return False
+    action = _preview_mapping(preview, "actionPayload")
+    base_state = _preview_mapping(preview, "baseState")
+    path = str(action.get("path") or "").strip()
+    workspace_roots = list(session.get("workspaceRoots") or [])
+    expected_scope = workspace_scope_sha256(workspace_roots)
+    preview_scope = str(
+        base_state.get("workspaceRootsSha256")
+        or base_state.get("workspaceRootSha256")
+        or ""
+    ).strip().lower()
+    return bool(
+        path
+        and expected_scope
+        and preview_scope == expected_scope
+        and _path_is_within_workspace_scope(path, workspace_roots)
+        and not _SENSITIVE_PREVIEW.search(path)
+    )
+
+
 
 
 
@@ -276,6 +319,15 @@ def approval_strategy(
         if (
             effect == _SAFE_FULL_AUTO_EFFECT
             and safe_full_auto_command(
+                session,
+                preview,
+                risk_level=risk_level,
+            )
+        ):
+            return APPROVAL_AUTO
+        if (
+            effect in _SAFE_FULL_AUTO_TEXT_EFFECTS
+            and _safe_full_auto_text_change(
                 session,
                 preview,
                 risk_level=risk_level,
@@ -332,10 +384,11 @@ def execution_policy_prompt(session: Mapping[str, object]) -> str:
         FULL_TRUST_EXECUTION_MODE: (
             (
                 "本轮是全自动模式。无需审批的查看和检索可以直接进行；\n"
-                "所有原本需要审批的操作都由独立的 Luna Max 模型判定。它只接收明确用户请求、"
-                "当前任务、结构化操作预览和既有裁决，不接收本 Agent 的输出或推理。\n"
-                "已授权工作区内不含破坏性、敏感或网络效果的普通受控命令不会重复请求裁决；"
-                "其余操作仍由 Luna 判定。\n"
+                "已授权工作区内的普通文本修改和不含破坏性、敏感或网络效果的受控命令，"
+                "由确定性策略和哈希边界直接放行，不重复请求裁决。\n"
+                "只有跨出工作区、接触敏感信息、产生网络或系统影响等仍需判断的高风险操作，"
+                "才交给独立的 Luna Max。它只接收明确用户请求、当前任务、结构化操作预览和"
+                "既有裁决，不接收本 Agent 的输出或推理。\n"
                 "Luna 拒绝或判定失败时原操作不执行；读取回执后改用范围更小、只读或可逆方案，"
                 "不要原样重试，也不要转为人工审批。"
             )

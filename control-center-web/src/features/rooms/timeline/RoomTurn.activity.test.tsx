@@ -49,6 +49,66 @@ describe('RoomTurn public activity detail', () => {
     expect(screen.queryByRole('button', { name: '回到最新' })).not.toBeInTheDocument();
   });
 
+  it('moves an updated work summary to the chronological bottom and names the real task', () => {
+    const projection = roomProjection();
+    projection.activitiesById['reasoning-a'] = {
+      id: 'reasoning-a',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'running',
+      summary: '当前任务推进有新进展',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'reasoning_summary',
+        source: 'provider_reasoning_summary',
+        publicSummaryVersion: 'room-work-summary.v1',
+        publicSummaryKind: 'implementation',
+        updateCount: 3,
+      },
+      createdAtMs: 1_500,
+      updatedAtMs: 3_500,
+    };
+    projection.activitiesById['progress-a'] = {
+      id: 'progress-a',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'running',
+      summary: '入口已经找到，正在核对调用方',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'current_progress',
+      },
+      createdAtMs: 3_200,
+      updatedAtMs: 3_200,
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: ['route-a', 'reasoning-a', 'progress-a'],
+      updatedAtMs: 3_500,
+    };
+
+    const view = render(roomTurn(projection, {
+      objective: '完成终端原生 TUI 的可运行闭环',
+      expectedOutput: '可启动、可操作、可验证的终端界面',
+    }));
+    const rows = [...view.container.querySelectorAll<HTMLElement>(
+      '.room-agent-activity, .room-reasoning-summary',
+    )];
+    const laneSummary = view.container.querySelector('.room-agent-lane > summary')!;
+
+    expect(rows.at(-1)).toHaveClass('room-reasoning-summary');
+    expect(rows.at(-1)).toHaveTextContent('正在处理「完成终端原生 TUI 的可运行闭环」');
+    expect(laneSummary).toHaveTextContent('正在处理「完成终端原生 TUI 的可运行闭环」');
+    expect(laneSummary).toHaveTextContent('要交付：可启动、可操作、可验证的终端界面');
+    expect(view.container).not.toHaveTextContent('当前任务推进有新进展');
+  });
+
   it('groups automatic retries into one clickable tool result without losing attempt details', () => {
     const projection = roomProjection();
     const attempts = [

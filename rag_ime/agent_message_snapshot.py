@@ -47,7 +47,15 @@ class AgentMessageSnapshotService:
 
         return self._runtime_provider()
 
-    def messages(self, session_id: str) -> dict[str, object]:
+    def messages(
+        self,
+        session_id: str,
+        *,
+        event_limit: int | None = None,
+        before_event_id: str = "",
+        turn_limit: int | None = None,
+        before_message_id: str = "",
+    ) -> dict[str, object]:
         session = self.sessions.get(session_id)
         last_sequence = self.sessions.max_event_sequence(session_id)
         snapshot_provider = getattr(
@@ -80,6 +88,15 @@ class AgentMessageSnapshotService:
                 private_messages=messages,
                 projection=room_projection,
             )
+        total_messages = len(messages)
+        history_page: dict[str, object] = {}
+        if turn_limit is not None:
+            messages, message_page = _message_turn_page(
+                messages,
+                limit=turn_limit,
+                before_message_id=before_message_id,
+            )
+            history_page.update(message_page)
         telemetry = _mapping_field(runtime_snapshot, "telemetry")
         message_queue = _mapping_field(
             runtime_snapshot,
@@ -128,6 +145,13 @@ class AgentMessageSnapshotService:
             live_events=live_events,
             last_sequence=last_sequence,
         )
+        if event_limit is not None:
+            live_events, event_page = _live_event_page(
+                live_events,
+                limit=event_limit,
+                before_event_id=before_event_id,
+            )
+            history_page.update(event_page)
         session = self._reconcile_session_status(
             session_id,
             session,
@@ -136,11 +160,11 @@ class AgentMessageSnapshotService:
         # tool calls), not the human transcript.  Reconcile only after the
         # visible private and Room-public branches have been projected, so a
         # Session cannot open as an apparently empty conversation.
-        if int(session.get("messageCount") or 0) != len(messages):
+        if int(session.get("messageCount") or 0) != total_messages:
             session = self.sessions.set_status(
                 session_id,
                 str(session.get("status") or "idle"),
-                message_count=len(messages),
+                message_count=total_messages,
             )
         workflow = self._workflow_projector(session_id)
         background_jobs = self.background_jobs.list(
@@ -153,7 +177,7 @@ class AgentMessageSnapshotService:
                 limit=20,
             )
         )
-        return {
+        response: dict[str, object] = {
             "schemaVersion": "rag-ime.agent-message-list.v1",
             "ok": True,
             "sessionId": session_id,
@@ -174,6 +198,9 @@ class AgentMessageSnapshotService:
             "backgroundJobs": list(background_jobs.get("items") or []),
             "lifecycleCancellationAudits": lifecycle_cancellation_audits,
         }
+        if history_page:
+            response["historyPage"] = history_page
+        return response
 
     def _append_pending_approvals(
         self,
@@ -581,6 +608,81 @@ def _merge_tool_events(
             continue
         merged.append(event)
     return merged
+
+
+def _live_event_page(
+    events: Sequence[Mapping[str, object]],
+    *,
+    limit: int,
+    before_event_id: str = "",
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    """Return one stable, newest-first navigation window over live history.
+
+    The public event order remains unchanged.  A caller asks for the events
+    immediately before the first event it already owns, so new tail events do
+    not move the older-page boundary while the conversation is still active.
+    Unknown cursors fail closed to the newest page rather than returning an
+    arbitrary or empty history window.
+    """
+
+    normalized = [dict(event) for event in events]
+    bounded_limit = max(1, min(int(limit), 500))
+    end = len(normalized)
+    cursor = str(before_event_id or "").strip()
+    if cursor:
+        for index, event in enumerate(normalized):
+            if str(event.get("eventId") or "") == cursor:
+                end = index
+                break
+    start = max(0, end - bounded_limit)
+    items = normalized[start:end]
+    first_event_id = str(items[0].get("eventId") or "") if items else ""
+    return items, {
+        "eventLimit": bounded_limit,
+        "eventStart": start,
+        "eventEnd": end,
+        "totalLiveEvents": len(normalized),
+        "hasOlderLiveEvents": start > 0,
+        "olderBeforeEventId": first_event_id if start > 0 else "",
+    }
+
+
+def _message_turn_page(
+    messages: Sequence[Mapping[str, object]],
+    *,
+    limit: int,
+    before_message_id: str = "",
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    """Return complete conversation turns immediately before a stable message."""
+
+    normalized = [dict(message) for message in messages]
+    bounded_limit = max(1, min(int(limit), 200))
+    end = len(normalized)
+    cursor = str(before_message_id or "").strip()
+    if cursor:
+        for index, message in enumerate(normalized):
+            if str(message.get("id") or "") == cursor:
+                end = index
+                break
+    start = end
+    seen_turns: set[str] = set()
+    while start > 0:
+        message = normalized[start - 1]
+        identity = str(message.get("turnId") or message.get("id") or start - 1)
+        if identity not in seen_turns and len(seen_turns) >= bounded_limit:
+            break
+        seen_turns.add(identity)
+        start -= 1
+    items = normalized[start:end]
+    first_message_id = str(items[0].get("id") or "") if items else ""
+    return items, {
+        "turnLimit": bounded_limit,
+        "messageStart": start,
+        "messageEnd": end,
+        "totalMessages": len(normalized),
+        "hasOlderMessages": start > 0,
+        "olderBeforeMessageId": first_message_id if start > 0 else "",
+    }
 
 
 def _apply_observed_times(

@@ -217,7 +217,23 @@
 .agent-new-task-dialog__projects > .ui-button { justify-self: start; }
 .agent-timeline { position: relative; display: grid; min-height: 0; grid-template-rows: minmax(0, 1fr); }
 .agent-timeline > div:first-child { height: 100%; }
-.agent-timeline__header-space { height: calc(var(--workspace-header-height) + 8px); }
+.agent-timeline__header-space {
+  display: flex;
+  height: calc(var(--workspace-header-height) + 8px);
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 8px;
+}
+.agent-timeline__header-space > .ui-button {
+  border: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-surface) 90%, transparent);
+  color: var(--color-text-secondary);
+  box-shadow: 0 4px 18px color-mix(in srgb, var(--color-shadow) 26%, transparent);
+}
+.agent-timeline__header-space > .ui-button:disabled svg {
+  animation: agent-status-spin 1.2s linear infinite;
+}
 .agent-workflow-panel { border-bottom: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-surface) 70%, transparent); }
 .agent-workflow-section { padding: 13px 14px 14px; }
 .agent-workflow-section + .agent-workflow-section { border-top: 1px solid var(--color-border); }
@@ -404,6 +420,73 @@
   background: var(--color-surface);
 }
 .agent-welcome__suggestions .ui-button:hover { border-color: var(--color-border-strong); background: var(--color-surface-hover); }
+
+/* History hydration is neither an empty Session nor a full-page loading
+   screen. Keep the workspace interactive, give the transcript one quiet live
+   state, and reserve the welcome view for an authoritative empty snapshot. */
+.agent-history-state {
+  display: grid;
+  width: min(100% - 40px, 520px);
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-self: center;
+  justify-self: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-2);
+  background: color-mix(in srgb, var(--color-surface) 78%, var(--color-paper));
+  box-shadow: var(--shadow-1);
+}
+.agent-history-state__icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: var(--radius-round);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+.agent-history-state:not(.agent-history-state--failed) .agent-history-state__icon svg {
+  animation: agent-status-spin 1.2s linear infinite;
+}
+.agent-history-state__copy { display: grid; min-width: 0; gap: 3px; }
+.agent-history-state__copy strong { color: var(--color-text); font-size: var(--font-size-ui); }
+.agent-history-state__copy small { color: var(--color-text-secondary); font-size: var(--font-size-caption); line-height: 1.45; }
+.agent-history-state__skeleton {
+  display: grid;
+  grid-column: 2;
+  gap: 5px;
+  margin-top: 4px;
+}
+.agent-history-state__skeleton i {
+  display: block;
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  border-radius: var(--radius-round);
+  background: linear-gradient(90deg, var(--color-border) 0%, var(--color-surface-hover) 46%, var(--color-border) 100%);
+  background-size: 220% 100%;
+  animation: agent-history-shimmer 1.4s ease-in-out infinite;
+}
+.agent-history-state__skeleton i:nth-child(2) { width: 84%; animation-delay: 90ms; }
+.agent-history-state__skeleton i:nth-child(3) { width: 62%; animation-delay: 180ms; }
+.agent-history-state--failed { border-left-color: var(--color-warning); }
+.agent-history-state--failed .agent-history-state__icon { background: var(--color-warning-soft); color: var(--color-warning); }
+
+@keyframes agent-history-shimmer {
+  from { background-position: 120% 0; }
+  to { background-position: -120% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-history-state:not(.agent-history-state--failed) .agent-history-state__icon svg,
+  .agent-history-state__skeleton i,
+  .agent-timeline__header-space > .ui-button:disabled svg { animation: none; }
+}
+:root[data-reduce-motion='true'] .agent-history-state:not(.agent-history-state--failed) .agent-history-state__icon svg,
+:root[data-reduce-motion='true'] .agent-history-state__skeleton i,
+:root[data-reduce-motion='true'] .agent-timeline__header-space > .ui-button:disabled svg { animation: none; }
 
 .agent-blocks { width: 100%; max-width: 100%; min-width: 0; }
 .agent-markdown { min-width: 0; max-width: 100%; color: var(--color-text); font-family: var(--font-sans); font-size: var(--font-size-chat); font-weight: var(--font-weight-regular); line-height: var(--line-height-chat); letter-spacing: -.004em; overflow-wrap: anywhere; word-break: break-word; }

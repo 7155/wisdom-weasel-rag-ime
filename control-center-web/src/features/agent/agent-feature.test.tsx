@@ -34,6 +34,7 @@ vi.mock('react-virtuoso', async () => {
     alignToBottom,
     atBottomStateChange,
     data,
+    components,
     followOutput,
     initialTopMostItemIndex,
     itemContent,
@@ -42,12 +43,14 @@ vi.mock('react-virtuoso', async () => {
     alignToBottom?: boolean;
     atBottomStateChange?: (atBottom: boolean) => void;
     data: string[];
+    components?: { Header?: React.ComponentType };
     followOutput?: (isAtBottom: boolean) => 'auto' | 'smooth' | false;
     initialTopMostItemIndex?: { index: string | number; align?: string };
     itemContent: (index: number, item: string) => ReactNode;
     scrollerRef?: (scroller: HTMLElement | Window | null) => void;
   }, ref) => {
     const localScrollerRef = React.useRef<HTMLDivElement>(null);
+    const Header = components?.Header;
     React.useImperativeHandle(ref, () => ({
       scrollToIndex: virtuosoMock.scrollToIndex,
     }));
@@ -68,6 +71,7 @@ vi.mock('react-virtuoso', async () => {
         data-initial-align={initialTopMostItemIndex?.align}
         data-testid="agent-virtuoso"
       >
+        {Header ? <Header /> : null}
         {data.map((item, index) => <div key={item}>{itemContent(index, item)}</div>)}
       </div>
     );
@@ -3405,6 +3409,10 @@ describe('Agent experience', () => {
     });
     renderAgent(transport);
 
+    expect(await screen.findByRole('status', { name: '正在恢复对话' })).toHaveTextContent(
+      '正在恢复这段对话',
+    );
+    expect(screen.queryByText('今天想先从哪里开始？')).not.toBeInTheDocument();
     expect(await screen.findByRole(
       'button',
       { name: /模型：GPT-5\.4/ },
@@ -3421,6 +3429,90 @@ describe('Agent experience', () => {
     await waitFor(() => expect(
       useAgentLiveStore.getState().projections['session-preview']?.messageOrder,
     ).toHaveLength(4));
+    expect(screen.queryByRole('status', { name: '正在恢复对话' })).not.toBeInTheDocument();
+  });
+
+  it('shows the welcome view only after the history snapshot confirms an empty Session', async () => {
+    const pendingSnapshot = deferred<unknown>();
+    const transport = productionTransport({
+      'agent.session.snapshot': () => pendingSnapshot.promise,
+    });
+    renderAgent(transport);
+
+    expect(await screen.findByRole('status', { name: '正在恢复对话' })).toBeInTheDocument();
+    expect(screen.queryByText('今天想先从哪里开始？')).not.toBeInTheDocument();
+
+    pendingSnapshot.resolve(previewAgentSnapshot('session-fresh'));
+
+    expect(await screen.findByText('今天想先从哪里开始？')).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: '正在恢复对话' })).not.toBeInTheDocument();
+  });
+
+  it('opens with a bounded activity window and loads older records from its stable cursor', async () => {
+    const snapshot = previewAgentSnapshot('session-preview');
+    const transport = productionTransport({
+      'agent.session.snapshot': (request: ControlRequest) => {
+        if (
+          request.query?.beforeEventId === 'event:first-visible'
+          && request.query?.beforeMessageId === 'message:first-visible'
+        ) {
+          return {
+            ...snapshot,
+            liveEvents: [],
+            historyPage: {
+              eventLimit: 80,
+              eventStart: 0,
+              eventEnd: 1,
+              totalLiveEvents: 81,
+              hasOlderLiveEvents: false,
+              olderBeforeEventId: '',
+              turnLimit: 100,
+              hasOlderMessages: false,
+              olderBeforeMessageId: '',
+            },
+          };
+        }
+        return {
+          ...snapshot,
+          historyPage: {
+            eventLimit: 80,
+            eventStart: 1,
+            eventEnd: 81,
+            totalLiveEvents: 81,
+            hasOlderLiveEvents: true,
+            olderBeforeEventId: 'event:first-visible',
+            turnLimit: 100,
+            hasOlderMessages: true,
+            olderBeforeMessageId: 'message:first-visible',
+          },
+        };
+      },
+    });
+    renderAgent(transport);
+
+    const loadOlder = await screen.findByRole('button', { name: '加载更早的运行记录' });
+    expect(loadOlder).toBeEnabled();
+    expect(transport.requests.find((request) => request.pathId === 'agent.session.snapshot')?.query).toEqual({
+      eventLimit: 80,
+      turnLimit: 100,
+    });
+
+    fireEvent.click(loadOlder);
+    await waitFor(() => expect(
+      transport.requests.filter((request) => request.pathId === 'agent.session.snapshot'),
+    ).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        query: {
+          eventLimit: 80,
+          beforeEventId: 'event:first-visible',
+          turnLimit: 100,
+          beforeMessageId: 'message:first-visible',
+        },
+      }),
+    ])));
+    await waitFor(() => expect(
+      screen.queryByRole('button', { name: '加载更早的运行记录' }),
+    ).not.toBeInTheDocument());
   });
 
   it('keeps persisted conversation visible when the Pi command catalog fails', async () => {

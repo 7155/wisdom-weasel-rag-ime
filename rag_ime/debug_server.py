@@ -7218,7 +7218,38 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             )
             return
         if agent_session_id and agent_action == "messages":
-            self._write_json(HTTPStatus.OK, self.service.agent.messages(agent_session_id))
+            event_limit_text = _query_first(query, "eventLimit")
+            event_limit = (
+                _integer(
+                    event_limit_text,
+                    default=80,
+                    minimum=1,
+                    maximum=500,
+                )
+                if event_limit_text
+                else None
+            )
+            turn_limit_text = _query_first(query, "turnLimit")
+            turn_limit = (
+                _integer(
+                    turn_limit_text,
+                    default=100,
+                    minimum=1,
+                    maximum=200,
+                )
+                if turn_limit_text
+                else None
+            )
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.messages(
+                    agent_session_id,
+                    event_limit=event_limit,
+                    before_event_id=_query_first(query, "beforeEventId"),
+                    turn_limit=turn_limit,
+                    before_message_id=_query_first(query, "beforeMessageId"),
+                ),
+            )
             return
         if agent_session_id and agent_action == "forks":
             try:

@@ -661,12 +661,13 @@ export function RoomTurn({
                   : laneComplete
                     ? 'completed'
                     : 'waiting';
+      const laneTask = laneTaskId ? kernelTasksById?.[laneTaskId] : undefined;
       const laneWork = roomLaneWorkSummary(
         segmentActivities,
         participant?.displayName,
         laneState,
+        laneTask,
       );
-      const laneTask = laneTaskId ? kernelTasksById?.[laneTaskId] : undefined;
       const laneSubagents = laneTaskId ? subagentsByTaskId[laneTaskId] ?? [] : [];
       const identityContinuation = identityContinuationByItemKey.get(streamItem.key) ?? false;
       return <RoomLaneDisclosure
@@ -938,11 +939,13 @@ function roomLaneWorkSummary(
   activities: RoomActivityProjection[],
   participantName = '协作成员',
   laneState: string,
+  workspaceTask?: RoomTaskV3,
 ): { title: string; detail: string } {
   const digest = roomActivityDigest(activities);
-  let focus = activities.at(-1);
-  for (let index = activities.length - 1; index >= 0; index -= 1) {
-    const candidate = activities[index];
+  const orderedActivities = roomActivityFeedEntries(activities).map((entry) => entry.activity);
+  let focus = orderedActivities.at(-1);
+  for (let index = orderedActivities.length - 1; index >= 0; index -= 1) {
+    const candidate = orderedActivities[index];
     if (candidate && ['running', 'waiting', 'failed', 'aborted'].includes(
       roomActivityDisplayStatus(candidate),
     )) {
@@ -951,9 +954,14 @@ function roomLaneWorkSummary(
     }
   }
   if (focus) {
+    const sourceEventType = textValue(focus.payload.sourceEventType);
+    const title = sourceEventType === 'reasoning_summary'
+      ? roomReasoningSummary(focus, workspaceTask)
+      : describeRoomActivity(focus, participantName).title;
+    const expectedOutput = roomPublicActivityText(workspaceTask?.expectedOutput ?? '');
     return {
-      title: describeRoomActivity(focus, participantName).title,
-      detail: `${digest.detail} · ${digest.title}`,
+      title,
+      detail: `${digest.detail} · ${digest.title}${expectedOutput ? ` · 要交付：${expectedOutput}` : ''}`,
     };
   }
   const title = laneState === 'completed'
@@ -1028,7 +1036,17 @@ function roomActivityFeedEntries(
     };
     toolEntryIndexByCallId.set(attemptId, existingIndex);
   }
-  return entries;
+  return entries
+    .map((entry, index) => ({ entry, index }))
+    .sort((left, right) => (
+      roomActivityPublicAtMs(left.entry.activity) - roomActivityPublicAtMs(right.entry.activity)
+      || left.index - right.index
+    ))
+    .map(({ entry }) => entry);
+}
+
+function roomActivityPublicAtMs(activity: RoomActivityProjection): number {
+  return activity.updatedAtMs ?? activity.createdAtMs;
 }
 
 function ActivityLog({
@@ -1146,7 +1164,7 @@ function ActivityLog({
         />;
       }
       if (sourceEventType === 'reasoning_summary') {
-        const summary = roomReasoningSummary(activity);
+        const summary = roomReasoningSummary(activity, workspaceTask);
         const updateCount = roomReasoningUpdateCount(activity);
         return <article
           className="room-reasoning-summary"
@@ -1398,12 +1416,25 @@ const roomPublicWorkSummaries = {
   general: '当前工作有新进展',
 } as const;
 
-function roomReasoningSummary(activity: RoomActivityProjection): string {
+function roomReasoningSummary(
+  activity: RoomActivityProjection,
+  workspaceTask?: RoomTaskV3,
+): string {
   const requestedKind = textValue(activity.payload.publicSummaryKind);
   const summaryKind = (
     activity.payload.publicSummaryVersion === 'room-work-summary.v1'
     && requestedKind in roomPublicWorkSummaries
   ) ? requestedKind as keyof typeof roomPublicWorkSummaries : 'general';
+  const objective = roomPublicActivityText(workspaceTask?.objective ?? '');
+  if (objective) {
+    return {
+      alignment: `正在确认「${objective}」还需要你决定什么`,
+      implementation: `正在处理「${objective}」`,
+      review: `正在检查「${objective}」是否达到要求`,
+      closure: `正在整理「${objective}」的结果和验证`,
+      general: `正在继续「${objective}」`,
+    }[summaryKind];
+  }
   return roomPublicWorkSummaries[summaryKind];
 }
 

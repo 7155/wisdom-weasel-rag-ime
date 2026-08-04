@@ -149,6 +149,7 @@ export const CONTROL_ROUTES = {
     method: 'GET',
     path: '/api/agent/sessions/:sessionId/messages',
     params: { sessionId: null },
+    query: ['eventLimit', 'beforeEventId', 'turnLimit', 'beforeMessageId'],
   },
   'agent.session.rename': {
     method: 'PATCH',

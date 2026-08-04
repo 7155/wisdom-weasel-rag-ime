@@ -3388,8 +3388,22 @@ class AgentService:
         }
 
 
-    def messages(self, session_id: str) -> dict[str, object]:
-        return self.message_snapshot.messages(session_id)
+    def messages(
+        self,
+        session_id: str,
+        *,
+        event_limit: int | None = None,
+        before_event_id: str = "",
+        turn_limit: int | None = None,
+        before_message_id: str = "",
+    ) -> dict[str, object]:
+        return self.message_snapshot.messages(
+            session_id,
+            event_limit=event_limit,
+            before_event_id=before_event_id,
+            turn_limit=turn_limit,
+            before_message_id=before_message_id,
+        )
 
     def import_media(
         self,

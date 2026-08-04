@@ -368,7 +368,6 @@ export function RoomTaskWorkList({
             {holdReason ? <div><dt>等待原因</dt><dd>{holdReason}</dd></div> : null}
             <div><dt>完成情况</dt><dd>{verification.label}</dd></div>
           </dl>
-          <RoomTaskTodoDetails owner={owner} todo={authority.todo} />
           {taskHasWorkspaceProjection(task) ? <TaskWorkspaceDetails
             owner={owner}
             task={task}
@@ -401,6 +400,7 @@ export function RoomTaskWorkList({
             })}</ol>
           </section> : <p className="room-task-work-card__empty">这项工作还没有公开活动。</p>}
           {subagents.length ? <RoomTaskSubagentRuns heading={objective} runs={subagents} /> : null}
+          <RoomTaskTodoDetails owner={owner} todo={authority.todo} />
         </div>
       </details>;
     })}</div>
@@ -857,6 +857,7 @@ function TaskNode({
   const dependencyLabel = dependencyCount
     ? `等待 ${dependencyCount} 项真实前置任务`
     : '无前置任务，可并行';
+  const action = taskNodeAction(node, expectedOutput);
   return <article
     aria-label={`${taskLabel}，负责人 ${owner}，${taskStateLabel(task.state)}`}
     className="room-task-flow__task-node"
@@ -867,7 +868,7 @@ function TaskNode({
     title={`交付目标：${expectedOutput}\n前置关系：${dependencyLabel}`}
   >
     <header>
-      <small>{node.result ? '任务结果' : taskStageLabel(node)}</small>
+      <small>{node.result ? '任务结果' : taskStageLabel(node)} · {dependencyLabel}</small>
       <strong>{taskLabel}</strong>
     </header>
     <div className="room-task-flow__task-owner">
@@ -878,7 +879,41 @@ function TaskNode({
       <FlowStateIcon state={state} />
       <span><small>当前状态</small><strong>{taskStateLabel(task.state)}</strong></span>
     </div>
+    <div className="room-task-flow__task-action">
+      <ArrowRight aria-hidden="true" size={14} />
+      <span><small>{action.label}</small><strong>{action.detail}</strong></span>
+    </div>
   </article>;
+}
+
+function taskNodeAction(
+  node: TaskGraphNode,
+  expectedOutput: string,
+): { label: string; detail: string } {
+  const progress = node.progress
+    ? roomPublicActivityText(roomParticipantPublicProgressSummary(node.progress))
+    : '';
+  const concreteProgress = /(?:有新进展|进度已经更新|公开进度已经更新)/u.test(progress)
+    ? ''
+    : progress;
+  if (node.task.state === 'active' || node.task.state === 'review') {
+    return {
+      label: node.task.state === 'review' ? '正在复核' : '正在做',
+      detail: concreteProgress || expectedOutput,
+    };
+  }
+  if (node.task.state === 'completed') {
+    return { label: '已交付', detail: node.result || expectedOutput };
+  }
+  if (node.task.state === 'blocked' || node.task.state === 'failed') {
+    return { label: '恢复后继续', detail: concreteProgress || '由协调伙伴处理并重新安排' };
+  }
+  if (node.task.state === 'cancelled') {
+    return { label: '已停止', detail: '这项工作不会继续执行' };
+  }
+  return node.dependencyIds.length
+    ? { label: '下一步', detail: `等待 ${node.dependencyIds.length} 项前置任务完成` }
+    : { label: '下一步', detail: expectedOutput };
 }
 
 export function RoomTaskSubagentRuns({

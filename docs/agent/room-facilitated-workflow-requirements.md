@@ -3,7 +3,7 @@
 - Document class: sole tracked authority for current Room product behavior and acceptance status
 - Approved vision window: user decisions made on or after 2026-08-02
 - Contract revision: 2026-08-04
-- Acceptance state: source remediation passed current full regression and independent Sol max review with no remaining P0/P1/P2; coherent install plus native foreground acceptance remain open
+- Acceptance state: prior source regression and independent review passed, but the 2026-08-04 real HTTP foreground run exposed blocking multi-companion and presentation gaps; production acceptance remains open
 - Status rule: source, test, installed, and foreground evidence are reported separately
 
 Older handoffs, ignored local notes under `docs/`, screenshots, prototypes, tests,
@@ -54,8 +54,11 @@ repository and runtime, then chooses one of two branches.
    message stream.
 3. Each question presents 2–5 honest single-select options, with at most one
    recommendation. Every option has a short name and a natural paragraph that
-   explains the resulting scope, effort, or tradeoff instead of repeating the
-   name. Free text remains hidden until the user chooses `其他`.
+   explains the resulting scope, the concrete user action and visible outcome,
+   the important exclusion or constraint, and the effort or tradeoff instead of
+   repeating the name. A user must be able to predict what will be built and how
+   it will be judged from the option copy alone. Free text remains hidden until
+   the user chooses `其他`.
 4. Clicking an option only selects it. The user must then click `确认并发送`;
    selection alone never advances the Room. `其他` reveals the text field and
    is the only free-text branch for an active alignment question. Active
@@ -242,6 +245,37 @@ of looping forever.
   React may display them but cannot invent a retry, keep a dead run alive, or
   decide that recovery succeeded.
 
+### Risk-based approval, not approval theater
+
+- Ordinary bounded work inside an already authorized workspace is decided by
+  deterministic policy and does not enter model approval: reading/searching,
+  creating or editing ordinary project files, applying bounded patches, running
+  focused tests, and non-destructive local commands covered by the active
+  capability lease.
+- Model adjudication is reserved for a genuinely pending decision whose effect
+  crosses or materially changes a trust boundary: leaving the authorized
+  workspace, destructive deletion or overwrite, credential or permission
+  access, external network/publication, dependency or application installation,
+  system configuration, privileged process control, or another explicitly
+  classified high-risk effect.
+- Independent model adjudication is an exceptional slow path. It is used only
+  when deterministic policy can name the bounded proposed effect but cannot
+  safely decide it from existing authorization and risk rules. Common Room work
+  must not invoke an approval model for ceremony, telemetry, a second opinion,
+  or because the model is available; unnecessary adjudication latency is itself
+  a product defect.
+- `全自动` means those genuinely risky pending decisions may be independently
+  judged by the configured approval companion (currently Luna Max) using the
+  Room's authorization history. It does not send every ordinary Tool call to
+  Luna and does not convert a safe workspace edit into a model verdict.
+- Safe operations retain an ordinary Tool/command receipt and meaningful result,
+  but the public UI does not show `审批模型`, `批准`, `裁决说明`, or an approval
+  card. A model approval card for a bounded ordinary file creation, edit, or test
+  inside the authorized workspace is an acceptance failure.
+- Deterministic allow/deny classification remains authoritative. The approval
+  model cannot widen the current capability, authorize an unknown effect, or
+  turn a hard policy denial into approval.
+
 ## Parallel workspaces and permanent ledger
 
 - A small coherent single-writer task may use the governed current workspace.
@@ -272,9 +306,17 @@ because a client timer pretends work happened.
 - Each active companion has one readable lane with avatar, current semantic
   state, current action, latest update time, elapsed time, completion summary,
   and a continuous chronological activity stream beneath it.
+- The role header answers four questions without expansion: what the companion
+  is doing now, why that action matters, what she will do next, and how much of
+  her Todo is complete. `执行中`, `当前任务推进有新进展`, a Tool family such as
+  `bash`, or a step count is not a sufficient current-action summary.
 - Activity is one vertical stream, not a stack of nested cards and columns.
   Tool activity, public-safe work summaries, results, waits, handoffs, and
   workspace transitions share the same time order.
+- New work summaries and Tool events append at the chronological bottom using
+  authoritative server sequence and event time. A mutable summary may update in
+  place only inside its current tail row; it must not remain above later events
+  or make recent work appear earlier than an older Tool call.
 - The default density follows the Codex activity-flow pattern: compact rows
   expose useful facts such as action, file name, command status, and attributed
   `+N/-N`; repeated plumbing, long arguments, and raw output stay collapsed.
@@ -287,6 +329,12 @@ because a client timer pretends work happened.
   bounded command/output, or the attributed patch. File manipulation must be
   strong enough to support repeated edits and verification during a day-scale
   run, not only report that an opaque Tool returned.
+- Expanded result details lead with the semantic result: affected file or
+  artifact, meaningful output, changed lines or diff, test/command verdict,
+  exit status when relevant, and the next consequence. A panel containing only
+  `状态：已完成`, `已有变更`, `结果已回传`, or a schema/state revision is an
+  acceptance failure. Failed attempts and recovery remain below that result as
+  bounded diagnostic detail.
 - A long-running edit has its own truthful active treatment: the file and
   current edit stage remain visible, real progress events update the row, and a
   restrained edit indicator continues only while that Tool call is active.
@@ -305,8 +353,52 @@ because a client timer pretends work happened.
 - Pending clarification owns the interaction point. The ordinary composer is
   hidden only while the current question is answerable; stale or terminal
   questions cannot trap input.
+- The active companion's Todo summary is always visible in her lane: completed,
+  active, waiting, blocked, and abandoned counts plus the current item. Expanding
+  it reveals the durable list without creating a second checklist.
+- Todo is a dedicated live region anchored at the bottom of the companion lane,
+  after the chronological activity stream. It is not rendered as a generic Tool
+  row or a result panel. The default view shows every Todo title with its real
+  status, highlights the current item, reports completed/total and the next item,
+  and names a blocker when present. Updates refresh that bottom region in place
+  with subtle feedback while a separate chronological state-change event remains
+  in the stream. `Todo：2/4 已完成…` without the four item titles is insufficient.
+- Expanding Todo reveals each item's checkpoint, relevant file/artifact or test,
+  and latest meaningful update. It must not expand to `结果明细 / 状态：已完成`
+  with no task-specific content.
 - Internal protocol words and identifiers stay in optional audit detail. Remove
   the old execution-gate panel and lead with ordinary conversation.
+
+### Conversation history loading and long-session performance
+
+- `正在恢复`, `已恢复`, `已确认为空`, and `恢复失败` are distinct frontend
+  states. `turnOrder.length === 0` is not proof that a Session is empty.
+- Selecting a Session immediately shows its header and either the last hydrated
+  transcript or one compact `正在恢复这段对话` state with truthful motion. It
+  never flashes the new-conversation welcome, an empty canvas, or zero-message
+  copy while the authoritative snapshot is still in flight.
+- A cached transcript remains visible while its cursor and catalogs refresh in
+  the background. Model, Tool, command, Todo, and task-center controls load
+  independently; one slow history response must not make the entire workspace
+  inert.
+- Only a successful authoritative empty snapshot may show the welcome view. A
+  failed or interrupted history request preserves cached content when present;
+  without cache it shows a recoverable history state, not a fake empty Session.
+- Initial hydration returns a bounded newest page rather than the complete
+  lifetime transcript. The default bound is at most 100 visible turns or 512 KB
+  of public projection, whichever is reached first. Older pages load when the
+  reader approaches the historical edge, retain scroll position, and merge by
+  stable event/message identity. Live events arriving during hydration are
+  buffered and reconciled by sequence instead of being lost or duplicated.
+- The timeline stays virtualized after hydration. A Session switch must expose
+  cached content or the recovery state within one render frame; cached history
+  should be readable within 100 ms, and the first newest-page content should
+  render within 500 ms after its successful local response. Performance
+  acceptance records response bytes, request time, hydration/render time, turn
+  count, and whether older-page loading preserved the reader's position.
+- Loading motion is restrained, stops on terminal state or disconnect, and
+  honors reduced motion. It communicates history recovery only; it cannot be
+  reused as evidence that an Agent is doing implementation work.
 
 ## Tasks surface: same source, lower density
 
@@ -314,6 +406,9 @@ because a client timer pretends work happened.
   records. They do not maintain separate completion truth.
 - A WorkItem card defaults to owner, objective, semantic state, latest summary,
   completion, last update, dependency/blocker, and verification.
+- Its primary label is the user-meaningful work objective, never the most recent
+  Tool family (`bash`, `工具操作`, or `提交工作结果`). The current Todo item and
+  completed/total Todo count remain visible in the compact card.
 - Expanding the card reveals that same activity stream, Tool details, Todo,
   subagents, workspace lifecycle, delivery, and result—never a copied second
   feed.
@@ -327,6 +422,32 @@ because a client timer pretends work happened.
   task, state, bounded budget/usage, timing, and result or safe error.
 - The dependency graph remains compact: short goal/task/result nodes, owner,
   state, and edges. It does not absorb Tool logs, Todo, subagents, or actions.
+- The graph uses a legible left-to-right goal/work/result flow with aligned
+  lanes, short readable node titles, visible owner, state, Todo progress, next
+  dependency, and an accessible non-color status cue. Edges attach to nodes and
+  communicate real dependency direction; excessive empty canvas, detached
+  dotted lines, bullet-only legends, truncated objectives without a useful
+  summary, and oversized single-task layouts are acceptance failures.
+- Motion is semantic and bounded: a newly released WorkItem enters once, an
+  active edge or node shows restrained ongoing state, handoff visibly changes
+  ownership/state, and terminal nodes settle. Reduced-motion disables the
+  decorative part without hiding state.
+
+### Genuine multi-companion acceptance
+
+- An invited participant, an idle participant card, or multiple Sessions polled
+  by the frontend does not count as collaboration.
+- A task selected to exercise Room parallelism must produce at least two real,
+  independently owned WorkItems with distinct directed execution, overlapping
+  active intervals when dependencies permit, separate Todo/checkpoints, and
+  attributed results before Facilitator integration.
+- If the Facilitator legitimately keeps a task single-writer, the UI states the
+  concrete dependency or overlap risk and must not label that run parallel or
+  use it as the Room multi-companion acceptance case.
+- The acceptance flow must show the Facilitator's own integration work, at least
+  one peer implementation/research contribution, and a later independent review
+  contribution as distinct responsibilities. Reviewer participation alone does
+  not satisfy the two-WorkItem implementation requirement.
 
 ## Public language and persona
 
@@ -368,21 +489,135 @@ Current product scope is voice input only. Room companions do not produce TTS.
   response, Session, participant, WorkItem, baseline, and revision that produced
   them.
 
+## Read-only source references, not product owners
+
+External and adjacent sources may supply interaction and implementation
+patterns, but they do not replace the Room contracts, runtime owners, Personas,
+or acceptance evidence above.
+
+- Codex is the density reference for a chronological conversation with compact,
+  individually expandable search/read/edit/command/diff rows.
+- The read-only OMP source is the reference for a latest-live Todo replacing its
+  earlier live snapshot, persistent last-good Todo on a failed update, active
+  Tool animation, streaming edit preview, and per-file diff statistics. Relevant
+  files include `oh-my-pi/packages/coding-agent/src/modes/components/tool-execution.ts`,
+  `oh-my-pi/packages/coding-agent/src/modes/utils/event-controller.ts`, and
+  `oh-my-pi/packages/collab-web/src/tool-render/tools/todo.tsx`.
+- `slopus/happy` is the read-only reference for explicit `isLoaded` versus empty
+  conversation state, inverted virtual history, a bounded newest slice with
+  older-message loading, compact Tool rows, concrete Todo titles, and expandable
+  patch/diff views. Relevant upstream files include
+  `packages/happy-app/sources/-session/SessionView.tsx`, `ChatList.tsx`,
+  `ToolView.tsx`, `TodoView.tsx`, `CodexPatchView.tsx`, and `ToolDiffView.tsx`.
+- Claude Code permission modes are a policy reference for separating ordinary
+  authorized work from rare trust-boundary decisions. Room retains its own
+  deterministic capability leases, receipts, approval model, and UI language.
+- Copying another project's component tree, master/child hierarchy, character
+  system, private reasoning display, or permission defaults is explicitly out
+  of scope. Adapt the proven pattern to the existing authoritative owner and add
+  Room-specific source, regression, and foreground evidence.
+
 ## Implementation and acceptance ledger
 
 | Area | Source/test state | Installed foreground state |
 | --- | --- | --- |
-| opening Facilitator, conditional clarification, crash-safe chronological answers and typed start | implemented; current Web 950/950, Room Kernel 98/98, and Runtime/public projection 104/104 passed; prior command receipt and injected-crash gates also passed | open |
+| opening Facilitator, conditional clarification, crash-safe chronological answers and typed start | implemented; current complete Web suite 953/953, Room Kernel 98/98, and Runtime/public projection 104/104 passed; prior command receipt and injected-crash gates also passed | open |
 | fresh execute Dispatch, peer work, nested delegation, integration, review, one report | implemented; current Room Kernel 98/98 and prior focused settlement gates passed | open |
 | stage Skills and capability receipts | implemented; Skill 25/25 and Pi runtime 70/70 passed | open |
 | permanent workspace ledger, same-baseline isolation, integration-before-cleanup, red retention | implemented; settlement and canary 18/18 passed | open |
-| continuous conversation activity and lower-density Tasks projection | implemented; current Web 950/950 passed | open |
+| continuous conversation activity and lower-density Tasks projection | source now reorders mutable activity by its latest authoritative timestamp, derives concrete role copy from the owned task and expected delivery, keeps Todo as the final sticky block, and gives the graph compact status markers, concrete current/next action, dependency labels, and truthful active-edge motion; 55 focused Room tests, the complete 953-test Web suite, and TypeScript passed | prior foreground failure remains authoritative until the coherent build is installed and rechecked |
+| history loading, cached transcript continuity, bounded initial page and older-history loading | explicit loading/empty/failed projection plus newest 80-event and newest 100-complete-turn windows, stable `beforeEventId` / `beforeMessageId` older-page merge, and total-count reconciliation are implemented; 138 backend/policy/route tests, focused Web paging/loading checks, the complete 953-test Web suite, TypeScript, and the prior local no-false-welcome checks passed | source Web shell passed; coherent installed foreground timing open |
+| risk-based full-auto approval | scoped hash-bound text write/edit/patch now bypass Luna by deterministic policy; focused policy and Agent-service regression passed while R3, sensitive, and out-of-scope cases remain model-routed | fresh full-auto Room foreground open |
 | Session Todo, per-owner result/diff, subagent grouping | implemented; source projections and Web regression passed | open |
 | day-scale full-auto recovery, durable checkpoints, automatic repair/retry/reassignment/model fallback | partially implemented; durable Dispatch attempts, Todo, workspace ledger, reconnect state, direct failed-Tool retry lineage, and Provider retry projection exist and passed source regression; restart-resume plus injected native recovery acceptance remain open | open |
 | historical continuation recovery and Report-stat filtering | implemented; historical upcast 7/7 and settlement regression passed | open |
 | tracked authority portability | implemented by `docs/agent/room-facilitated-workflow-requirements.md` | not applicable |
 | coherent App/Web/Python/managed-Pi provenance | production Web build passed; coherent install pending | open |
-| real installed Room completing a concrete TUI task | not a source claim | open |
+| real Room completing a concrete TUI task | not a source claim | current real HTTP run passed clarification ordering and automatic recovery, but had not produced two real peer WorkItems at the recorded checkpoint; open |
+
+## 2026-08-04 real HTTP foreground findings
+
+Room `Room 浏览器生产闭环验收 20260804` used the real local HTTP transport,
+not preview fixtures, with full-auto approval and an isolated TUI workspace.
+
+Verified in the foreground:
+
+- `@澄·今` selected the opening Facilitator.
+- Three necessary questions appeared one at a time with described options.
+- Selecting an option did not send it; `确认并发送` appended each answer as a
+  later user message.
+- The understanding summary preceded `开始行动`, and clicking it appended a
+  chronological user message before implementation work began.
+- A failed Tool argument and an interrupted model response were recovered
+  without asking the user; Todo advanced from `0/4` to `1/4`.
+- Tool rows were expandable and exposed bounded input and returned content.
+
+Open acceptance failures observed in that same run:
+
+- The top role summary could continue to say `执行失败` after the expanded row
+  showed a successful retry, and phrases such as `当前任务推进有新进展` did not
+  reveal the concrete work, next action, or completion state.
+- Mutable work-summary placement did not reliably communicate bottom-ordered
+  chronology.
+- Completed Tool result panels could reduce the outcome to generic state instead
+  of the meaningful file, output, diff, test, or consequence.
+- Durable Todo existed in events but was not visible enough in the role header or
+  compact WorkItem view.
+- Todo was exposed as a generic completed runtime row whose details repeated only
+  aggregate counts. It lacked the item titles and was not fixed at the bottom as
+  a continuously refreshed companion work list.
+- The task graph showed one large WorkItem with weak hierarchy, excessive empty
+  space, sparse node content, and an unattractive/disconnected visual flow.
+- Four participants were present, but only the Facilitator owned one real
+  WorkItem at the recorded checkpoint. This does not satisfy multi-companion
+  parallel acceptance.
+- A bounded test-file creation inside the authorized workspace was routed through
+  Luna Max and rendered a full approval verdict. This is approval overreach; the
+  operation should have been deterministically allowed with only a normal Tool
+  receipt.
+- Switching to a long Agent/Room participant Session rendered the new-session
+  welcome for roughly 0.4–0.6 seconds before replacing it with history. In a
+  measured cold load the first real transcript appeared at roughly 1.25 seconds;
+  the selected snapshot was about 315 KB and its local HTTP request took roughly
+  0.26–0.36 seconds. The false welcome was a frontend state bug, while the full
+  lifetime snapshot remains an architectural performance gap requiring bounded
+  newest-page hydration and older-history loading.
+
+Current source correction and Web-shell evidence:
+
+- The Agent workspace now tracks history as `loading`, `ready`, or `failed`
+  per Session. A slow snapshot shows one animated `正在恢复这段对话` state;
+  cached history remains visible; the welcome appears only after a successful
+  empty snapshot.
+- Focused loading/empty tests and the complete 112-test Agent feature suite
+  passed. In local Web switching and forced cold navigation, no sample rendered
+  the false welcome. The recovery state remained visible until the real long
+  transcript mounted.
+- The same pre-fix run took roughly 2.1 seconds to expose the virtual timeline
+  and roughly 3 seconds to mount visible articles. The response contained 16
+  messages and 194 live events; about 219 KB of compact payload belonged to live
+  events alone. The source now requests the newest 80 events and newest 100
+  complete turns, returns stable event and message cursors, merges older pages
+  by identity while buffering newer SSE events, reconciles the total Session
+  message count, and keeps the virtual timeline authoritative. Applying the event bound
+  to the measured 195-event fixture reduces the pretty-printed response from
+  316,048 bytes to 129,840 bytes (58.9%); real post-install response and render
+  timing remain open until the coherent gateway build is installed.
+- Mutable Room activity now follows its latest authoritative update time, so an
+  updated work summary moves to the chronological bottom instead of appearing
+  to change in place above later Tools. The same row and role header derive
+  concrete copy from the authoritative task objective and expected delivery,
+  without publishing private Provider reasoning. Todo is the final sticky block
+  in an expanded WorkItem card. The task graph uses a compact horizontal legend,
+  visible parallel/dependency labels, one concrete current or next action per
+  node, and moving dashed edges only while the dependency is active. These
+  changes passed 55 focused Room tests and the full 953-test Web suite; fresh
+  installed foreground evidence is still required.
+- Full-auto approval policy now treats a prepared, hash-bound ordinary text
+  write/edit/patch inside the granted workspace as deterministic policy work.
+  Sensitive paths, out-of-scope paths, and R3 effects remain model-routed. A
+  focused service regression proves the bounded write path never calls Luna;
+  fresh Room foreground evidence remains required.
 
 No row may be promoted to native accepted by unit tests, mock transport, hidden
 browser, direct API, screenshot, health response, copied hash, assistant prose,
@@ -408,7 +643,10 @@ Use one coherent installed build and one fresh Room in the foreground
    Confirm successful child cleanup and retained danger workspaces match the
    permanent ledger.
 6. Reload the same Room and confirm chronology, tasks, activity, provenance,
-   review, workspace state, and one final remain coherent.
+   review, workspace state, and one final remain coherent. Switch between a
+   cached long Session, an uncached long Session, and a real empty Session;
+   confirm there is no false welcome/blank flash, the recovery state appears
+   immediately when needed, and older history loads without moving the reader.
 7. Correlate the visible flow with durable receipts and installed provenance.
    Any fake activity, skipped implementation, missing integration/review,
    incomplete artifact, duplicate final, or mismatch keeps acceptance open.

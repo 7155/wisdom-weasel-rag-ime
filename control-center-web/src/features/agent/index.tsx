@@ -66,6 +66,26 @@ export function AgentFeature() {
   return <AgentWorkspace />;
 }
 
+type AgentHistoryState = 'loading' | 'ready' | 'failed';
+
+type AgentHistoryPage = {
+  hasOlderLiveEvents: boolean;
+  olderBeforeEventId: string;
+  hasOlderMessages: boolean;
+  olderBeforeMessageId: string;
+  totalLiveEvents: number;
+  totalMessages: number;
+};
+
+type AgentHistoryCache = {
+  snapshot: Record<string, unknown>;
+  liveEvents: unknown[];
+  page?: AgentHistoryPage;
+};
+
+const AGENT_HISTORY_EVENT_LIMIT = 80;
+const AGENT_HISTORY_TURN_LIMIT = 100;
+
 function AgentWorkspace() {
   const transport = useControlTransport();
   const identity = useProductIdentity();
@@ -90,6 +110,15 @@ function AgentWorkspace() {
   const [rewriteResolvingSessionIds, setRewriteResolvingSessionIds] = useState<Set<string>>(() => new Set());
   const [showArchived, setShowArchived] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [historyStates, setHistoryStates] = useState<Map<string, AgentHistoryState>>(
+    () => new Map(),
+  );
+  const [historyPages, setHistoryPages] = useState<Map<string, AgentHistoryPage>>(
+    () => new Map(),
+  );
+  const [olderHistoryLoadingIds, setOlderHistoryLoadingIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [sessionLoadError, setSessionLoadError] = useState('');
   const [sendingSessionIds, setSendingSessionIds] = useState<Set<string>>(() => new Set());
   const [stoppingSessionIds, setStoppingSessionIds] = useState<Set<string>>(() => new Set());
@@ -110,6 +139,7 @@ function AgentWorkspace() {
   const [error, setVisibleError] = useState('');
   const [sendTimings] = useState(() => new AgentSendTimingTracker());
   const session = sessions.find((item) => item.id === selectedId);
+  const historyState = historyStates.get(selectedId) ?? 'loading';
   const isRoomParticipant = Boolean(session?.roomParticipant);
   const railToggleRef = useRef<HTMLButtonElement>(null);
   const railRef = useRef<HTMLElement>(null);
@@ -123,6 +153,9 @@ function AgentWorkspace() {
   const sessionSendLocksRef = useRef(new Set<string>());
   const modelCatalogCacheRef = useRef(new Map<string, ModelCatalog>());
   const forkCatalogCacheRef = useRef(new Map<string, Record<string, unknown>>());
+  const historyStatesRef = useRef(historyStates);
+  const historyCacheRef = useRef(new Map<string, AgentHistoryCache>());
+  const olderHistoryLoadingRef = useRef(new Set<string>());
   const rewriteResolveGenerationRef = useRef(0);
   const editTargetSessionIdRef = useRef('');
   selectedIdRef.current = selectedId;
@@ -180,6 +213,87 @@ function AgentWorkspace() {
     selectedIdRef.current = sessionId;
     setSelectedId(sessionId);
   }
+
+  const updateSessionHistoryState = useCallback((
+    sessionId: string,
+    state?: AgentHistoryState,
+  ): void => {
+    const current = historyStatesRef.current;
+    if (current.get(sessionId) === state) return;
+    const next = new Map(current);
+    if (state) next.set(sessionId, state);
+    else next.delete(sessionId);
+    historyStatesRef.current = next;
+    setHistoryStates(next);
+  }, []);
+
+  const loadOlderHistory = useCallback(async (): Promise<void> => {
+    const sessionId = selectedIdRef.current;
+    const page = historyCacheRef.current.get(sessionId)?.page;
+    if (
+      !sessionId
+      || !page
+      || (!page.hasOlderLiveEvents && !page.hasOlderMessages)
+      || olderHistoryLoadingRef.current.has(sessionId)
+    ) return;
+    olderHistoryLoadingRef.current.add(sessionId);
+    setOlderHistoryLoadingIds((current) => new Set(current).add(sessionId));
+    try {
+      const response = await transport.request<Record<string, unknown>>({
+        pathId: 'agent.session.snapshot',
+        params: { sessionId },
+        query: {
+          eventLimit: AGENT_HISTORY_EVENT_LIMIT,
+          turnLimit: AGENT_HISTORY_TURN_LIMIT,
+          ...(page.olderBeforeEventId ? { beforeEventId: page.olderBeforeEventId } : {}),
+          ...(page.olderBeforeMessageId ? { beforeMessageId: page.olderBeforeMessageId } : {}),
+        },
+      });
+      const olderSnapshot = isRecord(response) ? response : {};
+      const current = historyCacheRef.current.get(sessionId);
+      if (!current) return;
+      const liveEvents = mergeAgentHistoryEvents(
+        arrayField(olderSnapshot, 'liveEvents'),
+        current.liveEvents,
+      );
+      const messages = mergeAgentHistoryMessages(
+        snapshotMessages(olderSnapshot),
+        snapshotMessages(current.snapshot),
+      );
+      const combined = {
+        ...current.snapshot,
+        ...olderSnapshot,
+        messages,
+        items: messages,
+        liveEvents,
+      };
+      const nextPage = agentHistoryPage(olderSnapshot);
+      historyCacheRef.current.set(sessionId, {
+        snapshot: combined,
+        liveEvents,
+        page: nextPage,
+      });
+      useAgentLiveStore.getState().hydrate(sessionId, combined);
+      setHistoryPages((pages) => {
+        const next = new Map(pages);
+        if (nextPage) next.set(sessionId, nextPage);
+        else next.delete(sessionId);
+        return next;
+      });
+    } catch (loadError) {
+      setSessionError(
+        sessionId,
+        `更早的对话记录暂时没有读取出来。${errorText(loadError)}`,
+      );
+    } finally {
+      olderHistoryLoadingRef.current.delete(sessionId);
+      setOlderHistoryLoadingIds((current) => {
+        const next = new Set(current);
+        next.delete(sessionId);
+        return next;
+      });
+    }
+  }, [transport]);
 
   function visibleSessionError(sessionId: string): string {
     const operationError = sessionErrorsRef.current.get(sessionId) ?? '';
@@ -399,11 +513,24 @@ function AgentWorkspace() {
   useEffect(() => {
     if (!selectedId) return;
     ensure(selectedId);
+    // A cached, already hydrated transcript remains useful while its stream
+    // cursor refreshes. A Session without confirmed history must not be
+    // presented as an empty conversation while the snapshot is in flight.
+    if (historyStatesRef.current.get(selectedId) !== 'ready') {
+      updateSessionHistoryState(selectedId, 'loading');
+    }
     let active = true;
     let unsubscribe = () => {};
     let snapshotRequestId = 0;
     let snapshotAbort: AbortController | undefined;
     const batcher = createAgentDeltaBatcher((events) => {
+      const historyCache = historyCacheRef.current.get(selectedId);
+      if (historyCache) {
+        historyCache.liveEvents = mergeAgentHistoryEvents(
+          historyCache.liveEvents,
+          events.filter((event) => event.eventType !== 'snapshot_required'),
+        );
+      }
       const needsSnapshot = useAgentLiveStore.getState().applyEvents(selectedId, events);
       if (needsSnapshot) void loadSnapshot();
     });
@@ -417,6 +544,10 @@ function AgentWorkspace() {
         const snapshotResponse = await transport.request({
           pathId: 'agent.session.snapshot',
           params: { sessionId: selectedId },
+          query: {
+            eventLimit: AGENT_HISTORY_EVENT_LIMIT,
+            turnLimit: AGENT_HISTORY_TURN_LIMIT,
+          },
           signal: abort.signal,
         });
         if (!active || requestId !== snapshotRequestId) return false;
@@ -426,6 +557,17 @@ function AgentWorkspace() {
         } else {
           useAgentLiveStore.getState().hydrate(selectedId, snapshotResponse);
         }
+        const snapshot = isRecord(snapshotResponse) ? snapshotResponse : {};
+        const liveEvents = arrayField(snapshot, 'liveEvents');
+        const page = agentHistoryPage(snapshot);
+        historyCacheRef.current.set(selectedId, { snapshot, liveEvents, page });
+        setHistoryPages((pages) => {
+          const next = new Map(pages);
+          if (page) next.set(selectedId, page);
+          else next.delete(selectedId);
+          return next;
+        });
+        updateSessionHistoryState(selectedId, 'ready');
         const cursor = agentProjection(selectedId).resumeToken;
         unsubscribe();
         unsubscribe = transport.subscribe<UiAgentEvent>(
@@ -456,6 +598,9 @@ function AgentWorkspace() {
         return true;
       } catch (loadError) {
         if (active && requestId === snapshotRequestId && !abort.signal.aborted) {
+          if (historyStatesRef.current.get(selectedId) !== 'ready') {
+            updateSessionHistoryState(selectedId, 'failed');
+          }
           setError(`对话记录暂时无法恢复。${errorText(loadError)}`);
         }
         return false;
@@ -591,7 +736,7 @@ function AgentWorkspace() {
       unsubscribe();
       sendTimings.clearSession(selectedId);
     };
-  }, [ensure, isRoomParticipant, selectedId, sendTimings, transport]);
+  }, [ensure, isRoomParticipant, selectedId, sendTimings, transport, updateSessionHistoryState]);
 
   const defaultPersona = personas.find((item) => item.runtimeCharacteristics.isDefault)
     ?? personas.find((item) => item.roleId === 'companion-future-v1')
@@ -662,6 +807,7 @@ function AgentWorkspace() {
       catalogNoticesRef.current.delete(sessionId);
       sessionSendLocksRef.current.delete(sessionId);
       forkCatalogCacheRef.current.delete(sessionId);
+      updateSessionHistoryState(sessionId);
       setSessions((current) => current.filter((item) => item.id !== sessionId));
       const currentSelectedId = selectedIdRef.current;
       if (currentSelectedId === sessionId) selectSessionId('');
@@ -1652,7 +1798,7 @@ function AgentWorkspace() {
             <IconButton ref={statusToggleRef} className="agent-status-toggle" aria-controls="agent-status-panel" aria-expanded={statusOpen} label={statusOpen ? '收起任务中心' : '展开任务中心'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} disabled={!session} onClick={toggleStatus} tooltip />
           </div>
         </header>
-        {selectedId ? <AgentTimeline assistantName={identity.assistantName} sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked && !isRoomParticipant} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} scrollToLatestRequest={scrollToLatestRequest} onAtBottomChange={setTimelineAtBottom} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setSelectedDraft} onRetryTurn={retryTurn} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
+        {selectedId ? <AgentTimeline assistantName={identity.assistantName} sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} historyStatus={historyState} expectedMessageCount={session?.messageCount ?? 0} hasOlderHistory={Boolean(historyPages.get(selectedId)?.hasOlderLiveEvents || historyPages.get(selectedId)?.hasOlderMessages)} loadingOlderHistory={olderHistoryLoadingIds.has(selectedId)} onLoadOlderHistory={loadOlderHistory} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked && !isRoomParticipant} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} scrollToLatestRequest={scrollToLatestRequest} onAtBottomChange={setTimelineAtBottom} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setSelectedDraft} onRetryTurn={retryTurn} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
         {session ? (
           <div className="agent-composer-dock">
             {pendingGenericInput && !pendingApproval && !pendingMemoryReview ? (
@@ -1768,6 +1914,80 @@ function AgentWorkspace() {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
+function arrayField(value: Record<string, unknown>, key: string): unknown[] {
+  return Array.isArray(value[key]) ? value[key] : [];
+}
+function snapshotMessages(value: Record<string, unknown>): unknown[] {
+  return Array.isArray(value.messages)
+    ? value.messages
+    : arrayField(value, 'items');
+}
+function agentHistoryPage(value: Record<string, unknown>): AgentHistoryPage | undefined {
+  const page = value.historyPage;
+  if (!isRecord(page)) return undefined;
+  return {
+    hasOlderLiveEvents: page.hasOlderLiveEvents === true,
+    olderBeforeEventId: typeof page.olderBeforeEventId === 'string'
+      ? page.olderBeforeEventId
+      : '',
+    hasOlderMessages: page.hasOlderMessages === true,
+    olderBeforeMessageId: typeof page.olderBeforeMessageId === 'string'
+      ? page.olderBeforeMessageId
+      : '',
+    totalLiveEvents: typeof page.totalLiveEvents === 'number'
+      ? page.totalLiveEvents
+      : 0,
+    totalMessages: typeof page.totalMessages === 'number'
+      ? page.totalMessages
+      : 0,
+  };
+}
+function mergeAgentHistoryEvents(...groups: readonly unknown[][]): unknown[] {
+  const merged: unknown[] = [];
+  const indexes = new Map<string, number>();
+  for (const group of groups) {
+    for (const value of group) {
+      const eventId = isRecord(value) && typeof value.eventId === 'string'
+        ? value.eventId
+        : '';
+      if (!eventId) {
+        merged.push(value);
+        continue;
+      }
+      const existing = indexes.get(eventId);
+      if (existing === undefined) {
+        indexes.set(eventId, merged.length);
+        merged.push(value);
+      } else {
+        merged[existing] = value;
+      }
+    }
+  }
+  return merged;
+}
+function mergeAgentHistoryMessages(...groups: readonly unknown[][]): unknown[] {
+  const merged: unknown[] = [];
+  const indexes = new Map<string, number>();
+  for (const group of groups) {
+    for (const value of group) {
+      const messageId = isRecord(value) && typeof value.id === 'string'
+        ? value.id
+        : '';
+      if (!messageId) {
+        merged.push(value);
+        continue;
+      }
+      const existing = indexes.get(messageId);
+      if (existing === undefined) {
+        indexes.set(messageId, merged.length);
+        merged.push(value);
+      } else {
+        merged[existing] = value;
+      }
+    }
+  }
+  return merged;
+}
 function conversationNodeText(blocks: Array<{ type: string; data: Record<string, unknown> }>): string {
   const value = blocks.map((block) => {
     const candidates = [block.data.text, block.data.markdown, block.data.code, block.data.message, block.data.summary];
