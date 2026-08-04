@@ -3,7 +3,7 @@
 - Document class: sole tracked authority for current Room product behavior and acceptance status
 - Approved vision window: user decisions made on or after 2026-08-02
 - Contract revision: 2026-08-04
-- Acceptance state: source implementation under final regression; coherent install and native foreground acceptance remain open
+- Acceptance state: source implementation passed final regression and independent P0/P1 review; coherent install and native foreground acceptance remain open
 - Status rule: source, test, installed, and foreground evidence are reported separately
 
 Older handoffs, ignored local notes under `docs/`, screenshots, prototypes, tests,
@@ -62,8 +62,9 @@ repository and runtime, then chooses one of two branches.
 8. After the last necessary answer, the Facilitator summarizes the aligned goal
    and asks `现在开始行动吗？`. The one-shot `开始行动` control exists only on
    this clarification branch.
-9. Clicking it appends an ordinary user message such as `开始行动`. No Worker or
-   Reviewer begins before this action.
+9. Clicking it appends an ordinary user message such as `开始行动`. That message
+   is durably ordered before the fresh execute Dispatch is released; a crash or
+   retry cannot begin a Worker or Reviewer without the visible authorization.
 
 Canonical ordering:
 
@@ -159,9 +160,14 @@ are receipted; stale or mismatched loads fail closed.
 
 1. Capture the opening request and initial Facilitator.
 2. Choose the direct or clarification branch.
-3. Append every accepted answer as a new requirement revision and chronological
-   user post. A specific question revision resumes at most once.
-4. If clarification occurred, wait for the typed start action.
+3. Append every accepted answer as a new requirement revision and durable
+   answer identity, publish its chronological user post, and only then
+   CAS-release the one resume Dispatch. A crash in any window remains
+   non-executable or exactly replayable, and a specific question revision
+   resumes at most once.
+4. If clarification occurred, wait for the typed start action, durably prepare
+   its one-shot identity, publish the user message, and only then CAS-release
+   execution. Any partial transaction remains non-executable and retryable.
 5. Define the accepted work atomically and fence the intake Dispatch.
 6. Create one fresh execute-capable Facilitator Dispatch with a new identity,
    capability lease, epoch, and implementation Skill. The intake Dispatch never
@@ -294,15 +300,15 @@ Current product scope is voice input only. Room companions do not produce TTS.
 
 | Area | Source/test state | Installed foreground state |
 | --- | --- | --- |
-| opening Facilitator, conditional clarification, chronological answers, typed start | implemented; Web 921/921 and answer/native-route focused gates passed | open |
-| fresh execute Dispatch, peer work, nested delegation, integration, review, one report | implemented; kernel 94/94 and settlement 47/47 passed | open |
+| opening Facilitator, conditional clarification, crash-safe chronological answers and typed start | implemented; Web 922/922, Room backend 525/525, command receipts 5/5, answer/native-route and injected-crash gates passed | open |
+| fresh execute Dispatch, peer work, nested delegation, integration, review, one report | implemented; Room backend 525/525 and prior focused settlement gates passed | open |
 | stage Skills and capability receipts | implemented; Skill 25/25 and Pi runtime 70/70 passed | open |
 | permanent workspace ledger, same-baseline isolation, integration-before-cleanup, red retention | implemented; settlement and canary 18/18 passed | open |
-| continuous conversation activity and lower-density Tasks projection | implemented; Web 921/921 passed | open |
+| continuous conversation activity and lower-density Tasks projection | implemented; Web 922/922 passed | open |
 | Session Todo, per-owner result/diff, subagent grouping | implemented; source projections and Web regression passed | open |
 | historical continuation recovery and Report-stat filtering | implemented; historical upcast 7/7 and settlement regression passed | open |
 | tracked authority portability | implemented by this file | not applicable |
-| coherent App/Web/Python/managed-Pi provenance | source build pending | open |
+| coherent App/Web/Python/managed-Pi provenance | production Web build passed; coherent install pending | open |
 | real installed Room completing a concrete TUI task | not a source claim | open |
 
 No row may be promoted to native accepted by unit tests, mock transport, hidden

@@ -1582,10 +1582,95 @@ describe('RoomEventReducer', () => {
     expect(state.pendingUserQuestion).toBeUndefined();
     expect(state.messagesById['wait-post-1']?.question).toMatchObject({
       status: 'answered',
-      answer: '稳定版',
+      answer: 'stable',
     });
     expect(state.messagesById['answer-post-1']?.answerToPostId).toBe('wait-post-1');
   });
+
+  it('preserves custom answer text when it collides with an option value', () => {
+    const question = wireRoomEvent(1, 'room_post', {
+      post: {
+        schemaVersion: 'wisdom-weasel.room-post.v2',
+        postId: 'wait-post-custom-collision',
+        roomId: 'room-1',
+        rootId: 'room-turn-1',
+        generation: 0,
+        authorActorRef: 'participant:facilitator',
+        kind: 'wait',
+        visibility: 'room',
+        content: '请选择发布方式。',
+        question: {
+          prompt: '发布预览版还是稳定版？',
+          options: [
+            { value: 'preview', label: '预览版', recommended: true },
+            { value: 'stable', label: '稳定版' },
+          ],
+        },
+        idempotencyKey: 'wait-post-custom-collision',
+        publicationSource: { kind: 'room_commit', ref: 'commit:wait-custom-collision' },
+        createdAtMs: 10,
+      },
+    });
+    let state = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      parseRoomEvent(question),
+    ).state;
+    const answer = wireRoomEvent(2, 'user_message', {
+      messageId: 'custom-answer-message',
+      clientMessageId: 'custom-answer-client',
+      rootId: 'room-turn-1',
+      text: 'stable',
+      answerToPostId: 'wait-post-custom-collision',
+      answerKind: 'custom',
+    });
+    answer.participantId = null;
+
+    state = reduceRoomEvent(state, parseRoomEvent(answer)).state;
+
+    expect(state.pendingUserQuestion).toBeUndefined();
+    expect(state.messagesById['wait-post-custom-collision']?.question).toMatchObject({
+      status: 'answered',
+      answer: 'stable',
+    });
+    expect(state.messagesById['custom-answer-message']).toMatchObject({
+      answerToPostId: 'wait-post-custom-collision',
+      role: 'user',
+      text: 'stable',
+    });
+
+    let legacyState = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      parseRoomEvent(question),
+    ).state;
+    const legacyAnswer = wireRoomEvent(2, 'user_message', {
+      messageId: 'legacy-custom-answer-message',
+      clientMessageId: 'legacy-custom-answer-client',
+      rootId: 'room-turn-1',
+      text: 'stable',
+      answerToPostId: 'wait-post-custom-collision',
+    });
+    legacyAnswer.participantId = null;
+
+    legacyState = reduceRoomEvent(
+      legacyState,
+      parseRoomEvent(legacyAnswer),
+    ).state;
+
+    expect(
+      legacyState.messagesById['wait-post-custom-collision']?.question,
+    ).toMatchObject({
+      status: 'answered',
+      answer: 'stable',
+    });
+    expect(
+      legacyState.messagesById['legacy-custom-answer-message'],
+    ).toMatchObject({
+      answerToPostId: 'wait-post-custom-collision',
+      role: 'user',
+      text: 'stable',
+    });
+  });
+
   it('reconciles one optimistic answer through user_message and its authoritative user RoomPost', () => {
     const clientMessageId = 'room-web-answer-1';
     let state = appendOptimisticRoomMessage(createRoomProjection('room-1'), {

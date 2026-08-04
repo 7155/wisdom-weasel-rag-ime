@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import mimetypes
 import os
@@ -22,6 +21,7 @@ from .agent_room_routing import (
     plan_room_route,
     plan_room_routes,
 )
+from .agent_room_projection_identity import room_projection_hash
 from .agent_room_work import work_item_payload
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
@@ -1511,7 +1511,7 @@ class AgentRoomStore:
         timestamp = _timestamp(created_at_ms)
         safe_payload = dict(payload)
         payload_json = json.dumps(safe_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        projection_hash = _room_projection_hash(
+        projection_hash = room_projection_hash(
             room_id=room_id,
             event_type=event_type,
             payload=safe_payload,
@@ -2126,34 +2126,6 @@ def _room_event_payload(row: sqlite3.Row) -> dict[str, object]:
     }
     validate_contract(payload, "agent-room-event.v1.json")
     return payload
-
-
-def _room_projection_hash(
-    *,
-    room_id: str,
-    event_type: str,
-    payload: Mapping[str, object],
-    turn_id: str,
-    participant_id: str | None,
-    source_session_id: str,
-    topic_id: str,
-) -> str:
-    material = {
-        "roomId": room_id,
-        "eventType": event_type,
-        "turnId": str(turn_id or ""),
-        "participantId": participant_id,
-        "sourceSessionId": str(source_session_id or ""),
-        "topicId": str(topic_id or ""),
-        "payload": dict(payload),
-    }
-    encoded = json.dumps(
-        material,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def _room_event_sse(event: Mapping[str, object]) -> bytes:

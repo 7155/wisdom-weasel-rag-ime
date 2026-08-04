@@ -690,10 +690,13 @@ function applyUserMessage(
   const answerToPostId = matchesPendingQuestion
     ? pendingQuestion!.postId
     : explicitAnswerToPostId;
-  const selectedOption = matchesPendingQuestion
+  const answerKind = text(payload.answerKind);
+  const selectedOption = matchesPendingQuestion && answerKind === 'option'
     ? pendingQuestion!.options.find((option) => option.value === rawAnswerText)
     : undefined;
-  const answerText = text(payload.displayText) || selectedOption?.label || rawAnswerText;
+  const answerText = answerKind === 'custom'
+    ? rawAnswerText
+    : text(payload.displayText) || selectedOption?.label || rawAnswerText;
   if (matchesPendingQuestion) {
     updateQuestionMessage(state, pendingQuestion!.postId, 'answered', answerText);
     state.pendingUserQuestion = undefined;
@@ -954,12 +957,9 @@ function applyRoomPost(
     && post.publicationSource.kind === 'user'
     && post.authorActorRef.startsWith('user:')
   ) ? state.pendingUserQuestion.postId : '';
-  const pendingAnswerQuestion = pendingAnswerToPostId
-    ? state.messagesById[pendingAnswerToPostId]?.question
-    : undefined;
-  const publicPostContent = pendingAnswerQuestion?.options.find(
-    (option) => option.value === post.content,
-  )?.label || post.content;
+  // A RoomPost has no answerKind. New option answers already persist their
+  // display label as post.content; legacy/custom posts must remain verbatim.
+  const publicPostContent = post.content;
   updatePendingUserQuestion(state, event, post);
   const fallbackBlock: UiAgentMessage['blocks'][number] = {
     schemaVersion: 'rag-ime.agent-block.v1',
@@ -1066,14 +1066,11 @@ function updatePendingUserQuestion(
     && post.publicationSource.kind === 'user'
     && post.authorActorRef.startsWith('user:')
   ) {
-    const selectedOption = pending.options.find(
-      (option) => option.value === post.content,
-    );
     updateQuestionMessage(
       state,
       pending.postId,
       'answered',
-      selectedOption?.label || post.content,
+      post.content,
     );
     state.pendingUserQuestion = undefined;
     return;

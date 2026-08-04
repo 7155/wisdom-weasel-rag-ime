@@ -98,7 +98,7 @@ class RoomKernelInvariantRepairTests(unittest.TestCase):
         *,
         resume_key: str = "resume-user-wait",
     ) -> tuple[dict[str, object], dict[str, str]]:
-        self._seed_root()
+        self._seed_root(facilitator_id="participant:a")
         parent = {
             **dispatch(
                 "dispatch:user-wait-parent",

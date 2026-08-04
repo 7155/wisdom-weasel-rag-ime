@@ -32,6 +32,7 @@ from .agent_execution_policy import (
 )
 from .work_documents import WorkDocumentService
 from .agent_command_receipts import (
+    AgentCommandReceiptPending,
     AgentCommandReceiptStore,
     AgentTurnConflictError,
 )
@@ -2872,20 +2873,44 @@ class AgentService:
                 answer_to_root_id=answer_to_root_id,
                 answer_kind=answer_kind,
             )
-        claim = self.command_receipts.begin(
-            command_scope="room_message",
-            scope_id=room_id,
-            client_message_id=client_message_id,
-            payload={
-                "message": message,
-                "participantIds": requested_participant_ids,
-                "workItemId": work_item_id,
-                "attachmentIds": attachment_ids,
-                "answerToPostId": answer_to_post_id,
-                "answerToRootId": answer_to_root_id,
-                "answerKind": answer_kind,
-            },
-        )
+        command_payload = {
+            "message": message,
+            "participantIds": requested_participant_ids,
+            "workItemId": work_item_id,
+            "attachmentIds": attachment_ids,
+            "answerToPostId": answer_to_post_id,
+            "answerToRootId": answer_to_root_id,
+            "answerKind": answer_kind,
+        }
+        try:
+            claim = self.command_receipts.begin(
+                command_scope="room_message",
+                scope_id=room_id,
+                client_message_id=client_message_id,
+                payload=command_payload,
+            )
+        except AgentCommandReceiptPending:
+            if not answer_to_post_id:
+                raise
+            durable_replay = self.room_application.resume_durable_answer(
+                room_id,
+                message=message,
+                client_message_id=client_message_id,
+                answer_to_post_id=answer_to_post_id,
+                answer_to_root_id=answer_to_root_id,
+                answer_kind=answer_kind,
+                attachment_ids=attachment_ids,
+            )
+            if durable_replay is None:
+                raise
+            reconciled = self.command_receipts.accept_pending_from_evidence(
+                command_scope="room_message",
+                scope_id=room_id,
+                client_message_id=client_message_id,
+                payload=command_payload,
+                response=durable_replay,
+            )
+            return {**reconciled, "idempotentReplay": True}
         if claim.replay_response is not None:
             return {**claim.replay_response, "idempotentReplay": True}
         try:
@@ -2901,6 +2926,18 @@ class AgentService:
                 answer_kind=answer_kind,
             )
         except Exception as exc:
+            if (
+                answer_to_post_id
+                and self.room_application.durable_message_post(
+                    room_id,
+                    client_message_id=client_message_id,
+                )
+                is not None
+            ):
+                # The command is locally accepted; only its public projection
+                # failed. Keep the receipt pending so the exact same client ID
+                # can reconcile from that durable Post on retry.
+                raise
             self.command_receipts.fail(
                 claim,
                 command_scope="room_message",

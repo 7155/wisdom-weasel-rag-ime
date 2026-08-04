@@ -25,6 +25,7 @@ from .agent_room_kernel_contracts import (
     upcast_room_root_execution,
     validate_kernel_contract,
 )
+from .agent_room_projection_identity import room_projection_hash
 from .agent_room_quality_gate import (
     RoomQualityGateError,
     validate_quality_gate_receipt,
@@ -12026,6 +12027,300 @@ class RoomKernelStore:
             _conn=conn,
         )
 
+    @staticmethod
+    def _user_wait_answer_preparation_locked(
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        continuation_id: str,
+    ) -> tuple[dict[str, object], Mapping[str, object]] | None:
+        rows = conn.execute(
+            """SELECT payload_json FROM room_kernel_receipts
+               WHERE root_id=? AND receipt_kind='accepted'
+               ORDER BY created_at_ms,rowid""",
+            (root_id,),
+        ).fetchall()
+        for row in rows:
+            receipt = json.loads(str(row["payload_json"]))
+            details = (
+                receipt.get("details")
+                if isinstance(receipt, Mapping)
+                else None
+            )
+            if (
+                isinstance(details, Mapping)
+                and details.get("purpose")
+                == "user_wait_answer_prepared"
+                and details.get("continuationId") == continuation_id
+            ):
+                return receipt, details
+        return None
+
+    def user_wait_answer_preparation_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        continuation_id: str,
+    ) -> dict[str, object] | None:
+        """Read a prepared clarification answer under the caller's write lock."""
+
+        prepared = self._user_wait_answer_preparation_locked(
+            conn,
+            root_id=_required(root_id, "root_id"),
+            continuation_id=_required(
+                continuation_id,
+                "continuation_id",
+            ),
+        )
+        if prepared is None:
+            return None
+        receipt, details = prepared
+        return {
+            "receipt": dict(receipt),
+            "details": dict(details),
+        }
+
+    def prepare_user_wait_answer_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        continuation_id: str,
+        dispatch_payload: Mapping[str, object],
+        question_post_id: str,
+        answer_root_id: str,
+        answer_post_id: str,
+        answer_anchor_id: str,
+        client_message_id: str,
+        answer_display_text: str,
+        answer_kind: str,
+        topic_id: str,
+        now_ms: int,
+    ) -> dict[str, object]:
+        """Reserve one canonical answer identity without releasing work."""
+
+        validate_kernel_contract("dispatchEnvelope", dispatch_payload)
+        continuation_id = _required(continuation_id, "continuation_id")
+        answer_root_id = _required(answer_root_id, "answer_root_id")
+        continuation = conn.execute(
+            "SELECT * FROM room_kernel_continuations WHERE continuation_id=?",
+            (continuation_id,),
+        ).fetchone()
+        if continuation is None:
+            raise RoomKernelFenceError("user wait continuation is missing")
+        root = self._root_row(conn, str(continuation["root_id"]))
+        parent = self._dispatch_row(
+            conn,
+            str(continuation["parent_dispatch_id"]),
+        )
+        expected_details = {
+            "purpose": "user_wait_answer_prepared",
+            "continuationId": continuation_id,
+            "questionPostId": _required(
+                question_post_id,
+                "question_post_id",
+            ),
+            "clientMessageId": _required(
+                client_message_id,
+                "client_message_id",
+            ),
+            "answerPostId": _required(answer_post_id, "answer_post_id"),
+            "answerAnchorId": _required(
+                answer_anchor_id,
+                "answer_anchor_id",
+            ),
+            "answerDisplayText": _required(
+                answer_display_text,
+                "answer_display_text",
+            ),
+            "answerKind": answer_kind,
+            "topicId": str(topic_id or ""),
+            "plannedResumeDispatch": dict(dispatch_payload),
+        }
+        prior = self.user_wait_answer_preparation_in_transaction(
+            conn,
+            root_id=str(root["root_id"]),
+            continuation_id=continuation_id,
+        )
+        if prior is not None:
+            receipt = prior["receipt"]
+            details = prior["details"]
+            if dict(details) != expected_details:
+                raise RoomKernelFenceError(
+                    "user wait already has a different prepared answer"
+                )
+            return {"receipt": receipt, "created": False}
+        continuation_payload = _room_continuation_payload(
+            conn,
+            continuation,
+        )
+        expected_question_post_id = _stable_id(
+            "room-post",
+            str(continuation["commit_id"]),
+        )
+        if (
+            str(continuation["state"]) != "applied"
+            or str(root["state"]) != "waiting"
+            or not isinstance(continuation_payload, Mapping)
+            or continuation_payload.get("waitingFor") != "user"
+            or str(root["root_id"]) != answer_root_id
+            or expected_details["questionPostId"]
+            != expected_question_post_id
+            or str(parent["target_participant_id"])
+            != str(root["facilitator_participant_id"])
+            or dispatch_payload.get("rootId") != root["root_id"]
+            or dispatch_payload.get("taskId") != continuation["task_id"]
+            or dispatch_payload.get("parentDispatchId")
+            != parent["dispatch_id"]
+            or dispatch_payload.get("targetParticipantId")
+            != parent["target_participant_id"]
+            or int(dispatch_payload.get("generation", -1))
+            != int(parent["generation"])
+            or answer_kind not in {"option", "custom"}
+        ):
+            raise RoomKernelFenceError(
+                "clarification answer preparation lost its waiting fence"
+            )
+        answer_post = conn.execute(
+            "SELECT root_id FROM room_kernel_posts WHERE post_id=?",
+            (expected_details["answerPostId"],),
+        ).fetchone()
+        answer_anchor = conn.execute(
+            """SELECT root_id FROM room_v2_requirement_anchors
+               WHERE anchor_id=?""",
+            (expected_details["answerAnchorId"],),
+        ).fetchone()
+        if (
+            answer_post is None
+            or str(answer_post["root_id"]) != answer_root_id
+            or answer_anchor is None
+            or str(answer_anchor["root_id"]) != answer_root_id
+        ):
+            raise RoomKernelFenceError(
+                "clarification answer preparation has no durable Post and anchor"
+            )
+        receipt = self._receipt(
+            conn,
+            root_id=answer_root_id,
+            command_id=None,
+            receipt_kind="accepted",
+            status="applied",
+            generation=int(parent["generation"]),
+            details=expected_details,
+            now_ms=now_ms,
+        )
+        return {"receipt": receipt, "created": True}
+
+    def resume_user_wait_after_public_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        continuation_id: str,
+        dispatch_payload: Mapping[str, object],
+        question_post_id: str,
+        answer_root_id: str,
+        answer_post: Mapping[str, object],
+        answer_anchor_id: str,
+        client_message_id: str,
+        answer_display_text: str,
+        answer_kind: str,
+        topic_id: str,
+        now_ms: int,
+    ) -> dict[str, object]:
+        """Release one resume Dispatch only after its answer is public."""
+
+        answer_post_id = _required(
+            answer_post.get("postId"),
+            "answer Post id",
+        )
+        room_id = _required(answer_post.get("roomId"), "answer Room")
+        publication_source = answer_post.get("publicationSource")
+        client_message_id = _required(
+            client_message_id,
+            "answer client message id",
+        )
+        stored_post_row = conn.execute(
+            "SELECT payload_json FROM room_kernel_posts WHERE post_id=?",
+            (answer_post_id,),
+        ).fetchone()
+        stored_anchor_row = conn.execute(
+            """SELECT root_id FROM room_v2_requirement_anchors
+               WHERE anchor_id=?""",
+            (_required(answer_anchor_id, "answer anchor id"),),
+        ).fetchone()
+        stored_post = (
+            json.loads(str(stored_post_row["payload_json"]))
+            if stored_post_row is not None
+            else None
+        )
+        preparation = self._user_wait_answer_preparation_locked(
+            conn,
+            root_id=answer_root_id,
+            continuation_id=continuation_id,
+        )
+        expected_preparation = {
+            "purpose": "user_wait_answer_prepared",
+            "continuationId": continuation_id,
+            "questionPostId": question_post_id,
+            "clientMessageId": client_message_id,
+            "answerPostId": answer_post_id,
+            "answerAnchorId": answer_anchor_id,
+            "answerDisplayText": answer_display_text,
+            "answerKind": answer_kind,
+            "topicId": str(topic_id or ""),
+            "plannedResumeDispatch": dict(dispatch_payload),
+        }
+        if (
+            preparation is None
+            or dict(preparation[1]) != expected_preparation
+            or not isinstance(stored_post, Mapping)
+            or any(
+                answer_post.get(key) != value
+                for key, value in stored_post.items()
+            )
+            or stored_anchor_row is None
+            or str(stored_anchor_row["root_id"] or "") != answer_root_id
+            or str(answer_post.get("roomId") or "") != room_id
+            or str(answer_post.get("rootId") or "") != answer_root_id
+            or str(answer_post.get("content") or "")
+            != answer_display_text
+            or not isinstance(publication_source, Mapping)
+            or str(publication_source.get("kind") or "")
+            != "user"
+            or str(publication_source.get("ref") or "")
+            != client_message_id
+            or answer_kind not in {"option", "custom"}
+        ):
+            raise RoomKernelFenceError(
+                "durable clarification answer does not match its public authorization"
+            )
+        authorization = self._public_user_message_authorization_locked(
+            conn,
+            room_id=room_id,
+            root_id=answer_root_id,
+            topic_id=str(topic_id or ""),
+            post_id=answer_post_id,
+            client_message_id=client_message_id,
+            content=answer_display_text,
+            created_at_ms=int(answer_post["createdAtMs"]),
+            attachment_receipts=tuple(answer_post.get("attachments") or ()),
+            answer_to_post_id=question_post_id,
+            answer_display_text=answer_display_text,
+            answer_kind=answer_kind,
+            error_subject="clarification answer",
+        )
+        resumed = self.resume_user_wait_in_transaction(
+            conn,
+            continuation_id=continuation_id,
+            dispatch_payload=dispatch_payload,
+            question_post_id=question_post_id,
+            answer_root_id=answer_root_id,
+            answer_post_id=answer_post_id,
+            answer_anchor_id=answer_anchor_id,
+            now_ms=now_ms,
+        )
+        return {**resumed, "authorization": authorization}
+
     def definition_fence(
         self,
         *,
@@ -12343,20 +12638,485 @@ class RoomKernelStore:
             "idempotent": False,
         }
 
-    def start_defined_execution(
+    @staticmethod
+    def _typed_start_preparation_locked(
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        receipt_id: str,
+    ) -> tuple[dict[str, object], Mapping[str, object]]:
+        row = conn.execute(
+            """SELECT payload_json FROM room_kernel_receipts
+               WHERE receipt_id=? AND root_id=?
+                 AND receipt_kind='accepted'""",
+            (_required(receipt_id, "prepare receipt"), root_id),
+        ).fetchone()
+        if row is None:
+            raise RoomKernelFenceError(
+                "typed start preparation receipt is missing"
+            )
+        prepared = json.loads(str(row["payload_json"]))
+        details = (
+            prepared.get("details")
+            if isinstance(prepared, Mapping)
+            else None
+        )
+        if (
+            not isinstance(details, Mapping)
+            or details.get("purpose")
+            != "typed_start_authorization_prepared"
+        ):
+            raise RoomKernelFenceError(
+                "typed start preparation receipt is invalid"
+            )
+        return prepared, details
+
+    @staticmethod
+    def _public_user_message_authorization_locked(
+        conn: sqlite3.Connection,
+        *,
+        room_id: str,
+        root_id: str,
+        topic_id: str,
+        post_id: str,
+        client_message_id: str,
+        content: str,
+        created_at_ms: int,
+        attachment_receipts: Sequence[object] = (),
+        answer_to_post_id: str = "",
+        answer_display_text: str = "",
+        answer_kind: str = "",
+        chronology_after_post_id: str = "",
+        error_subject: str = "Room user message",
+    ) -> dict[str, object]:
+        projection_key = f"room-post:{post_id}"
+        expected_event_payload = {
+            "messageId": post_id,
+            "clientMessageId": client_message_id,
+            "text": content,
+            "rootId": root_id,
+            "postId": post_id,
+            "attachmentReceipts": list(attachment_receipts),
+            **(
+                {"answerToPostId": answer_to_post_id}
+                if answer_to_post_id
+                else {}
+            ),
+            **(
+                {"displayText": answer_display_text}
+                if answer_display_text
+                and answer_display_text != content
+                else {}
+            ),
+            **({"answerKind": answer_kind} if answer_kind else {}),
+            **(
+                {"afterPostId": chronology_after_post_id}
+                if chronology_after_post_id
+                else {}
+            ),
+        }
+        expected_hash = room_projection_hash(
+            room_id=room_id,
+            event_type="user_message",
+            payload=expected_event_payload,
+            turn_id=root_id,
+            participant_id=None,
+            source_session_id="",
+            topic_id=topic_id,
+        )
+        authorization_row = conn.execute(
+            """
+            SELECT receipt.room_id AS receipt_room_id,
+                   receipt.event_id AS receipt_event_id,
+                   receipt.payload_hash AS receipt_payload_hash,
+                   receipt.created_at_ms AS receipt_created_at_ms,
+                   event.event_id AS retained_event_id,
+                   event.sequence AS retained_sequence,
+                   event.turn_id,event.event_type,event.participant_id,
+                   event.source_session_id,event.topic_id,
+                   event.created_at_ms AS event_created_at_ms,
+                   event.payload_json
+            FROM agent_room_public_projection_receipts AS receipt
+            LEFT JOIN agent_room_events AS event
+              ON event.event_id=receipt.event_id
+            WHERE receipt.projection_key=?
+            """,
+            (projection_key,),
+        ).fetchone()
+        if authorization_row is None:
+            raise RoomKernelFenceError(
+                f"{error_subject} authorization is not durably public"
+            )
+        event_id = str(authorization_row["receipt_event_id"] or "")
+        event_room_id, separator, event_ordinal = event_id.rpartition(":")
+        try:
+            event_sequence = int(event_ordinal)
+        except ValueError as exc:
+            raise RoomKernelFenceError(
+                f"{error_subject} authorization event identity is invalid"
+            ) from exc
+        if (
+            separator != ":"
+            or event_room_id != room_id
+            or event_sequence <= 0
+            or str(authorization_row["receipt_room_id"] or "") != room_id
+            or str(authorization_row["receipt_payload_hash"] or "")
+            != expected_hash
+            or int(authorization_row["receipt_created_at_ms"])
+            != int(created_at_ms)
+        ):
+            raise RoomKernelFenceError(
+                f"{error_subject} authorization projection was rebound"
+            )
+        retained = authorization_row["retained_event_id"] is not None
+        if retained:
+            actual_event_payload = json.loads(
+                str(authorization_row["payload_json"])
+            )
+            if (
+                str(authorization_row["retained_event_id"]) != event_id
+                or int(authorization_row["retained_sequence"])
+                != event_sequence
+                or str(authorization_row["event_type"]) != "user_message"
+                or str(authorization_row["turn_id"]) != root_id
+                or authorization_row["participant_id"] is not None
+                or str(authorization_row["source_session_id"] or "")
+                or str(authorization_row["topic_id"] or "") != topic_id
+                or int(authorization_row["event_created_at_ms"])
+                != int(created_at_ms)
+                or actual_event_payload != expected_event_payload
+            ):
+                raise RoomKernelFenceError(
+                    f"{error_subject} authorization event was rebound"
+                )
+        return {
+            "eventId": event_id,
+            "sequence": event_sequence,
+            "eventType": "user_message",
+            "roomId": room_id,
+            "turnId": root_id,
+            "topicId": topic_id,
+            "createdAtMs": int(created_at_ms),
+            "payload": expected_event_payload,
+            "retained": retained,
+            "projectionKey": projection_key,
+            "payloadHash": expected_hash,
+        }
+
+    @staticmethod
+    def _typed_start_authorization_locked(
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        prepared: Mapping[str, object],
+        prepared_details: Mapping[str, object],
+    ) -> dict[str, object]:
+        room_id = _required(prepared_details.get("roomId"), "prepared Room")
+        client_action_id = _required(
+            prepared_details.get("clientActionId"),
+            "prepared client action",
+        )
+        user_post_id = _required(
+            prepared_details.get("userPostId"),
+            "prepared user Post",
+        )
+        projection_key = _required(
+            prepared_details.get("projectionKey"),
+            "prepared projection key",
+        )
+        if projection_key != f"room-post:{user_post_id}":
+            raise RoomKernelFenceError(
+                "typed start authorization projection identity was rebound"
+            )
+        chronology_after_post_id = str(
+            prepared_details.get("chronologyAfterPostId") or ""
+        )
+        topic_id = str(prepared_details.get("topicId") or "")
+        created_at_ms = int(prepared["createdAtMs"])
+        return RoomKernelStore._public_user_message_authorization_locked(
+            conn,
+            room_id=room_id,
+            root_id=root_id,
+            topic_id=topic_id,
+            post_id=user_post_id,
+            client_message_id=client_action_id,
+            content="开始行动",
+            created_at_ms=created_at_ms,
+            chronology_after_post_id=chronology_after_post_id,
+            error_subject="typed start",
+        )
+
+    def defined_execution_start_authorization(
+        self,
+        *,
+        root_id: str,
+        prepare_receipt_id: str,
+    ) -> dict[str, object]:
+        """Resolve a start authorization from its permanent projection proof."""
+
+        root_id = _required(root_id, "root_id")
+        with self._connect() as conn:
+            prepared, details = self._typed_start_preparation_locked(
+                conn,
+                root_id=root_id,
+                receipt_id=prepare_receipt_id,
+            )
+            return self._typed_start_authorization_locked(
+                conn,
+                root_id=root_id,
+                prepared=prepared,
+                prepared_details=details,
+            )
+
+    def prepare_defined_execution_start(
         self,
         *,
         root_id: str,
         client_action_id: str,
         user_post_id: str,
+        room_id: str,
+        topic_id: str,
         now_ms: int,
     ) -> dict[str, object]:
-        """Consume the one typed post-clarification start action."""
+        """Durably freeze one typed start identity without releasing work."""
 
         root_id = _required(root_id, "root_id")
         client_action_id = _required(client_action_id, "client_action_id")
         user_post_id = _required(user_post_id, "user_post_id")
+        room_id = _required(room_id, "room_id")
         with self._connect(immediate=True) as conn:
+            root = self._root_row(conn, root_id)
+            if str(root["room_id"]) != room_id:
+                raise RoomKernelFenceError(
+                    "typed start Room does not match its Root"
+                )
+            prior_prepare: dict[str, object] | None = None
+            prior_final: dict[str, object] | None = None
+            prior_rows = conn.execute(
+                """SELECT payload_json FROM room_kernel_receipts
+                   WHERE root_id=? AND receipt_kind='accepted'
+                   ORDER BY created_at_ms,rowid""",
+                (root_id,),
+            ).fetchall()
+            for row in prior_rows:
+                receipt = json.loads(str(row["payload_json"]))
+                details = (
+                    receipt.get("details")
+                    if isinstance(receipt, Mapping)
+                    else None
+                )
+                if not isinstance(details, Mapping):
+                    continue
+                if details.get("purpose") == "typed_start_action":
+                    prior_final = receipt
+                    break
+                if (
+                    prior_prepare is None
+                    and details.get("purpose")
+                    == "typed_start_authorization_prepared"
+                ):
+                    prior_prepare = receipt
+            if prior_final is not None:
+                final_details = prior_final["details"]
+                dispatch_id = _required(
+                    final_details.get("executionDispatchId"),
+                    "execution dispatch id",
+                )
+                dispatch = self.dispatch(dispatch_id, conn=conn)
+                legacy_projection = conn.execute(
+                    """
+                    SELECT receipt.event_id,
+                           event.event_id AS retained_event_id,
+                           event.topic_id
+                    FROM agent_room_public_projection_receipts AS receipt
+                    LEFT JOIN agent_room_events AS event
+                      ON event.event_id=receipt.event_id
+                    WHERE receipt.projection_key=?
+                    """,
+                    (
+                        f"room-post:{str(final_details.get('userPostId') or '')}",
+                    ),
+                ).fetchone()
+                if legacy_projection is None:
+                    raise RoomKernelFenceError(
+                        "legacy typed start has execution but no durable public "
+                        "authorization; explicit incident repair is required"
+                    )
+                final_prepare_receipt_id = str(
+                    final_details.get("prepareReceiptId") or ""
+                )
+                prepared_topic_id = ""
+                if final_prepare_receipt_id:
+                    _prepared_receipt, prepared_details = (
+                        self._typed_start_preparation_locked(
+                            conn,
+                            root_id=root_id,
+                            receipt_id=final_prepare_receipt_id,
+                        )
+                    )
+                    prepared_topic_id = str(
+                        prepared_details.get("topicId") or ""
+                    )
+                    authorization_event_id = str(
+                        final_details.get("authorizationEventId") or ""
+                    )
+                    if (
+                        authorization_event_id
+                        and authorization_event_id
+                        != str(legacy_projection["event_id"] or "")
+                    ):
+                        raise RoomKernelFenceError(
+                            "typed start final receipt authorization was rebound"
+                        )
+                elif legacy_projection["retained_event_id"] is None:
+                    raise RoomKernelFenceError(
+                        "legacy typed start authorization was retained only as "
+                        "an unverifiable projection; explicit incident repair "
+                        "is required"
+                    )
+                return {
+                    "receipt": prior_final,
+                    "plannedDispatch": dispatch,
+                    "created": False,
+                    "finalized": True,
+                    "prepareReceiptId": (
+                        final_prepare_receipt_id
+                        or str(prior_final["receiptId"])
+                    ),
+                    "topicId": (
+                        prepared_topic_id
+                        or str(legacy_projection["topic_id"] or "")
+                        or str(topic_id or "")
+                    ),
+                }
+            intake = self.intake_state(root_id, conn=conn)
+            if (
+                intake.get("phase") != "awaiting_start"
+                or intake.get("clarificationOccurred") is not True
+                or str(root["state"]) != "waiting"
+            ):
+                raise RoomKernelFenceError(
+                    "typed start is allowed only after a clarified definition"
+                )
+            definition = self.definition_fence(root_id=root_id, conn=conn)
+            if definition is None:
+                raise RoomKernelFenceError(
+                    "typed start requires a durable room_define fence"
+                )
+            planned = definition.get("plannedExecuteDispatch")
+            if not isinstance(planned, Mapping):
+                raise RoomKernelFenceError(
+                    "room_define fence has no planned ExecuteDispatch"
+                )
+            task_id = _required(planned.get("taskId"), "definition task id")
+            task_row = conn.execute(
+                """SELECT state,payload_json FROM room_kernel_tasks
+                   WHERE task_id=?""",
+                (task_id,),
+            ).fetchone()
+            if task_row is None:
+                raise RoomKernelFenceError("defined Task is missing")
+            if str(task_row["state"]) != "waiting":
+                raise RoomKernelFenceError(
+                    "typed start requires its defined Task to be waiting"
+                )
+            if prior_prepare is not None:
+                prepared_details = prior_prepare["details"]
+                if (
+                    str(prepared_details.get("roomId") or "") != room_id
+                    or str(prepared_details.get("taskId") or "") != task_id
+                    or str(
+                        prepared_details.get("plannedExecutionDispatchId")
+                        or ""
+                    )
+                    != str(planned.get("dispatchId") or "")
+                    or int(
+                        prepared_details.get("generation")
+                        if prepared_details.get("generation") is not None
+                        else -1
+                    )
+                    != int(root["generation"])
+                ):
+                    raise RoomKernelFenceError(
+                        "typed start preparation no longer matches its definition"
+                    )
+                return {
+                    "receipt": prior_prepare,
+                    "plannedDispatch": dict(planned),
+                    "created": False,
+                    "finalized": False,
+                    "topicId": str(prepared_details.get("topicId") or ""),
+                }
+            prior_post = conn.execute(
+                """
+                SELECT post_id FROM room_kernel_posts
+                WHERE root_id=?
+                ORDER BY created_at_ms DESC, post_id DESC
+                LIMIT 1
+                """,
+                (root_id,),
+            ).fetchone()
+            chronology_after_post_id = (
+                str(prior_post["post_id"])
+                if prior_post is not None
+                else ""
+            )
+            definition_receipt = definition.get("receipt")
+            if not isinstance(definition_receipt, Mapping):
+                raise RoomKernelFenceError(
+                    "room_define fence has no authoritative receipt"
+                )
+            receipt = self._receipt(
+                conn,
+                root_id=root_id,
+                command_id=None,
+                receipt_kind="accepted",
+                status="applied",
+                generation=int(root["generation"]),
+                details={
+                    "purpose": "typed_start_authorization_prepared",
+                    "clientActionId": client_action_id,
+                    "userPostId": user_post_id,
+                    "projectionKey": f"room-post:{user_post_id}",
+                    "roomId": room_id,
+                    "topicId": str(topic_id or ""),
+                    "chronologyAfterPostId": chronology_after_post_id,
+                    "taskId": task_id,
+                    "plannedExecutionDispatchId": str(
+                        planned.get("dispatchId") or ""
+                    ),
+                    "definitionReceiptId": str(
+                        definition_receipt.get("receiptId") or ""
+                    ),
+                    "generation": int(root["generation"]),
+                },
+                now_ms=now_ms,
+            )
+            return {
+                "receipt": receipt,
+                "plannedDispatch": dict(planned),
+                "created": True,
+                "finalized": False,
+                "topicId": str(topic_id or ""),
+            }
+
+    def start_defined_execution(
+        self,
+        *,
+        root_id: str,
+        prepare_receipt_id: str,
+        user_post: Mapping[str, object],
+        now_ms: int,
+        _conn: sqlite3.Connection | None = None,
+    ) -> dict[str, object]:
+        """CAS-release work only after its public typed authorization exists."""
+
+        root_id = _required(root_id, "root_id")
+        prepare_receipt_id = _required(
+            prepare_receipt_id,
+            "prepare_receipt_id",
+        )
+        with self._write_connection(_conn) as conn:
             root = self._root_row(conn, root_id)
             prior_rows = conn.execute(
                 """SELECT payload_json FROM room_kernel_receipts
@@ -12385,6 +13145,13 @@ class RoomKernelStore:
                         "intake": self.intake_state(root_id, conn=conn),
                         "created": False,
                     }
+            prepared, prepared_details = (
+                self._typed_start_preparation_locked(
+                    conn,
+                    root_id=root_id,
+                    receipt_id=prepare_receipt_id,
+                )
+            )
             intake = self.intake_state(root_id, conn=conn)
             if (
                 intake.get("phase") != "awaiting_start"
@@ -12392,68 +13159,150 @@ class RoomKernelStore:
                 or str(root["state"]) != "waiting"
             ):
                 raise RoomKernelFenceError(
-                    "typed start is allowed only after a clarified definition"
+                    "typed start release lost its waiting definition fence"
+                )
+            generation = int(root["generation"])
+            if int(
+                prepared_details.get("generation")
+                if prepared_details.get("generation") is not None
+                else -1
+            ) != generation:
+                raise RoomKernelFenceError(
+                    "typed start preparation generation is stale"
+                )
+            room_id = _required(prepared_details.get("roomId"), "prepared Room")
+            if str(root["room_id"]) != room_id:
+                raise RoomKernelFenceError(
+                    "typed start preparation belongs to another Room"
+                )
+            client_action_id = _required(
+                prepared_details.get("clientActionId"),
+                "prepared client action",
+            )
+            user_post_id = _required(
+                prepared_details.get("userPostId"),
+                "prepared user Post",
+            )
+            projection_key = _required(
+                prepared_details.get("projectionKey"),
+                "prepared projection key",
+            )
+            chronology_after_post_id = str(
+                prepared_details.get("chronologyAfterPostId") or ""
+            )
+            authorization = self._typed_start_authorization_locked(
+                conn,
+                root_id=root_id,
+                prepared=prepared,
+                prepared_details=prepared_details,
+            )
+            event_id = str(authorization["eventId"])
+            event_sequence = int(authorization["sequence"])
+            expected_chronology = {
+                "schemaVersion": "wisdom-weasel.room-post-chronology.v1",
+                "roomEventId": event_id,
+                "roomEventSequence": event_sequence,
+                "createdAtMs": int(prepared["createdAtMs"]),
+                "afterPostId": chronology_after_post_id or None,
+                "orderKey": f"room-event:{event_sequence:020d}",
+            }
+            task_id = _required(
+                prepared_details.get("taskId"),
+                "prepared definition task",
+            )
+            expected_post_fields = {
+                "postId": user_post_id,
+                "roomId": room_id,
+                "rootId": root_id,
+                "generation": generation,
+                "taskId": task_id,
+                "authorActorRef": "user:local",
+                "kind": "request",
+                "visibility": "room",
+                "content": "开始行动",
+                "idempotencyKey": f"typed-start:{root_id}:{client_action_id}",
+                "publicationSource": {
+                    "kind": "user",
+                    "ref": client_action_id,
+                },
+                "createdAtMs": int(prepared["createdAtMs"]),
+                "chronology": expected_chronology,
+            }
+            if any(
+                user_post.get(key) != value
+                for key, value in expected_post_fields.items()
+            ):
+                raise RoomKernelFenceError(
+                    "typed start Room Post does not match its authorization"
                 )
             definition = self.definition_fence(root_id=root_id, conn=conn)
             if definition is None:
                 raise RoomKernelFenceError(
-                    "typed start requires a durable room_define fence"
+                    "typed start release lost its room_define fence"
                 )
             planned = definition.get("plannedExecuteDispatch")
             if not isinstance(planned, Mapping):
                 raise RoomKernelFenceError(
                     "room_define fence has no planned ExecuteDispatch"
                 )
-            task_id = _required(planned.get("taskId"), "definition task id")
+            if (
+                str(planned.get("taskId") or "") != task_id
+                or str(planned.get("dispatchId") or "")
+                != str(
+                    prepared_details.get("plannedExecutionDispatchId") or ""
+                )
+            ):
+                raise RoomKernelFenceError(
+                    "typed start release no longer matches its definition"
+                )
             task_row = conn.execute(
-                "SELECT payload_json FROM room_kernel_tasks WHERE task_id=?",
+                """SELECT state,payload_json FROM room_kernel_tasks
+                   WHERE task_id=?""",
                 (task_id,),
             ).fetchone()
-            if task_row is None:
-                raise RoomKernelFenceError("defined Task is missing")
+            if task_row is None or str(task_row["state"]) != "waiting":
+                raise RoomKernelFenceError(
+                    "typed start release requires its Task to be waiting"
+                )
             task_payload = json.loads(str(task_row["payload_json"]))
             task_payload["state"] = "active"
             validate_kernel_contract("roomTask", task_payload)
-            prior_post = conn.execute(
-                """
-                SELECT post_id FROM room_kernel_posts
-                WHERE root_id=?
-                ORDER BY created_at_ms DESC, post_id DESC
-                LIMIT 1
-                """,
-                (root_id,),
-            ).fetchone()
-            chronology_after_post_id = (
-                str(prior_post["post_id"])
-                if prior_post is not None
-                else None
+            root_update = conn.execute(
+                """UPDATE room_kernel_roots
+                   SET state='running',updated_at_ms=?
+                   WHERE root_id=? AND generation=? AND state='waiting'""",
+                (int(now_ms), root_id, generation),
             )
-            conn.execute(
+            if root_update.rowcount != 1:
+                raise RoomKernelFenceError(
+                    "typed start Root compare-and-set failed"
+                )
+            task_update = conn.execute(
                 """UPDATE room_kernel_tasks
                    SET state='active',payload_json=?,updated_at_ms=?
-                   WHERE task_id=?""",
+                   WHERE task_id=? AND state='waiting'""",
                 (_json(task_payload), int(now_ms), task_id),
             )
-            conn.execute(
-                "UPDATE room_kernel_roots SET state='running',updated_at_ms=? "
-                "WHERE root_id=?",
-                (int(now_ms), root_id),
-            )
+            if task_update.rowcount != 1:
+                raise RoomKernelFenceError(
+                    "typed start Task compare-and-set failed"
+                )
             self._record_intake_phase_locked(
                 conn,
                 root_id=root_id,
                 phase="execution_ready",
                 clarification_occurred=True,
                 source="typed_start_action",
-                generation=int(root["generation"]),
+                generation=generation,
                 details={
                     "clientActionId": client_action_id,
                     "userPostId": user_post_id,
                     "chronologyAfterPostId": chronology_after_post_id,
+                    "authorizationEventId": event_id,
                 },
                 now_ms=now_ms,
             )
-            dispatch, _ = self._enqueue_dispatch(
+            dispatch, dispatch_created = self._enqueue_dispatch(
                 conn,
                 planned,
                 shadow_only=self.mode not in {
@@ -12463,18 +13312,23 @@ class RoomKernelStore:
                 },
                 now_ms=now_ms,
             )
+            if not dispatch_created:
+                raise RoomKernelFenceError(
+                    "typed start ExecuteDispatch already exists without a final receipt"
+                )
             self._record_intake_phase_locked(
                 conn,
                 root_id=root_id,
                 phase="executing",
                 clarification_occurred=True,
                 source="execute_dispatch_enqueued",
-                generation=int(root["generation"]),
+                generation=generation,
                 details={
                     "clientActionId": client_action_id,
                     "userPostId": user_post_id,
                     "chronologyAfterPostId": chronology_after_post_id,
                     "executionDispatchId": str(dispatch["dispatchId"]),
+                    "authorizationEventId": event_id,
                 },
                 now_ms=now_ms,
             )
@@ -12484,9 +13338,13 @@ class RoomKernelStore:
                 command_id=None,
                 receipt_kind="accepted",
                 status="applied",
-                generation=int(root["generation"]),
+                generation=generation,
                 details={
                     "purpose": "typed_start_action",
+                    "prepareReceiptId": prepare_receipt_id,
+                    "authorizationProjectionKey": projection_key,
+                    "authorizationEventId": event_id,
+                    "authorizationEventSequence": event_sequence,
                     "clientActionId": client_action_id,
                     "userPostId": user_post_id,
                     "chronologyAfterPostId": chronology_after_post_id,

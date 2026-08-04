@@ -9,6 +9,7 @@ import subprocess
 import threading
 import time
 import unittest
+from collections.abc import Mapping
 from unittest.mock import patch
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -8639,17 +8640,145 @@ class RoomKernelServiceTests(unittest.TestCase):
         pending = self.service.room_kernel.pending_user_wait(self.room_id)
         self.assertIsNotNone(pending)
         assert pending is not None
+        answer_payload = {
+            "message": "yes",
+            "clientMessageId": "client:typed-start-answer",
+            "answerToPostId": pending["questionPostId"],
+            "answerToRootId": pending["rootId"],
+            "answerKind": "option",
+        }
+        with patch.object(
+            self.service.room_public_timeline,
+            "publish_ingress",
+            side_effect=RuntimeError("crash before answer publication"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "crash before answer publication",
+            ):
+                self.service.post_room_message(
+                    self.room_id,
+                    answer_payload,
+                )
+        self.assertFalse(self.service.room_kernel_worker.run_once())
+        self.assertIsNotNone(
+            self.service.room_kernel.pending_user_wait(
+                self.room_id,
+                root_id=str(pending["rootId"]),
+                question_post_id=str(pending["questionPostId"]),
+            )
+        )
+        with self.assertRaisesRegex(
+            RoomKernelFenceError,
+            "different prepared answer",
+        ):
+            self.service.post_room_message(
+                self.room_id,
+                {
+                    **answer_payload,
+                    "message": "no",
+                    "clientMessageId": "client:typed-start-answer-racer",
+                },
+            )
+        with patch.object(
+            self.service.room_kernel,
+            "resume_user_wait_after_public_in_transaction",
+            side_effect=RuntimeError("crash after answer publication"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "crash after answer publication",
+            ):
+                self.service.post_room_message(
+                    self.room_id,
+                    answer_payload,
+                )
+        self.assertFalse(self.service.room_kernel_worker.run_once())
+        self.assertIsNotNone(
+            self.service.room_kernel.pending_user_wait(
+                self.room_id,
+                root_id=str(pending["rootId"]),
+                question_post_id=str(pending["questionPostId"]),
+            )
+        )
+        staged_answer_events = [
+            event
+            for event in self.service.rooms.list_events(
+                self.room_id,
+                limit=500,
+            )
+            if event["eventType"] == "user_message"
+            and event["payload"].get("clientMessageId")
+            == answer_payload["clientMessageId"]
+        ]
+        self.assertEqual(len(staged_answer_events), 1)
+        original_publish_ingress = (
+            self.service.room_public_timeline.publish_ingress
+        )
+
+        def fail_answer_route_projection(*args, **kwargs):
+            if kwargs.get("route_decisions"):
+                raise RuntimeError("crash after answer resume")
+            return original_publish_ingress(*args, **kwargs)
+
+        with patch.object(
+            self.service.room_public_timeline,
+            "publish_ingress",
+            side_effect=fail_answer_route_projection,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "crash after answer resume",
+            ):
+                self.service.post_room_message(
+                    self.room_id,
+                    answer_payload,
+                )
+        resume_preparation = self.service.room_kernel.pending_user_wait(
+            self.room_id,
+            root_id=str(pending["rootId"]),
+            question_post_id=str(pending["questionPostId"]),
+        )
+        self.assertIsNotNone(resume_preparation)
+        assert resume_preparation is not None
+        self.assertEqual(resume_preparation["state"], "resumed")
+        self.assertTrue(self.service.room_kernel_worker.run_once())
+
         answered = self.service.post_room_message(
             self.room_id,
-            {
-                "message": "yes",
-                "clientMessageId": "client:typed-start-answer",
-                "answerToPostId": pending["questionPostId"],
-                "answerToRootId": pending["rootId"],
-            },
+            answer_payload,
+        )
+        replayed_answer_event = next(
+            event
+            for event in answered["timelineEvents"]
+            if event["eventType"] == "user_message"
+        )
+        self.assertEqual(
+            replayed_answer_event["payload"]["answerToPostId"],
+            pending["questionPostId"],
+        )
+        self.assertEqual(
+            replayed_answer_event["payload"]["answerKind"],
+            "option",
+        )
+        self.assertEqual(
+            replayed_answer_event["payload"]["text"],
+            "需要",
         )
         resume_id = str(answered["dispatches"][0]["dispatchId"])
-        self.assertTrue(self.service.room_kernel_worker.run_once())
+        self.assertEqual(
+            resume_id,
+            resume_preparation["payload"]["resumeDispatchId"],
+        )
+        self.assertEqual(
+            answered["resumeReceipt"]["receiptId"],
+            resume_preparation["payload"]["resumeReceiptId"],
+        )
+        self.assertTrue(
+            self.service.room_kernel.dispatch_is_active_alignment(
+                resume_id
+            )
+        )
         target = self.service.rooms.get(self.room_id)["participants"][2]
         define_arguments = {
             "objective": "完成实现并附验证记录",
@@ -8758,20 +8887,191 @@ class RoomKernelServiceTests(unittest.TestCase):
             alignment_post["postId"],
         )
 
+        planned_dispatch_id = str(
+            defined["definitionReceipt"]["details"]["plannedExecuteDispatch"][
+                "dispatchId"
+            ]
+        )
+        defined_task_id = str(
+            defined["definitionReceipt"]["details"]["plannedExecuteDispatch"][
+                "taskId"
+            ]
+        )
+        start_payload = {
+            "action": "start_execution",
+            "rootId": accepted["rootId"],
+            "clientActionId": "action:typed-start",
+        }
+        with patch.object(
+            self.service.room_public_timeline,
+            "publish_ingress",
+            side_effect=RuntimeError("public timeline unavailable"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "public timeline unavailable",
+            ):
+                self.service.start_room_execution(
+                    self.room_id,
+                    start_payload,
+                )
+        self.assertEqual(
+            self.service.room_kernel.root(accepted["rootId"])["state"],
+            "waiting",
+        )
+        self.assertEqual(
+            self.service.room_kernel.task(defined_task_id)["state"],
+            "waiting",
+        )
+        self.assertEqual(
+            self.service.room_kernel.intake_state(accepted["rootId"])[
+                "phase"
+            ],
+            "awaiting_start",
+        )
+        with self.assertRaises(KeyError):
+            self.service.room_kernel.dispatch(planned_dispatch_id)
+        start_events_after_publication_failure = [
+            event
+            for event in self.service.rooms.list_events(
+                self.room_id,
+                limit=500,
+            )
+            if event["eventType"] == "user_message"
+            and event["payload"].get("text") == "开始行动"
+        ]
+        self.assertEqual(start_events_after_publication_failure, [])
+
+        with patch.object(
+            self.service.room_kernel,
+            "start_defined_execution",
+            side_effect=RuntimeError("crash before CAS release"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "crash before CAS release",
+            ):
+                self.service.start_room_execution(
+                    self.room_id,
+                    start_payload,
+                )
+        self.assertEqual(
+            self.service.room_kernel.root(accepted["rootId"])["state"],
+            "waiting",
+        )
+        self.assertEqual(
+            self.service.room_kernel.task(defined_task_id)["state"],
+            "waiting",
+        )
+        self.assertEqual(
+            self.service.room_kernel.intake_state(accepted["rootId"])[
+                "phase"
+            ],
+            "awaiting_start",
+        )
+        with self.assertRaises(KeyError):
+            self.service.room_kernel.dispatch(planned_dispatch_id)
+        durable_start_events = [
+            event
+            for event in self.service.rooms.list_events(
+                self.room_id,
+                limit=500,
+            )
+            if event["eventType"] == "user_message"
+            and event["payload"].get("text") == "开始行动"
+        ]
+        self.assertEqual(len(durable_start_events), 1)
+        retained_start_event = durable_start_events[0]
+        start_projection_key = (
+            f"room-post:{retained_start_event['payload']['postId']}"
+        )
+        with sqlite3.connect(self.service.db_path) as conn:
+            conn.execute(
+                "DELETE FROM agent_room_events WHERE event_id=?",
+                (retained_start_event["eventId"],),
+            )
+            projection_receipt = conn.execute(
+                """SELECT event_id FROM agent_room_public_projection_receipts
+                   WHERE projection_key=?""",
+                (start_projection_key,),
+            ).fetchone()
+        self.assertIsNotNone(projection_receipt)
+        assert projection_receipt is not None
+        self.assertEqual(
+            str(projection_receipt[0]),
+            retained_start_event["eventId"],
+        )
+        rolled_back_start_posts = [
+            post
+            for post in self.service.room_kernel_snapshot(self.room_id)[
+                "posts"
+            ]
+            if post.get("rootId") == accepted["rootId"]
+            and post.get("content") == "开始行动"
+        ]
+        self.assertEqual(rolled_back_start_posts, [])
+
+        original_receipt = self.service.room_kernel._receipt
+
+        def fail_final_start_receipt(*args, **kwargs):
+            details = kwargs.get("details")
+            if (
+                isinstance(details, Mapping)
+                and details.get("purpose") == "typed_start_action"
+            ):
+                raise RuntimeError("crash after dispatch enqueue")
+            return original_receipt(*args, **kwargs)
+
+        with patch.object(
+            self.service.room_kernel,
+            "_receipt",
+            side_effect=fail_final_start_receipt,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "crash after dispatch enqueue",
+            ):
+                self.service.start_room_execution(
+                    self.room_id,
+                    start_payload,
+                )
+        self.assertEqual(
+            self.service.room_kernel.root(accepted["rootId"])["state"],
+            "waiting",
+        )
+        self.assertEqual(
+            self.service.room_kernel.task(defined_task_id)["state"],
+            "waiting",
+        )
+        self.assertEqual(
+            self.service.room_kernel.intake_state(accepted["rootId"])[
+                "phase"
+            ],
+            "awaiting_start",
+        )
+        with self.assertRaises(KeyError):
+            self.service.room_kernel.dispatch(planned_dispatch_id)
+        self.assertEqual(
+            [
+                post
+                for post in self.service.room_kernel_snapshot(self.room_id)[
+                    "posts"
+                ]
+                if post.get("rootId") == accepted["rootId"]
+                and post.get("content") == "开始行动"
+            ],
+            [],
+        )
+
         started = self.service.start_room_execution(
             self.room_id,
-            {
-                "action": "start_execution",
-                "rootId": accepted["rootId"],
-                "clientActionId": "action:typed-start",
-            },
+            start_payload,
         )
         replay = self.service.start_room_execution(
             self.room_id,
             {
-                "action": "start_execution",
-                "rootId": accepted["rootId"],
-                "clientActionId": "action:typed-start",
+                **start_payload,
+                "clientActionId": "action:typed-start-retry-with-new-id",
             },
         )
         self.assertTrue(started["created"])
@@ -8787,11 +9087,7 @@ class RoomKernelServiceTests(unittest.TestCase):
             chronology["orderKey"],
             r"^room-event:[0-9]{20}$",
         )
-        start_user_event = next(
-            event
-            for event in started["timelineEvents"]
-            if event["eventType"] == "user_message"
-        )
+        start_user_event = retained_start_event
         self.assertEqual(
             start_user_event["sequence"],
             chronology["roomEventSequence"],
@@ -8815,6 +9111,23 @@ class RoomKernelServiceTests(unittest.TestCase):
             started["dispatch"]["dispatchId"],
             replay["dispatch"]["dispatchId"],
         )
+        with sqlite3.connect(self.service.db_path) as conn:
+            conn.execute(
+                """DELETE FROM agent_room_public_projection_receipts
+                   WHERE projection_key=?""",
+                (start_projection_key,),
+            )
+        with self.assertRaisesRegex(
+            RoomKernelFenceError,
+            "no durable public authorization",
+        ):
+            self.service.start_room_execution(
+                self.room_id,
+                {
+                    **start_payload,
+                    "clientActionId": "action:typed-start-unproven-legacy",
+                },
+            )
 
 
     def test_root_child_aggregate_blocks_manual_finalize(self) -> None:

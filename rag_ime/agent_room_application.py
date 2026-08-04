@@ -212,16 +212,18 @@ class RoomApplicationService:
         timestamp = self.clock_ms()
         identity = _stable_digest(root_id, client_action_id, "typed-start")
         post_id = f"room-post:user:{identity}"
-        started = self.kernel.start_defined_execution(
+        prepared = self.kernel.prepare_defined_execution_start(
             root_id=root_id,
             client_action_id=client_action_id,
             user_post_id=post_id,
+            room_id=room_id,
+            topic_id=str(room.get("activeTopicId") or ""),
             now_ms=timestamp,
         )
-        receipt_details = started["receipt"].get("details")
+        receipt_details = prepared["receipt"].get("details")
         if not isinstance(receipt_details, Mapping):
             raise RoomKernelFenceError("typed start receipt has no details")
-        timestamp = int(started["receipt"]["createdAtMs"])
+        timestamp = int(prepared["receipt"]["createdAtMs"])
         post_id = str(receipt_details.get("userPostId") or post_id)
         effective_client_action_id = str(
             receipt_details.get("clientActionId") or client_action_id
@@ -229,15 +231,32 @@ class RoomApplicationService:
         chronology_after_post_id = str(
             receipt_details.get("chronologyAfterPostId") or ""
         )
-        dispatch = started["dispatch"]
-        task = self.kernel.task(str(dispatch["taskId"]))
+        planned_dispatch = prepared.get("plannedDispatch")
+        if not isinstance(planned_dispatch, Mapping):
+            raise RoomKernelFenceError(
+                "typed start preparation has no planned ExecuteDispatch"
+            )
+        task_id = str(planned_dispatch.get("taskId") or "").strip()
+        if not task_id:
+            raise RoomKernelFenceError(
+                "typed start preparation has no defined Task"
+            )
+        prepared_topic_id = str(prepared.get("topicId") or "")
+        prepare_receipt_id = str(
+            prepared.get("prepareReceiptId")
+            or prepared["receipt"]["receiptId"]
+        )
+        timeline_room = {
+            **dict(room),
+            "activeTopicId": prepared_topic_id,
+        }
         user_post = {
             "schemaVersion": ROOM_POST_SCHEMA_VERSION,
             "postId": post_id,
             "roomId": room_id,
             "rootId": root_id,
             "generation": int(root["generation"]),
-            "taskId": str(dispatch["taskId"]),
+            "taskId": task_id,
             "authorActorRef": "user:local",
             "kind": "request",
             "visibility": "room",
@@ -251,6 +270,68 @@ class RoomApplicationService:
             },
             "createdAtMs": timestamp,
         }
+        authorization_events = self.public_timeline.publish_ingress(
+            room=timeline_room,
+            post=user_post,
+            client_message_id=effective_client_action_id,
+            route_decisions=[],
+            dispatches=[],
+            chronology_after_post_id=chronology_after_post_id,
+        )
+        authorization_event = next(
+            (
+                event
+                for event in authorization_events
+                if event.get("eventType") == "user_message"
+                and isinstance(event.get("payload"), Mapping)
+                and str(event["payload"].get("postId") or "") == post_id
+            ),
+            None,
+        )
+        if authorization_event is None:
+            authorization_event = (
+                self.kernel.defined_execution_start_authorization(
+                    root_id=root_id,
+                    prepare_receipt_id=prepare_receipt_id,
+                )
+            )
+        event_sequence = int(authorization_event["sequence"])
+        user_post["chronology"] = {
+            "schemaVersion": "wisdom-weasel.room-post-chronology.v1",
+            "roomEventId": str(authorization_event["eventId"]),
+            "roomEventSequence": event_sequence,
+            "createdAtMs": timestamp,
+            "afterPostId": chronology_after_post_id or None,
+            "orderKey": f"room-event:{event_sequence:020d}",
+        }
+        transaction = sqlite3.connect(self.kernel.db_path, timeout=10)
+        transaction.row_factory = sqlite3.Row
+        try:
+            transaction.execute("PRAGMA foreign_keys = ON")
+            transaction.execute("BEGIN IMMEDIATE")
+            user_post = self.projection.publish_post_in_transaction(
+                transaction,
+                user_post,
+            )
+            self.context.publish_post_in_transaction(
+                transaction,
+                user_post,
+            )
+            started = self.kernel.start_defined_execution(
+                root_id=root_id,
+                prepare_receipt_id=prepare_receipt_id,
+                user_post=user_post,
+                now_ms=timestamp,
+                _conn=transaction,
+            )
+            transaction.commit()
+        except BaseException:
+            transaction.rollback()
+            raise
+        finally:
+            transaction.close()
+        dispatch = started["dispatch"]
+        task = self.kernel.task(str(dispatch["taskId"]))
         dispatch_result = _queued_dispatch_result(
             facilitator,
             dispatch,
@@ -270,53 +351,20 @@ class RoomApplicationService:
                 dispatch.get("dependsOnDispatchIds") or []
             ),
         }
-        timeline_events = self.public_timeline.publish_ingress(
-            room=room,
-            post=user_post,
-            client_message_id=effective_client_action_id,
-            route_decisions=[route_decision],
-            dispatches=[dispatch_result],
-            chronology_after_post_id=chronology_after_post_id,
-        )
-        existing_post = next(
-            (
-                item
-                for item in self.projection.snapshot(room_id)["posts"]
-                if str(item.get("postId") or "") == post_id
-            ),
-            None,
-        )
-        if existing_post is not None:
-            user_post = dict(existing_post)
-        else:
-            user_event = next(
-                (
-                    event
-                    for event in timeline_events
-                    if event.get("eventType") == "user_message"
-                    and isinstance(event.get("payload"), Mapping)
-                    and str(event["payload"].get("postId") or "") == post_id
-                ),
-                None,
+        try:
+            timeline_events = self.public_timeline.publish_ingress(
+                room=timeline_room,
+                post=user_post,
+                client_message_id=effective_client_action_id,
+                route_decisions=[route_decision],
+                dispatches=[dispatch_result],
+                chronology_after_post_id=chronology_after_post_id,
             )
-            if user_event is None:
-                raise RoomKernelFenceError(
-                    "typed start has no authoritative Room event order"
-                )
-            event_sequence = int(user_event["sequence"])
-            user_post["chronology"] = {
-                "schemaVersion": "wisdom-weasel.room-post-chronology.v1",
-                "roomEventId": str(user_event["eventId"]),
-                "roomEventSequence": event_sequence,
-                "createdAtMs": timestamp,
-                "afterPostId": chronology_after_post_id or None,
-                "orderKey": f"room-event:{event_sequence:020d}",
-            }
-            self.projection.publish_post(user_post)
-        self.context.publish_post(user_post)
-        self.projection.sync_room(room_id, now_ms=timestamp)
-        if started["created"]:
+        finally:
+            # A retry after a crash between release and wake must kick the
+            # already-durable outbox entry again, even when it is a replay.
             self.wake_worker()
+        self.projection.sync_room(room_id, now_ms=timestamp)
         return {
             "schemaVersion": "rag-ime.room-start-execution.v1",
             "ok": True,
@@ -815,12 +863,62 @@ class RoomApplicationService:
         *,
         client_message_id: str,
         post: Mapping[str, object],
+        expected_answer_to_post_id: str = "",
+        expected_answer_to_root_id: str = "",
+        expected_answer_kind: str = "",
     ) -> dict[str, object]:
         """Rebuild the durable ingress result without creating new state."""
 
         room = self.rooms.get(room_id)
         root_id = str(post.get("rootId") or "")
         task_id = str(post.get("taskId") or "")
+        replay_identity = _message_identity(room_id, client_message_id)
+        try:
+            replay_anchor = self.requirements.anchor(
+                f"requirement-anchor:{replay_identity}"
+            )
+        except KeyError:
+            replay_anchor = None
+        replay_provenance = (
+            replay_anchor.get("provenance")
+            if isinstance(replay_anchor, Mapping)
+            else None
+        )
+        replay_topic_id = str(room.get("activeTopicId") or "")
+        answer_to_post_id = ""
+        answer_display_text = ""
+        answer_kind = ""
+        if (
+            isinstance(replay_provenance, Mapping)
+            and str(replay_provenance.get("roomId") or "") == room_id
+            and str(replay_provenance.get("clientMessageId") or "")
+            == client_message_id
+        ):
+            answer_to_post_id = str(
+                replay_provenance.get("questionPostId") or ""
+            )
+            answer_display_text = str(
+                replay_provenance.get("answerDisplayText") or ""
+            )
+            candidate_answer_kind = str(
+                replay_provenance.get("answerKind") or ""
+            )
+            if candidate_answer_kind in {"option", "custom"}:
+                answer_kind = candidate_answer_kind
+            replay_topic_id = str(
+                replay_provenance.get("topicId") or replay_topic_id
+            )
+        if expected_answer_to_post_id and (
+            answer_to_post_id != expected_answer_to_post_id
+            or str(post.get("rootId") or "") != expected_answer_to_root_id
+            or (
+                expected_answer_kind
+                and answer_kind != expected_answer_kind
+            )
+        ):
+            raise RoomKernelFenceError(
+                "durable clarification answer provenance does not match its retry"
+            )
         root = self.kernel.root(root_id)
         alignment_dispatches = self.kernel.requirement_alignment_dispatches(root_id)
         alignment_results: list[dict[str, object]] = []
@@ -850,7 +948,7 @@ class RoomApplicationService:
             target = self.rooms.participant(
                 str(alignment["targetParticipantId"])
             )
-            resume_identity = _message_identity(room_id, client_message_id)
+            resume_identity = replay_identity
             resume_id = (
                 "room-dispatch:"
                 + _stable_digest(
@@ -916,12 +1014,19 @@ class RoomApplicationService:
             else self.rooms.participant(str(root["facilitatorParticipantId"]))
         )
         timeline_dispatches = dispatch_results if resumed else alignment_results
+        timeline_room = {
+            **dict(room),
+            "activeTopicId": replay_topic_id,
+        }
         timeline_events = self.public_timeline.publish_ingress(
-            room=room,
+            room=timeline_room,
             post=post,
             client_message_id=client_message_id,
             route_decisions=route_decisions,
             dispatches=timeline_dispatches,
+            answer_to_post_id=answer_to_post_id,
+            answer_display_text=answer_display_text,
+            answer_kind=answer_kind,
         )
         self.projection.sync_room(
             room_id,
@@ -948,10 +1053,379 @@ class RoomApplicationService:
             "routeDecisions": route_decisions,
             "dispatches": dispatch_results,
             "alignmentDispatches": alignment_results,
-            "topicId": str(room.get("activeTopicId") or ""),
+            "topicId": replay_topic_id,
             "sessionTurnId": "",
             "post": dict(post),
             "timelineEvents": timeline_events,
+        }
+
+    def durable_message_post(
+        self,
+        room_id: str,
+        *,
+        client_message_id: str,
+    ) -> dict[str, object] | None:
+        """Return the durable user Post that proves local Room acceptance."""
+
+        identity = _message_identity(room_id, client_message_id)
+        return self.context.post_by_idempotency(
+            room_id=room_id,
+            idempotency_key=f"user-message:{identity}",
+        )
+
+    def replay_durable_message(
+        self,
+        room_id: str,
+        *,
+        client_message_id: str,
+        expected_answer_to_post_id: str = "",
+        expected_answer_to_root_id: str = "",
+        expected_answer_kind: str = "",
+    ) -> dict[str, object] | None:
+        """Finish public projection for one already-durable Room message."""
+
+        post = self.durable_message_post(
+            room_id,
+            client_message_id=client_message_id,
+        )
+        if post is None:
+            return None
+        return self._replay_post_response(
+            room_id,
+            client_message_id=client_message_id,
+            post=post,
+            expected_answer_to_post_id=expected_answer_to_post_id,
+            expected_answer_to_root_id=expected_answer_to_root_id,
+            expected_answer_kind=expected_answer_kind,
+        )
+
+    def resume_durable_answer(
+        self,
+        room_id: str,
+        *,
+        message: str,
+        client_message_id: str,
+        answer_to_post_id: str,
+        answer_to_root_id: str,
+        answer_kind: str,
+        attachment_ids: Sequence[str],
+    ) -> dict[str, object] | None:
+        """Recover one staged answer under the ordinary Room entry gate."""
+
+        room = self.rooms.get(room_id)
+        self.restore_participant_sessions(room)
+        room = self.rooms.get(room_id)
+        active_session_ids = [
+            str(value["sessionId"])
+            for value in room.get("participants", [])
+            if (
+                isinstance(value, Mapping)
+                and value.get("status") == "active"
+                and str(value.get("sessionId") or "").strip()
+            )
+        ]
+        with self.session_mode_gate.claim_room(active_session_ids):
+            return self._resume_durable_answer_claimed(
+                room_id,
+                message=message,
+                client_message_id=client_message_id,
+                answer_to_post_id=answer_to_post_id,
+                answer_to_root_id=answer_to_root_id,
+                answer_kind=answer_kind,
+                attachment_ids=attachment_ids,
+            )
+
+    def _resume_durable_answer_claimed(
+        self,
+        room_id: str,
+        *,
+        message: str,
+        client_message_id: str,
+        answer_to_post_id: str,
+        answer_to_root_id: str,
+        answer_kind: str,
+        attachment_ids: Sequence[str],
+    ) -> dict[str, object] | None:
+        """Recover a staged answer without releasing work before it is public."""
+
+        post = self.durable_message_post(
+            room_id,
+            client_message_id=client_message_id,
+        )
+        if post is None:
+            return None
+        identity = _message_identity(room_id, client_message_id)
+        anchor_id = f"requirement-anchor:{identity}"
+        anchor = self.requirements.anchor(anchor_id)
+        provenance = anchor.get("provenance")
+        if not isinstance(provenance, Mapping):
+            raise RoomKernelFenceError(
+                "durable clarification answer has no provenance"
+            )
+        normalized_answer_kind = str(
+            provenance.get("answerKind") or ""
+        )
+        prepared_topic_id = str(provenance.get("topicId") or "")
+        answer_display_text = str(
+            provenance.get("answerDisplayText") or ""
+        )
+        if (
+            str(anchor.get("rootId") or "") != answer_to_root_id
+            or str(post.get("rootId") or "") != answer_to_root_id
+            or str(provenance.get("roomId") or "") != room_id
+            or str(provenance.get("clientMessageId") or "")
+            != client_message_id
+            or str(provenance.get("questionPostId") or "")
+            != answer_to_post_id
+            or str(provenance.get("answerValue") or "") != message
+            or str(post.get("content") or "") != answer_display_text
+            or normalized_answer_kind not in {"option", "custom"}
+            or (
+                answer_kind
+                and normalized_answer_kind != answer_kind
+            )
+        ):
+            raise RoomKernelFenceError(
+                "durable clarification answer provenance does not match its retry"
+            )
+        pending = self.kernel.pending_user_wait(
+            room_id,
+            root_id=answer_to_root_id,
+            question_post_id=answer_to_post_id,
+        )
+        if pending is None:
+            return self._replay_post_response(
+                room_id,
+                client_message_id=client_message_id,
+                post=post,
+                expected_answer_to_post_id=answer_to_post_id,
+                expected_answer_to_root_id=answer_to_root_id,
+                expected_answer_kind=answer_kind,
+            )
+        requirement_catalog = self.requirements.catalog_revision(
+            f"requirement-catalog:{_stable_digest(answer_to_root_id, identity, 'answer-catalog')}"
+        )
+        if str(pending.get("state") or "") == "resumed":
+            replayed = self._replay_post_response(
+                room_id,
+                client_message_id=client_message_id,
+                post=post,
+                expected_answer_to_post_id=answer_to_post_id,
+                expected_answer_to_root_id=answer_to_root_id,
+                expected_answer_kind=answer_kind,
+            )
+            pending_payload = pending.get("payload")
+            if not isinstance(pending_payload, Mapping):
+                raise RoomKernelFenceError(
+                    "resumed clarification answer lost its continuation payload"
+                )
+            resume_dispatch_id = str(
+                pending_payload.get("resumeDispatchId") or ""
+            )
+            resume_receipt_id = str(
+                pending_payload.get("resumeReceiptId") or ""
+            )
+            replayed_dispatches = replayed.get("dispatches")
+            if (
+                not resume_dispatch_id
+                or not resume_receipt_id
+                or not isinstance(replayed_dispatches, list)
+                or len(replayed_dispatches) != 1
+                or str(replayed_dispatches[0].get("dispatchId") or "")
+                != resume_dispatch_id
+            ):
+                raise RoomKernelFenceError(
+                    "resumed clarification answer lost its authoritative Dispatch"
+                )
+            replayed.update(
+                {
+                    "requirementAnchor": dict(anchor),
+                    "requirementCatalog": requirement_catalog,
+                    "resumeReceipt": self.kernel.receipt(
+                        resume_receipt_id
+                    ),
+                    "continuationId": str(pending["continuationId"]),
+                }
+            )
+            return replayed
+        participant_id = str(pending["targetParticipantId"])
+        target = self.rooms.participant(participant_id)
+        if (
+            target.get("roomId") != room_id
+            or target.get("status") != "active"
+        ):
+            raise RoomKernelFenceError(
+                "pending user wait participant is no longer active"
+            )
+        resume_dispatch = self._prepared_answer_dispatch(
+            identity=identity,
+            pending=pending,
+            post_id=str(post["postId"]),
+            target=target,
+            attachment_ids=attachment_ids,
+        )
+        return self._release_prepared_user_answer(
+            room=self.rooms.get(room_id),
+            pending=pending,
+            target=target,
+            user_post=post,
+            answer_anchor=anchor,
+            requirement_catalog=requirement_catalog,
+            client_message_id=client_message_id,
+            answer_display_text=answer_display_text,
+            normalized_answer_kind=normalized_answer_kind,
+            resume_dispatch=resume_dispatch,
+            topic_id=prepared_topic_id,
+        )
+
+    def _prepared_answer_dispatch(
+        self,
+        *,
+        identity: str,
+        pending: Mapping[str, object],
+        post_id: str,
+        target: Mapping[str, object],
+        attachment_ids: Sequence[str],
+    ) -> dict[str, object]:
+        target_session_id = str(target["sessionId"])
+        resume_dispatch = self._dispatch_envelope(
+            identity=identity,
+            root_id=str(pending["rootId"]),
+            task_id=str(pending["taskId"]),
+            post_id=post_id,
+            target=target,
+            ordinal=0,
+            intent_kind="resume",
+            capability_epoch=self._next_capability_epoch(target_session_id),
+            depends_on_dispatch_ids=[],
+            alignment_ordinal=None,
+            attachment_ids=attachment_ids,
+        )
+        resume_dispatch.update(
+            {
+                "parentDispatchId": str(pending["parentDispatchId"]),
+                "generation": int(pending["generation"]),
+                "hopCount": int(pending.get("parentHopCount") or 0) + 1,
+                "depth": int(pending.get("parentDepth") or 0),
+            }
+        )
+        return resume_dispatch
+
+    def _release_prepared_user_answer(
+        self,
+        *,
+        room: Mapping[str, object],
+        pending: Mapping[str, object],
+        target: Mapping[str, object],
+        user_post: Mapping[str, object],
+        answer_anchor: Mapping[str, object],
+        requirement_catalog: Mapping[str, object],
+        client_message_id: str,
+        answer_display_text: str,
+        normalized_answer_kind: str,
+        resume_dispatch: Mapping[str, object],
+        topic_id: str,
+    ) -> dict[str, object]:
+        room_id = str(user_post["roomId"])
+        root_id = str(pending["rootId"])
+        task_id = str(pending["taskId"])
+        question_post_id = str(pending["questionPostId"])
+        timestamp = int(user_post["createdAtMs"])
+        timeline_room = {
+            **dict(room),
+            "activeTopicId": str(topic_id or ""),
+        }
+        authorization_events = self.public_timeline.publish_ingress(
+            room=timeline_room,
+            post=user_post,
+            client_message_id=client_message_id,
+            route_decisions=[],
+            dispatches=[],
+            answer_to_post_id=question_post_id,
+            answer_display_text=answer_display_text,
+            answer_kind=normalized_answer_kind,
+        )
+        transaction = sqlite3.connect(self.kernel.db_path, timeout=10)
+        transaction.row_factory = sqlite3.Row
+        try:
+            transaction.execute("PRAGMA foreign_keys = ON")
+            transaction.execute("BEGIN IMMEDIATE")
+            resumed = self.kernel.resume_user_wait_after_public_in_transaction(
+                transaction,
+                continuation_id=str(pending["continuationId"]),
+                dispatch_payload=resume_dispatch,
+                question_post_id=question_post_id,
+                answer_root_id=root_id,
+                answer_post=user_post,
+                answer_anchor_id=str(answer_anchor["anchorId"]),
+                client_message_id=client_message_id,
+                answer_display_text=answer_display_text,
+                answer_kind=normalized_answer_kind,
+                topic_id=str(topic_id or ""),
+                now_ms=timestamp,
+            )
+            transaction.commit()
+        except BaseException:
+            transaction.rollback()
+            raise
+        finally:
+            transaction.close()
+        dispatch = resumed["dispatch"]
+        dispatch_result = _queued_dispatch_result(
+            target,
+            dispatch,
+            was_created=True,
+            phase="resume",
+        )
+        route_decision = {
+            "routingPolicy": "resume_wait",
+            "reason": "用户回答澄清问题",
+            "targetParticipantId": str(target["id"]),
+            "phase": "resume",
+            "rootId": root_id,
+            "taskId": task_id,
+            "dispatchId": dispatch["dispatchId"],
+        }
+        try:
+            route_events = self.public_timeline.publish_ingress(
+                room=timeline_room,
+                post=user_post,
+                client_message_id=client_message_id,
+                route_decisions=[route_decision],
+                dispatches=[dispatch_result],
+                answer_to_post_id=question_post_id,
+                answer_display_text=answer_display_text,
+                answer_kind=normalized_answer_kind,
+            )
+        finally:
+            self.wake_worker()
+        self.projection.sync_room(room_id, now_ms=timestamp)
+        return {
+            "schemaVersion": "rag-ime.agent-room-message.v1",
+            "ok": True,
+            "accepted": True,
+            "resumed": True,
+            "status": "queued",
+            "executionOwner": "kernel",
+            "roomId": room_id,
+            "roomTurnId": root_id,
+            "rootId": root_id,
+            "taskId": task_id,
+            "clientMessageId": client_message_id,
+            "participant": target,
+            "participants": [target],
+            "routeDecision": route_decision,
+            "routeDecisions": [route_decision],
+            "dispatches": [dispatch_result],
+            "alignmentDispatches": [],
+            "topicId": str(topic_id or ""),
+            "sessionTurnId": "",
+            "post": dict(user_post),
+            "requirementAnchor": dict(answer_anchor),
+            "requirementCatalog": dict(requirement_catalog),
+            "timelineEvents": [*authorization_events, *route_events],
+            "resumeReceipt": resumed["receipt"],
+            "continuationId": str(pending["continuationId"]),
         }
 
     def _resume_pending_user_wait(
@@ -1021,6 +1495,7 @@ class RoomApplicationService:
         answer_anchor_provenance = {
             "surface": "room",
             "roomId": room_id,
+            "topicId": str(room.get("activeTopicId") or ""),
             "clientMessageId": client_message_id,
             "answerToContinuationId": str(pending["continuationId"]),
             "questionPostId": str(pending["questionPostId"]),
@@ -1064,33 +1539,29 @@ class RoomApplicationService:
             },
             "createdAtMs": timestamp,
         }
-        target_session_id = str(target["sessionId"])
-        resume_dispatch = self._dispatch_envelope(
+        resume_dispatch = self._prepared_answer_dispatch(
             identity=identity,
-            root_id=root_id,
-            task_id=task_id,
+            pending=pending,
             post_id=post_id,
             target=target,
-            ordinal=0,
-            intent_kind="resume",
-            capability_epoch=self._next_capability_epoch(target_session_id),
-            depends_on_dispatch_ids=[],
-            alignment_ordinal=None,
             attachment_ids=attachment_ids,
-        )
-        resume_dispatch.update(
-            {
-                "parentDispatchId": parent_dispatch_id,
-                "generation": int(pending["generation"]),
-                "hopCount": int(pending.get("parentHopCount") or 0) + 1,
-                "depth": int(pending.get("parentDepth") or 0),
-            }
         )
         transaction = sqlite3.connect(self.kernel.db_path, timeout=10)
         transaction.row_factory = sqlite3.Row
         try:
             transaction.execute("PRAGMA foreign_keys = ON")
             transaction.execute("BEGIN IMMEDIATE")
+            prior_preparation = (
+                self.kernel.user_wait_answer_preparation_in_transaction(
+                    transaction,
+                    root_id=root_id,
+                    continuation_id=str(pending["continuationId"]),
+                )
+            )
+            if prior_preparation is not None:
+                raise RoomKernelFenceError(
+                    "user wait already has a different prepared answer"
+                )
             answer_anchor, _ = self.requirements.append_anchor_in_transaction(
                 transaction,
                 anchor_id=anchor_id,
@@ -1158,7 +1629,7 @@ class RoomApplicationService:
                 content=answer_display_text,
                 created_at_ms=timestamp,
             )
-            resumed = self.kernel.resume_user_wait_in_transaction(
+            self.kernel.prepare_user_wait_answer_in_transaction(
                 transaction,
                 continuation_id=str(pending["continuationId"]),
                 dispatch_payload=resume_dispatch,
@@ -1166,6 +1637,10 @@ class RoomApplicationService:
                 answer_root_id=root_id,
                 answer_post_id=post_id,
                 answer_anchor_id=anchor_id,
+                client_message_id=client_message_id,
+                answer_display_text=answer_display_text,
+                answer_kind=normalized_answer_kind,
+                topic_id=str(room.get("activeTopicId") or ""),
                 now_ms=timestamp,
             )
             transaction.commit()
@@ -1174,61 +1649,19 @@ class RoomApplicationService:
             raise
         finally:
             transaction.close()
-        dispatch = resumed["dispatch"]
-        dispatch_result = _queued_dispatch_result(
-            target,
-            dispatch,
-            was_created=True,
-            phase="resume",
-        )
-        route_decision = {
-            "routingPolicy": "resume_wait",
-            "reason": "用户回答澄清问题",
-            "targetParticipantId": participant_id,
-            "phase": "resume",
-            "rootId": root_id,
-            "taskId": task_id,
-            "dispatchId": dispatch["dispatchId"],
-        }
-        timeline_events = self.public_timeline.publish_ingress(
+        return self._release_prepared_user_answer(
             room=room,
-            post=user_post,
+            pending=pending,
+            target=target,
+            user_post=user_post,
+            answer_anchor=answer_anchor,
+            requirement_catalog=requirement_catalog,
             client_message_id=client_message_id,
-            route_decisions=[route_decision],
-            dispatches=[dispatch_result],
-            answer_to_post_id=str(pending["questionPostId"]),
             answer_display_text=answer_display_text,
-            answer_kind=normalized_answer_kind,
+            normalized_answer_kind=normalized_answer_kind,
+            resume_dispatch=resume_dispatch,
+            topic_id=str(room.get("activeTopicId") or ""),
         )
-        self.projection.sync_room(room_id, now_ms=timestamp)
-        self.wake_worker()
-        return {
-            "schemaVersion": "rag-ime.agent-room-message.v1",
-            "ok": True,
-            "accepted": True,
-            "resumed": True,
-            "status": "queued",
-            "executionOwner": "kernel",
-            "roomId": room_id,
-            "roomTurnId": root_id,
-            "rootId": root_id,
-            "taskId": task_id,
-            "clientMessageId": client_message_id,
-            "participant": target,
-            "participants": [target],
-            "routeDecision": route_decision,
-            "routeDecisions": [route_decision],
-            "dispatches": [dispatch_result],
-            "alignmentDispatches": [],
-            "topicId": str(room.get("activeTopicId") or ""),
-            "sessionTurnId": "",
-            "post": user_post,
-            "requirementAnchor": answer_anchor,
-            "requirementCatalog": requirement_catalog,
-            "timelineEvents": timeline_events,
-            "resumeReceipt": resumed["receipt"],
-            "continuationId": str(pending["continuationId"]),
-        }
 
 
     def _post_message_claimed(
@@ -1250,12 +1683,26 @@ class RoomApplicationService:
         room = self.rooms.get(room_id)
         self.restore_participant_sessions(room)
         room = self.rooms.get(room_id)
-        replay_identity = _message_identity(room_id, client_message_id)
-        replay_post = self.context.post_by_idempotency(
-            room_id=room_id,
-            idempotency_key=f"user-message:{replay_identity}",
+        replay_post = self.durable_message_post(
+            room_id,
+            client_message_id=client_message_id,
         )
         if replay_post is not None:
+            if answer_to_post_id:
+                recovered_answer = self._resume_durable_answer_claimed(
+                    room_id,
+                    message=message,
+                    client_message_id=client_message_id,
+                    answer_to_post_id=answer_to_post_id,
+                    answer_to_root_id=answer_to_root_id,
+                    answer_kind=answer_kind,
+                    attachment_ids=attachment_ids,
+                )
+                if recovered_answer is None:
+                    raise RoomKernelFenceError(
+                        "durable clarification answer disappeared during recovery"
+                    )
+                return recovered_answer
             return self._replay_post_response(
                 room_id,
                 client_message_id=client_message_id,

@@ -161,6 +161,18 @@ class RequirementGovernanceStore:
             raise KeyError(anchor_id)
         return bytes(row["original_bytes"])
 
+    def anchor(self, anchor_id: str) -> dict[str, object]:
+        """Read one durable requirement anchor, including replay provenance."""
+
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM room_v2_requirement_anchors WHERE anchor_id = ?",
+                (_required(anchor_id, "anchor_id"),),
+            ).fetchone()
+        if row is None:
+            raise KeyError(anchor_id)
+        return _anchor_payload(row)
+
     def prepare_dispatch_binding(
         self,
         *,

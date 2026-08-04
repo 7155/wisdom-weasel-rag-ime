@@ -328,7 +328,7 @@ describe('Rooms experience', () => {
     if (!answerMessage) {
       throw new Error('expected the accepted answer to render as a chronological user message');
     }
-    expect(answerMessage).toHaveTextContent('方案 B');
+    expect(answerMessage).toHaveTextContent('B');
     expect(resolvedPrompt.compareDocumentPosition(answerMessage) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(document.querySelectorAll('.room-user-message')).toHaveLength(1);
     expect(screen.getByRole('button', { name: '等待当前任务完成' })).toBeDisabled();
@@ -646,7 +646,7 @@ describe('Rooms experience', () => {
     expect(timeline.getByText('先选择一个发布方式。')).toBeInTheDocument();
     const answeredCard = within(timeline.getByRole('region', { name: '需要回答：选择发布方式' }));
     expect(answeredCard.getByText('回答保留在下一条用户消息中')).toBeInTheDocument();
-    expect(timeline.getByText('方案 B').closest('.room-user-message')).toBeInTheDocument();
+    expect(timeline.getByText('B').closest('.room-user-message')).toBeInTheDocument();
     expect(answeredCard.queryByRole('button', { name: '其他' })).not.toBeInTheDocument();
     expect(answeredCard.queryAllByRole('radio')).toHaveLength(0);
     expect(document.querySelectorAll('.room-question-option')).toHaveLength(0);
