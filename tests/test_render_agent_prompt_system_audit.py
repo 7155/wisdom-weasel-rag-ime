@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -528,6 +530,56 @@ class RenderAgentPromptSystemAuditTests(unittest.TestCase):
             self.assertIn("本项目 Skill", html)
             self.assertNotIn("__AGENT_PROMPT_AUDIT_DATA__", html)
 
+    def test_rendered_bundle_reads_contexts_from_the_recorded_evidence_root(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            evidence_root = root / "evidence"
+            agent = evidence_root / "provider-agent-deterministic"
+            room = evidence_root / "provider-room-deterministic"
+            for scenario in (agent, room):
+                (scenario / "calls").mkdir(parents=True)
+                (scenario / "audit.json").write_text("{}", encoding="utf-8")
+                (scenario / "README.md").write_text("evidence", encoding="utf-8")
+            (agent / "calls" / "call-001.json").write_text(
+                json.dumps(
+                    {
+                        "providerContext": {
+                            "systemPrompt": "standalone evidence probe",
+                            "messages": [],
+                            "tools": [],
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output = root / "rendered"
+            audit = {**self.audit, "deterministicEvidenceRoot": str(evidence_root)}
+
+            AUDIT.render_audit(audit, output)
+
+            html = (output / "index.html").read_text(encoding="utf-8")
+            payload_match = re.search(
+                r'<script id="audit-data" type="application/json">(.*?)</script>',
+                html,
+                re.DOTALL,
+            )
+            self.assertIsNotNone(payload_match)
+            payload = json.loads(payload_match.group(1))
+            contexts = {item["key"]: item for item in payload["contexts"]}
+            self.assertTrue(contexts["agent"]["available"])
+            self.assertTrue(contexts["room"]["available"])
+            self.assertEqual(len(contexts["agent"]["calls"]), 1)
+            self.assertEqual(
+                contexts["agent"]["calls"][0]["systemPrompt"],
+                "standalone evidence probe",
+            )
+            review_target = agent / "README.md"
+            review_link = os.path.relpath(review_target, start=output)
+            self.assertIn(
+                f"[provider-agent-deterministic/README.md](<{review_link}>)",
+                (output / "review.md").read_text(encoding="utf-8"),
+            )
+
 
 class SiblingRepositoryRootTests(unittest.TestCase):
     """Sibling repositories resolve through Git's common directory.
@@ -605,6 +657,64 @@ class SiblingRepositoryRootTests(unittest.TestCase):
                 AUDIT._sibling_repository_root(somewhere),
                 somewhere.parent,
             )
+
+    def test_explicit_sibling_root_environment_override_is_authoritative(self) -> None:
+        configured = Path("/opt/paw-audit-siblings")
+        self.assertEqual(
+            AUDIT._configured_sibling_repository_root(
+                Path("/standalone/release-clone"),
+                environ={"RAG_IME_AUDIT_SIBLING_ROOT": str(configured)},
+            ),
+            configured,
+        )
+
+    def test_sibling_root_environment_override_must_be_absolute(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must be an absolute path"):
+            AUDIT._configured_sibling_repository_root(
+                Path("/standalone/release-clone"),
+                environ={"RAG_IME_AUDIT_SIBLING_ROOT": "../siblings"},
+            )
+
+    def test_explicit_evidence_environment_override_is_authoritative(self) -> None:
+        configured = Path("/opt/paw-audit-evidence")
+        self.assertEqual(
+            AUDIT._configured_deterministic_evidence_root(
+                Path("/standalone/release-clone"),
+                environ={"RAG_IME_AUDIT_EVIDENCE_ROOT": str(configured)},
+            ),
+            configured,
+        )
+
+    def test_evidence_environment_override_must_be_absolute(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must be an absolute path"):
+            AUDIT._configured_deterministic_evidence_root(
+                Path("/standalone/release-clone"),
+                environ={"RAG_IME_AUDIT_EVIDENCE_ROOT": "audit/evidence"},
+            )
+
+    def test_missing_explicit_evidence_root_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            missing = Path(raw) / "missing-evidence"
+            audit = AUDIT.build_audit(evidence_root=missing)
+
+        self.assertEqual(audit["deterministicEvidenceRoot"], str(missing))
+        self.assertTrue(
+            all(not item["available"] for item in audit["deterministicEvidence"])
+        )
+        prompt_ids = {
+            item["prompt_id"]
+            for item in audit["promptRecords"]
+            if isinstance(item, dict)
+        }
+        self.assertNotIn("pi.runtime.workflow.agent-example", prompt_ids)
+        agent_route = next(
+            item for item in audit["modelRequestRoutes"]
+            if item["id"] == "agent-session"
+        )
+        self.assertIn(
+            "pi.runtime.workflow.agent-example",
+            agent_route["missingPromptIds"],
+        )
 
     def test_evidence_prefers_a_local_capture(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

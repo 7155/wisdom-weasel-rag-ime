@@ -13,6 +13,7 @@ import argparse
 import ast
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -73,6 +74,30 @@ def _sibling_repository_root(root: Path) -> Path:
     return repository.parent if repository is not None else root.parent
 
 
+def _configured_sibling_repository_root(
+    root: Path,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> Path:
+    """Resolve sibling repositories, with an explicit standalone-clone override.
+
+    Release/acceptance clones can live away from the product's sibling source
+    repositories, so Git's common directory cannot discover Pi, Cat Cafe, or
+    VCPToolBox.  The opt-in override keeps that boundary explicit and absolute;
+    without it, the historical canonical-checkout/worktree resolution remains
+    unchanged and missing references still fail closed in the audit.
+    """
+
+    environment = os.environ if environ is None else environ
+    configured = str(environment.get("RAG_IME_AUDIT_SIBLING_ROOT") or "").strip()
+    if not configured:
+        return _sibling_repository_root(root)
+    override = Path(configured).expanduser()
+    if not override.is_absolute():
+        raise ValueError("RAG_IME_AUDIT_SIBLING_ROOT must be an absolute path")
+    return override
+
+
 def _deterministic_evidence_root(root: Path) -> Path:
     """Where the machine-local deterministic Provider evidence lives.
 
@@ -109,11 +134,28 @@ def _deterministic_evidence_root(root: Path) -> Path:
     return local
 
 
-_SIBLING_ROOT = _sibling_repository_root(ROOT)
+def _configured_deterministic_evidence_root(
+    root: Path,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> Path:
+    """Resolve ignored runtime evidence for a standalone acceptance clone."""
+
+    environment = os.environ if environ is None else environ
+    configured = str(environment.get("RAG_IME_AUDIT_EVIDENCE_ROOT") or "").strip()
+    if not configured:
+        return _deterministic_evidence_root(root)
+    override = Path(configured).expanduser()
+    if not override.is_absolute():
+        raise ValueError("RAG_IME_AUDIT_EVIDENCE_ROOT must be an absolute path")
+    return override
+
+
+_SIBLING_ROOT = _configured_sibling_repository_root(ROOT)
 DEFAULT_PI_ROOT = _SIBLING_ROOT / "pi-rag-ime-runtime"
 DEFAULT_CAFE_ROOT = _SIBLING_ROOT / "clowder-ai"
 DEFAULT_VCP_ROOT = _SIBLING_ROOT / "VCPToolBox"
-DETERMINISTIC_EVIDENCE_ROOT = _deterministic_evidence_root(ROOT)
+DETERMINISTIC_EVIDENCE_ROOT = _configured_deterministic_evidence_root(ROOT)
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -902,11 +944,15 @@ PROMPT_SYMBOL_CLASSIFICATION = {
     "deepseek_memory_organizer.py::_memory_book_recovery_prompt": "background-prompt",
     "deepseek_memory_organizer.py::_memory_book_system_prompt": "background-prompt",
     "deepseek_memory_organizer.py::_memory_curation_recovery_prompt": "background-prompt",
+    "deepseek_memory_organizer.py::_memory_curation_semantic_repair_prompt": "background-prompt",
     "deepseek_memory_organizer.py::_memory_curation_system_prompt": "background-prompt",
+    "deepseek_memory_organizer.py::_memory_curation_verifier_prompt": "background-prompt",
     "deepseek_memory_organizer.py::_owner_memory_recovery_prompt": "background-prompt",
     "deepseek_memory_organizer.py::_owner_memory_system_prompt": "background-prompt",
     "deepseek_memory_organizer.py::_phrase_pinyin_repair_system_prompt": "background-prompt",
     "deepseek_memory_organizer.py::_role_book_curation_system_prompt": "background-prompt",
+    "deepseek_memory_organizer.py::_semantic_curation_prompt_bundle": "bounded-prompt-input",
+    "historical_memory_curation.py::ATOM_FIRST_HISTORICAL_INSTRUCTION": "background-prompt",
     "historical_memory_curation.py::DEFAULT_HISTORICAL_CURATION_INSTRUCTION": "background-prompt",
     "memory_model_executor.py::_session_prompt": "background-prompt",
     "memory_generator.py::_core_optimization_system_prompt": "background-prompt",
@@ -2889,13 +2935,16 @@ def _reference_comparison(cafe_root: Path, vcp_root: Path) -> dict[str, object]:
     }
 
 
-def _deterministic_provider_evidence() -> list[dict[str, object]]:
+def _deterministic_provider_evidence(
+    *,
+    evidence_root: Path = DETERMINISTIC_EVIDENCE_ROOT,
+) -> list[dict[str, object]]:
     evidence: list[dict[str, object]] = []
     for scenario, label, directory in (
         ("agent-session", "普通 Agent", "provider-agent-deterministic"),
         ("project-collaboration", "三成员 Room", "provider-room-deterministic"),
     ):
-        audit_path = DETERMINISTIC_EVIDENCE_ROOT / directory / "audit.json"
+        audit_path = evidence_root / directory / "audit.json"
         item: dict[str, object] = {
             "scenario": scenario,
             "label": label,
@@ -2926,8 +2975,12 @@ def _deterministic_provider_evidence() -> list[dict[str, object]]:
     return evidence
 
 
-def _deterministic_calls(directory: str) -> list[dict[str, object]]:
-    calls_dir = DETERMINISTIC_EVIDENCE_ROOT / directory / "calls"
+def _deterministic_calls(
+    directory: str,
+    *,
+    evidence_root: Path = DETERMINISTIC_EVIDENCE_ROOT,
+) -> list[dict[str, object]]:
+    calls_dir = evidence_root / directory / "calls"
     if not calls_dir.is_dir():
         return []
     calls = [
@@ -3004,9 +3057,18 @@ def _tool_result_text(call: Mapping[str, object], tool_name: str) -> str:
     return ""
 
 
-def _pi_runtime_prompt_records() -> list[PromptRecord]:
-    agent_calls = _deterministic_calls("provider-agent-deterministic")
-    room_calls = _deterministic_calls("provider-room-deterministic")
+def _pi_runtime_prompt_records(
+    *,
+    evidence_root: Path = DETERMINISTIC_EVIDENCE_ROOT,
+) -> list[PromptRecord]:
+    agent_calls = _deterministic_calls(
+        "provider-agent-deterministic",
+        evidence_root=evidence_root,
+    )
+    room_calls = _deterministic_calls(
+        "provider-room-deterministic",
+        evidence_root=evidence_root,
+    )
     if not agent_calls and not room_calls:
         return []
 
@@ -3243,16 +3305,19 @@ def build_audit(
     pi_root: Path = DEFAULT_PI_ROOT,
     cafe_root: Path = DEFAULT_CAFE_ROOT,
     vcp_root: Path = DEFAULT_VCP_ROOT,
+    evidence_root: Path = DETERMINISTIC_EVIDENCE_ROOT,
 ) -> dict[str, object]:
     records = (
         _ordinary_prompt_records()
         + _room_prompt_records()
         + _memory_prompt_records()
         + _auxiliary_prompt_records()
-        + _pi_runtime_prompt_records()
+        + _pi_runtime_prompt_records(evidence_root=evidence_root)
     )
     unclassified = unclassified_prompt_symbols(ROOT)
-    deterministic_evidence = _deterministic_provider_evidence()
+    deterministic_evidence = _deterministic_provider_evidence(
+        evidence_root=evidence_root,
+    )
     deterministic_passed = bool(deterministic_evidence) and all(
         item.get("available") is True and item.get("allChecksPassed") is True
         for item in deterministic_evidence
@@ -3262,6 +3327,7 @@ def build_audit(
         "schemaVersion": SCHEMA_VERSION,
         "productRoot": str(ROOT),
         "piRoot": str(pi_root),
+        "deterministicEvidenceRoot": str(evidence_root),
         "promptRecords": [record.payload() for record in records],
         "promptSymbolInventory": {
             "discovered": discovered_prompt_symbols(ROOT),
@@ -3448,7 +3514,11 @@ def _markdown_references(value: Mapping[str, object]) -> str:
     return "\n".join(lines)
 
 
-def _markdown_review(audit: Mapping[str, object]) -> str:
+def _markdown_review(
+    audit: Mapping[str, object],
+    *,
+    output: Path,
+) -> str:
     records = audit["promptRecords"]
     assert isinstance(records, list)
     categories: dict[str, dict[str, int]] = {}
@@ -3528,10 +3598,17 @@ def _markdown_review(audit: Mapping[str, object]) -> str:
             if item.get("available") is True and item.get("allChecksPassed") is True
             else "MISSING/FAIL"
         )
+        review_path = Path(str(audit["deterministicEvidenceRoot"])) / str(
+            item["reviewPath"]
+        )
+        try:
+            review_link = os.path.relpath(review_path, start=output)
+        except ValueError:
+            review_link = str(review_path)
         lines.append(
             f"| {item['label']} | {item.get('providerCallCount', '-')} | "
             f"{item.get('toolExecutionCount', '-')} | {item.get('compactionCount', '-')} | "
-            f"`{status}` | [{item['reviewPath']}]({item['reviewPath']}) |"
+            f"`{status}` | [{item['reviewPath']}](<{review_link}>) |"
         )
 
     lines.extend(
@@ -3588,7 +3665,7 @@ def render_audit(audit: Mapping[str, object], output: Path) -> None:
         encoding="utf-8",
     )
     (output / "review.md").write_text(
-        _markdown_review(audit),
+        _markdown_review(audit, output=output),
         encoding="utf-8",
     )
     findings = audit["findings"]
@@ -3641,7 +3718,7 @@ def render_audit(audit: Mapping[str, object], output: Path) -> None:
     render_audit_html(
         audit,
         output=output / "index.html",
-        audit_root=output,
+        audit_root=Path(str(audit["deterministicEvidenceRoot"])),
     )
 
 
