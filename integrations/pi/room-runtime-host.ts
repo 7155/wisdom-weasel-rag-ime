@@ -28,6 +28,7 @@ export type RoomDispatchParams = {
   rootId: string;
   dispatchId: string;
   generation: number;
+  capabilityEpoch: number;
   dispatchAttempt: number;
   idempotencyKey: string;
   leaseToken: string;
@@ -40,9 +41,31 @@ export type RoomDispatchParams = {
 };
 
 export type RoomCancelParams = {
+  cancelId: string;
   sessionId: string;
   rootId: string;
+  dispatchId: string;
   generation: number;
+  turnId: string;
+  capabilityEpoch: number;
+};
+
+export type RoomCancellationSurface =
+  | "provider"
+  | "tool"
+  | "exec"
+  | "retry"
+  | "compaction"
+  | "branch_summary"
+  | "timer"
+  | "continuation"
+  | "session";
+
+export type RuntimeSurfaceTerminationReceipt = {
+  schemaVersion: "wisdom-weasel.runtime-surface-termination-receipt.v1";
+  surface: RoomCancellationSurface;
+  state: "terminated" | "requested" | "unknown";
+  targetIds: string[];
 };
 
 export type RoomDispatchReceipt = {
@@ -54,6 +77,7 @@ export type RoomDispatchReceipt = {
   dispatchId: string;
   generation: number;
   turnId: string;
+  capabilityEpoch: number;
   duplicate?: boolean;
 };
 
@@ -61,11 +85,20 @@ export type RoomCancelReceipt = {
   schemaVersion: "wisdom-weasel.room-runtime-receipt.v1";
   receiptKind: "cancel_applied";
   status: "applied";
+  cancelId: string;
   sessionId: string;
   rootId: string;
+  dispatchId: string;
   generation: number;
+  turnId: string;
+  capabilityEpoch: number;
   cancelledContinuationIds: string[];
   activeRunAborted: boolean;
+  pendingTargets: RoomCancellationSurface[];
+  cancellationSurfaces: Record<
+    RoomCancellationSurface,
+    RuntimeSurfaceTerminationReceipt
+  >;
 };
 
 export type RoomRuntimeRequest =

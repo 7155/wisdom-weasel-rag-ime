@@ -316,12 +316,15 @@ def main() -> int:
                 "idempotencyKey": "root:staged-e2e/a", "leaseToken": "lease:a",
                 "message": "Inspect package.json and keep the bounded run active.",
             })
+            turn_id = str(first.get("turnId") or "").strip()
+            if not turn_id:
+                raise RuntimeError("staged Runtime Host dispatch omitted its turn lineage")
             debug_context: dict[str, object] | None = None
             for attempt in range(20):
                 inspected = request(
                     f"debug-{attempt}",
                     "session.debug.context",
-                    {"sessionId": "session:staged-e2e", "turnId": str(first.get("turnId") or "")},
+                    {"sessionId": "session:staged-e2e", "turnId": turn_id},
                 )
                 if inspected.get("available") is True and isinstance(inspected.get("context"), dict):
                     debug_context = inspected["context"]
@@ -393,9 +396,18 @@ def main() -> int:
                 raise RuntimeError(
                     "staged Runtime Host did not preserve prompt/follow-up delivery"
                 )
-            cancelled = request("cancel", "room.cancel", {
-                "sessionId": "session:staged-e2e", "rootId": "root:staged-e2e", "generation": 2,
-            })
+            cancel_lineage = {
+                "cancelId": "cancel:staged-e2e",
+                "sessionId": "session:staged-e2e",
+                "rootId": "root:staged-e2e",
+                "dispatchId": "dispatch:a",
+                "generation": 2,
+                "turnId": turn_id,
+                "capabilityEpoch": 1,
+            }
+            cancelled = request("cancel", "room.cancel", cancel_lineage)
+            if any(cancelled.get(key) != value for key, value in cancel_lineage.items()):
+                raise RuntimeError("staged Runtime Host returned mismatched cancel lineage")
             surfaces = cancelled.get("cancellationSurfaces")
             expected = {"provider", "tool", "exec", "retry", "compaction", "branch_summary", "timer", "continuation", "session"}
             if not isinstance(surfaces, dict) or set(surfaces) != expected:

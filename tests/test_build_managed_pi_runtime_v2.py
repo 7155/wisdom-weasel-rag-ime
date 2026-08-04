@@ -287,10 +287,13 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertEqual(script.count('"capabilityEpoch": 1,'), 3)
-        self.assertEqual(script.count('"dispatchId": "dispatch:a"'), 2)
+        self.assertEqual(script.count('"capabilityEpoch": 1,'), 4)
+        self.assertEqual(script.count('"dispatchId": "dispatch:a"'), 3)
         self.assertEqual(script.count('"dispatchAttempt": 0,'), 2)
         self.assertIn('"idempotencyKey": "root:staged-e2e/continuation-b"', script)
+        self.assertIn('"cancelId": "cancel:staged-e2e"', script)
+        self.assertIn('"turnId": turn_id', script)
+        self.assertIn("mismatched cancel lineage", script)
         self.assertIn('"manifestSha256": manifest_sha256', script)
         self.assertIn('"stage": "implementation"', script)
         self.assertIn('"workspace_read",', script)
@@ -304,6 +307,39 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             "room.cancel",
         ):
             self.assertIn(f'"{method}"', script)
+
+    def test_packaged_adapter_exposes_current_room_cancel_lineage(self) -> None:
+        adapter = (ROOT / "integrations" / "pi" / "room-runtime-host.ts").read_text(
+            encoding="utf-8"
+        )
+
+        cancel_params = adapter.split("export type RoomCancelParams = {", 1)[1].split(
+            "};", 1
+        )[0]
+        for field in (
+            "cancelId: string;",
+            "sessionId: string;",
+            "rootId: string;",
+            "dispatchId: string;",
+            "generation: number;",
+            "turnId: string;",
+            "capabilityEpoch: number;",
+        ):
+            self.assertIn(field, cancel_params)
+        dispatch_params = adapter.split(
+            "export type RoomDispatchParams = {", 1
+        )[1].split("};", 1)[0]
+        dispatch_receipt = adapter.split(
+            "export type RoomDispatchReceipt = {", 1
+        )[1].split("};", 1)[0]
+        self.assertIn("capabilityEpoch: number;", dispatch_params)
+        self.assertIn("capabilityEpoch: number;", dispatch_receipt)
+        self.assertIn("pendingTargets: RoomCancellationSurface[];", adapter)
+        self.assertIn("cancellationSurfaces: Record<", adapter)
+        self.assertIn(
+            'schemaVersion: "wisdom-weasel.runtime-surface-termination-receipt.v1";',
+            adapter,
+        )
 
     def test_product_owns_all_managed_skills(self) -> None:
         skills_root = ROOT / "integrations" / "pi" / "skills"
