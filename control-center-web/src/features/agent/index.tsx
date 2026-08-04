@@ -85,6 +85,8 @@ type AgentHistoryCache = {
 
 const AGENT_HISTORY_EVENT_LIMIT = 80;
 const AGENT_HISTORY_TURN_LIMIT = 100;
+const AGENT_HISTORY_MEMORY_WARM_LIMIT = 2;
+const AGENT_HISTORY_WARM_DELAY_MS = 180;
 
 function AgentWorkspace() {
   const transport = useControlTransport();
@@ -155,6 +157,7 @@ function AgentWorkspace() {
   const forkCatalogCacheRef = useRef(new Map<string, Record<string, unknown>>());
   const historyStatesRef = useRef(historyStates);
   const historyCacheRef = useRef(new Map<string, AgentHistoryCache>());
+  const recentHistorySessionIdsRef = useRef<string[]>([]);
   const olderHistoryLoadingRef = useRef(new Set<string>());
   const rewriteResolveGenerationRef = useRef(0);
   const editTargetSessionIdRef = useRef('');
@@ -434,6 +437,7 @@ function AgentWorkspace() {
       });
       const nextSessions = sessionItems(sessionResponse);
       const usableSessions = __CONTROL_PREVIEW__ && transport.kind === 'mock' && nextSessions.length === 0 ? previewSessions : nextSessions;
+      recentHistorySessionIdsRef.current = recentMeaningfulSessionIds(usableSessions);
       setSessions(usableSessions);
       setSessionLoadError('');
       void transport.request({ pathId: 'agent.roles.list' }).then(
@@ -446,11 +450,10 @@ function AgentWorkspace() {
       const preferredSessionId = usableSessions.some((item) => item.id === preferredId) ? preferredId : '';
       const backendActiveId = activeSessionId(sessionResponse);
       const activeId = usableSessions.some((item) => item.id === backendActiveId) ? backendActiveId : '';
-      const meaningful = (item: SessionSummary): boolean => (
-        (item.messageCount ?? 0) > 0 || Boolean(item.lastMessagePreview?.trim())
-      );
-      const meaningfulId = usableSessions.find(meaningful)?.id ?? '';
-      const activeMeaningfulId = usableSessions.find((item) => item.id === activeId && meaningful(item))?.id ?? '';
+      const meaningfulId = recentHistorySessionIdsRef.current[0] ?? '';
+      const activeMeaningfulId = usableSessions.find((item) => (
+        item.id === activeId && sessionHasMeaningfulHistory(item)
+      ))?.id ?? '';
       setSelectedId((current) => {
         const currentId = usableSessions.some((item) => item.id === current) ? current : '';
         const next = preferredSessionId || currentId || activeMeaningfulId || meaningfulId || activeId || usableSessions[0]?.id || '';
@@ -523,6 +526,8 @@ function AgentWorkspace() {
     let unsubscribe = () => {};
     let snapshotRequestId = 0;
     let snapshotAbort: AbortController | undefined;
+    let historyWarmTimer = 0;
+    const historyWarmAborts = new Set<AbortController>();
     const batcher = createAgentDeltaBatcher((events) => {
       const historyCache = historyCacheRef.current.get(selectedId);
       if (historyCache) {
@@ -558,16 +563,7 @@ function AgentWorkspace() {
           useAgentLiveStore.getState().hydrate(selectedId, snapshotResponse);
         }
         const snapshot = isRecord(snapshotResponse) ? snapshotResponse : {};
-        const liveEvents = arrayField(snapshot, 'liveEvents');
-        const page = agentHistoryPage(snapshot);
-        historyCacheRef.current.set(selectedId, { snapshot, liveEvents, page });
-        setHistoryPages((pages) => {
-          const next = new Map(pages);
-          if (page) next.set(selectedId, page);
-          else next.delete(selectedId);
-          return next;
-        });
-        updateSessionHistoryState(selectedId, 'ready');
+        retainHistorySnapshot(selectedId, snapshot);
         const cursor = agentProjection(selectedId).resumeToken;
         unsubscribe();
         unsubscribe = transport.subscribe<UiAgentEvent>(
@@ -607,6 +603,57 @@ function AgentWorkspace() {
       } finally {
         if (requestId === snapshotRequestId) snapshotAbort = undefined;
       }
+    }
+    function retainHistorySnapshot(
+      historySessionId: string,
+      snapshot: Record<string, unknown>,
+    ): void {
+      const liveEvents = arrayField(snapshot, 'liveEvents');
+      const page = agentHistoryPage(snapshot);
+      historyCacheRef.current.set(historySessionId, { snapshot, liveEvents, page });
+      setHistoryPages((pages) => {
+        const next = new Map(pages);
+        if (page) next.set(historySessionId, page);
+        else next.delete(historySessionId);
+        return next;
+      });
+      updateSessionHistoryState(historySessionId, 'ready');
+    }
+    async function warmRecentHistory(): Promise<void> {
+      for (const historySessionId of recentHistorySessionIdsRef.current) {
+        if (!active) return;
+        if (
+          historySessionId === selectedId
+          || historyCacheRef.current.has(historySessionId)
+        ) continue;
+        const abort = new AbortController();
+        historyWarmAborts.add(abort);
+        try {
+          const response = await transport.request({
+            pathId: 'agent.session.snapshot',
+            params: { sessionId: historySessionId },
+            query: {
+              eventLimit: AGENT_HISTORY_EVENT_LIMIT,
+              turnLimit: AGENT_HISTORY_TURN_LIMIT,
+            },
+            signal: abort.signal,
+          });
+          if (!active || abort.signal.aborted) return;
+          useAgentLiveStore.getState().hydrate(historySessionId, response);
+          retainHistorySnapshot(historySessionId, isRecord(response) ? response : {});
+        } catch {
+          // Recent-history warming is an optional latency optimization. The
+          // explicit selection path remains authoritative and owns any error.
+        } finally {
+          historyWarmAborts.delete(abort);
+        }
+      }
+    }
+    function scheduleRecentHistoryWarmup(): void {
+      window.clearTimeout(historyWarmTimer);
+      historyWarmTimer = window.setTimeout(() => {
+        if (active) void warmRecentHistory();
+      }, AGENT_HISTORY_WARM_DELAY_MS);
     }
     async function warmForkCatalog(): Promise<void> {
       if (isRoomParticipant) return;
@@ -723,15 +770,24 @@ function AgentWorkspace() {
       });
       await Promise.allSettled([modelTask, commandTask, toolTask]);
     }
-    // History recovery owns the stream cursor; model, command and tool
-    // catalogs are independent and should become interactive immediately.
+    // History recovery owns the first user-visible payload and the stream
+    // cursor. Pi catalog discovery can hold the same runtime lane for seconds,
+    // so it starts only after the transcript has settled. Once visible, keep
+    // the two most recent meaningful conversations warm for instant switching.
     void loadSnapshot().then((loaded) => {
-      if (loaded) void warmForkCatalog();
+      if (!active) return;
+      if (loaded) {
+        void warmForkCatalog();
+        scheduleRecentHistoryWarmup();
+      }
+      void loadSessionCatalogs();
     });
-    void loadSessionCatalogs();
     return () => {
       active = false;
       snapshotAbort?.abort();
+      window.clearTimeout(historyWarmTimer);
+      for (const abort of historyWarmAborts) abort.abort();
+      historyWarmAborts.clear();
       batcher.clear();
       unsubscribe();
       sendTimings.clearSession(selectedId);
@@ -1914,6 +1970,16 @@ function AgentWorkspace() {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
+function sessionHasMeaningfulHistory(session: SessionSummary): boolean {
+  return (session.messageCount ?? 0) > 0 || Boolean(session.lastMessagePreview?.trim());
+}
+function recentMeaningfulSessionIds(sessions: readonly SessionSummary[]): string[] {
+  return [...sessions]
+    .filter(sessionHasMeaningfulHistory)
+    .sort((left, right) => right.updatedAtMs - left.updatedAtMs)
+    .slice(0, AGENT_HISTORY_MEMORY_WARM_LIMIT)
+    .map((session) => session.id);
+}
 function arrayField(value: Record<string, unknown>, key: string): unknown[] {
   return Array.isArray(value[key]) ? value[key] : [];
 }

@@ -2344,7 +2344,9 @@ describe('Agent experience', () => {
       undefined,
       undefined,
       undefined,
-      () => {
+      (request: ControlRequest) => {
+        const sessionId = String(request.params?.sessionId ?? 'session-preview');
+        if (sessionId !== 'session-preview') return previewAgentSnapshot(sessionId);
         snapshotCalls += 1;
         if (snapshotCalls === 1) return previewAgentSnapshot('session-preview');
         return {
@@ -3402,7 +3404,7 @@ describe('Agent experience', () => {
     });
   });
 
-  it('makes the model and tool controls ready while a slow history snapshot is still loading', async () => {
+  it('prioritizes the visible transcript before model and tool catalog discovery', async () => {
     const pendingSnapshot = deferred<unknown>();
     const transport = productionTransport({
       'agent.session.snapshot': () => pendingSnapshot.promise,
@@ -3413,6 +3415,15 @@ describe('Agent experience', () => {
       '正在恢复这段对话',
     );
     expect(screen.queryByText('今天想先从哪里开始？')).not.toBeInTheDocument();
+    expect(transport.requests.some((request) => request.pathId === 'agent.session.models')).toBe(false);
+    expect(transport.requests.some((request) => request.pathId === 'agent.tools.list')).toBe(false);
+    expect(useAgentLiveStore.getState().projections['session-preview']?.messageOrder ?? []).toEqual([]);
+
+    pendingSnapshot.resolve(previewAgentSnapshot('session-preview'));
+    await waitFor(() => expect(
+      useAgentLiveStore.getState().projections['session-preview']?.messageOrder,
+    ).toHaveLength(4));
+    expect(screen.queryByRole('status', { name: '正在恢复对话' })).not.toBeInTheDocument();
     expect(await screen.findByRole(
       'button',
       { name: /模型：GPT-5\.4/ },
@@ -3423,13 +3434,49 @@ describe('Agent experience', () => {
       { name: /这段对话可用工具：14 个/ },
       { timeout: 5_000 },
     )).toBeEnabled();
-    expect(useAgentLiveStore.getState().projections['session-preview']?.messageOrder ?? []).toEqual([]);
+  });
 
-    pendingSnapshot.resolve(previewAgentSnapshot('session-preview'));
+  it('warms the two most recent meaningful conversations and keeps a warm transcript visible during refresh', async () => {
+    const pendingCurrentSnapshot = deferred<unknown>();
+    const pendingWarmRefresh = deferred<unknown>();
+    let warmSessionCalls = 0;
+    const transport = productionTransport({
+      'agent.session.snapshot': (request: ControlRequest) => {
+        const sessionId = String(request.params?.sessionId ?? '');
+        if (sessionId === 'session-preview') return pendingCurrentSnapshot.promise;
+        if (sessionId === 'session-input') {
+          warmSessionCalls += 1;
+          return warmSessionCalls === 1
+            ? previewAgentSnapshot(sessionId)
+            : pendingWarmRefresh.promise;
+        }
+        return previewAgentSnapshot(sessionId);
+      },
+    });
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    expect(await screen.findByRole('status', { name: '正在恢复对话' })).toBeInTheDocument();
+    expect(warmSessionCalls).toBe(0);
+
+    pendingCurrentSnapshot.resolve(previewAgentSnapshot('session-preview'));
     await waitFor(() => expect(
       useAgentLiveStore.getState().projections['session-preview']?.messageOrder,
     ).toHaveLength(4));
+    await waitFor(() => expect(warmSessionCalls).toBe(1));
+    expect(useAgentLiveStore.getState().projections['session-input']?.messageOrder).toHaveLength(1);
+
+    await user.click(screen.getByRole('button', { name: '等待你的回答' }));
+    await waitFor(() => expect(
+      screen.getByRole('button', { name: '等待你的回答' }),
+    ).toHaveAttribute('aria-current', 'true'));
     expect(screen.queryByRole('status', { name: '正在恢复对话' })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('log', { name: '对话时间线' })).getByText(
+      '请把待审问答做成更清楚的协作界面。',
+    )).toBeInTheDocument();
+    await waitFor(() => expect(warmSessionCalls).toBe(2));
+
+    pendingWarmRefresh.resolve(previewAgentSnapshot('session-input'));
   });
 
   it('shows the welcome view only after the history snapshot confirms an empty Session', async () => {
