@@ -4966,6 +4966,34 @@ class PiRuntimeV2Tests(unittest.TestCase):
             assert client is not None
             client.stop()
 
+    def test_stop_publishes_recoverable_failure_for_active_turn(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        with self.runtime._lock:
+            self.runtime._states[session_id].turn_id = (
+                "turn-runtime-service-stop"
+            )
+            self.runtime._states[session_id].had_tool_activity = True
+
+        self.runtime.stop()
+
+        failed = [
+            item
+            for item in self.events.replay(session_id)[0]
+            if item.event_type == "turn_failed"
+        ]
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(
+            failed[0].payload["failureKind"],
+            "runtime_host_exit",
+        )
+        self.assertEqual(
+            failed[0].payload["reasonCode"],
+            "runtime_host_exit",
+        )
+        self.assertTrue(failed[0].payload["retryable"])
+        self.assertTrue(failed[0].payload["hadToolActivity"])
+
     def test_truncated_final_stdout_frame_keeps_host_exit_as_diagnostic(self) -> None:
         session_id = str(self.first["id"])
         self.runtime.config = replace(

@@ -2680,6 +2680,15 @@ class PiRuntimeHostManager:
                 self._client = None
                 self._intentional_stop = True
                 session_ids = tuple(self._open_sessions)
+                interrupted_turns = tuple(
+                    (
+                        session_id,
+                        state.turn_id,
+                        state.had_tool_activity,
+                    )
+                    for session_id, state in self._states.items()
+                    if state.turn_id
+                )
                 for state in self._states.values():
                     if state.abort_timer is not None:
                         state.abort_timer.cancel()
@@ -2692,6 +2701,20 @@ class PiRuntimeHostManager:
                 self._status = "stopped" if self.config.enabled else "disabled"
             if client is not None:
                 client.stop()
+            for session_id, turn_id, had_tool_activity in interrupted_turns:
+                self.events.publish(
+                    session_id,
+                    "turn_failed",
+                    {
+                        "error": "Pi Runtime Host stopped before the active turn settled",
+                        "failureKind": "runtime_host_exit",
+                        "reasonCode": "runtime_host_exit",
+                        "retryable": True,
+                        "hadToolActivity": bool(had_tool_activity),
+                        "exitCode": None,
+                    },
+                    turn_id=turn_id,
+                )
             for session_id in session_ids:
                 try:
                     self.sessions.set_status(session_id, "idle")
