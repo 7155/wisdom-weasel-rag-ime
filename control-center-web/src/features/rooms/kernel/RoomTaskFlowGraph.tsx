@@ -346,10 +346,10 @@ export function RoomTaskWorkList({
       const workspaceAttention = roomTaskWorkspaceNeedsAttention(task);
       const summaryState = workspaceAttention ? 'attention' : state;
       const summary = node.result
-        || (latestActivity && publicTaskActivitySummary(latestActivity))
+        || (latestActivity && publicTaskActivitySummary(latestActivity, objective))
         || objective;
       const currentOrNextAction = latestActivity && ['active', 'review'].includes(task.state)
-        ? publicTaskActivitySummary(latestActivity)
+        ? publicTaskActivitySummary(latestActivity, objective)
         : taskCurrentOrNextAction(node, participantLabels, root);
       const subagents = subagentsByTaskId[task.taskId] ?? [];
       const authority = projectRoomTaskAuthority({
@@ -427,7 +427,7 @@ export function RoomTaskWorkList({
                 <span><FlowStateIcon state={activityFlowState(activity.status)} /></span>
                 <span>
                   <strong>{taskActivityKindLabel(activity)}</strong>
-                  <small>{publicTaskActivitySummary(activity)}</small>
+                  <small>{publicTaskActivitySummary(activity, objective)}</small>
                 </span>
                 <TaskActivityTime activity={activity} />
                 {toolActivity ? <RoomTaskToolOutput activity={activity} /> : null}
@@ -822,10 +822,18 @@ function taskActivityKindLabel(activity: RoomActivityProjection): string {
   return '工作进展';
 }
 
-function publicTaskActivitySummary(activity: RoomActivityProjection): string {
-  return roomPublicActivityText(activity.summary)
+function publicTaskActivitySummary(
+  activity: RoomActivityProjection,
+  taskObjective = '',
+): string {
+  const summary = roomPublicActivityText(activity.summary)
     || roomPublicActivityText(stringValue(activity.payload.summary || activity.payload.message))
-    || taskActivityKindLabel(activity);
+    || '';
+  if (summary && !/^(?:进度更新|当前任务推进有新进展|当前工作有新进展)[。.!！]?$/u.test(summary)) {
+    return summary;
+  }
+  const objective = roomPublicActivityText(taskObjective);
+  return objective ? `正在推进：${objective}` : taskActivityKindLabel(activity);
 }
 
 function RoomTaskToolOutput({ activity }: { activity: RoomActivityProjection }) {

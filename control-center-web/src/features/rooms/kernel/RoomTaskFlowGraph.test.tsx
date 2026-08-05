@@ -549,7 +549,7 @@ describe('RoomTaskWorkList workspace lifecycle projection', () => {
   });
 });
 
-describe('RoomTaskWorkList participant authority projection', () => {
+  describe('RoomTaskWorkList participant authority projection', () => {
   afterEach(cleanup);
 
   it('shows one participant Todo and receipted delivery in the Task card without leaking raw refs into the main result', () => {
@@ -693,6 +693,34 @@ describe('RoomTaskWorkList participant authority projection', () => {
     expect(audit).toHaveTextContent('verification-ref-private');
     expect(audit).toHaveTextContent('artifact:delivery-private');
     expect(deliveryRegion).toHaveTextContent('尚未完成真实前台输入验收');
+  });
+
+  it('replaces a generic progress placeholder with the concrete task objective', () => {
+    render(<RoomTaskWorkList
+      activities={[{
+        id: 'activity:summary',
+        turnId: 'root-workspace',
+        participantId: 'participant-owner',
+        sourceSessionId: 'session-owner',
+        kind: 'reasoning',
+        status: 'running',
+        summary: '当前任务推进有新进展',
+        payload: {
+          dispatchId: 'dispatch-owner',
+          sourceEventType: 'reasoning_summary',
+        },
+        createdAtMs: 5,
+      }]}
+      dispatches={[authorityDispatch()]}
+      participantLabels={{ 'participant-owner': '澄·今' }}
+      participantProgress={[]}
+      posts={[]}
+      root={workspaceRoot()}
+      tasks={[workspaceTask({ objective: '实现 Markdown 链接检查命令', state: 'active' })]}
+    />);
+
+    expect(screen.queryByText('当前任务推进有新进展')).not.toBeInTheDocument();
+    expect(screen.getAllByText('正在推进：实现 Markdown 链接检查命令').length).toBeGreaterThan(0);
   });
 });
 
