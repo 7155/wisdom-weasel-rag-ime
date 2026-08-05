@@ -3450,6 +3450,31 @@ describe('Agent experience', () => {
     )).toBeEnabled();
   });
 
+  it('loads conversation actions while the visible transcript is still recovering', async () => {
+    const pendingSnapshot = deferred<unknown>();
+    const transport = productionTransport({
+      'agent.runtime.get': {
+        schemaVersion: 'rag-ime.agent-runtime.v1',
+        capabilities: { conversationFork: true, conversationRewrite: true },
+      },
+      'agent.session.snapshot': () => pendingSnapshot.promise,
+    });
+    renderAgent(transport);
+
+    await waitFor(() => expect(transport.requests).toContainEqual(
+      expect.objectContaining({ pathId: 'agent.runtime.get' }),
+    ));
+    expect(transport.requests.some((request) => request.pathId === 'agent.session.models')).toBe(false);
+    expect(transport.requests.some((request) => request.pathId === 'agent.tools.list')).toBe(false);
+
+    pendingSnapshot.resolve(previewAgentSnapshot('session-preview'));
+    expect(await screen.findAllByRole(
+      'button',
+      { name: '从这条消息创建分支' },
+      { timeout: 2_000 },
+    )).not.toHaveLength(0);
+  });
+
   it('warms the two most recent meaningful conversations and keeps a warm transcript visible during refresh', async () => {
     const pendingCurrentSnapshot = deferred<unknown>();
     const pendingWarmRefresh = deferred<unknown>();

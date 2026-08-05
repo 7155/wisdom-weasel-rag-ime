@@ -668,27 +668,25 @@ function AgentWorkspace() {
         // action still retries and owns any user-visible error.
       }
     }
+    async function loadConversationCapabilities(): Promise<void> {
+      try {
+        const value = await transport.request({ pathId: 'agent.runtime.get' });
+        if (!active) return;
+        const runtimePayload = isRecord(value) ? value : {};
+        const runtimeCapabilities = isRecord(runtimePayload.capabilities)
+          ? runtimePayload.capabilities
+          : {};
+        setConversationForkAvailable(runtimeCapabilities.conversationFork === true);
+        setConversationRewriteAvailable(runtimeCapabilities.conversationRewrite === true);
+      } catch {
+        if (!active) return;
+        setConversationForkAvailable(false);
+        setConversationRewriteAvailable(false);
+      }
+    }
     async function loadSessionCatalogs(): Promise<void> {
       setToolCatalogStatus('loading');
       setCapabilityCatalogError('');
-      const runtimeRequest = transport.request({ pathId: 'agent.runtime.get' });
-      void runtimeRequest.then(
-        (value) => {
-          if (!active) return;
-          const runtimePayload = isRecord(value) ? value : {};
-          const runtimeCapabilities = isRecord(runtimePayload.capabilities)
-            ? runtimePayload.capabilities
-            : {};
-          setConversationForkAvailable(runtimeCapabilities.conversationFork === true);
-          setConversationRewriteAvailable(runtimeCapabilities.conversationRewrite === true);
-        },
-        () => {
-          if (active) {
-            setConversationForkAvailable(false);
-            setConversationRewriteAvailable(false);
-          }
-        },
-      );
       const publishNotice = (key: string, value = '') => {
         if (!active) return;
         // Catalog warnings have their own Session-local owner. A successful
@@ -770,10 +768,16 @@ function AgentWorkspace() {
       });
       await Promise.allSettled([modelTask, commandTask, toolTask]);
     }
+    // Fork/rewrite availability is a lightweight runtime capability and must
+    // not sit behind transcript recovery. Users should get message actions as
+    // soon as their messages render, even while Provider/tool catalogs remain
+    // deliberately deferred behind the first visible history payload.
+    void loadConversationCapabilities();
     // History recovery owns the first user-visible payload and the stream
-    // cursor. Pi catalog discovery can hold the same runtime lane for seconds,
-    // so it starts only after the transcript has settled. Once visible, keep
-    // the two most recent meaningful conversations warm for instant switching.
+    // cursor. Provider catalog discovery can hold the same runtime lane for
+    // seconds, so it starts only after the transcript has settled. Once
+    // visible, keep the two most recent meaningful conversations warm for
+    // instant switching.
     void loadSnapshot().then((loaded) => {
       if (!active) return;
       if (loaded) {
