@@ -3,7 +3,7 @@
 - Document class: sole tracked authority for current Room product behavior and acceptance status
 - Approved vision window: user decisions made on or after 2026-08-02
 - Contract revision: 2026-08-05
-- Acceptance state: targeted current-source regressions and the clean committed production/native Web plus signed App build pass at `e72d0267`; installation is blocked by this Codex filesystem sandbox, and no current-build foreground Room has yet completed peer work, integration, review, and final delivery, so production acceptance remains open
+- Acceptance state: targeted current-source regressions and the clean committed production/native Web plus signed App build pass at `bffbd5a2`; installation is blocked by this Codex filesystem sandbox, and no current-build foreground Room has yet completed peer work, integration, review, and final delivery, so production acceptance remains open
 - Status rule: source, test, installed, and foreground evidence are reported separately
 
 Older handoffs, ignored local notes under `docs/`, screenshots, prototypes, tests,
@@ -604,7 +604,7 @@ or acceptance evidence above.
 | day-scale full-auto recovery, durable checkpoints, automatic repair/retry/reassignment/model fallback | partially implemented; durable Dispatch attempts, Todo, workspace ledger, reconnect state, direct failed-Tool retry lineage, and Provider retry projection exist and passed source regression; restart-resume plus injected native recovery acceptance remain open | open |
 | historical continuation recovery and Report-stat filtering | implemented; historical upcast 7/7 and settlement regression passed | open |
 | tracked authority portability | implemented by `docs/agent/room-facilitated-workflow-requirements.md` | not applicable |
-| coherent App/Web/Python/managed-Pi provenance | exact dirty-tree production/native Web build, signed App build, and static footprint gate passed; clean commit rebuild and coherent install pending | open |
+| coherent App/Web/Python/managed-Pi provenance | clean commit `bffbd5a2` passed generated-contract reproduction, TypeScript, the complete Web suite inside the official production build, native Web dist validation, signed App build, and static footprint; its App marker is clean and binds native production transport to that exact commit | open; the sandbox refused replacement of `/Users/undo/Applications/RagImeControl.app`, whose installed marker remains `ae71bc07` |
 | real Room completing a concrete TUI task | not a source claim | the 2026-08-05 run created `rag_ime/tui.py` and `tests/test_tui.py` but remained a single-Facilitator failed run; its focused test currently has 1 error in 5 tests, so the artifacts are preserved as an uncommitted recovery input rather than reported as delivery |
 
 ## 2026-08-04 real HTTP foreground findings
@@ -791,6 +791,15 @@ Current verification of the combined working tree:
   transport, production channel, and that exact commit. A fresh managed Pi v2
   payload also passed its smoke contract and binds product commit `e72d0267` to
   Pi source `98cfe6a3a0a420ac6de4f85153c55fbc8809b845`;
+- On clean product commit `bffbd5a2d59ef6117264b06dc06f689e555ec086`,
+  the current Todo/checkpoint change re-passed 85 prompt, Skill, Session,
+  migration, and runtime-contract tests plus two focused Todo gateway tests,
+  151 generated-contract reproduction, TypeScript, import boundaries, route
+  ownership, and `git diff --check`. The official production/native build then
+  completed its full Web test gate and Vite build, compiled and signed the
+  WebKit App, and passed native dist and static-footprint checks. Its clean App
+  marker names that exact commit; the executable SHA-256 is
+  `879c4da74398797e674aa367d0c2e574cfa791fff00fe67675bd3430e1390ea6`;
 - the expanded 422-test backend/runtime set produced 421 passes. Its one
   real-HTTP transport test reached the system proxy and received HTTP 403;
   rerunning only that case with all proxies removed was skipped because this
@@ -799,17 +808,19 @@ Current verification of the combined working tree:
   SQLite/file `ResourceWarning` instances; they did not fail the suite but
   remain cleanup debt rather than silently counted as resolved.
 
-These are source and local-build facts only. The install command reached the
-new product generation but could not replace files under
-`~/Library/Application Support/RagIme/BrowserCopilot/extension` because this
-Codex filesystem sandbox returned `Operation not permitted`. A source-tree
-gateway also cannot bind a fresh loopback port in this sandbox. The signed App
-binary can be launched directly, but this task has not been granted desktop
-control permission, while Browser correctly refuses local `file://` navigation.
-Port `8768` therefore still serves the older installed build and may be used
-only as old-state evidence. Production acceptance still requires installing the
-coherent App/Python/Web/managed-Pi stack and completing the fresh foreground
-flow below.
+These are source and local-build facts only. An earlier stack install could not
+replace files under `~/Library/Application Support/RagIme/BrowserCopilot/extension`.
+The later `bffbd5a2` App install rebuilt the verified App but the same Codex
+filesystem sandbox rejected every replacement under
+`/Users/undo/Applications/RagImeControl.app` with `Operation not permitted`.
+Readback proves the installed App remains the older clean `ae71bc07` build; its
+binary SHA-256 is
+`76f3ccb1d273870eb05377c591c887e329839b60f4e8254088e895b0c433de65`.
+A source-tree gateway also cannot bind a fresh loopback port in this sandbox.
+The worktree App can be used for intermediate checks, but port `8768` still
+serves the older installed build and may be used only as old-state evidence.
+Production acceptance still requires installing the coherent
+App/Python/Web/managed-Pi stack and completing the fresh foreground flow below.
 
 No row may be promoted to native accepted by unit tests, mock transport, hidden
 browser, direct API, screenshot, health response, copied hash, assistant prose,
