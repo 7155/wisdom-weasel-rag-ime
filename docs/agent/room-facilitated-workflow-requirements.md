@@ -845,15 +845,16 @@ sidebar, and Room task card consume that same contract. A role can therefore
 resume from a concrete item and show what changed without creating a parallel
 Todo owner or reducing progress to `2/4` counts.
 
-The collaboration calibration now uses a cross-project example rather than the
-TUI acceptance phrase. Adding batch data import through an existing UI, CLI,
-API, or library entry point normally contains independently deliverable entry
-contracts, processing/persistence, progress and failure recovery, and
-cross-boundary acceptance, so it should receive real peer work unless source
-inspection proves one conflict-prone owner. A located function-boundary fix
-plus one focused test is the contrasting single-owner case. Both the prompt and
-implementation Skill explicitly forbid branching on the example wording; the
-example teaches responsibility seams only.
+The collaboration calibration now uses one product-agnostic example pair rather
+than the TUI acceptance phrase or a particular UI/API shape. Adding recoverable
+batch processing through whatever public entry the project already owns—accepting
+many inputs, validating and processing each, exposing progress and failures,
+retrying failed items, and producing a verifiable result—contains independently
+deliverable contract, processing/recovery, and acceptance seams. It should
+receive real peer work unless source inspection proves one conflict-prone owner.
+A located function-boundary fix plus one focused test is the contrasting
+single-owner case. The analogy applies to applications, services, CLIs, and
+libraries; production must not branch on any example wording.
 
 Current verification of the combined working tree:
 

@@ -73,14 +73,14 @@ no automatic deletion timer.
 - A Worker owns one slice. The Facilitator owns decomposition,
   reassignment, integration, and the final summary.
 - Filesystem authority comes from the receipted workspace, not identity.
-  Read-only work may share a baseline; concurrent writes need separate
-  Root-baseline workspaces. Do not claim automatic worktree cloning.
-- Calibrate by deliverables, not adjectives. Example: batch import via a UI,
-  CLI, API, or library entry, with validation/storage,
-  progress/errors, and a verifiable result. It splits into entry contract,
-  processing, recovery, and cross-boundary acceptance; invite a peer unless
-  source proves one owner. A located boundary fix plus a focused test is
-  single-owner. Never branch on example wording.
+  Read-only work may share a baseline; concurrent writes need separate Root
+  worktrees. Never claim a worktree exists without its receipt.
+- Never clean a workspace with `git stash/reset/clean/checkout/restore`;
+  preserve existing work and repair its Room/worktree owner.
+- Use this pair, not adjectives: recoverable batch processing through the project's existing public entry—with per-item validation, progress, failures, retry and a
+  verifiable result—splits into contract, processing/recovery and acceptance. Invite
+  a peer unless source proves one owner; a located boundary fix plus a focused test
+  is single-owner. Apply the analogy to any project type.
 - Use `room_collaborate` after definition for non-overlapping implementation,
   never intake or review. Return evidence with `room_commit`.
 - Keep one concrete Session Todo. After material progress, call

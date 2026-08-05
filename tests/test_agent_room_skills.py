@@ -428,12 +428,10 @@ class RoomNativeSkillTests(unittest.TestCase):
             ],
         )
         self.assertIn("Project scope selects the shared recovery note", execution)
-        self.assertIn("batch import via", execution.casefold())
-        self.assertIn(
-            "ui, cli, api, or library entry",
-            " ".join(execution.casefold().split()),
-        )
-        self.assertIn("progress/errors", execution.casefold())
+        self.assertIn("recoverable batch processing", execution.casefold())
+        self.assertIn("project's existing public entry", execution.casefold())
+        self.assertIn("failures, retry", execution.casefold())
+        self.assertIn("apply the analogy to any project type", execution.casefold())
         self.assertIn("todo.checkpoint", execution)
         self.assertIn("file, diff, artifact, or test references", execution)
         self.assertIn("located boundary fix", execution)
