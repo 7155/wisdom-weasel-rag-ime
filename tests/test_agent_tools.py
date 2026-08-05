@@ -3673,6 +3673,8 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn('const toolOutputPrefix = "tool-output://"', extension)
         self.assertIn("function boundedToolResult(", extension)
         self.assertIn("function readStoredToolOutput(", extension)
+        self.assertIn("function terminalForModelTurn(", extension)
+        self.assertIn("terminate: terminalForModelTurn(result)", extension)
         self.assertIn("fullOutputRef", extension)
         self.assertIn("writeFileSync(filePath, body, { mode: 0o600 })", extension)
         self.assertIn('spec.name === "read"', extension)

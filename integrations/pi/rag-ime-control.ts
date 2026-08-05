@@ -475,6 +475,15 @@ function askResult(
   return { answered, cancelled, answers, summary };
 }
 
+function terminalForModelTurn(value: unknown): boolean {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && (value as Record<string, unknown>).terminalForModelTurn === true,
+  );
+}
+
 
 
 const knowledgeParameterSchema: Record<string, unknown> = {
@@ -2754,6 +2763,7 @@ export default function (pi: any) {
         const visible = boundedToolResult(toolCallId, result);
         return {
           content: [{ type: "text", text: JSON.stringify(visible) }],
+          terminate: terminalForModelTurn(result),
           details: {
             ...(visible && typeof visible === "object" && !Array.isArray(visible)
               ? visible as Record<string, unknown>
