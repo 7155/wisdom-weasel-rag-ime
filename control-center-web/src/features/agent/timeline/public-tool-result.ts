@@ -1,6 +1,7 @@
 import type { AgentActivityProjection } from '@/contracts/agent-reducer';
 import { approvalDecisionReasonLabel, approvalDecisionView, approvalNeedsHumanDecision } from '@/contracts/approval-decision';
-import { publicToolName } from '../tool-presentation';
+import { normalizeAgentBlock, type UiAgentBlock } from '@/contracts/ui-events';
+import { canonicalToolId, publicToolName } from '../tool-presentation';
 const PUBLIC_TOOL_OUTPUT_MAX_CHARS = 6_000;
 const PUBLIC_TOOL_OUTPUT_MAX_LINES = 40;
 
@@ -30,7 +31,16 @@ export interface PublicToolResultView {
   output?: {
     text: string;
     truncated: boolean;
+    kind: 'code' | 'diff' | 'search' | 'terminal' | 'text';
+    title: string;
+    channels?: Array<{
+      id: 'stdout' | 'stderr';
+      label: string;
+      text: string;
+      truncated: boolean;
+    }>;
   };
+  artifacts: UiAgentBlock[];
   sources: string[];
   preview?: PublicToolSemanticPreview;
   error?: string;
@@ -186,10 +196,10 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
   const publicResult = record(payload.publicResult);
   const publicArguments = record(payload.args);
   const layers = [domain, envelope, carrier, publicResult, publicArguments, payload];
-  const toolId = firstText(
+  const toolId = canonicalToolId(firstText(
     [payload, envelope, carrier],
     ['toolId', 'toolName', 'tool'],
-  ).toLowerCase();
+  ));
   const toolLabel = publicToolLabel(toolId);
   const expectedNoop = payload.expectedNoop === true;
   const fields: PublicToolResultField[] = [];
@@ -351,6 +361,9 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
   if (codeResult.additions !== undefined || codeResult.deletions !== undefined) {
     append('changes', '变更', `+${codeResult.additions ?? 0} -${codeResult.deletions ?? 0}`);
   }
+  if (toolId === 'bash' && codeResult.exitCode !== undefined) {
+    append('exitCode', '退出码', String(codeResult.exitCode));
+  }
 
   const sources = toolId === 'knowledge'
     ? safeKnowledgeSourceLabels(items)
@@ -360,6 +373,7 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
     ? publicToolError(layers, carrier)
     : '';
   const recovery = error ? publicToolRecovery(error, payload) : undefined;
+  const artifacts = publicToolArtifactBlocks(payload);
 
   return {
     toolId,
@@ -369,6 +383,7 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
     fields,
     request: codeResult.request,
     ...(codeResult.output ? { output: codeResult.output } : {}),
+    artifacts,
     sources,
     ...(preview ? { preview } : {}),
     ...(error ? { error } : {}),
@@ -704,10 +719,19 @@ interface PublicCodeToolResult {
   output?: {
     text: string;
     truncated: boolean;
+    kind: 'code' | 'diff' | 'search' | 'terminal' | 'text';
+    title: string;
+    channels?: Array<{
+      id: 'stdout' | 'stderr';
+      label: string;
+      text: string;
+      truncated: boolean;
+    }>;
   };
   lines?: number;
   additions?: number;
   deletions?: number;
+  exitCode?: number;
 }
 
 function publicCodeActivitySummary(
@@ -719,16 +743,16 @@ function publicCodeActivitySummary(
   const running = status === 'running';
   const completed = status === 'completed';
   if (!running && !completed) return result.summary;
-  if (['edit', 'edit_file', 'workspace_edit', 'workspace_edit_file', 'workspace_patch', 'apply_patch'].includes(toolId)) {
+  if (toolId === 'edit') {
     return `${running ? '正在编辑' : '已编辑'} ${result.summary}`;
   }
-  if (['write', 'write_file', 'workspace_write', 'workspace_write_file'].includes(toolId)) {
+  if (toolId === 'write') {
     return `${running ? '正在写入' : '已写入'} ${result.summary.replace(/\s已写入$/u, '')}`;
   }
-  if (['read', 'read_file', 'workspace_read'].includes(toolId)) {
+  if (toolId === 'read') {
     return `${running ? '正在读取' : '已读取'} ${result.summary.replace(/\s已读取$/u, '')}`;
   }
-  if (['grep', 'workspace_search'].includes(toolId)) {
+  if (toolId === 'grep') {
     const searchMatch = /^在\s+(.+?)\s+中搜索\s+(.+)$/u.exec(result.summary);
     if (searchMatch) {
       const [, location, query] = searchMatch;
@@ -738,10 +762,10 @@ function publicCodeActivitySummary(
     }
     return `${running ? '正在' : '已'}${result.summary}`;
   }
-  if (['find', 'ls', 'workspace_list'].includes(toolId)) {
+  if (['find', 'ls'].includes(toolId)) {
     return `${running ? '正在' : '已'}${result.summary}`;
   }
-  if (['bash', 'workspace_shell'].includes(toolId)) {
+  if (toolId === 'bash') {
     return `${running ? '正在' : '已'}${result.summary}`;
   }
   return result.summary;
@@ -755,16 +779,36 @@ function publicCodeToolResult(
   carrier: Record<string, unknown>,
 ): PublicCodeToolResult {
   const fileTools = new Set([
-    'read', 'read_file', 'workspace_read',
-    'write', 'write_file', 'workspace_write', 'workspace_write_file',
-    'edit', 'edit_file', 'workspace_edit', 'workspace_edit_file',
-    'workspace_patch', 'apply_patch',
+    'read', 'write', 'edit',
   ]);
-  const searchTools = new Set(['grep', 'workspace_search']);
-  const listTools = new Set(['find', 'ls', 'workspace_list']);
-  const commandTools = new Set(['bash', 'workspace_shell']);
+  const searchTools = new Set(['grep']);
+  const listTools = new Set(['find', 'ls']);
+  const commandTools = new Set(['bash']);
   const codeTools = new Set([...fileTools, ...searchTools, ...listTools, ...commandTools]);
-  const rawOutputText = firstText([publicResult], ['outputPreview']);
+  // Session events normally carry the sanitized result in `publicResult`,
+  // while Room history may persist the same public fields in its bounded
+  // `result` carrier. Read both shapes through one precedence-ordered view so
+  // the two surfaces do not invent separate Tool contracts.
+  const resultLayers = [publicResult, envelope, carrier];
+  const rawOutputText = firstText(resultLayers, ['outputPreview']);
+  const stdoutText = publicToolOutputText(firstText(resultLayers, ['stdoutPreview']));
+  const stderrText = publicToolOutputText(firstText(resultLayers, ['stderrPreview']));
+  const commandChannels = commandTools.has(toolId)
+    ? [
+        ...(stdoutText ? [{
+          id: 'stdout' as const,
+          label: '标准输出',
+          text: stdoutText,
+          truncated: firstBoolean(resultLayers, ['stdoutTruncated']) === true,
+        }] : []),
+        ...(stderrText ? [{
+          id: 'stderr' as const,
+          label: '标准错误',
+          text: stderrText,
+          truncated: firstBoolean(resultLayers, ['stderrTruncated']) === true,
+        }] : []),
+      ]
+    : [];
   const managedEvidence = managedEvidencePreview(rawOutputText);
   const requestLayers = [
     publicResult,
@@ -818,21 +862,25 @@ function publicCodeToolResult(
 
   const outputText = protectedCommand
     ? ''
-    : managedEvidence?.summary ?? publicToolOutputText(rawOutputText);
+    : managedEvidence?.summary
+      || publicToolOutputText(rawOutputText)
+      || commandChannels.map((channel) => channel.text).join('\n');
   const output = outputText
     ? {
         text: outputText,
         truncated: managedEvidence?.truncated
           ?? (
-            firstBoolean([publicResult], ['outputTruncated']) === true
+            firstBoolean(resultLayers, ['outputTruncated']) === true
             || publicToolOutputWasTruncated(rawOutputText)
           ),
+        ...publicCodeOutputPresentation(toolId, file),
+        ...(commandChannels.length ? { channels: commandChannels } : {}),
       }
     : undefined;
 
-  if (['write', 'write_file', 'workspace_write', 'workspace_write_file'].includes(toolId)) {
-    const lines = firstFiniteNumber([publicResult], ['lineCount']) ?? publicLineCount(text(args.content));
-    const additions = firstFiniteNumber([publicResult], ['additions']) ?? lines;
+  if (toolId === 'write') {
+    const lines = firstFiniteNumber(resultLayers, ['lineCount']) ?? publicLineCount(text(args.content));
+    const additions = firstFiniteNumber(resultLayers, ['additions']) ?? lines;
     return {
       file,
       request,
@@ -841,10 +889,19 @@ function publicCodeToolResult(
       summary: file ? `${file}${lines !== undefined ? ` +${lines}` : ' 已写入'}` : '文件已写入',
     };
   }
-  if (['edit', 'edit_file', 'workspace_edit', 'workspace_edit_file', 'workspace_patch', 'apply_patch'].includes(toolId)) {
-    const diff = firstText([envelope, carrier], ['diff', 'patch']);
-    const additions = firstFiniteNumber([publicResult], ['additions']);
-    const deletions = firstFiniteNumber([publicResult], ['deletions']);
+  if (toolId === 'edit') {
+    const diff = firstText(resultLayers, ['diff', 'patch']) || rawOutputText;
+    const publicDiff = publicToolOutputText(diff);
+    const diffOutput = publicDiff
+      ? {
+          text: publicDiff,
+          truncated: publicToolOutputWasTruncated(diff),
+          kind: 'diff' as const,
+          title: file || '代码变更',
+        }
+      : output;
+    const additions = firstFiniteNumber(resultLayers, ['additions']);
+    const deletions = firstFiniteNumber(resultLayers, ['deletions']);
     const changes = additions !== undefined || deletions !== undefined
       ? { additions, deletions }
       : publicDiffCounts(diff);
@@ -854,13 +911,13 @@ function publicCodeToolResult(
     return {
       file,
       request,
-      ...(output ? { output } : {}),
+      ...(diffOutput ? { output: diffOutput } : {}),
       summary: file ? `${file}${changeLabel}` : '文件已更新',
       ...changes,
     };
   }
-  if (['read', 'read_file', 'workspace_read'].includes(toolId)) {
-    const truncation = firstRecord([envelope, carrier], ['truncation']);
+  if (toolId === 'read') {
+    const truncation = firstRecord(resultLayers, ['truncation']);
     const totalLines = firstFiniteNumber([truncation], ['totalLines']);
     const lines = totalLines ?? publicLineCount(publicToolContentText(carrier));
     return {
@@ -888,7 +945,7 @@ function publicCodeToolResult(
       file,
       request,
       ...(output ? { output } : {}),
-      summary: toolId === 'ls' || toolId === 'workspace_list'
+      summary: toolId === 'ls'
         ? `列出 ${file || '工作区'}`
         : needle
           ? `查找 “${needle.slice(0, 100)}”`
@@ -899,14 +956,46 @@ function publicCodeToolResult(
     const firstLine = protectedCommand
       ? '受保护命令'
       : command.split('\n', 1)[0]?.slice(0, 140) ?? '';
+    const exitCode = firstFiniteNumber(resultLayers, ['exitCode']);
     return {
       file,
       request,
       ...(output ? { output } : {}),
+      ...(exitCode !== undefined ? { exitCode } : {}),
       summary: firstLine ? `运行 ${firstLine}` : '运行项目命令',
     };
   }
   return { file: '', request: [], summary: '' };
+}
+
+function publicCodeOutputPresentation(
+  toolId: string,
+  file: string,
+): Pick<NonNullable<PublicCodeToolResult['output']>, 'kind' | 'title'> {
+  if (toolId === 'edit') {
+    return { kind: 'diff', title: file || '代码变更' };
+  }
+  if (toolId === 'read') {
+    return { kind: 'code', title: file || '文件内容' };
+  }
+  if (['grep', 'find', 'ls'].includes(toolId)) {
+    return { kind: 'search', title: toolId === 'ls' ? '文件列表' : '搜索结果' };
+  }
+  if (toolId === 'bash') {
+    return { kind: 'terminal', title: '命令输出' };
+  }
+  return { kind: 'text', title: '返回片段' };
+}
+
+function publicToolArtifactBlocks(payload: Record<string, unknown>): UiAgentBlock[] {
+  const values = Array.isArray(payload.agentBlocks) ? payload.agentBlocks : [];
+  return values.flatMap((value) => {
+    const raw = record(value);
+    if (!text(raw.id) || !['file', 'diff'].includes(text(raw.type)) || Object.keys(record(raw.data)).length === 0) {
+      return [];
+    }
+    return [normalizeAgentBlock(raw)];
+  });
 }
 
 function commandReferencesSensitiveFile(value: string): boolean {

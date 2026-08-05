@@ -12,7 +12,7 @@ import {
   RefreshCw,
   TriangleAlert,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { useOptionalControlTransport } from '@/app/control-transport';
 import { Button, IconButton } from '@/components/primitives';
 import { AgentHtmlReportCard } from './AgentHtmlReportCard';
@@ -21,7 +21,15 @@ import { FilePreviewRenderer } from './renderer-registry';
 import { useFilePreviewStore } from './file-preview-store';
 import './file-preview.css';
 
-export function AgentFileBlock({ data, sessionId = '' }: { data: Record<string, unknown>; sessionId?: string }) {
+export function AgentFileBlock({
+  autoExpand = false,
+  data,
+  sessionId = '',
+}: {
+  autoExpand?: boolean;
+  data: Record<string, unknown>;
+  sessionId?: string;
+}) {
   const transport = useOptionalControlTransport();
   const openPreview = useFilePreviewStore((state) => state.openPreview);
   const closePreview = useFilePreviewStore((state) => state.close);
@@ -42,7 +50,14 @@ export function AgentFileBlock({ data, sessionId = '' }: { data: Record<string, 
     && presentation === 'inline'
     && samePreviewRequest(request, activeRequest),
   );
+  const autoExpandStartedRef = useRef(false);
   const regionId = request ? `agent-file-preview-${request.mediaId}` : undefined;
+
+  useEffect(() => {
+    if (!autoExpand || autoExpandStartedRef.current || !request || !transport) return;
+    autoExpandStartedRef.current = true;
+    openPreview(request, transport, 'inline');
+  }, [autoExpand, openPreview, request, transport]);
 
   if (request && isHtmlReport(fileName, request.mimeTypeHint)) {
     return <AgentHtmlReportCard fileName={fileName} request={request} transport={transport ?? null} />;

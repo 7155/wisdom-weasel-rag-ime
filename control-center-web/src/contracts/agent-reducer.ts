@@ -1404,12 +1404,14 @@ function toolProgressSummary(
   status: AgentActivityProjection['status'],
 ): string {
   const carrier = record(payload.result ?? payload.partialResult);
+  const publicResult = record(payload.publicResult);
   const details = record(carrier.details);
   const domain = record(details.result ?? carrier.result);
   const explicit = boundedToolProgressText(
     domain.summary
       ?? details.summary
       ?? carrier.summary
+      ?? publicResult.summary
       ?? payload.summary
       ?? payload.message
       ?? payload.label,

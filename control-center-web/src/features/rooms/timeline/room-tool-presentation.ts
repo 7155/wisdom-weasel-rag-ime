@@ -38,7 +38,7 @@ const hiddenTechnicalFieldIds: Record<string, true> = {
 export function roomPublicToolResultView(view: PublicToolResultView): PublicToolResultView {
   const fields = view.fields.flatMap((field) => sanitizeField(field));
   const request = view.request.flatMap((field) => sanitizeRequestField(field));
-  const outputText = view.output ? sanitizeOutput(view.output.text) : '';
+  const output = view.output ? sanitizeToolOutput(view.output) : undefined;
   // An empty semantic result must stay empty. The tool row still carries the
   // action and status, while inventing “X 已完成” would turn stripped protocol
   // data into a false user-facing result.
@@ -74,14 +74,30 @@ export function roomPublicToolResultView(view: PublicToolResultView): PublicTool
     summary,
     fields,
     request,
+    artifacts: view.artifacts,
     sources,
     ...(preview ? { preview } : {}),
-    ...(outputText && view.output
-      ? { output: { ...view.output, text: outputText } }
-      : {}),
+    ...(output ? { output } : {}),
     ...(error ? { error } : {}),
     ...(view.recovery ? { recovery: view.recovery } : {}),
     ...(view.destination ? { destination: view.destination } : {}),
+  };
+}
+
+function sanitizeToolOutput(
+  output: NonNullable<PublicToolResultView['output']>,
+): NonNullable<PublicToolResultView['output']> | undefined {
+  const text = sanitizeOutput(output.text);
+  const channels = (output.channels ?? []).flatMap((channel) => {
+    const channelText = sanitizeOutput(channel.text);
+    return channelText ? [{ ...channel, text: channelText }] : [];
+  });
+  if (!text && !channels.length) return undefined;
+  const { channels: _unsafeChannels, ...safeOutput } = output;
+  return {
+    ...safeOutput,
+    text: text || channels.map((channel) => channel.text).join('\n'),
+    ...(channels.length ? { channels } : {}),
   };
 }
 

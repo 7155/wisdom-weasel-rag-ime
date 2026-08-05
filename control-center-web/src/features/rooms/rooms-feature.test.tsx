@@ -2506,6 +2506,7 @@ describe('Rooms experience', () => {
       { id: 'overview', displayName: '控制中心概览', description: '查看整体状态', sessionModes: ['assistant', 'coordinator'], operations: ['status'], profileOperations: { 'control-center-v1': ['status'], 'subagent-readonly-v1': ['status'] }, enabled: true },
       { id: 'memory', displayName: '记忆与工具书', description: '检索记忆', sessionModes: ['assistant', 'coordinator'], operations: ['catalog'], profileOperations: { 'control-center-v1': ['catalog'], 'subagent-readonly-v1': ['catalog'] }, enabled: true },
       { id: 'workspace_read', displayName: '工作区读取', description: '读取工作区', sessionModes: ['coordinator'], operations: ['read'], profileOperations: { 'control-center-v1': ['read'], 'subagent-readonly-v1': [] }, enabled: true },
+      { id: 'read_file', displayName: 'Read file', description: '旧 Provider 读取别名', sessionModes: ['coordinator'], operations: ['read_range'], profileOperations: { 'control-center-v1': ['read_range'], 'subagent-readonly-v1': [] }, enabled: false },
     ];
     const transport = new MockControlTransport({ routes: {
       'agent.rooms.list': { ok: true, items: [room] },
@@ -2532,8 +2533,10 @@ describe('Rooms experience', () => {
     expect(screen.queryByRole('radio', { name: '只读' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '保存权限' })).not.toBeInTheDocument();
     expect(screen.queryByText(/私有 Session：/)).not.toBeInTheDocument();
-    await user.click(screen.getByText(/看看可以使用哪些工具/));
-    expect(screen.getByText('读取项目文件')).toBeInTheDocument();
+    const toolDisclosure = screen.getByText(/看看可以使用哪些工具/).closest('summary')!;
+    expect(toolDisclosure).toHaveTextContent('3 项');
+    await user.click(toolDisclosure);
+    expect(screen.getAllByText('读取文件')).toHaveLength(1);
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.mode.update')).toBe(false);
   });
 
@@ -2699,11 +2702,14 @@ describe('Rooms experience', () => {
     expect(toolTitle).toBeInTheDocument();
     const toolSummary = toolTitle.closest('summary')!;
     expect(toolSummary).toHaveTextContent('运行记录 · 搜索文本 · 进行中');
+    expect(toolSummary).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByLabelText('工具调用参数')).toHaveTextContent('协作记录');
+    await user.click(toolSummary);
     expect(toolSummary).toHaveAttribute('aria-expanded', 'false');
+    expect(document.activeElement).toBe(toolSummary);
     await user.click(toolSummary);
     expect(toolSummary).toHaveAttribute('aria-expanded', 'true');
     expect(document.activeElement).toBe(toolSummary);
-    expect(screen.getByLabelText('工具调用参数')).toHaveTextContent('协作记录');
     expect(screen.getByLabelText('工具调用参数')).not.toHaveTextContent('room_event_projection');
     expect(screen.getByText(/1s/)).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: '停止本轮任务' })).toHaveLength(1);
@@ -2863,7 +2869,9 @@ describe('Rooms experience', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
     const { container } = render(
-      <RoomTurn turnId="turn-a" room={room} projection={projection} personas={previewPersonas} />,
+      <TooltipProvider>
+        <RoomTurn turnId="turn-a" room={room} projection={projection} personas={previewPersonas} />
+      </TooltipProvider>,
     );
 
     const row = container.querySelector<HTMLDetailsElement>('.room-agent-activity--tool')!;
@@ -2874,8 +2882,8 @@ describe('Rooms experience', () => {
 
     expect(within(row).getByLabelText('工具调用参数')).toHaveTextContent('80');
     expect(within(row).getByLabelText('工具调用参数')).toHaveTextContent('24');
-    expect(within(row).getByLabelText('工具返回内容')).toHaveTextContent('settleRoom');
-    await user.click(within(row).getByRole('button', { name: '复制结果' }));
+    expect(within(row).getByLabelText('工具返回片段')).toHaveTextContent('settleRoom');
+    await user.click(within(row).getByRole('button', { name: '复制代码' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(
       '80:export function settleRoom() {\\n81:  return receipt;\\n82:}',
     ));

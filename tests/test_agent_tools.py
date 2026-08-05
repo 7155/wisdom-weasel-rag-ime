@@ -1284,7 +1284,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "tool profile"):
             self.gateway.execute(self._call("catalog"))
 
-    def test_manifests_expose_workspace_shell_only_for_coordinator_sessions(self) -> None:
+    def test_public_manifests_expose_one_canonical_native_coding_tool_each(self) -> None:
         manifests = self.gateway.manifests()["items"]
         self.assertEqual(
             [manifest["id"] for manifest in manifests],
@@ -1305,20 +1305,23 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "todo",
                 "agent_goal",
                 "plugins",
-                "work_documents",
                 "desktop_semantic",
-                "workspace_list",
-                "workspace_lsp",
-                "workspace_read",
-                "workspace_search",
-                "workspace_patch",
-                "workspace_edit",
-                "workspace_write",
-                "workspace_job",
-                "workspace_shell",
+                "read",
+                "edit",
+                "write",
+                "bash",
                 "ask",
             ],
         )
+        public_ids = [str(manifest["id"]) for manifest in manifests]
+        self.assertFalse(any(tool_id.startswith("workspace_") for tool_id in public_ids))
+        self.assertNotIn("write_file", public_ids)
+        for tool_id in ("read", "edit", "write", "bash"):
+            with self.subTest(tool_id=tool_id):
+                self.assertEqual(public_ids.count(tool_id), 1)
+                native = next(item for item in manifests if item["id"] == tool_id)
+                self.assertEqual(native["canonicalId"], f"tool:{tool_id}")
+                self.assertEqual(native["runtimeOwner"], "pi_host")
         planning = next(manifest for manifest in manifests if manifest["id"] == "planning")
         self.assertEqual(planning["riskLevel"], "R1")
         self.assertEqual(
@@ -1370,37 +1373,9 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(browser_tool["operationRisks"]["screenshot"], "R0")
         self.assertEqual(browser_tool["operationRisks"]["navigate"], "R1")
         self.assertEqual(browser_tool["operationRisks"]["type"], "R1")
-        workspace_shell = next(
-            manifest for manifest in manifests if manifest["id"] == "workspace_shell"
-        )
-        self.assertEqual(workspace_shell["sessionModes"], ["coordinator"])
-        self.assertEqual(workspace_shell["operationRisks"], {"run": "R2"})
-        workspace_lsp = next(
-            manifest for manifest in manifests if manifest["id"] == "workspace_lsp"
-        )
-        self.assertEqual(workspace_lsp["sessionModes"], ["coordinator"])
-        self.assertEqual(
-            workspace_lsp["operationRisks"],
-            {
-                "status": "R0",
-                "symbols": "R0",
-                "hover": "R0",
-                "definition": "R0",
-                "references": "R0",
-                "diagnostics": "R0",
-                "rename": "R2",
-                "code_action_apply": "R2",
-            },
-        )
-        workspace_job = next(
-            manifest for manifest in manifests if manifest["id"] == "workspace_job"
-        )
-        self.assertEqual(workspace_job["sessionModes"], ["coordinator"])
-        self.assertEqual(
-            workspace_job["operationRisks"],
-            {"list": "R0", "status": "R0", "logs": "R0", "start": "R2", "cancel": "R1"},
-        )
-        self.assertEqual(workspace_job["availability"], "offline")
+        bash = next(manifest for manifest in manifests if manifest["id"] == "bash")
+        self.assertEqual(bash["sessionModes"], ["coordinator"])
+        self.assertEqual(bash["operationRisks"], {"run": "R2"})
         desktop = next(manifest for manifest in manifests if manifest["id"] == "desktop_semantic")
         self.assertEqual(desktop["riskLevel"], "R2")
         self.assertEqual(
@@ -1422,6 +1397,9 @@ class ControlToolGatewayTests(unittest.TestCase):
                     "configuration",
                     "browser",
                     "desktop_semantic",
+                    "edit",
+                    "write",
+                    "bash",
                     "work_documents",
                     "workspace_patch",
                     "workspace_lsp",
@@ -3956,9 +3934,12 @@ class ControlToolGatewayTests(unittest.TestCase):
             workspace_roots=[str(workspace)],
             created_at_ms=30,
         )
-        catalog = gateway.manifests(session_id=str(readonly["id"]))
+        target_manifests = gateway._manifest_items(
+            readonly,
+            include_runtime_projection=True,
+        )
         lsp_capability = next(
-            item for item in catalog["items"] if item["id"] == "workspace_lsp"
+            item for item in target_manifests if item["id"] == "workspace_lsp"
         )
         authoritative = lsp_capability["runtimeProjection"]
         self.assertTrue(authoritative["current"])

@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import * as Checkbox from '@radix-ui/react-checkbox';
 import * as RadioGroup from '@radix-ui/react-radio-group';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import {
   Button,
@@ -28,6 +28,7 @@ import type {
   SessionSummary,
   ToolManifest,
 } from '../types';
+import { projectPublicToolCatalog } from '../tool-presentation';
 import {
   PERMISSION_PRESETS,
   permissionPreset,
@@ -60,6 +61,7 @@ export function PermissionPicker({
   const sessionMode = session?.mode ?? 'assistant';
   const workspaceRoots = session?.workspaceRoots ?? [];
   const canCoordinate = persona?.selectableModes.includes('coordinator') ?? false;
+  const publicTools = useMemo(() => projectPublicToolCatalog(tools), [tools]);
 
   useEffect(() => {
     if (requestOpen > 0 && session && !disabled) setOpen(true);
@@ -126,7 +128,7 @@ export function PermissionPicker({
                 || preset.executionMode === 'full_trust';
               const available = !requiresCoordinator || canCoordinate;
               const effectiveMode = requiresCoordinator ? 'coordinator' : sessionMode;
-              const toolCount = tools.filter(
+              const toolCount = publicTools.filter(
                 (tool) => toolAvailableForPolicy(
                   tool,
                   effectiveMode,

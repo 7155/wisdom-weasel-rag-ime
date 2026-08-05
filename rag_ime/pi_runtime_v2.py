@@ -32,6 +32,7 @@ from .pi_runtime_public import (
     GROUPED_QUESTIONS_SCHEMA_VERSION,
     GROUPED_QUESTIONS_TITLE_PREFIX,
     REVIEW_TITLE_PREFIX,
+    canonical_code_tool_name,
     canonical_grouped_answers,
     grouped_questions_from_wire,
     last_assistant_error,
@@ -40,6 +41,7 @@ from .pi_runtime_public import (
     pi_message_completes_public_turn,
     pi_message_is_public,
     provider_retry_status,
+    public_code_tool_arguments,
     public_code_tool_activity,
     public_fork_candidate_text,
     public_pi_model,
@@ -2946,11 +2948,11 @@ class PiRuntimeHostManager:
                 "tool_execution_end": "tool_finished",
             }[event_type]
             raw_args = as_mapping(raw.get("args"))
-            tool_name = str(raw.get("toolName") or "")
+            tool_name = canonical_code_tool_name(raw.get("toolName"))
             payload: dict[str, object] = {
                 "toolCallId": str(raw.get("toolCallId") or ""),
                 "toolName": tool_name,
-                "args": redact_mapping(raw_args),
+                "args": public_code_tool_arguments(tool_name, raw_args),
                 "isError": bool(raw.get("isError")),
             }
             explicit_retry_parent = str(
@@ -3819,7 +3821,7 @@ def _pi_tool_history_events(
                 if str(item.get("type") or "") not in {"toolCall", "tool_call"}:
                     continue
                 tool_call_id = str(item.get("id") or item.get("toolCallId") or "").strip()
-                tool_name = str(item.get("name") or item.get("toolName") or "").strip()
+                tool_name = canonical_code_tool_name(item.get("name") or item.get("toolName"))
                 if not tool_call_id or not tool_name:
                     continue
                 raw_args = _pi_tool_arguments(item)
@@ -3865,7 +3867,12 @@ def _pi_tool_history_events(
         tool_call_id = str(raw.get("toolCallId") or raw.get("tool_call_id") or "").strip()
         if not tool_call_id:
             continue
-        tool_name = str(raw.get("toolName") or raw.get("tool_name") or tool_names.get(tool_call_id) or "tool").strip()
+        tool_name = canonical_code_tool_name(
+            raw.get("toolName")
+            or raw.get("tool_name")
+            or tool_names.get(tool_call_id)
+            or "tool"
+        )
         if tool_call_id not in tool_names:
             activity_order.append(tool_call_id)
         tool_names[tool_call_id] = tool_name

@@ -1,3 +1,8 @@
+import {
+  projectPublicToolCatalog,
+  projectPublicToolPreferenceMap,
+} from '@/features/agent/tool-presentation';
+
 export type CapabilityPreference = 'inherit' | 'enabled' | 'disabled';
 export type CapabilityEffective = 'enabled' | 'disabled';
 export type CapabilityKind = 'tool' | 'skill' | 'extension';
@@ -89,7 +94,7 @@ export function parseCapabilityCatalog(value: unknown): CapabilityCatalog | null
   if (items.some((item) => item === null)) return null;
   const sessionPolicy = parseSessionPolicy(root.sessionPolicy);
   if (root.sessionPolicy !== undefined && !sessionPolicy) return null;
-  return {
+  return projectCapabilityCatalog({
     schemaVersion: 'rag-ime.capability-catalog.v1',
     ok: true,
     revision: root.revision,
@@ -102,6 +107,25 @@ export function parseCapabilityCatalog(value: unknown): CapabilityCatalog | null
     },
     ...(sessionPolicy ? { sessionPolicy } : {}),
     items: items as CapabilityCatalogItem[],
+  });
+}
+
+export function projectCapabilityCatalog(catalog: CapabilityCatalog): CapabilityCatalog {
+  const sessionPolicy = catalog.sessionPolicy;
+  return {
+    ...catalog,
+    items: projectPublicToolCatalog(catalog.items),
+    ...(sessionPolicy ? {
+      sessionPolicy: {
+        ...sessionPolicy,
+        disclosurePreferences: {
+          globalDefault: projectPublicToolPreferenceMap(sessionPolicy.disclosurePreferences.globalDefault),
+          projectDefault: projectPublicToolPreferenceMap(sessionPolicy.disclosurePreferences.projectDefault),
+          session: projectPublicToolPreferenceMap(sessionPolicy.disclosurePreferences.session),
+          effective: projectPublicToolPreferenceMap(sessionPolicy.disclosurePreferences.effective),
+        },
+      },
+    } : {}),
   };
 }
 
@@ -139,9 +163,9 @@ export function parseCapabilityDefaults(value: unknown): CapabilityDefaultsSnaps
 }
 
 export function preferenceMap(value: unknown): Record<string, CapabilityPreference> {
-  return Object.fromEntries(Object.entries(record(value)).filter(
+  return projectPublicToolPreferenceMap(Object.fromEntries(Object.entries(record(value)).filter(
     (entry): entry is [string, CapabilityPreference] => isPreference(entry[1]),
-  ));
+  )));
 }
 
 export function preferenceLabel(value: CapabilityPreference): string {
@@ -264,9 +288,9 @@ function parseSessionPolicy(value: unknown): CapabilityCatalog['sessionPolicy'] 
 }
 
 function effectiveMap(value: unknown): Record<string, CapabilityEffective> {
-  return Object.fromEntries(Object.entries(record(value)).filter(
+  return projectPublicToolPreferenceMap(Object.fromEntries(Object.entries(record(value)).filter(
     (entry): entry is [string, CapabilityEffective] => isEffective(entry[1]),
-  ));
+  )));
 }
 
 function isPreference(value: unknown): value is CapabilityPreference {

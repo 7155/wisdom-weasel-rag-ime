@@ -1,5 +1,5 @@
 import { Wrench, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import {
   Button,
@@ -10,10 +10,12 @@ import {
 } from '@/components/primitives';
 import {
   capabilityPreferenceOptions,
+  projectCapabilityCatalog,
   type CapabilityCatalog,
   type CapabilityPreference,
 } from '@/features/plugins/capability-policy';
 import type { SessionSummary, ToolManifest } from '../types';
+import { projectPublicToolCatalog } from '../tool-presentation';
 import { riskLabel, toolAvailableForCurrentSession } from './tool-policy';
 
 export function ToolPicker({
@@ -44,7 +46,13 @@ export function ToolPicker({
     if (requestOpen > 0 && status === 'ready' && !disabled) setOpen(true);
   }, [disabled, requestOpen, status]);
 
-  const availableCount = tools.filter(
+  const publicTools = useMemo(() => projectPublicToolCatalog(tools), [tools]);
+  const publicCapabilityCatalog = useMemo(
+    () => capabilityCatalog ? projectCapabilityCatalog(capabilityCatalog) : undefined,
+    [capabilityCatalog],
+  );
+
+  const availableCount = publicTools.filter(
     (tool) => toolAvailableForCurrentSession(tool, session),
   ).length;
   const label = status === 'loading'
@@ -68,7 +76,7 @@ export function ToolPicker({
           size="small"
           title={label}
           variant="quiet"
-          disabled={status !== 'ready' || !tools.length || disabled}
+          disabled={status !== 'ready' || !publicTools.length || disabled}
           leadingIcon={<Wrench size={15} />}
         >
           {text}
@@ -82,7 +90,7 @@ export function ToolPicker({
         <header>
           <span>
             <strong id="agent-tool-picker-title">当前对话能力</strong>
-            <small>可用 {availableCount} 项，共发现 {capabilityCatalog?.items.length ?? tools.length} 项能力</small>
+            <small>可用 {availableCount} 项，共发现 {publicCapabilityCatalog?.items.length ?? publicTools.length} 项能力</small>
           </span>
           <button
             aria-label="关闭当前对话能力"
@@ -99,9 +107,9 @@ export function ToolPicker({
           </p>
         ) : null}
         <div>
-          {tools.map((tool) => {
+          {publicTools.map((tool) => {
             const available = toolAvailableForCurrentSession(tool, session);
-            const capability = capabilityCatalog?.items.find(
+            const capability = publicCapabilityCatalog?.items.find(
               (item) => item.kind === 'tool' && item.id === tool.id,
             );
             return (
@@ -125,7 +133,7 @@ export function ToolPicker({
                     disabled={adjustmentDisabled || capabilityPolicyPending}
                     onValueChange={(preference) => onCapabilityPreferenceChange(capability.canonicalId, preference)}
                     options={capabilityPreferenceOptions}
-                    value={capabilityCatalog?.sessionPolicy?.disclosurePreferences.session[capability.canonicalId] ?? 'inherit'}
+                    value={publicCapabilityCatalog?.sessionPolicy?.disclosurePreferences.session[capability.canonicalId] ?? 'inherit'}
                   />
                 ) : null}
               </article>

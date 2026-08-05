@@ -3613,7 +3613,7 @@ class WorkspaceHarness:
         launched = self._spawn_sandboxed(prepared)
         process = launched.process
         try:
-            output, timed_out, output_limited = self._bounded_output(
+            output, stdout, stderr, timed_out, output_limited = self._bounded_output(
                 process,
                 prepared.timeout_seconds,
             )
@@ -3626,10 +3626,14 @@ class WorkspaceHarness:
                 self._terminate_group(process)
             if process.stdout is not None:
                 process.stdout.close()
+            if process.stderr is not None:
+                process.stderr.close()
         finally:
             launched.cleanup()
         duration_ms = max(0, int(time.time() * 1_000) - started_at_ms)
         decoded = self.redact_output(output.decode("utf-8", errors="replace"))
+        decoded_stdout = self.redact_output(stdout.decode("utf-8", errors="replace"))
+        decoded_stderr = self.redact_output(stderr.decode("utf-8", errors="replace"))
         succeeded = int(exit_code) == 0 and not timed_out and not output_limited
         return {
             "schemaVersion": "rag-ime.workspace-command-receipt.v1",
@@ -3649,6 +3653,8 @@ class WorkspaceHarness:
             "outputLimited": output_limited,
             "networkAllowed": prepared.allow_network,
             "output": decoded,
+            "stdout": decoded_stdout,
+            "stderr": decoded_stderr,
             "outputBytes": len(output),
             "undoAvailable": False,
         }
@@ -3685,7 +3691,7 @@ class WorkspaceHarness:
                 env=environment,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                stderr=subprocess.PIPE,
                 start_new_session=True,
             )
         except Exception:
@@ -3700,13 +3706,17 @@ class WorkspaceHarness:
         self,
         process: subprocess.Popen[bytes],
         timeout_seconds: int,
-    ) -> tuple[bytes, bool, bool]:
-        if process.stdout is None:
-            return b"", False, False
+    ) -> tuple[bytes, bytes, bytes, bool, bool]:
+        if process.stdout is None and process.stderr is None:
+            return b"", b"", b"", False, False
         selector = selectors.DefaultSelector()
-        selector.register(process.stdout, selectors.EVENT_READ)
+        if process.stdout is not None:
+            selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+        if process.stderr is not None:
+            selector.register(process.stderr, selectors.EVENT_READ, "stderr")
         deadline = time.monotonic() + timeout_seconds
         chunks: list[bytes] = []
+        channel_chunks: dict[str, list[bytes]] = {"stdout": [], "stderr": []}
         size = 0
         timed_out = False
         output_limited = False
@@ -3728,15 +3738,29 @@ class WorkspaceHarness:
                         selector.unregister(key.fileobj)
                         continue
                     remaining_capacity = self.max_output_bytes - size
-                    chunks.append(chunk[:remaining_capacity])
-                    size += min(len(chunk), remaining_capacity)
+                    accepted = chunk[:remaining_capacity]
+                    chunks.append(accepted)
+                    channel_chunks[str(key.data)].append(accepted)
+                    size += len(accepted)
                     if len(chunk) > remaining_capacity or size >= self.max_output_bytes:
                         output_limited = True
                         self._terminate_group(process)
-                        return b"".join(chunks), timed_out, output_limited
+                        return (
+                            b"".join(chunks),
+                            b"".join(channel_chunks["stdout"]),
+                            b"".join(channel_chunks["stderr"]),
+                            timed_out,
+                            output_limited,
+                        )
         finally:
             selector.close()
-        return b"".join(chunks), timed_out, output_limited
+        return (
+            b"".join(chunks),
+            b"".join(channel_chunks["stdout"]),
+            b"".join(channel_chunks["stderr"]),
+            timed_out,
+            output_limited,
+        )
 
     @staticmethod
     def _terminate_group(process: subprocess.Popen[bytes]) -> None:

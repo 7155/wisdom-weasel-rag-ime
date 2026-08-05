@@ -11,7 +11,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/primitives';
-import { publicToolName } from '@/features/agent/tool-presentation';
+import {
+  projectPublicToolCatalog,
+  publicToolName,
+} from '@/features/agent/tool-presentation';
 import { publicErrorText } from '@/features/overview/management-ui';
 
 interface RoomMemberIdentity {
@@ -131,7 +134,7 @@ export function RoomMemberBoundaryDialog({
 
 function roomToolCatalogItems(value: unknown): RoomToolCatalogItem[] {
   const source = record(value);
-  return (Array.isArray(source.items) ? source.items : []).flatMap((value) => {
+  const items = (Array.isArray(source.items) ? source.items : []).flatMap((value) => {
     const item = record(value);
     return typeof item.id === 'string' && typeof item.displayName === 'string'
       ? [{
@@ -142,6 +145,7 @@ function roomToolCatalogItems(value: unknown): RoomToolCatalogItem[] {
         }]
       : [];
   });
+  return projectPublicToolCatalog(items);
 }
 
 function executionModeLabel(executionMode: RoomExecutionMode | undefined): string {

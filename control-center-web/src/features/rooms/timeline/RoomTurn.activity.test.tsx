@@ -1,8 +1,11 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { TooltipProvider } from '@/components/primitives';
+import type { Todo } from '@/contracts/generated/agent-workflow-state.v1';
 import type { RoomDispatchEnvelopeV2 } from '@/contracts/generated/room-dispatch-envelope.v2';
 import type { RoomTaskV3 } from '@/contracts/generated/room-task.v3';
+import type { PrivateSessionProjection } from '@/contracts/room-kernel-reducer';
 import { createRoomProjection } from '@/contracts/room-reducer';
 import type { RoomTaskSubagentRun } from '../kernel/RoomTaskFlowGraph';
 import type { RoomKernelSyncProjection } from '../state/live-store';
@@ -107,6 +110,79 @@ describe('RoomTurn public activity detail', () => {
     expect(laneSummary).toHaveTextContent('正在处理「完成终端原生 TUI 的可运行闭环」');
     expect(laneSummary).toHaveTextContent('要交付：可启动、可操作、可验证的终端界面');
     expect(view.container).not.toHaveTextContent('当前任务推进有新进展');
+  });
+
+  it('keeps the authoritative Todo in the collapsed summary and at the bottom of the role card', () => {
+    const projection = roomProjection();
+    const todo: Todo = {
+      schemaVersion: 'rag-ime.agent-todo.v1',
+      id: 'todo-a',
+      sessionId: 'session-a',
+      revision: 3,
+      actor: 'agent-runtime',
+      updatedAtMs: 3_600,
+      roomLineage: {
+        schemaVersion: 'wisdom-weasel.room-todo-lineage.v1',
+        roomId: 'room-a',
+        rootId: 'root-a',
+        taskId: 'task-a',
+        workItemId: 'work-item-a',
+        dispatchId: 'dispatch-a',
+        sessionId: 'session-a',
+        participantId: 'participant-a',
+        generation: 1,
+        taskRevision: 1,
+        ownershipRevision: 1,
+        workItemRevision: 1,
+      },
+      phases: [{
+        name: '实现与验证',
+        tasks: [
+          { content: '定位 TUI 入口', status: 'completed' },
+          { content: '实现交互闭环', status: 'completed' },
+          { content: '运行真实流程验收', status: 'in_progress' },
+          { content: '整理交付结果', status: 'pending' },
+        ],
+      }],
+      counts: {
+        total: 4,
+        pending: 1,
+        inProgress: 1,
+        blocked: 0,
+        completed: 2,
+        abandoned: 0,
+      },
+    };
+    const session: PrivateSessionProjection = {
+      sessionId: 'session-a',
+      participantId: 'participant-a',
+      rootId: 'root-a',
+      taskId: 'task-a',
+      taskKind: 'work',
+      workItemId: null,
+      dispatchId: 'dispatch-a',
+      generation: 1,
+      state: 'running',
+      updatedAtMs: 3_600,
+      todo,
+    };
+
+    const view = render(roomTurn(
+      projection,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      { 'session-a': session },
+    ));
+    const lane = view.container.querySelector<HTMLElement>('.room-agent-lane')!;
+    const todoRegion = within(lane).getByRole('region', { name: '澄·今 的 Todo' });
+
+    expect(lane.querySelector('summary')).toHaveTextContent('Todo 2/4');
+    expect(todoRegion).toHaveAttribute('aria-live', 'polite');
+    expect(todoRegion).toHaveTextContent('运行真实流程验收');
+    expect(todoRegion).toHaveTextContent('整理交付结果');
+    expect(lane.querySelector('.room-agent-lane__body')?.lastElementChild).toBe(todoRegion);
   });
 
   it('groups automatic retries into one clickable tool result without losing attempt details', () => {
@@ -495,6 +571,24 @@ describe('RoomTurn public activity detail', () => {
           ].join('\n'),
           outputTruncated: false,
         },
+        agentBlocks: [{
+          schemaVersion: 'rag-ime.agent-block.v1',
+          id: 'tool-artifact:diff:room-turn',
+          type: 'diff',
+          status: 'completed',
+          presentationKind: 'diff',
+          data: {
+            fileName: 'RoomTurn.tsx',
+            diff: [
+              '@@ -1,2 +1,3 @@',
+              '-const oldValue = true;',
+              '+const newValue = true;',
+              '+const ready = true;',
+            ].join('\n'),
+            additions: 2,
+            deletions: 1,
+          },
+        }],
       },
       createdAtMs: 3_500,
       updatedAtMs: 3_600,
@@ -510,16 +604,13 @@ describe('RoomTurn public activity detail', () => {
       .find((item) => item.dataset.toolKind === 'edit')!;
 
     expect(edit).toHaveAttribute('data-state', 'running');
+    expect(edit).toHaveAttribute('open');
     expect(edit.querySelector('summary')).toHaveTextContent('正在编辑 RoomTurn.tsx');
     expect(within(edit).getByRole('status', { name: '正在接收文件编辑进度' })).toBeInTheDocument();
-    fireEvent.click(edit.querySelector('summary')!);
-    const diff = within(edit).getByLabelText('文件变更');
-    expect(diff).toHaveTextContent('代码变更');
-    expect(within(diff).getByLabelText('文件变更内容')).toHaveTextContent('+const ready = true;');
-    expect(within(diff).getByText('+const ready = true;')).toHaveAttribute(
-      'data-diff-line',
-      'addition',
+    expect(within(edit).getByRole('status', { name: '正在编辑 RoomTurn.tsx' })).toHaveTextContent(
+      '正在生成并校验变更，完成后会在这里展示真实 Diff。',
     );
+    expect(within(edit).queryByLabelText('文件变更')).not.toBeInTheDocument();
 
     projection.activitiesById['edit-live'] = {
       ...projection.activitiesById['edit-live']!,
@@ -555,6 +646,122 @@ describe('RoomTurn public activity detail', () => {
     expect(edit).not.toHaveAttribute('data-edit-active');
     expect(edit.querySelector('summary')).toHaveTextContent('已编辑 RoomTurn.tsx +2 -1');
     expect(within(edit).queryByRole('status', { name: '正在接收文件编辑进度' })).not.toBeInTheDocument();
+    const diff = within(edit).getByLabelText('文件变更');
+    expect(within(diff).getByLabelText('Diff 展示方式')).toBeInTheDocument();
+    expect(diff).toHaveTextContent('RoomTurn.tsx');
+    expect([...diff.querySelectorAll('tr[data-kind="add"]')].map((row) => row.textContent)).toEqual(
+      expect.arrayContaining([expect.stringContaining('const ready = true;')]),
+    );
+    expect(diff.querySelector('tr[data-kind="remove"]')).toHaveTextContent('const oldValue = true;');
+  });
+
+  it('keeps running read and bash tools open with concrete live summaries', () => {
+    const projection = roomProjection();
+    projection.activitiesById['read-live'] = {
+      id: 'read-live',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'running',
+      summary: 'read',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'tool_started',
+        toolName: 'read',
+        toolCallId: 'read-live',
+        arguments: { path: 'src/runtime.ts' },
+      },
+      createdAtMs: 3_700,
+      updatedAtMs: 3_700,
+    };
+    projection.activitiesById['bash-live'] = {
+      id: 'bash-live',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'running',
+      summary: 'bash',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'tool_started',
+        toolName: 'bash',
+        toolCallId: 'bash-live',
+        arguments: { command: 'python3 -m unittest tests.test_runtime' },
+      },
+      createdAtMs: 3_800,
+      updatedAtMs: 3_800,
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: [
+        ...projection.turnsById['turn-a']!.activityIds,
+        'read-live',
+        'bash-live',
+      ],
+      updatedAtMs: 3_800,
+    };
+
+    const view = render(roomTurn(projection));
+    const runningTools = [...view.container.querySelectorAll<HTMLDetailsElement>(
+      '.room-agent-activity--tool[data-state="running"]',
+    )];
+    const read = runningTools.find((item) => item.dataset.toolKind === 'read')!;
+    const bash = runningTools.find((item) => item.dataset.toolKind === 'bash')!;
+
+    expect(read).toHaveAttribute('open');
+    expect(read.querySelector('summary')).toHaveAttribute('aria-expanded', 'true');
+    expect(read.querySelector('summary')).toHaveTextContent('正在读取 src/runtime.ts');
+    expect(bash).toHaveAttribute('open');
+    expect(bash.querySelector('summary')).toHaveAttribute('aria-expanded', 'true');
+    expect(bash.querySelector('summary')).toHaveTextContent('命令正在运行，等待新的输出');
+  });
+
+  it('renders completed Room bash channels from the bounded result carrier', () => {
+    const projection = roomProjection();
+    projection.activitiesById['bash-completed'] = {
+      id: 'bash-completed',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'completed',
+      summary: '运行测试',
+      payload: {
+        sourceEventType: 'tool_finished',
+        toolName: 'bash',
+        toolCallId: 'bash-completed',
+        arguments: { command: 'pnpm test --run RoomTurn.activity' },
+        result: {
+          stdoutPreview: 'PASS RoomTurn.activity',
+          stderrPreview: 'warning: recovered cache miss',
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          exitCode: 0,
+        },
+      },
+      createdAtMs: 3_900,
+      updatedAtMs: 4_000,
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: ['bash-completed'],
+      updatedAtMs: 4_000,
+    };
+
+    const view = render(roomTurn(projection));
+    const bash = view.container.querySelector<HTMLDetailsElement>('.room-agent-activity--tool')!;
+    fireEvent.click(bash.querySelector('summary')!);
+
+    expect(within(bash).getByText('标准输出')).toBeInTheDocument();
+    expect(within(bash).getByText('PASS RoomTurn.activity')).toBeInTheDocument();
+    expect(within(bash).getByText('标准错误')).toBeInTheDocument();
+    expect(within(bash).getByText('warning: recovered cache miss')).toBeInTheDocument();
+    expect(bash).toHaveTextContent('退出码');
+    expect(bash).toHaveTextContent('0');
   });
 
   it('does not animate an edit label without a real tool lifecycle event', () => {
@@ -853,8 +1060,9 @@ function roomTurn(
   taskUpdatedAtMs?: number,
   kernelSync?: RoomKernelSyncProjection,
   roomSyncState?: 'recovering' | 'failed' | 'synced',
+  kernelSessionsById: Record<string, PrivateSessionProjection> = {},
 ) {
-  return <RoomTurn
+  return <TooltipProvider><RoomTurn
     kernelDispatchesById={{
       'dispatch-a': { taskId: 'task-a' } as RoomDispatchEnvelopeV2,
     }}
@@ -869,6 +1077,7 @@ function roomTurn(
     kernelTaskUpdatedAtMsById={taskUpdatedAtMs === undefined
       ? {}
       : { 'task-a': taskUpdatedAtMs }}
+    kernelSessionsById={kernelSessionsById}
     kernelSync={kernelSync}
     roomSyncState={roomSyncState}
     personas={[]}
@@ -884,7 +1093,7 @@ function roomTurn(
     }}
     subagentsByTaskId={{ 'task-a': [subagent()] }}
     turnId="turn-a"
-  />;
+  /></TooltipProvider>;
 }
 
 function kernelSync(

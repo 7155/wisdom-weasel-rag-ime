@@ -13,9 +13,11 @@ from rag_ime.agent_events import AgentEventHub
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
 from rag_ime.pi_runtime_public import (
+    canonical_code_tool_name,
     pi_message_completes_public_turn,
     pi_message_is_public,
     pi_message_payload,
+    public_code_tool_arguments,
     public_code_tool_activity,
     public_reasoning_summaries,
     public_usage_evidence,
@@ -2471,6 +2473,40 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn("/Users/private", serialized)
         self.assertNotIn("sk-never-render-this", serialized)
 
+    def test_coding_tool_aliases_collapse_to_one_public_contract(self) -> None:
+        self.assertEqual(canonical_code_tool_name("workspace_read"), "read")
+        self.assertEqual(canonical_code_tool_name("read_file"), "read")
+        self.assertEqual(canonical_code_tool_name("workspace_edit"), "edit")
+        self.assertEqual(canonical_code_tool_name("apply_patch"), "edit")
+        self.assertEqual(canonical_code_tool_name("workspace_write"), "write")
+        self.assertEqual(canonical_code_tool_name("write_file"), "write")
+        self.assertEqual(canonical_code_tool_name("workspace_shell"), "bash")
+        self.assertEqual(canonical_code_tool_name("workspace_job"), "bash")
+
+    def test_public_mutation_arguments_keep_target_but_drop_the_second_body_carrier(self) -> None:
+        write = public_code_tool_arguments(
+            "write_file",
+            {
+                "path": "src/generated.py",
+                "content": "private source body",
+                "mode": "overwrite",
+            },
+        )
+        edit = public_code_tool_arguments(
+            "workspace_edit",
+            {
+                "path": "src/main.py",
+                "oldText": "private old body",
+                "newText": "private new body",
+                "edits": [{"new_text": "nested private body"}],
+            },
+        )
+
+        self.assertEqual(write, {"path": "src/generated.py", "mode": "overwrite"})
+        self.assertEqual(edit, {"path": "src/main.py"})
+        serialized = json.dumps({"write": write, "edit": edit})
+        self.assertNotIn("private", serialized)
+
     def test_canonical_workspace_tools_keep_meaningful_bounded_details(self) -> None:
         lsp = public_code_tool_activity(
             "workspace_lsp",
@@ -2504,6 +2540,26 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 "content": "first\nsecond\n",
             },
         )
+        command = public_code_tool_activity(
+            "workspace_shell",
+            {"command": "python3 -m unittest", "cwd": "/Users/private/project"},
+            {
+                "details": {
+                    "approval": {
+                        "receipt": {
+                            "stdout": "test_one ... ok",
+                            "stderr": "warning: bounded",
+                            "output": "test_one ... ok\nwarning: bounded",
+                            "exitCode": 0,
+                        },
+                    },
+                },
+                "content": [{
+                    "type": "text",
+                    "text": "test_one ... ok\n[stderr]\nwarning: bounded\n[exit code: 0]",
+                }],
+            },
+        )
 
         self.assertEqual(
             {
@@ -2527,6 +2583,9 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(job["outputPreview"], "tests complete")
         self.assertEqual(write["summary"], "new_file.py +2")
         self.assertNotIn("content", write)
+        self.assertEqual(command["stdoutPreview"], "test_one ... ok")
+        self.assertEqual(command["stderrPreview"], "warning: bounded")
+        self.assertEqual(command["exitCode"], 0)
 
     def test_edit_projection_keeps_safe_diff_and_per_file_counts(self) -> None:
         result = public_code_tool_activity(
@@ -2749,6 +2808,119 @@ class PiRuntimeV2Tests(unittest.TestCase):
             "rag_ime/pi_runtime.py:100:def provider_payload():",
         )
         self.assertNotIn("result", event.payload)
+
+    def test_host_bash_progress_stream_uses_the_canonical_name_and_partial_output(self) -> None:
+        session_id = str(self.first["id"])
+        turn_id = "turn-bash-progress"
+        self.runtime._handle_host_event(  # noqa: SLF001 - protocol boundary
+            {
+                "protocolVersion": "2",
+                "event": "agent.event",
+                "sessionId": session_id,
+                "turnId": turn_id,
+                "payload": {
+                    "type": "tool_execution_update",
+                    "toolCallId": "call-bash-progress",
+                    "toolName": "workspace_shell",
+                    "args": {
+                        "command": "python3 -m unittest tests.test_runtime",
+                        "cwd": "/Users/private/project",
+                    },
+                    "partialResult": {
+                        "content": [{
+                            "type": "text",
+                            "text": "test_one ... ok\ntest_two ...",
+                        }],
+                        "details": {
+                            "summary": "运行命令仍在执行，已持续 2 秒",
+                        },
+                    },
+                    "isError": False,
+                },
+            }
+        )
+
+        events, gap = self.events.replay(session_id)
+        self.assertFalse(gap)
+        event = next(
+            item
+            for item in events
+            if item.event_type == "tool_progress"
+            and item.payload.get("toolCallId") == "call-bash-progress"
+        )
+        self.assertEqual(event.payload["toolName"], "bash")
+        self.assertEqual(
+            event.payload["publicResult"]["command"],
+            "python3 -m unittest tests.test_runtime",
+        )
+        self.assertEqual(
+            event.payload["publicResult"]["outputPreview"],
+            "test_one ... ok\ntest_two ...",
+        )
+        self.assertEqual(
+            event.payload["publicResult"]["summary"],
+            "运行命令仍在执行，已持续 2 秒",
+        )
+        self.assertNotIn("partialResult", event.payload)
+
+    def test_host_background_job_uses_bash_projection_without_losing_stream_or_exit_code(self) -> None:
+        session_id = str(self.first["id"])
+        turn_id = "turn-background-job-progress"
+        for event_type, result_key, raw_result in (
+            (
+                "tool_execution_update",
+                "partialResult",
+                {
+                    "stdout": "collected 12 items\n...",
+                    "stderr": "warning: cache miss",
+                },
+            ),
+            (
+                "tool_execution_end",
+                "result",
+                {
+                    "stdout": "collected 12 items\n12 passed",
+                    "stderr": "warning: cache miss",
+                    "exitCode": 0,
+                },
+            ),
+        ):
+            self.runtime._handle_host_event(  # noqa: SLF001 - protocol boundary
+                {
+                    "protocolVersion": "2",
+                    "event": "agent.event",
+                    "sessionId": session_id,
+                    "turnId": turn_id,
+                    "payload": {
+                        "type": event_type,
+                        "toolCallId": "call-background-job",
+                        "toolName": "workspace_job",
+                        "args": {
+                            "operation": "logs",
+                            "jobId": "bg_123",
+                            "command": "python3 -m pytest",
+                        },
+                        result_key: raw_result,
+                        "isError": False,
+                    },
+                }
+            )
+
+        events, gap = self.events.replay(session_id)
+        self.assertFalse(gap)
+        lifecycle = {
+            item.event_type: item
+            for item in events
+            if item.payload.get("toolCallId") == "call-background-job"
+        }
+        progress = lifecycle["tool_progress"]
+        completed = lifecycle["tool_finished"]
+        self.assertEqual(progress.payload["toolName"], "bash")
+        self.assertEqual(progress.payload["publicResult"]["stdoutPreview"], "collected 12 items\n...")
+        self.assertEqual(progress.payload["publicResult"]["stderrPreview"], "warning: cache miss")
+        self.assertEqual(completed.payload["toolName"], "bash")
+        self.assertEqual(completed.payload["publicResult"]["stdoutPreview"], "collected 12 items\n12 passed")
+        self.assertEqual(completed.payload["publicResult"]["exitCode"], 0)
 
     def test_host_failed_room_tool_preserves_a_bounded_public_reason(self) -> None:
         session_id = str(self.first["id"])
@@ -3345,6 +3517,8 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual([event["createdAtMs"] for event in events], [501, 502, 902])
         self.assertEqual(events[0]["payload"]["items"], ["Planning project inspection"])
         self.assertEqual(events[1]["payload"]["publicResult"]["fileName"], "README.md")
+        self.assertEqual(events[1]["payload"]["toolName"], "read")
+        self.assertEqual(events[2]["payload"]["toolName"], "read")
         serialized = json.dumps(events, ensure_ascii=False)
         self.assertNotIn("top-secret", serialized)
         self.assertNotIn("/Users/private", serialized)

@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from rag_ime.agent_blocks import normalize_trusted_agent_blocks
 from rag_ime.agent_event_projection import (
     AgentEventProjectionService,
     room_event_projection,
@@ -1093,6 +1094,47 @@ class AgentEventProjectionTests(unittest.TestCase):
                 self.assertNotIn("raw private output", encoded)
                 self.assertNotIn("providerDiagnostics", encoded)
 
+        progress = AgentEventEnvelope(
+            event_id="event:tool:bash-progress",
+            session_id="session:1",
+            turn_id="turn:1",
+            sequence=10,
+            created_at_ms=10,
+            event_type="tool_progress",
+            payload={
+                "toolName": "bash",
+                "toolCallId": "call:bash-progress",
+                "args": {"command": "python3 -m unittest"},
+                "publicResult": {
+                    "command": "python3 -m unittest",
+                    "summary": "运行命令仍在执行，已持续 2 秒",
+                    "stdoutPreview": "test_one ... ok",
+                    "stdoutTruncated": False,
+                    "stderrPreview": "warning: bounded",
+                    "stderrTruncated": False,
+                    "exitCode": 0,
+                },
+                "isError": False,
+            },
+            resume_token="event:tool:bash-progress",
+        )
+
+        progress_type, progress_data = room_event_projection(progress)
+
+        self.assertEqual(progress_type, "participant_activity")
+        self.assertEqual(progress_data["summary"], "运行命令仍在执行，已持续 2 秒")
+        self.assertEqual(
+            progress_data["result"],
+            {
+                "summary": "运行命令仍在执行，已持续 2 秒",
+                "stdoutPreview": "test_one ... ok",
+                "stdoutTruncated": False,
+                "stderrPreview": "warning: bounded",
+                "stderrTruncated": False,
+                "exitCode": 0,
+            },
+        )
+
         failed = AgentEventEnvelope(
             event_id="event:tool:error",
             session_id="session:1",
@@ -1130,6 +1172,160 @@ class AgentEventProjectionTests(unittest.TestCase):
             "读取失败，请检查文件权限",
         )
         self.assertNotIn("providerDiagnostics", repr(failed_data))
+
+    def test_tool_projection_whitelists_only_verified_file_and_diff_blocks(
+        self,
+    ) -> None:
+        session_id = "session:artifact"
+        raw_blocks = [
+            {
+                "id": "tool-artifact:file:0123456789abcdef",
+                "type": "file",
+                "data": {
+                    "mediaId": "media_abcdefghijklmnop",
+                    "sessionId": session_id,
+                    "fileName": "RoomTurn.tsx.diff",
+                    "mimeType": "text/x-diff",
+                    "byteSize": 80,
+                    "sha256": "b" * 64,
+                    "receiptUrl": "/api/agent/media/forged/content",
+                    "privateNote": "must-not-project",
+                    "apiKey": "sk-private-artifact",
+                },
+            },
+            {
+                "id": "tool-artifact:diff:fedcba9876543210",
+                "type": "diff",
+                "data": {
+                    "fileName": "RoomTurn.tsx",
+                    "diff": "--- a/RoomTurn.tsx\n+++ b/RoomTurn.tsx\n@@ -1 +1 @@\n-old\n+new",
+                    "additions": 1,
+                    "deletions": 1,
+                    "privatePath": "/Users/private/project/RoomTurn.tsx",
+                },
+            },
+        ]
+        trusted_blocks = normalize_trusted_agent_blocks(
+            raw_blocks,
+            source_kind="pi_tool_result",
+            source_ref=f"{session_id}:turn:tool",
+        )
+        event = AgentEventEnvelope(
+            event_id="event:tool:artifact",
+            session_id=session_id,
+            turn_id="turn:artifact",
+            sequence=20,
+            created_at_ms=20,
+            event_type="tool_finished",
+            payload={
+                "toolName": "edit",
+                "toolCallId": "call:artifact",
+                "args": {"path": "RoomTurn.tsx"},
+                "publicResult": {
+                    "fileName": "RoomTurn.tsx",
+                    "additions": 1,
+                    "deletions": 1,
+                },
+                "agentBlocks": list(trusted_blocks),
+                "isError": False,
+            },
+            resume_token="event:tool:artifact",
+        )
+
+        event_type, data = room_event_projection(event)
+
+        self.assertEqual(event_type, "participant_activity")
+        self.assertEqual(
+            data["agentBlocks"],
+            [
+                {
+                    "schemaVersion": "rag-ime.agent-block.v1",
+                    "id": "tool-artifact:file:0123456789abcdef",
+                    "type": "file",
+                    "status": "completed",
+                    "presentationKind": "file",
+                    "data": {
+                        "mediaId": "media_abcdefghijklmnop",
+                        "sessionId": session_id,
+                        "fileName": "RoomTurn.tsx.diff",
+                        "mimeType": "text/x-diff",
+                        "byteSize": 80,
+                        "sha256": "b" * 64,
+                        "receiptUrl": (
+                            "/api/agent/media/media_abcdefghijklmnop/content"
+                            "?sessionId=session%3Aartifact"
+                        ),
+                    },
+                },
+                {
+                    "schemaVersion": "rag-ime.agent-block.v1",
+                    "id": "tool-artifact:diff:fedcba9876543210",
+                    "type": "diff",
+                    "status": "completed",
+                    "presentationKind": "diff",
+                    "data": {
+                        "fileName": "RoomTurn.tsx",
+                        "diff": (
+                            "--- a/RoomTurn.tsx\n+++ b/RoomTurn.tsx\n"
+                            "@@ -1 +1 @@\n-old\n+new"
+                        ),
+                        "additions": 1,
+                        "deletions": 1,
+                    },
+                },
+            ],
+        )
+        encoded = repr(data)
+        self.assertNotIn("must-not-project", encoded)
+        self.assertNotIn("sk-private-artifact", encoded)
+        self.assertNotIn("privatePath", encoded)
+        self.assertNotIn("forged/content", encoded)
+
+        tampered = [dict(trusted_blocks[0])]
+        tampered[0]["data"] = {
+            **dict(tampered[0]["data"]),
+            "fileName": "changed-after-digest.diff",
+        }
+        progress = AgentEventEnvelope(
+            event_id="event:tool:artifact-progress",
+            session_id=session_id,
+            turn_id="turn:artifact",
+            sequence=21,
+            created_at_ms=21,
+            event_type="tool_progress",
+            payload={
+                "toolName": "edit",
+                "toolCallId": "call:artifact",
+                "agentBlocks": tampered,
+                "isError": False,
+            },
+            resume_token="event:tool:artifact-progress",
+        )
+        _, progress_data = room_event_projection(progress)
+        self.assertNotIn("agentBlocks", progress_data)
+
+        cross_session = normalize_trusted_agent_blocks(
+            [raw_blocks[1]],
+            source_kind="pi_tool_result",
+            source_ref="session:other:turn:tool",
+        )
+        foreign = AgentEventEnvelope(
+            event_id="event:tool:artifact-foreign",
+            session_id=session_id,
+            turn_id="turn:artifact",
+            sequence=22,
+            created_at_ms=22,
+            event_type="tool_finished",
+            payload={
+                "toolName": "edit",
+                "toolCallId": "call:artifact-foreign",
+                "agentBlocks": list(cross_session),
+                "isError": False,
+            },
+            resume_token="event:tool:artifact-foreign",
+        )
+        _, foreign_data = room_event_projection(foreign)
+        self.assertNotIn("agentBlocks", foreign_data)
 
         oversized = AgentEventEnvelope(
             event_id="event:tool:bounded",

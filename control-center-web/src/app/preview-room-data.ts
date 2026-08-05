@@ -96,12 +96,12 @@ export function previewRoomSnapshot(roomId: string) {
     }),
     event(4, 'participant_activity', 'participant-present', {
       rootId, dispatchId: 'dispatch-present', sourceEventId: 'tool-present-start',
-      sourceEventType: 'tool_started', toolCallId: 'tool-present', toolName: 'read_file',
+      sourceEventType: 'tool_started', toolCallId: 'tool-present', toolName: 'read',
       summary: '读取 Room 时间线实现',
     }),
     event(5, 'participant_activity', 'participant-present', {
       rootId, dispatchId: 'dispatch-present', sourceEventId: 'tool-present-finish',
-      sourceEventType: 'tool_finished', toolCallId: 'tool-present', toolName: 'read_file',
+      sourceEventType: 'tool_finished', toolCallId: 'tool-present', toolName: 'read',
       summary: '已核对流式投影与 Post 替换', isError: false,
     }),
     event(6, 'participant_delta', 'participant-present', {

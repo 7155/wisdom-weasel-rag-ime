@@ -784,6 +784,33 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
         self.assertNotIn("must-not-leak", wildcard["output"])
 
     @unittest.skipUnless(sys.platform == "darwin", "requires the macOS sandbox harness")
+    def test_real_harness_keeps_stdout_and_stderr_as_distinct_public_channels(self) -> None:
+        sandbox = Path("/usr/bin/sandbox-exec")
+        if not sandbox.is_file():
+            self.skipTest("sandbox-exec is unavailable")
+        harness = WorkspaceHarness()
+
+        receipt = harness.execute(
+            harness.prepare_command(
+                self.session,
+                {
+                    "command": (
+                        "python3 -c 'import sys; "
+                        "print(\"stdout-line\", end=\"\"); "
+                        "print(\"stderr-line\", end=\"\", file=sys.stderr)'"
+                    ),
+                    "cwd": str(self.root),
+                },
+            )
+        )
+
+        self.assertEqual(receipt["exitCode"], 0, receipt["output"])
+        self.assertEqual(receipt["stdout"], "stdout-line")
+        self.assertEqual(receipt["stderr"], "stderr-line")
+        self.assertIn("stdout-line", receipt["output"])
+        self.assertIn("stderr-line", receipt["output"])
+
+    @unittest.skipUnless(sys.platform == "darwin", "requires the macOS sandbox harness")
     def test_real_harness_timeout_kills_the_process_group_before_a_late_write(self) -> None:
         sandbox = Path("/usr/bin/sandbox-exec")
         if not sandbox.is_file():

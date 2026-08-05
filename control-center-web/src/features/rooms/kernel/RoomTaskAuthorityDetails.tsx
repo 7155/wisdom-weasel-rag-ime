@@ -41,15 +41,18 @@ export type RoomTaskRoleResultProjection = {
 export type RoomWorkspaceDeliveryProjection = WorkspaceDelivery;
 
 export function RoomTaskTodoDetails({
+  live = false,
   owner,
   todo,
 }: {
+  live?: boolean;
   owner: string;
   todo?: Todo;
 }) {
   const settled = todo ? todo.counts.completed + todo.counts.abandoned : 0;
   return <section
     aria-label={`${owner} 的 Todo`}
+    aria-live={live ? 'polite' : undefined}
     className="room-task-authority room-task-todo"
     data-state={todo ? 'reported' : 'missing'}
   >

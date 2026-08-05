@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from rag_ime.agent_capability_catalog import build_capability_catalog
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_tools import ControlToolGateway, _TOOL_SPEC_BY_ID
 
@@ -51,6 +52,64 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         )
         catalog = gateway.manifests(session_id=str(session["id"]))["items"]
         return catalog, gateway.runtime_manifests(session)
+
+    def test_capability_catalog_rejects_duplicate_canonical_tool_ids(self) -> None:
+        manifest = {
+            "schemaVersion": "rag-ime.control-tool-manifest.v1",
+            "id": "read",
+            "domain": "workspace",
+            "displayName": "读取文件",
+            "description": "读取已授权项目中的文件内容",
+            "category": "workspace",
+            "riskLevel": "R0",
+            "sessionModes": ["coordinator"],
+            "operations": ["read"],
+            "resultPresentation": "tool_result",
+            "availability": "online",
+            "version": "1",
+        }
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "duplicate capability canonical id: tool:read",
+        ):
+            build_capability_catalog(
+                tool_manifests=[manifest, dict(manifest)],
+                session=None,
+                configuration_store=None,
+                governed_skills=None,
+                extensions=None,
+            )
+
+    def test_public_coding_catalog_and_hidden_runtime_targets_are_both_available(
+        self,
+    ) -> None:
+        catalog, runtime_manifests = self._runtime_contracts(mode="coordinator")
+        public_ids = [str(item["id"]) for item in catalog]
+
+        self.assertFalse(any(tool_id.startswith("workspace_") for tool_id in public_ids))
+        self.assertNotIn("write_file", public_ids)
+        for tool_id in ("read", "edit", "write", "bash"):
+            with self.subTest(public_tool=tool_id):
+                self.assertEqual(public_ids.count(tool_id), 1)
+
+        runtime_by_name = {
+            str(item["name"]): item
+            for item in runtime_manifests
+        }
+        expected_targets = {
+            "workspace_read": [{"name": "read", "operation": "read"}],
+            "workspace_edit": [{"name": "edit", "operation": "apply"}],
+            "workspace_write": [{"name": "write", "operation": "apply"}],
+            "workspace_shell": [{"name": "bash", "operation": "run"}],
+        }
+        for target, projections in expected_targets.items():
+            with self.subTest(runtime_target=target):
+                self.assertIs(runtime_by_name[target]["modelVisible"], False)
+                self.assertEqual(
+                    runtime_by_name[target]["runtimeProjections"],
+                    projections,
+                )
 
     def test_runtime_schema_projection_does_not_share_mutable_global_branches(self) -> None:
         _, manifests = self._runtime_contracts(mode="coordinator")
@@ -102,19 +161,18 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
 
     def test_every_enabled_runtime_tool_exposes_exact_operation_branches(self) -> None:
         catalog, manifests = self._runtime_contracts(mode="coordinator")
-        effective = {
-            item["id"]: set(item["effectiveOperations"])
+        native_host_tools = {
+            str(item["id"])
             for item in catalog
-            if item["enabled"] is True
-            and item.get("runtimeOwner") != "pi_host"
+            if item.get("runtimeOwner") == "pi_host"
         }
         native_ask = next(item for item in catalog if item["id"] == "ask")
         self.assertEqual(native_ask["runtimeOwner"], "pi_host")
         self.assertTrue(native_ask["alwaysAvailable"])
-
-        self.assertEqual(
-            {str(manifest["name"]) for manifest in manifests},
-            set(effective),
+        self.assertEqual(native_host_tools, {"read", "edit", "write", "bash", "ask"})
+        self.assertTrue(
+            {"workspace_read", "workspace_edit", "workspace_write", "workspace_shell"}
+            <= {str(manifest["name"]) for manifest in manifests}
         )
         for manifest in manifests:
             with self.subTest(tool=manifest["name"]):
@@ -141,7 +199,7 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
                         branch["properties"]["op"]["const"]
                         for branch in operation_branches
                     },
-                    effective[manifest["name"]],
+                    set(_TOOL_SPEC_BY_ID[str(manifest["name"])]["operations"]),
                 )
                 for branch in operation_branches:
                     self.assertIs(
@@ -373,10 +431,23 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             mode="coordinator",
             profile="subagent-readonly-v1",
         )
-        effective = {
+        public_effective = {
             item["id"]: set(item["effectiveOperations"])
             for item in catalog
             if item["enabled"] is True
+        }
+        self.assertEqual(public_effective["read"], {"read"})
+        self.assertNotIn("edit", public_effective)
+        self.assertNotIn("write", public_effective)
+        self.assertNotIn("bash", public_effective)
+
+        effective = {
+            str(manifest["name"]): {
+                branch["properties"]["op"]["const"]
+                for branch in manifest["parameters"]["oneOf"]
+                if "op" in branch.get("properties", {})
+            }
+            for manifest in manifests
         }
         self.assertEqual(effective["workspace_list"], {"list"})
         self.assertEqual(effective["workspace_read"], {"read"})

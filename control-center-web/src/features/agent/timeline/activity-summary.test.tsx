@@ -1,10 +1,15 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ControlTransportProvider } from '@/app/control-transport';
+import { TooltipProvider } from '@/components/primitives';
 import type { AgentActivityProjection } from '@/contracts/agent-reducer';
+import { StubControlTransport } from '@/test/stub-control-transport';
+import { useFilePreviewStore } from '../file-preview/file-preview-store';
 import { ActivitySummary, PublicActivityFeed } from './ActivitySummary';
 
 afterEach(() => {
   cleanup();
+  useFilePreviewStore.getState().reset();
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
 });
 
@@ -16,7 +21,9 @@ describe('Agent tool activity details', () => {
       result: { details: { ok: true, operation: 'status', result: { summary: '运行状态已读取' } } },
     });
 
-    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const { container } = render(
+      <TooltipProvider><ActivitySummary activities={[activity]} inline /></TooltipProvider>,
+    );
     const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline');
     expect(group).not.toBeNull();
     expect(group).not.toHaveAttribute('open');
@@ -194,6 +201,220 @@ describe('Agent tool activity details', () => {
     expect(row).toHaveTextContent('RoomTurn.tsx +8 -2');
   });
 
+  it.each([
+    ['workspace_read', 'read', '正在读取 src/main.ts'],
+    ['workspace_edit', 'edit', '正在编辑 src/main.ts'],
+    ['write_file', 'write', '正在写入 src/main.ts'],
+    ['workspace_shell', 'bash', '命令正在运行'],
+  ] as const)('gives %s one canonical, concrete running state', async (toolName, canonicalId, runningLabel) => {
+    const activity = toolActivity('tool_started', 'running', {
+      toolCallId: `call-running-${canonicalId}`,
+      toolName,
+      args: canonicalId === 'bash'
+        ? { command: 'npm test' }
+        : { path: 'src/main.ts', offset: 20, limit: 40 },
+    });
+    const { container } = render(
+      <TooltipProvider><ActivitySummary activities={[activity]} inline /></TooltipProvider>,
+    );
+    const details = openInlineActivity(container);
+    const row = details.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+
+    await waitFor(() => expect(row).toHaveAttribute('open'));
+    expect(row).toHaveAttribute('data-tool-kind', canonicalId);
+    expect(within(row).getByRole('status', { name: runningLabel })).toBeInTheDocument();
+    expect(row).not.toHaveTextContent('这条历史回执未包含');
+    if (canonicalId === 'read') {
+      const request = within(row).getByLabelText('工具调用参数');
+      expect(request).toHaveTextContent('src/main.ts');
+      expect(request).toHaveTextContent('起始行');
+      expect(request).toHaveTextContent('20');
+      expect(request).toHaveTextContent('上限');
+      expect(request).toHaveTextContent('40');
+    }
+    if (canonicalId === 'bash') {
+      expect(within(row).getByLabelText('工具调用参数')).toHaveTextContent('npm test');
+    }
+    if (canonicalId === 'edit' || canonicalId === 'write') {
+      expect(within(row).getByRole('status', {
+        name: canonicalId === 'write' ? '正在接收文件写入进度' : '正在接收文件编辑进度',
+      })).toBeInTheDocument();
+    }
+  });
+
+  it('auto-opens a running basic tool once without overriding a manual collapse', async () => {
+    const activity = toolActivity('tool_progress', 'running', {
+      toolCallId: 'call-running-auto-open',
+      toolName: 'read',
+      args: { path: 'src/stream.ts' },
+    });
+    const view = render(<ActivitySummary activities={[activity]} inline />);
+    const details = openInlineActivity(view.container);
+    const row = details.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    await waitFor(() => expect(row).toHaveAttribute('open'));
+
+    fireEvent.click(row.querySelector('summary')!);
+    expect(row).not.toHaveAttribute('open');
+    view.rerender(<ActivitySummary activities={[{
+      ...activity,
+      payload: { ...activity.payload, publicResult: { outputPreview: 'first line' } },
+      updatedAtMs: activity.updatedAtMs + 1_000,
+    }]} inline />);
+
+    expect(row).not.toHaveAttribute('open');
+  });
+
+  it('streams read content with its target and range in the same disclosure', async () => {
+    const activity = toolActivity('tool_progress', 'running', {
+      toolCallId: 'call-read-stream',
+      toolName: 'read',
+      args: { path: 'src/stream.ts', offset: 12, limit: 24 },
+      publicResult: {
+        outputPreview: 'export const first = true;\nexport const second =',
+        outputTruncated: false,
+      },
+    });
+    const { container } = render(
+      <TooltipProvider><ActivitySummary activities={[activity]} inline /></TooltipProvider>,
+    );
+    const details = openInlineActivity(container);
+    const row = details.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    await waitFor(() => expect(row).toHaveAttribute('open'));
+
+    const request = within(row).getByLabelText('工具调用参数');
+    expect(request).toHaveTextContent('src/stream.ts');
+    expect(request).toHaveTextContent('12');
+    expect(request).toHaveTextContent('24');
+    const output = within(row).getByLabelText('工具返回片段');
+    expect(output).toHaveAttribute('data-streaming', 'true');
+    expect(within(output).getByLabelText('src/stream.ts 代码内容')).toHaveTextContent('export const first');
+    expect(output.querySelector('.agent-streaming-cursor--inline')).toBeInTheDocument();
+  });
+
+  it('keeps a bash command separate from streaming stdout and stderr, then reports its exit code', async () => {
+    const running = toolActivity('tool_progress', 'running', {
+      toolCallId: 'call-bash-stream',
+      toolName: 'bash',
+      args: { command: 'npm test -- --runInBand' },
+      publicResult: {
+        stdoutPreview: 'PASS src/room.test.ts',
+        stderrPreview: 'warning: cache miss',
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      },
+    });
+    const view = render(
+      <TooltipProvider><ActivitySummary activities={[running]} inline /></TooltipProvider>,
+    );
+    const details = openInlineActivity(view.container);
+    const row = details.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    await waitFor(() => expect(row).toHaveAttribute('open'));
+
+    const request = within(row).getByLabelText('工具调用参数');
+    expect(request).toHaveTextContent('npm test -- --runInBand');
+    const output = within(row).getByLabelText('工具返回片段');
+    expect(within(output).getByLabelText('标准输出 代码内容')).toHaveTextContent('PASS src/room.test.ts');
+    expect(within(output).getByLabelText('标准错误 代码内容')).toHaveTextContent('warning: cache miss');
+    expect(output.querySelectorAll('.agent-streaming-cursor--inline')).toHaveLength(1);
+    expect(output.textContent).not.toContain('npm test -- --runInBand');
+
+    view.rerender(
+      <TooltipProvider><ActivitySummary activities={[{
+        ...running,
+        kind: 'tool_finished',
+        status: 'completed',
+        payload: {
+          ...running.payload,
+          publicResult: { ...(running.payload.publicResult as object), exitCode: 0 },
+        },
+        updatedAtMs: running.updatedAtMs + 1_000,
+      }]} inline /></TooltipProvider>,
+    );
+    if (!row.hasAttribute('open')) fireEvent.click(row.querySelector('summary')!);
+    expect(row).toHaveTextContent('退出码');
+    expect(row).toHaveTextContent('0');
+    expect(row.querySelector('.agent-streaming-cursor--inline')).not.toBeInTheDocument();
+  });
+
+  it('renders a managed workspace_job as the same streaming bash surface', async () => {
+    const activity = toolActivity('tool_progress', 'running', {
+      toolCallId: 'call-workspace-job-stream',
+      toolName: 'workspace_job',
+      args: { operation: 'logs', jobId: 'bg_123', command: 'python3 -m pytest' },
+      publicResult: {
+        stdoutPreview: 'collected 12 items\n...',
+        stderrPreview: 'warning: cache miss',
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      },
+    });
+    const view = render(
+      <TooltipProvider><ActivitySummary activities={[activity]} inline /></TooltipProvider>,
+    );
+    const details = openInlineActivity(view.container);
+    const row = details.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    await waitFor(() => expect(row).toHaveAttribute('open'));
+
+    expect(row).toHaveAttribute('data-tool-kind', 'bash');
+    expect(within(row).getByRole('status', { name: '命令正在运行' })).toBeInTheDocument();
+    expect(within(row).getByLabelText('工具调用参数')).toHaveTextContent('python3 -m pytest');
+    const output = within(row).getByLabelText('工具返回片段');
+    expect(within(output).getByLabelText('标准输出 代码内容')).toHaveTextContent('collected 12 items');
+    expect(within(output).getByLabelText('标准错误 代码内容')).toHaveTextContent('warning: cache miss');
+    expect(output.querySelector('.agent-streaming-cursor--inline')).toBeInTheDocument();
+
+    view.rerender(
+      <TooltipProvider><ActivitySummary activities={[{
+        ...activity,
+        kind: 'tool_finished',
+        status: 'completed',
+        payload: {
+          ...activity.payload,
+          publicResult: { ...(activity.payload.publicResult as object), exitCode: 0 },
+        },
+        updatedAtMs: activity.updatedAtMs + 1_000,
+      }]} inline /></TooltipProvider>,
+    );
+    if (!row.hasAttribute('open')) fireEvent.click(row.querySelector('summary')!);
+    expect(row).toHaveTextContent('退出码');
+    expect(row).toHaveTextContent('0');
+    expect(row.querySelector('.agent-streaming-cursor--inline')).not.toBeInTheDocument();
+  });
+
+  it('renders a completed edit only through the canonical Diff renderer', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-edit-diff',
+      toolName: 'edit_file',
+      args: { path: 'src/RoomTurn.tsx' },
+      publicResult: {
+        outputPreview: [
+          'diff --git a/src/RoomTurn.tsx b/src/RoomTurn.tsx',
+          '--- a/src/RoomTurn.tsx',
+          '+++ b/src/RoomTurn.tsx',
+          '@@ -1 +1 @@',
+          '-const oldValue = true;',
+          '+const newValue = true;',
+        ].join('\n'),
+        outputTruncated: false,
+        additions: 1,
+        deletions: 1,
+      },
+    });
+    const { container } = render(
+      <TooltipProvider><ActivitySummary activities={[activity]} inline /></TooltipProvider>,
+    );
+    const details = openInlineActivity(container);
+    const row = details.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+
+    expect(row).toHaveAttribute('data-tool-kind', 'edit');
+    expect(within(row).getByLabelText('文件变更')).toBeInTheDocument();
+    expect(within(row).getByLabelText('Diff 展示方式')).toBeInTheDocument();
+    expect(row).toHaveTextContent('oldValue');
+    expect(row).toHaveTextContent('newValue');
+    expect(within(row).queryByLabelText('工具返回片段')).not.toBeInTheDocument();
+  });
+
   it('does not animate an orphan edit progress event without a recorded start', () => {
     const activity = toolActivity('tool_progress', 'running', {
       toolCallId: 'call-edit-orphan-progress',
@@ -279,7 +500,9 @@ describe('Agent tool activity details', () => {
       },
     });
 
-    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const { container } = render(
+      <TooltipProvider><ActivitySummary activities={[activity]} inline /></TooltipProvider>,
+    );
     const dialog = openInlineActivity(container);
     const row = dialog.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
     expect(row.querySelector('summary')).toHaveTextContent('已在 …/project/rag_ime 中搜索 “rime_lexicon_review”');
@@ -317,15 +540,17 @@ describe('Agent tool activity details', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
     const { container } = render(
-      <div data-testid="output-scrollport" style={{ maxHeight: 300, overflowY: 'auto' }}>
-        <ActivitySummary activities={[activity]} inline />
-      </div>,
+      <TooltipProvider>
+        <div data-testid="output-scrollport" style={{ maxHeight: 300, overflowY: 'auto' }}>
+          <ActivitySummary activities={[activity]} inline />
+        </div>
+      </TooltipProvider>,
     );
     const group = openInlineActivity(container);
     const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
     fireEvent.click(row.querySelector('summary')!);
     const output = within(row).getByLabelText('工具返回片段');
-    const visibleOutput = within(output).getByLabelText('工具返回内容');
+    const visibleOutput = within(output).getByLabelText('搜索结果 代码内容');
     const scrollport = screen.getByTestId('output-scrollport');
     scrollport.scrollTop = 180;
 
@@ -343,11 +568,11 @@ describe('Agent tool activity details', () => {
     expect(visibleOutput).toHaveTextContent('mode=1');
     expect(visibleOutput).toHaveTextContent('token 用量');
     expect(visibleOutput).toHaveAttribute('tabindex', '0');
-    fireEvent.click(within(output).getByRole('button', { name: '复制结果' }));
+    fireEvent.click(within(output).getByRole('button', { name: '复制代码' }));
 
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(visibleOutput.textContent));
     expect(scrollport.scrollTop).toBe(180);
-    expect(within(output).getByRole('button', { name: '已复制结果' })).toBeInTheDocument();
+    expect(within(output).getByRole('button', { name: '已复制' })).toBeInTheDocument();
   });
 
   it('hides shell output when the command reads a credential-bearing file', () => {
@@ -402,7 +627,9 @@ describe('Agent tool activity details', () => {
       },
     });
 
-    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const { container } = render(
+      <TooltipProvider><ActivitySummary activities={[activity]} inline /></TooltipProvider>,
+    );
     const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
     expect(group).toHaveTextContent('已在 rag_ime 中搜索 “todo”');
     const dialog = openInlineActivity(container);
@@ -860,8 +1087,40 @@ describe('Agent tool activity details', () => {
     );
   });
 
-  it('summarizes a Pi write_file result as a safe file name and added line count', () => {
+  it('upcasts a legacy write_file event and renders its managed Diff through the canonical preview', async () => {
     const writtenContent = Array.from({ length: 335 }, (_, index) => `line ${index + 1}`).join('\n');
+    const mediaId = 'media_write_diff_1234';
+    const sessionId = 'session-write-diff';
+    const sha256 = 'c'.repeat(64);
+    const diff = [
+      'diff --git a/src/report.ts b/src/report.ts',
+      'new file mode 100644',
+      '--- /dev/null',
+      '+++ b/src/report.ts',
+      '@@ -0,0 +1,2 @@',
+      '+line 1',
+      '+line 2',
+    ].join('\n');
+    const transport = new StubControlTransport('mock', {
+      'agent.media.preview': {
+        schemaVersion: 'rag-ime.agent-file-preview.v1',
+        descriptor: {
+          schemaVersion: 'rag-ime.agent-file-descriptor.v1',
+          mediaId,
+          sessionId,
+          fileName: 'report.ts.diff',
+          mimeType: 'text/x-diff',
+          byteSize: new TextEncoder().encode(diff).byteLength,
+          sha256,
+          previewKind: 'diff',
+          language: '',
+          contentUrl: `/api/agent/media/${mediaId}/content?sessionId=${sessionId}`,
+        },
+        content: diff,
+        previewByteSize: new TextEncoder().encode(diff).byteLength,
+        truncated: false,
+      },
+    });
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-pi-write-file',
       toolName: 'write_file',
@@ -875,19 +1134,45 @@ describe('Agent tool activity details', () => {
           text: 'Successfully wrote 2908 bytes to /Users/private/project/src/report.ts',
         }],
       },
+      agentBlocks: [{
+        schemaVersion: 'rag-ime.agent-block.v1',
+        id: 'tool-artifact:file:write-diff',
+        type: 'file',
+        status: 'completed',
+        presentationKind: 'file.v1',
+        data: {
+          mediaId,
+          sessionId,
+          fileName: 'report.ts.diff',
+          mimeType: 'text/x-diff',
+          byteSize: new TextEncoder().encode(diff).byteLength,
+          sha256,
+          receiptUrl: `/api/agent/media/${mediaId}/content?sessionId=${sessionId}`,
+        },
+      }],
     });
 
-    const { container } = render(<ActivitySummary activities={[activity]} />);
+    const { container } = render(
+      <TooltipProvider>
+        <ControlTransportProvider transport={transport}>
+          <ActivitySummary activities={[activity]} />
+        </ControlTransportProvider>
+      </TooltipProvider>,
+    );
     openActivity(container);
 
     const dialog = screen.getByRole('dialog');
     expect(dialog).toHaveTextContent('写入文件');
     expect(dialog).toHaveTextContent('report.ts +335');
-    expect(dialog).toHaveTextContent('335 行');
-    expect(dialog).toHaveTextContent('+335 -0');
+    const preview = await screen.findByRole('region', { name: 'report.ts.diff 内联预览' });
+    expect(within(preview).getByLabelText('Diff 展示方式')).toBeInTheDocument();
+    expect(preview).toHaveTextContent('src/report.ts');
+    expect(preview).toHaveTextContent('line 1');
+    expect(within(dialog).queryByLabelText('工具调用参数')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('工具结果明细')).not.toBeInTheDocument();
     expect(dialog).not.toHaveTextContent('/Users/private/project');
-    expect(dialog).not.toHaveTextContent('line 1');
     expect(dialog).not.toHaveTextContent('Successfully wrote');
+    expect(transport.requests).toHaveLength(1);
   });
 
   it('shows the sanitized permission failure and opens the real permission picker entry point', () => {

@@ -2,7 +2,7 @@
 
 - Document class: sole tracked authority for current Room product behavior and acceptance status
 - Approved vision window: user decisions made on or after 2026-08-02
-- Contract revision: 2026-08-04
+- Contract revision: 2026-08-05
 - Acceptance state: prior source regression and independent review passed, but the 2026-08-04 real HTTP foreground run exposed blocking multi-companion and presentation gaps; production acceptance remains open
 - Status rule: source, test, installed, and foreground evidence are reported separately
 
@@ -322,9 +322,10 @@ because a client timer pretends work happened.
   `+N/-N`; repeated plumbing, long arguments, and raw output stay collapsed.
   Each row may expand in place to bounded input, output, diff, or safe failure
   details without opening another column or nested card stack.
-- Repository work uses first-class semantic rows for search, read, edit/create,
-  command, test, and diff instead of the generic label `工具操作`. A compact
-  sequence may read `已搜索 …`, `已读取 RoomTurn.tsx`, and
+- Repository work uses first-class semantic rows instead of the generic label
+  `工具操作`. Search and test are semantic `bash` results, while diff is the
+  semantic result of `edit` or `write`; none is a fifth basic coding Tool. A
+  compact sequence may read `已搜索 …`, `已读取 RoomTurn.tsx`, and
   `已编辑 RoomTurn.tsx +46 -1`; expanding it reveals matched locations, the
   bounded command/output, or the attributed patch. File manipulation must be
   strong enough to support repeated edits and verification during a day-scale
@@ -368,6 +369,61 @@ because a client timer pretends work happened.
   with no task-specific content.
 - Internal protocol words and identifiers stay in optional audit detail. Remove
   the old execution-gate panel and lead with ordinary conversation.
+
+### One canonical basic coding-Tool surface
+
+- The only public basic coding Tools available to the model and projected by
+  Agent, Room, conversation, and Tasks frontends are `read`, `edit`, `write`,
+  and `bash`. A localized row may say `正在读取` or `已编辑`, but its canonical
+  public Tool identity remains one of those four everywhere.
+- `workspace_*`, `read_file`, `edit_file`, `write_file`, `shell`,
+  `apply_patch`, and similar historical or Provider-specific names may exist
+  only as non-model-visible compatibility, authorization, or audit aliases.
+  The owning process upcasts an alias once at its Provider, persisted-history,
+  or backend boundary before the call enters the model-visible catalog or UI
+  projection. An alias must never register a second capability, appear as a
+  second public Tool, create a separate permission decision, produce a parallel
+  receipt/history branch, or select another frontend renderer. Original legacy
+  spelling may remain only inside optional audit provenance.
+- All four Tools use one chronological row contract: a compact semantic summary,
+  latest real update time, truthful active state, bounded incremental output,
+  completion or failure, and an in-place disclosure for parameters, output,
+  attempts, and safe diagnostics. A newly accepted call receives restrained
+  one-shot arrival feedback; ongoing motion starts only after an authoritative
+  active event and stops on completion, failure, cancellation, disconnect, or
+  reduced-motion preference. A timer or heartbeat cannot manufacture progress.
+- A running row distinguishes `等待首段结果`, newly received output, continued
+  output, recovery, and terminal state. Stream chunks are ordered by stable
+  call identity plus server sequence, append at the chronological bottom, and
+  reconcile after reconnect without duplication. The last truthful output stays
+  readable while a bounded retry is recovering; routine argument, code, command,
+  or transient Provider errors remain inside the row and do not ask the user to
+  operate the retry.
+- `read` shows the target path and requested range or bound before execution.
+  While active it can reveal newly received bounded text with a streaming cursor;
+  completion provides code-aware content with line numbers, truncation state,
+  copy, and folding instead of only `状态：已完成`.
+- `edit` shows the target and bounded change intent without exposing hidden
+  reasoning. Its active treatment identifies the current file and real edit
+  stage, incrementally renders available patch hunks, and settles into the actual
+  attributed Diff, per-file `+N/-N`, and verification consequence. A failed
+  attempt preserves its useful error and recovery lineage beneath the last good
+  patch instead of creating repeated top-level failure cards.
+- `write` shows the target, create/replace mode, and bounded size or line progress
+  without dumping a large proposed body into the collapsed row. It streams
+  truthful write progress when the runtime reports it and completes with the
+  actual created or replaced artifact, line count, attributed Diff, and next
+  verification step. It must not display a file as written merely because a
+  model proposed content or a client timer elapsed.
+- `bash` keeps the command and working directory distinct from its result. While
+  active it appends bounded stdout and stderr in their real order with a visible
+  running cursor; completion exposes exit code, duration, truncation, and the
+  semantic search/test/command verdict. Failure and autonomous retry remain
+  expandable in the same call lineage, with the recovered result becoming the
+  compact summary.
+- Conversation and Tasks reuse these exact call records and renderers at
+  different density. Neither React surface infers missing chunks, synthesizes a
+  Diff from repository-wide dirt, or maintains another Tool state machine.
 
 ### Conversation history loading and long-session performance
 
@@ -521,12 +577,13 @@ or acceptance evidence above.
 
 | Area | Source/test state | Installed foreground state |
 | --- | --- | --- |
-| opening Facilitator, conditional clarification, crash-safe chronological answers and typed start | implemented; current complete Web suite 953/953, Room Kernel 98/98, and Runtime/public projection 104/104 passed; prior command receipt and injected-crash gates also passed | open |
+| opening Facilitator, conditional clarification, crash-safe chronological answers and typed start | implemented; current complete Web suite 974/974, Room core 104/104, and changed backend/runtime modules 212/212 passed; prior command receipt and injected-crash gates also passed | open |
 | fresh execute Dispatch, peer work, nested delegation, integration, review, one report | implemented; current Room Kernel 98/98 and prior focused settlement gates passed | open |
 | stage Skills and capability receipts | implemented; Skill 25/25 and Pi runtime 70/70 passed | open |
 | permanent workspace ledger, same-baseline isolation, integration-before-cleanup, red retention | implemented; settlement and canary 18/18 passed | open |
-| continuous conversation activity and lower-density Tasks projection | source now reorders mutable activity by its latest authoritative timestamp, derives concrete role copy from the owned task and expected delivery, keeps Todo as the final sticky block, and gives the graph compact status markers, concrete current/next action, dependency labels, and truthful active-edge motion; 55 focused Room tests, the complete 953-test Web suite, and TypeScript passed | prior foreground failure remains authoritative until the coherent build is installed and rechecked |
-| history loading, cached transcript continuity, bounded initial page and older-history loading | explicit loading/empty/failed projection plus newest 80-event and newest 100-complete-turn windows, stable `beforeEventId` / `beforeMessageId` older-page merge, and total-count reconciliation are implemented; 138 backend/policy/route tests, focused Web paging/loading checks, the complete 953-test Web suite, TypeScript, and the prior local no-false-welcome checks passed | source Web shell passed; coherent installed foreground timing open |
+| continuous conversation activity and lower-density Tasks projection | source now reorders mutable activity by its latest authoritative timestamp, derives concrete role copy from the owned task and expected delivery, keeps Todo as the final sticky block, and gives the graph compact status markers, concrete current/next action, dependency labels, and truthful active-edge motion; focused Room tests, the complete 974-test Web suite, and TypeScript passed | prior foreground failure remains authoritative until the coherent build is installed and rechecked |
+| canonical `read` / `edit` / `write` / `bash` surface, streaming and personalized result views | implemented in source: public catalog projection exposes the four basic coding Tools once, historical aliases upcast into them, Agent and Room share the artifact/Diff renderer, active mutations animate without publishing a half-built Diff, and completed bash rows preserve bounded stdout/stderr plus exit status; changed backend modules 212/212, complete Web suite 974/974, TypeScript, and the native production Web build passed | open; must be exercised in one coherent foreground build |
+| history loading, cached transcript continuity, bounded initial page and older-history loading | explicit loading/empty/failed projection plus newest 80-event and newest 100-complete-turn windows, stable `beforeEventId` / `beforeMessageId` older-page merge, and total-count reconciliation are implemented; 138 backend/policy/route tests, focused Web paging/loading checks, the complete 974-test Web suite, TypeScript, and the prior local no-false-welcome checks passed | source Web shell passed; coherent installed foreground timing open |
 | risk-based full-auto approval | scoped hash-bound text write/edit/patch now bypass Luna by deterministic policy; focused policy and Agent-service regression passed while R3, sensitive, and out-of-scope cases remain model-routed | fresh full-auto Room foreground open |
 | Session Todo, per-owner result/diff, subagent grouping | implemented; source projections and Web regression passed | open |
 | day-scale full-auto recovery, durable checkpoints, automatic repair/retry/reassignment/model fallback | partially implemented; durable Dispatch attempts, Todo, workspace ledger, reconnect state, direct failed-Tool retry lineage, and Provider retry projection exist and passed source regression; restart-resume plus injected native recovery acceptance remain open | open |
@@ -611,7 +668,7 @@ Current source correction and Web-shell evidence:
   in an expanded WorkItem card. The task graph uses a compact horizontal legend,
   visible parallel/dependency labels, one concrete current or next action per
   node, and moving dashed edges only while the dependency is active. These
-  changes passed 55 focused Room tests and the full 953-test Web suite; fresh
+  changes passed focused Room tests and the full 974-test Web suite; fresh
   installed foreground evidence is still required.
 - Full-auto approval policy now treats a prepared, hash-bound ordinary text
   write/edit/patch inside the granted workspace as deterministic policy work.
@@ -639,18 +696,24 @@ Use one coherent installed build and one fresh Room in the foreground
    WorkItems when appropriate, each owner's Todo and attributed result/diff,
    real Tool/activity updates, one bounded nested subagent, delivery,
    Facilitator integration, required-canary independent review, and one final.
-5. Verify the requested artifact and focused checks in the governed workspace.
+5. Exercise `read`, `edit`, `write`, and `bash` through real governed work. Verify
+   that no `workspace_*`, `write_file`, or other alias appears as a second public
+   Tool; each call has its personalized compact row, truthful active animation,
+   ordered incremental output, in-place folding, semantic completion/failure,
+   and retained recovery detail. Confirm `edit` and `write` expose the actual
+   attributed Diff and `bash` exposes bounded stdout/stderr plus exit status.
+6. Verify the requested artifact and focused checks in the governed workspace.
    Confirm successful child cleanup and retained danger workspaces match the
    permanent ledger.
-6. Reload the same Room and confirm chronology, tasks, activity, provenance,
+7. Reload the same Room and confirm chronology, tasks, activity, provenance,
    review, workspace state, and one final remain coherent. Switch between a
    cached long Session, an uncached long Session, and a real empty Session;
    confirm there is no false welcome/blank flash, the recovery state appears
    immediately when needed, and older history loads without moving the reader.
-7. Correlate the visible flow with durable receipts and installed provenance.
+8. Correlate the visible flow with durable receipts and installed provenance.
    Any fake activity, skipped implementation, missing integration/review,
    incomplete artifact, duplicate final, or mismatch keeps acceptance open.
-8. In full-auto mode, inject at least one recoverable command or Tool-argument
+9. In full-auto mode, inject at least one recoverable command or Tool-argument
    failure and one transient Provider failure. Confirm the owning companion
    repairs or retries it, the Facilitator continues the plan, the user is not
    asked to handle the intermediate error, the expanded Tool row preserves the
@@ -666,6 +729,8 @@ Use one coherent installed build and one fresh Room in the foreground
 - ownership inferred from display names or later mentions
 - a second Ask Tool, Room state store, event bus, Todo implementation, or cost
   schema
+- a second public basic coding Tool, alias-specific execution path, or duplicate
+  frontend renderer beside canonical `read`, `edit`, `write`, and `bash`
 - prompt-specific `写 TUI` behavior
 - loading all stage Skills into every prompt
 - exposing hidden reasoning or private subagent transcript

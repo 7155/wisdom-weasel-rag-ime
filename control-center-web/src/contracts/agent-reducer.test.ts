@@ -995,7 +995,7 @@ describe('AgentEventReducer', () => {
       firstProgress,
       agentEvent(3, 'tool_progress', {
         toolCallId: 'tool-progress-1',
-        partialResult: { details: { result: { summary: '正在重排 4 条证据' } } },
+        publicResult: { summary: '正在重排 4 条证据' },
       }),
     ).state;
     const finished = reduceAgentEvent(

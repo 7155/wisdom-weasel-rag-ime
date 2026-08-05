@@ -743,13 +743,28 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 .agent-tool-result-panel[data-tone='error'] > strong, .agent-tool-result-panel[data-tone='error'] .agent-tool-result-panel__header > strong, .agent-tool-result-panel[data-tone='error'] > p { color: var(--color-danger); }
 .agent-tool-result-panel > p { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
 .agent-tool-result-panel > pre { max-height: 260px; margin: 0; padding: var(--space-2); overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; border: 1px solid var(--color-border); border-radius: var(--radius-1); background: var(--color-surface); color: var(--color-text-secondary); font-family: var(--font-mono); font-size: var(--text-code); line-height: var(--text-code-lh); white-space: pre-wrap; overflow-wrap: anywhere; }
-.agent-tool-result-panel[data-output-kind='diff'] > pre { white-space: pre; overflow-wrap: normal; }
-.agent-tool-result-panel[data-output-kind='diff'] > pre > span { display: block; min-width: max-content; }
-.agent-tool-result-panel[data-output-kind='diff'] > pre > span[data-diff-line='addition'] { background: color-mix(in srgb, var(--color-success-soft) 64%, transparent); color: var(--color-success); }
-.agent-tool-result-panel[data-output-kind='diff'] > pre > span[data-diff-line='deletion'] { background: color-mix(in srgb, var(--color-danger-soft) 64%, transparent); color: var(--color-danger); }
-.agent-tool-result-panel[data-output-kind='diff'] > pre > span[data-diff-line='hunk'] { color: var(--color-accent); }
 .agent-tool-result-panel > pre:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .agent-tool-result-panel > small { color: var(--color-text-tertiary); line-height: 1.45; }
+.agent-tool-artifact-output, .agent-tool-specialized-output { display: grid; min-width: 0; gap: var(--space-2); margin-top: var(--space-2); }
+.agent-tool-artifacts { display: grid; min-width: 0; gap: var(--space-2); }
+.agent-tool-specialized-output > .agent-code-block, .agent-tool-specialized-output > .agent-code-collapse { margin: 0; }
+.agent-tool-specialized-output > .agent-diff-preview { max-height: 560px; min-height: 0; overflow: hidden; border: 1px solid var(--color-code-border); border-radius: var(--radius-2); }
+.agent-tool-specialized-output > small { color: var(--color-text-tertiary); line-height: 1.45; }
+.agent-tool-specialized-output[data-streaming='true'] .agent-streaming-cursor--inline { display: inline-block; }
+.agent-tool-terminal-channel { display: grid; min-width: 0; gap: var(--space-1); }
+.agent-tool-terminal-channel + .agent-tool-terminal-channel { padding-top: var(--space-2); border-top: 1px solid var(--color-border-soft); }
+.agent-tool-terminal-channel[data-channel='stderr'] .agent-code-block { border-color: color-mix(in srgb, var(--color-danger) 32%, var(--color-code-border)); }
+.agent-tool-terminal-channel > small { color: var(--color-text-tertiary); line-height: 1.45; }
+.agent-tool-running-preview { display: grid; min-width: 0; grid-template-columns: 54px minmax(0, 1fr); align-items: center; gap: var(--space-3); margin-top: var(--space-2); padding: var(--space-3); border: 1px solid var(--color-border); border-left: 3px solid var(--color-accent); border-radius: var(--radius-2); background: color-mix(in srgb, var(--color-accent-soft) 38%, var(--color-surface)); }
+.agent-tool-running-preview[data-tool='edit'], .agent-tool-running-preview[data-tool='write'] { border-left-color: var(--color-project); background: color-mix(in srgb, var(--color-project-soft) 36%, var(--color-surface)); }
+.agent-tool-running-preview > span:last-child { display: grid; min-width: 0; gap: var(--space-1); }
+.agent-tool-running-preview strong { color: var(--color-text); font-size: var(--text-ui); line-height: var(--text-ui-lh); overflow-wrap: anywhere; }
+.agent-tool-running-preview small { color: var(--color-text-secondary); font-size: var(--text-label); line-height: 1.45; }
+.agent-tool-running-preview__pulse { display: grid; width: 46px; height: 5px; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.agent-tool-running-preview__pulse > i { border-radius: var(--radius-round); background: var(--color-accent); opacity: .2; transform: scaleX(.35); transform-origin: left; animation: agent-edit-step 1.35s ease-in-out infinite; }
+.agent-tool-running-preview[data-tool='edit'] .agent-tool-running-preview__pulse > i, .agent-tool-running-preview[data-tool='write'] .agent-tool-running-preview__pulse > i { background: var(--color-project); }
+.agent-tool-running-preview__pulse > i:nth-child(2) { animation-delay: 150ms; }
+.agent-tool-running-preview__pulse > i:nth-child(3) { animation-delay: 300ms; }
 .agent-tool-unavailable { margin: var(--space-2) 0 0; padding: var(--space-2); border-left: 2px solid var(--color-border-strong); background: var(--color-surface-subtle); color: var(--color-text-tertiary); font-size: var(--text-label); }
 .agent-tool-request { display: grid; gap: 5px; margin: 0; }
 .agent-tool-request > div { display: grid; grid-template-columns: minmax(72px, 0.25fr) minmax(0, 1fr); gap: 10px; align-items: start; }
@@ -2384,8 +2399,9 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
   .agent-working-dots b,
   .agent-review-dialog__loading svg,
   .agent-review-item__spinner,
-  .agent-activity-row[data-state='running'][data-tool-kind='edit'] .agent-activity-row__icon > svg,
+  .agent-activity-row[data-edit-active='true'] .agent-activity-row__icon > svg,
   .agent-activity-row__edit-progress > i,
+  .agent-tool-running-preview__pulse > i,
   .agent-activity[data-state='running'] .agent-activity__status svg,
   .agent-status-tool[data-state='running'] .agent-status-tool__icon > svg,
   .agent-status-turn[data-state='queued'] > svg,
@@ -2424,8 +2440,9 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 :root[data-reduce-motion='true'] .agent-working-dots b,
 :root[data-reduce-motion='true'] .agent-review-dialog__loading svg,
 :root[data-reduce-motion='true'] .agent-review-item__spinner,
-:root[data-reduce-motion='true'] .agent-activity-row[data-state='running'][data-tool-kind='edit'] .agent-activity-row__icon > svg,
+:root[data-reduce-motion='true'] .agent-activity-row[data-edit-active='true'] .agent-activity-row__icon > svg,
 :root[data-reduce-motion='true'] .agent-activity-row__edit-progress > i,
+:root[data-reduce-motion='true'] .agent-tool-running-preview__pulse > i,
 :root[data-reduce-motion='true'] .agent-activity[data-state='running'] .agent-activity__status svg,
 :root[data-reduce-motion='true'] .agent-status-tool[data-state='running'] .agent-status-tool__icon > svg,
 :root[data-reduce-motion='true'] .agent-status-turn[data-state='queued'] > svg,

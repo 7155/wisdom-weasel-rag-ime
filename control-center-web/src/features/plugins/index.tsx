@@ -41,6 +41,7 @@ import {
   publicErrorText,
   stringValue,
 } from '@/features/overview/management-ui';
+import { projectPublicToolCatalog } from '@/features/agent/tool-presentation';
 import {
   capabilityEffectiveLabel,
   capabilityKindLabel,
@@ -124,7 +125,11 @@ export function PluginsFeature() {
   const [defaultMutation, setDefaultMutation] = useState<DefaultMutationOutcome>();
   const [hookError, setHookError] = useState('');
   const [showMaintenance, setShowMaintenance] = useState(false);
-  const items = catalog.data?.items ?? [];
+  const catalogItems = catalog.data?.items;
+  const items = useMemo(
+    () => projectPublicToolCatalog(catalogItems ?? []),
+    [catalogItems],
+  );
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase('zh-CN');
     return items.filter((item) => {

@@ -73,6 +73,139 @@ describe('PluginsFeature', () => {
     expect(transport.requests.some((call) => call.request.pathId === 'agent.configuration.update')).toBe(false);
   });
 
+  it('projects historical coding adapters into four tool rows without changing skills or extensions', async () => {
+    renderPlugins({
+      'agent.tools.list': capabilityCatalog([
+        tool({
+          id: 'workspace_read',
+          displayName: '工作区读取',
+          description: '旧工作区适配器',
+          domain: 'workspace',
+          riskLevel: 'R0',
+          operations: ['read_range'],
+          effectiveOperations: ['read_range'],
+          sessionModes: ['coordinator'],
+          enabled: false,
+        }),
+        tool({
+          id: 'read_file',
+          displayName: 'Read file',
+          description: '旧 Provider 别名',
+          domain: 'workspace',
+          riskLevel: 'R0',
+          operations: ['read'],
+          effectiveOperations: ['read'],
+          sessionModes: ['coordinator'],
+          enabled: true,
+        }),
+        tool({
+          id: 'workspace_search',
+          displayName: '工作区搜索',
+          description: '旧搜索适配器',
+          domain: 'workspace',
+          riskLevel: 'R0',
+          operations: ['search'],
+          effectiveOperations: ['search'],
+          sessionModes: ['coordinator'],
+        }),
+        tool({
+          id: 'workspace_list',
+          displayName: '工作区浏览',
+          description: '旧浏览适配器',
+          domain: 'workspace',
+          riskLevel: 'R0',
+          operations: ['list'],
+          effectiveOperations: ['list'],
+          sessionModes: ['coordinator'],
+        }),
+        tool({
+          id: 'workspace_lsp',
+          displayName: '代码智能',
+          description: '旧 LSP 适配器',
+          domain: 'workspace',
+          riskLevel: 'R0',
+          operations: ['symbols'],
+          effectiveOperations: ['symbols'],
+          sessionModes: ['coordinator'],
+        }),
+        tool({
+          id: 'workspace_edit',
+          displayName: '工作区修改',
+          description: '旧编辑适配器',
+          domain: 'workspace',
+          riskLevel: 'R1',
+          operations: ['replace'],
+          effectiveOperations: ['replace'],
+          sessionModes: ['coordinator'],
+        }),
+        tool({
+          id: 'apply_patch',
+          displayName: 'Apply patch',
+          description: '旧补丁适配器',
+          domain: 'workspace',
+          riskLevel: 'R1',
+          operations: ['patch'],
+          effectiveOperations: ['patch'],
+          sessionModes: ['coordinator'],
+        }),
+        tool({
+          id: 'workspace_write',
+          displayName: '工作区写入',
+          description: '旧写入适配器',
+          domain: 'workspace',
+          riskLevel: 'R1',
+          operations: ['create'],
+          effectiveOperations: ['create'],
+          sessionModes: ['coordinator'],
+        }),
+        tool({
+          id: 'write_file',
+          displayName: 'Write file',
+          description: '旧 Provider 写入别名',
+          domain: 'workspace',
+          riskLevel: 'R1',
+          operations: ['write'],
+          effectiveOperations: ['write'],
+          sessionModes: ['coordinator'],
+        }),
+        tool({
+          id: 'workspace_shell',
+          displayName: '受控命令',
+          description: '旧命令适配器',
+          domain: 'workspace',
+          riskLevel: 'R2',
+          operations: ['run'],
+          effectiveOperations: ['run'],
+          sessionModes: ['coordinator'],
+        }),
+        tool({
+          id: 'workspace_job',
+          displayName: '后台任务',
+          description: '旧后台任务适配器',
+          domain: 'workspace',
+          riskLevel: 'R2',
+          operations: ['poll'],
+          effectiveOperations: ['poll'],
+          sessionModes: ['coordinator'],
+        }),
+        capability('debugging', 'skill', '调试技能'),
+        capability('browser-extension', 'extension', '浏览器扩展'),
+      ]),
+    });
+
+    const list = await screen.findByRole('group', { name: '能力列表' });
+    expect(within(list).getAllByRole('button')).toHaveLength(6);
+    for (const name of ['读取文件', '编辑文件', '写入文件', '运行命令', '调试技能', '浏览器扩展']) {
+      expect(within(list).getByRole('button', { name: new RegExp(name) })).toBeInTheDocument();
+    }
+    expect(list).not.toHaveTextContent('工作区读取');
+    expect(list).not.toHaveTextContent('工作区搜索');
+    expect(list).not.toHaveTextContent('工作区浏览');
+    expect(list).not.toHaveTextContent('代码智能');
+    expect(list).not.toHaveTextContent('后台任务');
+    expect(list).not.toHaveTextContent('Read file');
+  });
+
   it('reports an installed backend catalog version mismatch and never renders legacy items as controls', async () => {
     const user = userEvent.setup();
     const transport = renderPlugins({
@@ -114,11 +247,11 @@ describe('PluginsFeature', () => {
     await user.clear(search);
     await user.click(screen.getByRole('combobox', { name: '状态' }));
     await user.click(await screen.findByRole('option', { name: '需要处理' }));
-    expect(screen.getByRole('button', { name: /工作区读取/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /读取文件/ })).toBeInTheDocument();
     await user.click(screen.getByRole('combobox', { name: '状态' }));
     await user.click(await screen.findByRole('option', { name: '全部状态' }));
     await user.click(screen.getByRole('radio', { name: '技能' }));
-    expect(screen.queryByRole('button', { name: /工作区读取/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /读取文件/ })).not.toBeInTheDocument();
   });
 
   it('re-reads the backend catalog and defaults after connectivity returns', async () => {
@@ -488,8 +621,31 @@ function tool(overrides: Record<string, unknown>) {
   };
 }
 
-function capabilityCatalog(
-  items: ReturnType<typeof toolItems>,
+function capability(
+  id: string,
+  kind: 'skill' | 'extension',
+  displayName: string,
+) {
+  return {
+    ...tool({
+      id,
+      displayName,
+      description: `${displayName}说明`,
+      domain: kind,
+      riskLevel: 'R0',
+      operations: [],
+      sessionModes: ['assistant', 'coordinator'],
+    }),
+    canonicalId: `${kind}:${id}`,
+    kind,
+  };
+}
+
+function capabilityCatalog<T extends {
+  canonicalId: string;
+  disclosure: { effective: string };
+}>(
+  items: T[],
   projectScope: Record<string, unknown> = {
     supported: false,
     identityKind: 'none',

@@ -2695,8 +2695,8 @@ function previewCapabilityCatalog(
     previewTool('memory', '个人上下文记忆', '查询已治理的长期记忆与来源链路', 'memory', 'R1', ['catalog', 'read', 'recent', 'trace', 'search']),
     previewTool('knowledge', '文档知识库', '检索用户明确启用的独立文档知识库', 'knowledge', 'R0', ['list_bases', 'search', 'find', 'open', 'status']),
     previewTool('browser', '浏览器共驾', '读取已配对浏览器的页面，并在批准后执行可追踪操作', 'browser', 'R1', ['status', 'tabs', 'snapshot', 'navigate', 'click', 'type', 'stop']),
-    previewTool('workspace_read', '读取文件', '读取已授权项目目录中的文件内容', 'workspace', 'R0', ['read']),
-    previewTool('workspace_search', '搜索项目', '在已授权项目目录中检索文件与内容', 'workspace', 'R0', ['search']),
+    previewTool('read', '读取文件', '读取已授权项目目录中的文件内容', 'workspace', 'R0', ['read']),
+    previewTool('grep', '搜索文本', '在已授权项目目录中检索文件与内容', 'workspace', 'R0', ['search']),
     {
       ...previewTool(
         'workspace_lsp',
@@ -2727,8 +2727,9 @@ function previewCapabilityCatalog(
         }],
       },
     },
-    previewTool('workspace_edit', '修改文件', '通过快照保护修改已授权项目文件', 'workspace', 'R2', ['edit']),
-    previewTool('workspace_shell', '运行命令', '在审批与已授权工作区边界内运行命令', 'workspace', 'R2', ['run']),
+    previewTool('edit', '编辑文件', '通过快照保护修改已授权项目文件', 'workspace', 'R2', ['edit']),
+    previewTool('write', '写入文件', '在已授权项目目录中创建或完整写入文件', 'workspace', 'R2', ['write']),
+    previewTool('bash', '运行命令', '在审批与已授权工作区边界内运行命令', 'workspace', 'R2', ['run']),
     previewTool('workspace_job', '后台任务', '启动并观察有界后台命令', 'workspace', 'R2', ['start', 'status', 'cancel']),
   ];
   const items = manifests.map((manifest) => {

@@ -34,6 +34,8 @@ describe('roomPublicToolResultView', () => {
           '任务 dispatch-room-report-7 已完成',
         ].join('\n'),
         truncated: false,
+        kind: 'text',
+        title: '返回片段',
       },
     }));
 
@@ -90,11 +92,56 @@ describe('roomPublicToolResultView', () => {
           result: { status: 'completed' },
         }),
         truncated: false,
+        kind: 'text',
+        title: '返回片段',
       },
     }));
 
     expect(view.summary).toBe('');
     expect(view.output).toBeUndefined();
+  });
+
+  it('sanitizes terminal channels with the same Room boundary as the combined output', () => {
+    const view = roomPublicToolResultView(toolView({
+      toolId: 'bash',
+      output: {
+        text: 'ok\nTOKEN=combined-secret',
+        truncated: false,
+        kind: 'terminal',
+        title: '命令输出',
+        channels: [
+          {
+            id: 'stdout',
+            label: '标准输出',
+            text: '已读取 /Users/alice/project/src/RoomTurn.tsx',
+            truncated: false,
+          },
+          {
+            id: 'stderr',
+            label: '标准错误',
+            text: 'Authorization: Bearer channel-secret',
+            truncated: false,
+          },
+        ],
+      },
+    }));
+
+    expect(view.output?.text).toBe('ok\nTOKEN=[已隐藏的密钥]');
+    expect(view.output?.channels).toEqual([
+      {
+        id: 'stdout',
+        label: '标准输出',
+        text: '已读取 …/RoomTurn.tsx',
+        truncated: false,
+      },
+      {
+        id: 'stderr',
+        label: '标准错误',
+        text: 'Authorization: [已隐藏的密钥]',
+        truncated: false,
+      },
+    ]);
+    expect(JSON.stringify(view)).not.toMatch(/\/Users\/alice|combined-secret|channel-secret/u);
   });
 
   it('translates standalone internal protocol terms in public activity text', () => {
@@ -152,6 +199,7 @@ function toolView(overrides: Partial<PublicToolResultView>): PublicToolResultVie
     summary: '项目工具已完成',
     fields: [],
     request: [],
+    artifacts: [],
     sources: [],
     ...overrides,
   };

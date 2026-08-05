@@ -6,7 +6,7 @@ import json
 import os
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -1669,6 +1669,66 @@ _RUNTIME_TOOL_PROJECTIONS: dict[str, tuple[dict[str, str], ...]] = {
     ),
 }
 
+# The control plane authorizes concrete workspace targets, while the resident
+# Pi host exposes one stable public coding vocabulary. Keep both identities:
+# target names remain durable executor/receipt authorities, and only the four
+# native names below may enter the public capability catalog.
+_PUBLIC_CODING_TOOL_TARGETS: tuple[dict[str, str], ...] = (
+    {
+        "id": "read",
+        "target": "workspace_read",
+        "displayName": "读取文件",
+        "description": "读取已授权项目中的文件内容",
+    },
+    {
+        "id": "edit",
+        "target": "workspace_edit",
+        "displayName": "编辑文件",
+        "description": "基于最新文件快照精确修改已授权项目文件",
+    },
+    {
+        "id": "write",
+        "target": "workspace_write",
+        "displayName": "写入文件",
+        "description": "新建或覆盖已授权项目中的 UTF-8 文件",
+    },
+    {
+        "id": "bash",
+        "target": "workspace_shell",
+        "displayName": "运行命令",
+        "description": "在已授权项目边界内运行有界命令",
+    },
+)
+
+_PUBLIC_CAPABILITY_IDS_BY_RUNTIME_TARGET: dict[str, tuple[str, ...]] = {
+    "workspace_list": ("read",),
+    "workspace_lsp": ("read", "edit"),
+    "workspace_read": ("read",),
+    "workspace_search": ("read",),
+    "workspace_patch": ("edit",),
+    "workspace_edit": ("edit",),
+    "workspace_write": ("write",),
+    "workspace_job": ("bash",),
+    "workspace_shell": ("bash",),
+}
+
+_PUBLIC_CAPABILITY_ID_ALIASES: dict[str, str] = {
+    "tool:read_file": "tool:read",
+    "tool:workspace_list": "tool:read",
+    "tool:workspace_lsp": "tool:read",
+    "tool:workspace_read": "tool:read",
+    "tool:workspace_search": "tool:read",
+    "tool:apply_patch": "tool:edit",
+    "tool:edit_file": "tool:edit",
+    "tool:workspace_patch": "tool:edit",
+    "tool:workspace_edit": "tool:edit",
+    "tool:write_file": "tool:write",
+    "tool:workspace_write": "tool:write",
+    "tool:shell": "tool:bash",
+    "tool:workspace_job": "tool:bash",
+    "tool:workspace_shell": "tool:bash",
+}
+
 _PLANNING_TARGET_STATUS = {
     "complete": "done",
     "start": "in_progress",
@@ -1825,16 +1885,60 @@ class ControlToolGateway:
 
     def manifests(self, *, session_id: str = "") -> dict[str, object]:
         session = self.sessions.get(session_id) if session_id else None
-        return build_capability_catalog(
-            tool_manifests=self._manifest_items(
-                session,
-                include_runtime_projection=session is not None,
-            ),
-            session=session,
-            configuration_store=self.configuration_store,
+        return self._public_capability_catalog(
+            session,
             governed_skills=self.governed_skills,
             extensions=self.extensions,
         )
+
+    def _public_capability_catalog(
+        self,
+        session: Mapping[str, object] | None,
+        *,
+        governed_skills: object | None,
+        extensions: object | None,
+    ) -> dict[str, object]:
+        target_manifests = self._manifest_items(session)
+        return build_capability_catalog(
+            tool_manifests=self._public_manifest_items(target_manifests),
+            session=session,
+            configuration_store=self.configuration_store,
+            governed_skills=governed_skills,
+            extensions=extensions,
+            canonical_id_aliases=_PUBLIC_CAPABILITY_ID_ALIASES,
+        )
+
+    @staticmethod
+    def _public_manifest_items(
+        target_manifests: Sequence[Mapping[str, object]],
+    ) -> list[dict[str, object]]:
+        by_id = {
+            str(manifest.get("id") or ""): manifest
+            for manifest in target_manifests
+        }
+        public_manifests = [
+            dict(manifest)
+            for manifest in target_manifests
+            if not str(manifest.get("id") or "").startswith("workspace_")
+            and _TOOL_SPEC_BY_ID[str(manifest["id"])].get("modelVisible") is not False
+        ]
+        for public_spec in _PUBLIC_CODING_TOOL_TARGETS:
+            target = by_id.get(public_spec["target"])
+            if target is None:
+                raise RuntimeError(
+                    f"public coding tool target is missing: {public_spec['target']}"
+                )
+            public_manifest = {
+                **dict(target),
+                "id": public_spec["id"],
+                "displayName": public_spec["displayName"],
+                "description": public_spec["description"],
+                "runtimeOwner": "pi_host",
+            }
+            public_manifest.pop("modelVisible", None)
+            public_manifest.pop("runtimeProjection", None)
+            public_manifests.append(public_manifest)
+        return public_manifests
 
     def runtime_manifests(self, session: Mapping[str, object]) -> list[Mapping[str, object]]:
         # The runtime callback may retain a Prompt-time Session mapping. Reload
@@ -1844,28 +1948,60 @@ class ControlToolGateway:
         if session_id:
             session = self.sessions.get(session_id)
         manifest_items = self._manifest_items(session)
-        capability_catalog = build_capability_catalog(
+        internal_capability_catalog = build_capability_catalog(
             tool_manifests=manifest_items,
             session=session,
             configuration_store=self.configuration_store,
             governed_skills=None,
             extensions=None,
         )
-        disclosed_tools = {
+        public_capability_catalog = self._public_capability_catalog(
+            session,
+            governed_skills=None,
+            extensions=None,
+        )
+        internally_disclosed_tools = {
             str(item["id"])
-            for item in capability_catalog["items"]
+            for item in internal_capability_catalog["items"]
             if item.get("kind") == "tool"
             and isinstance(item.get("disclosure"), Mapping)
             and item["disclosure"].get("effective") == "enabled"
         }
+        publicly_disclosed_tools = {
+            str(item["id"])
+            for item in public_capability_catalog["items"]
+            if item.get("kind") == "tool"
+            and isinstance(item.get("disclosure"), Mapping)
+            and item["disclosure"].get("effective") == "enabled"
+        }
+        public_tool_ids = {
+            str(item["id"])
+            for item in public_capability_catalog["items"]
+            if item.get("kind") == "tool"
+        }
         manifests: list[Mapping[str, object]] = []
         for manifest in manifest_items:
-            if manifest.get("enabled") is not True or manifest["id"] not in disclosed_tools:
+            tool_id = str(manifest["id"])
+            public_capability_ids = _PUBLIC_CAPABILITY_IDS_BY_RUNTIME_TARGET.get(
+                tool_id,
+                (),
+            )
+            disclosed = (
+                all(
+                    public_id in publicly_disclosed_tools
+                    for public_id in public_capability_ids
+                )
+                if public_capability_ids
+                else tool_id in publicly_disclosed_tools
+                if tool_id in public_tool_ids
+                else tool_id in internally_disclosed_tools
+            )
+            if manifest.get("enabled") is not True or not disclosed:
                 continue
-            spec = _TOOL_SPEC_BY_ID[str(manifest["id"])]
+            spec = _TOOL_SPEC_BY_ID[tool_id]
             operations = list(manifest.get("effectiveOperations") or [])
             parameter_schema = _runtime_tool_parameter_schema(
-                str(manifest["id"]),
+                tool_id,
                 operations,
             )
             item: dict[str, object] = {
@@ -1892,7 +2028,7 @@ class ControlToolGateway:
             projections = [
                 dict(projection)
                 for projection in _RUNTIME_TOOL_PROJECTIONS.get(
-                    str(manifest["id"]),
+                    tool_id,
                     (),
                 )
                 if projection["operation"] in operations

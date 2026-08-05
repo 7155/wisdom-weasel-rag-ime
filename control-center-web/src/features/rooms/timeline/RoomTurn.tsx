@@ -34,7 +34,10 @@ import {
   type RoomProjectionState,
   type RoomTurnProjection,
 } from '@/contracts/room-reducer';
-import type { RoomKernelProjection } from '@/contracts/room-kernel-reducer';
+import type {
+  PrivateSessionProjection,
+  RoomKernelProjection,
+} from '@/contracts/room-kernel-reducer';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { RoomTaskV3 } from '@/contracts/generated/room-task.v3';
 import { publicAgentErrorText } from '@/features/agent/public-error';
@@ -45,14 +48,16 @@ import {
   PublicToolOutput,
   PublicToolRequest,
   SemanticToolPreview,
+  ToolRunningPreview,
 } from '@/features/agent/timeline/ActivitySummary';
 import {
   toggleDisclosureOnKeyPreservingAnchor,
   toggleDisclosurePreservingAnchor,
 } from '@/features/agent/timeline/disclosure-anchor';
 import { publicToolResultView } from '@/features/agent/timeline/public-tool-result';
+import { hasToolArtifacts, ToolArtifactOutput } from '@/features/agent/timeline/ToolArtifactOutput';
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
-import { publicToolName } from '@/features/agent/tool-presentation';
+import { canonicalToolId, publicToolName } from '@/features/agent/tool-presentation';
 import {
   roomActivityNeedsSessionAction,
   selectRoomTurnExecution,
@@ -63,6 +68,7 @@ import {
   RoomTaskSubagentRuns,
   type RoomTaskSubagentRun,
 } from '../kernel/RoomTaskFlowGraph';
+import { RoomTaskTodoDetails } from '../kernel/RoomTaskAuthorityDetails';
 import { RoomTaskUpdatedAt, useRoomTaskUpdateClock } from '../kernel/RoomTaskUpdatedAt';
 import type {
   PendingRoomQuestion,
@@ -103,6 +109,7 @@ interface RoomTurnProps {
   kernelDispatchesById?: RoomKernelProjection['dispatchesById'];
   kernelTasksById?: RoomKernelProjection['tasksById'];
   kernelTaskUpdatedAtMsById?: RoomKernelProjection['taskUpdatedAtMsById'];
+  kernelSessionsById?: RoomKernelProjection['sessionsById'];
   kernelReceiptsById?: RoomKernelProjection['receiptsById'];
   kernelSync?: RoomKernelSyncProjection;
   roomSyncState?: 'recovering' | 'failed' | 'synced';
@@ -300,6 +307,7 @@ export function RoomTurn({
   kernelDispatchesById,
   kernelTasksById,
   kernelTaskUpdatedAtMsById,
+  kernelSessionsById,
   kernelReceiptsById,
   kernelSync,
   roomSyncState,
@@ -662,12 +670,18 @@ export function RoomTurn({
                     ? 'completed'
                     : 'waiting';
       const laneTask = laneTaskId ? kernelTasksById?.[laneTaskId] : undefined;
+      const laneSession = roomLaneSession(
+        lane,
+        laneTaskId,
+        kernelSessionsById,
+      );
       const laneWork = roomLaneWorkSummary(
         segmentActivities,
         participant?.displayName,
         laneState,
         laneTask,
       );
+      const laneTodoSummary = roomLaneTodoSummary(laneSession?.todo);
       const laneSubagents = laneTaskId ? subagentsByTaskId[laneTaskId] ?? [] : [];
       const identityContinuation = identityContinuationByItemKey.get(streamItem.key) ?? false;
       return <RoomLaneDisclosure
@@ -705,7 +719,9 @@ export function RoomTurn({
               ><i /><i /><i /></span>
             </span>
             <strong className="room-agent-lane__task">{laneWork.title}</strong>
-            <small className="room-agent-lane__progress">{laneWork.detail}</small>
+            <small className="room-agent-lane__progress">
+              {laneWork.detail}{laneTodoSummary ? ` · ${laneTodoSummary}` : ''}
+            </small>
           </span>
           <RoomLaneTiming
             freshness={laneFreshness}
@@ -749,6 +765,11 @@ export function RoomTurn({
               : '这位伙伴的任务已经停止。'}
           </p>
         ) : null}
+        {includePersistentDetails && laneSession ? <RoomTaskTodoDetails
+          live
+          owner={participant?.displayName ?? '协作伙伴'}
+          todo={laneSession.todo}
+        /> : null}
       </RoomLaneDisclosure>;
     })}
     {outcome ? <section
@@ -974,6 +995,41 @@ function roomLaneWorkSummary(
           ? `${participantName} 正在等待后续`
           : `${participantName} 正在准备任务`;
   return { title, detail: '尚未收到公开工作进度' };
+}
+
+function roomLaneSession(
+  lane: RoomExecutionLane,
+  taskId: string,
+  sessionsById?: RoomKernelProjection['sessionsById'],
+): PrivateSessionProjection | undefined {
+  if (!sessionsById) return undefined;
+  const exact = lane.sourceSessionId ? sessionsById[lane.sourceSessionId] : undefined;
+  if (
+    exact
+    && (!lane.rootId || exact.rootId === lane.rootId)
+    && (!lane.dispatchId || exact.dispatchId === lane.dispatchId)
+  ) return exact;
+  return Object.values(sessionsById)
+    .filter((session) => (
+      (!lane.rootId || session.rootId === lane.rootId)
+      && (!lane.participantId || session.participantId === lane.participantId)
+      && (
+        (lane.dispatchId && session.dispatchId === lane.dispatchId)
+        || (taskId && session.taskId === taskId)
+      )
+    ))
+    .sort((left, right) => right.updatedAtMs - left.updatedAtMs)[0];
+}
+
+function roomLaneTodoSummary(todo?: PrivateSessionProjection['todo']): string {
+  if (!todo) return '';
+  const settled = todo.counts.completed + todo.counts.abandoned;
+  const current = todo.phases
+    .flatMap((phase) => phase.tasks)
+    .find((task) => task.status === 'in_progress')
+    ?? todo.phases.flatMap((phase) => phase.tasks).find((task) => task.status === 'blocked')
+    ?? todo.phases.flatMap((phase) => phase.tasks).find((task) => task.status === 'pending');
+  return `Todo ${settled}/${todo.counts.total}${current ? ` · 当前：${current.content}` : ''}`;
 }
 
 interface RoomActivityFeedEntry {
@@ -1229,15 +1285,7 @@ interface RoomChangedFileSummary {
 
 const roomMutationTools = new Set([
   'write',
-  'write_file',
-  'workspace_write_file',
-  'workspace_write',
   'edit',
-  'edit_file',
-  'workspace_edit_file',
-  'workspace_edit',
-  'workspace_patch',
-  'apply_patch',
 ]);
 
 function roomChangedFileSummary(
@@ -1248,7 +1296,7 @@ function roomChangedFileSummary(
     if (
       textValue(activity.payload.sourceEventType) !== 'tool_finished'
       || activity.status !== 'completed'
-      || !roomMutationTools.has(textValue(activity.payload.toolName).toLocaleLowerCase('en-US'))
+      || !roomMutationTools.has(canonicalToolId(textValue(activity.payload.toolName)))
     ) continue;
     const args = objectValue(activity.payload.arguments);
     const result = objectValue(activity.payload.result);
@@ -2013,13 +2061,14 @@ function RoomToolActivity({
 }) {
   const payload = activity.payload;
   const approvalId = textValue(payload.approvalId);
+  const sourceEventType = textValue(payload.sourceEventType);
   const [open, setOpen] = useState(Boolean(
-    approvalId && ['running', 'waiting'].includes(activity.status),
+    (approvalId && ['running', 'waiting'].includes(activity.status))
+    || activity.status === 'running',
   ));
   useEffect(() => {
-    if (approvalId) setOpen(true);
-  }, [approvalId]);
-  const sourceEventType = textValue(payload.sourceEventType);
+    if (approvalId || activity.status === 'running') setOpen(true);
+  }, [activity.status, approvalId]);
   const safeResult = payload.result;
   const publicResult = safeResult && typeof safeResult === 'object' && !Array.isArray(safeResult)
     ? safeResult as Record<string, unknown>
@@ -2053,7 +2102,10 @@ function RoomToolActivity({
   });
   const approvalDescription = approvalId ? describeRoomActivity(activity) : null;
   const retryCount = Math.max(0, attempts.length - 1);
-  const toolId = textValue(payload.toolName).toLocaleLowerCase('en-US');
+  const toolId = detailView.toolId || canonicalToolId(textValue(payload.toolName));
+  const basicToolKind = ['read', 'edit', 'write', 'bash'].includes(toolId)
+    ? toolId
+    : 'standard';
   const editing = roomMutationTools.has(toolId);
   const editStarted = sourceEventType === 'tool_started'
     || (Array.isArray(payload.progressHistory) && payload.progressHistory.some((entry) => (
@@ -2064,9 +2116,25 @@ function RoomToolActivity({
     && Boolean(textValue(payload.toolCallId))
     && editStarted
     && ['tool_started', 'tool_progress'].includes(sourceEventType);
+  const toolStreaming = basicToolKind !== 'standard'
+    && activity.status === 'running'
+    && ['tool_started', 'tool_progress'].includes(sourceEventType);
+  const mutationAwaitingDiff = toolStreaming && editing;
+  const showArtifacts = hasToolArtifacts(detailView.artifacts) && !mutationAwaitingDiff;
+  const showRunningPreview = toolStreaming
+    && (!detailView.output || mutationAwaitingDiff);
   const targetFile = detailView.request.find((field) => (
     field.id === 'path' || field.id === 'file'
   ))?.value || detailView.fields.find((field) => field.id === 'file')?.value || '';
+  const activeToolSummary = toolId === 'read'
+    ? `正在读取${targetFile ? ` ${targetFile}` : '文件'}`
+    : toolId === 'edit'
+      ? `正在编辑${targetFile ? ` ${targetFile}` : '文件'}`
+      : toolId === 'write'
+        ? `正在写入${targetFile ? ` ${targetFile}` : '文件'}`
+        : toolId === 'bash'
+          ? '命令正在运行，等待新的输出'
+          : detailView.summary || `${detailView.toolLabel}进行中`;
   const summary = recovering
     ? `正在恢复：${detailView.toolLabel}`
     : retryCount
@@ -2075,8 +2143,8 @@ function RoomToolActivity({
       : activity.status === 'running'
         ? `${detailView.toolLabel}正在第 ${attempts.length} 次尝试`
         : `${detailView.toolLabel}已尝试 ${attempts.length} 次，仍未完成`
-    : editActive
-      ? `正在编辑${targetFile ? ` ${targetFile}` : '文件'}`
+    : activity.status === 'running'
+      ? activeToolSummary
       : activity.status === 'failed'
       ? `${detailView.toolLabel}执行失败`
       : activity.status === 'aborted'
@@ -2088,7 +2156,7 @@ function RoomToolActivity({
       data-arriving={arriving || undefined}
       data-edit-active={editActive || undefined}
       data-state={recovering ? 'waiting' : activity.status}
-      data-tool-kind={editing ? 'edit' : 'standard'}
+      data-tool-kind={basicToolKind}
       open={open}
     >
       <summary
@@ -2152,10 +2220,18 @@ function RoomToolActivity({
               </article>;
             })}
           </section> : null}
-          {detailView.request.length ? <PublicToolRequest view={detailView} /> : null}
-          {detailView.output ? <PublicToolOutput view={detailView} /> : null}
-          {detailView.preview ? <SemanticToolPreview preview={detailView.preview} /> : null}
-          {detailView.fields.length ? <PublicToolFields view={detailView} /> : null}
+          {showArtifacts ? (
+            <ToolArtifactOutput artifacts={detailView.artifacts} autoExpandDiff={activity.status === 'completed'} />
+          ) : null}
+          {!showArtifacts && detailView.request.length ? <PublicToolRequest view={detailView} /> : null}
+          {showRunningPreview ? (
+            <ToolRunningPreview target={targetFile} toolId={basicToolKind} />
+          ) : null}
+          {!showArtifacts && !mutationAwaitingDiff && detailView.output ? (
+            <PublicToolOutput streaming={toolStreaming} view={detailView} />
+          ) : null}
+          {!showArtifacts && detailView.preview ? <SemanticToolPreview preview={detailView.preview} /> : null}
+          {!showArtifacts && detailView.fields.length ? <PublicToolFields view={detailView} /> : null}
           {detailView.error ? <PublicToolError reason={detailView.error} /> : null}
           {approvalDescription ? (
             <section className="room-agent-activity__approval" aria-label="Tool 审批状态">
@@ -2166,7 +2242,7 @@ function RoomToolActivity({
               </span>
             </section>
           ) : null}
-          {activity.status === 'running' && safeResult === undefined ? (
+          {activity.status === 'running' && safeResult === undefined && !showRunningPreview ? (
             <p className="room-agent-activity__unavailable">工具尚未返回结果。</p>
           ) : activity.status === 'aborted' && safeResult === undefined ? (
             <p className="room-agent-activity__unavailable">这个步骤已随本轮任务停止，没有返回公开结果。</p>

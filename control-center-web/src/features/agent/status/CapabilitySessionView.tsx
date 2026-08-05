@@ -20,6 +20,7 @@ import {
   capabilityRiskLabel,
   capabilityScopeLabel,
   capabilityStatusLabel,
+  projectCapabilityCatalog,
   preferenceLabel,
   type CapabilityCatalog,
   type CapabilityCatalogItem,
@@ -48,7 +49,11 @@ export function CapabilitySessionView({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const items = catalog?.items ?? [];
+  const publicCatalog = useMemo(
+    () => catalog ? projectCapabilityCatalog(catalog) : undefined,
+    [catalog],
+  );
+  const items = publicCatalog?.items ?? [];
   const disclosedCount = items.filter((item) => item.disclosure.effective === 'enabled').length;
   const overrideCount = items.filter((item) => item.disclosure.preference !== 'inherit').length;
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -67,7 +72,7 @@ export function CapabilitySessionView({
   if (status === 'loading') {
     return <p className="agent-capability-session__empty" role="status">正在读取当前对话的能力设置…</p>;
   }
-  if (status === 'failed' || !catalog?.sessionPolicy) {
+  if (status === 'failed' || !publicCatalog?.sessionPolicy) {
     return (
       <div className="agent-capability-session__empty" role="alert">
         <TriangleAlert aria-hidden="true" size={15} />
@@ -79,7 +84,7 @@ export function CapabilitySessionView({
     );
   }
 
-  const policy = catalog.sessionPolicy;
+  const policy = publicCatalog.sessionPolicy;
   const mutationLabel = mutation
     ? mutation.status === 'pending'
       ? '正在保存当前对话临时设置'

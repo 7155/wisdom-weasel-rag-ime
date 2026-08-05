@@ -84,6 +84,56 @@ describe('CapabilitySessionView', () => {
     expect(onPreferenceChange).not.toHaveBeenCalled();
   });
 
+  it('shows legacy aliases as one canonical current-conversation tool', async () => {
+    const user = userEvent.setup();
+    const onPreferenceChange = vi.fn();
+    const source = catalog();
+    const base = source.items[0]!;
+    source.items = [
+      {
+        ...base,
+        id: 'workspace_read',
+        canonicalId: 'tool:workspace_read',
+        displayName: '工作区读取',
+        enabled: false,
+        effectiveOperations: ['read_range'],
+      },
+      {
+        ...base,
+        id: 'read_file',
+        canonicalId: 'tool:read_file',
+        displayName: 'Read file',
+        enabled: true,
+        effectiveOperations: ['read'],
+      },
+    ];
+    source.sessionPolicy!.disclosurePreferences.session = {
+      'tool:workspace_read': 'disabled',
+      'tool:read': 'enabled',
+    };
+    render(
+      <MemoryRouter>
+        <CapabilitySessionView
+          busy={false}
+          catalog={source}
+          status="ready"
+          onPreferenceChange={onPreferenceChange}
+          onRetryCatalog={() => {}}
+          onRetryMutation={() => {}}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('当前对话会提供 1 项能力')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: '管理当前对话的工具与技能' }));
+    expect(screen.getAllByText('读取文件')).toHaveLength(1);
+    const preference = screen.getByRole('combobox', { name: '读取文件的当前对话临时设置' });
+    expect(preference).toHaveTextContent('向伙伴披露');
+    await user.click(preference);
+    await user.click(await screen.findByRole('option', { name: '不向伙伴披露' }));
+    expect(onPreferenceChange).toHaveBeenCalledWith('tool:read', 'disabled');
+  });
+
   it('rejects a catalog owned by another Session instead of projecting its preferences', () => {
     expect(() => requireSessionCapabilityCatalog(catalog(), 'session-other'))
       .toThrow('能力目录不属于当前对话；不会显示或修改其他对话的设置。');

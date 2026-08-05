@@ -17,6 +17,7 @@ def build_capability_catalog(
     configuration_store: object | None,
     governed_skills: object | None,
     extensions: object | None,
+    canonical_id_aliases: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     effective_at_ms = int(time.time() * 1000)
     global_preferences, project_id, project_preferences = _configuration_preferences(
@@ -28,6 +29,10 @@ def build_capability_catalog(
         if session is not None
         else None
     )
+    aliases = _canonical_id_aliases(canonical_id_aliases)
+    global_preferences = _aliased_preferences(global_preferences, aliases)
+    project_preferences = _aliased_preferences(project_preferences, aliases)
+    session_preferences = _aliased_preferences(session_preferences, aliases)
     items = [
         _tool_item(
             manifest,
@@ -76,6 +81,7 @@ def build_capability_catalog(
             key=lambda item: str(item.get("canonicalId") or ""),
         )
     )
+    _require_unique_canonical_ids(items)
     known_ids = {str(item["canonicalId"]) for item in items}
     for canonical_id in sorted(
         (
@@ -155,6 +161,55 @@ def build_capability_catalog(
             "effectiveAtMs": effective_at_ms,
         }
     return response
+
+
+def _canonical_id_aliases(value: Mapping[str, str] | None) -> dict[str, str]:
+    if value is None:
+        return {}
+    aliases: dict[str, str] = {}
+    for raw_id, canonical_id in value.items():
+        raw = str(raw_id).strip()
+        canonical = str(canonical_id).strip()
+        if not raw or not canonical or raw == canonical:
+            continue
+        aliases[raw] = canonical
+    return aliases
+
+
+def _aliased_preferences(
+    preferences: Mapping[str, str],
+    aliases: Mapping[str, str],
+) -> dict[str, str]:
+    if not aliases:
+        return dict(preferences)
+    # A setting already stored under the public identity wins over a legacy
+    # target identity. Otherwise migrate aliases deterministically so hidden
+    # executor names never reappear as removed public capabilities.
+    result = {
+        str(canonical_id): str(preference)
+        for canonical_id, preference in preferences.items()
+        if canonical_id not in aliases
+    }
+    for raw_id in sorted(aliases):
+        if raw_id not in preferences:
+            continue
+        result.setdefault(aliases[raw_id], str(preferences[raw_id]))
+    return result
+
+
+def _require_unique_canonical_ids(items: Sequence[Mapping[str, object]]) -> None:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for item in items:
+        canonical_id = str(item.get("canonicalId") or "").strip()
+        if not canonical_id:
+            raise ValueError("capability catalog item is missing canonicalId")
+        if canonical_id in seen:
+            duplicates.add(canonical_id)
+        seen.add(canonical_id)
+    if duplicates:
+        duplicate_list = ", ".join(sorted(duplicates))
+        raise ValueError(f"duplicate capability canonical id: {duplicate_list}")
 
 
 def _tool_item(

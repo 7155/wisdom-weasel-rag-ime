@@ -70,6 +70,16 @@ TOOL_CALLS: dict[str, dict[str, object]] = {
 }
 
 EXPECTED_TOOL_IDS = frozenset(CONTROL_TOOL_IDS)
+PUBLIC_CODING_TOOL_IDS = ("read", "edit", "write", "bash")
+LEGACY_PUBLIC_CODING_TOOL_IDS = frozenset(
+    {
+        "read_file",
+        "edit_file",
+        "apply_patch",
+        "write_file",
+        "shell",
+    }
+)
 
 
 def run_matrix(*, keep_workspace: bool = False) -> dict[str, object]:
@@ -88,7 +98,9 @@ def run_matrix(*, keep_workspace: bool = False) -> dict[str, object]:
         {
             "RAG_IME_PI_ENABLED": "1",
             "RAG_IME_AGENT_GATEWAY_ENABLED": "1",
-            "RAG_IME_ROOM_KERNEL_MODE": "kernel_only",
+            # This isolated matrix exercises the Tool gateway only and does
+            # not bind a typed Pi Room RPC transport.
+            "RAG_IME_ROOM_KERNEL_MODE": "off",
         }
     )
     service = DebugImeService(
@@ -135,16 +147,41 @@ def run_matrix(*, keep_workspace: bool = False) -> dict[str, object]:
             actor="agent-tool-matrix",
         )
 
-        enabled = {
+        public_catalog = service.agent_tools.manifests(session_id=session_id)
+        public_tool_ids = [
             str(item["id"])
-            for item in service.agent_tools.manifests(session_id=session_id)["items"]
-            if item.get("enabled") is True
+            for item in public_catalog["items"]
+            if item.get("kind") == "tool"
+        ]
+        public_coding_counts = {
+            tool_id: public_tool_ids.count(tool_id)
+            for tool_id in PUBLIC_CODING_TOOL_IDS
         }
-        if enabled != EXPECTED_TOOL_IDS:
+        leaked_target_ids = {
+            tool_id
+            for tool_id in public_tool_ids
+            if tool_id.startswith("workspace_")
+            or tool_id in LEGACY_PUBLIC_CODING_TOOL_IDS
+        }
+        if (
+            any(count != 1 for count in public_coding_counts.values())
+            or leaked_target_ids
+        ):
             raise RuntimeError(
-                "enabled Tool matrix differs from the reviewed catalog: "
-                f"missing={sorted(EXPECTED_TOOL_IDS - enabled)}, "
-                f"unexpected={sorted(enabled - EXPECTED_TOOL_IDS)}"
+                "public coding Tool catalog differs from the canonical contract: "
+                f"counts={public_coding_counts}, "
+                f"leaked={sorted(leaked_target_ids)}"
+            )
+
+        runtime_tool_ids = {
+            str(item["name"])
+            for item in service.agent_tools.runtime_manifests(session)
+        }
+        if runtime_tool_ids != EXPECTED_TOOL_IDS:
+            raise RuntimeError(
+                "runtime Tool target matrix differs from the reviewed inventory: "
+                f"missing={sorted(EXPECTED_TOOL_IDS - runtime_tool_ids)}, "
+                f"unexpected={sorted(runtime_tool_ids - EXPECTED_TOOL_IDS)}"
             )
 
         for index, (tool, args) in enumerate(TOOL_CALLS.items(), start=1):
@@ -204,6 +241,8 @@ def run_matrix(*, keep_workspace: bool = False) -> dict[str, object]:
             "ok": passed,
             "toolCount": len(rows),
             "expectedToolCount": len(EXPECTED_TOOL_IDS),
+            "publicCodingToolCounts": public_coding_counts,
+            "runtimeTargetCount": len(runtime_tool_ids),
             "elapsedMs": round((time.perf_counter() - started) * 1000, 1),
             "workspace": str(workspace) if keep_workspace else "<temporary>",
             "fileChecks": file_checks,

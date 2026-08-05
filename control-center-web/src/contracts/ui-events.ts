@@ -286,7 +286,7 @@ export function normalizeAgentMessage(value: Record<string, unknown>): UiAgentMe
   };
 }
 
-function normalizeAgentBlock(value: Record<string, unknown>): UiAgentBlock {
+export function normalizeAgentBlock(value: Record<string, unknown>): UiAgentBlock {
   const rawType = String(value.type ?? 'unknown');
   const known = agentBlockTypeSet.has(rawType);
   const source = value.source && typeof value.source === 'object' && !Array.isArray(value.source)

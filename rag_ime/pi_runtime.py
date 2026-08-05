@@ -35,6 +35,7 @@ from .pi_runtime_public import (
     GROUPED_QUESTIONS_SCHEMA_VERSION,
     GROUPED_QUESTIONS_TITLE_PREFIX,
     REVIEW_TITLE_PREFIX,
+    canonical_code_tool_name,
     canonical_grouped_answers,
     grouped_questions_from_wire,
     last_assistant_error,
@@ -43,6 +44,7 @@ from .pi_runtime_public import (
     pi_message_completes_public_turn,
     pi_message_is_public,
     provider_retry_status,
+    public_code_tool_arguments,
     public_code_tool_activity,
     public_file_name,
     public_fork_candidate_text,
@@ -1976,11 +1978,11 @@ class PiRuntimeManager:
                 "tool_execution_end": "tool_finished",
             }[event_type]
             raw_args = as_mapping(raw.get("args"))
-            tool_name = str(raw.get("toolName") or "")
+            tool_name = canonical_code_tool_name(raw.get("toolName"))
             payload = {
                 "toolCallId": str(raw.get("toolCallId") or ""),
                 "toolName": tool_name,
-                "args": redact_mapping(raw_args),
+                "args": public_code_tool_arguments(tool_name, raw_args),
                 "isError": bool(raw.get("isError")),
             }
             explicit_retry_parent = str(

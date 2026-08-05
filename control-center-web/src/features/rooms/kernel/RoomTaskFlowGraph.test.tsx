@@ -118,8 +118,32 @@ describe('RoomTaskFlowGraph dependency proof', () => {
             payload: {
               dispatchId: interfaceDispatch.dispatchId,
               sourceEventType: 'tool_finished',
-              toolName: 'check',
-              result: { summary: '检查结果可公开复核' },
+              toolName: 'edit',
+              arguments: { path: 'src/RoomFlowGraph.tsx' },
+              result: {
+                summary: '检查结果可公开复核',
+                fileName: 'RoomFlowGraph.tsx',
+                additions: 2,
+                deletions: 1,
+              },
+              agentBlocks: [{
+                schemaVersion: 'rag-ime.agent-block.v1',
+                id: 'tool-artifact:diff:task-graph',
+                type: 'diff',
+                status: 'completed',
+                presentationKind: 'diff',
+                data: {
+                  fileName: 'RoomFlowGraph.tsx',
+                  diff: [
+                    '@@ -1,2 +1,3 @@',
+                    '-const oldGraph = true;',
+                    '+const currentGraph = true;',
+                    '+const todoVisible = true;',
+                  ].join('\n'),
+                  additions: 2,
+                  deletions: 1,
+                },
+              }],
             },
             createdAtMs: 10,
             updatedAtMs: 11,
@@ -200,6 +224,10 @@ describe('RoomTaskFlowGraph dependency proof', () => {
     expect(interfaceCard).toHaveTextContent('已核对组件可访问性');
     fireEvent.click(within(interfaceCard as HTMLElement).getByText('查看工具返回'));
     expect(interfaceCard).toHaveTextContent('检查结果可公开复核');
+    expect(within(interfaceCard as HTMLElement).getByLabelText('文件变更')).toHaveTextContent(
+      'RoomFlowGraph.tsx',
+    );
+    expect(interfaceCard).toHaveTextContent('const currentGraph = true;');
     const nestedRun = within(interfaceCard as HTMLElement).getByRole('region', { name: '负责人调用了 1 个临时协作者' });
     expect(nestedRun).toHaveTextContent('临时协作者');
     expect(nestedRun).toHaveTextContent('研究助手 1');

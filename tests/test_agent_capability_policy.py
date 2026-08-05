@@ -242,6 +242,60 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
         self.assertEqual(memory["disclosure"]["state"], "disclosed")
         self.assertEqual(memory["authorization"]["state"], "denied")
 
+    def test_public_coding_disclosure_controls_hidden_runtime_targets(self) -> None:
+        session = self.sessions.create(
+            title="canonical coding disclosure",
+            mode="coordinator",
+            workspace_roots=[str(self.root)],
+        )
+        session_id = str(session["id"])
+        self.policy.update_session(
+            session_id,
+            {
+                "capabilityDisclosurePreferences": {
+                    "tool:read": "disabled",
+                    # A persisted legacy target preference is migrated to the
+                    # one public write identity instead of resurfacing as a
+                    # removed workspace_* capability.
+                    "tool:workspace_write": "disabled",
+                }
+            },
+        )
+        gateway = self._gateway()
+
+        catalog = gateway.manifests(session_id=session_id)
+        public_tools = {
+            str(item["id"]): item
+            for item in catalog["items"]
+            if item.get("kind") == "tool"
+        }
+        self.assertTrue({"read", "edit", "write", "bash"} <= set(public_tools))
+        self.assertFalse(any(tool_id.startswith("workspace_") for tool_id in public_tools))
+        self.assertEqual(public_tools["read"]["disclosure"]["effective"], "disabled")
+        self.assertEqual(public_tools["write"]["disclosure"]["effective"], "disabled")
+        self.assertEqual(
+            catalog["sessionPolicy"]["disclosurePreferences"]["session"],
+            {"tool:read": "disabled", "tool:write": "disabled"},
+        )
+
+        runtime_names = {
+            str(item["name"])
+            for item in gateway.runtime_manifests(self.sessions.get(session_id))
+        }
+        self.assertTrue(
+            {
+                "workspace_list",
+                "workspace_lsp",
+                "workspace_read",
+                "workspace_search",
+                "workspace_write",
+            }.isdisjoint(runtime_names)
+        )
+        self.assertTrue(
+            {"workspace_patch", "workspace_edit", "workspace_shell"}
+            <= runtime_names
+        )
+
     def test_busy_mutation_is_rejected_without_retiring_runtime(self) -> None:
         session = self.sessions.create(title="busy")
         session_id = str(session["id"])

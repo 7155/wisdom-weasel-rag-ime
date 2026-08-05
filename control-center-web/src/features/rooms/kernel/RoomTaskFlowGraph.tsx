@@ -25,11 +25,25 @@ import type {
   RoomActivityProjection,
   RoomParticipantPublicProgressProjection,
 } from '@/contracts/room-reducer';
+import {
+  PublicToolError,
+  PublicToolFields,
+  PublicToolOutput,
+  PublicToolRequest,
+  SemanticToolPreview,
+  ToolRunningPreview,
+} from '@/features/agent/timeline/ActivitySummary';
+import { publicToolResultView } from '@/features/agent/timeline/public-tool-result';
+import {
+  hasToolArtifacts,
+  ToolArtifactOutput,
+} from '@/features/agent/timeline/ToolArtifactOutput';
+import { canonicalToolId } from '@/features/agent/tool-presentation';
 import { roomParticipantPublicProgressSummary } from '../room-copy';
 import type { RoomWorkItem } from '../room-types';
 import {
-  roomPublicActivityOutput,
   roomPublicActivityText,
+  roomPublicToolResultView,
 } from '../timeline/room-tool-presentation';
 import { RoomTaskUpdatedAt } from './RoomTaskUpdatedAt';
 import {
@@ -384,7 +398,6 @@ export function RoomTaskWorkList({
             <ol>{taskActivities.map((activity) => {
               const sourceEventType = taskActivitySourceType(activity);
               const toolActivity = sourceEventType.startsWith('tool_');
-              const output = toolActivity ? taskActivityPublicOutput(activity.payload.result) : '';
               return <li data-state={activity.status} key={activity.id}>
                 <span><FlowStateIcon state={activityFlowState(activity.status)} /></span>
                 <span>
@@ -392,10 +405,7 @@ export function RoomTaskWorkList({
                   <small>{publicTaskActivitySummary(activity)}</small>
                 </span>
                 <TaskActivityTime activity={activity} />
-                {toolActivity ? <details className="room-task-work-card__tool-output">
-                  <summary>查看工具返回</summary>
-                  <p>{output || '这个工具没有公开返回内容。'}</p>
-                </details> : null}
+                {toolActivity ? <RoomTaskToolOutput activity={activity} /> : null}
               </li>;
             })}</ol>
           </section> : <p className="room-task-work-card__empty">这项工作还没有公开活动。</p>}
@@ -793,25 +803,65 @@ function publicTaskActivitySummary(activity: RoomActivityProjection): string {
     || taskActivityKindLabel(activity);
 }
 
-function taskActivityPublicOutput(value: unknown): string {
-  let output = '';
-  if (typeof value === 'string') output = value.trim();
-  if (Array.isArray(value)) {
-    output = value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
-      .slice(0, 12)
-      .join('\n');
-  }
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const record = value as Record<string, unknown>;
-    for (const key of ['summary', 'content', 'text', 'output', 'message', 'error']) {
-      const text = stringValue(record[key]);
-      if (text) {
-        output = text;
-        break;
-      }
-    }
-  }
-  return roomPublicActivityOutput(output);
+function RoomTaskToolOutput({ activity }: { activity: RoomActivityProjection }) {
+  const payload = activity.payload;
+  const sourceEventType = taskActivitySourceType(activity);
+  const result = recordValue(payload.result);
+  const error = stringValue(payload.error);
+  const publicResult = error && !result.error ? { ...result, error } : result;
+  const view = roomPublicToolResultView(publicToolResultView({
+    kind: sourceEventType || activity.kind,
+    status: activity.status,
+    payload: {
+      ...payload,
+      args: recordValue(payload.arguments),
+      publicResult,
+    },
+  }));
+  const toolId = view.toolId || canonicalToolId(stringValue(payload.toolName));
+  const basicToolKind = ['read', 'edit', 'write', 'bash'].includes(toolId)
+    ? toolId as 'read' | 'edit' | 'write' | 'bash'
+    : 'standard';
+  const streaming = basicToolKind !== 'standard'
+    && activity.status === 'running'
+    && ['tool_started', 'tool_progress'].includes(sourceEventType);
+  const mutationAwaitingDiff = streaming && (toolId === 'edit' || toolId === 'write');
+  const showArtifacts = hasToolArtifacts(view.artifacts) && !mutationAwaitingDiff;
+  const target = view.request.find((field) => field.id === 'path' || field.id === 'file')?.value
+    || view.fields.find((field) => field.id === 'file')?.value
+    || '';
+  const hasDetail = showArtifacts
+    || Boolean(view.request.length || view.output || view.preview || view.fields.length || view.error)
+    || streaming;
+  return <details className="room-task-work-card__tool-output" open={streaming || undefined}>
+    <summary>查看工具返回</summary>
+    <div className="room-task-work-card__tool-output-body">
+      {view.summary ? <p>{view.summary}</p> : null}
+      {showArtifacts ? <ToolArtifactOutput
+        artifacts={view.artifacts}
+        autoExpandDiff={activity.status === 'completed'}
+      /> : null}
+      {!showArtifacts && view.request.length ? <PublicToolRequest view={view} /> : null}
+      {streaming && (!view.output || mutationAwaitingDiff)
+        ? <ToolRunningPreview target={target} toolId={basicToolKind} />
+        : null}
+      {!showArtifacts && !mutationAwaitingDiff && view.output
+        ? <PublicToolOutput streaming={streaming} view={view} />
+        : null}
+      {!showArtifacts && view.preview ? <SemanticToolPreview preview={view.preview} /> : null}
+      {!showArtifacts && view.fields.length ? <PublicToolFields view={view} /> : null}
+      {view.error ? <PublicToolError reason={view.error} /> : null}
+      {!hasDetail && !view.summary
+        ? <p>这个工具没有公开返回内容。</p>
+        : null}
+    </div>
+  </details>;
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 function TaskActivityTime({ activity }: { activity: RoomActivityProjection }) {

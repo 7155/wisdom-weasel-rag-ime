@@ -50,6 +50,7 @@ __all__ = [
     "GROUPED_QUESTIONS_TITLE_PREFIX",
     "REVIEW_TITLE_PREFIX",
     "canonical_grouped_answers",
+    "canonical_code_tool_name",
     "grouped_questions_from_wire",
     "last_assistant_error",
     "last_assistant_preview",
@@ -59,9 +60,11 @@ __all__ = [
     "pi_message_is_public",
     "pi_message_payload",
     "provider_retry_status",
+    "public_code_tool_arguments",
     "public_code_tool_activity",
     "public_reasoning_summaries",
     "public_tool_error_text",
+    "public_tool_output_text",
     "public_file_name",
     "public_fork_candidate_text",
     "public_pi_model",
@@ -92,6 +95,37 @@ _GROUPED_QUESTION_KEYS = frozenset(
     {"id", "question", "header", "options", "multi", "recommended"}
 )
 _GROUPED_OPTION_KEYS = frozenset({"label", "description", "preview"})
+
+
+_CODE_TOOL_ALIASES = {
+    "read_file": "read",
+    "workspace_read": "read",
+    "edit_file": "edit",
+    "workspace_edit_file": "edit",
+    "workspace_edit": "edit",
+    "workspace_patch": "edit",
+    "apply_patch": "edit",
+    "write_file": "write",
+    "workspace_write_file": "write",
+    "workspace_write": "write",
+    "shell": "bash",
+    "workspace_shell": "bash",
+    "workspace_job": "bash",
+    "workspace_search": "grep",
+    "workspace_list": "ls",
+}
+
+
+def canonical_code_tool_name(tool_name: object) -> str:
+    """Collapse legacy and governed adapters onto the Pi public tool contract.
+
+    Product authorization may still be implemented by internal ``workspace_*``
+    adapters, but providers, events, and UI projections expose one coding-tool
+    vocabulary: read, edit, write, bash (plus the optional grep/find/ls tools).
+    """
+
+    normalized = str(tool_name or "").strip().lower()
+    return _CODE_TOOL_ALIASES.get(normalized, normalized)
 _GROUPED_ANSWER_KEYS = frozenset({"selected", "custom"})
 
 
@@ -813,16 +847,13 @@ def public_code_tool_activity(
     never copied into the event.
     """
 
-    normalized_tool = str(tool_name or "").strip().lower()
+    normalized_tool = canonical_code_tool_name(tool_name)
     file_tools = {
-        "read", "read_file", "workspace_read",
-        "write", "write_file", "workspace_write_file", "workspace_write",
-        "edit", "edit_file", "workspace_edit_file", "workspace_edit",
-        "workspace_patch", "apply_patch",
+        "read", "write", "edit",
     }
-    search_tools = {"grep", "workspace_search"}
-    list_tools = {"find", "ls", "workspace_list"}
-    command_tools = {"bash", "workspace_shell", "workspace_job"}
+    search_tools = {"grep"}
+    list_tools = {"find", "ls"}
+    command_tools = {"bash", "workspace_job"}
     semantic_tools = {"workspace_lsp"}
     coding_tools = (
         file_tools | search_tools | list_tools | command_tools | semantic_tools
@@ -902,7 +933,7 @@ def public_code_tool_activity(
         if command:
             result["command"] = command
 
-    if normalized_tool in {"write", "write_file", "workspace_write_file", "workspace_write"}:
+    if normalized_tool == "write":
         content = effective_args.get("content")
         if isinstance(content, str) and content:
             normalized = content.replace("\r\n", "\n").replace("\r", "\n")
@@ -913,19 +944,20 @@ def public_code_tool_activity(
             result.update({"lineCount": line_count, "additions": line_count})
             if file_name:
                 result["summary"] = f"{file_name} +{line_count}"
-    if normalized_tool in {
-        "edit", "edit_file", "workspace_edit_file", "workspace_edit",
-        "workspace_patch", "apply_patch",
-    }:
+    if normalized_tool == "edit":
         edit = _public_edit_projection(raw_result, fallback_path=raw_path)
         if edit:
             result.update(edit)
+    progress_summary = _public_tool_text(
+        _public_tool_result_scalar(raw_result, "summary"),
+        maximum=500,
+    )
+    if progress_summary and not result.get("summary"):
+        result["summary"] = progress_summary
     preview_tools = (
         file_tools
         - {
-            "write", "write_file", "workspace_write_file", "workspace_write",
-            "edit", "edit_file", "workspace_edit_file", "workspace_edit",
-            "workspace_patch", "apply_patch",
+            "write", "edit",
         }
         | search_tools
         | list_tools
@@ -947,6 +979,25 @@ def public_code_tool_activity(
         if preview:
             result["outputPreview"] = preview
             result["outputTruncated"] = truncated
+    if (
+        normalized_tool in command_tools
+        and _public_tool_output_allowed(
+            normalized_tool,
+            raw_path,
+            command=raw_command,
+        )
+    ):
+        for channel in ("stdout", "stderr"):
+            channel_preview, channel_truncated = _public_tool_channel_preview(
+                raw_result,
+                channel,
+            )
+            if channel_preview:
+                result[f"{channel}Preview"] = channel_preview
+                result[f"{channel}Truncated"] = channel_truncated
+        exit_code = _public_tool_result_scalar(raw_result, "exitCode")
+        if isinstance(exit_code, (int, float)) and not isinstance(exit_code, bool):
+            result["exitCode"] = int(exit_code)
     model_decision = _public_approval_model_decision(raw_result)
     if model_decision:
         result["decisionMode"] = "model"
@@ -954,6 +1005,51 @@ def public_code_tool_activity(
         result["automatic"] = True
 
     return result
+
+
+def _public_tool_result_layers(raw_result: object) -> list[Mapping[str, object]]:
+    root = as_mapping(raw_result)
+    if not root:
+        return []
+    layers: list[Mapping[str, object]] = [root]
+    seen = {id(root)}
+    frontier = [root]
+    for _ in range(4):
+        next_frontier: list[Mapping[str, object]] = []
+        for layer in frontier:
+            for key in ("details", "result", "receipt", "approval"):
+                candidate = layer.get(key)
+                if not isinstance(candidate, Mapping) or id(candidate) in seen:
+                    continue
+                seen.add(id(candidate))
+                layers.append(candidate)
+                next_frontier.append(candidate)
+        frontier = next_frontier
+        if not frontier:
+            break
+    return layers
+
+
+def _public_tool_result_scalar(raw_result: object, key: str) -> object:
+    for layer in _public_tool_result_layers(raw_result):
+        if key in layer:
+            return layer[key]
+    return None
+
+
+def _public_tool_channel_preview(
+    raw_result: object,
+    channel: str,
+) -> tuple[str, bool]:
+    raw_value = _public_tool_result_scalar(raw_result, channel)
+    if not isinstance(raw_value, str) or not raw_value:
+        return "", False
+    safe = _public_tool_text(raw_value, maximum=6_000)
+    if not safe:
+        return "", False
+    lines = safe.splitlines()
+    preview = "\n".join(lines[:40])[:6_000]
+    return preview, len(raw_value) > 6_000 or len(lines) > 40
 
 
 def _public_edit_projection(
@@ -1175,6 +1271,21 @@ def _public_tool_text(value: object, *, maximum: int) -> str:
     return text[:maximum]
 
 
+def public_tool_output_text(
+    value: object,
+    *,
+    maximum: int = 6_000,
+) -> str:
+    """Return bounded, multiline-safe public Tool output text.
+
+    This is the public projection boundary used by event mirrors that must
+    retain semantic line structure (notably unified diffs) without duplicating
+    the runtime's secret and machine-path redaction rules.
+    """
+
+    return _public_tool_text(value, maximum=maximum)
+
+
 def _public_tool_output_allowed(
     tool_name: str,
     raw_path: str,
@@ -1320,6 +1431,52 @@ def redact_mapping(value: Mapping[str, object], *, depth: int = 0) -> dict[str, 
         else:
             result[key] = safe_scalar(raw_value)
     return result
+
+
+_MUTATION_BODY_ARGUMENT_KEYS = frozenset({
+    "changes",
+    "content",
+    "diff",
+    "edits",
+    "newtext",
+    "oldtext",
+    "patch",
+    "replacement",
+    "replacementtext",
+})
+
+
+def public_code_tool_arguments(
+    tool_name: object,
+    value: Mapping[str, object],
+) -> dict[str, object]:
+    """Return the one bounded argument carrier used by public tool events.
+
+    ``edit`` and ``write`` bodies can be large and may contain private source.
+    Their public receipt is the separately bounded semantic result (line counts,
+    target and managed Diff), so keeping mutation bodies in the generic args
+    carrier would create a second rendering path and persist content before the
+    tool finishes.  Internal workspace adapters are canonicalized before this
+    boundary and receive the same treatment.
+    """
+
+    redacted = redact_mapping(value)
+    if canonical_code_tool_name(tool_name) not in {"edit", "write"}:
+        return redacted
+
+    def strip_mutation_bodies(candidate: object) -> object:
+        if isinstance(candidate, Mapping):
+            return {
+                str(key): strip_mutation_bodies(item)
+                for key, item in candidate.items()
+                if re.sub(r"[^a-z]", "", str(key).lower())
+                not in _MUTATION_BODY_ARGUMENT_KEYS
+            }
+        if isinstance(candidate, list):
+            return [strip_mutation_bodies(item) for item in candidate]
+        return candidate
+
+    return dict(strip_mutation_bodies(redacted))
 
 
 def managed_media_content_url(session_id: str, media_id: str) -> str:

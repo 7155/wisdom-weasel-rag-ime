@@ -27,7 +27,11 @@ import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { RoomDispatchEnvelopeV2 } from '@/contracts/generated/room-dispatch-envelope.v2';
 import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
 import type { RoomTaskV3 } from '@/contracts/generated/room-task.v3';
-import type { RoomKernelProjection, RootProjection } from '@/contracts/room-kernel-reducer';
+import type {
+  PrivateSessionProjection,
+  RoomKernelProjection,
+  RootProjection,
+} from '@/contracts/room-kernel-reducer';
 import type { PickedFile } from '@/platform/transport';
 import { parseRoomEventPage, type RoomAttachmentReceipt } from '@/contracts/room-reducer';
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
@@ -99,6 +103,7 @@ const emptyKernelRoots: Record<string, RootProjection> = {};
 const emptyKernelDispatches: Record<string, RoomDispatchEnvelopeV2> = {};
 const emptyKernelTasks: Record<string, RoomTaskV3> = {};
 const emptyKernelTaskUpdatedAtMs: Record<string, number> = {};
+const emptyKernelSessions: Record<string, PrivateSessionProjection> = {};
 const emptyKernelReceipts: Record<string, RoomKernelReceiptV1> = {};
 const ROOM_ROOT_TERMINAL_STATES: Record<string, true> = {
   completed: true,
@@ -360,6 +365,9 @@ export function RoomsFeature() {
   ));
   const kernelTaskUpdatedAtMsById = useRoomLiveStore((state) => (
     state.kernelProjections[selectedId]?.taskUpdatedAtMsById ?? emptyKernelTaskUpdatedAtMs
+  ));
+  const kernelSessionsById = useRoomLiveStore((state) => (
+    state.kernelProjections[selectedId]?.sessionsById ?? emptyKernelSessions
   ));
   const kernelReceiptsById = useRoomLiveStore((state) => (
     state.kernelProjections[selectedId]?.receiptsById ?? emptyKernelReceipts
@@ -1384,6 +1392,7 @@ export function RoomsFeature() {
               kernelDispatchesById={kernelDispatchesById}
               kernelTasksById={kernelTasksById}
               kernelTaskUpdatedAtMsById={kernelTaskUpdatedAtMsById}
+              kernelSessionsById={kernelSessionsById}
               kernelReceiptsById={kernelReceiptsById}
               kernelSync={kernelSync}
               roomSyncState={selectedRoomRecoveryState}

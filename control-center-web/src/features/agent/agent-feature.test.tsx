@@ -372,7 +372,12 @@ describe('Agent experience', () => {
       undefined,
       undefined,
       undefined,
-      () => {
+      (request: ControlRequest) => {
+        const sessionId = String(request.params?.sessionId ?? 'session-preview');
+        // Recent-conversation warming also uses the snapshot route after
+        // 180 ms. Count only this Session so idle preloading cannot be
+        // mistaken for a fourth gap-recovery request.
+        if (sessionId !== 'session-preview') return previewAgentSnapshot(sessionId);
         snapshotRequests += 1;
         if (snapshotRequests === 1) return baseline;
         if (snapshotRequests === 2) return staleSnapshot.promise;
@@ -1032,7 +1037,7 @@ describe('Agent experience', () => {
     expect(await screen.findByText('当前对话临时设置已保存')).toBeVisible();
   });
 
-  it('keeps an existing Runtime job visible and cancellable after hiding workspace_job from the next turn', async () => {
+  it('keeps an existing Runtime job visible and cancellable after hiding command execution from the next turn', async () => {
     let jobDisclosureDisabled = false;
     const runningJob = {
       schemaVersion: 'rag-ime.agent-background-job.v1',
@@ -1088,14 +1093,17 @@ describe('Agent experience', () => {
             ...catalog.sessionPolicy,
             disclosurePreferences: {
               ...catalog.sessionPolicy.disclosurePreferences,
-              session: { 'tool:workspace_job': 'disabled' },
+              session: { 'tool:bash': 'disabled' },
               effective: {
                 ...catalog.sessionPolicy.disclosurePreferences.effective,
-                'tool:workspace_job': 'disabled',
+                'tool:bash': 'disabled',
               },
             },
           },
-          items: catalog.items.map((item) => item.canonicalId === 'tool:workspace_job' ? {
+          items: catalog.items.map((item) => (
+            item.canonicalId === 'tool:workspace_shell'
+            || item.canonicalId === 'tool:workspace_job'
+          ) ? {
             ...item,
             disclosure: {
               preference: 'disabled',
@@ -1153,10 +1161,16 @@ describe('Agent experience', () => {
     await user.click(await within(statusPanel).findByRole('button', { name: /技术详情/ }));
     const capabilitySection = within(statusPanel).getByText('工具与技能').closest('section')!;
     await user.click(within(capabilitySection).getByRole('button', { name: '管理当前对话的工具与技能' }));
-    await user.click(screen.getByRole('combobox', { name: '后台任务的当前对话临时设置' }));
+    await user.click(screen.getByRole('combobox', { name: '运行命令的当前对话临时设置' }));
     await user.click(await screen.findByRole('option', { name: '不向伙伴披露' }));
 
     expect(await screen.findByText('当前对话临时设置已保存')).toBeVisible();
+    expect(transport.requests).toContainEqual(expect.objectContaining({
+      pathId: 'agent.session.capability-policy.update',
+      body: {
+        capabilityDisclosurePreferences: { 'tool:bash': 'disabled' },
+      },
+    }));
     await user.keyboard('{Escape}');
     const preservedJobButton = within(statusPanel).getByRole('button', { name: /构建工作区索引/ });
     expect(preservedJobButton).toBeVisible();
@@ -3203,13 +3217,13 @@ describe('Agent experience', () => {
     renderAgent(transport);
     const trigger = await screen.findByRole(
       'button',
-      { name: '这段对话可用工具：14 个' },
+      { name: '这段对话可用工具：12 个' },
       { timeout: 5_000 },
     );
 
     await user.click(trigger);
     expect(screen.getByRole('button', { name: /^控制中心概览/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^受控命令/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^运行命令/ })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /^控制中心概览/ }));
 
     expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue('帮我看看当前状态：');
@@ -3394,7 +3408,7 @@ describe('Agent experience', () => {
 
     expect(await screen.findByRole(
       'button',
-      { name: /这段对话可用工具：14 个/ },
+      { name: /这段对话可用工具：12 个/ },
       { timeout: 5_000 },
     )).toBeEnabled();
 
@@ -3431,7 +3445,7 @@ describe('Agent experience', () => {
     )).toBeEnabled();
     expect(await screen.findByRole(
       'button',
-      { name: /这段对话可用工具：14 个/ },
+      { name: /这段对话可用工具：12 个/ },
       { timeout: 5_000 },
     )).toBeEnabled();
   });

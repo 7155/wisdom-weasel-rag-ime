@@ -2,17 +2,21 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 import json
+import re
 from typing import Any
 
-from .agent_blocks import bind_block_scope
+from .agent_blocks import bind_block_scope, validate_persisted_blocks
 from .agent_prompt_support import bounded_text
-from .agent_protocol import AgentEventEnvelope
+from .agent_protocol import AgentBlock, AgentEventEnvelope
 from .agent_room_kernel import kernel_owns_room_execution
 from .agent_room_public_timeline import RoomPublicTimelineProjector
 from .pi_runtime_public import (
     GROUPED_QUESTIONS_SCHEMA_VERSION,
     grouped_questions_from_wire,
+    managed_media_content_url,
     public_code_tool_activity,
+    public_file_name,
+    public_tool_output_text,
     redact_mapping,
 )
 from .contracts.json_schema import validate_contract
@@ -612,7 +616,13 @@ def room_event_projection(
         if summary:
             data["summary"] = summary
         data.update(references)
-        data.update(_room_tool_disclosure(payload, event.event_type))
+        data.update(
+            _room_tool_disclosure(
+                payload,
+                event.event_type,
+                session_id=event.session_id,
+            )
+        )
     return "participant_activity", data
 
 
@@ -899,6 +909,11 @@ _ROOM_TOOL_REQUEST_KEYS = (
 _ROOM_TOOL_RESULT_KEYS = (
     "outputPreview",
     "outputTruncated",
+    "stdoutPreview",
+    "stdoutTruncated",
+    "stderrPreview",
+    "stderrTruncated",
+    "exitCode",
     "summary",
     "status",
     "message",
@@ -910,6 +925,136 @@ _ROOM_TOOL_RESULT_KEYS = (
     "approvalModelDecision",
     "automatic",
 )
+
+_ROOM_TOOL_FILE_MIME_TYPES = frozenset(
+    {
+        "text/html",
+        "text/markdown",
+        "text/plain",
+        "text/x-diff",
+        "text/x-patch",
+    }
+)
+_ROOM_TOOL_ARTIFACT_MAX_BYTES = 2 * 1024 * 1024
+
+
+def _room_tool_agent_blocks_projection(
+    value: object,
+    *,
+    session_id: str,
+) -> list[dict[str, object]]:
+    """Project only verified file/Diff descriptors from tool-owned blocks.
+
+    Tool events carry blocks captured by ``AgentToolBlockBuffer`` after a
+    successful tool result.  Revalidating their digest/source boundary here
+    prevents an arbitrary event payload from turning into a Room file link.
+    The Room copy deliberately omits provenance, refs and every unrecognized
+    data field; managed file URLs are rebuilt from the verified identifiers.
+    """
+
+    try:
+        trusted = validate_persisted_blocks(
+            value,
+            allowed_visibility=frozenset({"private_session"}),
+        )
+    except (TypeError, ValueError):
+        return []
+
+    projected: list[dict[str, object]] = []
+    for raw in trusted[:8]:
+        try:
+            block = AgentBlock.from_payload(raw)
+        except (TypeError, ValueError):
+            continue
+        source_ref = str(block.source.get("ref") or "").strip()
+        if (
+            block.status != "completed"
+            or block.block_type not in {"file", "diff"}
+            or str(block.source.get("kind") or "") != "pi_tool_result"
+            or not source_ref.startswith(f"{session_id}:")
+        ):
+            continue
+        if block.block_type == "file":
+            data = block.data
+            media_session_id = str(data.get("sessionId") or "").strip()
+            file_name = public_file_name(str(data.get("fileName") or ""))
+            mime_type = str(data.get("mimeType") or "").strip().lower()
+            byte_size = data.get("byteSize")
+            sha256 = str(data.get("sha256") or "").strip().lower()
+            media_id = str(data.get("mediaId") or "").strip()
+            if (
+                media_session_id != session_id
+                or not file_name
+                or mime_type not in _ROOM_TOOL_FILE_MIME_TYPES
+                or not isinstance(byte_size, int)
+                or isinstance(byte_size, bool)
+                or byte_size < 0
+                or byte_size > _ROOM_TOOL_ARTIFACT_MAX_BYTES
+                or re.fullmatch(r"[0-9a-f]{64}", sha256) is None
+            ):
+                continue
+            projected.append(
+                {
+                    "schemaVersion": "rag-ime.agent-block.v1",
+                    "id": bounded_text(block.block_id, maximum=160),
+                    "type": "file",
+                    "status": "completed",
+                    "presentationKind": "file",
+                    "data": {
+                        "mediaId": media_id,
+                        "sessionId": media_session_id,
+                        "fileName": file_name,
+                        "mimeType": mime_type,
+                        "byteSize": byte_size,
+                        "sha256": sha256,
+                        "receiptUrl": managed_media_content_url(
+                            media_session_id,
+                            media_id,
+                        ),
+                    },
+                }
+            )
+            continue
+
+        data = block.data
+        raw_name = str(
+            data.get("fileName")
+            or data.get("path")
+            or data.get("title")
+            or ""
+        )
+        file_name = public_file_name(raw_name)
+        diff = public_tool_output_text(
+            data.get("diff") or data.get("text"),
+            maximum=6_000,
+        )
+        if not file_name or not diff:
+            continue
+        diff_data: dict[str, object] = {
+            "fileName": file_name,
+            "diff": diff,
+        }
+        for key in ("additions", "deletions"):
+            count = data.get(key)
+            if (
+                isinstance(count, int)
+                and not isinstance(count, bool)
+                and 0 <= count <= 1_000_000
+            ):
+                diff_data[key] = count
+        if data.get("truncated") is True:
+            diff_data["truncated"] = True
+        projected.append(
+            {
+                "schemaVersion": "rag-ime.agent-block.v1",
+                "id": bounded_text(block.block_id, maximum=160),
+                "type": "diff",
+                "status": "completed",
+                "presentationKind": "diff",
+                "data": diff_data,
+            }
+        )
+    return projected
 
 _ROOM_TOOL_NAMES = frozenset(
     {
@@ -1372,6 +1517,8 @@ def _redacted_room_text(
 def _room_tool_disclosure(
     payload: Mapping[str, object],
     event_type: str,
+    *,
+    session_id: str,
 ) -> dict[str, object]:
     raw_args = (
         payload.get("args")
@@ -1464,6 +1611,13 @@ def _room_tool_disclosure(
             )
             if error:
                 disclosure["error"] = error
+    if event_type == "tool_finished" and not bool(payload.get("isError")):
+        agent_blocks = _room_tool_agent_blocks_projection(
+            payload.get("agentBlocks"),
+            session_id=session_id,
+        )
+        if agent_blocks:
+            disclosure["agentBlocks"] = agent_blocks
     return disclosure
 
 
@@ -1513,6 +1667,7 @@ def _room_tool_summary(
     raw_result = (
         payload.get("result")
         or payload.get("partialResult")
+        or payload.get("publicResult")
     )
     result = (
         raw_result
