@@ -1976,6 +1976,34 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.assertEqual(retained["state"], "cancelled")
         self.assertEqual(self.store.task("task:1")["state"], "cancelled")
 
+    def test_initialize_repairs_historical_task_reactivated_after_cancel(
+        self,
+    ) -> None:
+        self.seed(criteria=())
+        payload = self.store.task("task:1")
+        payload["state"] = "active"
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE room_kernel_roots SET state='cancelled',updated_at_ms=10 "
+                "WHERE root_id='root:1'"
+            )
+            connection.execute(
+                "UPDATE room_kernel_tasks SET state='active',payload_json=? "
+                "WHERE task_id='task:1'",
+                (
+                    json.dumps(
+                        payload,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                ),
+            )
+
+        self.store.initialize()
+
+        self.assertEqual(self.store.task("task:1")["state"], "cancelled")
+
     def test_workspace_retry_rejects_an_unrelated_tool_invocation_receipt(
         self,
     ) -> None:

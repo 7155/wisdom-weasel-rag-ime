@@ -142,9 +142,40 @@ class RoomKernelStore:
 
     def initialize(self) -> int:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
+        with self._connect(immediate=True) as conn:
             result = apply_database_migrations(conn)
+            self._repair_cancelled_root_task_states(conn)
         return result.current_version
+
+    @staticmethod
+    def _repair_cancelled_root_task_states(conn: sqlite3.Connection) -> int:
+        """Seal tasks resurrected by historical workspace lifecycle projection."""
+
+        rows = conn.execute(
+            """SELECT task.task_id,task.payload_json,root.updated_at_ms
+               FROM room_kernel_tasks task
+               JOIN room_kernel_roots root ON root.root_id=task.root_id
+               WHERE root.state IN ('cancelled','cancelled_with_unknowns')
+                 AND task.state NOT IN ('completed','failed','cancelled')"""
+        ).fetchall()
+        for row in rows:
+            payload = json.loads(str(row["payload_json"]))
+            if not isinstance(payload, dict):
+                payload = {}
+            payload["state"] = "cancelled"
+            payload["revision"] = int(payload.get("revision") or 0) + 1
+            conn.execute(
+                """UPDATE room_kernel_tasks
+                   SET state='cancelled',payload_json=?,updated_at_ms=?
+                   WHERE task_id=?
+                     AND state NOT IN ('completed','failed','cancelled')""",
+                (
+                    _json(payload),
+                    int(row["updated_at_ms"]),
+                    str(row["task_id"]),
+                ),
+            )
+        return len(rows)
 
     def create_root(
         self,
