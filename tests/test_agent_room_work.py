@@ -250,7 +250,7 @@ class AgentRoomWorkTests(unittest.TestCase):
             [],
         )
 
-    def test_kernel_waiting_keeps_parent_active_with_open_child(self) -> None:
+    def test_kernel_waiting_keeps_parent_active_with_open_kernel_child(self) -> None:
         assigned, _ = self.work.assign(
             str(self.coordinator["id"]),
             self._assignment(
@@ -287,19 +287,38 @@ class AgentRoomWorkTests(unittest.TestCase):
         )
         self.assertEqual(blocked[0]["state"], "blocked")
 
-        child, _ = self.work.assign(
-            str(self.worker["id"]),
-            {
-                **self._assignment(
-                    "kernel-waiting-child",
-                    self.researcher_participant["id"],
-                ),
-                "parentWorkId": claimed["id"],
-            },
-            created_at_ms=40,
-        )
-        self.assertEqual(child["state"], "queued")
-        self.assertEqual(child["parentWorkId"], claimed["id"])
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO room_kernel_roots(
+                    root_id, room_id, state, facilitator_participant_id,
+                    requirement_anchor_ref, budget_remaining,
+                    max_hops, max_depth, payload_json,
+                    created_at_ms, updated_at_ms
+                ) VALUES (?, ?, 'waiting', ?, 'requirement:test', 100,
+                          8, 3, '{}', 35, 35)
+                """,
+                (root_id, self.room["id"], self.worker_participant["id"]),
+            )
+            conn.execute(
+                """
+                INSERT INTO room_kernel_tasks(
+                    task_id, root_id, parent_task_id, state,
+                    payload_json, updated_at_ms
+                ) VALUES ('room-task:parent', ?, NULL, 'waiting', '{}', 35)
+                """,
+                (root_id,),
+            )
+            conn.execute(
+                """
+                INSERT INTO room_kernel_tasks(
+                    task_id, root_id, parent_task_id, state,
+                    payload_json, updated_at_ms
+                ) VALUES ('room-task:child', ?, 'room-task:parent',
+                          'active', '{}', 40)
+                """,
+                (root_id,),
+            )
 
         resumed = self.work.project_kernel_root(
             {

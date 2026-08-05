@@ -1102,7 +1102,7 @@ class AgentRoomWorkStore:
                 )
                 row_target_state = target_state
                 if kernel_state == "waiting":
-                    open_children = conn.execute(
+                    open_work_children = conn.execute(
                         """
                         SELECT COUNT(*) FROM agent_room_work_items
                         WHERE parent_work_id = ?
@@ -1110,7 +1110,27 @@ class AgentRoomWorkStore:
                         """,
                         (str(row["id"]),),
                     ).fetchone()
-                    if int(open_children[0] if open_children else 0) > 0:
+                    open_kernel_children = conn.execute(
+                        """
+                        SELECT COUNT(*) FROM room_kernel_tasks
+                        WHERE root_id = ? AND parent_task_id IS NOT NULL
+                          AND state NOT IN ('completed', 'failed', 'cancelled')
+                        """,
+                        (root_id,),
+                    ).fetchone()
+                    if (
+                        int(
+                            open_work_children[0]
+                            if open_work_children
+                            else 0
+                        )
+                        + int(
+                            open_kernel_children[0]
+                            if open_kernel_children
+                            else 0
+                        )
+                        > 0
+                    ):
                         row_target_state = "active"
                 if row_target_state == "active":
                     if (
