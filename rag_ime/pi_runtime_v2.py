@@ -859,10 +859,19 @@ class PiRuntimeHostManager:
                             "Session must settle before switching between "
                             "Agent and Room modes"
                         )
-                    raise PiRuntimeError(
-                        "managed Room Session must settle before rebinding PromptPlan"
-                    )
-                if (
+                    if not (
+                        stale_active_room
+                        and current_room
+                        and desired_room
+                    ):
+                        raise PiRuntimeError(
+                            "managed Room Session must settle before rebinding PromptPlan"
+                        )
+                    # The Kernel has already revoked the active Dispatch and
+                    # bound this Session to a fresh recovery identity. The old
+                    # host turn cannot settle authoritatively anymore, so
+                    # retire it before opening the replacement PromptPlan.
+                elif (
                     current_room
                     and desired_room
                     and rebind is not None

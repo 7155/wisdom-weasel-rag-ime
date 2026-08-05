@@ -127,7 +127,7 @@ for line in sys.stdin:
             } if os.environ.get("TEST_STALE_ACTIVE_ROOM") == "1" else None),
             "roomProviderContext": params.get("roomProviderContext"),
             "roomSkillLoad": room_skill_load,
-            "isIdle": True,
+            "isIdle": os.environ.get("TEST_STALE_ACTIVE_ROOM_BUSY") != "1",
             "messageQueue": {"steering": [], "followUp": [], "steeringMode": "one-at-a-time",
                              "followUpMode": "one-at-a-time"},
         })
@@ -1782,7 +1782,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         )
         self.assertEqual(second["roomSkillLoad"]["name"], "independent-review")
 
-    def test_room_dispatch_reopens_idle_session_with_stale_active_room(self) -> None:
+    def test_room_dispatch_reopens_busy_session_with_stale_active_room(self) -> None:
         self.runtime.stop()
         revision = {"value": 1}
 
@@ -1826,6 +1826,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 provider_environment={
                     "TEST_ROOM_TYPES": "1",
                     "TEST_STALE_ACTIVE_ROOM": "1",
+                    "TEST_STALE_ACTIVE_ROOM_BUSY": "1",
                 },
             ),
             sessions=self.store,
