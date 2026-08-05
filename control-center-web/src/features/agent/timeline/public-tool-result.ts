@@ -819,12 +819,16 @@ function publicCodeToolResult(
   ];
   const rawPath = firstText(requestLayers, ['relativePath', 'fileName', 'file_path', 'path']);
   const file = codeTools.has(toolId) ? publicWorkspacePath(rawPath) : '';
+  const workingDirectory = publicWorkspacePath(firstText(requestLayers, ['cwd', 'root']));
   const request: PublicToolRequestField[] = [];
   const addRequest = (id: string, label: string, value: string, code = false) => {
     if (!value || request.some((field) => field.id === id)) return;
     request.push({ id, label, value, ...(code ? { code: true } : {}) });
   };
   if (file) addRequest('path', '目标', file, true);
+  if (workingDirectory && workingDirectory !== file) {
+    addRequest('cwd', '工作目录', workingDirectory, true);
+  }
 
   const operation = firstText(requestLayers, ['op']);
   const mode = firstText(requestLayers, ['mode']);
@@ -832,12 +836,14 @@ function publicCodeToolResult(
   const query = firstText(requestLayers, ['query']);
   const pattern = firstText(requestLayers, ['pattern']);
   const glob = firstText(requestLayers, ['glob']);
+  const selector = firstText(requestLayers, ['selector']);
   const command = firstText(requestLayers, ['command']);
   const protectedCommand = commandTools.has(toolId) && commandReferencesSensitiveFile(command);
   if (operation) addRequest('op', '动作', operation, true);
   if (query) addRequest('query', '查询', query, true);
   if (pattern) addRequest('pattern', '模式', pattern, true);
   if (glob) addRequest('glob', '文件范围', glob, true);
+  if (selector) addRequest('selector', '读取行', selector, true);
   if (mode) addRequest('mode', '搜索方式', mode, true);
   if (patternKind) addRequest('patternKind', '模式类型', patternKind, true);
   if (command) {
@@ -1065,6 +1071,7 @@ function managedEvidencePreview(value: string): {
 function publicToolOutputText(value: string): string {
   const redacted = value
     .replace(/\r\n?/gu, '\n')
+    .replace(/^\s*\[evidence\s+ref:[^\]]+\]\s*/gimu, '')
     .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/gu, '[REDACTED_SECRET]')
     .replace(
       /(^|[^A-Za-z0-9_-])(["']?)([A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?token|password|secret|authorization|token|cookie|bearer))\2(\s*(?:=|:)\s*)(?:(?:Bearer|Basic|Token)\s+)?("[^"\r\n]*"|'[^'\r\n]*'|[^\s'"&,}]+)/gimu,

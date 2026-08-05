@@ -691,8 +691,10 @@ describe('RoomTurn public activity detail', () => {
 
     expect(edit).toHaveAttribute('data-state', 'completed');
     expect(edit).not.toHaveAttribute('data-edit-active');
+    expect(edit).not.toHaveAttribute('open');
     expect(edit.querySelector('summary')).toHaveTextContent('已编辑 RoomTurn.tsx +2 -1');
     expect(within(edit).queryByRole('status', { name: '正在接收文件编辑进度' })).not.toBeInTheDocument();
+    fireEvent.click(edit.querySelector('summary')!);
     const diff = within(edit).getByLabelText('文件变更');
     expect(within(diff).getByLabelText('Diff 展示方式')).toBeInTheDocument();
     expect(diff).toHaveTextContent('RoomTurn.tsx');

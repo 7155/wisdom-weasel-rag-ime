@@ -1309,6 +1309,15 @@ def _public_tool_text(value: object, *, maximum: int) -> str:
     text = value.replace("\r\n", "\n").replace("\r", "\n").strip()
     if not text:
         return ""
+    # Managed Tool bridges may prefix a safe summary with an internal evidence
+    # locator. The locator remains in the durable audit store; public timelines
+    # need the semantic result that follows it, not an implementation handle.
+    text = re.sub(
+        r"^\s*\[evidence\s+ref:[^\]]+\]\s*",
+        "",
+        text,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
     text = re.sub(r"\bsk-[A-Za-z0-9_-]{6,}\b", "[REDACTED_SECRET]", text)
     text = re.sub(
         r"(?<![A-Za-z0-9_-])(?P<quote>[\"']?)"

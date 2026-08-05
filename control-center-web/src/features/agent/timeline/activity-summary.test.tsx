@@ -264,6 +264,34 @@ describe('Agent tool activity details', () => {
     expect(row).not.toHaveAttribute('open');
   });
 
+  it('settles an automatically opened tool back to its compact row after completion', async () => {
+    const running = toolActivity('tool_progress', 'running', {
+      toolCallId: 'call-running-settles',
+      toolName: 'read',
+      args: { path: 'src/settles.ts' },
+      publicResult: { outputPreview: 'export const active = true;' },
+    });
+    const view = render(
+      <TooltipProvider><ActivitySummary activities={[running]} inline /></TooltipProvider>,
+    );
+    const details = openInlineActivity(view.container);
+    const row = details.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    await waitFor(() => expect(row).toHaveAttribute('open'));
+
+    view.rerender(
+      <TooltipProvider><ActivitySummary activities={[{
+        ...running,
+        kind: 'tool_finished',
+        status: 'completed',
+        updatedAtMs: running.updatedAtMs + 1_000,
+      }]} inline /></TooltipProvider>,
+    );
+
+    await waitFor(() => expect(row).not.toHaveAttribute('open'));
+    expect(row.querySelector('summary')).toHaveAttribute('aria-expanded', 'false');
+    expect(row.querySelector('summary')).toHaveTextContent('已读取 src/settles.ts');
+  });
+
   it('streams read content with its target and range in the same disclosure', async () => {
     const activity = toolActivity('tool_progress', 'running', {
       toolCallId: 'call-read-stream',
@@ -287,7 +315,10 @@ describe('Agent tool activity details', () => {
     expect(request).toHaveTextContent('24');
     const output = within(row).getByLabelText('工具返回片段');
     expect(output).toHaveAttribute('data-streaming', 'true');
-    expect(within(output).getByLabelText('src/stream.ts 代码内容')).toHaveTextContent('export const first');
+    const code = within(output).getByLabelText('src/stream.ts 代码内容');
+    expect(code).toHaveTextContent('export const first');
+    expect(code.querySelector('[data-line-number="12"]')).toBeInTheDocument();
+    expect(code.querySelector('[data-line-number="13"]')).toBeInTheDocument();
     expect(output.querySelector('.agent-streaming-cursor--inline')).toBeInTheDocument();
   });
 
@@ -333,6 +364,8 @@ describe('Agent tool activity details', () => {
     if (!row.hasAttribute('open')) fireEvent.click(row.querySelector('summary')!);
     expect(row).toHaveTextContent('退出码');
     expect(row).toHaveTextContent('0');
+    expect(within(row).getByLabelText('工具结果要点')).toHaveTextContent('退出码0');
+    expect(within(row).queryByLabelText('工具结果明细')).not.toBeInTheDocument();
     expect(row.querySelector('.agent-streaming-cursor--inline')).not.toBeInTheDocument();
   });
 
@@ -518,9 +551,39 @@ describe('Agent tool activity details', () => {
     expect(request).toHaveTextContent('2');
     const output = within(row).getByLabelText('工具返回片段');
     expect(within(request).getByRole('button', { name: '复制参数' })).toBeInTheDocument();
-    expect(output).toHaveTextContent('rag_ime/agent_tools.py:41');
-    expect(output).toHaveTextContent('tests/test_rime_lexicon_review.py:12');
+    expect(output).toHaveTextContent('rag_ime/agent_tools.py');
+    expect(output).toHaveTextContent('第 41 行');
+    expect(output).toHaveTextContent('tests/test_rime_lexicon_review.py');
+    expect(output).toHaveTextContent('第 12 行');
+    const matches = within(output).getByLabelText('搜索匹配位置');
+    expect(matches).toHaveTextContent('rag_ime/agent_tools.py');
+    expect(matches).toHaveTextContent('第 41 行');
+    expect(matches).toHaveTextContent('def rime_lexicon_review');
     expect(output).toHaveTextContent('完整结果仍由本机工具回执保留');
+  });
+
+  it('removes internal evidence references and renders an empty search as a plain result', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-empty-search-receipt',
+      toolName: 'grep',
+      args: { path: 'scripts', pattern: 'missing_symbol' },
+      publicResult: {
+        outputPreview: '[evidence ref: execution:invoke:private-handle] 在 417 个文件中找到 0 条匹配',
+        outputTruncated: false,
+      },
+    });
+    const { container } = render(
+      <TooltipProvider><ActivitySummary activities={[activity]} inline /></TooltipProvider>,
+    );
+    const details = openInlineActivity(container);
+    const row = details.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+    const output = within(row).getByLabelText('工具返回片段');
+
+    expect(output).toHaveTextContent('没有找到匹配内容');
+    expect(output).not.toHaveTextContent('evidence ref');
+    expect(output).not.toHaveTextContent('private-handle');
+    expect(within(output).queryByLabelText('搜索结果 代码内容')).not.toBeInTheDocument();
   });
 
   it('bounds long public output and copies exactly the visible safe fragment', async () => {
@@ -638,7 +701,8 @@ describe('Agent tool activity details', () => {
 
     expect(within(row).getByLabelText('工具调用参数')).toHaveTextContent('rag_ime');
     expect(within(row).getByLabelText('工具调用参数')).toHaveTextContent('todo');
-    expect(within(row).getByLabelText('工具返回片段')).toHaveTextContent('agent_tools.py:81');
+    expect(within(row).getByLabelText('工具返回片段')).toHaveTextContent('agent_tools.py');
+    expect(within(row).getByLabelText('工具返回片段')).toHaveTextContent('第 81 行');
     expect(container).not.toHaveTextContent('evidenceHandle');
     expect(container).not.toHaveTextContent('private-evidence-handle');
     expect(container).not.toHaveTextContent('evidenceSha256');

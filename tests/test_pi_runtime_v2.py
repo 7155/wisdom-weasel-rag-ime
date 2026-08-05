@@ -2662,6 +2662,25 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn("internal-handle", serialized)
         self.assertNotIn("evidenceSha256", serialized)
 
+    def test_coding_tool_projection_removes_plain_internal_evidence_prefix(self) -> None:
+        result = public_code_tool_activity(
+            "grep",
+            {"path": "scripts", "pattern": "missing_symbol"},
+            {
+                "content": [{
+                    "type": "text",
+                    "text": (
+                        "[evidence ref: execution:invoke:private-handle] "
+                        "在 417 个文件中找到 0 条匹配"
+                    ),
+                }],
+            },
+        )
+
+        self.assertEqual(result["outputPreview"], "在 417 个文件中找到 0 条匹配")
+        self.assertNotIn("evidence ref", json.dumps(result, ensure_ascii=False))
+        self.assertNotIn("private-handle", json.dumps(result, ensure_ascii=False))
+
     def test_coding_tool_projection_redacts_commands_and_never_previews_secret_files(self) -> None:
         command = public_code_tool_activity(
             "bash",

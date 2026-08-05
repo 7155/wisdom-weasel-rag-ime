@@ -2182,12 +2182,24 @@ function RoomToolActivity({
   const payload = activity.payload;
   const approvalId = textValue(payload.approvalId);
   const sourceEventType = textValue(payload.sourceEventType);
-  const [open, setOpen] = useState(Boolean(
+  const initiallyActive = Boolean(
     (approvalId && ['running', 'waiting'].includes(activity.status))
-    || activity.status === 'running',
-  ));
+    || activity.status === 'running');
+  const [open, setOpen] = useState(initiallyActive);
+  const autoOpenedRef = useRef(initiallyActive);
+  const userControlledDisclosureRef = useRef(false);
   useEffect(() => {
-    if (approvalId || activity.status === 'running') setOpen(true);
+    const active = Boolean(
+      (approvalId && ['running', 'waiting'].includes(activity.status))
+      || activity.status === 'running');
+    if (active) {
+      autoOpenedRef.current = true;
+      if (!userControlledDisclosureRef.current) setOpen(true);
+      return;
+    }
+    if (autoOpenedRef.current && !userControlledDisclosureRef.current) {
+      setOpen(false);
+    }
   }, [activity.status, approvalId]);
   const { detailView, safeResult } = roomToolActivityResultView(activity);
   const approvalDescription = approvalId ? describeRoomActivity(activity) : null;
@@ -2234,8 +2246,16 @@ function RoomToolActivity({
     >
       <summary
         aria-expanded={open}
-        onClick={(event) => toggleDisclosurePreservingAnchor(event, setOpen)}
-        onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setOpen)}
+        onClick={(event) => {
+          userControlledDisclosureRef.current = true;
+          toggleDisclosurePreservingAnchor(event, setOpen);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            userControlledDisclosureRef.current = true;
+          }
+          toggleDisclosureOnKeyPreservingAnchor(event, setOpen);
+        }}
       >
         <span className="room-agent-activity__state" aria-hidden="true">
           {recovering

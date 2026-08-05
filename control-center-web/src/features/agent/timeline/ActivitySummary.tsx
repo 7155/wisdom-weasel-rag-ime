@@ -332,10 +332,20 @@ function ActivityRow({
   const canDecide = activity.status === 'waiting' && approvalNeedsHumanDecision(payload) && approvalId && hash && onApprovalDecision;
   const [rowOpen, setRowOpen] = useState(Boolean(boundToTool && activity.status === 'waiting'));
   const autoOpenedRunningRef = useRef(false);
+  const userControlledDisclosureRef = useRef(false);
   useEffect(() => {
-    if (!basicToolId || activity.status !== 'running' || autoOpenedRunningRef.current) return;
-    autoOpenedRunningRef.current = true;
-    setRowOpen(true);
+    if (basicToolId && activity.status === 'running' && !autoOpenedRunningRef.current) {
+      autoOpenedRunningRef.current = true;
+      setRowOpen(true);
+      return;
+    }
+    if (
+      activity.status !== 'running'
+      && autoOpenedRunningRef.current
+      && !userControlledDisclosureRef.current
+    ) {
+      setRowOpen(false);
+    }
   }, [activity.status, basicToolId]);
   const nowMs = useActivityClock(activity.status === 'running');
   const duration = activityDuration(activity, nowMs);
@@ -350,8 +360,16 @@ function ActivityRow({
     >
       <summary
         aria-expanded={rowOpen}
-        onClick={(event) => toggleDisclosurePreservingAnchor(event, setRowOpen)}
-        onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setRowOpen)}
+        onClick={(event) => {
+          userControlledDisclosureRef.current = true;
+          toggleDisclosurePreservingAnchor(event, setRowOpen);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            userControlledDisclosureRef.current = true;
+          }
+          toggleDisclosureOnKeyPreservingAnchor(event, setRowOpen);
+        }}
       >
         <span className="agent-activity-row__icon" data-kind={presentation.kind}><Icon size={15} /></span>
         <span>
@@ -674,6 +692,27 @@ function ToolProgressTimeline({
 }
 
 export function PublicToolFields({ view }: { view: PublicToolResultView }) {
+  const codeTool = publicCodeToolId(view.toolId);
+  const codeFacts = codeTool
+    ? view.fields.filter((field) => ![
+        'status',
+        'ok',
+        'operation',
+        'resultStatus',
+        'summary',
+        'file',
+      ].includes(field.id))
+    : [];
+  if (codeTool) {
+    if (codeFacts.length === 0) return null;
+    return (
+      <dl className="agent-tool-facts" aria-label="工具结果要点">
+        {codeFacts.map((field) => (
+          <div key={field.id}><dt>{field.label}</dt><dd>{field.value}</dd></div>
+        ))}
+      </dl>
+    );
+  }
   const fieldsText = JSON.stringify(
     Object.fromEntries(view.fields.map((field) => [field.id, field.value])),
     null,
@@ -717,10 +756,24 @@ export function PublicToolRequest({ view }: { view: PublicToolResultView }) {
     2,
   );
   const { copy, state } = useCopyableText(requestText);
+  const codeTool = publicCodeToolId(view.toolId);
+  const requestLabel = codeTool === 'read'
+    ? '读取范围'
+    : codeTool === 'bash'
+      ? '运行命令'
+      : codeTool === 'grep' || codeTool === 'find' || codeTool === 'ls'
+        ? '搜索条件'
+        : codeTool === 'edit' || codeTool === 'write'
+          ? '变更目标'
+          : '调用参数';
   return (
-    <section className="agent-tool-result-panel" aria-label="工具调用参数">
+    <section
+      className="agent-tool-result-panel"
+      aria-label="工具调用参数"
+      data-panel-kind={codeTool ? 'code-request' : undefined}
+    >
       <header className="agent-tool-result-panel__header">
-        <strong><TerminalSquare size={13} />调用参数</strong>
+        <strong><TerminalSquare size={13} />{requestLabel}</strong>
         <Button
           aria-live="polite"
           leadingIcon={state === 'copied' ? <Check size={13} /> : <Copy size={13} />}
@@ -762,7 +815,59 @@ export function PublicToolOutput({
       </section>
     );
   }
-  if (['code', 'search', 'terminal'].includes(view.output.kind)) {
+  if (view.output.kind === 'search') {
+    const matches = publicSearchMatches(outputText);
+    const noMatches = publicSearchHasNoMatches(outputText);
+    const aggregateSummary = publicSearchLooksLikeAggregate(outputText);
+    return (
+      <section
+        className="agent-tool-specialized-output"
+        aria-label="工具返回片段"
+        data-output-kind="search"
+        data-streaming={streaming || undefined}
+      >
+        <header className="agent-tool-specialized-output__header">
+          <strong><Search aria-hidden="true" size={14} />搜索结果</strong>
+          <Button
+            aria-live="polite"
+            leadingIcon={state === 'copied' ? <Check size={13} /> : <Copy size={13} />}
+            onClick={() => void copy()}
+            size="small"
+            variant="quiet"
+          >
+            {state === 'copied' ? '已复制' : '复制结果'}
+          </Button>
+        </header>
+        {matches.length ? (
+          <ol className="agent-tool-search-results" aria-label="搜索匹配位置">
+            {matches.map((match, index) => (
+              <li key={`${match.path}:${match.line}:${index}`}>
+                <span><code>{match.path}</code><small>第 {match.line} 行{match.column ? ` · 第 ${match.column} 列` : ''}</small></span>
+                <pre><code>{match.text || '（空行）'}</code></pre>
+              </li>
+            ))}
+          </ol>
+        ) : noMatches || aggregateSummary ? (
+          <p className="agent-tool-search-summary" data-empty={noMatches || undefined}>
+            {noMatches ? '没有找到匹配内容。' : outputText}
+          </p>
+        ) : (
+          <CodeContentBlock
+            code={outputText}
+            fileName={view.output.title}
+            language="text"
+            streamingTail={streaming}
+          />
+        )}
+        {streaming && (matches.length > 0 || noMatches || aggregateSummary)
+          ? <span className="agent-streaming-cursor agent-streaming-cursor--inline" aria-hidden="true" />
+          : null}
+        {view.output.truncated ? <small>这里只显示前 {matches.length || '若干'} 项；完整结果仍由本机工具回执保留。</small> : null}
+        {state === 'failed' ? <small role="alert">无法复制结果，请手动选择内容。</small> : null}
+      </section>
+    );
+  }
+  if (['code', 'terminal'].includes(view.output.kind)) {
     const channels = view.output.kind === 'terminal' ? view.output.channels ?? [] : [];
     return (
       <section
@@ -786,6 +891,8 @@ export function PublicToolOutput({
             code={outputText}
             fileName={view.output.title}
             language={view.output.kind === 'terminal' ? 'shell' : 'text'}
+            lineNumbers={view.output.kind === 'code'}
+            startLine={publicReadStartLine(view)}
             streamingTail={streaming}
           />
         )}
@@ -868,6 +975,59 @@ export function ToolRunningPreview({
 function canonicalBasicToolId(value: string): CanonicalBasicToolId | null {
   const canonicalId = canonicalToolId(value) as CanonicalBasicToolId;
   return canonicalBasicToolIds.has(canonicalId) ? canonicalId : null;
+}
+
+type PublicCodeToolId = CanonicalBasicToolId | 'grep' | 'find' | 'ls';
+
+function publicCodeToolId(value: string): PublicCodeToolId | null {
+  const canonicalId = canonicalToolId(value) as PublicCodeToolId;
+  return canonicalBasicToolIds.has(canonicalId as CanonicalBasicToolId)
+    || ['grep', 'find', 'ls'].includes(canonicalId)
+    ? canonicalId
+    : null;
+}
+
+function publicReadStartLine(view: PublicToolResultView): number {
+  const offset = view.request.find((field) => field.id === 'offset')?.value;
+  const parsedOffset = Number(offset);
+  if (Number.isFinite(parsedOffset) && parsedOffset >= 1) return Math.floor(parsedOffset);
+  const selector = view.request.find((field) => field.id === 'selector')?.value ?? '';
+  const selectedLine = /^(\d+)/u.exec(selector)?.[1];
+  return selectedLine ? Math.max(1, Number(selectedLine)) : 1;
+}
+
+interface PublicSearchMatch {
+  path: string;
+  line: number;
+  column?: number;
+  text: string;
+}
+
+function publicSearchMatches(value: string): PublicSearchMatch[] {
+  return value.split('\n').flatMap((line) => {
+    const match = /^(.+?):(\d+)(?::(\d+))?:(.*)$/u.exec(line.trimEnd());
+    if (!match) return [];
+    const [, path = '', lineNumber = '', column = '', content = ''] = match;
+    const parsedLine = Number(lineNumber);
+    const parsedColumn = Number(column);
+    if (!path || !Number.isFinite(parsedLine) || parsedLine < 1) return [];
+    return [{
+      path,
+      line: parsedLine,
+      ...(Number.isFinite(parsedColumn) && parsedColumn >= 1 ? { column: parsedColumn } : {}),
+      text: content.trimStart(),
+    }];
+  }).slice(0, 100);
+}
+
+function publicSearchHasNoMatches(value: string): boolean {
+  return /(?:找到|found)\s*0\s*(?:条匹配|matches?)/iu.test(value)
+    || /(?:no matches?|没有找到匹配)/iu.test(value);
+}
+
+function publicSearchLooksLikeAggregate(value: string): boolean {
+  return value.length <= 500
+    && /(?:在\s*\d+\s*个文件中)?找到\s*\d+\s*条匹配/iu.test(value);
 }
 
 function publicToolTarget(view: PublicToolResultView): string {
