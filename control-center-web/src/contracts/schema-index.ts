@@ -19544,6 +19544,42 @@ export const contractSchemas = {
         "type": "string",
         "minLength": 1
       },
+      "workspaceBaseSnapshotSha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "workspaceBaseDirtyStatusSha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "workspaceBaseDirtyPaths": {
+        "type": "array",
+        "maxItems": 512,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "workspaceBaseDirtyPathCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "workspaceBaseDirtyPathsTruncated": {
+        "type": "boolean"
+      },
+      "workspaceBaseDirty": {
+        "type": "boolean"
+      },
+      "workspaceReservationReceiptId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 320
+      },
+      "workspaceReservationReceiptSha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
       "workspaceSnapshotSha256": {
         "type": "string",
         "pattern": "^[0-9a-f]{64}$"

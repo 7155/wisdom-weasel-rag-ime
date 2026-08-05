@@ -59,6 +59,17 @@ export interface RoomTaskV3 {
   workspaceRoot?: string;
   workspaceBaseRoot?: string;
   workspaceBaseCommit?: string;
+  workspaceBaseSnapshotSha256?: string;
+  workspaceBaseDirtyStatusSha256?: string;
+  /**
+   * @maxItems 512
+   */
+  workspaceBaseDirtyPaths?: string[];
+  workspaceBaseDirtyPathCount?: number;
+  workspaceBaseDirtyPathsTruncated?: boolean;
+  workspaceBaseDirty?: boolean;
+  workspaceReservationReceiptId?: string;
+  workspaceReservationReceiptSha256?: string;
   workspaceSnapshotSha256?: string;
   workspaceBindingId?: string;
   workspaceRepositoryId?: string;
