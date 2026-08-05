@@ -688,7 +688,7 @@ export function RoomTurn({
         collapsedPreview={<RoomLaneCollapsedPreview
           activities={segmentActivities}
           participantName={participant?.displayName}
-          workspaceTask={includePersistentDetails ? laneTask : undefined}
+          workspaceTask={laneTask}
         />}
         defaultOpen={laneActive && !visibleMessages.length}
         data-continuation={identityContinuation || undefined}
@@ -744,6 +744,7 @@ export function RoomTurn({
           updatesFresh={laneFreshness.state === 'fresh'}
           participantName={participant?.displayName}
           attention={laneState === 'failed' || laneState === 'aborted'}
+          taskContext={laneTask}
           workspaceTask={includePersistentDetails ? laneTask : undefined}
           workspaceUpdatedAtMs={laneTaskId
             ? kernelTaskUpdatedAtMsById?.[laneTaskId]
@@ -1230,6 +1231,7 @@ function ActivityLog({
   updatesFresh,
   attention,
   participantName,
+  taskContext,
   workspaceTask,
   workspaceUpdatedAtMs,
 }: {
@@ -1239,6 +1241,7 @@ function ActivityLog({
   updatesFresh: boolean;
   attention: boolean;
   participantName?: string;
+  taskContext?: RoomTaskV3;
   workspaceTask?: RoomTaskV3;
   workspaceUpdatedAtMs?: number;
 }) {
@@ -1338,7 +1341,7 @@ function ActivityLog({
         />;
       }
       if (sourceEventType === 'reasoning_summary') {
-        const summary = roomReasoningSummary(activity, workspaceTask);
+        const summary = roomReasoningSummary(activity, taskContext ?? workspaceTask);
         const updateCount = roomReasoningUpdateCount(activity);
         return <article
           className="room-reasoning-summary"

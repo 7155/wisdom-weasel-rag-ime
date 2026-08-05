@@ -174,8 +174,8 @@ describe('generated-contract Room Kernel projection', () => {
     expect(state.dispatchesById['dispatch-stale']).toBeUndefined();
     expect(state.sessionsById['session-a']).toBeUndefined();
     expect(state.postsById['post-stale']).toBeUndefined();
-    expect(state.diagnostics.filter((item) => item.kind === 'stale-generation')).toHaveLength(3);
-    expect(state.diagnostics.at(-1)?.kind).toBe('invalid-event');
+    expect(state.diagnostics.filter((item) => item.kind === 'stale-generation')).toHaveLength(4);
+    expect(state.diagnostics.at(-1)?.kind).toBe('stale-generation');
   });
 
   it('detects gap, ignores duplicate and freezes until snapshot', () => {
@@ -220,6 +220,31 @@ describe('generated-contract Room Kernel projection', () => {
     expect(state.snapshotHash).toBe(snapshot.snapshotHash);
     expect(state.taskUpdatedAtMsById).toEqual({ 'task-a': 12_345 });
     expect(state.postOrder).toEqual(['post-a']);
+  });
+
+  it('keeps a historical request post from breaking a newer Root snapshot', () => {
+    const snapshot: RoomKernelSnapshot = {
+      roomId: 'room-a',
+      lastSequence: 20,
+      snapshotHash: `sha256:${'a'.repeat(64)}`,
+      roots: [root({ generation: 4 })],
+      tasks: [task()],
+      dispatches: [],
+      posts: [post({ generation: 3, kind: 'request' })],
+      taskUpdatedAtMsById: {},
+      sessions: [],
+      receipts: [],
+      cancellationSurfaces: [],
+    };
+
+    const state = applyRoomKernelSnapshot(createRoomKernelProjection('room-a'), snapshot);
+
+    expect(state.postOrder).toEqual([]);
+    expect(state.diagnostics).toContainEqual(expect.objectContaining({
+      eventId: 'snapshot',
+      kind: 'stale-generation',
+      summary: 'RoomPost generation does not match Root',
+    }));
   });
 });
 
