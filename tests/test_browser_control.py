@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import os
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -136,6 +137,22 @@ class BrowserControlServiceTests(unittest.TestCase):
         self.assertNotIn("markdown", result["result"])
         self.assertTrue(result["result"]["snapshotId"].startswith("snap_"))
         self.assertIn("Next", self.service.latest_snapshot(tab_id=7)["markdown"])
+
+    def test_empty_long_poll_does_not_require_a_database_write_lock(self) -> None:
+        blocker = sqlite3.connect(str(self.service.db_path), timeout=0.1)
+        try:
+            blocker.execute("BEGIN IMMEDIATE")
+
+            result = self.service.next_command(
+                device_id="chrome-test",
+                client_id="chrome-test:worker",
+                timeout_seconds=0,
+            )
+
+            self.assertIsNone(result["command"])
+        finally:
+            blocker.rollback()
+            blocker.close()
 
     def test_screenshot_is_stored_behind_bounded_binary_route(self) -> None:
         png = base64.b64encode(b"\x89PNG\r\n\x1a\nfixture").decode("ascii")

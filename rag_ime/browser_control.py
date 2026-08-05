@@ -541,8 +541,9 @@ class BrowserControlService:
         normalized_client = self._identifier(client_id, field="clientId")
         deadline = time.monotonic() + min(max(float(timeout_seconds), 0.0), 25.0)
         while True:
+            # Extension long-polls are normally empty. Keep that common path
+            # read-only so it cannot starve Room/Agent writers sharing this DB.
             with self._connection() as connection:
-                connection.execute("BEGIN IMMEDIATE")
                 row = connection.execute(
                     """
                     SELECT * FROM browser_control_commands
@@ -552,36 +553,45 @@ class BrowserControlService:
                     """,
                     (normalized_device,),
                 ).fetchone()
-                if row is not None:
-                    claimed_at = self._now_ms()
-                    updated = connection.execute(
-                        """
-                        UPDATE browser_control_commands
-                        SET status='claimed', claimed_at_ms=?, claimed_by=?
-                        WHERE command_id=? AND status='queued'
-                        """,
-                        (claimed_at, normalized_client, row["command_id"]),
-                    ).rowcount
-                    if updated:
-                        self._touch_client(connection, normalized_device)
-                        self._event(
-                            connection,
-                            "command_claimed",
-                            normalized_device,
-                            {"action": row["action"], "clientId": normalized_client},
-                            command_id=str(row["command_id"]),
-                        )
-                        connection.commit()
-                        return {
-                            "schemaVersion": SCHEMA_VERSION,
-                            "ok": True,
-                            "command": {
-                                "commandId": str(row["command_id"]),
-                                "action": str(row["action"]),
-                                **self._json_object(row["payload_json"]),
-                            },
-                        }
-                connection.commit()
+
+            if row is not None:
+                try:
+                    with self._connection() as connection:
+                        connection.execute("BEGIN IMMEDIATE")
+                        # Another extension process may have claimed the row
+                        # after the read-only probe. The status predicate makes
+                        # this a compare-and-swap claim.
+                        claimed_at = self._now_ms()
+                        updated = connection.execute(
+                            """
+                            UPDATE browser_control_commands
+                            SET status='claimed', claimed_at_ms=?, claimed_by=?
+                            WHERE command_id=? AND status='queued'
+                            """,
+                            (claimed_at, normalized_client, row["command_id"]),
+                        ).rowcount
+                        if updated:
+                            self._touch_client(connection, normalized_device)
+                            self._event(
+                                connection,
+                                "command_claimed",
+                                normalized_device,
+                                {"action": row["action"], "clientId": normalized_client},
+                                command_id=str(row["command_id"]),
+                            )
+                            connection.commit()
+                            return {
+                                "schemaVersion": SCHEMA_VERSION,
+                                "ok": True,
+                                "command": {
+                                    "commandId": str(row["command_id"]),
+                                    "action": str(row["action"]),
+                                    **self._json_object(row["payload_json"]),
+                                },
+                            }
+                except sqlite3.OperationalError as exc:
+                    if "locked" not in str(exc).lower():
+                        raise
             if time.monotonic() >= deadline:
                 return {"schemaVersion": SCHEMA_VERSION, "ok": True, "command": None}
             time.sleep(0.2)
