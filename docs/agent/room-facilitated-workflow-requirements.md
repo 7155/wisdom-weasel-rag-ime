@@ -3,7 +3,7 @@
 - Document class: sole tracked authority for current Room product behavior and acceptance status
 - Approved vision window: user decisions made on or after 2026-08-02
 - Contract revision: 2026-08-05
-- Acceptance state: targeted current-source regressions pass; production/native Web and signed App builds passed only on the preceding dirty snapshot, and a clean committed build has not yet been installed; the 2026-08-05 foreground Room still failed before peer work, integration, review, and final delivery, so production acceptance remains open
+- Acceptance state: targeted current-source regressions and the clean committed production/native Web plus signed App build pass at `e72d0267`; installation is blocked by this Codex filesystem sandbox, and no current-build foreground Room has yet completed peer work, integration, review, and final delivery, so production acceptance remains open
 - Status rule: source, test, installed, and foreground evidence are reported separately
 
 Older handoffs, ignored local notes under `docs/`, screenshots, prototypes, tests,
@@ -755,10 +755,14 @@ Current verification of the combined working tree:
   sandbox (`sandbox-exec: sandbox_apply: Operation not permitted`) under this
   Codex sandbox, so no ready log could be emitted. This is recorded as an
   environment-blocked foreground check, not a product pass;
-- TypeScript, a production/native Web build, signed App build, static footprint
-  gate, route ownership, import boundaries, and `git diff --check` passed on the
-  preceding combined snapshot. They must be rerun after the final review fixes;
-  clean commit rebuild and install remain required;
+- On clean product commit `e72d02677bd62d9452620d1f9450726d40f9e602`,
+  TypeScript, 151 generated-contract reproduction, the complete Web suite
+  (104 files, 976 tests), production/native Web build, signed App build, static
+  transport footprint, route ownership, import boundaries, Python compilation,
+  and `git diff --check` passed. The App marker reports `gitDirty: false`, native
+  transport, production channel, and that exact commit. A fresh managed Pi v2
+  payload also passed its smoke contract and binds product commit `e72d0267` to
+  Pi source `98cfe6a3a0a420ac6de4f85153c55fbc8809b845`;
 - the expanded 422-test backend/runtime set produced 421 passes. Its one
   real-HTTP transport test reached the system proxy and received HTTP 403;
   rerunning only that case with all proxies removed was skipped because this
@@ -767,8 +771,15 @@ Current verification of the combined working tree:
   SQLite/file `ResourceWarning` instances; they did not fail the suite but
   remain cleanup debt rather than silently counted as resolved.
 
-These are source and local-build facts only. Port `8768` still serves the older
-installed build. Production acceptance requires rebuilding and installing the
+These are source and local-build facts only. The install command reached the
+new product generation but could not replace files under
+`~/Library/Application Support/RagIme/BrowserCopilot/extension` because this
+Codex filesystem sandbox returned `Operation not permitted`. A source-tree
+gateway also cannot bind a fresh loopback port in this sandbox. The signed App
+binary can be launched directly, but this task has not been granted desktop
+control permission, while Browser correctly refuses local `file://` navigation.
+Port `8768` therefore still serves the older installed build and may be used
+only as old-state evidence. Production acceptance still requires installing the
 coherent App/Python/Web/managed-Pi stack and completing the fresh foreground
 flow below.
 
