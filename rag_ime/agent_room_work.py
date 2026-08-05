@@ -1100,14 +1100,26 @@ class AgentRoomWorkStore:
                 current_blocker = dict(
                     json.loads(str(row["blocker_json"] or "{}"))
                 )
-                if target_state == "active":
+                row_target_state = target_state
+                if kernel_state == "waiting":
+                    open_children = conn.execute(
+                        """
+                        SELECT COUNT(*) FROM agent_room_work_items
+                        WHERE parent_work_id = ?
+                          AND state IN ('queued', 'active', 'review', 'blocked')
+                        """,
+                        (str(row["id"]),),
+                    ).fetchone()
+                    if int(open_children[0] if open_children else 0) > 0:
+                        row_target_state = "active"
+                if row_target_state == "active":
                     if (
                         current_state != "blocked"
                         or current_blocker.get("source")
                         != "room_kernel"
                     ):
                         continue
-                elif target_state == "blocked":
+                elif row_target_state == "blocked":
                     if current_state == "blocked":
                         if current_blocker.get("source") != "room_kernel":
                             continue
@@ -1116,7 +1128,7 @@ class AgentRoomWorkStore:
                             == kernel_state
                         ):
                             continue
-                elif target_state == "done":
+                elif row_target_state == "done":
                     open_children = conn.execute(
                         """
                         SELECT COUNT(*) FROM agent_room_work_items
@@ -1139,7 +1151,7 @@ class AgentRoomWorkStore:
                 ):
                     evidence_refs.append(terminal_receipt_id)
                 blocker: dict[str, object] = {}
-                if target_state == "blocked":
+                if row_target_state == "blocked":
                     blocker = {
                         "reason": {
                             "waiting": "Room 正在等待继续条件。",
@@ -1156,7 +1168,7 @@ class AgentRoomWorkStore:
                         "rootId": root_id,
                         "kernelRootState": kernel_state,
                     }
-                elif target_state in {"failed", "cancelled"}:
+                elif row_target_state in {"failed", "cancelled"}:
                     blocker = {
                         "reason": f"Room Kernel Root {kernel_state}",
                         "source": "room_kernel",
@@ -1176,7 +1188,7 @@ class AgentRoomWorkStore:
                     WHERE id = ? AND accepted_turn_id = ? AND state = ?
                     """,
                     (
-                        target_state,
+                        row_target_state,
                         json.dumps(
                             evidence_refs,
                             ensure_ascii=False,
@@ -1204,11 +1216,11 @@ class AgentRoomWorkStore:
                     updated,
                     event_type=(
                         "completed"
-                        if target_state == "done"
+                        if row_target_state == "done"
                         else (
                             "accepted"
-                            if target_state == "active"
-                            else target_state
+                            if row_target_state == "active"
+                            else row_target_state
                         )
                     ),
                     actor_participant_id=str(

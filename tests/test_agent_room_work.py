@@ -250,6 +250,70 @@ class AgentRoomWorkTests(unittest.TestCase):
             [],
         )
 
+    def test_kernel_waiting_keeps_parent_active_with_open_child(self) -> None:
+        assigned, _ = self.work.assign(
+            str(self.coordinator["id"]),
+            self._assignment(
+                "kernel-waiting-parent",
+                self.worker_participant["id"],
+            ),
+            created_at_ms=10,
+        )
+        active = self.work.accept_assignment(
+            str(assigned["id"]),
+            target_participant_id=str(self.worker_participant["id"]),
+            accepted_turn_id="turn:worker",
+            updated_at_ms=20,
+        )
+        root_id = "room-root:kernel-waiting"
+        claimed = self.work.claim_dispatch(
+            str(active["id"]),
+            room_id=str(self.room["id"]),
+            owner_participant_id=str(self.worker_participant["id"]),
+            assignment_key=str(active["assignmentKey"]),
+            previous_accepted_turn_id=str(active["acceptedTurnId"]),
+            room_turn_id=root_id,
+            claimed_at_ms=30,
+        )
+
+        blocked = self.work.project_kernel_root(
+            {
+                "rootId": root_id,
+                "roomId": self.room["id"],
+                "state": "waiting",
+                "terminalReceiptId": None,
+                "updatedAtMs": 35,
+            }
+        )
+        self.assertEqual(blocked[0]["state"], "blocked")
+
+        child, _ = self.work.assign(
+            str(self.worker["id"]),
+            {
+                **self._assignment(
+                    "kernel-waiting-child",
+                    self.researcher_participant["id"],
+                ),
+                "parentWorkId": claimed["id"],
+            },
+            created_at_ms=40,
+        )
+        self.assertEqual(child["state"], "queued")
+        self.assertEqual(child["parentWorkId"], claimed["id"])
+
+        resumed = self.work.project_kernel_root(
+            {
+                "rootId": root_id,
+                "roomId": self.room["id"],
+                "state": "waiting",
+                "terminalReceiptId": None,
+                "updatedAtMs": 45,
+            }
+        )
+        self.assertEqual(len(resumed), 1)
+        self.assertEqual(resumed[0]["state"], "active")
+        self.assertEqual(resumed[0]["blocker"], {})
+
     def test_assignment_is_idempotent_and_rejects_ancestor_bounce(self) -> None:
         payload = self._assignment("root-2", self.worker_participant["id"])
         first, created = self.work.assign(str(self.coordinator["id"]), payload)
