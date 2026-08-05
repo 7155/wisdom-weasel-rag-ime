@@ -286,8 +286,10 @@ describe('RoomTaskFlowGraph dependency proof', () => {
     const graph = screen.getByRole('region', { name: '任务依赖图' });
     const parentNode = within(graph).getByRole('article', { name: /实现命令入口/ });
     const childNode = within(graph).getByRole('article', { name: /调查现有链接规则/ });
+    const canvas = graph.querySelector<HTMLElement>('.room-task-flow__canvas')!;
     expect((parentNode as HTMLElement).style.gridColumn).toBe('2');
     expect((childNode as HTMLElement).style.gridColumn).toBe('2');
+    expect(canvas.style.getPropertyValue('--room-task-flow-height')).toBe('440px');
     expect(childNode).toHaveAttribute('data-task-stage', '任务目标');
     expect(childNode).toHaveAttribute('title', expect.stringContaining('无前置任务，可并行'));
     expect(graph).not.toHaveTextContent('接续 / 汇总');
@@ -653,6 +655,7 @@ describe('RoomTaskWorkList participant authority projection', () => {
     />);
 
     const card = document.querySelector<HTMLDetailsElement>('.room-task-work-card')!;
+    expect(card.querySelector('summary')).toHaveTextContent('Todo 1/2 · 当前：完成交付清单');
     fireEvent.click(card.querySelector('summary')!);
     const todoRegion = within(card).getByRole('region', { name: '澄·今 的 Todo' });
     expect(todoRegion).toHaveTextContent('实现权威 Todo 投影');

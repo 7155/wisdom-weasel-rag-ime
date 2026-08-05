@@ -71,7 +71,10 @@ import {
   RoomTaskSubagentRuns,
   type RoomTaskSubagentRun,
 } from '../kernel/RoomTaskFlowGraph';
-import { RoomTaskTodoDetails } from '../kernel/RoomTaskAuthorityDetails';
+import {
+  roomTaskTodoSummary,
+  RoomTaskTodoDetails,
+} from '../kernel/RoomTaskAuthorityDetails';
 import { RoomTaskUpdatedAt, useRoomTaskUpdateClock } from '../kernel/RoomTaskUpdatedAt';
 import type {
   PendingRoomQuestion,
@@ -677,7 +680,7 @@ export function RoomTurn({
         laneState,
         laneTask,
       );
-      const laneTodoSummary = roomLaneTodoSummary(laneTodo);
+      const laneTodoSummary = roomTaskTodoSummary(laneTodo);
       const laneSubagents = laneTaskId ? subagentsByTaskId[laneTaskId] ?? [] : [];
       const identityContinuation = identityContinuationByItemKey.get(streamItem.key) ?? false;
       return <RoomLaneDisclosure
@@ -1145,17 +1148,6 @@ function roomLaneAuthoritativeTodo(
     && lineage.workItemId !== session.workItemId
   ) return undefined;
   return todo;
-}
-
-function roomLaneTodoSummary(todo?: PrivateSessionProjection['todo']): string {
-  if (!todo) return '';
-  const settled = todo.counts.completed + todo.counts.abandoned;
-  const current = todo.phases
-    .flatMap((phase) => phase.tasks)
-    .find((task) => task.status === 'in_progress')
-    ?? todo.phases.flatMap((phase) => phase.tasks).find((task) => task.status === 'blocked')
-    ?? todo.phases.flatMap((phase) => phase.tasks).find((task) => task.status === 'pending');
-  return `Todo ${settled}/${todo.counts.total}${current ? ` · 当前：${current.content}` : ''}`;
 }
 
 interface RoomActivityFeedEntry {
@@ -1686,6 +1678,8 @@ function RoomLanePost({
   const [open, setOpen] = useState(false);
   const visibleBlocks = roomVisibleBlocks(message.message?.blocks ?? []);
   const reportLabel = roomPostReportLabel(message);
+  const meaningfulText = roomPostMeaningfulText(message.text);
+  if (!message.question && !visibleBlocks.length && !meaningfulText) return null;
   const collapsible = roomPostShouldCollapse(message, visibleBlocks);
   const questionIsAuthoritative = Boolean(
     message.question?.status === 'pending'
@@ -1712,8 +1706,8 @@ function RoomLanePost({
       </div>
     : visibleBlocks.length
       ? <AgentBlocks blocks={visibleBlocks} sessionId={message.message?.sessionId ?? message.sourceSessionId} />
-      : message.text
-        ? <MarkdownBody text={message.text} />
+      : meaningfulText
+        ? <MarkdownBody text={meaningfulText} />
         : null;
   return <div
     className="room-agent-lane__post"
@@ -2877,6 +2871,7 @@ function roomVisibleBlocks(
     && block.type !== 'tool_call'
     && block.type !== 'tool_result'
     && block.visibility !== 'private_session'
+    && roomBlockHasPublicContent(block)
   ));
   let retainedStatusIndex = -1;
   for (let index = visible.length - 1; index >= 0; index -= 1) {
@@ -2890,6 +2885,34 @@ function roomVisibleBlocks(
     (block.type !== 'progress' && block.type !== 'status')
     || index === retainedStatusIndex
   ));
+}
+
+function roomBlockHasPublicContent(
+  block: NonNullable<RoomMessageProjection['message']>['blocks'][number],
+): boolean {
+  if (block.type !== 'citation' && block.type !== 'reference') return true;
+  const data = block.data;
+  return [
+    data.title,
+    data.label,
+    data.name,
+    data.source,
+    data.domain,
+    data.publisher,
+    data.excerpt,
+    data.snippet,
+    data.description,
+    data.href,
+    data.url,
+    data.uri,
+  ].some((value) => typeof value === 'string' && value.trim().length > 0);
+}
+
+function roomPostMeaningfulText(value: string): string {
+  const text = value.trim();
+  if (!text) return '';
+  if (/^(?:进度更新|当前任务推进有新进展|当前工作有新进展)[。.!！]?$/u.test(text)) return '';
+  return text;
 }
 
 function publicActivitySummary(summary: string, kind: string): string {

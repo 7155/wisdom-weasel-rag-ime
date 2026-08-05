@@ -112,6 +112,49 @@ describe('RoomTurn public activity detail', () => {
     expect(view.container).not.toHaveTextContent('当前任务推进有新进展');
   });
 
+  it('does not render a generic progress post made only of empty citation placeholders', () => {
+    const projection = roomProjection();
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      messageIds: ['empty-progress'],
+    };
+    projection.messagesById['empty-progress'] = {
+      id: 'empty-progress',
+      roomId: 'room-a',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      role: 'assistant',
+      status: 'completed',
+      text: '进度更新',
+      projectionKind: 'post',
+      rootId: 'root-a',
+      dispatchId: 'dispatch-a',
+      createdAtMs: 3_200,
+      completedAtMs: 3_200,
+      message: {
+        schemaVersion: 'rag-ime.agent-message.v1',
+        id: 'empty-progress-message',
+        sessionId: 'session-a',
+        turnId: 'turn-a',
+        role: 'assistant',
+        status: 'completed',
+        blocks: [
+          { id: 'citation-a', type: 'citation', status: 'completed', presentationKind: 'citation', data: {} },
+          { id: 'citation-b', type: 'citation', status: 'completed', presentationKind: 'citation', data: { title: '  ' } },
+        ],
+        attachments: [],
+        citations: [],
+        createdAtMs: 3_200,
+      },
+    };
+
+    const view = render(roomTurn(projection));
+
+    expect(view.container).not.toHaveTextContent('引用来源');
+    expect(view.container.querySelector('.room-agent-lane__post')).not.toBeInTheDocument();
+  });
+
   it('keeps the authoritative Todo in the collapsed summary and at the bottom of the role card', () => {
     const projection = roomProjection();
     const todo: Todo = {

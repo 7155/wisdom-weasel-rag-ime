@@ -48,6 +48,16 @@ export type RoomTaskRoleResultProjection = {
 
 export type RoomWorkspaceDeliveryProjection = WorkspaceDelivery;
 
+export function roomTaskTodoSummary(todo?: Todo): string {
+  if (!todo) return '';
+  const settled = todo.counts.completed + todo.counts.abandoned;
+  const tasks = todo.phases.flatMap((phase) => phase.tasks);
+  const current = tasks.find((task) => task.status === 'in_progress')
+    ?? tasks.find((task) => task.status === 'blocked')
+    ?? tasks.find((task) => task.status === 'pending');
+  return `Todo ${settled}/${todo.counts.total}${current ? ` · 当前：${current.content}` : ''}`;
+}
+
 export function RoomTaskTodoDetails({
   live = false,
   owner,

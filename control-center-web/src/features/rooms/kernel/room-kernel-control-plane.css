@@ -188,7 +188,7 @@
     minmax(150px, 1.4fr)
     minmax(150px, 1.4fr)
     minmax(90px, .75fr);
-  grid-template-rows: repeat(var(--room-task-flow-row-count), minmax(118px, 1fr));
+  grid-template-rows: repeat(var(--room-task-flow-row-count), minmax(204px, 1fr));
   column-gap: 14px;
 }
 .room-task-flow__edges {
@@ -651,6 +651,13 @@
 .room-task-work-card__completion strong { overflow: hidden; font-size: var(--text-label); line-height: var(--text-label-lh); text-overflow: ellipsis; white-space: nowrap; }
 .room-task-work-card__summary small,
 .room-task-work-card__completion small { color: var(--color-text-tertiary); font-size: var(--text-label); line-height: var(--text-label-lh); }
+.room-task-work-card__summary .room-task-work-card__todo-summary {
+  overflow: hidden;
+  color: var(--color-accent);
+  font-weight: var(--font-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .room-task-work-card__completion { border-inline-start: 1px solid var(--color-border-soft); padding-inline-start: var(--space-3); }
 .room-task-work-card__completion[data-attention='true'] small,
 .room-task-work-card__completion[data-attention='true'] strong { color: var(--color-danger); }

@@ -49,6 +49,7 @@ import {
 } from '../timeline/room-tool-presentation';
 import { RoomTaskUpdatedAt } from './RoomTaskUpdatedAt';
 import {
+  roomTaskTodoSummary,
   RoomTaskDeliveryDetails,
   RoomTaskTodoDetails,
 } from './RoomTaskAuthorityDetails';
@@ -100,7 +101,7 @@ export type RoomTaskWorkspaceLifecycleView = {
   title: string;
 };
 
-const FLOW_ROW_HEIGHT = 132;
+const FLOW_ROW_HEIGHT = 220;
 const MAX_VISIBLE_SUBAGENT_RUNS = 4;
 const TASK_COLUMN_BOUNDS: Readonly<Record<TaskColumn, { left: number; right: number }>> = {
   2: { left: 150, right: 385 },
@@ -358,6 +359,7 @@ export function RoomTaskWorkList({
         task,
         workItems,
       });
+      const todoSummary = roomTaskTodoSummary(authority.todo);
       return <details
         aria-label={`${objective}，负责人 ${owner}，${taskNodeStateLabel(node)}`}
         className="room-task-work-card"
@@ -386,6 +388,7 @@ export function RoomTaskWorkList({
           <span className="room-task-work-card__summary">
             <strong>{summary}</strong>
             <small>{owner} · {taskNodeStateLabel(node)}{latestActivity ? <> · <TaskActivityTime activity={latestActivity} /></> : null}</small>
+            {todoSummary ? <small className="room-task-work-card__todo-summary">{todoSummary}</small> : null}
           </span>
           <span
             className="room-task-work-card__completion"
