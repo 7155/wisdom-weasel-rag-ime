@@ -39,14 +39,16 @@ export function ArtifactBlockRenderer({ block }: AgentBlockRenderProps) {
 
 export function CitationBlockRenderer({ block }: AgentBlockRenderProps) {
   const data = block.data;
-  const href = safeLink(text(data.href ?? data.url));
+  const href = safeLink(text(data.href ?? data.url ?? data.uri));
   const content = (
     <>
       <span className="agent-citation__index">{finiteNumber(data.index) || '•'}</span>
       <span>
-        <strong>{text(data.title ?? data.label) || '引用来源'}</strong>
-        <small>{text(data.source ?? data.domain)}</small>
-        {text(data.excerpt) ? <q>{text(data.excerpt)}</q> : null}
+        <strong>{text(data.title ?? data.label ?? data.name) || '引用来源'}</strong>
+        <small>{text(data.source ?? data.domain ?? data.publisher)}</small>
+        {text(data.excerpt ?? data.snippet ?? data.description)
+          ? <q>{text(data.excerpt ?? data.snippet ?? data.description)}</q>
+          : null}
       </span>
       {href ? <ExternalLink size={14} aria-hidden="true" /> : null}
     </>

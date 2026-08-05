@@ -109,7 +109,8 @@ export function ChecklistBlockRenderer({ block }: AgentBlockRenderProps) {
 
 export function TableBlockRenderer({ block }: AgentBlockRenderProps) {
   const data = block.data;
-  const columns = (Array.isArray(data.columns) ? data.columns : [])
+  const rows = (Array.isArray(data.rows) ? data.rows : []).slice(0, 100);
+  const declaredColumns = (Array.isArray(data.columns) ? data.columns : [])
     .map((column, index) => {
       const value = record(column);
       return {
@@ -118,7 +119,9 @@ export function TableBlockRenderer({ block }: AgentBlockRenderProps) {
       };
     })
     .slice(0, 12);
-  const rows = (Array.isArray(data.rows) ? data.rows : []).slice(0, 100);
+  const columns = declaredColumns.length
+    ? declaredColumns
+    : inferredTableColumns(rows);
   const title = text(data.title ?? data.caption) || '数据表';
   return (
     <details
@@ -157,6 +160,42 @@ export function TableBlockRenderer({ block }: AgentBlockRenderProps) {
       ) : <p>表格缺少可展示的列。</p>}
     </details>
   );
+}
+
+function inferredTableColumns(rows: unknown[]): Array<{ key: string; label: string }> {
+  const keys: string[] = [];
+  let widestArray = 0;
+  for (const row of rows) {
+    if (Array.isArray(row)) {
+      widestArray = Math.max(widestArray, row.length);
+      continue;
+    }
+    for (const key of Object.keys(record(row))) {
+      if (!keys.includes(key)) keys.push(key);
+      if (keys.length >= 12) break;
+    }
+    if (keys.length >= 12) break;
+  }
+  if (keys.length) {
+    return keys.map((key) => ({ key, label: tableColumnLabel(key) }));
+  }
+  return Array.from({ length: Math.min(12, widestArray) }, (_, index) => ({
+    key: String(index),
+    label: `列 ${index + 1}`,
+  }));
+}
+
+function tableColumnLabel(key: string): string {
+  const labels: Record<string, string> = {
+    partner: '伙伴',
+    owner: '负责人',
+    work: '任务',
+    task: '任务',
+    status: '状态',
+    result: '结果',
+    file: '文件',
+  };
+  return labels[key] ?? key;
 }
 
 export function StatusBlockRenderer({ block }: AgentBlockRenderProps) {

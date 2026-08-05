@@ -70,6 +70,7 @@ export interface RoomActivityProjection {
 export interface RoomActivityLaneIdentity {
   rootId: string;
   participantId: string;
+  taskId: string;
   dispatchId: string;
   key: string;
 }
@@ -439,11 +440,16 @@ export function roomActivityLaneIdentity(
     || activity.sourceSessionId
     || text(activity.payload.sourceEventId)
     || activity.id;
+  const taskId = text(activity.payload.taskId);
   return {
     rootId,
     participantId,
+    taskId,
     dispatchId,
-    key: `${rootId}\u001f${participantId}\u001f${dispatchId}`,
+    // A retry or runtime recovery creates a fresh Dispatch, but it is still
+    // the same piece of user-visible work. Keep the visual lane stable by
+    // Task whenever the authoritative runtime projection supplies one.
+    key: `${rootId}\u001f${participantId}\u001f${taskId || dispatchId}`,
   };
 }
 export function selectRoomParticipantPublicProgress(

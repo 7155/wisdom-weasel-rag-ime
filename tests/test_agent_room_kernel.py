@@ -6,13 +6,16 @@ import tempfile
 import unittest
 import sqlite3
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from rag_ime.agent_room_kernel import (
     RoomKernelFenceError,
     RoomKernelStore,
     kernel_owns_room_execution,
 )
+from rag_ime.agent_room_kernel_application import RoomKernelApplicationService
+from rag_ime.agent_room_kernel_worker import KernelCommandBus
 from rag_ime.agent_room_capabilities import (
     canonical_review_finding_fingerprint,
 )
@@ -1278,6 +1281,76 @@ class RoomKernelCoreTests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_application_recovers_runtime_host_exit_with_fresh_dispatch_after_tools(
+        self,
+    ) -> None:
+        """A host crash after writes resumes from state, never replays the turn."""
+
+        self.seed()
+        failed_dispatch_id = "dispatch:runtime-host-exit"
+        self.store.enqueue_dispatch(
+            dispatch(failed_dispatch_id, key="runtime-host-exit"),
+            now_ms=10,
+        )
+        self.accept_runtime_attempt(
+            failed_dispatch_id,
+            turn_id="turn:runtime-host-exit",
+            now_ms=11,
+        )
+
+        wake_worker = Mock()
+        revoke_session = Mock()
+        projection = SimpleNamespace(sync_room=Mock())
+        application = object.__new__(RoomKernelApplicationService)
+        application.rooms = SimpleNamespace(
+            get=lambda room_id: {"id": room_id}
+        )
+        application.kernel = self.store
+        application.commands = KernelCommandBus(
+            self.store,
+            object(),  # type: ignore[arg-type]
+            runtime_effects_enabled=False,
+        )
+        application.projection = projection
+        application.workspaces = None
+        application.wake_worker = wake_worker
+        application.revoke_session = revoke_session
+        application.root_state_observer = Mock()
+
+        receipt = application.record_runtime_failure(
+            room_id="room:1",
+            dispatch_id=failed_dispatch_id,
+            generation=0,
+            source_event_id="event:runtime-host-exit",
+            runtime_turn_id="turn:runtime-host-exit",
+            dispatch_attempt=0,
+            created_at_ms=12,
+            retryable=True,
+            had_tool_activity=True,
+            reason_code="runtime_host_exit",
+        )
+
+        failed = self.store.dispatch(failed_dispatch_id)
+        self.assertEqual(failed["state"], "failed")
+        self.assertEqual(
+            self.store.outbox(failed_dispatch_id)["state"],
+            "dead_letter",
+        )
+        recovery = receipt["recoveryReceipt"]
+        self.assertEqual(recovery["receiptKind"], "root_retried")
+        self.assertEqual(recovery["status"], "applied")
+        retried_dispatch_id = str(
+            recovery["details"]["retriedDispatchIds"][0]
+        )
+        self.assertNotEqual(retried_dispatch_id, failed_dispatch_id)
+        self.assertEqual(
+            self.store.dispatch(retried_dispatch_id)["state"],
+            "pending",
+        )
+        self.assertEqual(self.store.root("root:1")["state"], "running")
+        revoke_session.assert_called_once_with("session:participant:a", 12)
+        wake_worker.assert_called_once_with()
 
     def test_control_retry_tampered_root_ordinal_cannot_resolve_failure(
         self,

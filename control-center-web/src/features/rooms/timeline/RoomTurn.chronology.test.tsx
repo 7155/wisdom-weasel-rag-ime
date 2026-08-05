@@ -67,7 +67,7 @@ describe('RoomTurn canonical conversation chronology', () => {
     ).toHaveAttribute('data-continuation', 'true');
   });
 
-  it('interleaves a public handoff between earlier and later role activity', () => {
+  it('keeps one role task card while public replies remain in server order', () => {
     const projection = liveProjection([
       userEvent(1, 'opening', '请一起完成 TUI'),
       postEvent(2, 'accepted', 'progress', '我已经接手，先核对现有入口', 'participant-a', 'dispatch-a'),
@@ -77,19 +77,12 @@ describe('RoomTurn canonical conversation chronology', () => {
     ]);
 
     const view = render(roomTurn(projection));
-    const opening = textElement(view.container, '请一起完成 TUI');
-    const accepted = textElement(view.container, '我已经接手，先核对现有入口');
-    const activity = view.container.querySelector<HTMLElement>('.room-agent-activity--tool')!;
-    const handoff = textElement(view.container, '入口与验证已经完成');
-    const laterActivity = [...view.container.querySelectorAll<HTMLElement>('.room-agent-activity strong')]
-      .find((element) => element.textContent === '继续完成交接后的验证')!
-      .closest('.room-agent-activity')!;
-
-    expect(activity).toBeInTheDocument();
-    expect(opening.compareDocumentPosition(accepted) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(accepted.compareDocumentPosition(activity) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(activity.compareDocumentPosition(handoff) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(handoff.compareDocumentPosition(laterActivity) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(messageOrder(view.container)).toEqual(['opening', 'accepted', 'result']);
+    expect(view.container.querySelectorAll('.room-agent-lane')).toHaveLength(1);
+    const lane = view.container.querySelector<HTMLElement>('.room-agent-lane')!;
+    expect(lane).toHaveTextContent('读取并更新了 TUI 入口');
+    expect(lane).toHaveTextContent('继续完成交接后的验证');
+    expect(view.container.querySelectorAll('.agent-persona-avatar')).toHaveLength(1);
   });
 
   it('uses one role identity when activity is followed by the same role public reply', () => {
@@ -108,7 +101,7 @@ describe('RoomTurn canonical conversation chronology', () => {
     expect(view.container).toHaveTextContent('入口已经找到，我继续处理');
   });
 
-  it('keeps parallel lane segments and public messages in one server-ordered stream', () => {
+  it('keeps one card per parallel role task and public messages in server order', () => {
     const projection = liveProjection([
       userEvent(1, 'opening', '请并行完成两个部分'),
       activityEvent(2, '澄·今开始实现', 'participant-a', 'dispatch-a'),
@@ -120,17 +113,44 @@ describe('RoomTurn canonical conversation chronology', () => {
     ]);
     const view = render(roomTurn(projection));
 
-    expectTextOrder(view.container, [
-      '请并行完成两个部分',
-      '澄·今开始实现',
-      '澄·初开始复核',
-      '澄·初先交回复核线索',
-      '澄·今补充实现说明',
-      '澄·初继续验证',
-      '澄·今完成收尾',
-    ]);
-    expect(view.container.querySelectorAll('.room-agent-lane[data-continuation="true"]')).toHaveLength(2);
+    expect(messageOrder(view.container)).toEqual(['opening', 'b-handoff', 'a-update']);
+    expect(view.container.querySelectorAll('.room-agent-lane')).toHaveLength(2);
+    expect(view.container.querySelectorAll('.room-agent-lane[data-continuation="true"]')).toHaveLength(0);
     expect(view.container.querySelectorAll('.room-agent-lane .agent-persona-avatar')).toHaveLength(2);
+    expect(view.container).toHaveTextContent('澄·初继续验证');
+    expect(view.container).toHaveTextContent('澄·今完成收尾');
+  });
+
+  it('merges a fresh recovery dispatch into the original role task card', () => {
+    const sourceEvents = [
+      userEvent(1, 'opening', '请完成并验证这个功能'),
+      activityEvent(2, '开始读取现有实现', 'participant-a', 'dispatch-a', 'task-shared'),
+      activityEvent(3, '运行中断，正在从现有进度恢复', 'participant-a', 'dispatch-a', 'task-shared'),
+      toolActivityEvent(4, '恢复后继续编辑文件', 'participant-a', 'dispatch-recovery', 'task-shared'),
+      postEvent(5, 'recovered', 'progress', '我已经恢复，继续完成验证', 'participant-a', 'dispatch-recovery'),
+    ];
+    // Historical activity did not carry taskId. The current Kernel snapshot
+    // still lets the UI upcast both Dispatch attempts into one Task lane.
+    for (const sourceEvent of sourceEvents.slice(1, 4)) {
+      delete (sourceEvent.payload as Record<string, unknown>).taskId;
+    }
+    const projection = liveProjection(sourceEvents);
+
+    const view = render(roomTurn(projection, {
+      kernelDispatchesById: {
+        'dispatch-a': { dispatchId: 'dispatch-a', taskId: 'task-shared' } as never,
+        'dispatch-recovery': {
+          dispatchId: 'dispatch-recovery',
+          taskId: 'task-shared',
+        } as never,
+      },
+    }));
+    const lanes = view.container.querySelectorAll<HTMLElement>('.room-agent-lane');
+    expect(lanes).toHaveLength(1);
+    expect(lanes[0]).toHaveTextContent('开始读取现有实现');
+    expect(lanes[0]).toHaveTextContent('恢复后继续编辑文件');
+    expect(lanes[0]!.querySelectorAll('.agent-persona-avatar')).toHaveLength(1);
+    expect(messageOrder(view.container)).toEqual(['opening', 'recovered']);
   });
 
   it('stops live motion when a companion is waiting for the user', () => {
@@ -539,10 +559,12 @@ function activityEvent(
   summary: string,
   participantId: string,
   dispatchId: string,
+  taskId = `task-${participantId}`,
 ) {
   return event(sequence, 'participant_activity', {
     rootId: 'root-a',
     dispatchId,
+    taskId,
     sourceEventType: 'current_progress',
     requestId: `progress-${sequence}`,
     summary,
@@ -555,10 +577,12 @@ function toolActivityEvent(
   summary: string,
   participantId: string,
   dispatchId: string,
+  taskId = `task-${participantId}`,
 ) {
   return event(sequence, 'participant_activity', {
     rootId: 'root-a',
     dispatchId,
+    taskId,
     sourceEventType: 'tool_finished',
     toolName: 'edit',
     toolCallId: `tool-${sequence}`,

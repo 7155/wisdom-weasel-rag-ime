@@ -3265,7 +3265,7 @@ describe('Rooms experience', () => {
     expect(cards[1]).toHaveTextContent('file-2.ts');
     expect(container.querySelector('.room-agent-activity--tool-group')).not.toBeInTheDocument();
     expect(container.querySelector('.room-agent-lane__activity-heading')).toHaveTextContent('读取文件');
-    expect(container.querySelector('.room-agent-lane__activity-heading')).toHaveTextContent('2 个步骤 · 所有步骤已返回');
+    expect(container.querySelector('.room-agent-lane__activity-heading')).toHaveTextContent('2 个步骤 · 2 个步骤已返回 · 正在继续');
   });
 
   it('separates returned steps from a stopped Root and exposes the concrete step list', () => {

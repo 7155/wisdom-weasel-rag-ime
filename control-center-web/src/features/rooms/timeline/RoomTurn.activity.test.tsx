@@ -159,7 +159,7 @@ describe('RoomTurn public activity detail', () => {
       rootId: 'root-a',
       taskId: 'task-a',
       taskKind: 'work',
-      workItemId: null,
+      workItemId: 'work-item-a',
       dispatchId: 'dispatch-a',
       generation: 1,
       state: 'running',
@@ -222,6 +222,24 @@ describe('RoomTurn public activity detail', () => {
     expect(lane.querySelector('summary')).toHaveTextContent('Todo 3/4 · 当前：整理交付结果');
     expect(refreshedTodo).toHaveTextContent('3 / 4 已收束');
     expect(lane.querySelector('.room-agent-lane__body')?.lastElementChild).toBe(refreshedTodo);
+
+    session.todo = {
+      ...session.todo!,
+      roomLineage: {
+        ...session.todo!.roomLineage!,
+        dispatchId: 'dispatch-from-an-older-run',
+      },
+    };
+    view.rerender(roomTurn(
+      projection,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      sessionsById,
+    ));
+    expect(within(lane).queryByRole('region', { name: '澄·今 的 Todo' })).not.toBeInTheDocument();
+    expect(lane.querySelector('summary')).not.toHaveTextContent('Todo');
   });
 
   it('groups automatic retries into one clickable tool result without losing attempt details', () => {
@@ -1028,7 +1046,7 @@ describe('RoomTurn public activity detail', () => {
 
     act(() => vi.advanceTimersByTime(58_000));
     expect(lane).toHaveAttribute('data-motion', 'stale');
-    expect(lane).toHaveTextContent('最近一分钟没有新的公开进展，实时连接仍正常');
+    expect(lane).toHaveTextContent('正在等待下一条进展；如有短暂中断，伙伴会自动恢复并继续');
     expect(lane.querySelector('.agent-persona-avatar')).not.toHaveAttribute('data-presence', 'thinking');
     expect(lane.querySelector('.room-agent-lane__activity')).toHaveAttribute('data-state', 'running');
     expect(lane.querySelector('.room-agent-lane__activity')).toHaveAttribute('data-motion', 'paused');

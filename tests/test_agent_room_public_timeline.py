@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
+from rag_ime.agent_protocol import AgentEventEnvelope
 from rag_ime.agent_room_public_timeline import (
     assert_public_room_report_claims,
     canonical_room_alignment_content,
@@ -162,6 +163,44 @@ class RoomPublicTimelineProjectorTests(unittest.TestCase):
 
         self.assertIsNone(event)
         self.assertEqual(self.events.calls, [])
+
+    def test_runtime_projection_keeps_authoritative_task_identity(self) -> None:
+        event = AgentEventEnvelope(
+            event_id="event:progress",
+            session_id="session:1",
+            turn_id="runtime-turn:1",
+            sequence=1,
+            created_at_ms=10,
+            event_type="current_progress",
+            payload={},
+            resume_token="event:progress",
+        )
+
+        projected = self.projector.publish_runtime(
+            event=event,
+            binding={
+                "roomId": self.room_id,
+                "rootId": "root:1",
+                "taskId": "task:shared",
+                "dispatchId": "dispatch:retry-2",
+            },
+            participant={"id": "participant:1"},
+            event_type="participant_activity",
+            public_data={"status": "running", "summary": "继续验证"},
+        )
+
+        self.assertIsNotNone(projected)
+        assert projected is not None
+        self.assertEqual(
+            projected["payload"]["data"],
+            {
+                "status": "running",
+                "summary": "继续验证",
+                "rootId": "root:1",
+                "taskId": "task:shared",
+                "dispatchId": "dispatch:retry-2",
+            },
+        )
 
     def test_public_report_rejects_internal_protocol_artifacts(self) -> None:
         self.assertEqual(

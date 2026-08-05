@@ -29,6 +29,7 @@ from .agent_room_kernel import kernel_owns_room_execution
 from .agent_room_kernel_contracts import (
     DEFAULT_RUNTIME_PROFILE_REVISION,
     DISPATCH_ENVELOPE_SCHEMA_VERSION,
+    KERNEL_COMMAND_SCHEMA_VERSION,
     validate_kernel_contract,
 )
 from .agent_room_kernel_projection import RoomKernelProjection
@@ -222,6 +223,7 @@ class RoomKernelApplicationService:
             == "runtime_retry_scheduled"
             and receipt.get("status") == "applied"
         )
+        fresh_recovery: dict[str, object] | None = None
         if receipt.get("status") == "applied" and not retry_scheduled:
             self.revoke_session(
                 str(dispatch["targetSessionId"]),
@@ -237,11 +239,41 @@ class RoomKernelApplicationService:
                 actor_ref="system:room-runtime",
                 now_ms=created_at_ms,
             )
+            if _allows_fresh_runtime_recovery(
+                retryable=retryable,
+                reason_code=reason_code,
+            ):
+                command = _fresh_runtime_recovery_command(
+                    room_id=room_id,
+                    root_id=str(root["rootId"]),
+                    generation=int(root["generation"]),
+                    dispatch_id=dispatch_id,
+                    source_event_id=source_event_id,
+                    created_at_ms=created_at_ms,
+                )
+                try:
+                    control_result = self.commands.control(command)
+                except RoomKernelFenceError as exc:
+                    receipt = {
+                        **receipt,
+                        "recoveryBlockedReason": str(exc)[:240],
+                    }
+                else:
+                    kernel_receipt = control_result.get("kernelReceipt")
+                    if isinstance(kernel_receipt, Mapping):
+                        fresh_recovery = dict(kernel_receipt)
+                        receipt = {
+                            **receipt,
+                            "recoveryReceipt": fresh_recovery,
+                        }
         self.projection.sync_room(room_id)
         self.root_state_observer(
             self.kernel.root(str(dispatch["rootId"]))
         )
-        if retry_scheduled:
+        if retry_scheduled or (
+            fresh_recovery is not None
+            and fresh_recovery.get("status") == "applied"
+        ):
             self.wake_worker()
         return receipt
 
@@ -2999,6 +3031,66 @@ def _collaboration_tool_result(
 def _stable_id(prefix: str, *parts: str) -> str:
     digest = hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
     return f"{prefix}:{digest[:40]}"
+
+
+def _allows_fresh_runtime_recovery(
+    *,
+    retryable: bool,
+    reason_code: str,
+) -> bool:
+    """Allow a bounded continuation without replaying a side-effectful turn."""
+
+    normalized = str(reason_code or "").strip().lower()
+    if normalized in {
+        "provider_auth_failure",
+        "provider_cancelled",
+        "user_cancelled",
+        "permission_required",
+        "credentials_required",
+    }:
+        return False
+    return bool(retryable) or normalized in {
+        "runtime_host_exit",
+        "room_commit_missing",
+        "tool_activity_observed",
+        "provider_contract_failure",
+        "provider_failure_unclassified",
+    }
+
+
+def _fresh_runtime_recovery_command(
+    *,
+    room_id: str,
+    root_id: str,
+    generation: int,
+    dispatch_id: str,
+    source_event_id: str,
+    created_at_ms: int,
+) -> dict[str, object]:
+    command_id = _stable_id(
+        "room-command-runtime-recovery",
+        root_id,
+        dispatch_id,
+        source_event_id,
+    )
+    return {
+        "schemaVersion": KERNEL_COMMAND_SCHEMA_VERSION,
+        "commandId": command_id,
+        "rootId": root_id,
+        "roomId": room_id,
+        "commandKind": "retry_root",
+        "targetKind": "root",
+        "targetId": root_id,
+        "sourceKind": "system_runtime_recovery",
+        "sourceId": source_event_id,
+        "idempotencyKey": command_id,
+        "generation": int(generation),
+        "payload": {
+            "failedDispatchId": dispatch_id,
+            "recoveryMode": "fresh_dispatch",
+        },
+        "createdAtMs": int(created_at_ms),
+    }
 
 
 def _validated_post_proposal(

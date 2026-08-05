@@ -352,6 +352,53 @@ class AgentEventProjectionService:
                             else {}
                         ),
                     }
+                elif _fresh_runtime_recovery_applied(
+                    runtime_failure_receipt
+                ):
+                    mapped_type = "participant_activity"
+                    recovery = runtime_failure_receipt.get(
+                        "recoveryReceipt"
+                    )
+                    recovery_details = (
+                        recovery.get("details")
+                        if isinstance(recovery, Mapping)
+                        else None
+                    )
+                    retry_lineage = (
+                        recovery_details.get("retryLineage")
+                        if isinstance(recovery_details, Mapping)
+                        else None
+                    )
+                    first_retry = (
+                        retry_lineage[0]
+                        if isinstance(retry_lineage, list)
+                        and retry_lineage
+                        and isinstance(retry_lineage[0], Mapping)
+                        else {}
+                    )
+                    failure_kind = str(
+                        event.payload.get("failureKind") or ""
+                    )
+                    public_data = {
+                        "status": "recovering",
+                        "summary": (
+                            "当前回合没有完整交回，已接着现有进度继续"
+                            if missing_commit
+                            else "运行中断，已从现有进度恢复，正在继续"
+                        ),
+                        "requestId": (
+                            f"{str(binding['dispatchId'])}:"
+                            + (
+                                "runtime"
+                                if failure_kind == "runtime_host_exit"
+                                else "provider"
+                            )
+                        ),
+                        "retryAttempt": int(
+                            first_retry.get("retriedDispatchAttempt") or 0
+                        ),
+                        "recoveryMode": "fresh_dispatch",
+                    }
                 elif missing_commit:
                     mapped_type = "participant_activity"
                     public_data = {
@@ -705,6 +752,17 @@ def _public_turn_failure(
         ),
         "isError": True,
     }
+
+
+def _fresh_runtime_recovery_applied(
+    receipt: Mapping[str, object],
+) -> bool:
+    recovery = receipt.get("recoveryReceipt")
+    return (
+        isinstance(recovery, Mapping)
+        and recovery.get("receiptKind") == "root_retried"
+        and recovery.get("status") == "applied"
+    )
 
 
 def _completed_message_failed(

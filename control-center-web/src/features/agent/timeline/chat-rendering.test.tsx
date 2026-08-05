@@ -410,8 +410,10 @@ describe('Agent chat rendering', () => {
       { id: 'card', type: 'card', status: 'completed', presentationKind: 'card.v1', data: { title: '发布检查', tone: 'success', bodyMarkdown: '[安全链接](https://example.com) <img src=x onerror=alert(1)> [危险](javascript:alert(1))', fields: [{ label: '测试', value: '通过' }] } },
       { id: 'checklist', type: 'checklist', status: 'completed', presentationKind: 'checklist.v1', data: { title: '验收项', items: [{ id: 'one', text: '类型检查', checked: true }, { id: 'two', text: '移动端检查' }] } },
       { id: 'table', type: 'table', status: 'completed', presentationKind: 'table.v1', data: { title: '结果表', columns: ['项目', '状态'], rows: [['Room Post', '通过']] } },
+      { id: 'table-inferred', type: 'table', status: 'completed', presentationKind: 'table.v1', data: { title: '协作分工', rows: [{ partner: '澄·远', work: '实现命令入口' }, { partner: '澄·初', work: '独立复核' }] } },
       { id: 'artifact', type: 'artifact', status: 'completed', presentationKind: 'artifact.v1', data: { title: '审计报告', summary: '已持久化', url: 'javascript:alert(1)' } },
       { id: 'reference', type: 'reference', status: 'completed', presentationKind: 'reference.v1', data: { title: '需求原文', url: 'javascript:alert(1)', excerpt: '原始需求保持不变' } },
+      { id: 'reference-aliases', type: 'reference', status: 'completed', presentationKind: 'reference.v1', data: { name: '项目说明', uri: 'https://example.com/docs', snippet: '包含命令使用方式' } },
       { id: 'artifact-protocol-relative', type: 'artifact', status: 'completed', presentationKind: 'artifact.v1', data: { title: '协议相对地址', url: '//evil.example/file' } },
       { id: 'reference-backslash', type: 'reference', status: 'completed', presentationKind: 'reference.v1', data: { title: '反斜杠地址', url: '/\\evil.example', excerpt: '不可点击' } },
       { id: 'status', type: 'status', status: 'completed', presentationKind: 'status.v1', data: { title: 'Runtime', state: 'completed', summary: '全部收束' } },
@@ -425,7 +427,10 @@ describe('Agent chat rendering', () => {
     expect(container.querySelector('img[src="x"]')).toBeNull();
     expect(container.querySelector('script')).toBeNull();
     expect(screen.getByText('类型检查')).toBeInTheDocument();
-    expect(screen.getByRole('table')).toHaveTextContent('Room Post通过');
+    expect(screen.getAllByRole('table')[0]).toHaveTextContent('Room Post通过');
+    expect(screen.getByText('协作分工').closest('details')).toHaveTextContent('澄·远实现命令入口');
+    expect(screen.getByText('项目说明').closest('a')).toHaveAttribute('href', 'https://example.com/docs');
+    expect(screen.getByText('包含命令使用方式')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '打开产物回执' })).not.toBeInTheDocument();
     expect(screen.getByText('原始需求保持不变').closest('a')).toBeNull();
     expect(screen.getByText('协议相对地址').closest('a')).toBeNull();

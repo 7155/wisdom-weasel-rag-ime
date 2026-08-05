@@ -254,6 +254,61 @@ describe('RoomTaskFlowGraph dependency proof', () => {
     expect(graph.querySelector('.room-task-flow__dispatch-node')).not.toBeInTheDocument();
   });
 
+  it('keeps a responsibility child parallel until a real dependency is declared', () => {
+    const parent = workspaceTask({
+      taskId: 'task-parent',
+      objective: '实现命令入口',
+      currentOwnerParticipantId: 'participant-owner',
+      state: 'active',
+    });
+    const child = workspaceTask({
+      taskId: 'task-child',
+      parentTaskId: parent.taskId,
+      objective: '调查现有链接规则',
+      currentOwnerParticipantId: 'participant-researcher',
+      state: 'active',
+    });
+
+    render(<RoomTaskFlowGraph
+      dispatches={[]}
+      finalPostCount={0}
+      goal="完成链接检查能力"
+      participantLabels={{
+        'participant-owner': '澄·远',
+        'participant-researcher': '澄·瞬',
+      }}
+      participantProgress={[]}
+      posts={[]}
+      root={workspaceRoot()}
+      tasks={[parent, child]}
+    />);
+
+    const graph = screen.getByRole('region', { name: '任务依赖图' });
+    const parentNode = within(graph).getByRole('article', { name: /实现命令入口/ });
+    const childNode = within(graph).getByRole('article', { name: /调查现有链接规则/ });
+    expect((parentNode as HTMLElement).style.gridColumn).toBe('2');
+    expect((childNode as HTMLElement).style.gridColumn).toBe('2');
+    expect(childNode).toHaveAttribute('data-task-stage', '任务目标');
+    expect(childNode).toHaveAttribute('title', expect.stringContaining('无前置任务，可并行'));
+    expect(graph).not.toHaveTextContent('接续 / 汇总');
+  });
+
+  it('does not describe a blocked committed task as waiting for acceptance', () => {
+    const view = render(<RoomTaskWorkList
+      activities={[]}
+      dispatches={[authorityDispatch()]}
+      participantLabels={{ 'participant-owner': '澄·今' }}
+      participantProgress={[]}
+      posts={[]}
+      root={workspaceRoot()}
+      tasks={[workspaceTask({ state: 'blocked' })]}
+    />);
+
+    const card = view.container.querySelector<HTMLElement>('.room-task-work-card')!;
+    expect(card).toHaveTextContent('未通过验收');
+    expect(card).not.toHaveTextContent('结果已回传，等待验收');
+  });
+
   it('projects the internal report task only through the single result stage', () => {
     const workTask = workspaceTask({
       taskId: 'task-implementation',

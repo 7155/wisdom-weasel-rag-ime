@@ -659,6 +659,22 @@ class AgentEventProjectionTests(unittest.TestCase):
 
         def record_runtime_failure(**values: object) -> dict[str, object]:
             failure_events.append(dict(values))
+            if values.get("reason_code") == "runtime_host_exit":
+                Kernel.binding["state"] = "running"
+                return {
+                    "receiptKind": "runtime_failed",
+                    "status": "applied",
+                    "recoveryReceipt": {
+                        "receiptKind": "root_retried",
+                        "status": "applied",
+                        "details": {
+                            "retriedDispatchIds": ["dispatch:recovery"],
+                            "retryLineage": [
+                                {"retriedDispatchAttempt": 2}
+                            ],
+                        },
+                    },
+                }
             Kernel.binding["state"] = "retry_wait"
             return {
                 "receiptKind": "runtime_retry_scheduled",
@@ -724,10 +740,28 @@ class AgentEventProjectionTests(unittest.TestCase):
                 resume_token="event:uncommitted",
             )
         )
+        Kernel.binding["state"] = "running"
+        service.mirror_to_room(
+            AgentEventEnvelope(
+                event_id="event:host-exit",
+                session_id="session:1",
+                turn_id="turn:1",
+                sequence=4,
+                created_at_ms=4,
+                event_type="turn_failed",
+                payload={
+                    "failureKind": "runtime_host_exit",
+                    "retryable": True,
+                    "hadToolActivity": True,
+                    "reasonCode": "runtime_host_exit",
+                },
+                resume_token="event:host-exit",
+            )
+        )
 
         self.assertEqual(
             [str(item["source_event_id"]) for item in failure_events],
-            ["event:retry", "event:uncommitted"],
+            ["event:retry", "event:uncommitted", "event:host-exit"],
         )
         self.assertEqual(
             failure_events[1]["reason_code"],
@@ -754,6 +788,16 @@ class AgentEventProjectionTests(unittest.TestCase):
                 "retryAttempt": 2,
                 "retryAtMs": 1_003,
                 "retryDelayMs": 1_000,
+            },
+        ))
+        self.assertEqual(timeline.events[3], (
+            "participant_activity",
+            {
+                "status": "recovering",
+                "summary": "运行中断，已从现有进度恢复，正在继续",
+                "requestId": "dispatch:1:runtime",
+                "retryAttempt": 2,
+                "recoveryMode": "fresh_dispatch",
             },
         ))
 

@@ -359,6 +359,7 @@ export function RoomTaskWorkList({
         workItems,
       });
       return <details
+        aria-label={`${objective}，负责人 ${owner}，${taskNodeStateLabel(node)}`}
         className="room-task-work-card"
         data-has-persona={ownerPersona ? 'true' : undefined}
         data-state={summaryState}
@@ -1235,9 +1236,11 @@ function taskGraphNodes(
   const sortedTasks = [...tasks].sort((left, right) => left.taskId.localeCompare(right.taskId));
   const columnTasks: Record<TaskColumn, RoomTaskV3[]> = { 2: [], 3: [], 4: [] };
   for (const task of sortedTasks) {
+    // parentTaskId describes responsibility hierarchy, not execution order.
+    // Only an explicit review/dependency contract moves work into a later
+    // stage; otherwise a child task is allowed to run beside its parent.
     const hasPredecessor = Boolean(
-      dependenciesByTaskId.get(task.taskId)?.length
-      || (task.parentTaskId && taskById.has(task.parentTaskId)),
+      dependenciesByTaskId.get(task.taskId)?.length,
     );
     const column: TaskColumn = task.taskKind === 'review' ? 4 : hasPredecessor ? 3 : 2;
     columnTasks[column].push(task);
@@ -1260,10 +1263,7 @@ function taskGraphNodes(
         downstreamIds: downstreamByTaskId.get(task.taskId) ?? [],
         childIds: childIdsByTaskId.get(task.taskId) ?? [],
         downstreamOwnerParticipantIds: [
-          ...new Set([
-            ...(downstreamByTaskId.get(task.taskId) ?? []),
-            ...(childIdsByTaskId.get(task.taskId) ?? []),
-          ]
+          ...new Set((downstreamByTaskId.get(task.taskId) ?? [])
             .map((taskId) => taskById.get(taskId)?.currentOwnerParticipantId ?? '')
             .filter(Boolean)),
         ],
@@ -1301,10 +1301,7 @@ function taskGraphEdges(
   const edges: GraphEdge[] = [];
   for (const node of nodes) {
     const target = points.get(node.task.taskId)!;
-    const predecessorIds = [...new Set([
-      ...node.dependencyIds,
-      ...(node.parentId ? [node.parentId] : []),
-    ])];
+    const predecessorIds = node.dependencyIds;
     if (!predecessorIds.length) {
       edges.push({
         id: `goal:${node.task.taskId}`,
@@ -1326,7 +1323,7 @@ function taskGraphEdges(
         state: taskFlowState(nodes.find((candidate) => candidate.task.taskId === dependencyId)?.task.state ?? 'pending'),
       });
     }
-    if (!node.downstreamIds.length && !node.childIds.length) {
+    if (!node.downstreamIds.length) {
       edges.push({
         id: `${node.task.taskId}:result`,
         from: { x: target.right, y: target.y },
@@ -1435,7 +1432,7 @@ function taskHoldReason(
 }
 
 function taskVerification(task: RoomTaskV3, dispatches: RoomDispatchEnvelopeV2[]): TaskVerification {
-  if (task.state === 'failed' || task.state === 'cancelled') {
+  if (task.state === 'blocked' || task.state === 'failed' || task.state === 'cancelled') {
     return { state: 'attention', label: '未通过验收' };
   }
   if (task.reviewState === 'changes_requested') return { state: 'attention', label: '复核未通过，等待修改' };

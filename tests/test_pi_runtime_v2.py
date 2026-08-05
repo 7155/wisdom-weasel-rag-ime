@@ -35,6 +35,7 @@ FAKE_HOST = r'''#!/usr/bin/env python3
 import json
 import os
 import pathlib
+import signal
 import sys
 import time
 
@@ -152,6 +153,10 @@ for line in sys.stdin:
         result(request, {"commands": [{"name": "skill:plugin-creator",
                                         "description": "Create and propose a managed plugin", "source": "skill"}]})
     elif method == "models.list":
+        if os.environ.get("TEST_PARTIAL_STDOUT_EXIT") == "1":
+            sys.stdout.write('{"protocolVersion":"2","event":"runtime.notice"')
+            sys.stdout.flush()
+            os.kill(os.getpid(), signal.SIGKILL)
         result(request, {"models": [model]})
     elif method == "session.thinking.set":
         sessions[session_id]["thinkingLevel"] = params["level"]
@@ -4932,6 +4937,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
             self.runtime._states[session_id].turn_id = (
                 "turn-runtime-host-exit"
             )
+            self.runtime._states[session_id].had_tool_activity = True
 
         try:
             self.runtime._handle_host_exit(-9, "")
@@ -4947,12 +4953,40 @@ class PiRuntimeV2Tests(unittest.TestCase):
             )
             self.assertEqual(failed[-1].payload["exitCode"], -9)
             self.assertEqual(
+                failed[-1].payload["reasonCode"],
+                "runtime_host_exit",
+            )
+            self.assertTrue(failed[-1].payload["retryable"])
+            self.assertTrue(failed[-1].payload["hadToolActivity"])
+            self.assertEqual(
                 failed[-1].payload["error"],
                 "Pi Runtime Host exited with code -9",
             )
         finally:
             assert client is not None
             client.stop()
+
+    def test_truncated_final_stdout_frame_keeps_host_exit_as_diagnostic(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.config = replace(
+            self.runtime.config,
+            provider_environment={"TEST_PARTIAL_STDOUT_EXIT": "1"},
+        )
+        self.runtime.ensure(session_id)
+        client = self.runtime._client
+        self.assertIsNotNone(client)
+        assert client is not None
+
+        with self.assertRaises(PiRuntimeError) as caught:
+            client.send("models.list")
+
+        _wait_until(lambda: self.runtime._status == "faulted")
+        self.assertNotIn("invalid Pi Runtime Host JSONL", str(caught.exception))
+        self.assertNotIn("Unterminated string", self.runtime._last_error)
+        self.assertEqual(
+            self.runtime._last_error,
+            "Pi Runtime Host exited with code -9",
+        )
 
     def _record_event(self, event) -> None:
         self.store.record_runtime_event(

@@ -409,6 +409,13 @@ class PiRuntimeHostClient:
             raw = process.stdout.readline()
             if not raw:
                 break
+            if not raw.endswith((b"\n", b"\r")):
+                # A pipe returns an unterminated final fragment only at EOF.
+                # That fragment is evidence that the Host died mid-frame, not
+                # a standalone protocol record.  Let the exit code and stderr
+                # remain the authoritative diagnostic instead of replacing a
+                # recoverable runtime_host_exit with a JSON parser message.
+                continue
             try:
                 value = json.loads(raw.rstrip(b"\r\n").decode("utf-8"))
                 if not isinstance(value, dict):
@@ -3575,7 +3582,11 @@ class PiRuntimeHostManager:
             if self._intentional_stop:
                 return
             message = redact_runtime_text(error or f"Pi Runtime Host exited with code {exit_code}")
-            active = [(session_id, state.turn_id) for session_id, state in self._states.items() if state.turn_id]
+            active = [
+                (session_id, state.turn_id, state.had_tool_activity)
+                for session_id, state in self._states.items()
+                if state.turn_id
+            ]
             for state in self._states.values():
                 if state.abort_timer is not None:
                     state.abort_timer.cancel()
@@ -3586,7 +3597,7 @@ class PiRuntimeHostManager:
             self._states.clear()
             self._status = "faulted"
             self._last_error = message
-        for session_id, turn_id in active:
+        for session_id, turn_id, had_tool_activity in active:
             self.sessions.set_status(session_id, "faulted", last_message_preview=message)
             self.events.publish(
                 session_id,
@@ -3594,6 +3605,11 @@ class PiRuntimeHostManager:
                 {
                     "error": message,
                     "failureKind": "runtime_host_exit",
+                    "reasonCode": "runtime_host_exit",
+                    # A fresh recovery Dispatch can inspect the retained
+                    # workspace even when this exact turn is unsafe to replay.
+                    "retryable": True,
+                    "hadToolActivity": bool(had_tool_activity),
                     "exitCode": exit_code,
                 },
                 turn_id=turn_id,

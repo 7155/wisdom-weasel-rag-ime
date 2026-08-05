@@ -366,6 +366,11 @@ class RoomPublicTimelineProjector:
         data = {
             **dict(public_data),
             "rootId": root_id,
+            **(
+                {"taskId": str(binding["taskId"])}
+                if str(binding.get("taskId") or "")
+                else {}
+            ),
             "dispatchId": dispatch_id,
         }
         projection_namespace = (

@@ -323,10 +323,15 @@
   padding: var(--space-2);
   background: var(--color-surface);
   box-shadow: var(--shadow-1);
+  transition:
+    border-color var(--motion-exit) var(--ease-standard),
+    box-shadow var(--motion-exit) var(--ease-standard),
+    transform var(--motion-exit) var(--ease-standard);
 }
 .room-task-flow__task-node[data-state='active'] {
   border-color: var(--color-accent);
   box-shadow: var(--shadow-2);
+  animation: room-task-node-arrival 240ms var(--ease-standard) both;
 }
 .room-task-flow__task-node[data-state='complete'] { border-color: var(--color-success); }
 .room-task-flow__task-node[data-state='attention'] { border-color: var(--color-danger); }
@@ -352,7 +357,7 @@
   line-height: var(--text-ui-lh);
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 1;
+  -webkit-line-clamp: 2;
 }
 .room-task-flow__task-owner,
 .room-task-flow__task-state,
@@ -1487,6 +1492,10 @@
 @keyframes room-task-flow-progress {
   to { stroke-dashoffset: -10; }
 }
+@keyframes room-task-node-arrival {
+  from { opacity: .46; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 @container room-task-flow (max-width: 590px) {
   .room-task-flow__stage-labels { display: none; }
   .room-task-flow__canvas {
@@ -1615,6 +1624,7 @@
 @media (prefers-reduced-motion: reduce) {
   .room-kernel-participant-lane,
   .room-kernel-shared-check,
+  .room-task-flow__task-node,
   .room-kernel-posts > article[data-latest='true'] {
     animation: none;
     transition: none;

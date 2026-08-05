@@ -285,8 +285,18 @@
 .room-agent-lane__identity { display: flex; min-width: 0; align-items: baseline; gap: 7px; }
 .room-agent-lane__identity strong { overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-weight: var(--font-weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
 .room-agent-lane__identity small { flex: 0 0 auto; color: var(--color-text-tertiary); font-size: 11px; font-weight: var(--font-weight-semibold); transition: color var(--motion-exit) var(--ease-standard); }
-.room-agent-lane__task { display: block; overflow: hidden; color: var(--color-text); font-size: 14px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
-.room-agent-lane__progress { display: block; overflow: hidden; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.room-agent-lane__task,
+.room-agent-lane__progress {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.room-agent-lane__task { color: var(--color-text); font-size: 14px; line-height: 1.4; }
+.room-agent-lane__progress { color: var(--color-text-tertiary); font-size: 12px; line-height: 1.4; }
 .room-agent-lane__live-indicator { display: inline-flex; height: 10px; align-items: center; gap: 2px; opacity: .36; }
 .room-agent-lane__live-indicator > i { display: block; width: 3px; height: 3px; border-radius: 50%; background: currentColor; transform: translateY(0); }
 .room-agent-lane__live-indicator[data-active='true'] { color: var(--color-accent); opacity: 1; }
@@ -323,8 +333,17 @@
   color: var(--color-text-secondary);
 }
 .room-agent-lane__activity-heading > span { display: grid; min-width: 0; gap: 1px; }
-.room-agent-lane__activity-heading strong { overflow: hidden; color: var(--color-text); font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.room-agent-lane__activity-heading small { overflow: hidden; color: var(--color-text-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.room-agent-lane__activity-heading strong,
+.room-agent-lane__activity-heading small {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.room-agent-lane__activity-heading strong { color: var(--color-text); font-size: 12px; font-weight: 700; }
+.room-agent-lane__activity-heading small { color: var(--color-text-tertiary); font-size: 12px; }
 .room-agent-lane__activity-heading > svg { color: var(--color-text-tertiary); }
 .room-agent-lane__activity[data-state='running'] .room-agent-lane__activity-heading > svg { color: var(--color-accent); }
 .room-agent-lane__activity[data-state='attention'] .room-agent-lane__activity-heading > svg { color: var(--color-danger); }

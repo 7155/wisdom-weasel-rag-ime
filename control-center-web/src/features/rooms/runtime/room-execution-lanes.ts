@@ -9,7 +9,9 @@ import { approvalNeedsHumanDecision } from '@/contracts/approval-decision';
 export interface RoomExecutionLane {
   key: string;
   rootId: string;
+  taskId: string;
   dispatchId: string;
+  dispatchIds: string[];
   participantId: string | null;
   sourceSessionId: string;
   activities: RoomActivityProjection[];
@@ -34,6 +36,7 @@ export function selectPublicRoomTurnOrder(
 export function selectRoomTurnExecution(
   projection: RoomProjectionState,
   turnId: string,
+  taskIdByDispatchId: Readonly<Record<string, string>> = {},
 ): RoomTurnExecution {
   const turn = projection.turnsById[turnId];
   if (!turn) return { activities: [], lanes: [], messageIds: [], userMessageIds: [] };
@@ -44,22 +47,44 @@ export function selectRoomTurnExecution(
     .filter(isUsefulRoomActivity);
   const lanes = new Map<string, RoomExecutionLane>();
   const participantLaneKeys = new Map<string, string[]>();
+  const dispatchLaneKeys = new Map<string, string>();
 
   for (const activity of activities) {
-    const identity = roomActivityLaneIdentity(activity);
+    const sourceIdentity = roomActivityLaneIdentity(activity);
+    const taskId = sourceIdentity.taskId
+      || taskIdByDispatchId[sourceIdentity.dispatchId]
+      || '';
+    const identity = {
+      ...sourceIdentity,
+      taskId,
+      key: taskId
+        ? `${sourceIdentity.rootId}\u001f${sourceIdentity.participantId}\u001f${taskId}`
+        : sourceIdentity.key,
+    };
     const participantId = activity.participantId
       || textValue(activity.payload.targetParticipantId)
       || null;
     const lane = lanes.get(identity.key) ?? {
       key: identity.key,
       rootId: identity.rootId,
+      taskId: identity.taskId,
       dispatchId: identity.dispatchId,
+      dispatchIds: [],
       participantId,
       sourceSessionId: activity.sourceSessionId,
       activities: [],
       messageIds: [],
     };
     lane.activities.push(activity);
+    if (identity.taskId) lane.taskId = identity.taskId;
+    if (identity.dispatchId) {
+      lane.dispatchId = identity.dispatchId;
+      if (!lane.dispatchIds.includes(identity.dispatchId)) {
+        lane.dispatchIds.push(identity.dispatchId);
+      }
+      dispatchLaneKeys.set(identity.dispatchId, identity.key);
+    }
+    if (activity.sourceSessionId) lane.sourceSessionId = activity.sourceSessionId;
     if (!lane.participantId && participantId) lane.participantId = participantId;
     if (!lane.sourceSessionId && activity.sourceSessionId) {
       lane.sourceSessionId = activity.sourceSessionId;
@@ -80,6 +105,9 @@ export function selectRoomTurnExecution(
     if (message.role === 'user') {
       continue;
     }
+    const dispatchKey = message.dispatchId
+      ? dispatchLaneKeys.get(message.dispatchId) ?? ''
+      : '';
     const exactKey = message.dispatchId
       ? [
           message.rootId || turn.rootId || turnId,
@@ -87,11 +115,12 @@ export function selectRoomTurnExecution(
           message.dispatchId,
         ].join('\u001f')
       : '';
-    const existingKey = exactKey && lanes.has(exactKey)
+    const existingKey = dispatchKey
+      || (exactKey && lanes.has(exactKey)
       ? exactKey
       : participantLaneKeys
           .get(participantKey(message.participantId, message.sourceSessionId))
-          ?.at(-1);
+          ?.at(-1));
     const laneKey = existingKey ?? [
       turn.rootId || turnId,
       message.participantId || message.sourceSessionId || 'participant',
@@ -100,7 +129,9 @@ export function selectRoomTurnExecution(
     const lane = lanes.get(laneKey) ?? {
       key: laneKey,
       rootId: message.rootId || turn.rootId || turnId,
+      taskId: '',
       dispatchId: message.dispatchId || '',
+      dispatchIds: message.dispatchId ? [message.dispatchId] : [],
       participantId: message.participantId,
       sourceSessionId: message.sourceSessionId,
       activities: [],
@@ -114,7 +145,9 @@ export function selectRoomTurnExecution(
     lanes.set(`${turnId}\u001frouter\u001fpending`, {
       key: `${turnId}\u001frouter\u001fpending`,
       rootId: turn.rootId || turnId,
+      taskId: '',
       dispatchId: '',
+      dispatchIds: [],
       participantId: null,
       sourceSessionId: '',
       activities: [],

@@ -210,7 +210,7 @@ function roomTurnChronologicalStream(
   atoms.sort(compareRoomTurnChronologicalAtoms);
 
   const result: RoomTurnChronologicalItem[] = [];
-  const laneSegmentCounts = new Map<string, number>();
+  const renderedLaneKeys = new Set<string>();
   for (const atom of atoms) {
     if (atom.kind === 'message') {
       result.push({
@@ -220,40 +220,29 @@ function roomTurnChronologicalStream(
       });
       continue;
     }
-    const previous = result.at(-1);
-    if (previous?.kind === 'lane' && previous.lane.key === atom.lane.key) {
-      previous.activities.push(atom.activity);
-      continue;
-    }
-    const segment = laneSegmentCounts.get(atom.lane.key) ?? 0;
-    laneSegmentCounts.set(atom.lane.key, segment + 1);
+    if (renderedLaneKeys.has(atom.lane.key)) continue;
+    renderedLaneKeys.add(atom.lane.key);
     result.push({
       kind: 'lane',
-      key: `${atom.lane.key}:segment:${segment}:${atom.activity.id}`,
+      key: `${atom.lane.key}:work`,
       lane: atom.lane,
-      activities: [atom.activity],
-      continuation: segment > 0,
-      includePersistentDetails: false,
+      activities: atom.lane.activities,
+      continuation: false,
+      includePersistentDetails: true,
     });
   }
   for (const lane of lanes) {
-    if (lane.activities.length || result.some((item) => (
-      item.kind === 'lane' && item.lane.key === lane.key
-    ))) continue;
+    if (renderedLaneKeys.has(lane.key)) continue;
+    renderedLaneKeys.add(lane.key);
     result.push({
       kind: 'lane',
       key: `${lane.key}:segment:empty`,
       lane,
       activities: [],
       continuation: false,
-      includePersistentDetails: false,
+      includePersistentDetails: true,
     });
   }
-  const lastLaneItemByKey = new Map<string, Extract<RoomTurnChronologicalItem, { kind: 'lane' }>>();
-  for (const item of result) {
-    if (item.kind === 'lane') lastLaneItemByKey.set(item.lane.key, item);
-  }
-  for (const item of lastLaneItemByKey.values()) item.includePersistentDetails = true;
   return result;
 }
 
@@ -340,6 +329,9 @@ export function RoomTurn({
   const { activities, lanes, messageIds, userMessageIds } = selectRoomTurnExecution(
     projection,
     turnId,
+    Object.fromEntries(Object.values(kernelDispatchesById ?? {}).map((dispatch) => (
+      [dispatch.dispatchId, dispatch.taskId]
+    ))),
   );
   const responseUsageActivities = turn.activityIds
     .map((activityId) => projection.activitiesById[activityId])
@@ -466,9 +458,9 @@ export function RoomTurn({
     const persona = personas.find((item) => (
       item.roleId === participant?.roleId && item.version === participant.roleVersion
     ));
-    const taskId = lane?.dispatchId
+    const taskId = lane?.taskId || (lane?.dispatchId
       ? kernelDispatchesById?.[lane.dispatchId]?.taskId ?? ''
-      : '';
+      : '');
     const freshness = lane
       ? roomLaneFreshness(
           lane,
@@ -615,9 +607,9 @@ export function RoomTurn({
       const laneAction = rootTerminal
         ? undefined
         : lane.activities.find(roomActivityNeedsSessionAction);
-      const laneTaskId = lane.dispatchId
+      const laneTaskId = lane.taskId || (lane.dispatchId
         ? kernelDispatchesById?.[lane.dispatchId]?.taskId ?? ''
-        : '';
+        : '');
       const laneFreshness = roomLaneFreshness(
         lane,
         projection,
@@ -678,13 +670,14 @@ export function RoomTurn({
         laneTaskId,
         kernelSessionsById,
       );
+      const laneTodo = roomLaneAuthoritativeTodo(lane, laneTask, laneSession);
       const laneWork = roomLaneWorkSummary(
         segmentActivities,
         participant?.displayName,
         laneState,
         laneTask,
       );
-      const laneTodoSummary = roomLaneTodoSummary(laneSession?.todo);
+      const laneTodoSummary = roomLaneTodoSummary(laneTodo);
       const laneSubagents = laneTaskId ? subagentsByTaskId[laneTaskId] ?? [] : [];
       const identityContinuation = identityContinuationByItemKey.get(streamItem.key) ?? false;
       return <RoomLaneDisclosure
@@ -773,10 +766,10 @@ export function RoomTurn({
               : '这位伙伴的任务已经停止。'}
           </p>
         ) : null}
-        {includePersistentDetails && laneSession ? <RoomTaskTodoDetails
+        {includePersistentDetails && laneTodo ? <RoomTaskTodoDetails
           live
           owner={participant?.displayName ?? '协作伙伴'}
-          todo={laneSession.todo}
+          todo={laneTodo}
         /> : null}
       </RoomLaneDisclosure>;
     })}
@@ -1025,17 +1018,49 @@ function roomLaneWorkSummary(
   laneState: string,
   workspaceTask?: RoomTaskV3,
 ): { title: string; detail: string } {
-  const digest = roomActivityDigest(activities);
+  const digest = roomActivityDigest(activities, laneState === 'running');
   const orderedActivities = roomActivityFeedEntries(activities).map((entry) => entry.activity);
-  let focus = orderedActivities.at(-1);
-  for (let index = orderedActivities.length - 1; index >= 0; index -= 1) {
-    const candidate = orderedActivities[index];
-    if (candidate && ['running', 'waiting', 'failed', 'aborted'].includes(
-      roomActivityDisplayStatus(candidate),
-    )) {
-      focus = candidate;
-      break;
-    }
+  if (laneState === 'failed' || laneState === 'aborted') {
+    return {
+      title: laneState === 'failed'
+        ? `${participantName} 的任务未完成`
+        : `${participantName} 的任务已停止`,
+      detail: digest.detail,
+    };
+  }
+  const latest = orderedActivities.at(-1);
+  const activeFocus = laneState === 'running'
+    ? [...orderedActivities].reverse().find((candidate) => (
+        ['running', 'waiting'].includes(roomActivityDisplayStatus(candidate))
+      ))
+    : undefined;
+  const focus = activeFocus ?? latest;
+  if (
+    laneState === 'running'
+    && focus
+    && (
+      focus.kind === 'route_decision'
+      || textValue(focus.payload.sourceEventType) === 'route_decision'
+    )
+  ) {
+    return {
+      title: describeRoomActivity(focus, participantName).title,
+      detail: digest.detail,
+    };
+  }
+  if (
+    laneState === 'running'
+    && focus
+    && roomActivityDisplayStatus(focus) === 'completed'
+  ) {
+    const objective = roomPublicActivityText(workspaceTask?.objective ?? '');
+    const expectedOutput = roomPublicActivityText(workspaceTask?.expectedOutput ?? '');
+    return {
+      title: objective
+        ? `正在处理「${objective}」`
+        : `${participantName} 正在继续任务`,
+      detail: `${digest.detail}${expectedOutput ? ` · 要交付：${expectedOutput}` : ''}`,
+    };
   }
   if (focus) {
     const sourceEventType = textValue(focus.payload.sourceEventType);
@@ -1082,6 +1107,44 @@ function roomLaneSession(
       )
     ))
     .sort((left, right) => right.updatedAtMs - left.updatedAtMs)[0];
+}
+
+function roomLaneAuthoritativeTodo(
+  lane: RoomExecutionLane,
+  task: RoomTaskV3 | undefined,
+  session: PrivateSessionProjection | undefined,
+): PrivateSessionProjection['todo'] | undefined {
+  const todo = session?.todo;
+  const lineage = todo?.roomLineage;
+  if (!session || !todo || !lineage) return undefined;
+  if (
+    todo.sessionId !== session.sessionId
+    || lineage.schemaVersion !== 'wisdom-weasel.room-todo-lineage.v1'
+    || lineage.rootId !== lane.rootId
+    || lineage.sessionId !== session.sessionId
+    || lineage.participantId !== lane.participantId
+    || lineage.dispatchId !== lane.dispatchId
+    || session.rootId !== lane.rootId
+    || session.dispatchId !== lane.dispatchId
+    || session.generation !== lineage.generation
+  ) return undefined;
+  if (
+    task
+    && (
+      lineage.taskId !== task.taskId
+      || session.taskId !== task.taskId
+      || lineage.taskRevision !== task.revision
+      || (
+        task.ownershipRevision !== undefined
+        && lineage.ownershipRevision !== task.ownershipRevision
+      )
+    )
+  ) return undefined;
+  if (
+    session.workItemId
+    && lineage.workItemId !== session.workItemId
+  ) return undefined;
+  return todo;
 }
 
 function roomLaneTodoSummary(todo?: PrivateSessionProjection['todo']): string {
@@ -1233,7 +1296,7 @@ function ActivityLog({
   }, [contentKey]);
   if (!publicActivities.length && !workspaceView) return null;
   const digest = publicActivities.length
-    ? roomActivityDigest(publicActivities)
+    ? roomActivityDigest(publicActivities, active)
     : {
         title: workspaceView?.title ?? '工作区进展',
         detail: '1 条权威任务更新',
@@ -2052,6 +2115,7 @@ function roomActivityProvenanceLabel(activity: RoomActivityProjection): '实时�
 
 function roomActivityDigest(
   activities: RoomActivityProjection[],
+  workActive = false,
 ): { title: string; detail: string } {
   const displayActivities = roomActivityFeedEntries(activities).map((entry) => entry.activity);
   const labels = displayActivities.flatMap((activity) => {
@@ -2083,7 +2147,9 @@ function roomActivityDigest(
     counts.failed ? `${counts.failed} 个未完成` : '',
     counts.aborted ? `${counts.aborted} 个已停止` : '',
     !counts.running && !counts.waiting && !counts.failed && !counts.aborted
-      ? '所有步骤已返回'
+      ? workActive
+        ? `${counts.completed} 个步骤已返回 · 正在继续`
+        : '所有步骤已返回'
       : counts.completed
         ? `${counts.completed} 个步骤已返回`
         : '',
@@ -2524,7 +2590,7 @@ function roomFallbackFreshness(
     return {
       state: 'stale',
       updatedAtMs,
-      detail: '最近一分钟没有新的公开进展，实时连接仍正常',
+      detail: '正在等待下一条进展；如有短暂中断，伙伴会自动恢复并继续',
     };
   }
   return { state: 'fresh', updatedAtMs, detail: '实时进展已同步' };
