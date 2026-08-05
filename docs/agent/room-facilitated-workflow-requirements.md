@@ -628,9 +628,9 @@ or acceptance evidence above.
 | opening Facilitator, conditional clarification, crash-safe chronological answers and typed start | implemented; current complete Web suite 976/976, Room core 104/104, and focused backend/runtime regressions passed; prior command receipt and injected-crash gates also passed | open |
 | fresh execute Dispatch, peer work, nested delegation, integration, review, one report | source now exposes the parallel execution policy to the fresh Facilitator Dispatch and rejects a parallel Facilitator final before at least one eligible peer has returned real execute work; review policy can be durably raised at definition and cannot be downgraded; focused gates passed | open; a fresh installed Room must still prove the positive peer/integration/review/final path |
 | stage Skills and capability receipts | implemented; Skill 25/25 and Pi runtime 70/70 passed | open |
-| permanent workspace ledger, same-baseline isolation, integration-before-cleanup, red retention | implemented; settlement and canary 18/18 passed | open |
+| permanent workspace ledger, same-baseline isolation, integration-before-cleanup, red retention | source now permits an unrelated dirty target by pinning `HEAD`, storing the target snapshot/status/path receipt permanently, and creating the child from that commit; integration rejects any changed-path overlap before target mutation while non-overlapping delivery preserves the user's dirt. The complete 42-test workspace coordinator module, 7-test ledger module, compilation, and diff checks passed | open; a fresh Room must still prove two simultaneous isolated writers, integration, cleanup, and permanent ledger readback |
 | continuous conversation activity and lower-density Tasks projection | source now reorders mutable activity by its latest authoritative timestamp, derives concrete role copy from the owned task and expected delivery, keeps Todo as the final sticky block, removes the redundant answered-question notice, makes the whole companion lane foldable, and gives the graph compact status markers, concrete current/next action, dependency labels, and truthful active-edge motion; focused Room tests, the complete 976-test Web suite, TypeScript, and the prior production Web build passed | prior foreground failure remains authoritative until the coherent build is installed and rechecked |
-| canonical `read` / `edit` / `write` / `bash` surface, streaming and personalized result views | implemented in source: public catalog projection exposes the four basic coding Tools once, historical aliases upcast into them, Agent and Room share the artifact/Diff renderer, active mutations animate without publishing a half-built Diff, and completed bash rows preserve bounded stdout/stderr plus exit status; changed backend modules 212/212, complete Web suite 974/974, TypeScript, and the native production Web build passed | open; must be exercised in one coherent foreground build |
+| canonical `read` / `edit` / `write` / `bash` surface, streaming and personalized result views | implemented in source: public catalog projection exposes the four basic coding Tools once, historical aliases upcast into them, Agent and Room share the artifact/Diff renderer, active mutations animate without publishing a half-built Diff, and completed bash rows preserve bounded stdout/stderr plus exit status. Structured read/search payloads now survive the Room event boundary as numbered source windows and matched file/line/snippet rows instead of generic result cards; focused Python projection, TypeScript, and 75 Agent/Room activity tests passed | open; all four tools must be exercised in one coherent foreground build |
 | history loading, cached transcript continuity, bounded initial page and older-history loading | explicit loading/empty/failed projection plus newest 80-event and newest 100-complete-turn windows, stable `beforeEventId` / `beforeMessageId` older-page merge, and total-count reconciliation are implemented; 138 backend/policy/route tests, focused Web paging/loading checks, the complete 974-test Web suite, TypeScript, and the prior local no-false-welcome checks passed | source Web shell passed; coherent installed foreground timing open |
 | risk-based full-auto approval | scoped hash-bound text write/edit/patch now bypass Luna by deterministic policy; focused policy and Agent-service regression passed while R3, sensitive, and out-of-scope cases remain model-routed | fresh full-auto Room foreground open |
 | Session Todo, per-owner result/diff, subagent grouping | implemented on one authoritative Session Todo: every item may persist a current checkpoint, categorized file/Diff/artifact/test reference, and authoritative update time; migration 0145 preserves prior event history while admitting checkpoint events; writable and read-only Room roles can maintain their own Todo; Agent and Room task surfaces project the same fields at different density. The affected 97-test backend/runtime set, focused gateway checks, complete 976-test Web suite, TypeScript, and generated-contract reproduction passed | open; a fresh installed multi-companion Room must show distinct live Todo and attributed results for every real owner |
@@ -661,13 +661,17 @@ Verified behavior:
 The run was deliberately stopped and is not accepted. Its retained evidence
 exposes these current failures:
 
-- `isolated_writable` rejects any dirty base worktree, including unrelated
-  untracked recovery files. The fallback produced only one read-only peer while
-  implementation remained serial. A Room parallelism acceptance task therefore
-  did not create two overlapping, independently owned implementation WorkItems.
-  The safe recovery must pin clean `HEAD`, retain a hash/snapshot of unrelated
-  base dirt in the ledger, isolate non-overlapping writers from that commit, and
-  integrate only their receipted patches without overwriting the retained dirt.
+- The observed build rejected `isolated_writable` for any dirty base worktree,
+  including unrelated untracked recovery files. The fallback produced only one
+  read-only peer while implementation remained serial, so that Room did not
+  create two overlapping, independently owned implementation WorkItems. Source
+  now pins `HEAD`, stores a permanent reservation receipt containing the target
+  snapshot, status hash, bounded path list and truncation count, and creates the
+  child worktree from that commit. Integration preserves unrelated target dirt
+  and retains the child red before applying when its changed paths overlap any
+  current target change. Focused non-overlap and overlap tests pass; a fresh
+  foreground Room still has to prove two real concurrent writers and their
+  final integration.
 - A missing or zero-item Todo rendered `澄·远 的 Todo / 当前没有 Todo`; this is
   non-information and must render nothing until a real item exists.
 - A normal waiting lane used ochre warning styling and looked failed. Warning

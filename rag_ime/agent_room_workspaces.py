@@ -29,6 +29,7 @@ class RoomWorkspaceError(RuntimeError):
 _DELIVERY_MAX_FILES = 512
 _DELIVERY_MAX_PATH_BYTES = 4_096
 _DELIVERY_MAX_MANIFEST_BYTES = 256 * 1_024
+_BASE_DIRTY_PATH_PREVIEW_LIMIT = 512
 _DELIVERY_SENSITIVE_NAMES = frozenset(
     {
         ".env",
@@ -192,19 +193,10 @@ class RoomWorkspaceCoordinator:
             raise RoomWorkspaceError(
                 "isolated_writable requires the authorized root to be the Git worktree root"
             )
-        status = self._git_bytes(
-            base_root,
-            "status",
-            "--porcelain=v1",
-            "--untracked-files=all",
-        )
-        if status:
-            raise RoomWorkspaceError(
-                "isolated_writable requires a clean base worktree; preserve current changes "
-                "with shared_single_writer or finish them before parallel writers"
-            )
         base_commit = self._git_text(base_root, "rev-parse", "HEAD")
         repository_id = self._repository_identity(base_root)
+        base_workspace_snapshot_sha256 = self.snapshot_digest([base_root])
+        base_dirty_receipt = self._base_dirty_receipt(base_root)
         with self._repository_integration_lock(
             base_root,
             expected_repository_id=repository_id,
@@ -213,6 +205,10 @@ class RoomWorkspaceCoordinator:
                 base_root=base_root,
                 base_commit=base_commit,
                 repository_id=repository_id,
+                base_workspace_snapshot_sha256=(
+                    base_workspace_snapshot_sha256
+                ),
+                base_dirty_receipt=base_dirty_receipt,
                 root_id=root_id,
                 task_id=task_id,
                 target_session_id=target_session_id,
@@ -233,6 +229,8 @@ class RoomWorkspaceCoordinator:
         base_root: Path,
         base_commit: str,
         repository_id: str,
+        base_workspace_snapshot_sha256: str,
+        base_dirty_receipt: Mapping[str, object],
         root_id: str,
         task_id: str,
         target_session_id: str,
@@ -250,12 +248,7 @@ class RoomWorkspaceCoordinator:
             raise RoomWorkspaceError(
                 "repository baseline changed while acquiring materialization lease"
             )
-        if self._git_bytes(
-            base_root,
-            "status",
-            "--porcelain=v1",
-            "--untracked-files=all",
-        ):
+        if self.snapshot_digest([base_root]) != base_workspace_snapshot_sha256:
             raise RoomWorkspaceError(
                 "repository changed while acquiring materialization lease"
             )
@@ -284,6 +277,23 @@ class RoomWorkspaceCoordinator:
                 creation_reason=creation_reason,
                 now_ms=timestamp,
                 restore_policy=restore_policy,
+                base_workspace_snapshot_sha256=(
+                    base_workspace_snapshot_sha256
+                ),
+                base_dirty_status_sha256=str(
+                    base_dirty_receipt.get("statusSha256") or ""
+                ),
+                base_dirty_paths=[
+                    str(value)
+                    for value in base_dirty_receipt.get("paths") or []
+                    if str(value).strip()
+                ],
+                base_dirty_path_count=int(
+                    base_dirty_receipt.get("pathCount") or 0
+                ),
+                base_dirty_paths_truncated=bool(
+                    base_dirty_receipt.get("pathsTruncated")
+                ),
             )
         except (RoomWorkspaceLedgerError, RoomWorkspaceLedgerConflict) as exc:
             raise RoomWorkspaceError(str(exc)) from exc
@@ -353,7 +363,7 @@ class RoomWorkspaceCoordinator:
         try:
             self._run(
                 [
-                    "git",
+                    _SYSTEM_GIT,
                     "-C",
                     str(base_root),
                     "worktree",
@@ -1154,6 +1164,19 @@ class RoomWorkspaceCoordinator:
         )
         target_applied_receipt = self.ledger.target_applied_receipt(binding_id)
         recovered_after_apply = target_applied_receipt is not None
+        if patch and not recovered_after_apply:
+            target_dirty_paths = set(self._base_dirty_paths(base))
+            overlapping_paths = sorted(
+                target_dirty_paths.intersection(changed_files)
+            )
+            if overlapping_paths:
+                preview = ", ".join(overlapping_paths[:12])
+                if len(overlapping_paths) > 12:
+                    preview += f" and {len(overlapping_paths) - 12} more"
+                return source_conflict(
+                    "isolated delivery overlaps existing target changes; "
+                    "the target was left untouched: " + preview
+                )
         if recovered_after_apply:
             target_applied_payload = target_applied_receipt.get("payload")
             if not isinstance(target_applied_payload, Mapping) or any(
@@ -3137,12 +3160,12 @@ class RoomWorkspaceCoordinator:
                 break
         return result
 
-    @staticmethod
     def _prepared_payload(
+        self,
         binding: Mapping[str, object],
         restore_policy: Mapping[str, object],
     ) -> dict[str, object]:
-        return {
+        result: dict[str, object] = {
             "workspaceBindingId": binding["workspaceBindingId"],
             "workspaceRepositoryId": binding["repositoryId"],
             "workspacePolicy": binding["workspacePolicy"],
@@ -3156,6 +3179,84 @@ class RoomWorkspaceCoordinator:
             "workspaceAttentionRequired": bool(binding["attentionRequired"]),
             "workspaceRestorePolicy": dict(restore_policy),
         }
+        receipt = self.ledger.reservation_receipt(
+            str(binding["workspaceBindingId"])
+        )
+        reservation = (
+            receipt.get("payload")
+            if isinstance(receipt, Mapping)
+            else None
+        )
+        if isinstance(reservation, Mapping):
+            result.update(
+                {
+                    "workspaceBaseSnapshotSha256": reservation.get(
+                        "baseWorkspaceSnapshotSha256"
+                    ),
+                    "workspaceBaseDirtyStatusSha256": reservation.get(
+                        "baseDirtyStatusSha256"
+                    ),
+                    "workspaceBaseDirtyPaths": list(
+                        reservation.get("baseDirtyPaths") or []
+                    ),
+                    "workspaceBaseDirtyPathCount": int(
+                        reservation.get("baseDirtyPathCount") or 0
+                    ),
+                    "workspaceBaseDirtyPathsTruncated": bool(
+                        reservation.get("baseDirtyPathsTruncated")
+                    ),
+                    "workspaceBaseDirty": bool(
+                        reservation.get("baseDirtyPathCount")
+                    ),
+                    "workspaceReservationReceiptId": receipt.get("eventId"),
+                    "workspaceReservationReceiptSha256": receipt.get(
+                        "payloadSha256"
+                    ),
+                }
+            )
+        return result
+
+    def _base_dirty_receipt(self, root: Path) -> dict[str, object]:
+        status = self._git_bytes(
+            root,
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+        )
+        paths = self._base_dirty_paths(root)
+        return {
+            "statusSha256": hashlib.sha256(status).hexdigest(),
+            "pathCount": len(paths),
+            "paths": paths[:_BASE_DIRTY_PATH_PREVIEW_LIMIT],
+            "pathsTruncated": len(paths) > _BASE_DIRTY_PATH_PREVIEW_LIMIT,
+        }
+
+    def _base_dirty_paths(self, root: Path) -> list[str]:
+        tracked = self._git_bytes(
+            root,
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            "HEAD",
+            "--",
+        )
+        untracked = self._git_bytes(
+            root,
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+        )
+        return sorted(
+            {
+                value.decode("utf-8", errors="replace")
+                for value in (*tracked.split(b"\0"), *untracked.split(b"\0"))
+                if value
+            }
+        )
 
     def task_snapshot_digest(self, task: Mapping[str, object]) -> str:
         raw_root = str(

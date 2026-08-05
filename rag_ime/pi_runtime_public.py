@@ -1014,6 +1014,10 @@ def public_code_tool_activity(
         edit = _public_edit_projection(raw_result, fallback_path=raw_path)
         if edit:
             result.update(edit)
+    structured_preview, structured_truncated, structured_fields = (
+        _public_structured_code_preview(normalized_tool, raw_result)
+    )
+    result.update(structured_fields)
     progress_summary = _public_tool_text(
         _public_tool_result_scalar(raw_result, "summary"),
         maximum=500,
@@ -1038,9 +1042,10 @@ def public_code_tool_activity(
             command=raw_command,
         )
     ):
-        preview, truncated = _public_tool_output_preview(
-            raw_result,
-            evidence=evidence,
+        preview, truncated = (
+            (structured_preview, structured_truncated)
+            if structured_preview
+            else _public_tool_output_preview(raw_result, evidence=evidence)
         )
         if preview:
             result["outputPreview"] = preview
@@ -1071,6 +1076,87 @@ def public_code_tool_activity(
         result["automatic"] = True
 
     return result
+
+
+def _public_structured_code_preview(
+    tool_name: str,
+    raw_result: object,
+) -> tuple[str, bool, dict[str, object]]:
+    """Keep useful structured read/search results before generic MCP shaping.
+
+    The workspace owner returns actual content and match records.  Waiting
+    until the generic content-list fallback loses those fields and leaves the
+    UI with only an aggregate summary.  This projection is bounded and uses the
+    same redaction/path rules as every other public Tool result.
+    """
+
+    layers = _public_tool_result_layers(raw_result)
+    if tool_name == "read":
+        for layer in layers:
+            content = layer.get("content")
+            if not isinstance(content, str) or not content:
+                continue
+            safe = _public_tool_text(content, maximum=6_000)
+            if not safe:
+                return "", False, {}
+            source_lines = safe.splitlines()
+            preview = "\n".join(source_lines[:40])[:6_000]
+            start_line = as_integer(layer.get("startLine"))
+            end_line = as_integer(layer.get("endLine"))
+            fields: dict[str, object] = {}
+            if start_line > 0:
+                fields["startLine"] = start_line
+            if end_line >= start_line > 0:
+                fields["endLine"] = end_line
+                fields["lineCount"] = end_line - start_line + 1
+            return (
+                preview,
+                bool(layer.get("truncated"))
+                or len(source_lines) > 40
+                or len(safe) > len(preview),
+                fields,
+            )
+
+    if tool_name == "grep":
+        for layer in layers:
+            matches = layer.get("matches")
+            if not isinstance(matches, list):
+                continue
+            lines: list[str] = []
+            for value in matches[:100]:
+                match = as_mapping(value)
+                raw_match_path = match.get("relativePath") or match.get("path")
+                path = _public_workspace_path(raw_match_path)
+                if not path:
+                    continue
+                line_number = as_integer(match.get("lineNumber"))
+                preview = _public_tool_text(match.get("preview"), maximum=500)
+                if line_number > 0:
+                    lines.append(f"{path}:{line_number}:{preview}")
+                else:
+                    lines.append(path)
+            summary = _public_tool_text(layer.get("summary"), maximum=500)
+            source = "\n".join(lines) if lines else summary
+            safe_lines = source.splitlines()
+            preview = "\n".join(safe_lines[:40])[:6_000]
+            files_scanned = layer.get("filesScanned")
+            fields = {
+                "matchCount": len(matches),
+                **(
+                    {"filesScanned": as_integer(files_scanned)}
+                    if isinstance(files_scanned, (int, float))
+                    and not isinstance(files_scanned, bool)
+                    else {}
+                ),
+            }
+            return (
+                preview,
+                bool(layer.get("truncated"))
+                or len(matches) > 40
+                or len(source) > len(preview),
+                fields,
+            )
+    return "", False, {}
 
 
 def _public_tool_result_layers(raw_result: object) -> list[Mapping[str, object]]:

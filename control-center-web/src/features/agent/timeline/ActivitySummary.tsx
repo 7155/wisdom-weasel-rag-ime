@@ -988,6 +988,9 @@ function publicCodeToolId(value: string): PublicCodeToolId | null {
 }
 
 function publicReadStartLine(view: PublicToolResultView): number {
+  if (view.output?.startLine !== undefined && view.output.startLine >= 1) {
+    return Math.floor(view.output.startLine);
+  }
   const offset = view.request.find((field) => field.id === 'offset')?.value;
   const parsedOffset = Number(offset);
   if (Number.isFinite(parsedOffset) && parsedOffset >= 1) return Math.floor(parsedOffset);

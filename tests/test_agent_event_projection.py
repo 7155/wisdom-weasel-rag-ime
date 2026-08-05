@@ -1141,8 +1141,19 @@ class AgentEventProjectionTests(unittest.TestCase):
                         "user_input_required"
                     ),
                     "outputTruncated": False,
+                    "matchCount": 11,
+                    "filesScanned": 417,
                 },
                 {"path": "rag_ime", "pattern": "user_input_required"},
+                {
+                    "outputPreview": (
+                        "rag_ime/pi_runtime_v2.py:3082: "
+                        "user_input_required"
+                    ),
+                    "outputTruncated": False,
+                    "matchCount": 11,
+                    "filesScanned": 417,
+                },
             ),
             (
                 "read",
@@ -1153,6 +1164,9 @@ class AgentEventProjectionTests(unittest.TestCase):
                     "limit": 220,
                     "outputPreview": "def _room_tool_disclosure(...):",
                     "outputTruncated": False,
+                    "startLine": 640,
+                    "endLine": 859,
+                    "lineCount": 220,
                 },
                 {
                     "fileName": "agent_event_projection.py",
@@ -1160,9 +1174,21 @@ class AgentEventProjectionTests(unittest.TestCase):
                     "offset": 640,
                     "limit": 220,
                 },
+                {
+                    "outputPreview": "def _room_tool_disclosure(...):",
+                    "outputTruncated": False,
+                    "startLine": 640,
+                    "endLine": 859,
+                    "lineCount": 220,
+                },
             ),
         )
-        for sequence, (tool_name, public_result, expected_args) in enumerate(
+        for sequence, (
+            tool_name,
+            public_result,
+            expected_args,
+            expected_result,
+        ) in enumerate(
             cases,
             start=1,
         ):
@@ -1223,10 +1249,7 @@ class AgentEventProjectionTests(unittest.TestCase):
                 self.assertEqual(data["arguments"], expected_args)
                 self.assertEqual(
                     data["result"],
-                    {
-                        "outputPreview": public_result["outputPreview"],
-                        "outputTruncated": False,
-                    },
+                    expected_result,
                 )
                 encoded = repr(data)
                 self.assertNotIn("apiKey", encoded)

@@ -2681,6 +2681,50 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn("evidence ref", json.dumps(result, ensure_ascii=False))
         self.assertNotIn("private-handle", json.dumps(result, ensure_ascii=False))
 
+    def test_structured_workspace_read_and_search_keep_renderable_results(self) -> None:
+        read = public_code_tool_activity(
+            "workspace_read",
+            {"path": "src/runtime.py"},
+            {
+                "summary": "已读取 runtime.py 第 12-13 行",
+                "relativePath": "src/runtime.py",
+                "content": "def start():\n    return True\n",
+                "startLine": 12,
+                "endLine": 13,
+                "truncated": False,
+            },
+        )
+        search = public_code_tool_activity(
+            "workspace_search",
+            {"query": "start", "path": "src"},
+            {
+                "summary": "在 8 个文件中找到 2 条匹配",
+                "matches": [
+                    {
+                        "relativePath": "src/runtime.py",
+                        "lineNumber": 12,
+                        "preview": "def start():",
+                    },
+                    {
+                        "relativePath": "tests/test_runtime.py",
+                        "lineNumber": 7,
+                        "preview": "def test_start():",
+                    },
+                ],
+                "filesScanned": 8,
+                "truncated": False,
+            },
+        )
+
+        self.assertEqual(read["outputPreview"], "def start():\n    return True")
+        self.assertEqual(read["startLine"], 12)
+        self.assertEqual(read["endLine"], 13)
+        self.assertEqual(read["lineCount"], 2)
+        self.assertIn("src/runtime.py:12:def start():", search["outputPreview"])
+        self.assertIn("tests/test_runtime.py:7:def test_start():", search["outputPreview"])
+        self.assertEqual(search["matchCount"], 2)
+        self.assertEqual(search["filesScanned"], 8)
+
     def test_coding_tool_projection_redacts_commands_and_never_previews_secret_files(self) -> None:
         command = public_code_tool_activity(
             "bash",

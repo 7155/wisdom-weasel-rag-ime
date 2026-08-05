@@ -33,6 +33,7 @@ export interface PublicToolResultView {
     truncated: boolean;
     kind: 'code' | 'diff' | 'search' | 'terminal' | 'text';
     title: string;
+    startLine?: number;
     channels?: Array<{
       id: 'stdout' | 'stderr';
       label: string;
@@ -160,6 +161,8 @@ const countFields: Array<[string, string]> = [
   ['providerCount', '服务数量'],
   ['profileCount', '方案数量'],
   ['completed', '已完成'],
+  ['matchCount', '匹配数量'],
+  ['filesScanned', '扫描文件'],
   ['artifacts', '产物数量'],
 ];
 
@@ -721,6 +724,7 @@ interface PublicCodeToolResult {
     truncated: boolean;
     kind: 'code' | 'diff' | 'search' | 'terminal' | 'text';
     title: string;
+    startLine?: number;
     channels?: Array<{
       id: 'stdout' | 'stderr';
       label: string;
@@ -926,12 +930,19 @@ function publicCodeToolResult(
     const truncation = firstRecord(resultLayers, ['truncation']);
     const totalLines = firstFiniteNumber([truncation], ['totalLines']);
     const lines = totalLines ?? publicLineCount(publicToolContentText(carrier));
+    const startLine = firstFiniteNumber(resultLayers, ['startLine']);
+    const endLine = firstFiniteNumber(resultLayers, ['endLine']);
+    const returnedLines = firstFiniteNumber(resultLayers, ['lineCount'])
+      ?? (startLine !== undefined && endLine !== undefined && endLine >= startLine
+        ? endLine - startLine + 1
+        : undefined);
+    const visibleLines = returnedLines ?? lines;
     return {
       file,
       request,
-      ...(output ? { output } : {}),
-      ...(lines !== undefined ? { lines } : {}),
-      summary: file ? `${file}${lines !== undefined ? ` · ${lines} 行` : ' 已读取'}` : '文件已读取',
+      ...(output ? { output: { ...output, ...(startLine !== undefined ? { startLine } : {}) } } : {}),
+      ...(visibleLines !== undefined ? { lines: visibleLines } : {}),
+      summary: file ? `${file}${visibleLines !== undefined ? ` · ${visibleLines} 行` : ' 已读取'}` : '文件已读取',
     };
   }
   if (searchTools.has(toolId)) {

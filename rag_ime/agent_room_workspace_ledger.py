@@ -79,6 +79,11 @@ class RoomWorkspaceLedgerStore:
         creation_reason: str,
         now_ms: int,
         restore_policy: Mapping[str, object] | None = None,
+        base_workspace_snapshot_sha256: str = "",
+        base_dirty_status_sha256: str = "",
+        base_dirty_paths: Sequence[str] = (),
+        base_dirty_path_count: int = 0,
+        base_dirty_paths_truncated: bool = False,
     ) -> tuple[dict[str, object], bool]:
         root_id = _required_text(root_id, "root_id")
         task_id = _required_text(task_id, "task_id")
@@ -89,6 +94,27 @@ class RoomWorkspaceLedgerStore:
         workspace_root = _required_text(workspace_root, "workspace_root")
         creation_reason = _required_text(creation_reason, "creation_reason")
         now_ms = _non_negative_int(now_ms, "now_ms")
+        base_snapshot = str(base_workspace_snapshot_sha256 or "").strip()
+        if base_snapshot:
+            base_snapshot = _sha256_text(
+                base_snapshot,
+                "base_workspace_snapshot_sha256",
+            )
+        dirty_status = str(base_dirty_status_sha256 or "").strip()
+        if dirty_status:
+            dirty_status = _sha256_text(
+                dirty_status,
+                "base_dirty_status_sha256",
+            )
+        dirty_paths = _normalized_text_list(base_dirty_paths)
+        dirty_path_count = _non_negative_int(
+            base_dirty_path_count,
+            "base_dirty_path_count",
+        )
+        if dirty_path_count < len(dirty_paths):
+            raise RoomWorkspaceLedgerError(
+                "base_dirty_path_count cannot be smaller than its path receipt"
+            )
         if workspace_policy != "isolated_writable":
             raise RoomWorkspaceLedgerError(
                 "durable workspace binding currently requires isolated_writable"
@@ -126,6 +152,16 @@ class RoomWorkspaceLedgerStore:
                 (root_id, repository_id),
             ).fetchone()
             if baseline is None:
+                baseline_metadata = {
+                    "creationReason": creation_reason,
+                    "baseWorkspaceSnapshotSha256": base_snapshot,
+                    "baseDirtyStatusSha256": dirty_status,
+                    "baseDirtyPaths": dirty_paths,
+                    "baseDirtyPathCount": dirty_path_count,
+                    "baseDirtyPathsTruncated": bool(
+                        base_dirty_paths_truncated
+                    ),
+                }
                 conn.execute(
                     """
                     INSERT INTO room_workspace_root_baselines(
@@ -138,7 +174,7 @@ class RoomWorkspaceLedgerStore:
                         repository_id,
                         base_root,
                         base_commit,
-                        _json({"creationReason": creation_reason}),
+                        _json(baseline_metadata),
                         now_ms,
                         now_ms,
                     ),
@@ -217,6 +253,13 @@ class RoomWorkspaceLedgerStore:
                     "baseCommit": base_commit,
                     "repositoryId": repository_id,
                     "workspaceRoot": workspace_root,
+                    "baseWorkspaceSnapshotSha256": base_snapshot,
+                    "baseDirtyStatusSha256": dirty_status,
+                    "baseDirtyPaths": dirty_paths,
+                    "baseDirtyPathCount": dirty_path_count,
+                    "baseDirtyPathsTruncated": bool(
+                        base_dirty_paths_truncated
+                    ),
                 },
                 updates={},
                 now_ms=now_ms,
@@ -2113,6 +2156,9 @@ class RoomWorkspaceLedgerStore:
 
     def delivery_receipt(self, binding_id: str) -> dict[str, object] | None:
         return self._latest_event_receipt(binding_id, "delivered")
+
+    def reservation_receipt(self, binding_id: str) -> dict[str, object] | None:
+        return self._latest_event_receipt(binding_id, "reserved")
 
     def source_lease_receipt(self, binding_id: str) -> dict[str, object] | None:
         return self._latest_event_receipt(binding_id, "source_lease_revoked")

@@ -219,6 +219,224 @@ class RoomWorkspaceIdentityTests(unittest.TestCase):
         ):
             self.assertEqual(restored[field], before[field], field)
 
+    def test_dirty_base_allows_isolated_work_and_preserves_user_changes(
+        self,
+    ) -> None:
+        user_draft = self.root / "user-notes.local"
+        user_draft.write_text("keep my draft\n", encoding="utf-8")
+        base_snapshot = self.coordinator.snapshot_digest([self.root])
+
+        prepared = self.coordinator.prepare(
+            root_id="root:dirty-base",
+            task_id="task:dirty-base",
+            target_session_id=str(self.owner_a["id"]),
+            base_roots=[str(self.root)],
+            policy="isolated_writable",
+            room_id="room:dirty-base",
+            work_item_id="work-item:dirty-base",
+            dispatch_id="dispatch:dirty-base",
+            creation_reason="implement an independent Room work item",
+        )
+
+        self.assertTrue(prepared["workspaceBaseDirty"])
+        self.assertEqual(
+            prepared["workspaceBaseSnapshotSha256"],
+            base_snapshot,
+        )
+        self.assertEqual(
+            prepared["workspaceBaseDirtyPaths"],
+            ["user-notes.local"],
+        )
+        self.assertEqual(prepared["workspaceBaseDirtyPathCount"], 1)
+        reservation = self.coordinator.ledger.reservation_receipt(
+            str(prepared["workspaceBindingId"])
+        )
+        self.assertIsNotNone(reservation)
+        assert reservation is not None
+        self.assertEqual(
+            reservation["payload"]["baseWorkspaceSnapshotSha256"],
+            base_snapshot,
+        )
+        self.assertEqual(
+            reservation["payload"]["baseDirtyPaths"],
+            ["user-notes.local"],
+        )
+
+        worktree = Path(str(prepared["workspaceRoot"]))
+        (worktree / "ROOM.md").write_text(
+            "independent delivery\n",
+            encoding="utf-8",
+        )
+        task = {
+            "taskId": "task:dirty-base",
+            "state": "completed",
+            **prepared,
+        }
+        self.coordinator.record_delivery(
+            task,
+            artifacts=["ROOM.md"],
+            verification_refs=["test:dirty-base-independent"],
+            actor_ref="participant:worker",
+            now_ms=10,
+        )
+        integrated = self.coordinator.integrate(task, now_ms=11)
+
+        self.assertTrue(integrated["integrated"])
+        self.assertEqual(integrated["cleanupState"], "cleaned")
+        self.assertEqual(
+            user_draft.read_text(encoding="utf-8"),
+            "keep my draft\n",
+        )
+        self.assertEqual(
+            (self.root / "ROOM.md").read_text(encoding="utf-8"),
+            "independent delivery\n",
+        )
+
+    def test_dirty_target_overlap_retains_child_without_touching_user_change(
+        self,
+    ) -> None:
+        (self.root / "README.md").write_text(
+            "user draft\n",
+            encoding="utf-8",
+        )
+        prepared = self.coordinator.prepare(
+            root_id="root:dirty-overlap",
+            task_id="task:dirty-overlap",
+            target_session_id=str(self.owner_a["id"]),
+            base_roots=[str(self.root)],
+            policy="isolated_writable",
+            room_id="room:dirty-overlap",
+            work_item_id="work-item:dirty-overlap",
+            dispatch_id="dispatch:dirty-overlap",
+        )
+        worktree = Path(str(prepared["workspaceRoot"]))
+        (worktree / "README.md").write_text(
+            "room delivery\n",
+            encoding="utf-8",
+        )
+        task = {
+            "taskId": "task:dirty-overlap",
+            "state": "completed",
+            **prepared,
+        }
+        self.coordinator.record_delivery(
+            task,
+            artifacts=["README.md"],
+            verification_refs=["test:dirty-overlap"],
+            actor_ref="participant:worker",
+            now_ms=10,
+        )
+        integrated = self.coordinator.integrate(task, now_ms=11)
+
+        self.assertFalse(integrated["integrated"])
+        self.assertTrue(integrated["conflict"])
+        self.assertIn("overlaps existing target changes", integrated["reason"])
+        self.assertEqual(integrated["workspaceLifecycleState"], "conflict")
+        self.assertTrue(worktree.is_dir())
+        self.assertEqual(
+            (self.root / "README.md").read_text(encoding="utf-8"),
+            "user draft\n",
+        )
+        binding = self.coordinator.ledger.binding(
+            str(prepared["workspaceBindingId"])
+        )
+        self.assertTrue(binding["attentionRequired"])
+        self.assertEqual(binding["cleanupState"], "retained")
+
+    def test_two_isolated_writers_from_one_dirty_baseline_integrate_in_order(
+        self,
+    ) -> None:
+        (self.root / "user-notes.local").write_text(
+            "keep my draft\n",
+            encoding="utf-8",
+        )
+        prepared_a = self.coordinator.prepare(
+            root_id="root:parallel-dirty",
+            task_id="task:parallel-a",
+            target_session_id=str(self.owner_a["id"]),
+            base_roots=[str(self.root)],
+            policy="isolated_writable",
+            room_id="room:parallel-dirty",
+            work_item_id="work-item:parallel-a",
+            dispatch_id="dispatch:parallel-a",
+        )
+        prepared_b = self.coordinator.prepare(
+            root_id="root:parallel-dirty",
+            task_id="task:parallel-b",
+            target_session_id=str(self.owner_b["id"]),
+            base_roots=[str(self.root)],
+            policy="isolated_writable",
+            room_id="room:parallel-dirty",
+            work_item_id="work-item:parallel-b",
+            dispatch_id="dispatch:parallel-b",
+        )
+        self.assertEqual(
+            prepared_a["workspaceBaseCommit"],
+            prepared_b["workspaceBaseCommit"],
+        )
+        self.assertNotEqual(
+            prepared_a["workspaceRoot"],
+            prepared_b["workspaceRoot"],
+        )
+
+        worktree_a = Path(str(prepared_a["workspaceRoot"]))
+        worktree_b = Path(str(prepared_b["workspaceRoot"]))
+        (worktree_a / "A.md").write_text("A delivery\n", encoding="utf-8")
+        (worktree_b / "B.md").write_text("B delivery\n", encoding="utf-8")
+        task_a = {
+            "taskId": "task:parallel-a",
+            "state": "completed",
+            **prepared_a,
+        }
+        task_b = {
+            "taskId": "task:parallel-b",
+            "state": "completed",
+            **prepared_b,
+        }
+        self.coordinator.record_delivery(
+            task_a,
+            artifacts=["A.md"],
+            verification_refs=["test:parallel-a"],
+            actor_ref="participant:a",
+            now_ms=10,
+        )
+        self.coordinator.record_delivery(
+            task_b,
+            artifacts=["B.md"],
+            verification_refs=["test:parallel-b"],
+            actor_ref="participant:b",
+            now_ms=10,
+        )
+
+        integrated_a = self.coordinator.integrate(task_a, now_ms=11)
+        integrated_b = self.coordinator.integrate(task_b, now_ms=12)
+
+        self.assertTrue(integrated_a["integrated"])
+        self.assertTrue(integrated_b["integrated"])
+        self.assertFalse(worktree_a.exists())
+        self.assertFalse(worktree_b.exists())
+        self.assertEqual(
+            (self.root / "user-notes.local").read_text(encoding="utf-8"),
+            "keep my draft\n",
+        )
+        self.assertEqual(
+            (self.root / "A.md").read_text(encoding="utf-8"),
+            "A delivery\n",
+        )
+        self.assertEqual(
+            (self.root / "B.md").read_text(encoding="utf-8"),
+            "B delivery\n",
+        )
+        for prepared in (prepared_a, prepared_b):
+            event_kinds = [
+                event["eventKind"]
+                for event in self.coordinator.ledger.events(
+                    str(prepared["workspaceBindingId"])
+                )
+            ]
+            self.assertIn("integrated", event_kinds)
+            self.assertIn("cleaned", event_kinds)
+
     def test_isolated_handoff_rebinds_exact_root_and_integrates_claimed_root(self) -> None:
         prepared = self.coordinator.prepare(
             root_id="root:handoff",
