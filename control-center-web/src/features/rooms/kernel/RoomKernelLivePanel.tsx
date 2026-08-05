@@ -1,6 +1,7 @@
 import { CircleAlert, Workflow } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, EmptyState } from '@/components/primitives';
+import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
 import type { RoomEventEnvelopeV2 } from '@/contracts/generated/room-event-envelope.v2';
 import {
@@ -55,6 +56,7 @@ export type RoomTaskSubagentLineage = {
 
 export function RoomKernelLivePanel({
   participantLabels = {},
+  participantPersonas = {},
   participantSessionIds = [],
   participantRoles = {},
   roomId,
@@ -63,6 +65,7 @@ export function RoomKernelLivePanel({
   workItems = [],
 }: {
   participantLabels?: Record<string, string>;
+  participantPersonas?: Record<string, AgentPersonaV1>;
   participantSessionIds?: readonly string[];
   participantRoles?: Record<string, RoomCollaborationRole>;
   roomId: string;
@@ -352,6 +355,7 @@ export function RoomKernelLivePanel({
       commandDisabledReason={kernelCommandDisabledReason(controlGate)}
       panicEnabled={controlGate?.panicEnabled === true}
       participantLabels={participantLabels}
+      participantPersonas={participantPersonas}
       participantRoles={participantRoles}
       participantProgress={participantProgress}
       subagentsByTaskId={subagentsByTaskId}

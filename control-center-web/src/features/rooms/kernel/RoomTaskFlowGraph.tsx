@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useId, type CSSProperties, type ReactNode } from 'react';
 
+import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
 import type { RoomDispatchEnvelopeV2 } from '@/contracts/generated/room-dispatch-envelope.v2';
 import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
@@ -39,6 +40,7 @@ import {
   ToolArtifactOutput,
 } from '@/features/agent/timeline/ToolArtifactOutput';
 import { canonicalToolId } from '@/features/agent/tool-presentation';
+import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
 import { roomParticipantPublicProgressSummary } from '../room-copy';
 import type { RoomWorkItem } from '../room-types';
 import {
@@ -141,6 +143,7 @@ export function RoomTaskFlowGraph({
   finalPostCount,
   goal,
   participantLabels,
+  participantPersonas = {},
   participantProgress,
   posts,
   root,
@@ -151,6 +154,7 @@ export function RoomTaskFlowGraph({
   finalPostCount: number;
   goal: string;
   participantLabels: Record<string, string>;
+  participantPersonas?: Record<string, AgentPersonaV1>;
   participantProgress: RoomParticipantPublicProgressProjection[];
   posts: RoomPostV2[];
   root: RootProjection;
@@ -252,6 +256,7 @@ export function RoomTaskFlowGraph({
         key={node.task.taskId}
         node={node}
         participantLabels={participantLabels}
+        participantPersonas={participantPersonas}
         style={{ gridColumn: node.column, gridRow: node.row }}
       />)}
       <CompactFlowNode
@@ -277,7 +282,7 @@ export function RoomTaskFlowGraph({
         : '尚未拆分任务。'}</li>
       {nodes.map((node) => <li key={`summary:${node.task.taskId}`}>
         {roomPublicActivityText(node.result || node.task.objective) || '协作任务'}；负责人 {participantLabel(node.task.currentOwnerParticipantId, participantLabels)}；
-        {taskStateLabel(node.task.state)}。
+        {taskNodeStateLabel(node)}。
       </li>)}
       <li>{rootFinalLabel(root)}，{rootStateLabel(root)}。</li>
     </ol>
@@ -288,6 +293,7 @@ export function RoomTaskWorkList({
   activities = [],
   dispatches,
   participantLabels,
+  participantPersonas = {},
   participantProgress,
   posts,
   root,
@@ -300,6 +306,7 @@ export function RoomTaskWorkList({
   activities?: RoomActivityProjection[];
   dispatches: RoomDispatchEnvelopeV2[];
   participantLabels: Record<string, string>;
+  participantPersonas?: Record<string, AgentPersonaV1>;
   participantProgress: RoomParticipantPublicProgressProjection[];
   posts: RoomPostV2[];
   root: RootProjection;
@@ -327,6 +334,7 @@ export function RoomTaskWorkList({
     <div>{nodes.map((node) => {
       const task = node.task;
       const owner = participantLabel(task.currentOwnerParticipantId, participantLabels);
+      const ownerPersona = participantPersonas[task.currentOwnerParticipantId];
       const state = taskFlowState(task.state);
       const verification = taskVerification(task, node.dispatches);
       const taskActivities = taskPublicActivities(task, node.dispatches, activities);
@@ -352,6 +360,7 @@ export function RoomTaskWorkList({
       });
       return <details
         className="room-task-work-card"
+        data-has-persona={ownerPersona ? 'true' : undefined}
         data-state={summaryState}
         data-task-state={state}
         data-workspace-attention={workspaceAttention || undefined}
@@ -361,9 +370,21 @@ export function RoomTaskWorkList({
           <span className="room-task-work-card__state" aria-hidden="true">
             <FlowStateIcon state={summaryState} />
           </span>
+          {ownerPersona ? <PersonaAvatar
+            fallbackName={owner}
+            persona={ownerPersona}
+            presence={summaryState === 'active'
+              ? 'thinking'
+              : summaryState === 'complete'
+                ? 'done'
+                : summaryState === 'attention'
+                  ? 'warning'
+                  : 'listening'}
+            size="small"
+          /> : null}
           <span className="room-task-work-card__summary">
             <strong>{summary}</strong>
-            <small>{owner} · {taskStateLabel(task.state)}{latestActivity ? <> · <TaskActivityTime activity={latestActivity} /></> : null}</small>
+            <small>{owner} · {taskNodeStateLabel(node)}{latestActivity ? <> · <TaskActivityTime activity={latestActivity} /></> : null}</small>
           </span>
           <span
             className="room-task-work-card__completion"
@@ -892,16 +913,19 @@ function stringValue(value: unknown): string {
 function TaskNode({
   node,
   participantLabels,
+  participantPersonas,
   style,
 }: {
   node: TaskGraphNode;
   participantLabels: Record<string, string>;
+  participantPersonas: Record<string, AgentPersonaV1>;
   style: CSSProperties;
 }) {
   const { task } = node;
   const taskLabel = roomPublicActivityText(node.result || task.objective) || '协作任务';
   const expectedOutput = roomPublicActivityText(task.expectedOutput) || '按约定完成交付';
   const owner = participantLabel(task.currentOwnerParticipantId, participantLabels);
+  const ownerPersona = participantPersonas[task.currentOwnerParticipantId];
   const state = taskFlowState(task.state);
   const dependencyCount = node.dependencyIds.length;
   const dependencyLabel = dependencyCount
@@ -909,7 +933,7 @@ function TaskNode({
     : '无前置任务，可并行';
   const action = taskNodeAction(node, expectedOutput);
   return <article
-    aria-label={`${taskLabel}，负责人 ${owner}，${taskStateLabel(task.state)}`}
+    aria-label={`${taskLabel}，负责人 ${owner}，${taskNodeStateLabel(node)}`}
     className="room-task-flow__task-node"
     data-state={state}
     data-task-kind={task.taskKind}
@@ -922,12 +946,23 @@ function TaskNode({
       <strong>{taskLabel}</strong>
     </header>
     <div className="room-task-flow__task-owner">
-      <span aria-hidden="true">{Array.from(owner.trim())[0] || '伙'}</span>
+      {ownerPersona ? <PersonaAvatar
+        fallbackName={owner}
+        persona={ownerPersona}
+        presence={state === 'active'
+          ? 'thinking'
+          : state === 'complete'
+            ? 'done'
+            : state === 'attention'
+              ? 'warning'
+              : 'listening'}
+        size="small"
+      /> : <span aria-hidden="true">{Array.from(owner.trim())[0] || '伙'}</span>}
       <span><small>负责人</small><strong>{owner}</strong></span>
     </div>
     <div className="room-task-flow__task-state">
       <FlowStateIcon state={state} />
-      <span><small>当前状态</small><strong>{taskStateLabel(task.state)}</strong></span>
+      <span><small>当前状态</small><strong>{taskNodeStateLabel(node)}</strong></span>
     </div>
     <div className="room-task-flow__task-action">
       <ArrowRight aria-hidden="true" size={14} />
@@ -943,7 +978,7 @@ function taskNodeAction(
   const progress = node.progress
     ? roomPublicActivityText(roomParticipantPublicProgressSummary(node.progress))
     : '';
-  const concreteProgress = /(?:有新进展|进度已经更新|公开进度已经更新)/u.test(progress)
+  const concreteProgress = /(?:有新进展|进度已经更新|公开进度已经更新|Provider|公开思考|思考摘要)/iu.test(progress)
     ? ''
     : progress;
   if (node.task.state === 'active' || node.task.state === 'review') {
@@ -1468,6 +1503,14 @@ function taskStateLabel(state: RoomTaskV3['state']): string {
     failed: '未完成',
     cancelled: '已停止',
   } as const)[state];
+}
+
+function taskNodeStateLabel(node: TaskGraphNode): string {
+  if (node.task.state === 'pending') return '等待开始';
+  if (node.task.state === 'waiting') {
+    return node.dependencyIds.length ? '等待前置工作' : '等待继续';
+  }
+  return taskStateLabel(node.task.state);
 }
 
 function dispatchIntentLabel(intent: RoomDispatchEnvelopeV2['intentKind']): string {

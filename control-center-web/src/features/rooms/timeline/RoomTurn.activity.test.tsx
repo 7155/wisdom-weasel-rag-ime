@@ -878,7 +878,7 @@ describe('RoomTurn public activity detail', () => {
     expect(activityFeed).toHaveTextContent('最终验证已经完成');
     expect(activityFeed).not.toHaveAttribute('aria-live');
     expect(
-      screen.getByText('最终验证已经完成').closest('.room-agent-activity'),
+      within(activityFeed).getByText('最终验证已经完成').closest('.room-agent-activity'),
     ).toHaveAttribute('data-arriving', 'true');
   });
 

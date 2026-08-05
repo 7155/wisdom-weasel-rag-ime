@@ -203,10 +203,10 @@ class RoomNativeSkillTests(unittest.TestCase):
             self.assertIn(exact_field, skill)
         self.assertRegex(
             skill,
-            r"questionOptions=\[\.\.\.\]` containing 2-5\s+"
-            r"unique, genuinely different options",
+            r"questionOptions=\[\.\.\.\]` with 2-5 distinct\s+options",
         )
         self.assertIn("at most one `recommended`", skill)
+        self.assertIn("stable `value`", skill)
         self.assertIn("one-paragraph `description`", skill)
         self.assertIn("instead of repeating the label", skill)
         self.assertIn("natural continuation of the user's", skill)
@@ -428,10 +428,15 @@ class RoomNativeSkillTests(unittest.TestCase):
             ],
         )
         self.assertIn("Project scope selects the shared recovery note", execution)
-        self.assertIn("adding file import with", execution.casefold())
+        self.assertIn("batch import via", execution.casefold())
+        self.assertIn(
+            "ui, cli, api, or library entry",
+            " ".join(execution.casefold().split()),
+        )
+        self.assertIn("progress/errors", execution.casefold())
         self.assertIn("todo.checkpoint", execution)
         self.assertIn("file, diff, artifact, or test references", execution)
-        self.assertIn("located function-boundary fix", execution)
+        self.assertIn("located boundary fix", execution)
         self.assertIn("return the proposed document delta\nto the caller", execution)
 
         self.assertIn("eligible under the active\n   lifecycle schema", handoff)

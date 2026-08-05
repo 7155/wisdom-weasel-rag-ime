@@ -284,6 +284,14 @@ describe('Rooms experience', () => {
 
     const optionA = questionCard.getByRole('radio', { name: /方案 A/ });
     await waitFor(() => expect(optionA).toHaveFocus());
+    fireEvent.click(optionA);
+    expect(optionA).toBeChecked();
+    const optionForm = questionRegion.querySelector('form');
+    if (!optionForm) throw new Error('expected the option question form');
+    fireEvent.submit(optionForm);
+    expect(transport.requests.filter(({ request }) => (
+      request.pathId === 'agent.room.message'
+    ))).toHaveLength(0);
     const optionB = questionCard.getByRole('radio', { name: '方案 B' });
     fireEvent.click(optionB);
     expect(questionCard.getByRole('radio', { name: '方案 B' })).toBeChecked();

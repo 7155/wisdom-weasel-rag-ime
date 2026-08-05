@@ -641,6 +641,15 @@ export function RoomsFeature() {
     () => Object.fromEntries((room?.participants ?? []).map((participant) => [participant.id, participant.displayName])),
     [room?.participants],
   );
+  const participantPersonas = useMemo(
+    () => Object.fromEntries((room?.participants ?? []).flatMap((participant) => {
+      const persona = personas.find((item) => (
+        item.roleId === participant.roleId && item.version === participant.roleVersion
+      )) ?? personas.find((item) => item.roleId === participant.roleId);
+      return persona ? [[participant.id, persona] as const] : [];
+    })),
+    [personas, room?.participants],
+  );
   const participantSessionIds = useMemo(
     () => [...new Set((room?.participants ?? [])
       .map((participant) => participant.sessionId.trim())
@@ -1468,6 +1477,7 @@ export function RoomsFeature() {
           {room ? (
             <RoomKernelLivePanel
               participantLabels={participantLabels}
+              participantPersonas={participantPersonas}
               participantSessionIds={participantSessionIds}
               participantRoles={participantRoles}
               roomId={room.id}

@@ -44,11 +44,15 @@ export function CodeContentBlock({
   language,
   fileName,
   streamingTail = false,
+  lineNumbers = false,
+  startLine = 1,
 }: {
   code: string;
   language: string;
   fileName?: string;
   streamingTail?: boolean;
+  lineNumbers?: boolean;
+  startLine?: number;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -80,10 +84,21 @@ export function CodeContentBlock({
       >
         <code
           className="agent-code-block__content"
+          data-line-numbers={lineNumbers || undefined}
           data-stream-tail={streamingTail || undefined}
         >
-          {code}
-          <StreamingCursor active={streamingTail} />
+          {lineNumbers
+            ? code.split('\n').map((line, index, lines) => (
+                <span
+                  className="agent-code-block__line"
+                  data-line-number={Math.max(1, startLine) + index}
+                  key={`${Math.max(1, startLine) + index}:${line}`}
+                >
+                  <span>{line || '\u00a0'}</span>
+                  <StreamingCursor active={streamingTail && index === lines.length - 1} />
+                </span>
+              ))
+            : <>{code}<StreamingCursor active={streamingTail} /></>}
         </code>
       </pre>
     </figure>

@@ -75,11 +75,12 @@ no automatic deletion timer.
 - Filesystem authority comes from the receipted workspace, not identity.
   Read-only work may share a baseline; concurrent writes need separate
   Root-baseline workspaces. Do not claim automatic worktree cloning.
-- Calibrate by deliverables, not the word "complex". Adding file import with
-  file picking, parsing/storage, live progress/errors, and a final result
-  usually splits into UI, data, and cross-boundary acceptance; invite a peer
-  unless source proves one conflict-prone owner. A located function-boundary fix plus
-  one focused test is usually single-owner. Never branch on example wording.
+- Calibrate by deliverables, not adjectives. Example: batch import via a UI,
+  CLI, API, or library entry, with validation/storage,
+  progress/errors, and a verifiable result. It splits into entry contract,
+  processing, recovery, and cross-boundary acceptance; invite a peer unless
+  source proves one owner. A located boundary fix plus a focused test is
+  single-owner. Never branch on example wording.
 - Use `room_collaborate` after definition for non-overlapping implementation,
   never intake or review. Return evidence with `room_commit`.
 - Keep one concrete Session Todo. After material progress, call

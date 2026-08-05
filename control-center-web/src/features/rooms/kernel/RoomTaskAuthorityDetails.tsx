@@ -57,24 +57,20 @@ export function RoomTaskTodoDetails({
   owner: string;
   todo?: Todo;
 }) {
+  const taskCount = todo?.phases.reduce((count, phase) => count + phase.tasks.length, 0) ?? 0;
+  if (!todo || taskCount === 0) return null;
   const settled = todo ? todo.counts.completed + todo.counts.abandoned : 0;
   return <section
     aria-label={`${owner} 的 Todo`}
     aria-live={live ? 'polite' : undefined}
     className="room-task-authority room-task-todo"
-    data-state={todo ? 'reported' : 'missing'}
+    data-state="reported"
   >
     <header>
       <span><ListChecks aria-hidden="true" size={15} /><strong>{owner} 的 Todo</strong></span>
-      <small>{todo
-        ? todo.counts.total
-          ? `${settled} / ${todo.counts.total} 已收束`
-          : '当前没有 Todo'
-        : 'Todo 未上报'}</small>
+      <small>{`${settled} / ${todo.counts.total} 已收束`}</small>
     </header>
-    {!todo ? (
-      <p className="room-task-authority__missing">这位伙伴尚未上报权威 Todo。</p>
-    ) : todo.phases.length ? (
+    {todo.phases.length ? (
       <div className="room-task-todo__phases">
         {todo.phases.map((phase) => <section aria-label={phase.name} key={phase.name}>
           <header>
@@ -112,13 +108,11 @@ export function RoomTaskTodoDetails({
           </li>)}</ul>
         </section>)}
       </div>
-    ) : (
-      <p className="room-task-authority__empty">这位伙伴已确认当前没有 Todo。</p>
-    )}
-    {todo ? <footer>
+    ) : null}
+    <footer>
       <small>只读同步自这位伙伴的权威 Todo</small>
       <RoomTaskUpdatedAt updatedAtMs={todo.updatedAtMs > 0 ? todo.updatedAtMs : undefined} />
-    </footer> : null}
+    </footer>
   </section>;
 }
 

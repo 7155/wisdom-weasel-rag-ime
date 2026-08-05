@@ -69,8 +69,8 @@ weakens the requirements.
   the target surface, required interactions, and acceptance boundary into one prompt.
 - Use `room_commit` with `decision="wait"`,
   `waitingFor="user"`, `questionKind="bounded"`,
-  `question="<one prompt>"`, and `questionOptions=[...]` containing 2-5
-  unique, genuinely different options with at most one `recommended`. Each needs a short `label` and one-paragraph `description` of scope, effort, or tradeoff instead of repeating the label. The interface supplies `Other`; never write an Other option or replace choices with an open text box. This is not a second
+  `question="<one prompt>"`, and `questionOptions=[...]` with 2-5 distinct
+  options and at most one `recommended`. Each needs a stable `value`, short `label`, and one-paragraph `description` of scope, effort, or tradeoff instead of repeating the label. The interface supplies `Other`; never write an Other option or replace choices with an open text box. This is not a second
   question Tool.
 - Keep `publicSummary` and `question` a natural continuation of the user's message: acknowledge the goal and briefly explain why this choice matters. Never announce a work-card read, declare the request insufficient, or recite goal/deliverable/acceptance categories.
 - The next ordinary Room message answers the wait: append its source span to the

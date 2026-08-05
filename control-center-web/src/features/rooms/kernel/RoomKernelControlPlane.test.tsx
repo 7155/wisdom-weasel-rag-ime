@@ -152,7 +152,7 @@ describe('RoomKernelControlPlane', () => {
     expect(integration).toHaveAttribute('title', expect.stringMatching(/等待 1 项真实前置任务/));
     const review = within(graph).getByRole('article', { name: /独立复核整合结果/ });
     expect(review).toHaveTextContent('审查员');
-    expect(review).toHaveTextContent('等待前置任务');
+    expect(review).toHaveTextContent('等待前置工作');
     expect(graph).not.toHaveTextContent(/运行尝试|dispatch-a|dispatch:outside-snapshot|receipt:/);
     const workList = screen.getAllByRole('region', { name: '每项工作的详细进展' })[0]!;
     const completedCard = [...workList.querySelectorAll('.room-task-work-card')].find((card) => (

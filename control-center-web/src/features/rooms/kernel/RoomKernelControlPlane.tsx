@@ -16,6 +16,7 @@ import {
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { Button } from '@/components/primitives';
+import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { RoomKernelProjection, RootProjection } from '@/contracts/room-kernel-reducer';
 import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
 import type { RoomPostV2 } from '@/contracts/generated/room-post.v2';
@@ -24,6 +25,7 @@ import type {
   RoomActivityProjection,
   RoomParticipantPublicProgressProjection,
 } from '@/contracts/room-reducer';
+import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
 import { RoomRequirementsControlPlane } from '../requirements/RoomRequirementsControlPlane';
 import type { RoomRequirementsReadProjection } from '../requirements/room-requirements-read-model';
 import { ROOM_PUBLIC_PROGRESS_KIND_LABELS as PUBLIC_PROGRESS_KIND_LABELS, roomCollaborationRoleLabel, roomParticipantPublicProgressSummary } from '../room-copy';
@@ -72,6 +74,7 @@ export function RoomKernelControlPlane({
   commandDisabledReason,
   panicEnabled = false,
   participantLabels = {},
+  participantPersonas = {},
   participantRoles = {},
   participantProgress = [],
   projection,
@@ -88,6 +91,7 @@ export function RoomKernelControlPlane({
   commandDisabledReason?: string;
   panicEnabled?: boolean;
   participantLabels?: Record<string, string>;
+  participantPersonas?: Record<string, AgentPersonaV1>;
   participantRoles?: Record<string, RoomCollaborationRole>;
   participantProgress?: RoomParticipantPublicProgressProjection[];
   subagentsByTaskId?: Record<string, RoomTaskSubagentRun[]>;
@@ -106,7 +110,7 @@ export function RoomKernelControlPlane({
     ['blocked', 'failed', 'cancelled'].includes(task.state)
   )).length;
   const attentionRoots = roots.filter((root) => (
-    ['waiting', 'blocked', 'cancelling', 'cancelled_with_unknowns', 'failed'].includes(
+    ['blocked', 'cancelling', 'cancelled_with_unknowns', 'failed'].includes(
       root.state,
     )
   )).length;
@@ -190,6 +194,7 @@ export function RoomKernelControlPlane({
         commandTransport={commandTransport}
         commandDisabledReason={commandDisabledReason}
         participantLabels={participantLabels}
+        participantPersonas={participantPersonas}
         participantRoles={participantRoles}
         requirements={requirementsByRootId[root.rootId]}
         participantProgress={participantProgress}
@@ -211,6 +216,7 @@ function RootControlSection({
   commandDisabledReason,
   projection,
   participantLabels,
+  participantPersonas,
   participantRoles,
   participantProgress,
   root,
@@ -227,6 +233,7 @@ function RootControlSection({
   commandTransport?: RoomKernelCommandTransport;
   commandDisabledReason?: string;
   participantLabels: Record<string, string>;
+  participantPersonas: Record<string, AgentPersonaV1>;
   participantRoles: Record<string, RoomCollaborationRole>;
   participantProgress: RoomParticipantPublicProgressProjection[];
   requirements?: RoomRequirementsReadProjection;
@@ -345,6 +352,7 @@ function RootControlSection({
       finalPostCount={terminal ? visiblePosts.length : 0}
       goal={taskTitle}
       participantLabels={participantLabels}
+      participantPersonas={participantPersonas}
       participantProgress={participantProgress}
       posts={posts}
       root={root}
@@ -356,6 +364,7 @@ function RootControlSection({
       activities={activities}
       dispatches={dispatches}
       participantLabels={participantLabels}
+      participantPersonas={participantPersonas}
       participantProgress={participantProgress}
       posts={posts}
       root={root}
@@ -376,6 +385,7 @@ function RootControlSection({
       <RoomParallelWorkPhase
         dispatches={dispatches}
         participantLabels={participantLabels}
+        participantPersonas={participantPersonas}
         participantRoles={participantRoles}
         participantProgress={participantProgress}
         root={root}
@@ -582,6 +592,7 @@ function collaborationStage(
 function RoomParallelWorkPhase({
   dispatches,
   participantLabels,
+  participantPersonas,
   participantRoles,
   participantProgress,
   root,
@@ -589,6 +600,7 @@ function RoomParallelWorkPhase({
 }: {
   dispatches: RoomKernelProjection['dispatchesById'][string][];
   participantLabels: Record<string, string>;
+  participantPersonas: Record<string, AgentPersonaV1>;
   participantRoles: Record<string, RoomCollaborationRole>;
   participantProgress: RoomParticipantPublicProgressProjection[];
   root: RootProjection;
@@ -656,7 +668,20 @@ function RoomParallelWorkPhase({
           key={participantId}
         >
           <header>
-            <UserRound size={16} />
+            {participantPersonas[participantId]
+              ? <PersonaAvatar
+                  fallbackName={participantLabel(participantId, participantLabels)}
+                  persona={participantPersonas[participantId]}
+                  presence={state === 'running' || state === 'review'
+                    ? 'thinking'
+                    : state === 'settled'
+                      ? 'done'
+                      : state === 'blocked'
+                        ? 'warning'
+                        : 'listening'}
+                  size="small"
+                />
+              : <UserRound size={16} />}
             <span>
               <strong>{participantLabel(participantId, participantLabels)}</strong>
               <small>{roleSummary}</small>

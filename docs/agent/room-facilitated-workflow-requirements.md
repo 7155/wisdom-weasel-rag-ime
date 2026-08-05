@@ -306,6 +306,11 @@ because a client timer pretends work happened.
 - Each active companion has one readable lane with avatar, current semantic
   state, current action, latest update time, elapsed time, completion summary,
   and a continuous chronological activity stream beneath it.
+- Every bound companion resolves to her configured portrait in the conversation
+  lane, Tasks graph, WorkItem detail, and partner progress view. An initial,
+  generic route glyph, missing image, or another companion's portrait is only a
+  bounded loading fallback and must be replaced as soon as the authoritative
+  persona projection is available.
 - The role header answers four questions without expansion: what the companion
   is doing now, why that action matters, what she will do next, and how much of
   her Todo is complete. `执行中`, `当前任务推进有新进展`, a Tool family such as
@@ -322,6 +327,15 @@ because a client timer pretends work happened.
   `+N/-N`; repeated plumbing, long arguments, and raw output stay collapsed.
   Each row may expand in place to bounded input, output, diff, or safe failure
   details without opening another column or nested card stack.
+- Disclosure has two independent levels. Closing a companion lane must retain a
+  compact live tail with the latest three meaningful actions, any currently
+  active Tool, current/next work, latest update, and non-empty Todo progress; it
+  must not collapse a multi-page run into one opaque summary card or hide every
+  sign of work. Older repeated actions may become one truthful count. Opening
+  the lane reveals the complete chronological stream. Each Tool row then owns
+  its own disclosure, so opening one result never expands the whole lane or
+  every Tool. The active Tool may auto-open while streaming and settle back to
+  its compact semantic row after completion.
 - Repository work uses first-class semantic rows instead of the generic label
   `工具操作`. Search and test are semantic `bash` results, while diff is the
   semantic result of `edit` or `write`; none is a fifth basic coding Tool. A
@@ -336,6 +350,14 @@ because a client timer pretends work happened.
   `状态：已完成`, `已有变更`, `结果已回传`, or a schema/state revision is an
   acceptance failure. Failed attempts and recovery remain below that result as
   bounded diagnostic detail.
+- Search detail lists bounded matched files, line numbers, and useful snippets;
+  a zero-result search names the searched scope and query without an empty dark
+  output block. Read detail renders the requested range with line numbers.
+  Command detail renders the command, working directory, ordered stdout/stderr,
+  duration, exit code, and truncation. Edit and write detail render the actual
+  per-file Diff or created-file preview and `+N/-N`. Internal evidence handles,
+  protocol fields, and a second `状态：已完成 / 结果摘要` box are audit-only and
+  never substitute for these user-meaningful results.
 - A long-running edit has its own truthful active treatment: the file and
   current edit stage remain visible, real progress events update the row, and a
   restrained edit indicator continues only while that Tool call is active.
@@ -364,6 +386,10 @@ because a client timer pretends work happened.
   and names a blocker when present. Updates refresh that bottom region in place
   with subtle feedback while a separate chronological state-change event remains
   in the stream. `Todo：2/4 已完成…` without the four item titles is insufficient.
+- A missing Todo or an authoritative Todo with zero tasks renders no Todo block,
+  no heading, and no “当前没有 Todo” confirmation. Absence is not user-facing
+  progress. As soon as the first real item exists, the same bottom region
+  appears and updates in place.
 - Expanding Todo reveals each item's checkpoint, relevant file/artifact or test,
   and latest meaningful update. It must not expand to `结果明细 / 状态：已完成`
   with no task-specific content.
@@ -488,15 +514,23 @@ because a client timer pretends work happened.
   active edge or node shows restrained ongoing state, handoff visibly changes
   ownership/state, and terminal nodes settle. Reduced-motion disables the
   decorative part without hiding state.
+- Ordinary `waiting`, `waiting for a peer`, and `waiting for the next step` use
+  neutral or informational styling. Ochre/red warning treatments are reserved
+  for a concrete delay that needs attention, a confirmed blocker, or failure;
+  a normal wait must not look like an error. Root, lane, WorkItem, and graph
+  labels derive from the same authoritative state so a running or peer-waiting
+  Root cannot be presented as `已阻塞` merely because an earlier Tool attempt
+  failed and recovered.
 
 ### Genuine multi-companion acceptance
 
 - An invited participant, an idle participant card, or multiple Sessions polled
   by the frontend does not count as collaboration.
 - Complexity is calibrated by concrete responsibility seams, not by adjectives
-  or file count. `给现有应用新增文件导入：用户选择文件，后台解析并保存，界面持续
-  显示进度、错误和最终结果` is the canonical positive example: UI
-  interaction, parsing/persistence, and cross-boundary acceptance are normally
+  or file count. `为已有系统增加批量数据导入：从产品现有的界面、CLI、API 或库接口
+  接收数据，完成校验与保存，持续报告进度和逐项错误，最后产出可核对结果` is the
+  canonical positive example: entry contracts, processing/persistence,
+  progress and failure recovery, and cross-boundary acceptance are normally
   separable, while the Facilitator retains integration and the end-to-end run.
   Unless source inspection proves those seams conflict on one owner, at least
   one peer must receive real work. `修复一个已经定位的函数边界条件并补一个聚焦测试` is
@@ -606,6 +640,60 @@ or acceptance evidence above.
 | tracked authority portability | implemented by `docs/agent/room-facilitated-workflow-requirements.md` | not applicable |
 | coherent App/Web/Python/managed-Pi provenance | clean commit `bffbd5a2` passed generated-contract reproduction, TypeScript, the complete Web suite inside the official production build, native Web dist validation, signed App build, and static footprint; its App marker is clean and binds native production transport to that exact commit | open; the sandbox refused replacement of `/Users/undo/Applications/RagImeControl.app`, whose installed marker remains `ae71bc07` |
 | real Room completing a concrete TUI task | not a source claim | the 2026-08-05 run created `rag_ime/tui.py` and `tests/test_tui.py` but remained a single-Facilitator failed run; its focused test currently has 1 error in 5 tests, so the artifacts are preserved as an uncommitted recovery input rather than reported as delivery |
+
+## 2026-08-05 Markdown-link-checker Room findings
+
+Room `通用多人协作验收 20260805` used the real local production Web transport
+and the generic request `我想给这个项目加一个真正能用的 Markdown 文档链接检查命令。`
+It is an acceptance probe for decomposition, not a product-specific branch.
+
+Verified behavior:
+
+- Four decision-changing questions appeared one at a time with described
+  options, explicit `确认并发送`, chronological user answers, a natural summary,
+  and one `开始行动` message.
+- The opening Facilitator attempted a real peer implementation assignment and,
+  after isolated workspace preparation failed, recovered without asking the
+  user and assigned a separate read-only source investigation.
+- Provider/model and reported token/cache evidence were visible on the
+  completed alignment response.
+
+The run was deliberately stopped and is not accepted. Its retained evidence
+exposes these current failures:
+
+- `isolated_writable` rejects any dirty base worktree, including unrelated
+  untracked recovery files. The fallback produced only one read-only peer while
+  implementation remained serial. A Room parallelism acceptance task therefore
+  did not create two overlapping, independently owned implementation WorkItems.
+  The safe recovery must pin clean `HEAD`, retain a hash/snapshot of unrelated
+  base dirt in the ledger, isolate non-overlapping writers from that commit, and
+  integrate only their receipted patches without overwriting the retained dirt.
+- A missing or zero-item Todo rendered `澄·远 的 Todo / 当前没有 Todo`; this is
+  non-information and must render nothing until a real item exists.
+- A normal waiting lane used ochre warning styling and looked failed. Warning
+  styling is reserved for attention; ordinary peer wait is neutral/info.
+- The task/header projection could say `已阻塞` while the authoritative Root was
+  waiting and a peer was still active. Recoverable Tool/workspace attempts must
+  not become the Root's user-visible terminal state, and every surface must use
+  the same current projection.
+- Task graph owners used initials or generic route glyphs instead of the bound
+  companion portraits. The graph also showed vague action text and only one
+  effective worker, so it did not communicate real parallel ownership.
+- Closing a companion lane hid the entire multi-page Tool timeline. The closed
+  lane must retain a compact recent-action tail; opening the lane reveals the
+  full stream, and each Tool keeps its own independent disclosure.
+- Compact Tool rows repeated useful counts but expanded search/read results were
+  dominated by generic parameter and result cards, internal evidence handles,
+  and duplicated completion state. Search lacked bounded matched
+  file/line/snippet rows; read lacked a useful code window; edit/write must show
+  their true Diff; bash must show ordered output and exit semantics. The four
+  canonical renderers remain the only implementation.
+
+The stopped Root and child work remain in the permanent Room/workspace ledger;
+no failed or cancelled physical workspace may be silently deleted. A corrected
+same-request rerun must prove two real parallel WorkItems, distinct non-empty
+Todo/checkpoints, attributed results/diffs, Facilitator integration, independent
+review when required, and one final user-facing delivery.
 
 ## 2026-08-04 real HTTP foreground findings
 
@@ -754,13 +842,14 @@ resume from a concrete item and show what changed without creating a parallel
 Todo owner or reducing progress to `2/4` counts.
 
 The collaboration calibration now uses a cross-project example rather than the
-TUI acceptance phrase. Adding file import to an existing application normally
-contains independently deliverable UI selection, parsing/persistence, and
-cross-boundary progress/error/result acceptance, so it should receive real peer
-work unless source inspection proves one conflict-prone owner. A located
-function-boundary fix plus one focused test is the contrasting single-owner
-case. Both the prompt and implementation Skill explicitly forbid branching on
-the example wording; the example teaches responsibility seams only.
+TUI acceptance phrase. Adding batch data import through an existing UI, CLI,
+API, or library entry point normally contains independently deliverable entry
+contracts, processing/persistence, progress and failure recovery, and
+cross-boundary acceptance, so it should receive real peer work unless source
+inspection proves one conflict-prone owner. A located function-boundary fix
+plus one focused test is the contrasting single-owner case. Both the prompt and
+implementation Skill explicitly forbid branching on the example wording; the
+example teaches responsibility seams only.
 
 Current verification of the combined working tree:
 

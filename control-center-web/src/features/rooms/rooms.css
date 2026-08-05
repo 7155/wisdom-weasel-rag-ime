@@ -200,11 +200,11 @@
   animation: room-lane-flow 1.8s ease-in-out infinite;
 }
 .room-agent-lane[data-state='running'] { --room-lane-tone: var(--color-accent); background: color-mix(in srgb, var(--color-accent-subtle) 18%, var(--color-paper)); }
-.room-agent-lane[data-state='waiting'] { --room-lane-tone: var(--color-warning); }
+.room-agent-lane[data-state='waiting'] { --room-lane-tone: var(--color-info); }
 .room-agent-lane[data-state='completed'] { --room-lane-tone: var(--color-success); }
 .room-agent-lane[data-state='failed'] { --room-lane-tone: var(--color-danger); }
 .room-agent-lane[data-state='aborted'] { --room-lane-tone: var(--color-border-strong); }
-.room-agent-lane[data-outcome='blocked'] { --room-lane-tone: var(--color-warning); }
+.room-agent-lane[data-outcome='blocked'] { --room-lane-tone: var(--color-danger); }
 .room-agent-lane > summary {
   display: grid;
   min-width: 0;
@@ -239,6 +239,47 @@
   transition: transform 180ms ease-out, color 160ms ease-out, background-color 160ms ease-out;
 }
 .room-agent-lane[open] > summary .room-agent-lane__disclosure { color: var(--room-lane-tone); transform: rotate(90deg); }
+.room-agent-lane__collapsed-preview {
+  min-width: 0;
+  grid-column: 2 / -1;
+  border-top: 1px solid var(--color-border-soft);
+  padding-top: var(--space-2);
+}
+.room-agent-lane[data-continuation='true'] .room-agent-lane__collapsed-preview { grid-column: 1 / -1; }
+.room-agent-lane__collapsed-preview ol {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.room-agent-lane__collapsed-preview li {
+  display: grid;
+  min-width: 0;
+  min-height: var(--space-5);
+  grid-template-columns: 18px minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-secondary);
+}
+.room-agent-lane__collapsed-preview li > span { display: grid; place-items: center; color: var(--color-text-tertiary); }
+.room-agent-lane__collapsed-preview li[data-state='running'] > span { color: var(--color-accent); }
+.room-agent-lane__collapsed-preview li[data-state='failed'] > span { color: var(--color-danger); }
+.room-agent-lane__collapsed-preview li[data-state='waiting'] > span { color: var(--color-info); }
+.room-agent-lane__collapsed-preview strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-label);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--text-label-lh);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.room-agent-lane__collapsed-preview time {
+  color: var(--color-text-tertiary);
+  font: var(--font-weight-regular) var(--text-label)/var(--text-label-lh) var(--font-mono);
+}
 .room-agent-lane__route { display: grid; width: 44px; height: 44px; place-items: center; border: 1px solid var(--color-border); border-radius: 50%; color: var(--color-accent); }
 .room-agent-lane__work { display: grid; min-width: 0; gap: 3px; }
 .room-agent-lane__identity { display: flex; min-width: 0; align-items: baseline; gap: 7px; }
@@ -254,10 +295,10 @@
 .room-agent-lane__live-indicator[data-active='true'] > i:nth-child(3) { animation-delay: 240ms; }
 .room-agent-lane[data-state='running'] .room-agent-lane__identity small { color: var(--color-accent); }
 .room-agent-lane[data-state='failed'] .room-agent-lane__identity small { color: var(--color-danger); }
-.room-agent-lane[data-state='waiting'] .room-agent-lane__identity small { color: var(--color-warning); }
+.room-agent-lane[data-state='waiting'] .room-agent-lane__identity small { color: var(--color-info); }
 .room-agent-lane[data-state='completed'] .room-agent-lane__identity small { color: var(--color-success); }
 .room-agent-lane[data-state='aborted'] .room-agent-lane__identity small { color: var(--color-text-secondary); }
-.room-agent-lane[data-outcome='blocked'] .room-agent-lane__identity small { color: var(--color-warning); }
+.room-agent-lane[data-outcome='blocked'] .room-agent-lane__identity small { color: var(--color-danger); }
 .room-agent-lane__elapsed { display: inline-flex; min-width: 42px; align-self: start; align-items: center; justify-content: flex-end; gap: 3px; margin-top: 3px; color: var(--color-text-tertiary); font: var(--font-weight-semibold) 12px var(--font-mono); white-space: nowrap; }
 .room-agent-lane__timing { display: grid; min-width: 152px; align-self: start; justify-items: end; gap: 2px; color: var(--color-text-tertiary); }
 .room-agent-lane__updated-at { font: var(--font-weight-semibold) 11px/1.4 var(--font-mono); white-space: nowrap; }

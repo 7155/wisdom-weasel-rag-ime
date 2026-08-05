@@ -54,7 +54,10 @@ import {
   toggleDisclosureOnKeyPreservingAnchor,
   toggleDisclosurePreservingAnchor,
 } from '@/features/agent/timeline/disclosure-anchor';
-import { publicToolResultView } from '@/features/agent/timeline/public-tool-result';
+import {
+  publicToolResultView,
+  type PublicToolResultView,
+} from '@/features/agent/timeline/public-tool-result';
 import { hasToolArtifacts, ToolArtifactOutput } from '@/features/agent/timeline/ToolArtifactOutput';
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
 import { canonicalToolId, publicToolName } from '@/features/agent/tool-presentation';
@@ -686,6 +689,11 @@ export function RoomTurn({
       const identityContinuation = identityContinuationByItemKey.get(streamItem.key) ?? false;
       return <RoomLaneDisclosure
         active={laneMotionActive}
+        collapsedPreview={<RoomLaneCollapsedPreview
+          activities={segmentActivities}
+          participantName={participant?.displayName}
+          workspaceTask={includePersistentDetails ? laneTask : undefined}
+        />}
         defaultOpen={laneActive && !visibleMessages.length}
         data-continuation={identityContinuation || undefined}
         data-motion={laneOperationallyActive ? laneFreshness.state : 'settled'}
@@ -868,6 +876,7 @@ function RoomParticipantPost({
 
 interface RoomLaneDisclosureProps {
   active: boolean;
+  collapsedPreview?: ReactNode;
   defaultOpen: boolean;
   participantName: string;
   summary: ReactNode;
@@ -880,6 +889,7 @@ interface RoomLaneDisclosureProps {
 
 function RoomLaneDisclosure({
   active,
+  collapsedPreview,
   defaultOpen,
   participantName,
   summary,
@@ -912,9 +922,61 @@ function RoomLaneDisclosure({
     >
       {summary}
       <ChevronRight aria-hidden="true" className="room-agent-lane__disclosure" size={16} />
+      {!open && collapsedPreview ? <div className="room-agent-lane__collapsed-preview">
+        {collapsedPreview}
+      </div> : null}
     </summary>
     <div className="room-agent-lane__body">{children}</div>
   </details>;
+}
+
+function RoomLaneCollapsedPreview({
+  activities,
+  participantName,
+  workspaceTask,
+}: {
+  activities: RoomActivityProjection[];
+  participantName?: string;
+  workspaceTask?: RoomTaskV3;
+}) {
+  const visibleActivities = activities.filter((activity) => (
+    textValue(activity.payload.sourceEventType) !== 'reasoning_summary'
+    || textValue(activity.payload.source) === 'provider_reasoning_summary'
+  ));
+  const entries = roomActivityFeedEntries(visibleActivities).slice(-3);
+  if (!entries.length) return null;
+  return <ol aria-label={`${participantName ?? '这位伙伴'}最近的工作`}>
+    {entries.map(({ activity, key, toolAttempts }) => {
+      const sourceEventType = textValue(activity.payload.sourceEventType);
+      const state = roomActivityDisplayStatus(activity);
+      const summary = toolAttempts
+        ? roomToolActivitySummary(
+            activity,
+            roomToolActivityResultView(activity).detailView,
+            Math.max(0, toolAttempts.length - 1),
+            toolAttempts.length,
+            false,
+          )
+        : sourceEventType === 'reasoning_summary'
+          ? roomReasoningSummary(activity, workspaceTask)
+          : describeRoomActivity(activity, participantName).title;
+      return <li data-state={state} key={`collapsed:${key}`}>
+        <span aria-hidden="true">
+          {state === 'running'
+            ? <LoaderCircle size={13} />
+            : state === 'failed'
+              ? <X size={13} />
+              : state === 'waiting'
+                ? <Clock3 size={13} />
+                : state === 'aborted'
+                  ? <CircleStop size={13} />
+                  : <CheckCircle2 size={13} />}
+        </span>
+        <strong>{summary}</strong>
+        <RoomActivityTimestamp activity={activity} />
+      </li>;
+    })}
+  </ol>;
 }
 
 function RoomUserPost({
@@ -2032,6 +2094,79 @@ function roomActivityDigest(
   };
 }
 
+function roomToolActivityResultView(activity: RoomActivityProjection): {
+  detailView: PublicToolResultView;
+  safeResult: unknown;
+} {
+  const payload = activity.payload;
+  const safeResult = payload.result;
+  const publicResult = safeResult && typeof safeResult === 'object' && !Array.isArray(safeResult)
+    ? safeResult as Record<string, unknown>
+    : {};
+  const error = textValue(payload.error);
+  const projectedArguments = payload.arguments && typeof payload.arguments === 'object' && !Array.isArray(payload.arguments)
+    ? payload.arguments as Record<string, unknown>
+    : {};
+  const view = publicToolResultView({
+    kind: textValue(payload.sourceEventType) || activity.kind,
+    status: activity.status,
+    payload: {
+      ...payload,
+      args: projectedArguments,
+      publicResult: error && !publicResult.error
+        ? { ...publicResult, error }
+        : publicResult,
+    },
+  });
+  const requestFields = roomToolDetailFields(projectedArguments);
+  const resultFields = view.output ? [] : roomToolDetailFields(safeResult);
+  return {
+    detailView: roomPublicToolResultView({
+      ...view,
+      request: view.request.length ? view.request : requestFields,
+      fields: [
+        ...view.fields,
+        ...resultFields.filter((field) => (
+          !view.fields.some((existingField) => existingField.id === field.id)
+        )),
+      ],
+    }),
+    safeResult,
+  };
+}
+
+function roomToolActivitySummary(
+  activity: RoomActivityProjection,
+  detailView: PublicToolResultView,
+  retryCount: number,
+  attemptCount: number,
+  recovering: boolean,
+): string {
+  const toolId = detailView.toolId || canonicalToolId(textValue(activity.payload.toolName));
+  const targetFile = detailView.request.find((field) => (
+    field.id === 'path' || field.id === 'file'
+  ))?.value || detailView.fields.find((field) => field.id === 'file')?.value || '';
+  const activeToolSummary = toolId === 'read'
+    ? `正在读取${targetFile ? ` ${targetFile}` : '文件'}`
+    : toolId === 'edit'
+      ? `正在编辑${targetFile ? ` ${targetFile}` : '文件'}`
+      : toolId === 'write'
+        ? `正在写入${targetFile ? ` ${targetFile}` : '文件'}`
+        : toolId === 'bash'
+          ? '命令正在运行，等待新的输出'
+          : detailView.summary || `${detailView.toolLabel}进行中`;
+  if (recovering) return `正在恢复：${detailView.toolLabel}`;
+  if (retryCount) {
+    if (activity.status === 'completed') return `${detailView.toolLabel}重试 ${retryCount} 次后成功`;
+    if (activity.status === 'running') return `${detailView.toolLabel}正在第 ${attemptCount} 次尝试`;
+    return `${detailView.toolLabel}已尝试 ${attemptCount} 次，仍未完成`;
+  }
+  if (activity.status === 'running') return activeToolSummary;
+  if (activity.status === 'failed') return `${detailView.toolLabel}执行失败`;
+  if (activity.status === 'aborted') return `${detailView.toolLabel}已停止`;
+  return detailView.summary || detailView.toolLabel;
+}
+
 
 function RoomToolActivity({
   activity,
@@ -2054,37 +2189,7 @@ function RoomToolActivity({
   useEffect(() => {
     if (approvalId || activity.status === 'running') setOpen(true);
   }, [activity.status, approvalId]);
-  const safeResult = payload.result;
-  const publicResult = safeResult && typeof safeResult === 'object' && !Array.isArray(safeResult)
-    ? safeResult as Record<string, unknown>
-    : {};
-  const error = textValue(payload.error);
-  const projectedArguments = payload.arguments && typeof payload.arguments === 'object' && !Array.isArray(payload.arguments)
-    ? payload.arguments as Record<string, unknown>
-    : {};
-  const view = publicToolResultView({
-    kind: sourceEventType || activity.kind,
-    status: activity.status,
-    payload: {
-      ...payload,
-      args: projectedArguments,
-      publicResult: error && !publicResult.error
-        ? { ...publicResult, error }
-        : publicResult,
-    },
-  });
-  const requestFields = roomToolDetailFields(projectedArguments);
-  const resultFields = view.output ? [] : roomToolDetailFields(safeResult);
-  const detailView = roomPublicToolResultView({
-    ...view,
-    request: view.request.length ? view.request : requestFields,
-    fields: [
-      ...view.fields,
-      ...resultFields.filter((field) => (
-        !view.fields.some((existingField) => existingField.id === field.id)
-      )),
-    ],
-  });
+  const { detailView, safeResult } = roomToolActivityResultView(activity);
   const approvalDescription = approvalId ? describeRoomActivity(activity) : null;
   const retryCount = Math.max(0, attempts.length - 1);
   const toolId = detailView.toolId || canonicalToolId(textValue(payload.toolName));
@@ -2111,30 +2216,13 @@ function RoomToolActivity({
   const targetFile = detailView.request.find((field) => (
     field.id === 'path' || field.id === 'file'
   ))?.value || detailView.fields.find((field) => field.id === 'file')?.value || '';
-  const activeToolSummary = toolId === 'read'
-    ? `正在读取${targetFile ? ` ${targetFile}` : '文件'}`
-    : toolId === 'edit'
-      ? `正在编辑${targetFile ? ` ${targetFile}` : '文件'}`
-      : toolId === 'write'
-        ? `正在写入${targetFile ? ` ${targetFile}` : '文件'}`
-        : toolId === 'bash'
-          ? '命令正在运行，等待新的输出'
-          : detailView.summary || `${detailView.toolLabel}进行中`;
-  const summary = recovering
-    ? `正在恢复：${detailView.toolLabel}`
-    : retryCount
-    ? activity.status === 'completed'
-      ? `${detailView.toolLabel}重试 ${retryCount} 次后成功`
-      : activity.status === 'running'
-        ? `${detailView.toolLabel}正在第 ${attempts.length} 次尝试`
-        : `${detailView.toolLabel}已尝试 ${attempts.length} 次，仍未完成`
-    : activity.status === 'running'
-      ? activeToolSummary
-      : activity.status === 'failed'
-      ? `${detailView.toolLabel}执行失败`
-      : activity.status === 'aborted'
-        ? `${detailView.toolLabel}已停止`
-        : detailView.summary || detailView.toolLabel;
+  const summary = roomToolActivitySummary(
+    activity,
+    detailView,
+    retryCount,
+    attempts.length,
+    recovering,
+  );
   return (
     <details
       className="room-agent-activity room-agent-activity--tool"

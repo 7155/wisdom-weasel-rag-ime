@@ -72,9 +72,10 @@ export function RoomQuestionDialog({
 
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
+    if (hasOptions && !customAnswer) return;
     void submitValue(
       answerValue,
-      hasOptions && !customAnswer ? 'option' : 'custom',
+      'custom',
     );
   }
 
@@ -181,8 +182,11 @@ export function RoomQuestionDialog({
         <Button
           disabled={!answerValue.trim() || submitting}
           loading={submitting}
+          onClick={hasOptions && !customAnswer
+            ? () => void submitValue(answerValue, 'option')
+            : undefined}
           size="small"
-          type="submit"
+          type={hasOptions && !customAnswer ? 'button' : 'submit'}
           variant="primary"
         >{hasOptions && !customAnswer ? '确认并发送' : '发送回答'}</Button>
       </footer>

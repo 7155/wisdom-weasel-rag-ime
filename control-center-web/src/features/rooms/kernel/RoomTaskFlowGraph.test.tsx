@@ -204,7 +204,7 @@ describe('RoomTaskFlowGraph dependency proof', () => {
     expect((reviewNode as HTMLElement).style.gridColumn).toBe('4');
     expect(reviewNode).toHaveAttribute('title', expect.stringContaining('等待 1 项真实前置任务'));
     expect(reviewNode).toHaveTextContent('负责人澄·远');
-    expect(reviewNode).toHaveTextContent('等待前置任务');
+    expect(reviewNode).toHaveTextContent('等待前置工作');
     expect(dataNode).toHaveTextContent('已交付');
     expect(interfaceNode).toHaveTextContent('已交付');
     expect(integrationNode).toHaveTextContent('正在做');

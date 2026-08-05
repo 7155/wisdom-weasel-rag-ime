@@ -199,7 +199,7 @@ class AgentPromptAuditTests(unittest.TestCase):
         self.assertIn("集成、端到端验证", prompt)
         self.assertIn("普通分工使用\nroom_collaborate", prompt)
         self.assertIn("有 Reviewer 只代表可用能力，不自动", prompt)
-        self.assertIn("给现有应用新增文件\n导入", prompt)
+        self.assertIn("为已有系统增加批量\n数据导入", prompt)
         self.assertIn("函数边界条件并补一个聚焦测试", prompt)
         self.assertIn("todo.checkpoint", prompt)
         self.assertIn("文件、Diff、产物或测试引用", prompt)

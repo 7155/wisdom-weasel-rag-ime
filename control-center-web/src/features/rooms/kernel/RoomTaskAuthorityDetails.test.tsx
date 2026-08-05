@@ -15,22 +15,37 @@ describe('RoomTaskAuthorityDetails', () => {
     vi.useRealTimers();
   });
 
-  it('marks absent authority projections as unreported instead of inventing work', () => {
+  it('omits absent Todo authority instead of rendering an empty card', () => {
     render(<>
       <RoomTaskTodoDetails owner="澄·今" />
       <RoomTaskDeliveryDetails owner="澄·今" />
     </>);
 
-    const todo = screen.getByRole('region', { name: '澄·今 的 Todo' });
     const delivery = screen.getByRole('region', { name: '澄·今 的交付结果' });
-    expect(todo).toHaveAttribute('data-state', 'missing');
-    expect(todo).toHaveTextContent('Todo 未上报');
-    expect(todo).toHaveTextContent('这位伙伴尚未上报权威 Todo');
+    expect(screen.queryByRole('region', { name: '澄·今 的 Todo' })).not.toBeInTheDocument();
     expect(delivery).toHaveAttribute('data-state', 'missing');
     expect(delivery).toHaveTextContent('工作结果未提交');
     expect(delivery).toHaveTextContent('不会从本地文件状态猜测这位伙伴的贡献');
     expect(delivery).not.toHaveTextContent(/WorkItem|Receipt|收据/);
     expect(delivery).not.toHaveTextContent(/\.tsx|\+\d|−\d/);
+  });
+
+  it('omits an authoritative zero-item Todo', () => {
+    const todo = todoProjection();
+    todo.phases = [];
+    todo.counts = {
+      total: 0,
+      pending: 0,
+      inProgress: 0,
+      completed: 0,
+      blocked: 0,
+      abandoned: 0,
+    };
+
+    render(<RoomTaskTodoDetails owner="澄·远" todo={todo} />);
+
+    expect(screen.queryByRole('region', { name: '澄·远 的 Todo' })).not.toBeInTheDocument();
+    expect(screen.queryByText('当前没有 Todo')).not.toBeInTheDocument();
   });
 
   it('renders the exact Session Todo with its statuses and authoritative update time', () => {
