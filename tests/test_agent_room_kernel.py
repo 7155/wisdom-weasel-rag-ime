@@ -1927,6 +1927,55 @@ class RoomKernelCoreTests(unittest.TestCase):
         abandon(2, 11)
         self.assertEqual(self.store.root("root:1")["state"], "running")
 
+    def test_retained_workspace_receipt_cannot_reactivate_cancelled_task(
+        self,
+    ) -> None:
+        self.seed(criteria=())
+        payload = self.store.task("task:1")
+        payload.update(
+            {
+                "workspacePolicy": "isolated_writable",
+                "workspaceRoot": "/tmp/room-child",
+                "workspaceBindingId": "binding:workspace:cancelled",
+                "workspaceLifecycleState": "work_started",
+                "workspaceCleanupState": "not_authorized",
+                "workspaceAttentionRequired": False,
+                "workspaceIntegrationState": "pending",
+                "workspaceIntegrationRef": None,
+                "state": "active",
+            }
+        )
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE room_kernel_tasks SET state='active',payload_json=? "
+                "WHERE task_id='task:1'",
+                (
+                    json.dumps(
+                        payload,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                ),
+            )
+
+        self.store.cancel_root("root:1", now_ms=10)
+        retained = self.store.record_workspace_lifecycle(
+            "task:1",
+            operation="retain",
+            workspace_result={
+                "workspaceBindingId": "binding:workspace:cancelled",
+                "workspaceLifecycleState": "cancelled",
+                "cleanupState": "retained",
+                "attentionRequired": True,
+                "terminalReason": "Root cancelled before integration",
+            },
+            now_ms=11,
+        )
+
+        self.assertEqual(retained["state"], "cancelled")
+        self.assertEqual(self.store.task("task:1")["state"], "cancelled")
+
     def test_workspace_retry_rejects_an_unrelated_tool_invocation_receipt(
         self,
     ) -> None:

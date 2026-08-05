@@ -9097,6 +9097,12 @@ class RoomKernelStore:
                 raise RoomKernelFenceError(
                     "workspace lifecycle projection requires an isolated Task"
                 )
+            # The SQL state is the authoritative task lifecycle. Cancellation
+            # intentionally updates it before the retained-worktree receipt is
+            # projected, while the JSON payload can still contain the prior
+            # active state. Never let that stale payload resurrect a task after
+            # its Root has stopped.
+            task["state"] = str(row["state"])
             result = dict(workspace_result)
             if str(result.get("workspaceBindingId") or "") != str(
                 task.get("workspaceBindingId") or ""
