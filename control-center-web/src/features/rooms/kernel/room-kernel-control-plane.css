@@ -188,7 +188,7 @@
     minmax(150px, 1.4fr)
     minmax(150px, 1.4fr)
     minmax(90px, .75fr);
-  grid-template-rows: repeat(var(--room-task-flow-row-count), minmax(204px, 1fr));
+  grid-template-rows: repeat(var(--room-task-flow-row-count), var(--room-task-flow-row-height));
   column-gap: 14px;
 }
 .room-task-flow__edges {
@@ -315,7 +315,9 @@
   z-index: 1;
   display: grid;
   min-width: 0;
-  block-size: calc(100% - var(--space-3));
+  min-block-size: 0;
+  block-size: calc(var(--room-task-flow-row-height) - var(--space-3));
+  max-block-size: calc(var(--room-task-flow-row-height) - var(--space-3));
   align-self: center;
   box-sizing: border-box;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1524,6 +1526,7 @@
   }
   .room-task-flow__task-node {
     block-size: auto;
+    max-block-size: none;
     margin-inline-start: var(--space-3);
     border-inline-start-width: 2px;
     overflow: visible;
@@ -1566,6 +1569,7 @@
   }
   .room-task-flow__task-node {
     block-size: auto;
+    max-block-size: none;
     margin-inline-start: var(--space-3);
     border-inline-start-width: 2px;
     overflow: visible;

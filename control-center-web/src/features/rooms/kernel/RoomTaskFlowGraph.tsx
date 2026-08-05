@@ -181,6 +181,7 @@ export function RoomTaskFlowGraph({
   const finalState = rootFlowState(root);
   const canvasStyle = {
     '--room-task-flow-height': `${graphHeight}px`,
+    '--room-task-flow-row-height': `${flowRowHeight}px`,
     '--room-task-flow-row-count': rowCount,
   } as CSSProperties;
   const hasContinuation = nodes.some((node) => node.column === 3);

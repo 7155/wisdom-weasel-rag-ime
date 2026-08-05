@@ -290,6 +290,7 @@ describe('RoomTaskFlowGraph dependency proof', () => {
     expect((parentNode as HTMLElement).style.gridColumn).toBe('2');
     expect((childNode as HTMLElement).style.gridColumn).toBe('2');
     expect(canvas.style.getPropertyValue('--room-task-flow-height')).toBe('440px');
+    expect(canvas.style.getPropertyValue('--room-task-flow-row-height')).toBe('220px');
     expect(childNode).toHaveAttribute('data-task-stage', '任务目标');
     expect(childNode).toHaveAttribute('title', expect.stringContaining('无前置任务，可并行'));
     expect(graph).not.toHaveTextContent('接续 / 汇总');
