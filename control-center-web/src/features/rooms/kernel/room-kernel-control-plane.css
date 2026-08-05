@@ -770,7 +770,7 @@
   padding: 0;
   list-style: none;
 }
-.room-task-todo__phases li {
+.room-task-todo__phases > section > ul > li {
   display: grid;
   min-width: 0;
   grid-template-columns: var(--space-5) minmax(0, 1fr) max-content;
@@ -779,16 +779,56 @@
   border-block-start: 1px solid var(--color-border-soft);
   padding-block: var(--space-2);
 }
-.room-task-todo__phases li:first-child { border-block-start: 0; }
-.room-task-todo__phases li > span:first-child { display: grid; place-items: center; color: var(--color-text-tertiary); }
-.room-task-todo__phases li[data-state='in_progress'] > span:first-child { color: var(--color-accent); }
-.room-task-todo__phases li[data-state='completed'] > span:first-child { color: var(--color-success); }
-.room-task-todo__phases li[data-state='blocked'] > span:first-child { color: var(--color-danger); }
-.room-task-todo__phases li > span:nth-child(2) { display: grid; min-width: 0; gap: 2px; }
+.room-task-todo__phases > section > ul > li:first-child { border-block-start: 0; }
+.room-task-todo__phases > section > ul > li > span:first-child { display: grid; place-items: center; color: var(--color-text-tertiary); }
+.room-task-todo__phases > section > ul > li[data-state='in_progress'] > span:first-child { color: var(--color-accent); }
+.room-task-todo__phases > section > ul > li[data-state='completed'] > span:first-child { color: var(--color-success); }
+.room-task-todo__phases > section > ul > li[data-state='blocked'] > span:first-child { color: var(--color-danger); }
+.room-task-todo__phases > section > ul > li > span:nth-child(2) { display: grid; min-width: 0; gap: 2px; }
 .room-task-todo__phases li strong,
 .room-task-todo__phases li small { font-size: var(--text-label); line-height: var(--text-label-lh); overflow-wrap: anywhere; }
-.room-task-todo__phases li > small,
 .room-task-todo__phases li > span small { color: var(--color-text-tertiary); }
+.room-task-todo__checkpoint {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-2);
+  margin-block-start: var(--space-1);
+  border-inline-start: 2px solid var(--color-accent);
+  padding-inline-start: var(--space-2);
+  color: var(--color-text-secondary) !important;
+}
+.room-task-todo__checkpoint b { color: var(--color-accent); font-size: inherit; }
+.room-task-todo__references {
+  display: grid !important;
+  min-width: 0;
+  gap: var(--space-1);
+  margin-block-start: var(--space-1) !important;
+}
+.room-task-todo__references li {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: max-content max-content minmax(0, 1fr);
+  gap: var(--space-2);
+  border: 0;
+  padding: 0;
+  color: var(--color-text-tertiary);
+}
+.room-task-todo__references li > span,
+.room-task-todo__references li > strong,
+.room-task-todo__references li > code {
+  font: var(--text-label)/var(--text-label-lh) var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.room-task-todo__references li > strong { color: var(--color-text-secondary); }
+.room-task-todo__references li > code { min-width: 0; color: var(--color-text-tertiary); white-space: normal; }
+.room-task-todo__state {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  color: var(--color-text-tertiary);
+}
+.room-task-todo__state time { font: var(--text-label)/var(--text-label-lh) var(--font-mono); white-space: nowrap; }
 .room-task-todo > footer {
   display: flex;
   min-width: 0;
@@ -1503,8 +1543,10 @@
   .room-task-work-card__activities li { grid-template-columns: var(--space-5) minmax(0, 1fr); }
   .room-task-work-card__activities li > time { grid-column: 2; }
   .room-task-work-card__tool-output { grid-column: 2; }
-  .room-task-todo__phases li { grid-template-columns: var(--space-5) minmax(0, 1fr); }
-  .room-task-todo__phases li > small { grid-column: 2; }
+  .room-task-todo__phases > section > ul > li { grid-template-columns: var(--space-5) minmax(0, 1fr); }
+  .room-task-todo__state { grid-column: 2; justify-items: start; }
+  .room-task-todo__references li { grid-template-columns: max-content minmax(0, 1fr); }
+  .room-task-todo__references li > code { grid-column: 2; }
   .room-task-delivery__files > header { align-items: flex-start; flex-direction: column; gap: var(--space-1); }
   .room-task-delivery__files > header small { text-align: start; }
   .room-task-flow__task-owner,

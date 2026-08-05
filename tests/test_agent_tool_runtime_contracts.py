@@ -354,6 +354,7 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
                 "drop",
                 "block",
                 "unblock",
+                "checkpoint",
                 "append",
                 "view",
                 "rm",

@@ -353,8 +353,8 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
             "任务包含至少三个清晰动作、用户给出多项要求，或工作需要跨回合、跨阶段验证",
         ),
         "notFor": ("简单问答、单步操作、修改用户每日计划或替代长期 Goal",),
-        "input": "init、start、done、drop、block、unblock、append、view 或 rm",
-        "output": "当前 Todo 的阶段、任务状态、计数与本次完成项",
+        "input": "init、start、done、drop、block、unblock、checkpoint、append、view 或 rm",
+        "output": "当前 Todo 的阶段、任务状态、检查点、关联产物/测试、计数与本次完成项",
         "does": (
             "按 OMP Todo 状态机维护 Session 清单；每次调用原子更新并发布最新投影，"
             "Agent 可自行创建、推进、完成、阻塞、解除阻塞、放弃或清空。"
@@ -366,6 +366,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
             "drop",
             "block",
             "unblock",
+            "checkpoint",
             "append",
             "view",
             "rm",
@@ -804,6 +805,40 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                 "minLength": 1,
                 "maxLength": 500,
             },
+            "checkpoint": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000,
+            },
+            "references": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 20,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["kind", "label", "reference"],
+                    "properties": {
+                        "kind": {
+                            "type": "string",
+                            "enum": [
+                                "file", "artifact", "test", "diff",
+                                "url", "other",
+                            ],
+                        },
+                        "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 160,
+                        },
+                        "reference": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 1000,
+                        },
+                    },
+                },
+            },
         },
         "oneOf": [
             {
@@ -817,6 +852,14 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
             {
                 "required": ["op", "task"],
                 "properties": {"op": {"const": "start"}},
+            },
+            {
+                "required": ["op", "task"],
+                "anyOf": [
+                    {"required": ["checkpoint"]},
+                    {"required": ["references"]},
+                ],
+                "properties": {"op": {"const": "checkpoint"}},
             },
             *[
                 {
@@ -2888,7 +2931,10 @@ class ControlToolGateway:
         if not session_id:
             raise ValueError("Todo session is missing")
         mutation: dict[str, object] = {"op": operation}
-        for key in ("list", "items", "phase", "task", "reason"):
+        for key in (
+            "list", "items", "phase", "task", "reason", "checkpoint",
+            "references",
+        ):
             if key in args:
                 mutation[key] = args[key]
         result = self.sessions.mutate_agent_todo(
@@ -8339,7 +8385,10 @@ def _tool_profile_allows(
         ),
         "agent_schedule": frozenset({"list", "runs"}),
         "todo": frozenset(
-            {"init", "start", "done", "drop", "append", "view", "rm"}
+            {
+                "init", "start", "done", "drop", "block", "unblock",
+                "checkpoint", "append", "view", "rm",
+            }
         ),
         "agent_goal": frozenset({"list"}),
         "work_documents": frozenset({"list", "history.search", "get"}),

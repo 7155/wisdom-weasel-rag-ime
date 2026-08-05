@@ -340,19 +340,76 @@ class AgentSessionStoreTests(unittest.TestCase):
                 {
                     "name": "执行",
                     "tasks": [
-                        {"content": "核对权限边界", "status": "in_progress"},
-                        {"content": "实现并验收", "status": "pending"},
+                        {
+                            "content": "核对权限边界",
+                            "status": "in_progress",
+                            "updatedAtMs": 200,
+                        },
+                        {
+                            "content": "实现并验收",
+                            "status": "pending",
+                            "updatedAtMs": 200,
+                        },
                     ],
                 }
             ],
         )
+
+        checkpointed = self.store.mutate_agent_todo(
+            session_id,
+            {
+                "op": "checkpoint",
+                "task": "核对权限边界",
+                "checkpoint": "权限边界已经确认，准备进入实现",
+                "references": [
+                    {
+                        "kind": "file",
+                        "label": "权限策略",
+                        "reference": "rag_ime/agent_permissions.py",
+                    },
+                    {
+                        "kind": "test",
+                        "label": "聚焦回归",
+                        "reference": "tests/test_agent_permissions.py",
+                    },
+                ],
+            },
+            updated_at_ms=250,
+        )
+        checkpoint_task = checkpointed["todo"]["phases"][0]["tasks"][0]
+        self.assertEqual(checkpoint_task["status"], "in_progress")
+        self.assertEqual(
+            checkpoint_task["checkpoint"],
+            "权限边界已经确认，准备进入实现",
+        )
+        self.assertEqual(checkpoint_task["updatedAtMs"], 250)
+        self.assertEqual(
+            [item["kind"] for item in checkpoint_task["references"]],
+            ["file", "test"],
+        )
+        with self.assertRaisesRegex(ValueError, "reference kind is invalid"):
+            self.store.mutate_agent_todo(
+                session_id,
+                {
+                    "op": "checkpoint",
+                    "task": "核对权限边界",
+                    "references": [
+                        {
+                            "kind": "receipt",
+                            "label": "内部回执",
+                            "reference": "receipt:must-not-be-public",
+                        }
+                    ],
+                },
+                updated_at_ms=260,
+            )
 
         started = self.store.mutate_agent_todo(
             session_id,
             {"op": "start", "task": "核对权限边界"},
             updated_at_ms=300,
         )
-        self.assertEqual(started["todo"]["revision"], 2)
+        self.assertEqual(started["todo"]["revision"], 3)
         self.assertEqual(
             [
                 task["status"]
@@ -366,7 +423,7 @@ class AgentSessionStoreTests(unittest.TestCase):
             {"op": "done", "task": "核对权限边界"},
             updated_at_ms=400,
         )
-        self.assertEqual(completed["todo"]["revision"], 3)
+        self.assertEqual(completed["todo"]["revision"], 4)
         self.assertEqual(
             completed["completedTasks"],
             [{"phase": "执行", "task": "核对权限边界"}],
@@ -377,7 +434,7 @@ class AgentSessionStoreTests(unittest.TestCase):
             {"op": "append", "phase": "执行", "items": ["补充回归"]},
             updated_at_ms=500,
         )
-        self.assertEqual(appended["todo"]["revision"], 4)
+        self.assertEqual(appended["todo"]["revision"], 5)
         self.assertEqual(
             [task["content"] for task in appended["todo"]["phases"][0]["tasks"]],
             ["核对权限边界", "实现并验收", "补充回归"],
@@ -388,7 +445,7 @@ class AgentSessionStoreTests(unittest.TestCase):
             {"op": "drop", "task": "实现并验收"},
             updated_at_ms=600,
         )
-        self.assertEqual(dropped["todo"]["revision"], 5)
+        self.assertEqual(dropped["todo"]["revision"], 6)
         self.assertEqual(
             [task["status"] for task in dropped["todo"]["phases"][0]["tasks"]],
             ["completed", "abandoned", "in_progress"],
@@ -399,7 +456,7 @@ class AgentSessionStoreTests(unittest.TestCase):
             {"op": "rm", "task": "补充回归"},
             updated_at_ms=700,
         )
-        self.assertEqual(removed["todo"]["revision"], 6)
+        self.assertEqual(removed["todo"]["revision"], 7)
         self.assertEqual(removed["todo"]["counts"]["total"], 2)
         self.assertEqual(
             self.store.agent_todo(session_id),
@@ -422,11 +479,12 @@ class AgentSessionStoreTests(unittest.TestCase):
             events,
             [
                 (1, "init"),
-                (2, "start"),
-                (3, "done"),
-                (4, "append"),
-                (5, "drop"),
-                (6, "rm"),
+                (2, "checkpoint"),
+                (3, "start"),
+                (4, "done"),
+                (5, "append"),
+                (6, "drop"),
+                (7, "rm"),
             ],
         )
 
@@ -458,8 +516,13 @@ class AgentSessionStoreTests(unittest.TestCase):
                     "content": "等待用户选择",
                     "status": "blocked",
                     "reason": "等待用户决定兼容性范围",
+                    "updatedAtMs": 300,
                 },
-                {"content": "继续其余验收", "status": "in_progress"},
+                {
+                    "content": "继续其余验收",
+                    "status": "in_progress",
+                    "updatedAtMs": 300,
+                },
             ],
         )
         self.assertEqual(blocked["counts"]["blocked"], 1)

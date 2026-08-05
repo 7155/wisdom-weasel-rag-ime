@@ -24,6 +24,14 @@ import type { RoomWorkItem } from '../room-types';
 import { roomPublicActivityText } from '../timeline/room-tool-presentation';
 import { RoomTaskUpdatedAt } from './RoomTaskUpdatedAt';
 
+const todoTaskTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
+
 export type RoomWorkspaceDeliveryFile = WorkspaceDeliveryFile;
 
 export type RoomPublicVerification = PublicVerification;
@@ -78,8 +86,29 @@ export function RoomTaskTodoDetails({
             key={`${phase.name}:${index}:${task.content}`}
           >
             <span aria-hidden="true">{todoTaskIcon(task.status)}</span>
-            <span><strong>{task.content}</strong>{task.reason ? <small>{task.reason}</small> : null}</span>
-            <small>{todoTaskStatusLabel(task.status)}</small>
+            <span>
+              <strong>{task.content}</strong>
+              {task.reason ? <small>{task.reason}</small> : null}
+              {task.checkpoint ? <small className="room-task-todo__checkpoint">
+                <b>当前检查点</b>{task.checkpoint}
+              </small> : null}
+              {task.references?.length ? <ul
+                aria-label={`${task.content} 的相关文件、产物与测试`}
+                className="room-task-todo__references"
+              >{task.references.map((reference, referenceIndex) => <li
+                key={`${reference.kind}:${reference.reference}:${referenceIndex}`}
+              >
+                <span>{todoReferenceKindLabel(reference.kind)}</span>
+                <strong>{reference.label}</strong>
+                <code>{reference.reference}</code>
+              </li>)}</ul> : null}
+            </span>
+            <span className="room-task-todo__state">
+              <small>{todoTaskStatusLabel(task.status)}</small>
+              {task.updatedAtMs !== undefined ? <time dateTime={new Date(task.updatedAtMs).toISOString()}>
+                最近更新 {todoTaskTimeFormatter.format(new Date(task.updatedAtMs))}
+              </time> : null}
+            </span>
           </li>)}</ul>
         </section>)}
       </div>
@@ -234,6 +263,19 @@ function todoTaskStatusLabel(status: TodoTask['status']): string {
     completed: '已完成',
     abandoned: '已放弃',
   }[status];
+}
+
+function todoReferenceKindLabel(
+  kind: NonNullable<TodoTask['references']>[number]['kind'],
+): string {
+  return {
+    file: '文件',
+    artifact: '产物',
+    test: '测试',
+    diff: 'Diff',
+    url: '链接',
+    other: '参考',
+  }[kind];
 }
 
 function deliveryFileStat(file: RoomWorkspaceDeliveryFile): string {

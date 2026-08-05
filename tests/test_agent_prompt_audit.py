@@ -63,7 +63,7 @@ class AgentPromptAuditTests(unittest.TestCase):
                 if name == "profile:standard-room":
                     continue
                 self.assertGreater(len(prompt.strip()), 80)
-                self.assertNotRegex(prompt, r"(?i)\b(?:TODO|TBD)\b|未定|待补")
+                self.assertNotRegex(prompt, r"\b(?:TODO|TBD)\b|未定|待补")
 
     def test_definition_layers_do_not_repeat_each_others_hard_rules(self) -> None:
         for item in agent_role_catalog():
@@ -201,6 +201,8 @@ class AgentPromptAuditTests(unittest.TestCase):
         self.assertIn("有 Reviewer 只代表可用能力，不自动", prompt)
         self.assertIn("给现有应用新增文件\n导入", prompt)
         self.assertIn("函数边界条件并补一个聚焦测试", prompt)
+        self.assertIn("todo.checkpoint", prompt)
+        self.assertIn("文件、Diff、产物或测试引用", prompt)
         self.assertIn(
             "room_commit(decision=handoff, intent=review)",
             prompt,

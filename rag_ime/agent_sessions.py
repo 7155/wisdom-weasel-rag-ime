@@ -1040,6 +1040,7 @@ class AgentSessionStore:
             "drop",
             "block",
             "unblock",
+            "checkpoint",
             "append",
             "rm",
             "view",
@@ -1098,7 +1099,7 @@ class AgentSessionStore:
             phases = _clone_todo_phases(current["phases"])
             previous_statuses = _todo_statuses(phases)
             if operation == "init":
-                phases = _todo_init(payload)
+                phases = _todo_init(payload, updated_at_ms=timestamp)
             elif operation == "start":
                 task = _required_todo_target(payload, "task", maximum=240)
                 target = _find_todo_task(phases, task)
@@ -1108,8 +1109,10 @@ class AgentSessionStore:
                     for item in phase["tasks"]:
                         if item["status"] == "in_progress":
                             item["status"] = "pending"
+                            item["updatedAtMs"] = timestamp
                 target["status"] = "in_progress"
                 target.pop("reason", None)
+                _update_todo_task_progress(target, payload, updated_at_ms=timestamp)
             elif operation in {"done", "drop"}:
                 targets = _todo_targets(phases, payload)
                 target_status = "completed" if operation == "done" else "abandoned"
@@ -1120,6 +1123,7 @@ class AgentSessionStore:
                         item["reason"] = reason
                     else:
                         item.pop("reason", None)
+                    _update_todo_task_progress(item, payload, updated_at_ms=timestamp)
             elif operation == "block":
                 targets = _todo_targets(phases, payload)
                 if any(item["status"] in {"completed", "abandoned"} for item in targets):
@@ -1131,6 +1135,7 @@ class AgentSessionStore:
                         item["reason"] = reason
                     else:
                         item.pop("reason", None)
+                    _update_todo_task_progress(item, payload, updated_at_ms=timestamp)
             elif operation == "unblock":
                 targets = _todo_targets(phases, payload)
                 if any(item["status"] != "blocked" for item in targets):
@@ -1138,6 +1143,17 @@ class AgentSessionStore:
                 for item in targets:
                     item["status"] = "pending"
                     item.pop("reason", None)
+                    _update_todo_task_progress(item, payload, updated_at_ms=timestamp)
+            elif operation == "checkpoint":
+                task = _required_todo_target(payload, "task", maximum=240)
+                target = _find_todo_task(phases, task)
+                if target is None:
+                    raise ValueError(_todo_task_not_found(task, phases))
+                if not any(key in payload for key in ("checkpoint", "references")):
+                    raise ValueError(
+                        "checkpoint operation requires checkpoint or references"
+                    )
+                _update_todo_task_progress(target, payload, updated_at_ms=timestamp)
             elif operation == "append":
                 phase_name = _required_todo_target(payload, "phase", maximum=80)
                 items = _todo_input_items(payload.get("items"), field="items")
@@ -1157,12 +1173,17 @@ class AgentSessionStore:
                     target_phase = {"name": phase_name, "tasks": []}
                     phases.append(target_phase)
                 target_phase["tasks"].extend(
-                    {"content": item, "status": "pending"} for item in items
+                    {
+                        "content": item,
+                        "status": "pending",
+                        "updatedAtMs": timestamp,
+                    }
+                    for item in items
                 )
             else:
                 _todo_remove(phases, payload)
 
-            _normalize_todo_in_progress(phases)
+            _normalize_todo_in_progress(phases, updated_at_ms=timestamp)
             _validate_todo_phases(phases)
             revision = int(current["revision"]) + 1
             event_id = f"todo-event:{uuid.uuid4()}"
@@ -3069,6 +3090,28 @@ def _clone_todo_phases(value: object) -> list[dict[str, object]]:
                         if str(item.get("reason") or "").strip()
                         else {}
                     ),
+                    **(
+                        {"checkpoint": str(item["checkpoint"])}
+                        if str(item.get("checkpoint") or "").strip()
+                        else {}
+                    ),
+                    **(
+                        {
+                            "references": [
+                                dict(reference)
+                                for reference in item.get("references") or []
+                                if isinstance(reference, Mapping)
+                            ]
+                        }
+                        if isinstance(item.get("references"), list)
+                        else {}
+                    ),
+                    **(
+                        {"updatedAtMs": int(item["updatedAtMs"])}
+                        if isinstance(item.get("updatedAtMs"), int)
+                        and not isinstance(item.get("updatedAtMs"), bool)
+                        else {}
+                    ),
                 }
                 for item in phase["tasks"]
             ],
@@ -3077,7 +3120,11 @@ def _clone_todo_phases(value: object) -> list[dict[str, object]]:
     ]
 
 
-def _todo_init(payload: Mapping[str, object]) -> list[dict[str, object]]:
+def _todo_init(
+    payload: Mapping[str, object],
+    *,
+    updated_at_ms: int,
+) -> list[dict[str, object]]:
     if "list" in payload and "items" in payload:
         raise ValueError("init accepts list or items, not both")
     phases: list[dict[str, object]] = []
@@ -3107,7 +3154,11 @@ def _todo_init(payload: Mapping[str, object]) -> list[dict[str, object]]:
                 {
                     "name": phase_name,
                     "tasks": [
-                        {"content": item, "status": "pending"}
+                        {
+                            "content": item,
+                            "status": "pending",
+                            "updatedAtMs": updated_at_ms,
+                        }
                         for item in items
                     ],
                 }
@@ -3123,7 +3174,11 @@ def _todo_init(payload: Mapping[str, object]) -> list[dict[str, object]]:
             {
                 "name": phase_name,
                 "tasks": [
-                    {"content": item, "status": "pending"}
+                    {
+                        "content": item,
+                        "status": "pending",
+                        "updatedAtMs": updated_at_ms,
+                    }
                     for item in items
                 ],
             }
@@ -3164,6 +3219,56 @@ def _optional_todo_reason(payload: Mapping[str, object]) -> str:
         field="reason",
         maximum=500,
     )
+
+
+def _update_todo_task_progress(
+    task: dict[str, object],
+    payload: Mapping[str, object],
+    *,
+    updated_at_ms: int,
+) -> None:
+    if "checkpoint" in payload:
+        task["checkpoint"] = _bounded_todo_text(
+            payload.get("checkpoint"),
+            field="checkpoint",
+            maximum=1000,
+        )
+    if "references" in payload:
+        task["references"] = _todo_references(payload.get("references"))
+    task["updatedAtMs"] = updated_at_ms
+
+
+def _todo_references(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list) or not value:
+        raise ValueError("todo references must be a non-empty array")
+    if len(value) > 20:
+        raise ValueError("todo references are limited to 20 items")
+    references: list[dict[str, str]] = []
+    allowed_kinds = {"file", "artifact", "test", "diff", "url", "other"}
+    for item in value:
+        if not isinstance(item, Mapping):
+            raise ValueError("todo reference must be an object")
+        if set(item) != {"kind", "label", "reference"}:
+            raise ValueError("todo reference fields are invalid")
+        kind = str(item.get("kind") or "").strip()
+        if kind not in allowed_kinds:
+            raise ValueError("todo reference kind is invalid")
+        references.append(
+            {
+                "kind": kind,
+                "label": _bounded_todo_text(
+                    item.get("label"),
+                    field="reference label",
+                    maximum=160,
+                ),
+                "reference": _bounded_todo_text(
+                    item.get("reference"),
+                    field="reference",
+                    maximum=1000,
+                ),
+            }
+        )
+    return references
 
 
 def _find_todo_task(
@@ -3246,7 +3351,11 @@ def _todo_remove(
         phase["tasks"] = []
 
 
-def _normalize_todo_in_progress(phases: list[dict[str, object]]) -> None:
+def _normalize_todo_in_progress(
+    phases: list[dict[str, object]],
+    *,
+    updated_at_ms: int,
+) -> None:
     active_seen = False
     for phase in phases:
         for item in phase["tasks"]:
@@ -3254,6 +3363,7 @@ def _normalize_todo_in_progress(phases: list[dict[str, object]]) -> None:
                 continue
             if active_seen:
                 item["status"] = "pending"
+                item["updatedAtMs"] = updated_at_ms
             else:
                 active_seen = True
     if active_seen:
@@ -3262,6 +3372,7 @@ def _normalize_todo_in_progress(phases: list[dict[str, object]]) -> None:
         for item in phase["tasks"]:
             if item["status"] == "pending":
                 item["status"] = "in_progress"
+                item["updatedAtMs"] = updated_at_ms
                 return
 
 
@@ -3317,6 +3428,25 @@ def _validate_todo_phases(phases: list[dict[str, object]]) -> None:
             reason = str(item.get("reason") or "").strip()
             if reason:
                 _bounded_todo_text(reason, field="reason", maximum=500)
+            checkpoint = str(item.get("checkpoint") or "").strip()
+            if checkpoint:
+                _bounded_todo_text(
+                    checkpoint,
+                    field="checkpoint",
+                    maximum=1000,
+                )
+            if "references" in item:
+                _todo_references(item.get("references"))
+            updated_at_ms = item.get("updatedAtMs")
+            if (
+                updated_at_ms is not None
+                and (
+                    not isinstance(updated_at_ms, int)
+                    or isinstance(updated_at_ms, bool)
+                    or updated_at_ms < 0
+                )
+            ):
+                raise ValueError("todo task updatedAtMs is invalid")
             active_count += int(status == "in_progress")
             task_count += 1
     if active_count > 1:

@@ -42,12 +42,18 @@ describe('RoomTaskAuthorityDetails', () => {
     expect(todo).toHaveAttribute('data-state', 'reported');
     expect(todo).toHaveTextContent('2 / 4 已收束');
     expect(todo).toHaveTextContent('实现2 / 4');
-    expect(todo).toHaveTextContent('接入 Room Todo进行中');
+    const activeTask = within(todo).getByText('接入 Room Todo').closest('li');
+    expect(activeTask).toHaveTextContent('进行中');
+    expect(todo).toHaveTextContent('当前检查点完成权威 Todo 投影，正在接入任务卡');
+    expect(todo).toHaveTextContent('文件RoomTaskAuthorityDetails.tsx');
+    expect(todo).toHaveTextContent('测试RoomTaskAuthorityDetails.test.tsx');
+    expect(todo).toHaveTextContent('最近更新');
+    expect(activeTask).toHaveTextContent(/最近更新\s+01\/01\s+08:00:06/);
     expect(todo).toHaveTextContent('补齐异常态等待后端字段已阻塞');
     expect(todo).toHaveTextContent('旧方案已放弃');
     expect(todo).toHaveTextContent('只读同步自这位伙伴的权威 Todo');
     expect(todo).toHaveTextContent('3 秒前');
-    expect(todo.querySelector('time')).toHaveAttribute(
+    expect(todo.querySelector('footer time')).toHaveAttribute(
       'datetime',
       new Date(7_000).toISOString(),
     );
@@ -166,7 +172,16 @@ function todoProjection(): Todo {
     phases: [{
       name: '实现',
       tasks: [
-        { content: '接入 Room Todo', status: 'in_progress' },
+        {
+          content: '接入 Room Todo',
+          status: 'in_progress',
+          checkpoint: '完成权威 Todo 投影，正在接入任务卡',
+          references: [
+            { kind: 'file', label: '文件', reference: 'RoomTaskAuthorityDetails.tsx' },
+            { kind: 'test', label: '测试', reference: 'RoomTaskAuthorityDetails.test.tsx' },
+          ],
+          updatedAtMs: 6_000,
+        },
         { content: '补齐异常态', status: 'blocked', reason: '等待后端字段' },
         { content: '完成聚焦测试', status: 'completed' },
         { content: '旧方案', status: 'abandoned' },

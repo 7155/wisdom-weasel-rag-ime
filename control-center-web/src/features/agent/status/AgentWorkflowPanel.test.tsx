@@ -27,6 +27,9 @@ describe('AgentWorkflowPanel', () => {
     expect(todo).toHaveTextContent('验证');
     expect(todo).toHaveTextContent('完成前端状态同步');
     expect(todo).toHaveTextContent('进行中');
+    expect(todo).toHaveTextContent('当前检查点完成状态投影，正在核对交互');
+    expect(todo).toHaveTextContent('文件 · 前端组件');
+    expect(todo).toHaveTextContent('AgentWorkflowPanel.tsx');
     expect(screen.getByRole('region', { name: '长期目标' })).toHaveTextContent('完成 Agent 工作流并验证');
     expect(screen.queryByText('当前请求可以继续')).not.toBeInTheDocument();
     expect(transport.requests.filter((request) => request.pathId === 'agent.session.goal.mutate')).toHaveLength(0);
@@ -240,7 +243,19 @@ function workflowState(): AgentWorkflowStateV1 {
           name: '实现',
           tasks: [
             { content: '核对 Todo 与 Goal 契约', status: 'completed' },
-            { content: '完成前端状态同步', status: 'in_progress' },
+            {
+              content: '完成前端状态同步',
+              status: 'in_progress',
+              checkpoint: '完成状态投影，正在核对交互',
+              references: [
+                {
+                  kind: 'file',
+                  label: '前端组件',
+                  reference: 'AgentWorkflowPanel.tsx',
+                },
+              ],
+              updatedAtMs: 100,
+            },
           ],
         },
         {

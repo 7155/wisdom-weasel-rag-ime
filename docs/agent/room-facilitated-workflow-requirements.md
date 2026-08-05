@@ -599,7 +599,7 @@ or acceptance evidence above.
 | canonical `read` / `edit` / `write` / `bash` surface, streaming and personalized result views | implemented in source: public catalog projection exposes the four basic coding Tools once, historical aliases upcast into them, Agent and Room share the artifact/Diff renderer, active mutations animate without publishing a half-built Diff, and completed bash rows preserve bounded stdout/stderr plus exit status; changed backend modules 212/212, complete Web suite 974/974, TypeScript, and the native production Web build passed | open; must be exercised in one coherent foreground build |
 | history loading, cached transcript continuity, bounded initial page and older-history loading | explicit loading/empty/failed projection plus newest 80-event and newest 100-complete-turn windows, stable `beforeEventId` / `beforeMessageId` older-page merge, and total-count reconciliation are implemented; 138 backend/policy/route tests, focused Web paging/loading checks, the complete 974-test Web suite, TypeScript, and the prior local no-false-welcome checks passed | source Web shell passed; coherent installed foreground timing open |
 | risk-based full-auto approval | scoped hash-bound text write/edit/patch now bypass Luna by deterministic policy; focused policy and Agent-service regression passed while R3, sensitive, and out-of-scope cases remain model-routed | fresh full-auto Room foreground open |
-| Session Todo, per-owner result/diff, subagent grouping | implemented; source projections and Web regression passed | open |
+| Session Todo, per-owner result/diff, subagent grouping | implemented on one authoritative Session Todo: every item may persist a current checkpoint, categorized file/Diff/artifact/test reference, and authoritative update time; migration 0145 preserves prior event history while admitting checkpoint events; writable and read-only Room roles can maintain their own Todo; Agent and Room task surfaces project the same fields at different density. The affected 97-test backend/runtime set, focused gateway checks, complete 976-test Web suite, TypeScript, and generated-contract reproduction passed | open; a fresh installed multi-companion Room must show distinct live Todo and attributed results for every real owner |
 | real Provider/model/token/cache provenance on Tool-only Room replies | implemented through one post-bound `response_evidence` path shared with the existing reply footer; the settled lookup is fenced by exact Session, runtime turn, `room_commit` Tool call, applied receipt, committed Dispatch, and resulting Post; terminal Room replay admits only that matching provenance; focused v1, v2, projection, real SQLite kernel, and Web regressions passed; incomplete evidence renders no misleading placeholder | open; corrected installed Room must show the real fields on its resulting reply |
 | day-scale full-auto recovery, durable checkpoints, automatic repair/retry/reassignment/model fallback | partially implemented; durable Dispatch attempts, Todo, workspace ledger, reconnect state, direct failed-Tool retry lineage, and Provider retry projection exist and passed source regression; restart-resume plus injected native recovery acceptance remain open | open |
 | historical continuation recovery and Report-stat filtering | implemented; historical upcast 7/7 and settlement regression passed | open |
@@ -741,9 +741,37 @@ Two separate source defects behind the visible symptoms are now corrected:
   silently turn a required review off. The runtime never infers the decision
   from example keywords or merely from the presence of a Reviewer.
 
+The remaining Todo continuity gap from the source audit is also corrected.
+`checkpoint` is now an operation on the existing Session Todo rather than a
+second task system. Each item can retain a bounded natural-language checkpoint,
+up to twenty typed references (`file`, `diff`, `artifact`, `test`, `url`, or
+`other`), and its own authoritative update time inside the existing
+event projection. Migration 0145 rebuilds only the operation constraint and
+copies every prior Todo event and Room lineage unchanged. The Python gateway,
+managed Pi Tool schema, read-only role profile, generated contracts, Agent
+sidebar, and Room task card consume that same contract. A role can therefore
+resume from a concrete item and show what changed without creating a parallel
+Todo owner or reducing progress to `2/4` counts.
+
+The collaboration calibration now uses a cross-project example rather than the
+TUI acceptance phrase. Adding file import to an existing application normally
+contains independently deliverable UI selection, parsing/persistence, and
+cross-boundary progress/error/result acceptance, so it should receive real peer
+work unless source inspection proves one conflict-prone owner. A located
+function-boundary fix plus one focused test is the contrasting single-owner
+case. Both the prompt and implementation Skill explicitly forbid branching on
+the example wording; the example teaches responsibility seams only.
+
 Current verification of the combined working tree:
 
 - complete Web suite: 104 files and 976 tests passed;
+- the Todo/checkpoint increment passed the complete 97-test affected
+  Session/migration/Skill/prompt/runtime-contract/capability set, focused
+  gateway execution and static-Pi checks, TypeScript, 151 generated-contract
+  reproduction, and the complete Web suite. The full Agent Tool file has one
+  remaining environment failure in the governed background-job case because a
+  nested `sandbox-exec` cannot enter this Codex sandbox; the Todo and Pi source
+  assertions pass when run directly;
 - complete Room settlement lifecycle: 49/49 passed, including premature-review,
   read-only review coverage, late-task freshness, and repair/re-review cases;
 - focused Tool-only evidence path: Pi v1 (51/51), Pi v2 (80/80), Room

@@ -68,21 +68,22 @@ no automatic deletion timer.
 
 ## Managed Room Boundary
 
-- Start only after alignment/definition/handoff; reuse the bound Root, WorkItem,
-  aliases, participant, and workspace rather than creating parallel state.
-- A Worker owns only its directed slice. The Facilitator owns decomposition,
-  reassignment, dependencies, integration, and the final summary.
+- Start only after governed handoff; reuse the bound Root, WorkItem, aliases,
+  participant, and workspace.
+- A Worker owns one slice. The Facilitator owns decomposition,
+  reassignment, integration, and the final summary.
 - Filesystem authority comes from the receipted workspace, not identity.
   Read-only work may share a baseline; concurrent writes need separate
-  Root-baseline workspaces. Never claim automatic worktree cloning.
-- Calibrate with examples, not the word "complex": adding file import with file
-  choice, parsing/persistence, live progress/errors, and a result normally
-  splits into UI, data, and cross-boundary acceptance. Invite a peer unless
-  source proves one conflict-prone owner. A located function-boundary fix plus
-  one focused test is usually single-owner. Generalize; never match the wording.
-- Use `room_collaborate` only after definition for bounded, non-overlapping
-  implementation, never intake or review. Return evidence with `room_commit`;
-  use `room_post` only for progress.
+  Root-baseline workspaces. Do not claim automatic worktree cloning.
+- Calibrate by deliverables, not the word "complex". Adding file import with
+  file picking, parsing/storage, live progress/errors, and a final result
+  usually splits into UI, data, and cross-boundary acceptance; invite a peer
+  unless source proves one conflict-prone owner. A located function-boundary fix plus
+  one focused test is usually single-owner. Never branch on example wording.
+- Use `room_collaborate` after definition for non-overlapping implementation,
+  never intake or review. Return evidence with `room_commit`.
+- Keep one concrete Session Todo. After material progress, call
+  `todo.checkpoint` with file, diff, artifact, or test references; avoid count-only churn.
 - The Facilitator integrates, then follows review policy. Re-read `room_state`
   after rejection/handoff; stale authority blocks work rather than replacing it.
 

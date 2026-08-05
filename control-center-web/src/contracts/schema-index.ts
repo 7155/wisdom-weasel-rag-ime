@@ -7818,6 +7818,9 @@ export const contractSchemas = {
           "init",
           "done",
           "drop",
+          "block",
+          "unblock",
+          "checkpoint",
           "append",
           "view",
           "rm"
@@ -7891,6 +7894,54 @@ export const contractSchemas = {
             "type": "string",
             "minLength": 1,
             "maxLength": 500
+          },
+          "checkpoint": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "references": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/$defs/todoReference"
+            }
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "todoReference": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "label",
+          "reference"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "file",
+              "artifact",
+              "test",
+              "diff",
+              "url",
+              "other"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "reference": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
           }
         }
       },

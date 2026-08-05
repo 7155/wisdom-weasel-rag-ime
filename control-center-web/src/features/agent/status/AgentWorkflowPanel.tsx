@@ -233,8 +233,25 @@ function TodoProgress({ todo }: { todo: Todo }) {
                       <span>
                         {task.content}
                         {task.reason ? <small>{task.reason}</small> : null}
+                        {task.checkpoint ? <small className="agent-todo-checkpoint">
+                          <b>当前检查点</b>{task.checkpoint}
+                        </small> : null}
+                        {task.references?.length ? <ul
+                          aria-label={`${task.content} 的相关文件、产物与测试`}
+                          className="agent-todo-references"
+                        >{task.references.map((reference, referenceIndex) => <li
+                          key={`${reference.kind}:${reference.reference}:${referenceIndex}`}
+                        >
+                          <span>{todoReferenceKindLabel(reference.kind)} · {reference.label}</span>
+                          <code>{reference.reference}</code>
+                        </li>)}</ul> : null}
                       </span>
-                      <small>{todoTaskStatusLabel(task.status)}</small>
+                      <span className="agent-todo-task-state">
+                        <small>{todoTaskStatusLabel(task.status)}</small>
+                        {task.updatedAtMs !== undefined ? <time dateTime={new Date(task.updatedAtMs).toISOString()}>
+                          {formatWorkflowTime(task.updatedAtMs)}
+                        </time> : null}
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -285,6 +302,19 @@ function todoTaskStatusLabel(status: TodoTask['status']): string {
     completed: '已完成',
     abandoned: '已放弃',
   }[status];
+}
+
+function todoReferenceKindLabel(
+  kind: NonNullable<TodoTask['references']>[number]['kind'],
+): string {
+  return {
+    file: '文件',
+    artifact: '产物',
+    test: '测试',
+    diff: 'Diff',
+    url: '链接',
+    other: '参考',
+  }[kind];
 }
 
 function todoActorLabel(actor: string): string {

@@ -1209,6 +1209,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "drop",
                 "block",
                 "unblock",
+                "checkpoint",
                 "append",
                 "view",
                 "rm",
@@ -1531,9 +1532,18 @@ class ControlToolGatewayTests(unittest.TestCase):
         )["result"]
 
         self.assertEqual(initialized["presentationKind"], "todo")
+        self.assertEqual(len(initialized["todo"]["phases"][0]["tasks"]), 1)
         self.assertEqual(
-            initialized["todo"]["phases"][0]["tasks"],
-            [{"content": "验证权限模式", "status": "in_progress"}],
+            initialized["todo"]["phases"][0]["tasks"][0]["content"],
+            "验证权限模式",
+        )
+        self.assertEqual(
+            initialized["todo"]["phases"][0]["tasks"][0]["status"],
+            "in_progress",
+        )
+        self.assertIsInstance(
+            initialized["todo"]["phases"][0]["tasks"][0]["updatedAtMs"],
+            int,
         )
         self.assertEqual(
             self.store.workflow_state(str(self.session["id"]))["actGate"]["reason"],
@@ -1555,6 +1565,43 @@ class ControlToolGatewayTests(unittest.TestCase):
             self._tool_call("todo", "start", task="验证权限模式")
         )["result"]
         self.assertEqual(started["todo"]["counts"]["inProgress"], 1)
+        checkpointed = self.gateway.execute(
+            self._tool_call(
+                "todo",
+                "checkpoint",
+                task="验证权限模式",
+                checkpoint="权限边界已确认，正在验证工具链",
+                references=[
+                    {
+                        "kind": "test",
+                        "label": "Todo 工具回归",
+                        "reference": "tests/test_agent_tools.py",
+                    }
+                ],
+            )
+        )["result"]
+        checkpoint_task = checkpointed["todo"]["phases"][0]["tasks"][0]
+        self.assertEqual(
+            checkpoint_task["checkpoint"],
+            "权限边界已确认，正在验证工具链",
+        )
+        self.assertEqual(
+            checkpoint_task["references"][0]["reference"],
+            "tests/test_agent_tools.py",
+        )
+        blocked = self.gateway.execute(
+            self._tool_call(
+                "todo",
+                "block",
+                task="验证权限模式",
+                reason="等待本地测试环境",
+            )
+        )["result"]
+        self.assertEqual(blocked["todo"]["counts"]["blocked"], 1)
+        unblocked = self.gateway.execute(
+            self._tool_call("todo", "unblock", task="验证权限模式")
+        )["result"]
+        self.assertEqual(unblocked["todo"]["counts"]["inProgress"], 1)
         completed = self.gateway.execute(
             self._tool_call("todo", "done", task="验证权限模式")
         )["result"]
@@ -3599,7 +3646,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn("recentNonRetryableFailures", extension)
         self.assertIn("同一工具与参数刚刚已被判定为不可重试", extension)
         self.assertIn(
-            'operations: ["init", "start", "done", "drop", "block", "unblock", "append", "view", "rm"]',
+            'operations: ["init", "start", "done", "drop", "block", "unblock", "checkpoint", "append", "view", "rm"]',
             extension,
         )
         self.assertIn('operations: ["list", "confirm_setup", "update", "pause", "resume", "complete", "cancel"]', extension)

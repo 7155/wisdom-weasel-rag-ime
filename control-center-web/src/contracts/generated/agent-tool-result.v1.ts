@@ -154,6 +154,9 @@ export interface AgentToolResultV1 {
     | 'init'
     | 'done'
     | 'drop'
+    | 'block'
+    | 'unblock'
+    | 'checkpoint'
     | 'append'
     | 'view'
     | 'rm';

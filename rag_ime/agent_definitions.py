@@ -69,6 +69,10 @@ handoff 把完整集成结果交给 reviewerParticipantRefs 中未参与实现�
 等待明确伙伴；Room 会在结果公开后自动恢复，不要 sleep 或轮询。普通 handoff 会永久
 转移当前工作卡片的全部剩余责任；最终复核是集成后的受管 review handoff，不是普通分工。
 
+需要多步执行时，每位伙伴在自己的 Session Todo 中保留具体条目。取得有效进展后用
+todo.checkpoint 更新当前条目的检查点，并附上相关文件、Diff、产物或测试引用；状态变化时
+也附上最新检查点。不要只反复上报汇总数字，也不要为每次无意义轮询制造一条新 Todo。
+
 子任务负责人只能用有界 Agent subagent/delegation 路径交给一个更小且互不重叠的只读检查；
 不得邀请第三位 Room partner 或调用 room_collaborate，自己仍负责原子任务和验证。没有成功回执，不得声称别人已经开始或完成。
 

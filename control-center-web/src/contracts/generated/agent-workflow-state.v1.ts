@@ -183,6 +183,241 @@ export interface TodoTask {
   content: string;
   status: 'pending' | 'in_progress' | 'blocked' | 'completed' | 'abandoned';
   reason?: string;
+  checkpoint?: string;
+  /**
+   * @maxItems 20
+   */
+  references?:
+    | []
+    | [TodoReference]
+    | [TodoReference, TodoReference]
+    | [TodoReference, TodoReference, TodoReference]
+    | [TodoReference, TodoReference, TodoReference, TodoReference]
+    | [TodoReference, TodoReference, TodoReference, TodoReference, TodoReference]
+    | [TodoReference, TodoReference, TodoReference, TodoReference, TodoReference, TodoReference]
+    | [
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+      ]
+    | [
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+      ]
+    | [
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+      ]
+    | [
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+      ]
+    | [
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+      ]
+    | [
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+      ]
+    | [
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+      ]
+    | [
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+      ]
+    | [
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+      ]
+    | [
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+      ]
+    | [
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+      ]
+    | [
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+      ]
+    | [
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+      ]
+    | [
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+        TodoReference,
+      ];
+  updatedAtMs?: number;
+}
+export interface TodoReference {
+  kind: 'file' | 'artifact' | 'test' | 'diff' | 'url' | 'other';
+  label: string;
+  reference: string;
 }
 export interface Goal {
   schemaVersion: 'rag-ime.agent-goal.v1';

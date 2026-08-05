@@ -428,7 +428,9 @@ class RoomNativeSkillTests(unittest.TestCase):
             ],
         )
         self.assertIn("Project scope selects the shared recovery note", execution)
-        self.assertIn("adding file import with file", execution)
+        self.assertIn("adding file import with", execution.casefold())
+        self.assertIn("todo.checkpoint", execution)
+        self.assertIn("file, diff, artifact, or test references", execution)
         self.assertIn("located function-boundary fix", execution)
         self.assertIn("return the proposed document delta\nto the caller", execution)
 

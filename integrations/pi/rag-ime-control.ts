@@ -131,6 +131,12 @@ type ToolParams = {
   targetId?: string;
   text?: string;
   reason?: string;
+  checkpoint?: string;
+  references?: Array<{
+    kind: "file" | "artifact" | "test" | "diff" | "url" | "other";
+    label: string;
+    reference: string;
+  }>;
   memoryKind?: "fact" | "preference" | "decision" | "commitment" | "project_state";
   evidenceIds?: string[];
   claimKey?: string;
@@ -1218,7 +1224,7 @@ const toolSpecs: ToolSpec[] = [
     name: "todo",
     label: "Todo",
     description: "维护当前 Session 唯一的分阶段任务清单，并把进度同步到任务中心。",
-    operations: ["init", "start", "done", "drop", "block", "unblock", "append", "view", "rm"],
+    operations: ["init", "start", "done", "drop", "block", "unblock", "checkpoint", "append", "view", "rm"],
     progress: {
       init: "正在建立 Todo",
       start: "正在推进 Todo",
@@ -1226,6 +1232,7 @@ const toolSpecs: ToolSpec[] = [
       drop: "正在放弃 Todo 任务",
       block: "正在阻塞 Todo 任务",
       unblock: "正在解除 Todo 阻塞",
+      checkpoint: "正在记录 Todo 进展",
       append: "正在追加 Todo 任务",
       view: "正在读取 Todo",
       rm: "正在整理 Todo",
@@ -1233,7 +1240,7 @@ const toolSpecs: ToolSpec[] = [
     guidelines: [
       "这是当前 Session 唯一的任务状态，不是用户的长期记忆或每日规划，也不构成额外执行许可。",
       "任务包含至少三个清晰动作、用户给出多项要求，或工作需要跨回合验证时必须先 init；简单问答和单步操作不要创建 Todo。",
-      "init 使用分阶段 list；每个任务写 5 到 10 个字，描述结果而不是方法。状态变化后立即调用 start、done、drop、block、unblock、append 或 rm，不能只在回复里描述进度。",
+      "init 使用分阶段 list；每个任务写 5 到 10 个字，描述结果而不是方法。有效进展用 checkpoint 记录当前结论和文件、Diff、产物或测试引用；状态变化后立即调用 start、done、drop、block、unblock、append 或 rm。",
       "同一时间只能有一个 in_progress。只有验收证据已经成立才能 done；等待外部输入时 block，解除后 unblock 并 start；命令已运行不等于任务已完成。",
       "Todo 调用必须和本轮实际工作一起发出，不能成为整轮唯一动作。Room WorkItem 和子 Agent 任务仍以各自 objective、expectedOutput、acceptanceCriteria 为边界；压缩或恢复后先 view 并延续已有 Todo，不要重建冲突清单。",
     ],
@@ -1283,7 +1290,55 @@ const toolSpecs: ToolSpec[] = [
           properties: {
             op: { const: "start" },
             task: { type: "string", minLength: 1, maxLength: 240 },
+            checkpoint: { type: "string", minLength: 1, maxLength: 1000 },
+            references: {
+              type: "array",
+              minItems: 1,
+              maxItems: 20,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "label", "reference"],
+                properties: {
+                  kind: {
+                    type: "string",
+                    enum: ["file", "artifact", "test", "diff", "url", "other"],
+                  },
+                  label: { type: "string", minLength: 1, maxLength: 160 },
+                  reference: { type: "string", minLength: 1, maxLength: 1000 },
+                },
+              },
+            },
           },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["op", "task"],
+          properties: {
+            op: { const: "checkpoint" },
+            task: { type: "string", minLength: 1, maxLength: 240 },
+            checkpoint: { type: "string", minLength: 1, maxLength: 1000 },
+            references: {
+              type: "array",
+              minItems: 1,
+              maxItems: 20,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "label", "reference"],
+                properties: {
+                  kind: {
+                    type: "string",
+                    enum: ["file", "artifact", "test", "diff", "url", "other"],
+                  },
+                  label: { type: "string", minLength: 1, maxLength: 160 },
+                  reference: { type: "string", minLength: 1, maxLength: 1000 },
+                },
+              },
+            },
+          },
+          anyOf: [{ required: ["checkpoint"] }, { required: ["references"] }],
         },
         ...["done", "drop", "block", "unblock"].map((operation) => ({
           type: "object",
@@ -1294,6 +1349,25 @@ const toolSpecs: ToolSpec[] = [
             task: { type: "string", minLength: 1, maxLength: 240 },
             phase: { type: "string", minLength: 1, maxLength: 80 },
             reason: { type: "string", minLength: 1, maxLength: 500 },
+            checkpoint: { type: "string", minLength: 1, maxLength: 1000 },
+            references: {
+              type: "array",
+              minItems: 1,
+              maxItems: 20,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "label", "reference"],
+                properties: {
+                  kind: {
+                    type: "string",
+                    enum: ["file", "artifact", "test", "diff", "url", "other"],
+                  },
+                  label: { type: "string", minLength: 1, maxLength: 160 },
+                  reference: { type: "string", minLength: 1, maxLength: 1000 },
+                },
+              },
+            },
           },
           oneOf: [{ required: ["task"] }, { required: ["phase"] }],
         })),
@@ -2364,7 +2438,10 @@ function specsForToolProfile(specs: ToolSpec[]) {
         runtime: ["health", "components", "diagnose"],
         agents: ["catalog", "delegate", "status", "artifact", "abort"],
         agent_schedule: ["list", "runs"],
-        todo: ["view"],
+        todo: [
+          "init", "start", "done", "drop", "block", "unblock",
+          "checkpoint", "append", "view", "rm",
+        ],
         agent_goal: ["list"],
         workspace_job: ["list", "status", "logs"],
         workspace_lsp: [
