@@ -1,6 +1,6 @@
 import { Archive, ArchiveRestore, BriefcaseBusiness, FilePlus2, FolderOpen, GitBranch, LoaderCircle, MessageSquarePlus, MessagesSquare, MoreHorizontal, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus, RefreshCw, Settings2, ShieldCheck, Sparkles, Trash2, UserMinus, UserPlus, X } from 'lucide-react';
 import * as RadioGroup from '@radix-ui/react-radio-group';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Virtuoso } from 'react-virtuoso';
 import { useShallow } from 'zustand/react/shallow';
@@ -190,7 +190,7 @@ function RoomHistoryControl({ roomId }: { roomId: string }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  async function loadEarlier(): Promise<void> {
+  const loadEarlier = useCallback(async (): Promise<void> => {
     if (loading || !history?.hasMore || !history.firstSequence) return;
     const requestedBefore = history.firstSequence;
     const scroller = markerRef.current?.closest<HTMLElement>('[data-virtuoso-scroller="true"]');
@@ -223,25 +223,45 @@ function RoomHistoryControl({ roomId }: { roomId: string }) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [history?.firstSequence, history?.hasMore, loading, prependHistory, roomId, transport]);
+
+  useEffect(() => {
+    const marker = markerRef.current;
+    if (!marker || !history?.hasMore || loading || error || typeof IntersectionObserver === 'undefined') {
+      return undefined;
+    }
+    const scroller = marker.closest<HTMLElement>('[data-virtuoso-scroller="true"]');
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void loadEarlier();
+    }, {
+      root: scroller,
+      rootMargin: '240px 0px 0px',
+      threshold: 0,
+    });
+    observer.observe(marker);
+    return () => observer.disconnect();
+  }, [error, history?.hasMore, loadEarlier, loading]);
 
   if (!history?.hasMore && !history?.retainedPrefixTruncated && !error) {
     return null;
   }
   return <div ref={markerRef} className="room-history-control">
-    {history?.hasMore ? <Button
-      leadingIcon={loading ? <LoaderCircle className="ui-spin" size={14} /> : <RefreshCw size={14} />}
-      disabled={loading}
-      onClick={() => void loadEarlier()}
-      size="small"
-      variant="quiet"
-    >
-      {loading ? '正在载入较早记录' : '载入更早记录'}
-    </Button> : null}
+    {loading ? <span role="status"><LoaderCircle className="ui-spin" size={14} />正在补上更早的对话</span> : null}
     {!history?.hasMore && history?.retainedPrefixTruncated
       ? <span role="status">更早记录已按保留策略截断</span>
       : null}
-    {error ? <span role="alert">{error}</span> : null}
+    {error ? <>
+      <span role="alert">{error}</span>
+      <Button
+        leadingIcon={<RefreshCw size={14} />}
+        onClick={() => {
+          setError('');
+          void loadEarlier();
+        }}
+        size="small"
+        variant="quiet"
+      >重试</Button>
+    </> : null}
   </div>;
 }
 

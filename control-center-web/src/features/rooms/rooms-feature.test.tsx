@@ -49,6 +49,7 @@ vi.mock('react-virtuoso', () => ({
 describe('Rooms experience', () => {
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
     useRoomLiveStore.getState().reset();
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
   });
@@ -99,6 +100,20 @@ describe('Rooms experience', () => {
   });
 
   it('loads older Room history without collapsing an expanded report', async () => {
+    let intersect: ((entries: IntersectionObserverEntry[]) => void) | undefined;
+    class MockIntersectionObserver implements IntersectionObserver {
+      readonly root = null;
+      readonly rootMargin = '240px 0px 0px';
+      readonly thresholds = [0];
+      constructor(callback: IntersectionObserverCallback) {
+        intersect = (entries) => callback(entries, this);
+      }
+      disconnect = vi.fn();
+      observe = vi.fn();
+      takeRecords = vi.fn(() => []);
+      unobserve = vi.fn();
+    }
+    vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
     const expandedMarker = '历史加载后仍保持展开。';
     const recent = [
       roomEvent('room-a', 3, 'user_message', { text: '最近消息三' }, {
@@ -145,7 +160,9 @@ describe('Rooms experience', () => {
     await user.click(within(report).getByText('查看完整汇报'));
     expect(within(report).getByText(/历史加载后仍保持展开/)).toBeInTheDocument();
     expect(report).toHaveAttribute('open');
-    await user.click(screen.getByRole('button', { name: '载入更早记录' }));
+    expect(screen.queryByRole('button', { name: '载入更早记录' })).not.toBeInTheDocument();
+    await waitFor(() => expect(intersect).toBeTypeOf('function'));
+    act(() => intersect?.([{ isIntersecting: true } as IntersectionObserverEntry]));
 
     expect(await screen.findByText('较早消息一')).toBeInTheDocument();
     expect(screen.getByText('较早消息二')).toBeInTheDocument();
@@ -153,7 +170,6 @@ describe('Rooms experience', () => {
     expect(reportAfterPrepend).toBe(report);
     expect(within(reportAfterPrepend).getByText(/历史加载后仍保持展开/)).toBeInTheDocument();
     expect(reportAfterPrepend).toHaveAttribute('open');
-    expect(screen.queryByRole('button', { name: '载入更早记录' })).not.toBeInTheDocument();
     expect(transport.requests.find((call) => call.request.pathId === 'agent.room.history')?.request).toMatchObject({
       params: { roomId: 'room-a' },
       query: { beforeSequence: 3, limit: 200 },

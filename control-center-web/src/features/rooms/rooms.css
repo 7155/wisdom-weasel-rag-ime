@@ -128,6 +128,7 @@
   color: var(--color-text-tertiary);
   font-size: 12px;
 }
+.room-history-control > span { display: inline-flex; align-items: center; gap: 6px; }
 .room-history-control > span[role='alert'] { color: var(--color-danger); }
 .room-turn__root-control { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 10px; margin: 6px 0 10px; }
 .room-turn__root-control > span { display: inline-flex; min-width: 0; align-items: center; gap: 5px; color: var(--color-text-tertiary); }
