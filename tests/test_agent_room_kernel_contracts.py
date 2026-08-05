@@ -307,6 +307,42 @@ class AgentRoomKernelContractsTest(unittest.TestCase):
                         {**payload, "verifications": [verification]},
                     )
 
+    def test_room_task_contract_accepts_isolated_workspace_reservation_baseline(
+        self,
+    ) -> None:
+        payload = {
+            "schemaVersion": ROOM_TASK_SCHEMA_VERSION,
+            "taskId": "task:isolated-workspace",
+            "rootId": "root:1",
+            "parentTaskId": "task:parent",
+            "taskKind": "work",
+            "currentOwnerParticipantId": "participant:worker",
+            "ownershipRevision": 0,
+            "ownershipReceiptId": None,
+            "objective": "Implement a bounded change in an isolated worktree.",
+            "expectedOutput": "A tested patch and delivery receipt.",
+            "requirementItemIds": ["requirement:1"],
+            "acceptanceCriterionIds": ["criterion:1"],
+            "contextEvidenceRefs": [],
+            "invitationId": None,
+            "reviewOfTaskIds": [],
+            "reviewAuthorParticipantIds": [],
+            "reviewState": "not_required",
+            "workspacePolicy": "isolated_writable",
+            "workspaceBaseSnapshotSha256": "a" * 64,
+            "workspaceBaseDirtyStatusSha256": "b" * 64,
+            "workspaceBaseDirtyPaths": ["user-notes.local"],
+            "workspaceBaseDirtyPathCount": 1,
+            "workspaceBaseDirtyPathsTruncated": False,
+            "workspaceBaseDirty": True,
+            "workspaceReservationReceiptId": "room-workspace-event:1",
+            "workspaceReservationReceiptSha256": "c" * 64,
+            "revision": 0,
+            "state": "active",
+        }
+
+        validate_kernel_contract("roomTask", payload)
+
     def test_structured_wait_question_round_trips_through_post_and_commit_contracts(
         self,
     ) -> None:
