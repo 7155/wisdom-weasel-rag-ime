@@ -4044,6 +4044,42 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.service.room_kernel_worker_loop.close()
         self.assertFalse(self.service.room_kernel_worker_loop.running)
 
+    def test_startup_recovers_running_dispatch_without_runtime_owner(self) -> None:
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        accepted = self.service.room_kernel_worker.run_once()
+        self.assertIsNotNone(accepted)
+        self.assertEqual(
+            self.service.room_kernel.dispatch("dispatch:service")["state"],
+            "running",
+        )
+
+        recovered = (
+            self.service._recover_interrupted_room_runtime_dispatches(
+                observed_at_ms=12,
+            )
+        )
+
+        self.assertEqual(recovered, 1)
+        self.assertEqual(
+            self.service.room_kernel.dispatch("dispatch:service")["state"],
+            "failed",
+        )
+        with sqlite3.connect(self.service.db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT dispatch_id, state, payload_json
+                FROM room_kernel_dispatches
+                WHERE root_id = 'root:service'
+                ORDER BY created_at_ms, dispatch_id
+                """
+            ).fetchall()
+        self.assertEqual(len(rows), 2)
+        retried = json.loads(str(rows[-1][2]))
+        self.assertNotEqual(str(rows[-1][0]), "dispatch:service")
+        self.assertIn(str(rows[-1][1]), {"pending", "leased", "running"})
+        self.assertEqual(retried["intentKind"], "execute")
+        self.assertEqual(retried["attempt"], 1)
+
     def test_projection_sync_skips_kernel_roots_for_deleted_rooms(self) -> None:
         stale_room_id = "room:deleted"
         self.service.room_kernel.create_root_with_task(

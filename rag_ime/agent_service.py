@@ -678,6 +678,7 @@ class AgentService:
                 self.room_turns.user_priority_sessions
             ),
         )
+        self._recover_interrupted_room_runtime_dispatches()
         self._reconcile_room_work_from_kernel()
         if self._room_kernel_worker_enabled:
             self.room_kernel_worker_loop.start()
@@ -4476,6 +4477,67 @@ class AgentService:
                     self.room_kernel.root(root_id)
                 )
         return projected
+
+    def _recover_interrupted_room_runtime_dispatches(
+        self,
+        *,
+        observed_at_ms: int | None = None,
+    ) -> int:
+        """Resume accepted Kernel turns that have no live local Runtime owner."""
+
+        runtime_status = self.runtime.runtime_status()
+        active_session_ids = {
+            str(value)
+            for value in runtime_status.get("activeSessionIds") or []
+            if str(value).strip()
+        }
+        recovered = 0
+        timestamp = (
+            int(observed_at_ms)
+            if observed_at_ms is not None
+            else int(time.time() * 1000)
+        )
+        for room_id in self.room_kernel.room_ids():
+            for target in self.room_kernel.room_active_runtime_targets(room_id):
+                session_id = str(target.get("sessionId") or "")
+                if not session_id or session_id in active_session_ids:
+                    continue
+                binding = self.room_kernel.session_binding(session_id)
+                if (
+                    binding is None
+                    or binding.get("state") != "running"
+                    or binding.get("dispatchId") != target.get("dispatchId")
+                    or not str(binding.get("runtimeTurnId") or "").strip()
+                ):
+                    continue
+                identity = "\0".join(
+                    (
+                        str(binding["dispatchId"]),
+                        str(binding["runtimeTurnId"]),
+                    )
+                )
+                source_event_id = (
+                    "event:runtime-restart:"
+                    + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
+                )
+                try:
+                    receipt = self.room_kernel_application.record_runtime_failure(
+                        room_id=room_id,
+                        dispatch_id=str(binding["dispatchId"]),
+                        generation=int(binding["generation"]),
+                        source_event_id=source_event_id,
+                        runtime_turn_id=str(binding["runtimeTurnId"]),
+                        dispatch_attempt=int(binding["attempt"]),
+                        created_at_ms=timestamp,
+                        retryable=True,
+                        had_tool_activity=True,
+                        reason_code="runtime_host_exit",
+                    )
+                except (KeyError, RoomKernelFenceError, ValueError):
+                    continue
+                if receipt.get("status") == "applied":
+                    recovered += 1
+        return recovered
 
     def _project_room_work_from_kernel_root(
         self,
