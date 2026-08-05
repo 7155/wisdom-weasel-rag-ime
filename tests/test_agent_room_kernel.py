@@ -1282,6 +1282,65 @@ class RoomKernelCoreTests(unittest.TestCase):
             ],
         )
 
+    def test_explicit_control_center_retry_can_extend_exhausted_automatic_budget(
+        self,
+    ) -> None:
+        self.seed()
+        failed_dispatch_id = "dispatch:manual-retry-after-exhaustion"
+        self.store.enqueue_dispatch(
+            dispatch(failed_dispatch_id, key="manual-retry-after-exhaustion"),
+            now_ms=10,
+        )
+        self.accept_runtime_attempt(
+            failed_dispatch_id,
+            turn_id="turn:manual-retry-after-exhaustion",
+            now_ms=11,
+        )
+        self.store.record_runtime_failure(
+            failed_dispatch_id,
+            generation=0,
+            source_event_id="event:manual-retry-after-exhaustion",
+            runtime_turn_id="turn:manual-retry-after-exhaustion",
+            dispatch_attempt=0,
+            now_ms=12,
+        )
+        with sqlite3.connect(self.db_path) as connection:
+            retry_limit = int(
+                connection.execute(
+                    "SELECT retry_limit FROM room_kernel_root_limits WHERE root_id=?",
+                    ("root:1",),
+                ).fetchone()[0]
+            )
+            connection.execute(
+                "UPDATE room_kernel_root_limits SET retry_used=? WHERE root_id=?",
+                (retry_limit, "root:1"),
+            )
+
+        automatic = control_command(
+            "command:automatic-retry-after-exhaustion",
+            "retry_root",
+            now_ms=13,
+            source_kind="system_runtime_recovery",
+        )
+        with self.assertRaisesRegex(RoomKernelFenceError, "retry limit exhausted"):
+            self.store.apply_control_command(automatic)
+
+        manual = control_command(
+            "command:manual-retry-after-exhaustion",
+            "retry_root",
+            now_ms=14,
+            source_kind="control_center",
+        )
+        receipt = self.store.apply_control_command(manual)
+        self.assertEqual(receipt["receiptKind"], "root_retried")
+        self.assertEqual(receipt["status"], "applied")
+        self.assertEqual(receipt["details"]["manualRetryBudgetExtension"], 1)
+        self.assertEqual(receipt["details"]["retryLimitBefore"], retry_limit)
+        self.assertEqual(receipt["details"]["retryLimitAfter"], retry_limit + 1)
+        limits = self.store.resource_limits("root:1")
+        self.assertEqual(limits["retry_limit"], retry_limit + 1)
+        self.assertEqual(limits["retry_used"], retry_limit + 1)
+
     def test_application_recovers_runtime_host_exit_with_fresh_dispatch_after_tools(
         self,
     ) -> None:
@@ -4051,6 +4110,7 @@ def control_command(
     target_kind: str | None = "root",
     target_id: str | None = "root:1",
     now_ms: int,
+    source_kind: str = "user_control",
 ) -> dict[str, object]:
     return {
         "schemaVersion": KERNEL_COMMAND_SCHEMA_VERSION,
@@ -4060,7 +4120,7 @@ def control_command(
         "commandKind": kind,
         "targetKind": None if kind == "panic" else target_kind,
         "targetId": None if kind == "panic" else target_id,
-        "sourceKind": "user_control",
+        "sourceKind": source_kind,
         "sourceId": command_id,
         "idempotencyKey": command_id,
         "generation": 0,

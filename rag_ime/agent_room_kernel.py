@@ -4279,6 +4279,9 @@ class RoomKernelStore:
                     root_id=root_id,
                     command_id=str(command["commandId"]),
                     now_ms=int(command["createdAtMs"]),
+                    allow_manual_budget_extension=(
+                        str(command.get("sourceKind") or "") == "control_center"
+                    ),
                 )
             return self._cancel_target(conn, root_id=root_id, target_kind=str(command["targetKind"]), target_id=_required(command.get("targetId"), "targetId"), command_id=str(command["commandId"]), now_ms=int(command["createdAtMs"]))
 
@@ -4289,6 +4292,7 @@ class RoomKernelStore:
         root_id: str,
         command_id: str,
         now_ms: int,
+        allow_manual_budget_extension: bool = False,
     ) -> dict[str, object]:
         root = self._root_row(conn, root_id)
         if str(root["state"]) != "blocked":
@@ -4323,8 +4327,21 @@ class RoomKernelStore:
             raise RoomKernelFenceError("Root resource limits are missing")
         if int(now_ms) >= int(limits["deadline_at_ms"]):
             raise RoomKernelFenceError("Root wall-clock deadline exceeded")
-        if int(limits["retry_used"]) + len(selected) > int(limits["retry_limit"]):
-            raise RoomKernelFenceError("Root retry limit exhausted")
+        retry_used_before = int(limits["retry_used"])
+        retry_limit_before = int(limits["retry_limit"])
+        retry_limit_after = retry_limit_before
+        manual_budget_extension = 0
+        required_retry_total = retry_used_before + len(selected)
+        if required_retry_total > retry_limit_before:
+            if not allow_manual_budget_extension:
+                raise RoomKernelFenceError("Root retry limit exhausted")
+            manual_budget_extension = required_retry_total - retry_limit_before
+            retry_limit_after = retry_limit_before + manual_budget_extension
+            conn.execute(
+                """UPDATE room_kernel_root_limits
+                   SET retry_limit=?,updated_at_ms=? WHERE root_id=?""",
+                (retry_limit_after, int(now_ms), root_id),
+            )
 
         conn.execute(
             "UPDATE room_kernel_roots SET state='running',updated_at_ms=? WHERE root_id=?",
@@ -4332,7 +4349,6 @@ class RoomKernelStore:
         )
         retried_dispatch_ids: list[str] = []
         retry_lineage: list[dict[str, object]] = []
-        retry_used_before = int(limits["retry_used"])
         for retry_index, failed in enumerate(selected, start=1):
             task_id = str(failed["task_id"])
             conn.execute(
@@ -4384,6 +4400,19 @@ class RoomKernelStore:
                SET retry_used=retry_used+?,updated_at_ms=? WHERE root_id=?""",
             (len(retried_dispatch_ids), int(now_ms), root_id),
         )
+        details: dict[str, object] = {
+            "retriedDispatchIds": retried_dispatch_ids,
+            "retriedTaskIds": sorted(task_ids),
+            "retryLineage": retry_lineage,
+        }
+        if manual_budget_extension:
+            details.update(
+                {
+                    "manualRetryBudgetExtension": manual_budget_extension,
+                    "retryLimitBefore": retry_limit_before,
+                    "retryLimitAfter": retry_limit_after,
+                }
+            )
         return self._receipt(
             conn,
             root_id=root_id,
@@ -4391,11 +4420,7 @@ class RoomKernelStore:
             receipt_kind="root_retried",
             status="applied",
             generation=int(root["generation"]),
-            details={
-                "retriedDispatchIds": retried_dispatch_ids,
-                "retriedTaskIds": sorted(task_ids),
-                "retryLineage": retry_lineage,
-            },
+            details=details,
             now_ms=now_ms,
         )
 
