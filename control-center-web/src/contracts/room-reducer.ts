@@ -230,7 +230,10 @@ export function reduceRoomEvent(
   next.resumeToken = event.resumeToken;
   const payload = publicRoomPayload(event.payload);
 
-  if (isExecutionEventAfterRootTerminal(next, event, payload)) {
+  if (
+    isExecutionEventAfterRootTerminal(next, event, payload)
+    && !isExactLateResponseProvenance(next, event, payload)
+  ) {
     appendDiagnostic(next, {
       id: `${event.eventId}:after-root-terminal`,
       streamKind: 'room',
@@ -2002,6 +2005,39 @@ function isExecutionEventAfterRootTerminal(
   const post = record(payload.post);
   const rootId = text(payload.rootId) || text(post.rootId) || event.turnId;
   return state.turnsById[rootId]?.rootTerminalAtMs != null;
+}
+
+function isExactLateResponseProvenance(
+  state: RoomProjectionState,
+  event: UiRoomEvent,
+  payload: Record<string, unknown>,
+): boolean {
+  const sourceEventType = text(payload.sourceEventType);
+  if (
+    event.eventType !== 'participant_activity'
+    || !['message_completed', 'response_evidence'].includes(sourceEventType)
+  ) return false;
+
+  const rootId = text(payload.rootId);
+  const dispatchId = text(payload.dispatchId);
+  const responsePostId = text(payload.responsePostId);
+  if (
+    !rootId
+    || event.turnId !== rootId
+    || !dispatchId
+    || !responsePostId
+  ) return false;
+
+  const turn = state.turnsById[rootId];
+  const responsePost = state.messagesById[responsePostId];
+  return Boolean(
+    turn?.rootTerminalAtMs != null
+    && turn.terminalDispatchIds?.includes(dispatchId)
+    && responsePost?.projectionKind === 'post'
+    && responsePost.status === 'completed'
+    && responsePost.rootId === rootId
+    && responsePost.dispatchId === dispatchId
+  );
 }
 
 function publicRoomPayload(value: unknown): Record<string, unknown> {

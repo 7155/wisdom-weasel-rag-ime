@@ -40,6 +40,7 @@ from .pi_runtime_public import (
     grouped_questions_from_wire,
     last_assistant_error,
     last_assistant_preview,
+    last_room_commit_response_evidence,
     pi_message_id,
     pi_message_completes_public_turn,
     pi_message_is_public,
@@ -2199,6 +2200,14 @@ class PiRuntimeManager:
                 # fallback before publishing so it cannot emit a second
                 # terminal receipt while turn_completed is being recorded.
                 self._cancel_abort_locked()
+            response_evidence = last_room_commit_response_evidence(messages)
+            if response_evidence:
+                self.events.publish(
+                    session_id,
+                    "response_evidence",
+                    response_evidence,
+                    turn_id=turn_id,
+                )
             # Publish the terminal receipt before exposing the session as idle.
             # Otherwise a poller can observe idle in the small window before
             # turn_completed is appended and incorrectly treat the same Pi

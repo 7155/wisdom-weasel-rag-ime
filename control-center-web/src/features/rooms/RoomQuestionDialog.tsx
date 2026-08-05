@@ -99,7 +99,6 @@ export function RoomQuestionDialog({
         <strong>{question.prompt}</strong>
       </span>
     </header>
-    {question.status === 'answered' ? <QuestionAnsweredNotice /> : null}
     {question.status === 'superseded' ? <p className="room-question-card__superseded">这项问题已由后续问题替代。</p> : null}
     {stale ? <p className="room-question-card__stale">这项问题已不再是当前可回答的问题。</p> : null}
     {interactive ? <form className="room-question-card__form" onSubmit={submit}>
@@ -189,14 +188,4 @@ export function RoomQuestionDialog({
       </footer>
     </form> : null}
   </section>;
-}
-
-function QuestionAnsweredNotice() {
-  return <div className="room-question-card__resolved" role="status">
-    <Check size={15} aria-hidden="true" />
-    <span>
-      <small>已锁定</small>
-      <strong>回答保留在下一条用户消息中</strong>
-    </span>
-  </div>;
 }

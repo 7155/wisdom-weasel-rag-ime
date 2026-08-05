@@ -333,7 +333,8 @@ describe('Rooms experience', () => {
     const resolvedQuestion = within(screen.getByRole('region', { name: '需要回答：这次采用哪一种发布方式？' }));
     const resolvedPrompt = resolvedQuestion.getByText('这次采用哪一种发布方式？');
     expect(resolvedQuestion.getByText('已收到回答')).toBeInTheDocument();
-    expect(resolvedQuestion.getByText('回答保留在下一条用户消息中')).toBeInTheDocument();
+    expect(resolvedQuestion.queryByText('已锁定')).not.toBeInTheDocument();
+    expect(resolvedQuestion.queryByText('回答保留在下一条用户消息中')).not.toBeInTheDocument();
     const answerMessage = document.querySelector('.room-user-message');
     if (!answerMessage) {
       throw new Error('expected the accepted answer to render as a chronological user message');
@@ -583,7 +584,8 @@ describe('Rooms experience', () => {
     ).not.toBeInTheDocument());
     const resolvedQuestion = within(screen.getByRole('region', { name: '需要回答：还有哪些实现边界必须保留？' }));
     expect(resolvedQuestion.getByText('已收到回答')).toBeInTheDocument();
-    expect(resolvedQuestion.getByText('回答保留在下一条用户消息中')).toBeInTheDocument();
+    expect(resolvedQuestion.queryByText('已锁定')).not.toBeInTheDocument();
+    expect(resolvedQuestion.queryByText('回答保留在下一条用户消息中')).not.toBeInTheDocument();
     expect(screen.getByText('请保留现有 API，并补充错误状态。').closest('.room-user-message')).toBeInTheDocument();
     expect(document.querySelectorAll('.room-user-message')).toHaveLength(1);
   });
@@ -632,7 +634,9 @@ describe('Rooms experience', () => {
       within(screen.getByRole('region', { name: '需要回答：采用哪一种发布方式？' }))
         .queryByRole('button', { name: '其他' }),
     ).not.toBeInTheDocument());
-    expect(within(screen.getByRole('region', { name: '需要回答：采用哪一种发布方式？' })).getByText('回答保留在下一条用户消息中')).toBeInTheDocument();
+    const answeredQuestion = within(screen.getByRole('region', { name: '需要回答：采用哪一种发布方式？' }));
+    expect(answeredQuestion.queryByText('已锁定')).not.toBeInTheDocument();
+    expect(answeredQuestion.queryByText('回答保留在下一条用户消息中')).not.toBeInTheDocument();
     expect(screen.getByText('稳定版').closest('.room-user-message')).toBeInTheDocument();
     expect(document.querySelectorAll('.room-user-message')).toHaveLength(3);
   });
@@ -736,7 +740,8 @@ describe('Rooms experience', () => {
     expect(await timeline.findByText('请直接在对话中说明希望怎样继续。')).toBeInTheDocument();
     expect(timeline.getByText('先选择一个发布方式。')).toBeInTheDocument();
     const answeredCard = within(timeline.getByRole('region', { name: '需要回答：选择发布方式' }));
-    expect(answeredCard.getByText('回答保留在下一条用户消息中')).toBeInTheDocument();
+    expect(answeredCard.queryByText('已锁定')).not.toBeInTheDocument();
+    expect(answeredCard.queryByText('回答保留在下一条用户消息中')).not.toBeInTheDocument();
     expect(timeline.getByText('B').closest('.room-user-message')).toBeInTheDocument();
     expect(answeredCard.queryByRole('button', { name: '其他' })).not.toBeInTheDocument();
     expect(answeredCard.queryAllByRole('radio')).toHaveLength(0);
@@ -1080,15 +1085,11 @@ describe('Rooms experience', () => {
     view.rerender(
       <RoomTurn turnId="turn-usage" room={room} projection={projection} personas={previewPersonas} />,
     );
-    const noCacheEvidence = screen.getByLabelText(
+    const noCacheEvidence = screen.queryByLabelText(
       '输入 1200 tokens，输出 80 tokens，缓存用量未上报',
     );
-    expect(noCacheEvidence).not.toHaveAttribute('data-cache-hit');
-    expect(noCacheEvidence).toHaveAttribute(
-      'title',
-      'input=1200, output=80, cache=unreported',
-    );
-    expect(screen.getByText('缓存未上报')).toBeInTheDocument();
+    expect(noCacheEvidence).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('回复运行记录')).not.toBeInTheDocument();
 
 
     projection.turnsById['turn-usage'] = {
@@ -1098,10 +1099,153 @@ describe('Rooms experience', () => {
     view.rerender(
       <RoomTurn turnId="turn-usage" room={room} projection={projection} personas={previewPersonas} />,
     );
-    expect(screen.getByText('本条回复未上报 Token / 缓存用量')).toBeInTheDocument();
-    expect(screen.getByText('模型 / Provider 未上报')).toBeInTheDocument();
+    expect(screen.queryByText('本条回复未上报 Token / 缓存用量')).not.toBeInTheDocument();
+    expect(screen.queryByText('模型 / Provider 未上报')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('回复运行记录')).not.toBeInTheDocument();
     expect(screen.queryByText(/self-reported-provider|self-reported-model/)).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '查看本轮上下文' })).not.toBeInTheDocument();
+  });
+
+  it('prefers complete response_evidence and falls back to complete legacy message evidence', () => {
+    const room = roomSummary('room-a', '工具提交证据 Room');
+    const projection = createRoomProjection(room.id);
+    projection.turnOrder.push('turn-tool-commit');
+    projection.turnsById['turn-tool-commit'] = {
+      id: 'turn-tool-commit',
+      rootId: 'turn-tool-commit',
+      status: 'completed',
+      messageIds: ['post-tool-commit'],
+      activityIds: ['tool-response-evidence', 'legacy-message-evidence'],
+      participantIds: ['room-a:p1'],
+      dispatchIds: ['dispatch-tool-commit'],
+      terminalDispatchIds: ['dispatch-tool-commit'],
+      terminalParticipantIds: ['room-a:p1'],
+      dispatchParticipantIds: { 'dispatch-tool-commit': 'room-a:p1' },
+      createdAtMs: 1,
+      updatedAtMs: 3,
+    };
+    projection.messagesById['post-tool-commit'] = {
+      id: 'post-tool-commit',
+      roomId: room.id,
+      turnId: 'turn-tool-commit',
+      participantId: 'room-a:p1',
+      sourceSessionId: 'room-a:s1',
+      role: 'assistant',
+      status: 'completed',
+      text: '工具提交已经完成。',
+      projectionKind: 'post',
+      rootId: 'turn-tool-commit',
+      dispatchId: 'dispatch-tool-commit',
+      postKind: 'result',
+      createdAtMs: 2,
+      completedAtMs: 2,
+    };
+    projection.activitiesById['tool-response-evidence'] = {
+      id: 'tool-response-evidence',
+      turnId: 'turn-tool-commit',
+      participantId: 'room-a:p1',
+      sourceSessionId: 'room-a:s1',
+      kind: 'participant_activity',
+      status: 'completed',
+      summary: '已保留工具提交的回复证据',
+      payload: {
+        rootId: 'turn-tool-commit',
+        dispatchId: 'dispatch-tool-commit',
+        sourceEventType: 'response_evidence',
+        responsePostId: 'post-tool-commit',
+        runtimeTurnId: 'runtime:tool-commit:1',
+        provider: 'openai',
+        model: 'gpt-5.6-luna',
+        usageReported: true,
+        cacheUsageReported: true,
+        usage: {
+          input: 640,
+          output: 48,
+          cacheRead: 512,
+          cacheWrite: 16,
+          totalTokens: 1_216,
+        },
+      },
+      createdAtMs: 3,
+      updatedAtMs: 3,
+    };
+    projection.activitiesById['legacy-message-evidence'] = {
+      id: 'legacy-message-evidence',
+      turnId: 'turn-tool-commit',
+      participantId: 'room-a:p1',
+      sourceSessionId: 'room-a:s1',
+      kind: 'participant_activity',
+      status: 'completed',
+      summary: '旧版回复证据',
+      payload: {
+        rootId: 'turn-tool-commit',
+        dispatchId: 'dispatch-tool-commit',
+        sourceEventType: 'message_completed',
+        responsePostId: 'post-tool-commit',
+        runtimeTurnId: 'runtime:legacy:1',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-5',
+        usageReported: true,
+        cacheUsageReported: true,
+        usage: {
+          input: 320,
+          output: 24,
+          cacheRead: 128,
+          cacheWrite: 8,
+          totalTokens: 480,
+        },
+      },
+      createdAtMs: 4,
+      updatedAtMs: 4,
+    };
+
+    const view = render(
+      <RoomTurn
+        turnId="turn-tool-commit"
+        room={room}
+        projection={projection}
+        personas={previewPersonas}
+      />,
+    );
+
+    expect(screen.getByText('openai · gpt-5.6-luna')).toBeInTheDocument();
+    expect(screen.getByLabelText(
+      '输入 640 tokens，输出 48 tokens，缓存读取 512 tokens，缓存写入 16 tokens',
+    )).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '查看本轮上下文' })).toHaveAttribute(
+      'href',
+      '#/context-debug?sessionId=room-a%3As1&turnId=runtime%3Atool-commit%3A1',
+    );
+
+    projection.turnsById['turn-tool-commit'] = {
+      ...projection.turnsById['turn-tool-commit']!,
+      activityIds: ['legacy-message-evidence', 'tool-response-evidence'],
+    };
+    projection.activitiesById['tool-response-evidence'] = {
+      ...projection.activitiesById['tool-response-evidence']!,
+      payload: {
+        ...projection.activitiesById['tool-response-evidence']!.payload,
+        provider: '',
+      },
+    };
+    view.rerender(
+      <RoomTurn
+        turnId="turn-tool-commit"
+        room={room}
+        projection={projection}
+        personas={previewPersonas}
+      />,
+    );
+
+    expect(screen.getByText('anthropic · claude-sonnet-4-5')).toBeInTheDocument();
+    expect(screen.getByLabelText(
+      '输入 320 tokens，输出 24 tokens，缓存读取 128 tokens，缓存写入 8 tokens',
+    )).toBeInTheDocument();
+    expect(screen.queryByText('gpt-5.6-luna')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '查看本轮上下文' })).toHaveAttribute(
+      'href',
+      '#/context-debug?sessionId=room-a%3As1&turnId=runtime%3Alegacy%3A1',
+    );
   });
 
   it('turns a terminal blocked Post into a clear final response', () => {

@@ -54,6 +54,7 @@ __all__ = [
     "grouped_questions_from_wire",
     "last_assistant_error",
     "last_assistant_preview",
+    "last_room_commit_response_evidence",
     "managed_media_content_url",
     "pi_message_id",
     "pi_message_completes_public_turn",
@@ -735,6 +736,71 @@ def public_usage_evidence(value: object) -> dict[str, bool]:
             for key in ("cacheRead", "cacheWrite")
         ),
     }
+
+
+def last_room_commit_response_evidence(
+    messages: list[object],
+) -> dict[str, object]:
+    """Return safe model/usage evidence for the exact ``room_commit`` call.
+
+    Managed Room turns commonly finish by calling ``room_commit`` and then
+    settling without another public assistant paragraph.  The Provider still
+    reports its identity and usage on that Tool-call message.  Keep the
+    protocol body private, but retain those bounded receipt fields so the
+    eventual Room Post can show its real runtime provenance.
+
+    A normal public final message already owns this evidence through
+    ``message_completed`` and must not create a second provenance event.
+    """
+
+    for item in reversed(messages):
+        message = as_mapping(item)
+        if str(message.get("role") or "").lower() != "assistant":
+            continue
+        if pi_message_completes_public_turn(message):
+            return {}
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        commit_calls = [
+            as_mapping(block)
+            for block in content
+            if (
+                isinstance(block, Mapping)
+                and str(block.get("type") or "") == "toolCall"
+                and str(block.get("name") or "") == "room_commit"
+                and str(block.get("id") or "").strip()
+            )
+        ]
+        if len(commit_calls) != 1:
+            continue
+        tool_call_id = str(commit_calls[0]["id"]).strip()[:240]
+        provider = str(message.get("provider") or "").strip()[:80]
+        model = str(
+            message.get("responseModel")
+            or message.get("model")
+            or ""
+        ).strip()[:160]
+        reporting = public_usage_evidence(message)
+        if not provider and not model and not reporting["usageReported"]:
+            return {}
+        evidence: dict[str, object] = {
+            "toolCallId": tool_call_id,
+            "usageReported": reporting["usageReported"],
+            "cacheUsageReported": (
+                reporting["cacheUsageReported"]
+                if reporting["usageReported"]
+                else False
+            ),
+        }
+        if provider:
+            evidence["provider"] = provider
+        if model:
+            evidence["model"] = model
+        if reporting["usageReported"]:
+            evidence["usage"] = public_usage(message)
+        return evidence
+    return {}
 
 
 def provider_retry_status(

@@ -58,8 +58,8 @@ This is one code stage in one continuous suite:
 9. Continue while a materially different legal action can advance acceptance.
    Preserve failed routes so compaction does not repeat them.
 10. After planned code and slice checks pass, return `ready_for_quality`.
-    Review is optional: the Facilitator decides whether risk warrants a
-    distinct, post-integration review.
+    Review is optional; Facilitator decides whether risk warrants it unless
+    `room_state.executionPolicy` requires it.
 
 Read [the continuity contract](references/execution-continuity-contract.md)
 before the first update and after compaction or handoff. A terminal authority
@@ -68,24 +68,23 @@ no automatic deletion timer.
 
 ## Managed Room Boundary
 
-- Start only after Kernel alignment/definition/handoff. Continue the existing
-  Root/Task/WorkItem, aliases, and participant binding; never create parallel
-  state.
-- A Worker executes only its directed responsibility. The Facilitator owns
-  decomposition, reassignment, dependencies, and authoritative integration.
-  A Worker may reject with a structured reason but never widen scope silently.
-- Participant identity is not a filesystem root. Use only the bound workspace
-  harness and accepted evidence receipts. Read-only work may share a baseline;
-  concurrent writable Workers need separate receipted workspaces from the same
-  Root baseline. Never claim automatic worktree cloning.
-- `room_collaborate` is a bounded non-overlapping implementation child only
-  after definition; never use it for intake, mention-based assignment, or review.
-- Submit artifacts/evidence/handoff via `room_commit`; reserve `room_post` for
-  progress. The Facilitator integrates results, then decides if risk warrants
-  review; when chosen, the Kernel hands the WorkItem to a distinct participant.
-- Re-read `room_state` after rejection or handoff. Stale or foreign authority
-  blocks work and leaves ownership with the Facilitator; never replace state.
-- Only the Facilitator/reporter emits the final public summary.
+- Start only after alignment/definition/handoff; reuse the bound Root, WorkItem,
+  aliases, participant, and workspace rather than creating parallel state.
+- A Worker owns only its directed slice. The Facilitator owns decomposition,
+  reassignment, dependencies, integration, and the final summary.
+- Filesystem authority comes from the receipted workspace, not identity.
+  Read-only work may share a baseline; concurrent writes need separate
+  Root-baseline workspaces. Never claim automatic worktree cloning.
+- Calibrate with examples, not the word "complex": adding file import with file
+  choice, parsing/persistence, live progress/errors, and a result normally
+  splits into UI, data, and cross-boundary acceptance. Invite a peer unless
+  source proves one conflict-prone owner. A located function-boundary fix plus
+  one focused test is usually single-owner. Generalize; never match the wording.
+- Use `room_collaborate` only after definition for bounded, non-overlapping
+  implementation, never intake or review. Return evidence with `room_commit`;
+  use `room_post` only for progress.
+- The Facilitator integrates, then follows review policy. Re-read `room_state`
+  after rejection/handoff; stale authority blocks work rather than replacing it.
 
 ## No-Progress And Cancellation
 

@@ -1085,6 +1085,91 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertFalse(gap)
         self.assertNotIn("message_completed", [event.event_type for event in events])
 
+    def test_tool_only_turn_reports_response_evidence_before_completion(self) -> None:
+        session_id = str(self.session["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn:tool-only-evidence"
+        assistant = {
+            "role": "assistant",
+            "provider": "openai-codex",
+            "model": "gpt-5.6-luna",
+            "usage": {
+                "input": 1804,
+                "output": 426,
+                "cacheRead": 9728,
+                "cacheWrite": 0,
+                "totalTokens": 11958,
+            },
+            "timestamp": 101,
+            "content": [{
+                "type": "toolCall",
+                "id": "call-room-commit",
+                "name": "room_commit",
+                "arguments": {"decision": "deliver"},
+            }],
+        }
+        trailing = {
+            "role": "assistant",
+            "provider": "other-provider",
+            "model": "wrong-trailing-model",
+            "usage": {
+                "input": 1,
+                "output": 2,
+                "cacheRead": 3,
+                "cacheWrite": 4,
+                "totalTokens": 10,
+            },
+            "content": [{
+                "type": "toolCall",
+                "id": "call-room-state-after-commit",
+                "name": "room_state",
+                "arguments": {},
+            }],
+        }
+        with self.runtime._lock:
+            client = self.runtime._client
+            self.runtime._active_turn_id = turn_id
+        assert client is not None
+
+        self.runtime._handle_pi_event(
+            client,
+            session_id,
+            {"type": "message_end", "message": assistant},
+        )
+        self.runtime._handle_pi_event(
+            client,
+            session_id,
+            {"type": "agent_end", "messages": [assistant, trailing]},
+        )
+
+        events, gap = self.events.replay(session_id)
+        self.assertFalse(gap)
+        event_types = [event.event_type for event in events]
+        self.assertNotIn("message_completed", event_types)
+        self.assertLess(
+            event_types.index("response_evidence"),
+            event_types.index("turn_completed"),
+        )
+        evidence = next(
+            event.payload
+            for event in events
+            if event.event_type == "response_evidence"
+        )
+        self.assertEqual(evidence, {
+            "toolCallId": "call-room-commit",
+            "provider": "openai-codex",
+            "model": "gpt-5.6-luna",
+            "usage": {
+                "input": 1804,
+                "output": 426,
+                "cacheRead": 9728,
+                "cacheWrite": 0,
+                "totalTokens": 11958,
+            },
+            "usageReported": True,
+            "cacheUsageReported": True,
+        })
+
     def test_provider_retry_is_visible_without_publishing_an_early_failure(self) -> None:
         session_id = str(self.session["id"])
         self.runtime.ensure(session_id)

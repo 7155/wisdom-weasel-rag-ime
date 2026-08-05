@@ -1353,6 +1353,118 @@ describe('RoomEventReducer', () => {
     )).toHaveLength(3);
   });
 
+  it('accepts only exact late response provenance for an existing terminal Post', () => {
+    const route = roomEvent(1, 'route_decision', {
+      rootId: 'room-turn-1', dispatchId: 'dispatch-1', targetParticipantId: 'participant-1',
+    });
+    const published = roomEvent(2, 'room_post', {
+      post: roomPost('post-1', '正式交付', 'dispatch-1'),
+    });
+    const rootCompleted = parseRoomEvent({
+      ...wireRoomEvent(3, 'turn_completed', { status: 'completed' }),
+      participantId: null,
+      sourceSessionId: '',
+    });
+    const exactEvidence = parseRoomEvent(wireRoomEvent(4, 'participant_activity', {
+      sourceEventId: 'runtime:evidence:1',
+      sourceEventType: 'response_evidence',
+      data: {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        responsePostId: 'post-1',
+        provider: 'openai',
+        model: 'gpt-5.6-luna',
+        usageReported: true,
+        cacheUsageReported: true,
+        usage: { input: 10, output: 2, cacheRead: 8, cacheWrite: 0, totalTokens: 20 },
+      },
+    }));
+    const exactLegacyEvidence = parseRoomEvent(wireRoomEvent(5, 'participant_activity', {
+      sourceEventId: 'runtime:evidence:legacy',
+      sourceEventType: 'message_completed',
+      data: {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        responsePostId: 'post-1',
+      },
+    }));
+    const wrongPost = parseRoomEvent(wireRoomEvent(6, 'participant_activity', {
+      sourceEventId: 'runtime:evidence:wrong-post',
+      sourceEventType: 'response_evidence',
+      data: {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        responsePostId: 'post-other',
+      },
+    }));
+    const wrongDispatch = parseRoomEvent(wireRoomEvent(7, 'participant_activity', {
+      sourceEventId: 'runtime:evidence:wrong-dispatch',
+      sourceEventType: 'message_completed',
+      data: {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-other',
+        responsePostId: 'post-1',
+      },
+    }));
+    const wrongTurn = parseRoomEvent({
+      ...wireRoomEvent(8, 'participant_activity', {
+        sourceEventId: 'runtime:evidence:wrong-turn',
+        sourceEventType: 'response_evidence',
+        data: {
+          rootId: 'room-turn-1',
+          dispatchId: 'dispatch-1',
+          responsePostId: 'post-1',
+        },
+      }),
+      turnId: 'room-turn-other',
+    });
+    const ordinaryLateActivity = roomEvent(9, 'participant_activity', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-1',
+      sourceEventType: 'current_progress',
+      summary: '迟到的普通进展',
+    });
+
+    let state = createRoomProjection('room-1');
+    for (const event of [
+      route,
+      published,
+      rootCompleted,
+      exactEvidence,
+      exactLegacyEvidence,
+      wrongPost,
+      wrongDispatch,
+      wrongTurn,
+      ordinaryLateActivity,
+    ]) {
+      state = reduceRoomEvent(state, event).state;
+    }
+
+    const accepted = Object.values(state.activitiesById).filter((activity) => [
+      'runtime:evidence:1',
+      'runtime:evidence:legacy',
+    ].includes(String(activity.payload.sourceEventId)));
+    expect(accepted).toHaveLength(2);
+    expect(accepted[0]?.payload).toMatchObject({
+      sourceEventType: 'response_evidence',
+      responsePostId: 'post-1',
+      dispatchId: 'dispatch-1',
+    });
+    expect(accepted[1]?.payload).toMatchObject({
+      sourceEventType: 'message_completed',
+      responsePostId: 'post-1',
+      dispatchId: 'dispatch-1',
+    });
+    expect(Object.values(state.activitiesById).some(
+      (activity) => activity.payload.sourceEventId === 'runtime:evidence:wrong-turn',
+    )).toBe(false);
+    expect(state.turnsById['room-turn-other']).toBeUndefined();
+    expect(Object.values(state.activitiesById)).toHaveLength(3);
+    expect(state.diagnostics.filter(
+      (item) => item.eventType === 'room_event_after_root_terminal',
+    )).toHaveLength(4);
+  });
+
   it('projects Room lifecycle events as completed instead of leaving a false running turn', () => {
     const created = reduceRoomEvent(
       createRoomProjection('room-1'),

@@ -401,12 +401,30 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             "implementationParticipantRef",
             schema["required"],
         )
+        self.assertIn("independentReviewRequired", schema["required"])
+        with self.assertRaises(ContractValidationError):
+            validate_contract(
+                {
+                    "objective": "完成小型单写任务",
+                    "expectedOutput": "可验证结果",
+                    "entrySurface": "协作任务页的单写任务入口",
+                    "primaryInteraction": "主持伙伴执行一次有界检查",
+                    "observableCompletion": "任务页显示检查结果和证据",
+                    "requirements": ["不虚构并行工作"],
+                    "acceptanceCriteria": ["结果通过验证"],
+                },
+                schema,
+            )
         validate_contract(
             {
                 "objective": "完成小型单写任务",
                 "expectedOutput": "可验证结果",
+                "entrySurface": "协作任务页的单写任务入口",
+                "primaryInteraction": "主持伙伴执行一次有界检查",
+                "observableCompletion": "任务页显示检查结果和证据",
                 "requirements": ["不虚构并行工作"],
                 "acceptanceCriteria": ["结果通过验证"],
+                "independentReviewRequired": False,
             },
             schema,
         )

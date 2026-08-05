@@ -221,6 +221,146 @@ class AgentEventProjectionTests(unittest.TestCase):
         )])
         self.assertTrue(timeline.allow_after_terminal)
 
+    def test_tool_only_response_evidence_projects_to_the_committed_room_post(
+        self,
+    ) -> None:
+        class Kernel:
+            mode = "kernel_only"
+            binding = {
+                "roomId": "room:1",
+                "rootId": "root:1",
+                "dispatchId": "dispatch:1",
+                "generation": 1,
+                "state": "committed",
+                "runtimeTurnId": "turn:1",
+                "attempt": 0,
+            }
+
+            @staticmethod
+            def session_binding(
+                _session_id: str,
+            ) -> dict[str, object]:
+                raise AssertionError(
+                    "settled response evidence must not use live ownership"
+                )
+
+            @classmethod
+            def response_provenance_binding(
+                cls,
+                session_id: str,
+                runtime_turn_id: str,
+                tool_call_id: str,
+            ) -> dict[str, object] | None:
+                if (
+                    session_id,
+                    runtime_turn_id,
+                    tool_call_id,
+                ) != (
+                    "session:1",
+                    "turn:1",
+                    "call-room-commit",
+                ):
+                    return None
+                return cls.binding
+
+            @staticmethod
+            def post_for_dispatch(
+                dispatch_id: str,
+            ) -> dict[str, object]:
+                if dispatch_id != "dispatch:1":
+                    raise AssertionError("response lookup used another Dispatch")
+                return {"postId": "post:1"}
+
+        class Rooms(_Rooms):
+            @staticmethod
+            def get(_room_id: str) -> dict[str, object]:
+                return {"activeTopicId": "topic:1"}
+
+        class Timeline:
+            def __init__(self) -> None:
+                self.events: list[tuple[str, dict[str, object]]] = []
+                self.allow_after_terminal = False
+
+            def publish_runtime(self, **values: object) -> None:
+                self.allow_after_terminal = bool(
+                    values.get("allow_after_terminal")
+                )
+                self.events.append((
+                    str(values["event_type"]),
+                    dict(values["public_data"]),  # type: ignore[arg-type]
+                ))
+
+        class KernelProjection:
+            @staticmethod
+            def sync_room(_room_id: str, *, now_ms: int) -> None:
+                if now_ms != 10:
+                    raise AssertionError("evidence timestamp was not preserved")
+
+        timeline = Timeline()
+        service = AgentEventProjectionService(
+            sessions=None,
+            room_kernel=Kernel(),
+            rooms=Rooms(),
+            agent_blocks=None,
+            observations=_Observations(),
+            room_kernel_projection=KernelProjection(),
+            room_events=None,
+            public_timeline=timeline,  # type: ignore[arg-type]
+            room_turns=_ForbiddenLegacyTurns(),
+            append_recent_message=lambda *_args: None,
+            record_assistant_evidence=lambda _event: {},
+            notify_intercom=lambda: None,
+        )
+
+        service.mirror_to_room(
+            AgentEventEnvelope(
+                event_id="event:tool-only-evidence",
+                session_id="session:1",
+                turn_id="turn:1",
+                sequence=1,
+                created_at_ms=10,
+                event_type="response_evidence",
+                payload={
+                    "toolCallId": "call-room-commit",
+                    "provider": "openai-codex",
+                    "model": "gpt-5.6-luna",
+                    "usage": {
+                        "input": 2873,
+                        "output": 426,
+                        "cacheRead": 10752,
+                        "cacheWrite": 0,
+                        "totalTokens": 14051,
+                    },
+                    "usageReported": True,
+                    "cacheUsageReported": True,
+                },
+                resume_token="event:tool-only-evidence",
+            )
+        )
+
+        self.assertEqual(timeline.events, [(
+            "participant_activity",
+            {
+                "status": "recorded",
+                "summary": "本轮运行记录已更新",
+                "requestId": "dispatch:1:provider",
+                "runtimeTurnId": "turn:1",
+                "usageReported": True,
+                "cacheUsageReported": True,
+                "provider": "openai-codex",
+                "model": "gpt-5.6-luna",
+                "usage": {
+                    "input": 2873,
+                    "output": 426,
+                    "cacheRead": 10752,
+                    "cacheWrite": 0,
+                    "totalTokens": 14051,
+                },
+                "responsePostId": "post:1",
+            },
+        )])
+        self.assertTrue(timeline.allow_after_terminal)
+
     def test_terminal_room_allows_only_explicit_response_provenance(
         self,
     ) -> None:

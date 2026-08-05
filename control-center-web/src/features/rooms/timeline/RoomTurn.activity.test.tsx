@@ -167,13 +167,14 @@ describe('RoomTurn public activity detail', () => {
       todo,
     };
 
+    const sessionsById = { 'session-a': session };
     const view = render(roomTurn(
       projection,
       {},
       undefined,
       undefined,
       undefined,
-      { 'session-a': session },
+      sessionsById,
     ));
     const lane = view.container.querySelector<HTMLElement>('.room-agent-lane')!;
     const todoRegion = within(lane).getByRole('region', { name: '澄·今 的 Todo' });
@@ -183,6 +184,44 @@ describe('RoomTurn public activity detail', () => {
     expect(todoRegion).toHaveTextContent('运行真实流程验收');
     expect(todoRegion).toHaveTextContent('整理交付结果');
     expect(lane.querySelector('.room-agent-lane__body')?.lastElementChild).toBe(todoRegion);
+
+    session.todo = {
+      ...todo,
+      revision: 4,
+      updatedAtMs: 3_900,
+      phases: [{
+        name: '实现与验证',
+        tasks: [
+          { content: '定位 TUI 入口', status: 'completed' },
+          { content: '实现交互闭环', status: 'completed' },
+          { content: '运行真实流程验收', status: 'completed' },
+          { content: '整理交付结果', status: 'in_progress' },
+        ],
+      }],
+      counts: {
+        total: 4,
+        pending: 0,
+        inProgress: 1,
+        blocked: 0,
+        completed: 3,
+        abandoned: 0,
+      },
+    };
+    session.updatedAtMs = 3_900;
+    view.rerender(roomTurn(
+      projection,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      sessionsById,
+    ));
+
+    const refreshedTodo = within(lane).getByRole('region', { name: '澄·今 的 Todo' });
+    expect(refreshedTodo).toBe(todoRegion);
+    expect(lane.querySelector('summary')).toHaveTextContent('Todo 3/4 · 当前：整理交付结果');
+    expect(refreshedTodo).toHaveTextContent('3 / 4 已收束');
+    expect(lane.querySelector('.room-agent-lane__body')?.lastElementChild).toBe(refreshedTodo);
   });
 
   it('groups automatic retries into one clickable tool result without losing attempt details', () => {
@@ -370,6 +409,14 @@ describe('RoomTurn public activity detail', () => {
       'data-active',
       'true',
     );
+
+    fireEvent.click(laneSummary);
+    expect(lane).not.toHaveAttribute('open');
+    expect(laneSummary).toHaveAttribute('aria-label', '展开澄·今的实时进展');
+
+    fireEvent.click(lane.querySelector('.room-agent-lane__disclosure')!);
+    expect(lane).toHaveAttribute('open');
+    expect(laneSummary).toHaveAttribute('aria-label', '收起澄·今的实时进展');
 
     fireEvent.click(laneSummary);
     expect(lane).not.toHaveAttribute('open');

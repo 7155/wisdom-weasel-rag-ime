@@ -155,9 +155,25 @@ class AgentEventProjectionService:
             )
         if participant is None:
             return
-        binding = self.room_kernel.session_binding(
-            event.session_id
-        )
+        if event.event_type == "response_evidence":
+            provenance_binding = getattr(
+                self.room_kernel,
+                "response_provenance_binding",
+                None,
+            )
+            binding = (
+                provenance_binding(
+                    event.session_id,
+                    event.turn_id,
+                    str(event.payload.get("toolCallId") or ""),
+                )
+                if callable(provenance_binding)
+                else None
+            )
+        else:
+            binding = self.room_kernel.session_binding(
+                event.session_id
+            )
         registered_turn_for_event = getattr(
             self.room_turns,
             "registered_turn_for_event",
@@ -178,10 +194,16 @@ class AgentEventProjectionService:
                 event,
                 room_intent_kind=str(binding.get("intentKind") or ""),
             )
-            if event.event_type == "message_completed":
+            if event.event_type in {
+                "message_completed",
+                "response_evidence",
+            }:
                 mapped_type = "participant_activity"
                 dispatch_id = str(binding["dispatchId"])
-                if _completed_message_failed(event):
+                if (
+                    event.event_type == "message_completed"
+                    and _completed_message_failed(event)
+                ):
                     # Provider diagnostics stay private. The public Room only
                     # needs one coalesced lifecycle signal until turn_failed
                     # publishes the authoritative terminal state.
@@ -191,17 +213,25 @@ class AgentEventProjectionService:
                         "requestId": f"{dispatch_id}:provider",
                         "isError": True,
                     }
-                else:
+                elif event.event_type == "message_completed":
                     public_data = {
                         "status": "draft_ready",
                         "summary": "正在整理正式 Post",
                         "requestId": f"{dispatch_id}:provider",
                     }
+                else:
+                    public_data = {
+                        "status": "recorded",
+                        "summary": "本轮运行记录已更新",
+                        "requestId": f"{dispatch_id}:provider",
+                    }
                 message = event.payload.get("message")
                 usage = _public_token_usage(
-                    message.get("usage")
-                    if isinstance(message, Mapping)
-                    else None
+                    (
+                        message.get("usage")
+                        if isinstance(message, Mapping)
+                        else event.payload.get("usage")
+                    )
                 )
                 response_post = self.room_kernel.post_for_dispatch(
                     dispatch_id
@@ -219,19 +249,23 @@ class AgentEventProjectionService:
                     if usage_reported
                     else False
                 )
-                if isinstance(message, Mapping):
-                    provider = bounded_text(
-                        message.get("provider"),
-                        maximum=80,
-                    )
-                    model = bounded_text(
-                        message.get("model"),
-                        maximum=160,
-                    )
-                    if provider:
-                        public_data["provider"] = provider
-                    if model:
-                        public_data["model"] = model
+                evidence_source = (
+                    message
+                    if isinstance(message, Mapping)
+                    else event.payload
+                )
+                provider = bounded_text(
+                    evidence_source.get("provider"),
+                    maximum=80,
+                )
+                model = bounded_text(
+                    evidence_source.get("model"),
+                    maximum=160,
+                )
+                if provider:
+                    public_data["provider"] = provider
+                if model:
+                    public_data["model"] = model
                 if usage_reported and usage is not None:
                     public_data["usage"] = usage
                 if response_post is not None:
@@ -336,7 +370,10 @@ class AgentEventProjectionService:
                 public_data=public_data,
                 topic_id=str(room.get("activeTopicId") or ""),
                 allow_after_terminal=(
-                    event.event_type == "message_completed"
+                    event.event_type in {
+                        "message_completed",
+                        "response_evidence",
+                    }
                     and str(binding.get("state") or "") == "committed"
                 ),
             )

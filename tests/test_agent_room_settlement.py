@@ -1193,6 +1193,171 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         ]
         self.assertEqual(len(report_dispatches), 1)
 
+    def test_review_handoff_covers_read_only_peer_result(self) -> None:
+        parent_dispatch = self.service.room_kernel.dispatch(
+            "dispatch:settle"
+        )
+        parent_task = self.service.room_kernel.task("task:settle")
+        peer_task_id = "task:read-only-peer"
+        peer_task = {
+            **parent_task,
+            "taskId": peer_task_id,
+            "parentTaskId": "task:settle",
+            "currentOwnerParticipantId": str(self.owner["id"]),
+            "state": "completed",
+            "workspacePolicy": "read_only",
+            "workspaceRoot": str(self.workspace_root),
+            "workspaceBaseRoot": str(self.workspace_root),
+            "workspaceIntegrationState": "not_required",
+        }
+        peer_dispatch = {
+            **parent_dispatch,
+            "dispatchId": "dispatch:read-only-peer",
+            "taskId": peer_task_id,
+            "parentDispatchId": "dispatch:settle",
+            "intentKind": "execute",
+            "targetParticipantId": str(self.owner["id"]),
+            "state": "committed",
+            "resultPublic": True,
+        }
+        review_seed = {
+            **parent_task,
+            "taskId": "task:review-read-only-peer",
+            "parentTaskId": "task:settle",
+            "taskKind": "review",
+            "currentOwnerParticipantId": str(self.target["id"]),
+            "state": "pending",
+        }
+        evidence_ref = "execution:facilitator-integration-read"
+        prepared_workspace = {
+            "workspacePolicy": "read_only",
+            "workspaceRoot": str(self.workspace_root),
+            "workspaceBaseRoot": str(self.workspace_root),
+            "workspaceIntegrationState": "not_required",
+        }
+
+        with (
+            patch.object(
+                self.service.room_kernel,
+                "collaboration_children",
+                return_value=[peer_dispatch],
+            ),
+            patch.object(
+                self.service.room_kernel,
+                "task",
+                return_value=peer_task,
+            ),
+            patch.object(
+                self.service.room_kernel,
+                "review_target_revision",
+                return_value=f"sha256:{'f' * 64}",
+            ),
+            patch.object(
+                self.service.room_capabilities,
+                "runtime_evidence_tools",
+                return_value={evidence_ref: "workspace_read"},
+            ),
+            patch.object(
+                self.service.room_kernel_application.workspaces,
+                "prepare",
+                return_value=prepared_workspace,
+            ),
+        ):
+            prepared = (
+                self.service.room_kernel_application.prepare_review_handoff_task(
+                    parent_dispatch=parent_dispatch,
+                    parent_task=parent_task,
+                    target_participant_id=str(self.target["id"]),
+                    evidence_refs=[evidence_ref],
+                    child_task=review_seed,
+                    pending_parent_task=parent_task,
+                    now_ms=self.now_ms + 20,
+                    parent_commit_id="commit:review-read-only-peer",
+                )
+            )
+
+        self.assertEqual(
+            prepared["reviewOfTaskIds"],
+            ["task:settle", peer_task_id],
+        )
+        self.assertEqual(
+            prepared["reviewAuthorParticipantIds"],
+            [str(self.owner["id"])],
+        )
+
+    def test_final_delivery_rejects_review_that_omits_late_peer_task(
+        self,
+    ) -> None:
+        parent_dispatch = self.service.room_kernel.dispatch(
+            "dispatch:settle"
+        )
+        parent_task = self.service.room_kernel.task("task:settle")
+        peer_task_id = "task:late-peer"
+        peer_task = {
+            **parent_task,
+            "taskId": peer_task_id,
+            "parentTaskId": "task:settle",
+            "state": "completed",
+            "workspacePolicy": "read_only",
+            "workspaceIntegrationState": "not_required",
+        }
+        peer_dispatch = {
+            **parent_dispatch,
+            "dispatchId": "dispatch:late-peer",
+            "taskId": peer_task_id,
+            "parentDispatchId": "dispatch:settle",
+            "intentKind": "execute",
+            "state": "committed",
+            "resultPublic": True,
+        }
+        stale_review = {
+            **parent_task,
+            "taskId": "task:review-before-late-peer",
+            "parentTaskId": "task:settle",
+            "taskKind": "review",
+            "currentOwnerParticipantId": str(self.target["id"]),
+            "state": "completed",
+            "reviewState": "accepted",
+            "reviewOfTaskIds": ["task:settle"],
+            "reviewAuthorParticipantIds": [str(self.owner["id"])],
+        }
+        latest_attempt = {
+            "dispatch": {
+                "targetParticipantId": str(self.target["id"]),
+            },
+            "payload": stale_review,
+            "taskState": "completed",
+            "resultPublic": True,
+        }
+
+        with (
+            patch.object(
+                self.service.room_kernel,
+                "collaboration_children",
+                return_value=[peer_dispatch],
+            ),
+            patch.object(
+                self.service.room_kernel,
+                "task",
+                return_value=peer_task,
+            ),
+            patch.object(
+                self.service.room_kernel,
+                "latest_review_attempts",
+                return_value=[latest_attempt],
+            ),
+        ):
+            with self.assertRaisesRegex(
+                RoomCommitProposalError,
+                "没有覆盖当轮全部实现",
+            ):
+                self.service.room_settle_lifecycle._assert_managed_collaboration_ready(
+                    decision="deliver",
+                    root=self.service.room_kernel.root("root:settle"),
+                    task=parent_task,
+                    dispatch=parent_dispatch,
+                )
+
     def test_review_finding_revises_then_rechecks_before_final_delivery(
         self,
     ) -> None:

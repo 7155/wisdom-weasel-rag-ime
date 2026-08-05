@@ -503,8 +503,8 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
     ),
     "input": (
         "最终 objective、expectedOutput、1-8 条 requirements、1-16 条 "
-        "acceptanceCriteria；确有独立工作时可附一位非 Reviewer 实现伙伴的 "
-        "participantRef"
+        "acceptanceCriteria、是否必须独立复核；确有独立工作时可附一位非 "
+        "Reviewer 实现伙伴的 participantRef"
     ),
     "output": (
         "新的不可变 RequirementCatalog、稳定 AC-1... 别名、一个由 Facilitator "
@@ -524,6 +524,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
             "observableCompletion",
             "requirements",
             "acceptanceCriteria",
+            "independentReviewRequired",
         ],
         "properties": {
             "objective": {"type": "string", "minLength": 1, "maxLength": 8000},
@@ -604,6 +605,14 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     "可选的首位建议实施伙伴；必须是活跃的非 Reviewer 成员。"
                     "省略或指向 Facilitator 时，由 Facilitator 先执行并按真实依赖决定"
                     "是否再用 room_collaborate 分工"
+                ),
+            },
+            "independentReviewRequired": {
+                "type": "boolean",
+                "description": (
+                    "当前交付是否必须在集成后交给独立 Reviewer。仅当用户、"
+                    "任务验收或改动风险明确要求独立复核时设为 true；名单中"
+                    "存在活跃 Reviewer 只代表可用能力，不会自动要求复核。"
                 ),
             },
         },

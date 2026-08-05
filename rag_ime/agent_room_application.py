@@ -535,6 +535,13 @@ class RoomApplicationService:
             raise RoomKernelFenceError(
                 "room_define Dispatch does not belong to this Room alignment"
             )
+        requested_review_policy = arguments.get(
+            "independentReviewRequired"
+        )
+        if not isinstance(requested_review_policy, bool):
+            raise ValueError(
+                "room_define independentReviewRequired must be explicitly boolean"
+            )
         participant_refs = participant_ref_map(room["participants"])
         implementation_ref = str(
             arguments.get("implementationParticipantRef") or ""
@@ -888,6 +895,7 @@ class RoomApplicationService:
             )
             independent_review_required = bool(
                 root.get("independentReviewRequired")
+                or requested_review_policy is True
             )
             details = {
                 "operation": "room_define",

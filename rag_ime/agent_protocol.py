@@ -33,6 +33,7 @@ AGENT_EVENT_TYPES = frozenset(
         "memory_maintenance_updated",
         "user_input_required",
         "message_completed",
+        "response_evidence",
         "compaction_started",
         "compaction_completed",
         "turn_completed",

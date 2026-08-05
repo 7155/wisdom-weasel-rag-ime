@@ -492,6 +492,7 @@ class RoomSettleLifecycleService:
         self,
         *,
         decision: str,
+        handoff_intent: str = "",
         root: Mapping[str, object],
         task: Mapping[str, object],
         dispatch: Mapping[str, object],
@@ -503,8 +504,12 @@ class RoomSettleLifecycleService:
             # pre-report Facilitator gate would make the report Task itself
             # appear as a post-review artifact change.
             return
+        is_final_delivery = decision == "deliver"
+        is_review_handoff = (
+            decision == "handoff" and handoff_intent == "review"
+        )
         if (
-            decision != "deliver"
+            not (is_final_delivery or is_review_handoff)
             or str(dispatch.get("intentKind") or "") == "align"
             or task.get("parentTaskId")
             or str(dispatch.get("targetParticipantId") or "")
@@ -525,12 +530,13 @@ class RoomSettleLifecycleService:
             ),
             None,
         )
+        routing_policy = str(room.get("routingPolicy") or "natural")
+        required_peer_count = 0
         if managed_work is not None:
             managed_client_id = str(
                 managed_work.get("clientMessageId") or ""
             )
             parts = managed_client_id.split(":", 4)
-            routing_policy = ""
             required_peer_count = -1
             try:
                 if (
@@ -543,6 +549,7 @@ class RoomSettleLifecycleService:
                     len(parts) == 4
                     and parts[:2] == ["managed-room-ingress", "v1"]
                 ):
+                    routing_policy = "natural"
                     required_peer_count = int(parts[2])
             except ValueError:
                 required_peer_count = -1
@@ -550,46 +557,61 @@ class RoomSettleLifecycleService:
                 raise RoomCommitProposalError(
                     "Room 协作信息不完整，当前工作无法安全结束"
                 )
+        elif routing_policy == "parallel":
             facilitator_id = str(
                 root.get("facilitatorParticipantId") or ""
             )
-            if routing_policy == "parallel":
-                managed_children = self.kernel.collaboration_children(
-                    str(root["rootId"])
+            eligible_peers = [
+                participant
+                for participant in room.get("participants", ())
+                if isinstance(participant, Mapping)
+                and participant.get("status") == "active"
+                and str(participant.get("id") or "") != facilitator_id
+                and canonical_collaboration_role_id(
+                    participant.get("collaborationRole")
+                ) != "reviewer"
+            ]
+            required_peer_count = 1 if eligible_peers else 0
+        facilitator_id = str(
+            root.get("facilitatorParticipantId") or ""
+        )
+        if routing_policy == "parallel":
+            managed_children = self.kernel.collaboration_children(
+                str(root["rootId"])
+            )
+            public_peer_ids = {
+                str(child.get("targetParticipantId") or "")
+                for child in managed_children
+                if child.get("resultPublic") is True
+                and str(child.get("intentKind") or "") == "execute"
+                and str(child.get("targetParticipantId") or "")
+                != facilitator_id
+            }
+            if len(public_peer_ids) < required_peer_count:
+                raise RoomCommitProposalError(
+                    "Facilitator 尚未通过 room_collaborate 收齐隔离并行结果；"
+                    "先拆分可独立工作并等待伙伴公开结果，再完成串行集成。"
+                    f"需要 {required_peer_count} 位，已公开 "
+                    f"{len(public_peer_ids)} 位"
                 )
-                public_peer_ids = {
-                    str(child.get("targetParticipantId") or "")
-                    for child in managed_children
-                    if child.get("resultPublic") is True
-                    and str(child.get("intentKind") or "") == "execute"
-                    and str(child.get("targetParticipantId") or "")
-                    != facilitator_id
-                }
-                if len(public_peer_ids) < required_peer_count:
-                    raise RoomCommitProposalError(
-                        "Facilitator 尚未通过 room_collaborate 收齐隔离并行结果；"
-                        "先拆分可独立工作并等待伙伴公开结果，再完成串行集成。"
-                        f"需要 {required_peer_count} 位，已公开 "
-                        f"{len(public_peer_ids)} 位"
-                    )
-            elif required_peer_count:
-                managed_children = self.kernel.collaboration_children(
-                    str(root["rootId"])
+        elif required_peer_count:
+            managed_children = self.kernel.collaboration_children(
+                str(root["rootId"])
+            )
+            public_participant_ids = {
+                str(child.get("targetParticipantId") or "")
+                for child in managed_children
+                if child.get("resultPublic") is True
+                and str(child.get("targetParticipantId") or "")
+                != facilitator_id
+            }
+            if len(public_participant_ids) < required_peer_count:
+                raise RoomCommitProposalError(
+                    "其他伙伴的公开结果尚未到齐；先邀请缺少的伙伴继续工作，"
+                    "再选择等待，结果到齐后才能发布最终回复。"
+                    f"需要 {required_peer_count} 位，已公开 "
+                    f"{len(public_participant_ids)} 位"
                 )
-                public_participant_ids = {
-                    str(child.get("targetParticipantId") or "")
-                    for child in managed_children
-                    if child.get("resultPublic") is True
-                    and str(child.get("targetParticipantId") or "")
-                    != facilitator_id
-                }
-                if len(public_participant_ids) < required_peer_count:
-                    raise RoomCommitProposalError(
-                        "其他伙伴的公开结果尚未到齐；先邀请缺少的伙伴继续工作，"
-                        "再选择等待，结果到齐后才能发布最终回复。"
-                        f"需要 {required_peer_count} 位，已公开 "
-                        f"{len(public_participant_ids)} 位"
-                    )
         children = self.kernel.collaboration_children(
             str(root["rootId"])
         )
@@ -618,6 +640,11 @@ class RoomSettleLifecycleService:
             raise RoomCommitProposalError(
                 "仍有独立 worktree 尚未合入；先用 room_integrate 完成集成和验证"
             )
+        if is_review_handoff:
+            # Starting the review must cross the same peer-result and
+            # integration fences as final delivery, but cannot require an
+            # already accepted review.
+            return
         latest_attempts = self.kernel.latest_review_attempts(
             str(root["rootId"])
         )
@@ -668,6 +695,29 @@ class RoomSettleLifecycleService:
             if not authors or reviewer_id in authors:
                 raise RoomCommitProposalError(
                     "最新复核没有独立作者边界，不能作为最终交付依据"
+                )
+            required_review_task_ids = {
+                str(task.get("taskId") or ""),
+                *(
+                    str(child_task.get("taskId") or "")
+                    for child, child_task in records
+                    if str(child.get("intentKind") or "")
+                    in {"execute", "revise"}
+                ),
+            }
+            required_review_task_ids.discard("")
+            reviewed_task_ids = {
+                str(value)
+                for value in review_task.get("reviewOfTaskIds", ())
+                if str(value or "").strip()
+            }
+            missing_review_task_ids = sorted(
+                required_review_task_ids - reviewed_task_ids
+            )
+            if missing_review_task_ids:
+                raise RoomCommitProposalError(
+                    "最新独立复核没有覆盖当轮全部实现与修正结果；"
+                    "请基于完整集成结果重新复核"
                 )
             self.application.assert_read_only_workspace_unchanged(
                 review_task
@@ -1396,6 +1446,7 @@ class RoomSettleLifecycleService:
             )
         self._assert_managed_collaboration_ready(
             decision=decision,
+            handoff_intent=handoff_intent,
             root=root,
             task=task,
             dispatch=dispatch,

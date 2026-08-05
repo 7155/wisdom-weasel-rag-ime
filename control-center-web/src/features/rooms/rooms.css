@@ -689,10 +689,6 @@
 .room-question-card__error, .room-question-card__superseded, .room-question-card__stale { margin: 0; font-size: var(--text-label); line-height: var(--text-label-lh); }
 .room-question-card__error { padding: var(--space-2) var(--space-3); background: var(--color-danger-soft); color: var(--color-danger); }
 .room-question-card__superseded, .room-question-card__stale { color: var(--color-text-tertiary); }
-.room-question-card__resolved { display: grid; min-width: 0; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: var(--space-2); border-top: 1px solid var(--color-border-soft); padding-top: var(--space-2); color: var(--color-success); }
-.room-question-card__resolved > span { display: grid; min-width: 0; gap: 1px; }
-.room-question-card__resolved small { color: var(--color-text-tertiary); font-size: var(--text-label); line-height: var(--text-label-lh); }
-.room-question-card__resolved strong { color: var(--color-text-primary); font-size: var(--text-label); line-height: var(--text-label-lh); overflow-wrap: anywhere; }
 .room-question-card[data-state='answered'] { border-color: var(--color-border); border-inline-start-color: var(--color-success); background: var(--color-paper); }
 .room-question-card[data-state='superseded'], .room-question-card[data-state='stale'] { border-color: var(--color-border); background: var(--color-surface-subtle); }
 .room-policy-loading { margin: 0; padding: 24px 0; color: var(--color-text-tertiary); font-size: 13px; text-align: center; }

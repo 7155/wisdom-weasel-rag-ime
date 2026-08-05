@@ -3,7 +3,7 @@
 - Document class: sole tracked authority for current Room product behavior and acceptance status
 - Approved vision window: user decisions made on or after 2026-08-02
 - Contract revision: 2026-08-05
-- Acceptance state: prior source regression and independent review passed, but the 2026-08-04 real HTTP foreground run exposed blocking multi-companion and presentation gaps; production acceptance remains open
+- Acceptance state: targeted current-source regressions pass; production/native Web and signed App builds passed only on the preceding dirty snapshot, and a clean committed build has not yet been installed; the 2026-08-05 foreground Room still failed before peer work, integration, review, and final delivery, so production acceptance remains open
 - Status rule: source, test, installed, and foreground evidence are reported separately
 
 Older handoffs, ignored local notes under `docs/`, screenshots, prototypes, tests,
@@ -493,6 +493,15 @@ because a client timer pretends work happened.
 
 - An invited participant, an idle participant card, or multiple Sessions polled
   by the frontend does not count as collaboration.
+- Complexity is calibrated by concrete responsibility seams, not by adjectives
+  or file count. `给现有应用新增文件导入：用户选择文件，后台解析并保存，界面持续
+  显示进度、错误和最终结果` is the canonical positive example: UI
+  interaction, parsing/persistence, and cross-boundary acceptance are normally
+  separable, while the Facilitator retains integration and the end-to-end run.
+  Unless source inspection proves those seams conflict on one owner, at least
+  one peer must receive real work. `修复一个已经定位的函数边界条件并补一个聚焦测试` is
+  the contrasting single-owner example. These examples train analogous
+  decomposition and never authorize a request-text-specific branch.
 - A task selected to exercise Room parallelism must produce at least two real,
   independently owned WorkItems with distinct directed execution, overlapping
   active intervals when dependencies permit, separate Todo/checkpoints, and
@@ -539,6 +548,11 @@ Current product scope is voice input only. Room companions do not produce TTS.
 - Every completed response reports its real Provider/model and runtime-reported
   token/cache usage. Usage is `reported`, `not_reported`, or `not_applicable`;
   missing data is never rendered as zero.
+- A managed Room turn that ends through a Tool-only authoritative commit still
+  produces one safe response-evidence event after settlement. It carries only
+  bounded Provider/model/usage fields, binds to the exact Dispatch and resulting
+  Post, and reuses the same response-evidence renderer as a normal completed
+  message. Tool arguments, hidden text, and protocol bodies remain private.
 - Primary Tasks statistics exclude internal final-report bookkeeping; Report
   work remains visible only where its audit role matters.
 - Provider calls, artifacts, diffs, Todo, and workspace state stay bound to the
@@ -577,20 +591,21 @@ or acceptance evidence above.
 
 | Area | Source/test state | Installed foreground state |
 | --- | --- | --- |
-| opening Facilitator, conditional clarification, crash-safe chronological answers and typed start | implemented; current complete Web suite 974/974, Room core 104/104, and changed backend/runtime modules 212/212 passed; prior command receipt and injected-crash gates also passed | open |
-| fresh execute Dispatch, peer work, nested delegation, integration, review, one report | implemented; current Room Kernel 98/98 and prior focused settlement gates passed | open |
+| opening Facilitator, conditional clarification, crash-safe chronological answers and typed start | implemented; current complete Web suite 976/976, Room core 104/104, and focused backend/runtime regressions passed; prior command receipt and injected-crash gates also passed | open |
+| fresh execute Dispatch, peer work, nested delegation, integration, review, one report | source now exposes the parallel execution policy to the fresh Facilitator Dispatch and rejects a parallel Facilitator final before at least one eligible peer has returned real execute work; review policy can be durably raised at definition and cannot be downgraded; focused gates passed | open; a fresh installed Room must still prove the positive peer/integration/review/final path |
 | stage Skills and capability receipts | implemented; Skill 25/25 and Pi runtime 70/70 passed | open |
 | permanent workspace ledger, same-baseline isolation, integration-before-cleanup, red retention | implemented; settlement and canary 18/18 passed | open |
-| continuous conversation activity and lower-density Tasks projection | source now reorders mutable activity by its latest authoritative timestamp, derives concrete role copy from the owned task and expected delivery, keeps Todo as the final sticky block, and gives the graph compact status markers, concrete current/next action, dependency labels, and truthful active-edge motion; focused Room tests, the complete 974-test Web suite, and TypeScript passed | prior foreground failure remains authoritative until the coherent build is installed and rechecked |
+| continuous conversation activity and lower-density Tasks projection | source now reorders mutable activity by its latest authoritative timestamp, derives concrete role copy from the owned task and expected delivery, keeps Todo as the final sticky block, removes the redundant answered-question notice, makes the whole companion lane foldable, and gives the graph compact status markers, concrete current/next action, dependency labels, and truthful active-edge motion; focused Room tests, the complete 976-test Web suite, TypeScript, and the prior production Web build passed | prior foreground failure remains authoritative until the coherent build is installed and rechecked |
 | canonical `read` / `edit` / `write` / `bash` surface, streaming and personalized result views | implemented in source: public catalog projection exposes the four basic coding Tools once, historical aliases upcast into them, Agent and Room share the artifact/Diff renderer, active mutations animate without publishing a half-built Diff, and completed bash rows preserve bounded stdout/stderr plus exit status; changed backend modules 212/212, complete Web suite 974/974, TypeScript, and the native production Web build passed | open; must be exercised in one coherent foreground build |
 | history loading, cached transcript continuity, bounded initial page and older-history loading | explicit loading/empty/failed projection plus newest 80-event and newest 100-complete-turn windows, stable `beforeEventId` / `beforeMessageId` older-page merge, and total-count reconciliation are implemented; 138 backend/policy/route tests, focused Web paging/loading checks, the complete 974-test Web suite, TypeScript, and the prior local no-false-welcome checks passed | source Web shell passed; coherent installed foreground timing open |
 | risk-based full-auto approval | scoped hash-bound text write/edit/patch now bypass Luna by deterministic policy; focused policy and Agent-service regression passed while R3, sensitive, and out-of-scope cases remain model-routed | fresh full-auto Room foreground open |
 | Session Todo, per-owner result/diff, subagent grouping | implemented; source projections and Web regression passed | open |
+| real Provider/model/token/cache provenance on Tool-only Room replies | implemented through one post-bound `response_evidence` path shared with the existing reply footer; the settled lookup is fenced by exact Session, runtime turn, `room_commit` Tool call, applied receipt, committed Dispatch, and resulting Post; terminal Room replay admits only that matching provenance; focused v1, v2, projection, real SQLite kernel, and Web regressions passed; incomplete evidence renders no misleading placeholder | open; corrected installed Room must show the real fields on its resulting reply |
 | day-scale full-auto recovery, durable checkpoints, automatic repair/retry/reassignment/model fallback | partially implemented; durable Dispatch attempts, Todo, workspace ledger, reconnect state, direct failed-Tool retry lineage, and Provider retry projection exist and passed source regression; restart-resume plus injected native recovery acceptance remain open | open |
 | historical continuation recovery and Report-stat filtering | implemented; historical upcast 7/7 and settlement regression passed | open |
 | tracked authority portability | implemented by `docs/agent/room-facilitated-workflow-requirements.md` | not applicable |
-| coherent App/Web/Python/managed-Pi provenance | production Web build passed; coherent install pending | open |
-| real Room completing a concrete TUI task | not a source claim | current real HTTP run passed clarification ordering and automatic recovery, but had not produced two real peer WorkItems at the recorded checkpoint; open |
+| coherent App/Web/Python/managed-Pi provenance | exact dirty-tree production/native Web build, signed App build, and static footprint gate passed; clean commit rebuild and coherent install pending | open |
+| real Room completing a concrete TUI task | not a source claim | the 2026-08-05 run created `rag_ime/tui.py` and `tests/test_tui.py` but remained a single-Facilitator failed run; its focused test currently has 1 error in 5 tests, so the artifacts are preserved as an uncommitted recovery input rather than reported as delivery |
 
 ## 2026-08-04 real HTTP foreground findings
 
@@ -675,6 +690,87 @@ Current source correction and Web-shell evidence:
   Sensitive paths, out-of-scope paths, and R3 effects remain model-routed. A
   focused service regression proves the bounded write path never calls Luna;
   fresh Room foreground evidence remains required.
+
+## 2026-08-05 source correction and acceptance checkpoint
+
+The most recent foreground Room was
+`room:04bf7d88-eb5d-49b1-b060-ef2807fb6af4`. It is evidence of a failed
+production attempt, not evidence that the current source works. Only `澄·今`
+performed implementation work; no peer implementation WorkItem, independent
+review contribution, integration, or final delivery was produced. The run
+ended in `runtime_turn_failed` after creating uncommitted `rag_ime/tui.py` and
+`tests/test_tui.py`. Running that focused suite now produces four passes and one
+error because the streaming test expects `stream_turn` while the implementation
+calls only `prompt`. Those files remain intact as the next fresh Room's concrete
+recovery input and are excluded from the infrastructure commit until the Room
+repairs and verifies them.
+
+Two separate source defects behind the visible symptoms are now corrected:
+
+- A managed turn that completed only by calling `room_commit` carried real
+  `openai-codex`, `gpt-5.6-luna`, token, and cache fields in Pi's terminal
+  assistant message, but both runtime adapters discarded that Tool-only message
+  before `message_completed`. The projection therefore had no evidence to bind
+  to the resulting Room Post. Both adapters now publish one bounded
+  `response_evidence` event after Room settlement and before `turn_completed`;
+  a historical non-authorizing lookup binds it through the exact Session,
+  runtime turn, `room_commit` Tool call, capability manifest, applied execution
+  receipt, committed Dispatch, and resulting Post. Terminal replay rejects all
+  late execution events except response evidence that matches that canonical
+  Post; the frontend additionally requires the event turn to equal the evidence
+  Root, so a valid Post/Dispatch tuple cannot be inserted into another Room
+  turn. The reply footer prefers the newest complete `response_evidence`, falls
+  back to a complete normal completed-message event, and skips newer incomplete
+  evidence instead of masking older complete evidence. Missing or partial
+  evidence no longer emits `模型 / Provider 未上报` filler.
+- A normal defined parallel Root did release the fresh Facilitator execute
+  Dispatch, but its model-facing `room_state` omitted the peer/reviewer
+  obligation and the peer-result completion fence applied only to the older
+  managed-ingress path. The execute state now names eligible peer and reviewer
+  references, minimum peer work, assigned peer work, review policy, and the next
+  action. Final delivery from an ordinary parallel Root is rejected until a real
+  eligible peer execute result is public, and the same fence applies before the
+  Facilitator may start review. Review targets now include every current
+  execute/revise result, including read-only contributions; final delivery
+  rejects a review that omits a late implementation or revision. The review
+  requirement may be set at `room_define`, is receipted, and cannot be
+  downgraded. A Reviewer in the roster remains capacity, not an automatic
+  requirement; explicit user/acceptance policy and risk decide whether review
+  is required. `room_define` must always submit that decision as an explicit
+  boolean; omission or a non-boolean value is rejected so a model mistake cannot
+  silently turn a required review off. The runtime never infers the decision
+  from example keywords or merely from the presence of a Reviewer.
+
+Current verification of the combined working tree:
+
+- complete Web suite: 104 files and 976 tests passed;
+- complete Room settlement lifecycle: 49/49 passed, including premature-review,
+  read-only review coverage, late-task freshness, and repair/re-review cases;
+- focused Tool-only evidence path: Pi v1 (51/51), Pi v2 (80/80), Room
+  projection (23/23), real SQLite kernel binding, and Web binding regressions
+  passed;
+- prompt/role and Room Skill contract suites passed (21/21 and 25/25). The full
+  Room Kernel service file produced 96 passes, 2 skips, and one environment
+  failure: its governed background-job command could not enter a nested macOS
+  sandbox (`sandbox-exec: sandbox_apply: Operation not permitted`) under this
+  Codex sandbox, so no ready log could be emitted. This is recorded as an
+  environment-blocked foreground check, not a product pass;
+- TypeScript, a production/native Web build, signed App build, static footprint
+  gate, route ownership, import boundaries, and `git diff --check` passed on the
+  preceding combined snapshot. They must be rerun after the final review fixes;
+  clean commit rebuild and install remain required;
+- the expanded 422-test backend/runtime set produced 421 passes. Its one
+  real-HTTP transport test reached the system proxy and received HTTP 403;
+  rerunning only that case with all proxies removed was skipped because this
+  sandbox cannot bind the local HTTP listener. It remains environment-blocked
+  rather than reported as passed. Python 3.14 also reports existing unclosed
+  SQLite/file `ResourceWarning` instances; they did not fail the suite but
+  remain cleanup debt rather than silently counted as resolved.
+
+These are source and local-build facts only. Port `8768` still serves the older
+installed build. Production acceptance requires rebuilding and installing the
+coherent App/Python/Web/managed-Pi stack and completing the fresh foreground
+flow below.
 
 No row may be promoted to native accepted by unit tests, mock transport, hidden
 browser, direct API, screenshot, health response, copied hash, assistant prose,

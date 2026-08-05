@@ -2188,6 +2188,7 @@ export const contractSchemas = {
           "memory_maintenance_updated",
           "user_input_required",
           "message_completed",
+          "response_evidence",
           "compaction_started",
           "compaction_completed",
           "turn_completed",

@@ -2383,6 +2383,102 @@ class RoomKernelStore:
             ).fetchone()
         return row is not None
 
+    def response_provenance_binding(
+        self,
+        session_id: str,
+        runtime_turn_id: str,
+        tool_call_id: str,
+    ) -> dict[str, object] | None:
+        """Resolve one settled response to its exact applied ``room_commit``.
+
+        ``session_binding`` deliberately exposes only live ownership.  A
+        Tool-only response receipt is emitted after settlement, when that live
+        binding has already been retired, so provenance needs a separate
+        historical lookup fenced by Session, runtime turn, Tool call,
+        capability manifest, successful execution receipt, and committed
+        Dispatch.  Never use this method to authorize new work.
+        """
+
+        normalized_session_id = str(session_id or "").strip()
+        normalized_turn_id = str(runtime_turn_id or "").strip()
+        normalized_tool_call_id = str(tool_call_id or "").strip()
+        if (
+            not normalized_session_id
+            or not normalized_turn_id
+            or not normalized_tool_call_id
+        ):
+            return None
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT DISTINCT
+                          dispatches.dispatch_id,
+                          dispatches.root_id,
+                          dispatches.generation,
+                          dispatches.state,
+                          dispatches.payload_json,
+                          roots.room_id,
+                          effects.runtime_receipt_json
+                   FROM room_kernel_dispatches dispatches
+                   JOIN room_kernel_roots roots
+                     ON roots.root_id = dispatches.root_id
+                   JOIN room_kernel_runtime_effects effects
+                     ON effects.dispatch_id = dispatches.dispatch_id
+                   JOIN room_v2_capability_manifests manifests
+                     ON manifests.dispatch_id = dispatches.dispatch_id
+                    AND manifests.root_id = dispatches.root_id
+                    AND manifests.generation = dispatches.generation
+                   JOIN room_v2_tool_invocation_receipts invocations
+                     ON invocations.manifest_id = manifests.manifest_id
+                    AND invocations.manifest_hash = manifests.manifest_hash
+                   JOIN room_v2_tool_execution_receipts executions
+                     ON executions.invocation_receipt_id = invocations.receipt_id
+                   WHERE dispatches.target_session_id = ?
+                     AND dispatches.state = 'committed'
+                     AND json_extract(
+                       effects.runtime_receipt_json,
+                       '$.turnId'
+                     ) = ?
+                     AND invocations.invocation_key = ?
+                     AND invocations.canonical_tool_name = 'room_commit'
+                     AND invocations.authorization_state = 'authorized'
+                     AND executions.session_id = ?
+                     AND executions.tool_name = 'room_commit'
+                     AND executions.status = 'applied'
+                   ORDER BY dispatches.updated_at_ms DESC,
+                            dispatches.dispatch_id DESC
+                   LIMIT 2""",
+                (
+                    normalized_session_id,
+                    normalized_turn_id,
+                    normalized_tool_call_id,
+                    normalized_session_id,
+                ),
+            ).fetchall()
+        if len(rows) != 1:
+            return None
+        row = rows[0]
+        dispatch_payload = json.loads(str(row["payload_json"]))
+        runtime_receipt = json.loads(
+            str(row["runtime_receipt_json"] or "{}")
+        )
+        return {
+            "roomId": str(row["room_id"]),
+            "rootId": str(row["root_id"]),
+            "dispatchId": str(row["dispatch_id"]),
+            "taskId": str(dispatch_payload.get("taskId") or ""),
+            "intentKind": str(dispatch_payload.get("intentKind") or ""),
+            "generation": int(row["generation"]),
+            "state": str(row["state"]),
+            "runtimeTurnId": normalized_turn_id,
+            "attempt": int(
+                runtime_receipt.get(
+                    "dispatchAttempt",
+                    dispatch_payload.get("attempt") or 0,
+                )
+            ),
+            "toolCallId": normalized_tool_call_id,
+        }
+
     def room_ids(self) -> list[str]:
         with self._connect() as conn:
             return [
@@ -12436,12 +12532,19 @@ class RoomKernelStore:
             )
         updated_root_criteria = list(criteria)
         updated_root_payload = json.loads(str(root["payload_json"]))
-        if bool(updated_root_payload.get("independentReviewRequired")) != bool(
-            independent_review_required
+        if (
+            bool(updated_root_payload.get("independentReviewRequired"))
+            and not bool(independent_review_required)
         ):
             raise RoomKernelFenceError(
-                "room_define cannot infer or mutate independent review policy"
+                "room_define cannot downgrade independent review policy"
             )
+        review_policy_changed = bool(
+            updated_root_payload.get("independentReviewRequired")
+        ) != bool(independent_review_required)
+        updated_root_payload["independentReviewRequired"] = bool(
+            independent_review_required
+        )
         validate_kernel_contract("rootExecution", updated_root_payload)
         intake = self.intake_state(str(root["root_id"]), conn=conn)
         clarification_occurred = bool(intake["clarificationOccurred"])
@@ -12481,6 +12584,16 @@ class RoomKernelStore:
                 str(root["root_id"]),
             ),
         )
+        if review_policy_changed:
+            self._record_review_policy_locked(
+                conn,
+                root_id=str(root["root_id"]),
+                required=bool(independent_review_required),
+                source="facilitator_definition",
+                generation=int(root["generation"]),
+                dispatch_id=str(dispatch["dispatch_id"]),
+                now_ms=now_ms,
+            )
         conn.execute(
             """UPDATE room_kernel_tasks
                SET state=?,current_owner_participant_id=?,payload_json=?,updated_at_ms=?

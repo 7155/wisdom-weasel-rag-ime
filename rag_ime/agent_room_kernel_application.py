@@ -467,6 +467,66 @@ class RoomKernelApplicationService:
             and candidate.get("workspaceIntegrationState") == "pending"
             and candidate.get("state") == "completed"
         ]
+        routing_policy = str(room.get("routingPolicy") or "natural")
+        facilitator_id = str(root.get("facilitatorParticipantId") or "")
+        eligible_peer_refs: list[str] = []
+        reviewer_refs: list[str] = []
+        for candidate in room.get("participants", ()):
+            if (
+                not isinstance(candidate, Mapping)
+                or candidate.get("status") != "active"
+            ):
+                continue
+            candidate_id = str(candidate.get("id") or "")
+            candidate_ref = ref_for_participant(
+                candidate_id,
+                participant_refs,
+            )
+            if canonical_collaboration_role_id(
+                candidate.get("collaborationRole")
+            ) == "reviewer":
+                reviewer_refs.append(candidate_ref)
+            elif candidate_id != facilitator_id:
+                eligible_peer_refs.append(candidate_ref)
+        peer_children = [
+            child
+            for child in self.kernel.collaboration_children(root_id)
+            if str(child.get("targetParticipantId") or "")
+            != facilitator_id
+            and str(child.get("intentKind") or "")
+            in {"execute", "revise"}
+            and str(child.get("state") or "")
+            not in {"cancelled", "failed"}
+        ]
+        peer_work_required = bool(
+            routing_policy == "parallel" and eligible_peer_refs
+        )
+        # Reviewer presence is roster capacity, not review policy.  The
+        # Facilitator owns the risk decision at room_define and the Root keeps
+        # its durable, receipted answer.  Showing an inferred requirement here
+        # while settlement reads the Root would give the model and the gate two
+        # different truths.
+        review_required = bool(root.get("independentReviewRequired"))
+        execution_policy = {
+            "routingPolicy": routing_policy,
+            "facilitatorOwnsIntegration": (
+                str(dispatch.get("targetParticipantId") or "")
+                == facilitator_id
+            ),
+            "peerWorkRequired": peer_work_required,
+            "minimumPeerWorkItems": 1 if peer_work_required else 0,
+            "assignedPeerWorkItems": len(peer_children),
+            "eligiblePeerParticipantRefs": eligible_peer_refs,
+            "independentReviewRequired": review_required,
+            "reviewerParticipantRefs": reviewer_refs,
+            "nextAction": (
+                "assign_independent_peer_work"
+                if peer_work_required and not peer_children
+                else "integrate_completed_peer_work"
+                if pending_integrations
+                else "continue_owned_work"
+            ),
+        }
         model_state = {
             "schemaVersion": "wisdom-weasel.room-state-tool.v1",
             "mode": "managed",
@@ -482,6 +542,7 @@ class RoomKernelApplicationService:
                 and dispatch.get("state") == "running"
             ),
             "participants": participants,
+            "executionPolicy": execution_policy,
             "recentPublicChanges": recent_changes,
             "pendingIntegrations": pending_integrations,
             "reviewContext": (
@@ -880,8 +941,6 @@ class RoomKernelApplicationService:
                     "before final review"
                 )
             policy = str(task.get("workspacePolicy") or "")
-            if policy not in {"shared_single_writer", "isolated_writable"}:
-                continue
             review_task_ids.append(str(task["taskId"]))
             review_author_ids.add(str(task["currentOwnerParticipantId"]))
             if (

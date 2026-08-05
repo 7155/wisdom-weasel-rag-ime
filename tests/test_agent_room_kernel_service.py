@@ -1051,6 +1051,7 @@ class RoomKernelServiceTests(unittest.TestCase):
                         "expectedReceiptTypes": ["evidence"],
                     }
                 ],
+                "independentReviewRequired": False,
             },
         )
         self.assertEqual(
@@ -7474,6 +7475,7 @@ class RoomKernelServiceTests(unittest.TestCase):
                 }
             ],
             "implementationParticipantRef": "P3",
+            "independentReviewRequired": False,
         }
         defined = self.service.room_application.define_room(
             self.room_id,
@@ -7588,6 +7590,7 @@ class RoomKernelServiceTests(unittest.TestCase):
                             "expectedReceiptTypes": ["evidence"],
                         }
                     ],
+                    "independentReviewRequired": False,
                 },
             )
 
@@ -7675,6 +7678,7 @@ class RoomKernelServiceTests(unittest.TestCase):
                         "expectedReceiptTypes": ["evidence"],
                     }
                 ],
+                "independentReviewRequired": False,
             },
         )
         facilitator_id = str(accepted["root"]["facilitatorParticipantId"])
@@ -7726,6 +7730,7 @@ class RoomKernelServiceTests(unittest.TestCase):
                     }
                 ],
                 "implementationParticipantRef": facilitator_id,
+                "independentReviewRequired": False,
             },
         )
         self.assertEqual(
@@ -7735,6 +7740,89 @@ class RoomKernelServiceTests(unittest.TestCase):
             defined["executionDispatch"]["targetParticipantId"],
             facilitator_id,
         )
+
+    def test_parallel_defined_root_cannot_deliver_before_real_peer_work(
+        self,
+    ) -> None:
+        room = self.service.create_room(
+            {
+                "title": "parallel definition gate",
+                "routingPolicy": "parallel",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {
+                        "roleId": "companion-present-v1",
+                        "roleVersion": "1",
+                        "collaborationRole": "coordinator",
+                    },
+                    {
+                        "roleId": "companion-firstlight-v1",
+                        "roleVersion": "1",
+                        "collaborationRole": "implementer",
+                    },
+                    {
+                        "roleId": "companion-flash-v1",
+                        "roleVersion": "1",
+                        "collaborationRole": "reviewer",
+                    },
+                ],
+            }
+        )["room"]
+        accepted = self.service.post_room_message(
+            str(room["id"]),
+            {
+                "message": "完成一个可以独立拆分实现与检查的终端工具。",
+                "clientMessageId": "client:parallel-definition-gate",
+            },
+        )
+        alignment = accepted["alignmentDispatches"][0]
+        self.assertTrue(self.service.room_kernel_worker.run_once())
+        defined = self.service.room_application.define_room(
+            str(room["id"]),
+            dispatch_id=str(alignment["dispatchId"]),
+            invocation_receipt_id="invoke:parallel-definition-gate",
+            arguments={
+                "objective": "在终端入口完成可拆分实现与检查",
+                "expectedOutput": "实现产物、独立检查结果和集成结论",
+                "entrySurface": "仓库根目录的终端启动命令",
+                "primaryInteraction": "用户启动终端工具并完成核心操作",
+                "observableCompletion": "终端显示真实结果且检查通过",
+                "requirements": ["实现与检查可以独立推进"],
+                "acceptanceCriteria": [
+                    {
+                        "statement": "实现和检查结果均可验证",
+                        "fullNameZh": "实现检查结果",
+                        "expectedReceiptTypes": ["evidence"],
+                    }
+                ],
+                "independentReviewRequired": True,
+            },
+        )
+        execute = defined["executionDispatch"]
+        root = self.service.room_kernel.root(str(accepted["rootId"]))
+        task = self.service.room_kernel.task(str(execute["taskId"]))
+
+        with self.assertRaisesRegex(
+            RoomCommitProposalError,
+            "room_collaborate",
+        ):
+            self.service.room_settle_lifecycle._assert_managed_collaboration_ready(
+                decision="deliver",
+                root=root,
+                task=task,
+                dispatch=execute,
+            )
+        with self.assertRaisesRegex(
+            RoomCommitProposalError,
+            "room_collaborate",
+        ):
+            self.service.room_settle_lifecycle._assert_managed_collaboration_ready(
+                decision="handoff",
+                handoff_intent="review",
+                root=root,
+                task=task,
+                dispatch=execute,
+            )
 
     def test_room_define_tool_fences_alignment_before_fresh_execute_dispatch(
         self,
@@ -7779,6 +7867,7 @@ class RoomKernelServiceTests(unittest.TestCase):
                     }
                 ],
                 "implementationParticipantRef": str(target["id"]),
+                "independentReviewRequired": True,
             },
             tool_call_id="call:define-tool",
             load_receipt_id=str(loaded["receiptId"]),
@@ -7786,6 +7875,15 @@ class RoomKernelServiceTests(unittest.TestCase):
         execute_id = str(executed["executionDispatch"]["dispatchId"])
 
         self.assertTrue(executed["terminalForModelTurn"])
+        self.assertTrue(
+            self.service.room_kernel.root(
+                str(accepted["rootId"])
+            )["independentReviewRequired"]
+        )
+        self.assertTrue(
+            executed["definitionReceipt"]["details"]
+            ["independentReviewRequired"]
+        )
         self.assertFalse(executed["requiresStartAction"])
         self.assertNotIn("alignmentPost", executed)
         self.assertFalse(
@@ -7934,6 +8032,7 @@ class RoomKernelServiceTests(unittest.TestCase):
                     }
                 ],
                 "implementationParticipantRef": str(first_peer["id"]),
+                "independentReviewRequired": False,
             },
             tool_call_id="call:two-peer:define",
             load_receipt_id=str(define_load["receiptId"]),
@@ -7958,6 +8057,22 @@ class RoomKernelServiceTests(unittest.TestCase):
             tool_call_id="call:two-peer:state",
             load_receipt_id=str(state_load["receiptId"]),
         )["result"]
+        execution_policy = state["executionPolicy"]
+        self.assertEqual(execution_policy["routingPolicy"], "parallel")
+        self.assertTrue(execution_policy["facilitatorOwnsIntegration"])
+        self.assertTrue(execution_policy["peerWorkRequired"])
+        self.assertEqual(execution_policy["minimumPeerWorkItems"], 1)
+        self.assertEqual(execution_policy["assignedPeerWorkItems"], 0)
+        self.assertFalse(execution_policy["independentReviewRequired"])
+        self.assertEqual(
+            execution_policy["nextAction"],
+            "assign_independent_peer_work",
+        )
+        self.assertEqual(
+            len(execution_policy["eligiblePeerParticipantRefs"]),
+            2,
+        )
+        self.assertEqual(len(execution_policy["reviewerParticipantRefs"]), 1)
         refs = {
             str(item["displayName"]): str(item["participantRef"])
             for item in state["participants"]
@@ -8084,6 +8199,29 @@ class RoomKernelServiceTests(unittest.TestCase):
                 }
             )
             self.assertEqual(settled["state"], "committed", settled)
+            provenance = self.service.room_kernel.response_provenance_binding(
+                session_id,
+                f"turn:{dispatch_id}:1",
+                f"call:{suffix}:commit",
+            )
+            self.assertIsNotNone(provenance)
+            assert provenance is not None
+            self.assertEqual(provenance["dispatchId"], dispatch_id)
+            self.assertEqual(
+                provenance["runtimeTurnId"],
+                f"turn:{dispatch_id}:1",
+            )
+            self.assertEqual(
+                provenance["toolCallId"],
+                f"call:{suffix}:commit",
+            )
+            self.assertIsNone(
+                self.service.room_kernel.response_provenance_binding(
+                    session_id,
+                    f"turn:{dispatch_id}:1",
+                    f"call:{suffix}:wrong",
+                )
+            )
             return settled
 
         nested_batches: list[dict[str, object]] = []
@@ -8280,6 +8418,7 @@ class RoomKernelServiceTests(unittest.TestCase):
                         }
                     ],
                     "implementationParticipantRef": "P3",
+                    "independentReviewRequired": False,
                 },
             )
 
@@ -8310,25 +8449,40 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertFalse(accepted["root"]["independentReviewRequired"])
         self.assertTrue(self.service.room_kernel_worker.run_once())
 
+        missing_policy_arguments = {
+            "objective": "在协作任务页完成实现并提交独立复核",
+            "expectedOutput": "任务页显示实现证据和独立复核结论",
+            "entrySurface": "协作任务页中的实现与复核入口",
+            "primaryInteraction": "实现伙伴提交产物后由 Reviewer 独立检查",
+            "observableCompletion": "任务页显示实现证据与独立复核结论",
+            "requirements": ["实现与复核责任分离"],
+            "acceptanceCriteria": [
+                {
+                    "statement": "实现完成后由 Reviewer 独立复核",
+                    "fullNameZh": "独立复核结果",
+                    "expectedReceiptTypes": ["evidence"],
+                }
+            ],
+            "implementationParticipantRef": "P2",
+        }
+        with self.assertRaisesRegex(
+            ValueError,
+            "independentReviewRequired must be explicitly boolean",
+        ):
+            self.service.room_application.define_room(
+                self.room_id,
+                dispatch_id=str(alignment["dispatchId"]),
+                invocation_receipt_id="invoke:missing-review-policy",
+                arguments=missing_policy_arguments,
+            )
+
         defined = self.service.room_application.define_room(
             self.room_id,
             dispatch_id=str(alignment["dispatchId"]),
             invocation_receipt_id="invoke:definition-review-policy",
             arguments={
-                "objective": "在协作任务页完成实现并提交独立复核",
-                "expectedOutput": "任务页显示实现证据和独立复核结论",
-                "entrySurface": "协作任务页中的实现与复核入口",
-                "primaryInteraction": "实现伙伴提交产物后由 Reviewer 独立检查",
-                "observableCompletion": "任务页显示实现证据与独立复核结论",
-                "requirements": ["实现与复核责任分离"],
-                "acceptanceCriteria": [
-                    {
-                        "statement": "实现完成后由 Reviewer 独立复核",
-                        "fullNameZh": "独立复核结果",
-                        "expectedReceiptTypes": ["evidence"],
-                    }
-                ],
-                "implementationParticipantRef": "P2",
+                **missing_policy_arguments,
+                "independentReviewRequired": False,
             },
         )
 
@@ -8648,6 +8802,7 @@ class RoomKernelServiceTests(unittest.TestCase):
                     }
                 ],
                 "implementationParticipantRef": "P3",
+                "independentReviewRequired": False,
             },
         )
         self.assertEqual(defined["dispatchId"], resumed_dispatch_id)
@@ -8961,6 +9116,7 @@ class RoomKernelServiceTests(unittest.TestCase):
                 }
             ],
             "implementationParticipantRef": str(target["id"]),
+            "independentReviewRequired": False,
         }
         define_loaded = self.service.room_capability_tool_load(
             {

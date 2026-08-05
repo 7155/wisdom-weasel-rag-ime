@@ -901,7 +901,8 @@ function RoomLaneDisclosure({
     <summary
       aria-expanded={open}
       aria-label={`${open ? '收起' : '展开'}${participantName}的实时进展`}
-      onClick={() => {
+      onClick={(event) => {
+        event.preventDefault();
         userControlled.current = true;
         setOpen((current) => !current);
       }}
@@ -1625,7 +1626,7 @@ function RoomLanePost({
       participants={participants}
       turnStartedAtMs={turnStartedAtMs}
     />
-    {showEvidence && message.status !== 'streaming'
+    {showEvidence && message.status !== 'streaming' && roomResponseEvidenceIsComplete(evidence)
       ? <RoomResponseEvidenceFooter evidence={evidence} />
       : null}
     {message.status === 'streaming' && streamingMotion
@@ -1731,52 +1732,60 @@ interface RoomResponseEvidence {
   sourceSessionId: string;
 }
 
+type CompleteRoomResponseEvidence = RoomResponseEvidence & {
+  usage: RoomResponseUsage;
+  usageReported: true;
+  cacheUsageReported: true;
+};
+
+function roomResponseEvidenceIsComplete(
+  evidence: RoomResponseEvidence | undefined,
+): evidence is CompleteRoomResponseEvidence {
+  return Boolean(
+    evidence?.provider
+    && evidence.model
+    && evidence.usage
+    && evidence.usageReported
+    && evidence.cacheUsageReported
+  );
+}
+
 function roomResponseEvidenceForPost(
   message: RoomMessageProjection,
   activities: RoomActivityProjection[],
-): RoomResponseEvidence | undefined {
-  let usage: RoomResponseUsage | undefined;
-  let usageReported = false;
-  let cacheUsageReported = false;
-  let provider = '';
-  let model = '';
-  let runtimeTurnId = '';
-  let sourceSessionId = message.sourceSessionId;
+): CompleteRoomResponseEvidence | undefined {
   const messageDispatchId = textValue(message.dispatchId);
-  for (let index = activities.length - 1; index >= 0; index -= 1) {
-    const activity = activities[index];
-    if (!activity) continue;
-    const responsePostId = textValue(activity.payload.responsePostId);
-    if (
-      textValue(activity.payload.sourceEventType) !== 'message_completed'
-      || !messageDispatchId
-      || textValue(activity.payload.dispatchId) !== messageDispatchId
-      || responsePostId !== message.id
-    ) continue;
-    usageReported = activity.payload.usageReported === true;
-    cacheUsageReported = (
-      usageReported
-      && activity.payload.cacheUsageReported === true
-    );
-    usage = usageReported
-      ? normalizeRoomResponseUsage(activity.payload.usage)
-      : undefined;
-    provider = textValue(activity.payload.provider);
-    model = textValue(activity.payload.model);
-    runtimeTurnId = textValue(activity.payload.runtimeTurnId);
-    sourceSessionId = activity.sourceSessionId || sourceSessionId;
-    break;
+  if (!messageDispatchId) return undefined;
+
+  for (const preferredType of ['response_evidence', 'message_completed'] as const) {
+    for (let index = activities.length - 1; index >= 0; index -= 1) {
+      const activity = activities[index];
+      if (
+        !activity
+        || textValue(activity.payload.sourceEventType) !== preferredType
+        || textValue(activity.payload.dispatchId) !== messageDispatchId
+        || textValue(activity.payload.responsePostId) !== message.id
+      ) continue;
+
+      const usageReported = activity.payload.usageReported === true;
+      const evidence: RoomResponseEvidence = {
+        usage: usageReported
+          ? normalizeRoomResponseUsage(activity.payload.usage)
+          : undefined,
+        usageReported,
+        cacheUsageReported: (
+          usageReported
+          && activity.payload.cacheUsageReported === true
+        ),
+        provider: textValue(activity.payload.provider),
+        model: textValue(activity.payload.model),
+        runtimeTurnId: textValue(activity.payload.runtimeTurnId),
+        sourceSessionId: activity.sourceSessionId || message.sourceSessionId,
+      };
+      if (roomResponseEvidenceIsComplete(evidence)) return evidence;
+    }
   }
-  if (!usage && !provider && !model && !runtimeTurnId) return undefined;
-  return {
-    usage,
-    usageReported,
-    cacheUsageReported,
-    provider,
-    model,
-    runtimeTurnId,
-    sourceSessionId,
-  };
+  return undefined;
 }
 
 function normalizeRoomResponseUsage(value: unknown): RoomResponseUsage | undefined {
@@ -1802,27 +1811,21 @@ function normalizeRoomResponseUsage(value: unknown): RoomResponseUsage | undefin
 function RoomResponseEvidenceFooter({
   evidence,
 }: {
-  evidence?: RoomResponseEvidence;
+  evidence: CompleteRoomResponseEvidence;
 }) {
-  const modelLabel = roomResponseModelLabel(evidence?.provider, evidence?.model);
-  const contextHref = evidence?.sourceSessionId && evidence.runtimeTurnId
+  const contextHref = evidence.sourceSessionId && evidence.runtimeTurnId
     ? `#/context-debug?sessionId=${encodeURIComponent(evidence.sourceSessionId)}&turnId=${encodeURIComponent(evidence.runtimeTurnId)}`
     : '';
   return <footer aria-label="回复运行记录" className="room-response-evidence">
     <small className="room-response-evidence__source">运行记录</small>
     <small
       className="room-response-model"
-      data-state={evidence?.provider || evidence?.model ? 'reported' : 'unavailable'}
-      title={evidence?.provider || evidence?.model
-        ? `provider=${evidence.provider || 'unreported'}, model=${evidence.model || 'unreported'}`
-        : undefined}
+      data-state="reported"
+      title={`provider=${evidence.provider}, model=${evidence.model}`}
     >
-      {modelLabel}
+      {evidence.provider} · {evidence.model}
     </small>
-    <RoomResponseUsageFooter
-      cacheUsageReported={evidence?.cacheUsageReported === true}
-      usage={evidence?.usage}
-    />
+    <RoomResponseUsageFooter usage={evidence.usage} />
     {contextHref ? <a href={contextHref}>
       <Braces aria-hidden="true" size={12} />
       查看本轮上下文
@@ -1830,43 +1833,25 @@ function RoomResponseEvidenceFooter({
   </footer>;
 }
 
-function roomResponseModelLabel(provider = '', model = ''): string {
-  if (provider && model) return `${provider} · ${model}`;
-  if (model) return `Provider 未上报 · ${model}`;
-  if (provider) return `${provider} · 模型未上报`;
-  return '模型 / Provider 未上报';
-}
-
 function RoomResponseUsageFooter({
   usage,
-  cacheUsageReported,
 }: {
-  usage?: RoomResponseUsage;
-  cacheUsageReported: boolean;
+  usage: RoomResponseUsage;
 }) {
-  if (!usage) {
-    return <small className="room-response-usage" data-state="unavailable">
-      本条回复未上报 Token / 缓存用量
-    </small>;
-  }
-  const cacheLabel = cacheUsageReported
-    ? `缓存读取 ${usage.cacheRead} tokens，缓存写入 ${usage.cacheWrite} tokens`
-    : '缓存用量未上报';
+  const cacheLabel = `缓存读取 ${usage.cacheRead} tokens，缓存写入 ${usage.cacheWrite} tokens`;
   return <small
     aria-label={`输入 ${usage.input} tokens，输出 ${usage.output} tokens，${cacheLabel}`}
     className="room-response-usage"
-    data-cache-hit={cacheUsageReported ? usage.cacheRead > 0 : undefined}
-    data-cache-reported={cacheUsageReported}
-    title={cacheUsageReported
-      ? `input=${usage.input}, output=${usage.output}, cacheRead=${usage.cacheRead}, cacheWrite=${usage.cacheWrite}`
-      : `input=${usage.input}, output=${usage.output}, cache=unreported`}
+    data-cache-hit={usage.cacheRead > 0}
+    data-cache-reported="true"
+    title={`input=${usage.input}, output=${usage.output}, cacheRead=${usage.cacheRead}, cacheWrite=${usage.cacheWrite}`}
   >
     <span>输入 {formatTokenCount(usage.input)}</span>
     <span>输出 {formatTokenCount(usage.output)}</span>
-    {cacheUsageReported ? <>
+    <>
       <span>{usage.cacheRead > 0 ? '缓存命中' : '缓存读'} {formatTokenCount(usage.cacheRead)}</span>
       <span>写 {formatTokenCount(usage.cacheWrite)}</span>
-    </> : <span>缓存未上报</span>}
+    </>
   </small>;
 }
 

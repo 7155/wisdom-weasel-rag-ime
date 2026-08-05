@@ -3682,6 +3682,73 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual([block["type"] for block in completed[-1]["blocks"]], ["file", "text"])
         self.assertEqual(completed[-1]["blocks"][0]["data"]["mimeType"], "text/x-diff")
 
+    def test_tool_only_host_turn_reports_response_evidence_after_settlement(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-host-tool-only-evidence"
+        assistant = {
+            "role": "assistant",
+            "provider": "openai-codex",
+            "model": "gpt-5.6-luna",
+            "usage": {
+                "input": 2873,
+                "output": 426,
+                "cacheRead": 10752,
+                "cacheWrite": 0,
+                "totalTokens": 14051,
+            },
+            "timestamp": 101,
+            "content": [{
+                "type": "toolCall",
+                "id": "call-room-commit",
+                "name": "room_commit",
+                "arguments": {"decision": "deliver"},
+            }],
+        }
+
+        def send(payload: dict[str, object]) -> None:
+            self.runtime._handle_host_event(  # noqa: SLF001 - protocol boundary
+                {
+                    "protocolVersion": "2",
+                    "event": "agent.event",
+                    "sessionId": session_id,
+                    "turnId": turn_id,
+                    "payload": payload,
+                }
+            )
+
+        send({"type": "message_end", "message": assistant})
+        send({"type": "agent_end", "messages": [assistant]})
+        send({"type": "agent_settled"})
+
+        events, gap = self.events.replay(session_id)
+        self.assertFalse(gap)
+        event_types = [event.event_type for event in events]
+        self.assertNotIn("message_completed", event_types)
+        self.assertLess(
+            event_types.index("response_evidence"),
+            event_types.index("turn_completed"),
+        )
+        evidence = next(
+            event.payload
+            for event in events
+            if event.event_type == "response_evidence"
+        )
+        self.assertEqual(evidence, {
+            "toolCallId": "call-room-commit",
+            "provider": "openai-codex",
+            "model": "gpt-5.6-luna",
+            "usage": {
+                "input": 2873,
+                "output": 426,
+                "cacheRead": 10752,
+                "cacheWrite": 0,
+                "totalTokens": 14051,
+            },
+            "usageReported": True,
+            "cacheUsageReported": True,
+        })
+
     def test_manual_and_automatic_compaction_notify_memory_checkpoint_observer(self) -> None:
         session_id = str(self.first["id"])
 
