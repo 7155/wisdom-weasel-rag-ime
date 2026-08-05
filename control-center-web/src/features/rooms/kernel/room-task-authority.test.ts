@@ -154,6 +154,33 @@ describe('projectRoomTaskAuthority', () => {
     expect(projection.todo).toBeUndefined();
     expect(projection.workItem).toBe(workItemA);
   });
+
+  it('keeps a terminal task Todo readable after the Root advances generation', () => {
+    const todo = todoProjection('session:owner', { generation: 3 });
+    const projection = projectRoomTaskAuthority({
+      dispatches: [
+        dispatchProjection({
+          attempt: 4,
+          dispatchId: 'dispatch:alignment',
+          intentKind: 'align',
+        }),
+        dispatchProjection(),
+      ],
+      generation: 4,
+      sessionsById: {
+        'session:owner': sessionProjection({
+          participantId: 'participant:owner',
+          state: 'failed',
+          todo,
+        }),
+      },
+      task: taskProjection({ state: 'cancelled', workItemId: 'work:owner' }),
+      workItems: [workItemProjection({ state: 'cancelled' })],
+    });
+
+    expect(projection.canonicalDispatch?.dispatchId).toBe('dispatch:owner');
+    expect(projection.todo).toBe(todo);
+  });
 });
 
 function taskProjection(overrides: Record<string, unknown> = {}): RoomTaskV3 {

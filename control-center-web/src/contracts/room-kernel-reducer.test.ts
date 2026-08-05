@@ -222,29 +222,34 @@ describe('generated-contract Room Kernel projection', () => {
     expect(state.postOrder).toEqual(['post-a']);
   });
 
-  it('keeps a historical request post from breaking a newer Root snapshot', () => {
+  it('keeps historical execution evidence readable in a newer Root snapshot', () => {
     const snapshot: RoomKernelSnapshot = {
       roomId: 'room-a',
       lastSequence: 20,
       snapshotHash: `sha256:${'a'.repeat(64)}`,
       roots: [root({ generation: 4 })],
       tasks: [task()],
-      dispatches: [],
+      dispatches: [dispatch({ generation: 3 })],
       posts: [post({ generation: 3, kind: 'request' })],
       taskUpdatedAtMsById: {},
-      sessions: [],
-      receipts: [],
+      sessions: [{
+        sessionId: 'session-a', participantId: 'researcher', rootId: 'root-a',
+        taskId: 'task-a', taskKind: 'work', workItemId: 'work-a', dispatchId: 'dispatch-a',
+        generation: 3, state: 'completed', updatedAtMs: 9,
+        todo: todo({ sessionId: 'session-a', revision: 2, updatedAtMs: 9 }),
+      }],
+      receipts: [receipt({ generation: 3 })],
       cancellationSurfaces: [],
     };
 
     const state = applyRoomKernelSnapshot(createRoomKernelProjection('room-a'), snapshot);
 
-    expect(state.postOrder).toEqual([]);
-    expect(state.diagnostics).toContainEqual(expect.objectContaining({
-      eventId: 'snapshot',
-      kind: 'stale-generation',
-      summary: 'RoomPost generation does not match Root',
-    }));
+    expect(state.postOrder).toEqual(['post-a']);
+    expect(state.dispatchesById['dispatch-a']?.generation).toBe(3);
+    expect(state.sessionsById['session-a']?.todo?.revision).toBe(2);
+    expect(state.receiptsById['receipt-a']?.generation).toBe(3);
+    expect(state.terminalReceiptByRootId['root-a']).toBeUndefined();
+    expect(state.diagnostics).toEqual([]);
   });
 });
 

@@ -79,7 +79,7 @@ export function projectRoomTaskAuthority({
     && session.taskKind === task.taskKind
     && session.workItemId === workItemId
     && session.dispatchId === canonicalDispatch.dispatchId
-    && session.generation === generation
+    && session.generation === canonicalDispatch.generation
   );
   const lineage = session?.todo?.roomLineage;
   const todo = sessionOwnerMatches
@@ -94,7 +94,7 @@ export function projectRoomTaskAuthority({
     && lineage.dispatchId === canonicalDispatch?.dispatchId
     && lineage.sessionId === session.sessionId
     && lineage.participantId === task.currentOwnerParticipantId
-    && lineage.generation === generation
+    && lineage.generation === canonicalDispatch?.generation
     && lineage.taskRevision === task.revision
     && lineage.ownershipRevision === task.ownershipRevision
     && lineage.workItemRevision === workItem.revision
@@ -151,7 +151,7 @@ function canonicalTaskDispatch(
   const candidates = dispatches.filter((dispatch) => (
     dispatch.taskId === task.taskId
     && dispatch.rootId === task.rootId
-    && dispatch.generation === generation
+    && dispatch.generation <= generation
     && dispatch.targetParticipantId === task.currentOwnerParticipantId
   ));
   const activelyBound = candidates.filter((dispatch) => {
@@ -161,10 +161,27 @@ function canonicalTaskDispatch(
       && manifest.rootId === task.rootId
       && manifest.taskId === task.taskId
       && manifest.dispatchId === dispatch.dispatchId
-      && manifest.generation === generation;
+      && manifest.generation === dispatch.generation;
   });
-  return [...(activelyBound.length ? activelyBound : candidates)].sort((left, right) => (
-    right.attempt - left.attempt
+  const sessionBound = candidates.filter((dispatch) => {
+    const session = sessionsById[dispatch.targetSessionId] as RoomSessionAuthoritySource | undefined;
+    return session?.sessionId === dispatch.targetSessionId
+      && session.participantId === task.currentOwnerParticipantId
+      && session.rootId === task.rootId
+      && session.taskId === task.taskId
+      && session.taskKind === task.taskKind
+      && session.workItemId === (task.workItemId?.trim() ?? '')
+      && session.dispatchId === dispatch.dispatchId
+      && session.generation === dispatch.generation;
+  });
+  const preferred = activelyBound.length
+    ? activelyBound
+    : sessionBound.length
+      ? sessionBound
+      : candidates.filter((dispatch) => dispatch.generation === generation);
+  return [...(preferred.length ? preferred : candidates)].sort((left, right) => (
+    right.generation - left.generation
+    || right.attempt - left.attempt
     || right.capabilityEpoch - left.capabilityEpoch
     || right.dispatchId.localeCompare(left.dispatchId)
   ))[0];

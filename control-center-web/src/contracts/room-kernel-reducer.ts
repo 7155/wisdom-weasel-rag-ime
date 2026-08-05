@@ -167,10 +167,10 @@ export function applyRoomKernelSnapshot(
   for (const task of snapshot.tasks) {
     applyTask(next, task, snapshot.taskUpdatedAtMsById[task.taskId], 'snapshot');
   }
-  for (const dispatch of snapshot.dispatches) applyDispatch(next, dispatch, 'snapshot');
-  for (const post of snapshot.posts) applyPost(next, post, 'snapshot');
-  for (const session of snapshot.sessions) applySession(next, session, 'snapshot');
-  for (const receipt of snapshot.receipts) applyReceipt(next, receipt, 'snapshot');
+  for (const dispatch of snapshot.dispatches) applyDispatch(next, dispatch, 'snapshot', true);
+  for (const post of snapshot.posts) applyPost(next, post, 'snapshot', true);
+  for (const session of snapshot.sessions) applySession(next, session, 'snapshot', true);
+  for (const receipt of snapshot.receipts) applyReceipt(next, receipt, 'snapshot', true);
   next.cancellationSurfaces = snapshot.cancellationSurfaces.map((item) => ({ ...item, detail: { ...item.detail } }));
   return next;
 }
@@ -254,21 +254,37 @@ function applyTask(
   }
 }
 
-function applyDispatch(state: RoomKernelProjection, value: unknown, eventId: string): void {
+function applyDispatch(
+  state: RoomKernelProjection,
+  value: unknown,
+  eventId: string,
+  acceptHistoricalSnapshot = false,
+): void {
   const dispatch = parseContract('room-dispatch-envelope.v2', value);
   const root = state.rootsById[dispatch.rootId];
-  if (!root || dispatch.generation !== root.generation) {
+  if (!root || (
+    dispatch.generation !== root.generation
+    && !(acceptHistoricalSnapshot && dispatch.generation < root.generation)
+  )) {
     appendDiagnostic(state, { eventId, kind: 'stale-generation', summary: 'Dispatch generation does not match Root' });
     return;
   }
   state.dispatchesById[dispatch.dispatchId] = dispatch;
 }
 
-function applyPost(state: RoomKernelProjection, value: unknown, eventId: string): void {
+function applyPost(
+  state: RoomKernelProjection,
+  value: unknown,
+  eventId: string,
+  acceptHistoricalSnapshot = false,
+): void {
   const post = parseContract('room-post.v2', value);
   if (post.roomId !== state.roomId) throw new TypeError('RoomPost belongs to another Room');
   const root = state.rootsById[post.rootId];
-  if (!root || post.generation !== root.generation) {
+  if (!root || (
+    post.generation !== root.generation
+    && !(acceptHistoricalSnapshot && post.generation < root.generation)
+  )) {
     appendDiagnostic(state, {
       eventId,
       kind: 'stale-generation',
@@ -280,10 +296,16 @@ function applyPost(state: RoomKernelProjection, value: unknown, eventId: string)
   state.postsById[post.postId] = post;
 }
 
-function applySession(state: RoomKernelProjection, value: unknown, eventId: string): void {
+function applySession(
+  state: RoomKernelProjection,
+  value: unknown,
+  eventId: string,
+  acceptHistoricalSnapshot = false,
+): void {
   const session = privateSession(value);
   const root = session.rootId ? state.rootsById[session.rootId] : undefined;
-  if (root && session.generation !== root.generation) {
+  if (root && session.generation !== root.generation
+    && !(acceptHistoricalSnapshot && session.generation < root.generation)) {
     appendDiagnostic(state, { eventId, kind: 'stale-generation', summary: 'Session generation does not match Root' });
     return;
   }
@@ -295,15 +317,24 @@ function applySession(state: RoomKernelProjection, value: unknown, eventId: stri
   state.sessionsById[session.sessionId] = session;
 }
 
-function applyReceipt(state: RoomKernelProjection, value: unknown, eventId: string): void {
+function applyReceipt(
+  state: RoomKernelProjection,
+  value: unknown,
+  eventId: string,
+  acceptHistoricalSnapshot = false,
+): void {
   const receipt = parseContract('room-kernel-receipt.v1', value);
   if (!receipt.rootId) return;
   const root = state.rootsById[receipt.rootId];
-  if (!root || receipt.generation !== root.generation) {
+  if (!root || (
+    receipt.generation !== root.generation
+    && !(acceptHistoricalSnapshot && receipt.generation < root.generation)
+  )) {
     appendDiagnostic(state, { eventId, kind: 'stale-generation', summary: 'Kernel receipt generation does not match Root' });
     return;
   }
   state.receiptsById[receipt.receiptId] = receipt;
+  if (receipt.generation !== root.generation) return;
   if (receipt.receiptKind === 'terminal') state.terminalReceiptByRootId[receipt.rootId] = receipt;
   if (receipt.receiptKind === 'root_cancelled' || receipt.receiptKind === 'target_cancelled') {
     state.cancelReceiptByRootId[receipt.rootId] = receipt;
