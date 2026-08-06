@@ -397,6 +397,9 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         self,
     ) -> None:
         schema = room_runtime_registry()["room_define"]["inputSchema"]
+        self.assertIn("executionPlan", schema["properties"])
+        plan_schema = schema["properties"]["executionPlan"]
+        self.assertEqual(plan_schema["properties"]["featureTasks"]["maxItems"], 4)
         self.assertNotIn(
             "implementationParticipantRef",
             schema["required"],
@@ -424,6 +427,17 @@ class RoomCapabilityManifestTests(unittest.TestCase):
                 "observableCompletion": "任务页显示检查结果和证据",
                 "requirements": ["不虚构并行工作"],
                 "acceptanceCriteria": ["结果通过验证"],
+                "executionPlan": {
+                    "sharedContracts": [],
+                    "featureTasks": [{
+                        "title": "小型单写任务",
+                        "participantRef": "P1",
+                        "userOutcome": "从入口完成检查并看到证据",
+                        "dependencies": [],
+                    }],
+                    "integrationPlan": "负责人完成后统一核对",
+                    "acceptancePlan": ["任务页显示结果和证据"],
+                },
                 "independentReviewRequired": False,
             },
             schema,

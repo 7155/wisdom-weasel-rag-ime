@@ -2462,7 +2462,185 @@ class AgentService:
         dispatch: Mapping[str, object],
         now_ms: int,
     ) -> dict[str, object]:
+        self._ensure_room_dispatch_todo(dispatch, now_ms=now_ms)
         return self.room_kernel_runtime.prepare_dispatch(dispatch, now_ms)
+
+    def _ensure_room_dispatch_todo(
+        self,
+        dispatch: Mapping[str, object],
+        *,
+        now_ms: int,
+    ) -> None:
+        """Bind one visible Session Todo to each real managed Room job.
+
+        The Todo remains the existing Session-owned state machine.  This hook
+        only seeds it from the authoritative Room task before Pi starts, so a
+        model omission cannot leave the task page empty and a replay cannot
+        manufacture a second checklist.
+        """
+
+        dispatch_id = str(dispatch.get("dispatchId") or "").strip()
+        session_id = str(dispatch.get("targetSessionId") or "").strip()
+        root_id = str(dispatch.get("rootId") or "").strip()
+        task_id = str(dispatch.get("taskId") or "").strip()
+        if not all((dispatch_id, session_id, root_id, task_id)):
+            return
+        task = self.room_kernel.task(task_id)
+        if (
+            str(task.get("taskKind") or "") == "report"
+            or not str(task.get("workItemId") or "").strip()
+        ):
+            return
+        definition = self.room_kernel.definition_fence(root_id=root_id)
+        planned_execution = (
+            definition.get("plannedExecuteDispatch")
+            if isinstance(definition, Mapping)
+            and isinstance(definition.get("plannedExecuteDispatch"), Mapping)
+            else {}
+        )
+        defined_execution_dispatch_id = str(
+            (definition or {}).get("executionDispatchId")
+            or planned_execution.get("dispatchId")
+            or ""
+        )
+        is_defined_root_execution = bool(
+            definition
+            and defined_execution_dispatch_id == dispatch_id
+        )
+        is_bounded_child = bool(
+            str(task.get("parentTaskId") or "").strip()
+            and str(dispatch.get("intentKind") or "")
+            in {"execute", "revise", "review", "retry"}
+        )
+        if not is_defined_root_execution and not is_bounded_child:
+            return
+
+        current = self.sessions.agent_todo(session_id)
+        lineage = (
+            current.get("roomLineage")
+            if isinstance(current.get("roomLineage"), Mapping)
+            else {}
+        )
+        changed = False
+        if str(lineage.get("dispatchId") or "") != dispatch_id:
+            phase, items = self._room_dispatch_todo_template(
+                dispatch=dispatch,
+                task=task,
+                definition=definition,
+            )
+            current = self.sessions.mutate_agent_todo(
+                session_id,
+                {
+                    "op": "init",
+                    "list": [{"phase": phase, "items": items}],
+                },
+                actor="room-runtime",
+                updated_at_ms=now_ms,
+            )["todo"]
+            changed = True
+
+        tasks = [
+            item
+            for phase in current.get("phases") or []
+            if isinstance(phase, Mapping)
+            for item in phase.get("tasks") or []
+            if isinstance(item, Mapping)
+        ]
+        if not any(item.get("status") == "in_progress" for item in tasks):
+            next_item = next(
+                (
+                    item
+                    for item in tasks
+                    if item.get("status") == "pending"
+                    and str(item.get("content") or "").strip()
+                ),
+                None,
+            )
+            if next_item is not None:
+                self.sessions.mutate_agent_todo(
+                    session_id,
+                    {
+                        "op": "start",
+                        "task": str(next_item["content"]),
+                    },
+                    actor="room-runtime",
+                    updated_at_ms=now_ms,
+                )
+                changed = True
+        if changed:
+            self.publish_workflow_state(
+                session_id,
+                reason="todo:room_dispatch_started",
+            )
+
+    def _room_dispatch_todo_template(
+        self,
+        *,
+        dispatch: Mapping[str, object],
+        task: Mapping[str, object],
+        definition: Mapping[str, object] | None,
+    ) -> tuple[str, list[str]]:
+        root = self.room_kernel.root(str(dispatch["rootId"]))
+        room = self.rooms.get(str(root["roomId"]))
+        participant_id = str(dispatch.get("targetParticipantId") or "")
+        participant = next(
+            (
+                item
+                for item in room.get("participants") or []
+                if isinstance(item, Mapping)
+                and str(item.get("id") or "") == participant_id
+            ),
+            {},
+        )
+        objective = compact_whitespace(str(task.get("objective") or ""))
+        if len(objective) > 232:
+            objective = objective[:231].rstrip() + "…"
+        objective = objective or "完成当前负责的工作"
+        is_root_facilitator = bool(
+            participant_id == str(root.get("facilitatorParticipantId") or "")
+            and not str(task.get("parentTaskId") or "").strip()
+        )
+        if is_root_facilitator:
+            execution_plan = (
+                definition.get("executionPlan")
+                if isinstance(definition, Mapping)
+                and isinstance(definition.get("executionPlan"), Mapping)
+                else {}
+            )
+            feature_tasks = [
+                item
+                for item in execution_plan.get("featureTasks") or []
+                if isinstance(item, Mapping)
+            ]
+            items = []
+            facilitator_name = compact_whitespace(
+                str(participant.get("displayName") or "")
+            )
+            if any(
+                compact_whitespace(str(item.get("ownerDisplayName") or ""))
+                not in {"", facilitator_name}
+                for item in feature_tasks
+            ):
+                items.append("按批准方案分派各纵向功能并确认依赖与写入边界")
+            items.extend(
+                [
+                    f"完成自己的实现与集成准备：{objective}",
+                    "集成伙伴成果并运行整体验证",
+                    (
+                        "完成独立复核并向用户交付结果"
+                        if root.get("independentReviewRequired") is True
+                        else "整理验证证据并向用户交付结果"
+                    ),
+                ]
+            )
+            return "协作与交付", _unique_room_todo_items(items)
+        if str(task.get("taskKind") or "") == "review":
+            return "独立复核", _unique_room_todo_items(
+                [objective, "提交独立复核结论与剩余风险"]
+            )
+        return "功能实现与验证", _unique_room_todo_items(
+            [objective, "运行验证并把可核对结果交回负责人"]
+        )
 
     def _accept_managed_room_runtime_context(
         self,
@@ -4374,7 +4552,7 @@ class AgentService:
         self.room_kernel_worker = RoomKernelWorker(
             self.room_kernel,
             self.runtime,  # type: ignore[arg-type]
-            prepare_dispatch=self.room_kernel_runtime.prepare_dispatch,
+            prepare_dispatch=self._prepare_managed_room_dispatch,
             prepare_memory_context=self._prepare_room_memory_context,
             accept_runtime_context=self.room_kernel_runtime.accept_runtime_context,
             revoke_session=self.room_kernel_runtime.revoke_session,
@@ -5453,6 +5631,21 @@ def _optional_work_item_id(value: object) -> str:
     ):
         raise ValueError("workItemId must contain between 1 and 320 safe characters")
     return normalized
+
+
+def _unique_room_todo_items(values: Sequence[object]) -> list[str]:
+    items: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = compact_whitespace(str(value or ""))
+        if not text:
+            continue
+        if len(text) > 240:
+            text = text[:239].rstrip() + "…"
+        if text not in seen:
+            seen.add(text)
+            items.append(text)
+    return items
 
 
 def _public_error(error: BaseException) -> str:

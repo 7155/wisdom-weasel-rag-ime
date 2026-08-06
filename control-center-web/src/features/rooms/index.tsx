@@ -2,7 +2,7 @@ import { Archive, ArchiveRestore, BriefcaseBusiness, FilePlus2, FolderOpen, GitB
 import * as RadioGroup from '@radix-ui/react-radio-group';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { Virtuoso } from 'react-virtuoso';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useShallow } from 'zustand/react/shallow';
 import { useControlTransport } from '@/app/control-transport';
 import { useComposerClearance } from '@/components/layout/use-composer-clearance';
@@ -349,6 +349,9 @@ export function RoomsFeature() {
   const [sendingRoomIds, setSendingRoomIds] = useState<Set<string>>(() => new Set());
   const [retryingRootIds, setRetryingRootIds] = useState<Set<string>>(() => new Set());
   const [startingRootIds, setStartingRootIds] = useState<Set<string>>(() => new Set());
+  const [continuedAfterAnswerRoomIds, setContinuedAfterAnswerRoomIds] = useState<Set<string>>(() => new Set());
+  const [timelineAtBottom, setTimelineAtBottom] = useState(true);
+  const roomTimelineRef = useRef<VirtuosoHandle>(null);
   const kernelProjection = useRoomLiveStore((state) => (
     state.kernelProjections[selectedId] ?? null
   ));
@@ -414,6 +417,7 @@ export function RoomsFeature() {
   function selectRoomId(roomId: string): void {
     selectedRoomIdRef.current = roomId;
     setSelectedId(roomId);
+    setTimelineAtBottom(true);
     setWorkspaceView('posts');
     setDraft(roomDraftsRef.current.get(roomId) ?? '');
     setAttachments(roomAttachmentsRef.current.get(roomId) ?? []);
@@ -701,6 +705,69 @@ export function RoomsFeature() {
       : openKernelRoots.length || activeWork
         ? 'running'
         : undefined;
+  const activeDispatchParticipantIds = [...new Set(Object.values(kernelDispatchesById)
+    .filter((dispatch) => ['pending', 'leased', 'running', 'retry_wait', 'timer_wait'].includes(dispatch.state))
+    .map((dispatch) => dispatch.targetParticipantId)
+    .filter(Boolean))];
+  const liveParticipantIds = activeDispatchParticipantIds.length
+    ? activeDispatchParticipantIds
+    : [...new Set(openKernelRoots
+        .filter((root) => ['pending', 'running'].includes(root.state))
+        .map((root) => root.facilitatorParticipantId)
+        .filter(Boolean))];
+  const liveParticipantNames = room
+    ? liveParticipantIds
+        .map((participantId) => participantName(room, participantId))
+        .filter(Boolean)
+    : [];
+  const continuedAfterAnswer = Boolean(room && continuedAfterAnswerRoomIds.has(room.id));
+  const startingExecution = openKernelRoots.some((root) => (
+    startingRootIds.has(root.rootId)
+  ));
+  const showLiveStatus = Boolean(
+    room
+    && !answerablePendingQuestion
+    && managedTaskBusyState === 'running'
+    && (
+      startingExecution
+      || continuedAfterAnswer
+      || liveParticipantNames.length
+      || activeWork?.state === 'queued'
+      || activeWork?.state === 'active'
+      || activeWork?.state === 'review'
+    )
+  );
+  const liveStatusTitle = continuedAfterAnswer
+    ? '回答已送达，伙伴正在继续处理'
+    : startingExecution
+      ? '正在开始行动，主持伙伴正在接手'
+      : liveParticipantNames.length > 1
+        ? `${liveParticipantNames.join('、')} 正在并行处理`
+        : liveParticipantNames.length === 1
+          ? `${liveParticipantNames[0]} 已接手，${activeDispatchParticipantIds.length ? '正在处理' : '正在安排分工'}`
+          : '任务已送达，主持伙伴正在接手';
+
+  useEffect(() => {
+    if (!selectedId || (managedTaskBusyState === 'running' && !answerablePendingQuestion)) return;
+    setContinuedAfterAnswerRoomIds((current) => {
+      if (!current.has(selectedId)) return current;
+      const next = new Set(current);
+      next.delete(selectedId);
+      return next;
+    });
+  }, [answerablePendingQuestion, managedTaskBusyState, selectedId]);
+  useEffect(() => {
+    if (!selectedId || !continuedAfterAnswerRoomIds.has(selectedId)) return undefined;
+    const timeout = window.setTimeout(() => {
+      setContinuedAfterAnswerRoomIds((current) => {
+        if (!current.has(selectedId)) return current;
+        const next = new Set(current);
+        next.delete(selectedId);
+        return next;
+      });
+    }, 4_500);
+    return () => window.clearTimeout(timeout);
+  }, [continuedAfterAnswerRoomIds, selectedId]);
   const roomSettingsChanged = Boolean(room && (
     settingsTitle.trim() !== room.title
     || settingsAvatar !== (room.avatar ?? (room.roomKind === 'roleplay' ? 'sparkles' : 'briefcase'))
@@ -822,6 +889,7 @@ export function RoomsFeature() {
       });
       useRoomLiveStore.getState().acceptMessage(room.id, response);
       if (pendingQuestionAnswer && authoritativeQuestion) {
+        setContinuedAfterAnswerRoomIds((current) => new Set(current).add(room.id));
         for (const [key, attempt] of roomQuestionAnswerAttemptsRef.current) {
           if (
             attempt.roomId === room.id
@@ -1402,8 +1470,10 @@ export function RoomsFeature() {
         </div>
         {workspaceView === 'posts' ? <><div className="room-timeline" aria-label="协作对话时间线">
           {room ? visibleTurnOrder.length ? <Virtuoso
+            ref={roomTimelineRef}
             context={{ roomId: room.id }}
             alignToBottom
+            atBottomStateChange={setTimelineAtBottom}
             components={roomTimelineComponents}
             computeItemKey={(_index, turnId) => turnId}
             data={visibleTurnOrder}
@@ -1458,7 +1528,24 @@ export function RoomsFeature() {
             : catalogLoading
               ? <p className="room-empty">正在读取协作空间…</p>
               : <EmptyState icon={MessagesSquare} title="选择一个协作空间" description="从左侧选择，或新建一个协作空间。" />}
-        </div>{!(room && answerablePendingQuestion?.roomId === room.id) ? <div className="room-composer-dock"><div className="room-composer-cluster">{room ? <RoomComposer
+        </div>{showLiveStatus ? <div
+          aria-label="当前协作状态"
+          className="room-live-status"
+          data-away-from-latest={!timelineAtBottom || undefined}
+          role="status"
+        >
+          <span className="room-live-status__signal" aria-hidden="true"><LoaderCircle size={18} /></span>
+          <span><strong>{liveStatusTitle}</strong><small>分工和交接会出现在最新进度中。</small></span>
+          {!timelineAtBottom && visibleTurnOrder.length ? <Button
+            onClick={() => roomTimelineRef.current?.scrollToIndex({
+              index: 'LAST',
+              align: 'end',
+              behavior: 'smooth',
+            })}
+            size="small"
+            variant="quiet"
+          >回到最新进度</Button> : null}
+        </div> : null}{!(room && answerablePendingQuestion?.roomId === room.id) ? <div className="room-composer-dock"><div className="room-composer-cluster">{room ? <RoomComposer
           key={room.id}
           inputRef={roomComposerRef}
           room={room}

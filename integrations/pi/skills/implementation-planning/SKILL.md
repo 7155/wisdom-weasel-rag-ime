@@ -37,6 +37,7 @@ notFor:
 4. If one Session can finish coherently, return one candidate. Otherwise use
    tracer-bullet candidates: each crosses affected layers, produces observable
    behavior, is independently verifiable, and fits one fresh context window.
+   Each candidate owns one user-visible feature end-to-end. Never split one feature by technical layer.
 5. Express dependencies as blocking edges. Work with no unfinished blocking
    edges is on the frontier. Name owner, order, permission, cancellation,
    integration, and rollback boundaries.
@@ -46,6 +47,7 @@ notFor:
    responsibilities, no unmet prerequisite, and a material waiting-time
    benefit. Otherwise serialize or combine them under one owner; never create
    parallel work merely to fill a roster.
+   Always lock shared contracts before parallel work; expose dependency waves and write boundaries.
 8. Keep one Facilitator/Integrator accountable for shared contracts and the
    authoritative workspace. For concurrent writable children, require a
    separate receipted workspace from the same Root baseline; read-only work
@@ -60,10 +62,8 @@ Kernel handoff. Do not create another Root, Task, Dispatch, WorkItem, or task
 store. The Facilitator owns decomposition, assignment, reassignment,
 dependency handling, and integration; this Skill may describe candidate
 capabilities and owners, but must not silently recruit or create Dispatches.
-Candidate WorkItems remain non-overlapping and review is an optional,
-post-integration Kernel handoff to a distinct participant, never a planning
-child. Stale, foreign, or missing authority returns a governed wait or
-blocker, never replacement state.
+Candidates remain non-overlapping; review is post-integration, never a planning child.
+Stale, foreign, or missing authority returns a governed wait or blocker.
 - Consume `room_state` for the current aliases, then use
   `room_commit(handoff)` only after the active alignment Dispatch has fenced
   the next target. `room_collaborate` remains only a bounded implementation
@@ -126,5 +126,4 @@ confirmed requirements or dump every field unless requested.
 ## Boundaries
 
 Do not allocate Agents, create managed work, publish tracker tickets, write
-implementation code, reopen confirmed choices, or invent a hierarchy. A plan
-is not Runtime work until accepted by the Kernel.
+implementation code, reopen confirmed choices, or invent a hierarchy.

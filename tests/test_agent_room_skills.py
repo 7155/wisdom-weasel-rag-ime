@@ -187,7 +187,7 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertIn("do not send", review)
         self.assertIn("acceptanceAliases", review)
 
-    def test_user_owned_room_choices_route_through_room_commit_options(
+    def test_user_owned_room_choices_use_grouped_text_or_one_bounded_choice(
         self,
     ) -> None:
         skill = (
@@ -196,8 +196,9 @@ class RoomNativeSkillTests(unittest.TestCase):
         for exact_field in (
             '`decision="wait"`',
             '`waitingFor="user"`',
+            '`questionKind="unbounded"`',
             '`questionKind="bounded"`',
-            '`question="<one prompt>"`',
+            '`question="<numbered prompts with A/B/C choices>"`',
             "`questionOptions=[...]`",
         ):
             self.assertIn(exact_field, skill)
@@ -210,10 +211,30 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertIn("one-paragraph `description`", skill)
         self.assertIn("instead of repeating the label", skill)
         self.assertIn("natural continuation of the user's", skill)
-        self.assertIn("one user-owned decision at a time", skill)
+        self.assertIn("Ask at most one clarification round", skill)
+        self.assertIn("2-4 independent material questions", skill)
+        self.assertIn("such as `1A 2C`", skill)
+        self.assertIn("exactly one genuinely mutually exclusive decision", skill)
         self.assertRegex(skill, r"The\s+interface supplies `Other`")
-        self.assertNotIn('`questionKind="unbounded"`', skill)
-        self.assertIn("not a second\n  question Tool", skill)
+        self.assertIn("not a second question Tool", skill)
+
+    def test_room_plan_is_vertical_visible_and_approved_before_start(self) -> None:
+        alignment = (
+            SKILLS_ROOT / "alignment-and-decision" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        planning = (
+            SKILLS_ROOT / "implementation-planning" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        execution = (
+            SKILLS_ROOT / "implementation-execution" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("show the proposed execution plan before `开始行动`", alignment)
+        self.assertIn("1-4 peer Agent tasks", alignment)
+        self.assertIn("one user-visible feature end-to-end", planning)
+        self.assertIn("Never split one feature by technical layer", planning)
+        self.assertIn("lock shared contracts before parallel work", planning)
+        self.assertIn("Do not start writes or tests before user approval", execution)
 
     def test_work_document_archive_is_progressive_adapter_not_room_stage(
         self,

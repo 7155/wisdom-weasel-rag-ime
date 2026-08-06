@@ -491,9 +491,8 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
         },
 "room_define": {
     "description": (
-        "需求对齐完成后，把最终目标、推导出的需求、可观察验收条件和"
-        "可选的首位建议实施伙伴一次性写入当前 Room Root；只允许当前对齐 Dispatch "
-        "调用。Reviewer 不能作为实现伙伴。"
+        "需求对齐和执行规划完成后，把最终目标、可观察验收条件以及用户可审核的"
+        "纵向功能分工一次性写入当前 Room Root；只允许当前对齐 Dispatch 调用。"
     ),
     "when": (
         "已经读取原始用户请求并完成必要澄清，准备进入实现阶段",
@@ -503,8 +502,8 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
     ),
     "input": (
         "最终 objective、expectedOutput、1-8 条 requirements、1-16 条 "
-        "acceptanceCriteria、是否必须独立复核；确有独立工作时可附一位非 "
-        "Reviewer 实现伙伴的 participantRef"
+        "acceptanceCriteria、是否必须独立复核，以及 1-4 项纵向 executionPlan；"
+        "确有独立工作时可附一位建议实施伙伴的 participantRef"
     ),
     "output": (
         "新的不可变 RequirementCatalog、稳定 AC-1... 别名、一个由 Facilitator "
@@ -524,6 +523,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
             "observableCompletion",
             "requirements",
             "acceptanceCriteria",
+            "executionPlan",
             "independentReviewRequired",
         ],
         "properties": {
@@ -602,10 +602,66 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                 "minLength": 1,
                 "maxLength": 320,
                 "description": (
-                    "可选的首位建议实施伙伴；必须是活跃的非 Reviewer 成员。"
+                    "可选的首位建议实施伙伴；必须是活跃 Room 成员。"
                     "省略或指向 Facilitator 时，由 Facilitator 先执行并按真实依赖决定"
                     "是否再用 room_collaborate 分工"
                 ),
+            },
+            "executionPlan": {
+                "type": "object",
+                "description": (
+                    "开始行动前展示给用户的执行方案。先锁定公共契约；每个 featureTask "
+                    "必须由一位伙伴端到端负责一个用户可见功能，不能按前端、后端、"
+                    "解析、测试等技术层横向拆开。Room 最多同时规划 4 位同能力伙伴。"
+                ),
+                "required": [
+                    "sharedContracts",
+                    "featureTasks",
+                    "integrationPlan",
+                    "acceptancePlan",
+                ],
+                "properties": {
+                    "sharedContracts": {
+                        "type": "array",
+                        "maxItems": 8,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 1000},
+                    },
+                    "featureTasks": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 4,
+                        "items": {
+                            "type": "object",
+                            "required": [
+                                "title",
+                                "participantRef",
+                                "userOutcome",
+                                "dependencies",
+                            ],
+                            "properties": {
+                                "title": {"type": "string", "minLength": 1, "maxLength": 200},
+                                "participantRef": {"type": "string", "minLength": 1, "maxLength": 320},
+                                "userOutcome": {"type": "string", "minLength": 1, "maxLength": 2000},
+                                "dependencies": {
+                                    "type": "array",
+                                    "maxItems": 4,
+                                    "items": {"type": "string", "minLength": 1, "maxLength": 200},
+                                },
+                                "wave": {"type": "integer", "minimum": 1, "maximum": 4},
+                                "writeBoundary": {"type": "string", "minLength": 1, "maxLength": 1000},
+                            },
+                            "additionalProperties": False,
+                        },
+                    },
+                    "integrationPlan": {"type": "string", "minLength": 1, "maxLength": 2000},
+                    "acceptancePlan": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 12,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 1000},
+                    },
+                },
+                "additionalProperties": False,
             },
             "independentReviewRequired": {
                 "type": "boolean",

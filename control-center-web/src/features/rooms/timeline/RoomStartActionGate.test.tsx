@@ -10,7 +10,7 @@ import { RoomStartActionGate, roomRootRequiresStartAction } from './RoomStartAct
 describe('RoomStartActionGate', () => {
   afterEach(cleanup);
 
-  it('only asks for a start confirmation after a real clarification gate', () => {
+  it('asks for start whenever a defined plan is awaiting explicit approval', () => {
     const waitingRoot = root('waiting');
     expect(roomRootRequiresStartAction(waitingRoot, [
       receipt(1, { operation: 'room_define', requiresStartAction: false }),
@@ -27,6 +27,15 @@ describe('RoomStartActionGate', () => {
         purpose: 'intake_phase',
         phase: 'awaiting_start',
         clarificationOccurred: true,
+      }),
+    ])).toBe(true);
+
+    expect(roomRootRequiresStartAction(waitingRoot, [
+      receipt(1, { operation: 'room_define', requiresStartAction: true }),
+      receipt(2, {
+        purpose: 'intake_phase',
+        phase: 'awaiting_start',
+        clarificationOccurred: false,
       }),
     ])).toBe(true);
 
@@ -66,7 +75,7 @@ describe('RoomStartActionGate', () => {
     const onStart = vi.fn();
     const { rerender } = render(<RoomStartActionGate onStart={onStart} starting={false} />);
 
-    expect(screen.getByRole('group', { name: '确认开始行动' })).toHaveTextContent('现在开始行动吗？');
+    expect(screen.getByRole('group', { name: '确认开始行动' })).toHaveTextContent('开始行动前，请确认这套分工');
     expect(screen.queryByText('目标、交付和边界已经对齐')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '开始行动' }));
     expect(onStart).toHaveBeenCalledTimes(1);

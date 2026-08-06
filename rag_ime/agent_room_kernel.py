@@ -12654,7 +12654,13 @@ class RoomKernelStore:
         validate_kernel_contract("rootExecution", updated_root_payload)
         intake = self.intake_state(str(root["root_id"]), conn=conn)
         clarification_occurred = bool(intake["clarificationOccurred"])
-        execution_authorized = not clarification_occurred
+        approval_required = (
+            clarification_occurred
+            or isinstance(details.get("executionPlan"), Mapping)
+        )
+        # Current Room definitions carry the visible plan; only typed Start
+        # authorizes them. Plan-less calls remain a legacy compatibility path.
+        execution_authorized = not approval_required
         planned_execute = dict(execute_dispatch_payload)
         validate_kernel_contract("dispatchEnvelope", planned_execute)
         if (
@@ -12801,11 +12807,7 @@ class RoomKernelStore:
                 clarification_occurred=False,
                 source="execute_dispatch_enqueued",
                 generation=int(root["generation"]),
-                details={
-                    "executionDispatchId": str(
-                        execute_dispatch["dispatchId"]
-                    )
-                },
+                details={"executionDispatchId": str(execute_dispatch["dispatchId"])},
                 now_ms=now_ms,
             )
         else:
@@ -12813,7 +12815,7 @@ class RoomKernelStore:
                 conn,
                 root_id=str(root["root_id"]),
                 phase="awaiting_start",
-                clarification_occurred=True,
+                clarification_occurred=clarification_occurred,
                 source="definition_committed",
                 generation=int(root["generation"]),
                 details={"definitionDispatchId": str(dispatch["dispatch_id"])},
@@ -13211,11 +13213,10 @@ class RoomKernelStore:
             intake = self.intake_state(root_id, conn=conn)
             if (
                 intake.get("phase") != "awaiting_start"
-                or intake.get("clarificationOccurred") is not True
                 or str(root["state"]) != "waiting"
             ):
                 raise RoomKernelFenceError(
-                    "typed start is allowed only after a clarified definition"
+                    "typed start is allowed only after an approved definition"
                 )
             definition = self.definition_fence(root_id=root_id, conn=conn)
             if definition is None:
@@ -13374,7 +13375,6 @@ class RoomKernelStore:
             intake = self.intake_state(root_id, conn=conn)
             if (
                 intake.get("phase") != "awaiting_start"
-                or intake.get("clarificationOccurred") is not True
                 or str(root["state"]) != "waiting"
             ):
                 raise RoomKernelFenceError(
@@ -13510,7 +13510,7 @@ class RoomKernelStore:
                 conn,
                 root_id=root_id,
                 phase="execution_ready",
-                clarification_occurred=True,
+                clarification_occurred=bool(intake.get("clarificationOccurred")),
                 source="typed_start_action",
                 generation=generation,
                 details={
@@ -13539,7 +13539,7 @@ class RoomKernelStore:
                 conn,
                 root_id=root_id,
                 phase="executing",
-                clarification_occurred=True,
+                clarification_occurred=bool(intake.get("clarificationOccurred")),
                 source="execute_dispatch_enqueued",
                 generation=generation,
                 details={

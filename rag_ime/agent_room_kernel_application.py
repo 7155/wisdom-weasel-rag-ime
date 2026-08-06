@@ -638,12 +638,9 @@ class RoomKernelApplicationService:
                 candidate_id,
                 participant_refs,
             )
-            if canonical_collaboration_role_id(
-                candidate.get("collaborationRole")
-            ) == "reviewer":
-                reviewer_refs.append(candidate_ref)
-            elif candidate_id != facilitator_id:
+            if candidate_id != facilitator_id:
                 eligible_peer_refs.append(candidate_ref)
+                reviewer_refs.append(candidate_ref)
         peer_children = [
             child
             for child in self.kernel.collaboration_children(root_id)
@@ -654,9 +651,42 @@ class RoomKernelApplicationService:
             and str(child.get("state") or "")
             not in {"cancelled", "failed"}
         ]
-        peer_work_required = bool(
-            routing_policy == "parallel" and eligible_peer_refs
+        definition = self.kernel.definition_fence(root_id=root_id)
+        definition_receipt = (
+            definition.get("receipt")
+            if isinstance(definition, Mapping)
+            and isinstance(definition.get("receipt"), Mapping)
+            else {}
         )
+        definition_details = (
+            definition_receipt.get("details")
+            if isinstance(definition_receipt, Mapping)
+            and isinstance(definition_receipt.get("details"), Mapping)
+            else {}
+        )
+        execution_plan = (
+            definition_details.get("executionPlan")
+            if isinstance(definition_details, Mapping)
+            and isinstance(definition_details.get("executionPlan"), Mapping)
+            else {}
+        )
+        planned_feature_tasks = [
+            dict(item)
+            for item in execution_plan.get("featureTasks", [])
+            if isinstance(item, Mapping)
+        ] if isinstance(execution_plan, Mapping) else []
+        planned_peer_ids: set[str] = set()
+        for planned_task in planned_feature_tasks:
+            try:
+                planned_id = resolve_participant_ref(
+                    planned_task.get("participantRef"),
+                    participant_refs,
+                )
+            except ParticipantReferenceError:
+                planned_id = str(planned_task.get("participantRef") or "")
+            if planned_id and planned_id != facilitator_id:
+                planned_peer_ids.add(planned_id)
+        peer_work_required = bool(planned_peer_ids)
         # Reviewer presence is roster capacity, not review policy.  The
         # Facilitator owns the risk decision at room_define and the Root keeps
         # its durable, receipted answer.  Showing an inferred requirement here
@@ -670,11 +700,12 @@ class RoomKernelApplicationService:
                 == facilitator_id
             ),
             "peerWorkRequired": peer_work_required,
-            "minimumPeerWorkItems": 1 if peer_work_required else 0,
+            "minimumPeerWorkItems": len(planned_peer_ids),
             "assignedPeerWorkItems": len(peer_children),
             "eligiblePeerParticipantRefs": eligible_peer_refs,
             "independentReviewRequired": review_required,
             "reviewerParticipantRefs": reviewer_refs,
+            "approvedFeatureTasks": planned_feature_tasks,
             "nextAction": (
                 "assign_independent_peer_work"
                 if peer_work_required and not peer_children
@@ -1384,13 +1415,6 @@ class RoomKernelApplicationService:
         if target is None or not str(target.get("sessionId") or "").strip():
             raise RoomKernelFenceError(
                 "Room collaboration target has no active Session"
-            )
-        if canonical_collaboration_role_id(
-            target.get("collaborationRole")
-        ) == "reviewer":
-            raise RoomKernelFenceError(
-                "Reviewer cannot receive implementation work through "
-                "room_collaborate; use the post-integration review handoff"
             )
         evidence_refs = arguments.get("evidenceRefs") or []
         if not isinstance(evidence_refs, list):

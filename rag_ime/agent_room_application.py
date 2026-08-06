@@ -572,18 +572,6 @@ class RoomApplicationService:
             raise RoomKernelFenceError(
                 "room_define implementation participant is not active"
             )
-        if (
-            implementation_id != str(root["facilitatorParticipantId"])
-            and canonical_collaboration_role_id(
-                target.get("collaborationRole")
-            )
-            == "reviewer"
-        ):
-            raise RoomKernelFenceError(
-                "room_define implementation participant cannot be the Reviewer; "
-                "Reviewer enters only after integration"
-            )
-
         objective = str(arguments.get("objective") or "").strip()
         expected_output = str(arguments.get("expectedOutput") or "").strip()
         entry_surface = " ".join(
@@ -672,6 +660,16 @@ class RoomApplicationService:
                     ),
                 }
             )
+
+        execution_plan = _normalize_room_execution_plan(
+            arguments.get("executionPlan"),
+            objective=objective,
+            expected_output=expected_output,
+            default_participant=target,
+            participant_refs=participant_refs,
+            participants=room.get("participants", []),
+            acceptance_plan=[str(item["statement"]) for item in criteria_input],
+        )
 
         if prior_definition is None:
             _assert_concrete_room_definition(
@@ -912,6 +910,7 @@ class RoomApplicationService:
                 "entrySurface": entry_surface,
                 "primaryInteraction": primary_interaction,
                 "observableCompletion": observable_completion,
+                **({"executionPlan": execution_plan} if execution_plan else {}),
                 "implementationParticipantId": implementation_id,
                 "implementationParticipantRef": implementation_ref,
                 "workItemId": work_item["id"],
@@ -921,7 +920,10 @@ class RoomApplicationService:
                 str(root["rootId"]),
                 conn=transaction,
             )
-            if intake_before_definition.get("clarificationOccurred") is True:
+            if (
+                execution_plan is not None
+                or intake_before_definition.get("clarificationOccurred") is True
+            ):
                 alignment_post = {
                     "schemaVersion": ROOM_POST_SCHEMA_VERSION,
                     "postId": alignment_post_id,
@@ -991,6 +993,7 @@ class RoomApplicationService:
             "acceptanceAliases": aliases,
             "implementationParticipant": target,
             "implementationParticipantRef": implementation_ref,
+            **({"executionPlan": execution_plan} if execution_plan else {}),
             "workItem": work_item,
             "contextFence": {
                 "definitionReceiptId": revised["receipt"]["receiptId"],
@@ -1915,18 +1918,6 @@ class RoomApplicationService:
             raise RoomKernelFenceError(
                 "managed Room execution requires an active participant"
             )
-        implementation_participants = [
-            participant
-            for participant in active_participants
-            if canonical_collaboration_role_id(
-                participant.get("collaborationRole")
-            )
-            != "reviewer"
-        ]
-        if not implementation_participants:
-            raise RoomKernelFenceError(
-                "managed Room execution requires a non-Reviewer participant"
-            )
         preferred_facilitator = _opening_facilitator(
             room,
             active_participants,
@@ -1950,17 +1941,6 @@ class RoomApplicationService:
             self.rooms.participant(str(decision["targetParticipantId"]))
             for decision in decisions
         ]
-        if managed_work and any(
-            canonical_collaboration_role_id(
-                target.get("collaborationRole")
-            )
-            == "reviewer"
-            for target in targets
-        ):
-            raise RoomKernelFenceError(
-                "Reviewer cannot enter the implementation wave; "
-                "use the post-integration review handoff"
-            )
         if not targets:
             raise RoomKernelFenceError(
                 "managed Room execution requires an active response participant"
@@ -2622,7 +2602,7 @@ def _queued_dispatch_result(
     was_created: bool,
     phase: str,
     alignment_ordinal: int | None = None,
-) -> dict[str, object]:
+) -> dict[str, object] | None:
     result: dict[str, object] = {
         "participantId": target["id"],
         "sessionId": target["sessionId"],
@@ -2672,26 +2652,19 @@ def _root_facilitator(
         return moderator_id
     if coordinator_ids:
         return coordinator_ids[0]
-    non_reviewer_ids = [
-        str(value.get("id") or "")
-        for value in active_participants
-        if canonical_collaboration_role_id(value.get("collaborationRole"))
-        != "reviewer"
-    ]
-    if moderator_id in non_reviewer_ids:
+    active_ids = [str(value.get("id") or "") for value in active_participants]
+    if moderator_id in active_ids:
         return moderator_id
     target_ids = {
         str(value.get("id") or "")
         for value in targets
-        if canonical_collaboration_role_id(value.get("collaborationRole"))
-        != "reviewer"
     }
-    for participant_id in non_reviewer_ids:
+    for participant_id in active_ids:
         if participant_id in target_ids:
             return participant_id
-    raise RoomKernelFenceError(
-        "managed Room execution requires a non-Reviewer Facilitator"
-    )
+    if active_ids:
+        return active_ids[0]
+    raise RoomKernelFenceError("managed Room execution requires an active Facilitator")
 
 
 def _opening_facilitator(
@@ -2782,27 +2755,174 @@ def _alignment_task(
             "什么；（3）要交付哪些真实产物；（4）怎样从界面或运行结果判断完成。"
             "“端到端可用、完整、可运行闭环”只能说明范围，不能替代具体目标；"
             "“当前项目、规定入口、核心操作、真实结果”都是未完成的占位说法。"
-            "请求已经足够具体时，不要再问用户确认，也不要发布单独的确认消息；"
-            "直接用 room_define 一次写入具体目标、交付物、要求、可观察验收条件和"
-            "禁区。如果仍缺少一个会改变做法的决定，用 room_commit wait 一次只问"
-            "一个问题，先问影响最大的决定，不得把入口、交互和验收边界合成一问；"
-            "每一问提供 2–5 个可点选项，每个选项都要有简短标题和一段说明，界面会"
-            "另外提供“其他”文本入口。每个用户回答按时间进入对话；前一个回答写入"
-            "后再问下一个。问题全部问完后再调用 room_define；只有走过提问路径才"
-            "询问“现在开始行动吗？”。公开消息里不要使用“对齐、澄清、需求不足、"
+            "请求已经足够具体时，不要再问用户确认需求细节；先形成可展示的执行方案，再直接用 room_define "
+            "一次写入具体目标、交付物、要求、可观察验收条件、禁区和方案。如果仍缺少"
+            "会实质改变范围、风险或交付方式的决定，先从项目现状和"
+            "安全的常规默认值推断；不得让用户复述能从代码、页面或已有请求中确定的"
+            "信息，也不得为了填满入口、格式、字段、错误处理等清单而连续追问。最多"
+            "只进行一轮补问：有 2–4 个互不依赖的问题时，一次列出 2–4 个互不依赖的问题，"
+            "在正文中按 1/2/3/4 编号，并为每题给出 A/B/C 等简短方案，允许用户直接回复"
+            "“1A 2C”；此时用 questionKind=unbounded 且不传 questionOptions。只有单个真正"
+            "互斥的决定才使用可点击选择项：用 questionKind=bounded 并提供 2–5 个有简短"
+            "标题和说明的 questionOptions，界面会另提供“其他”文本入口。非阻塞细节使用"
+            "合理默认值并在定义中说明。收到这一轮回答后应直接形成方案并 room_define；仅当还剩"
+            "一个无法安全推断的高风险决定时才允许再问一次，不得形成逐题问卷。定义前先锁定"
+            "公共契约；若有多个用户可见功能，按功能纵向拆成最多四项，每项由一位同能力伙伴端到端"
+            "负责并写明依赖波次、写入边界、集成和验收。单个功能只能交给一位 Room Agent，不能按"
+            "前端、后端、解析或测试横向拆分。room_define 后始终展示方案并询问“现在开始行动吗？”，"
+            "用户批准前不得分派、写入或测试。公开消息里不要使用“对齐、澄清、需求不足、"
             "工作卡片、门禁”，应自然说明“我明白了”或“还差一个会影响做法的问题”。"
             "如果 room_define 拒绝了占位定义，就继续问下一个具体问题，不要把工具"
             "失败当作本轮结论。不得把计划或执行结果冒充具体定义。"
             f" 原始请求：{message[:2_000]}"
         )[:4_000],
         "expectedOutput": (
-            "一个具体且可执行的目标；仅在确实缺少决定时，按时间追加问题、回答、"
-            "自然总结和开始行动。定义后由 Facilitator 先执行，并只把真正独立的"
-            "工作通过 room_collaborate 分配给伙伴。"
+            "一个具体且可执行的目标，以及开始行动前可审核的公共契约、纵向功能分工、"
+            "依赖波次、写入边界、集成和验收方案。定义后由 Facilitator 先执行方案展示与等待；"
+            "用户批准后，Facilitator 才按方案用"
+            "room_collaborate 分配真正独立的完整功能。"
         ),
         "acceptanceCriterionIds": [criterion_id],
         "revision": 0,
         "state": "active",
+    }
+
+
+def _normalize_room_execution_plan(
+    value: object,
+    *,
+    objective: str,
+    expected_output: str,
+    default_participant: Mapping[str, object],
+    participant_refs: Mapping[str, str],
+    participants: object,
+    acceptance_plan: Sequence[str],
+) -> dict[str, object]:
+    """Validate the user-visible pre-start plan without creating parallel state."""
+
+    active = {
+        str(item.get("id") or ""): item
+        for item in (
+            participants
+            if isinstance(participants, Sequence)
+            and not isinstance(participants, (str, bytes))
+            else []
+        )
+        if isinstance(item, Mapping)
+        and item.get("status") == "active"
+        and str(item.get("id") or "").strip()
+    }
+
+    def clean_text(raw: object, field: str, *, limit: int) -> str:
+        text = " ".join(str(raw or "").split())
+        if not text:
+            raise ValueError(f"room_define executionPlan {field} is required")
+        return text[:limit]
+
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("room_define executionPlan must be an object")
+    raw_tasks = value.get("featureTasks")
+    if (
+        not isinstance(raw_tasks, Sequence)
+        or isinstance(raw_tasks, (str, bytes))
+        or not 1 <= len(raw_tasks) <= 4
+    ):
+        raise ValueError("room_define executionPlan featureTasks must contain 1-4 items")
+    feature_tasks: list[dict[str, object]] = []
+    titles: set[str] = set()
+    for ordinal, raw_task in enumerate(raw_tasks):
+        if not isinstance(raw_task, Mapping):
+            raise ValueError("room_define executionPlan feature task must be an object")
+        title = clean_text(raw_task.get("title"), "feature title", limit=200)
+        if title in titles:
+            raise ValueError("room_define executionPlan feature titles must be unique")
+        titles.add(title)
+        participant_ref = clean_text(
+            raw_task.get("participantRef"),
+            "participantRef",
+            limit=320,
+        )
+        try:
+            participant_id = resolve_participant_ref(
+                participant_ref,
+                participant_refs,
+            )
+        except ParticipantReferenceError:
+            participant_id = participant_ref
+        participant = active.get(participant_id)
+        if participant is None:
+            raise RoomKernelFenceError(
+                "room_define executionPlan participant is not active"
+            )
+        dependencies = [
+            " ".join(str(item or "").split())[:200]
+            for item in (
+                raw_task.get("dependencies")
+                if isinstance(raw_task.get("dependencies"), Sequence)
+                and not isinstance(raw_task.get("dependencies"), (str, bytes))
+                else []
+            )
+            if " ".join(str(item or "").split())
+        ][:4]
+        wave = raw_task.get("wave")
+        normalized_wave = (
+            int(wave)
+            if isinstance(wave, int) and not isinstance(wave, bool) and 1 <= wave <= 4
+            else ordinal + 1 if dependencies else 1
+        )
+        feature_tasks.append(
+            {
+                "title": title,
+                "participantRef": participant_ref,
+                "ownerDisplayName": str(
+                    participant.get("displayName") or f"伙伴 {ordinal + 1}"
+                ),
+                "userOutcome": clean_text(
+                    raw_task.get("userOutcome"),
+                    "userOutcome",
+                    limit=2_000,
+                ),
+                "dependencies": dependencies,
+                "wave": normalized_wave,
+                "writeBoundary": " ".join(
+                    str(raw_task.get("writeBoundary") or "").split()
+                )[:1_000],
+            }
+        )
+    shared_contracts = [
+        " ".join(str(item or "").split())[:1_000]
+        for item in (
+            value.get("sharedContracts")
+            if isinstance(value.get("sharedContracts"), Sequence)
+            and not isinstance(value.get("sharedContracts"), (str, bytes))
+            else []
+        )
+        if " ".join(str(item or "").split())
+    ][:8]
+    raw_acceptance = value.get("acceptancePlan")
+    normalized_acceptance = [
+        " ".join(str(item or "").split())[:1_000]
+        for item in (
+            raw_acceptance
+            if isinstance(raw_acceptance, Sequence)
+            and not isinstance(raw_acceptance, (str, bytes))
+            else acceptance_plan
+        )
+        if " ".join(str(item or "").split())
+    ][:12]
+    if not normalized_acceptance:
+        raise ValueError("room_define executionPlan acceptancePlan is required")
+    return {
+        "sharedContracts": shared_contracts,
+        "featureTasks": feature_tasks,
+        "integrationPlan": clean_text(
+            value.get("integrationPlan"),
+            "integrationPlan",
+            limit=2_000,
+        ),
+        "acceptancePlan": normalized_acceptance,
     }
 
 

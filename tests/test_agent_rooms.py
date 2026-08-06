@@ -136,7 +136,7 @@ class AgentRoomTests(unittest.TestCase):
             )
 
 
-    def test_parallel_managed_routing_reserves_reviewer_for_final_handoff(
+    def test_parallel_managed_routing_treats_role_labels_as_capability_neutral(
         self,
     ) -> None:
         room = self.store.create(
@@ -166,27 +166,24 @@ class AgentRoomTests(unittest.TestCase):
         )
         self.assertEqual(
             [decision["targetParticipantId"] for decision in decisions],
-            [facilitator["id"], implementer["id"]],
+            [facilitator["id"], implementer["id"], reviewer["id"]],
         )
-        with self.assertRaisesRegex(
-            ValueError,
-            "Reviewer cannot own managed implementation ingress",
-        ):
-            self.store.plan_routes(
-                str(room["id"]),
-                "直接开始工作。",
-                authoritative_participant_id=str(reviewer["id"]),
-            )
-        with self.assertRaisesRegex(
-            ValueError,
-            "Reviewer cannot enter the implementation wave",
-        ):
-            self.store.plan_routes(
-                str(room["id"]),
-                "@审查者 直接实现。",
-                requested_participant_ids=[str(reviewer["id"])],
-                authoritative_participant_id=str(facilitator["id"]),
-            )
+        reviewer_owned = self.store.plan_routes(
+            str(room["id"]),
+            "直接开始工作。",
+            authoritative_participant_id=str(reviewer["id"]),
+        )
+        self.assertEqual(reviewer_owned[0]["targetParticipantId"], reviewer["id"])
+        mentioned = self.store.plan_routes(
+            str(room["id"]),
+            "@审查者 直接实现。",
+            requested_participant_ids=[str(reviewer["id"])],
+            authoritative_participant_id=str(reviewer["id"]),
+        )
+        self.assertEqual(
+            [item["targetParticipantId"] for item in mentioned],
+            [reviewer["id"]],
+        )
 
     def test_parallel_unaddressed_conversation_selects_one_responder(
         self,

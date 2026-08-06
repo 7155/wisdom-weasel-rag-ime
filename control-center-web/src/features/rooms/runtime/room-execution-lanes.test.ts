@@ -16,6 +16,33 @@ describe('selectRoomTurnExecution', () => {
     expect(selectPublicRoomTurnOrder(projection)).toEqual(['root-1']);
   });
 
+  it('orders public task cards by their authoritative creation time', () => {
+    const projection = createRoomProjection('room-1');
+    projection.turnOrder.push('root-newer', 'root-older');
+    projection.turnsById['root-newer'] = {
+      id: 'root-newer',
+      rootId: 'root-newer',
+      status: 'running',
+      messageIds: [],
+      activityIds: [],
+      participantIds: [],
+      createdAtMs: 20,
+      updatedAtMs: 30,
+    };
+    projection.turnsById['root-older'] = {
+      id: 'root-older',
+      rootId: 'root-older',
+      status: 'completed',
+      messageIds: [],
+      activityIds: [],
+      participantIds: [],
+      createdAtMs: 10,
+      updatedAtMs: 40,
+    };
+
+    expect(selectPublicRoomTurnOrder(projection)).toEqual(['root-older', 'root-newer']);
+  });
+
   it('merges a payload-addressed route and its reply into one participant lane', () => {
     const projection = createRoomProjection('room-1');
     projection.turnOrder.push('root-1');
@@ -205,7 +232,7 @@ describe('selectRoomTurnExecution', () => {
     expect(selected.messageIds).toEqual(['opening', 'question', 'answer']);
     expect(selected.userMessageIds).toEqual(['opening', 'answer']);
     expect(selected.lanes).toHaveLength(1);
-    expect(selected.lanes[0]?.messageIds).toEqual(['question']);
+    expect(selected.lanes[0]?.messageIds).toEqual(['question', 'answer']);
   });
 
   it('uses authoritative event sequence before timestamp and a stable fallback for legacy messages', () => {

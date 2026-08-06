@@ -87,7 +87,11 @@ import {
   useRoomLiveStore,
   type RoomKernelSyncProjection,
 } from '../state/live-store';
-import { RoomStartActionGate, roomRootRequiresStartAction } from './RoomStartActionGate';
+import {
+  RoomStartActionGate,
+  roomRootExecutionPlan,
+  roomRootRequiresStartAction,
+} from './RoomStartActionGate';
 import {
   roomPublicActivityText,
   roomPublicToolResultView,
@@ -182,6 +186,12 @@ type RoomTurnChronologicalItem =
 type RoomTurnChronologicalAtom =
   | { kind: 'message'; message: RoomMessageProjection; sourceIndex: number }
   | {
+      kind: 'lane_message';
+      message: RoomMessageProjection;
+      lane: RoomExecutionLane;
+      sourceIndex: number;
+    }
+  | {
       kind: 'activity';
       activity: RoomActivityProjection;
       lane: RoomExecutionLane;
@@ -206,7 +216,7 @@ function roomTurnChronologicalStream(
     lanes.flatMap((lane) => lane.messageIds.filter((id) => cardMessageIds.has(id))),
   );
   const atoms: RoomTurnChronologicalAtom[] = messages
-    .filter((message) => message.role === 'user' || !laneMessageIds.has(message.id))
+    .filter((message) => !laneMessageIds.has(message.id))
     .map((message, sourceIndex) => ({
       kind: 'message',
       message,
@@ -214,6 +224,23 @@ function roomTurnChronologicalStream(
     }));
   let activityIndex = 0;
   for (const lane of lanes) {
+    const firstLaneMessage = lane.messageIds
+      .map((messageId) => messages.find((message) => message.id === messageId))
+      .filter((message): message is RoomMessageProjection => Boolean(message))
+      .sort((left, right) => (
+        (left.chronology?.roomEventSequence ?? left.sequence ?? Number.MAX_SAFE_INTEGER)
+        - (right.chronology?.roomEventSequence ?? right.sequence ?? Number.MAX_SAFE_INTEGER)
+        || left.createdAtMs - right.createdAtMs
+      ))[0];
+    if (firstLaneMessage) {
+      atoms.push({
+        kind: 'lane_message',
+        message: firstLaneMessage,
+        lane,
+        sourceIndex: activityIndex,
+      });
+      activityIndex += 1;
+    }
     for (const activity of lane.activities) {
       atoms.push({ kind: 'activity', activity, lane, sourceIndex: activityIndex });
       activityIndex += 1;
@@ -259,35 +286,40 @@ function roomTurnChronologicalStream(
 }
 
 function roomMessageBelongsInExecutionCard(message: RoomMessageProjection): boolean {
-  return message.role !== 'user'
-    && !message.question
-    && message.postKind !== 'alignment';
+  return message.role !== 'user' || Boolean(message.answerToPostId);
 }
 
 function compareRoomTurnChronologicalAtoms(
   left: RoomTurnChronologicalAtom,
   right: RoomTurnChronologicalAtom,
 ): number {
-  const leftSequence = left.kind === 'message'
-    ? left.message.chronology?.roomEventSequence ?? left.message.sequence
-    : left.activity.sequence;
-  const rightSequence = right.kind === 'message'
-    ? right.message.chronology?.roomEventSequence ?? right.message.sequence
-    : right.activity.sequence;
+  const leftSequence = left.kind === 'activity'
+    ? left.activity.sequence
+    : left.message.chronology?.roomEventSequence ?? left.message.sequence;
+  const rightSequence = right.kind === 'activity'
+    ? right.activity.sequence
+    : right.message.chronology?.roomEventSequence ?? right.message.sequence;
   if (leftSequence !== undefined && rightSequence !== undefined && leftSequence !== rightSequence) {
     return leftSequence - rightSequence;
   }
-  const leftAtMs = left.kind === 'message' ? left.message.createdAtMs : left.activity.createdAtMs;
-  const rightAtMs = right.kind === 'message' ? right.message.createdAtMs : right.activity.createdAtMs;
+  const leftAtMs = left.kind === 'activity' ? left.activity.createdAtMs : left.message.createdAtMs;
+  const rightAtMs = right.kind === 'activity' ? right.activity.createdAtMs : right.message.createdAtMs;
   if (leftAtMs !== rightAtMs) return leftAtMs - rightAtMs;
   if (leftSequence !== undefined || rightSequence !== undefined) {
     if (leftSequence === undefined) return 1;
     if (rightSequence === undefined) return -1;
   }
-  if (left.kind !== right.kind) return left.kind === 'message' ? -1 : 1;
+  if (left.kind !== right.kind) {
+    const rank: Record<RoomTurnChronologicalAtom['kind'], number> = {
+      message: 0,
+      lane_message: 1,
+      activity: 2,
+    };
+    return rank[left.kind] - rank[right.kind];
+  }
   if (left.sourceIndex !== right.sourceIndex) return left.sourceIndex - right.sourceIndex;
-  const leftId = left.kind === 'message' ? left.message.id : left.activity.id;
-  const rightId = right.kind === 'message' ? right.message.id : right.activity.id;
+  const leftId = left.kind === 'activity' ? left.activity.id : left.message.id;
+  const rightId = right.kind === 'activity' ? right.activity.id : right.message.id;
   return leftId.localeCompare(rightId);
 }
 
@@ -392,10 +424,9 @@ export function RoomTurn({
     && projection.pendingUserQuestion?.rootId === rootId
     ? projection.pendingUserQuestion
     : undefined;
-  // While the Room is asking the user, the chronological message and its
-  // choices are the whole interaction. Keep every role lane in the projection,
-  // but do not stack current or earlier activity panels beneath the form.
-  const visibleLanes = pendingQuestion ? [] : lanes;
+  // Questions, answers and the accepted plan stay inside the facilitator's
+  // task card; low-level activity remains secondary detail in that same card.
+  const visibleLanes = lanes;
   const reporterSummaryRequired = Boolean(
     rootTerminal && kernelRoot?.reporterParticipantId,
   );
@@ -461,6 +492,7 @@ export function RoomTurn({
   const startActionGate = requiresStartAction && onStartExecution
     ? <RoomStartActionGate
         onStart={() => onStartExecution(rootId)}
+        plan={roomRootExecutionPlan(kernelRoot, Object.values(kernelReceiptsById ?? {}))}
         starting={startingRootIds.has(rootId)}
       />
     : null;
@@ -611,14 +643,14 @@ export function RoomTurn({
           : participantId
             ? (turn.failedParticipantIds ?? []).includes(participantId)
             : false
-      ) || (!explicitlyTerminal && (turn.status === 'failed' || kernelRootFailed));
+      ) || kernelRootFailed || (!explicitlyTerminal && turn.status === 'failed');
       const laneAborted = (
         lane.dispatchId
           ? (turn.abortedDispatchIds ?? []).includes(lane.dispatchId)
           : participantId
             ? (turn.abortedParticipantIds ?? []).includes(participantId)
             : false
-      ) || (!explicitlyTerminal && (turn.status === 'aborted' || kernelRootAborted));
+      ) || kernelRootAborted || (!explicitlyTerminal && turn.status === 'aborted');
       // A terminal Root is authoritative even when a transient resume Dispatch
       // never appeared in the terminal-id lists.
       const laneTerminal = rootTerminal || explicitlyTerminal;
@@ -717,7 +749,9 @@ export function RoomTurn({
           participantName={participant?.displayName}
           workspaceTask={laneTask}
         />}
-        defaultOpen={false}
+        defaultOpen={cardMessages.some((message) => (
+          message.id === pendingQuestion?.postId || message.id === finalAlignmentId
+        ))}
         data-motion={laneOperationallyActive ? laneFreshness.state : 'settled'}
         data-outcome={laneOutcome || undefined}
         data-state={laneState}
@@ -787,7 +821,10 @@ export function RoomTurn({
           data-status={message.status}
           key={message.id}
         >
-          <RoomLanePost
+          {message.role === 'user' ? <div className="room-agent-lane__user-answer">
+            <small>你的回答</small>
+            <MarkdownBody text={message.text} />
+          </div> : <RoomLanePost
             activeWait={
               message.postKind === 'wait'
               && !rootTerminal
@@ -801,7 +838,7 @@ export function RoomTurn({
             showEvidence={Boolean(roomTerminalPostLabels[message.postKind ?? ''])}
             streamingMotion={laneMotionActive}
             turnStartedAtMs={turn.createdAtMs}
-          />
+          />}
           {message.id === finalAlignmentId ? startActionGate : null}
         </div>)}
         {includePersistentDetails && laneComplete && laneTask?.workspaceDelivery

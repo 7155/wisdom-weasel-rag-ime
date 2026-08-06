@@ -179,6 +179,30 @@ describe('RoomTurn canonical conversation chronology', () => {
     expect(summary).not.toHaveTextContent('正在等待');
   });
 
+  it('shows a cancelled Root as stopped even when its last Dispatch returned normally', () => {
+    const projection = liveProjection([
+      userEvent(1, 'opening', '请确认批量导入方案'),
+      activityEvent(2, '正在确认导入规则', 'participant-a', 'dispatch-a'),
+    ]);
+    projection.turnsById['root-a'] = {
+      ...projection.turnsById['root-a']!,
+      status: 'completed',
+      terminalDispatchIds: ['dispatch-a'],
+      terminalParticipantIds: ['participant-a'],
+    };
+
+    const view = render(roomTurn(projection, {
+      kernelRootsById: { 'root-a': root('cancelled') },
+    }));
+    const lane = view.container.querySelector<HTMLDetailsElement>('.room-agent-lane')!;
+    const summary = lane.querySelector<HTMLElement>(':scope > summary')!;
+
+    expect(lane).toHaveAttribute('data-state', 'aborted');
+    expect(lane).toHaveAttribute('data-motion', 'settled');
+    expect(summary).toHaveTextContent('已停止');
+    expect(summary).not.toHaveTextContent('已完成');
+  });
+
   it('uses one role identity when activity is followed by the same role public reply', () => {
     const projection = liveProjection([
       userEvent(1, 'opening', '请完成这个入口'),
@@ -434,7 +458,29 @@ describe('RoomTurn canonical conversation chronology', () => {
     const view = render(roomTurn(projection, {
       kernelRootsById: { 'root-a': root('waiting') },
       kernelReceiptsById: Object.fromEntries([
-        receipt(1, { operation: 'room_define', requiresStartAction: true }),
+        receipt(1, {
+          operation: 'room_define',
+          requiresStartAction: true,
+          executionPlan: {
+            sharedContracts: ['先锁定消息、任务和状态事件契约'],
+            featureTasks: [
+              {
+                title: '需求对齐任务框',
+                ownerDisplayName: '澄·今',
+                userOutcome: '问题、回答和最终结论都归属同一个 Agent 大框',
+                dependencies: [],
+              },
+              {
+                title: '实时进度与回到最新',
+                ownerDisplayName: '澄·初',
+                userOutcome: '用户始终能看到谁在运行以及最新反馈',
+                dependencies: ['需求对齐任务框'],
+              },
+            ],
+            integrationPlan: '负责人按共享契约合并，再执行独立复核',
+            acceptancePlan: ['真实 GUI 验证提问、启动、并行、交付和恢复'],
+          },
+        }),
         receipt(2, {
           purpose: 'intake_phase',
           phase: 'awaiting_start',
@@ -450,7 +496,13 @@ describe('RoomTurn canonical conversation chronology', () => {
     const gate = screen.getByRole('group', { name: '确认开始行动' });
 
     expect(alignment.compareDocumentPosition(gate) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(gate).toHaveTextContent('现在开始行动吗？');
+    expect(gate).toHaveTextContent('开始行动前，请确认这套分工');
+    expect(gate).toHaveTextContent('先锁定消息、任务和状态事件契约');
+    expect(gate).toHaveTextContent('需求对齐任务框');
+    expect(gate).toHaveTextContent('澄·今');
+    expect(gate).toHaveTextContent('实时进度与回到最新');
+    expect(gate).toHaveTextContent('负责人按共享契约合并，再执行独立复核');
+    expect(gate).toHaveTextContent('真实 GUI 验证提问、启动、并行、交付和恢复');
   });
 
   it('does not render an unanchored start action before the canonical alignment post arrives', () => {
@@ -473,7 +525,7 @@ describe('RoomTurn canonical conversation chronology', () => {
     expect(screen.queryByRole('group', { name: '确认开始行动' })).not.toBeInTheDocument();
   });
 
-  it('keeps a pending clarification in the message flow without duplicate lane controls', () => {
+  it('keeps a pending clarification inside its facilitator Agent card', () => {
     const projection = liveProjection([
       userEvent(1, 'opening', '@澄·今 我准备写 TUI'),
       questionEvent(2, 'question-1', '目标界面是什么？', ['终端原生 TUI', '网页界面']),
@@ -494,7 +546,12 @@ describe('RoomTurn canonical conversation chronology', () => {
     expect(screen.getByRole('region', { name: '需要回答：首版交付边界是什么？' })).toBeInTheDocument();
     expect(view.container).toHaveTextContent('终端原生 TUI');
     expect(screen.queryByRole('button', { name: '停止本轮任务' })).not.toBeInTheDocument();
-    expect(view.container.querySelector('.room-agent-lane')).not.toBeInTheDocument();
+    const lane = view.container.querySelector<HTMLElement>('.room-agent-lane');
+    expect(lane).toBeInTheDocument();
+    expect(lane).toHaveTextContent('澄·今');
+    expect(lane).toContainElement(
+      screen.getByRole('region', { name: '需要回答：首版交付边界是什么？' }),
+    );
   });
 
   it('locks a pending question when the Kernel terminal snapshot arrives first', () => {
@@ -608,8 +665,13 @@ function expectTextOrder(container: HTMLElement, texts: string[]): void {
 }
 
 function textElement(container: HTMLElement, text: string): HTMLElement {
-  const element = [...container.querySelectorAll<HTMLElement>('p, strong')]
-    .find((candidate) => candidate.textContent === text);
+  const candidates = [...container.querySelectorAll<HTMLElement>('p, strong')]
+    .filter((candidate) => candidate.textContent === text);
+  const element = candidates.find((candidate) => (
+    candidate.closest('.room-agent-lane__user-answer')
+  )) ?? candidates.find((candidate) => (
+    candidate.closest('.room-agent-lane__post')
+  )) ?? candidates[0];
   if (!element) throw new TypeError(`Missing public message text: ${text}`);
   return element;
 }

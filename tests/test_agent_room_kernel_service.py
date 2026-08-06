@@ -757,6 +757,15 @@ class RoomKernelServiceTests(unittest.TestCase):
             "请求已经足够具体时，不要再问用户确认",
             alignment_task["objective"],
         )
+        self.assertIn(
+            "一次列出 2–4 个互不依赖的问题",
+            alignment_task["objective"],
+        )
+        self.assertIn(
+            "只有单个真正互斥的决定才使用可点击选择项",
+            alignment_task["objective"],
+        )
+        self.assertNotIn("一次只问一个问题", alignment_task["objective"])
         self.assertIn("直接用 room_define", alignment_task["objective"])
         self.assertIn(
             "公开消息里不要使用“对齐、澄清、需求不足、工作卡片、门禁”",
@@ -7925,12 +7934,23 @@ class RoomKernelServiceTests(unittest.TestCase):
                     }
                 ],
                 "implementationParticipantRef": str(target["id"]),
+                "executionPlan": {
+                    "sharedContracts": ["先锁定实现与验证结果契约"],
+                    "featureTasks": [{
+                        "title": "目标实现闭环",
+                        "participantRef": str(target["id"]),
+                        "userOutcome": "从任务入口完成实现并看到验证结果",
+                        "dependencies": [],
+                    }],
+                    "integrationPlan": "负责人完成集成后执行全链路验证",
+                    "acceptancePlan": ["任务页显示实现产物与验证通过状态"],
+                },
                 "independentReviewRequired": True,
             },
             tool_call_id="call:define-tool",
             load_receipt_id=str(loaded["receiptId"]),
         )["result"]
-        execute_id = str(executed["executionDispatch"]["dispatchId"])
+        self.assertIsNone(executed["executionDispatch"])
 
         self.assertTrue(executed["terminalForModelTurn"])
         self.assertTrue(
@@ -7942,9 +7962,9 @@ class RoomKernelServiceTests(unittest.TestCase):
             executed["definitionReceipt"]["details"]
             ["independentReviewRequired"]
         )
-        self.assertFalse(executed["requiresStartAction"])
-        self.assertNotIn("alignmentPost", executed)
-        self.assertFalse(
+        self.assertTrue(executed["requiresStartAction"])
+        self.assertIn("alignmentPost", executed)
+        self.assertTrue(
             any(
                 event["eventType"] == "room_post"
                 and event["payload"]["post"].get("rootId")
@@ -8010,6 +8030,15 @@ class RoomKernelServiceTests(unittest.TestCase):
             }
         )
         self.assertEqual(settled["state"], "committed")
+        started = self.service.start_room_execution(
+            self.room_id,
+            {
+                "action": "start_execution",
+                "rootId": accepted["rootId"],
+                "clientActionId": "action:define-tool",
+            },
+        )
+        execute_id = str(started["dispatch"]["dispatchId"])
         self.assertTrue(self.service.room_kernel_worker.run_once())
         self.assertEqual(
             self.factory.runtime.dispatched[-1],
@@ -8090,15 +8119,51 @@ class RoomKernelServiceTests(unittest.TestCase):
                     }
                 ],
                 "implementationParticipantRef": str(first_peer["id"]),
+                "executionPlan": {
+                    "sharedContracts": ["先锁定页面记录模型、状态事件和结果契约"],
+                    "featureTasks": [
+                        {
+                            "title": "批量导入闭环",
+                            "participantRef": str(first_peer["id"]),
+                            "userOutcome": "用户可上传、预览、确认并核对导入结果",
+                            "dependencies": [],
+                        },
+                        {
+                            "title": "标签筛选闭环",
+                            "participantRef": str(second_peer["id"]),
+                            "userOutcome": "用户可维护标签并组合筛选当前记录",
+                            "dependencies": [],
+                        },
+                    ],
+                    "integrationPlan": "负责人按共享契约合并两个完整功能",
+                    "acceptancePlan": ["真实界面分别验证导入与筛选闭环"],
+                },
                 "independentReviewRequired": False,
             },
             tool_call_id="call:two-peer:define",
             load_receipt_id=str(define_load["receiptId"]),
         )["result"]
-        execute_id = str(defined["executionDispatch"]["dispatchId"])
+        started = self.service.start_room_execution(
+            room_id,
+            {
+                "action": "start_execution",
+                "rootId": root_id,
+                "clientActionId": "action:two-peer-start",
+            },
+        )
+        execute_id = str(started["dispatch"]["dispatchId"])
         self.assertTrue(self.service.room_kernel_worker.run_once())
         execute = self.service.room_kernel.dispatch(execute_id)
         self.assertEqual(execute["targetParticipantId"], facilitator["id"])
+        facilitator_todo = self.service.sessions.agent_todo(
+            facilitator_session
+        )
+        self.assertEqual(
+            facilitator_todo["roomLineage"]["dispatchId"],
+            execute_id,
+        )
+        self.assertGreaterEqual(facilitator_todo["counts"]["total"], 3)
+        self.assertEqual(facilitator_todo["counts"]["inProgress"], 1)
 
         state_load = self.service.room_capability_tool_load(
             {
@@ -8119,7 +8184,7 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertEqual(execution_policy["routingPolicy"], "parallel")
         self.assertTrue(execution_policy["facilitatorOwnsIntegration"])
         self.assertTrue(execution_policy["peerWorkRequired"])
-        self.assertEqual(execution_policy["minimumPeerWorkItems"], 1)
+        self.assertEqual(execution_policy["minimumPeerWorkItems"], 2)
         self.assertEqual(execution_policy["assignedPeerWorkItems"], 0)
         self.assertFalse(execution_policy["independentReviewRequired"])
         self.assertEqual(
@@ -8128,9 +8193,9 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         self.assertEqual(
             len(execution_policy["eligiblePeerParticipantRefs"]),
-            2,
+            3,
         )
-        self.assertEqual(len(execution_policy["reviewerParticipantRefs"]), 1)
+        self.assertEqual(len(execution_policy["reviewerParticipantRefs"]), 3)
         refs = {
             str(item["displayName"]): str(item["participantRef"])
             for item in state["participants"]
@@ -8287,6 +8352,22 @@ class RoomKernelServiceTests(unittest.TestCase):
             self.assertTrue(self.service.room_kernel_worker.run_once())
             child = self.service.room_kernel.dispatch(child_id)
             child_session = str(child["targetSessionId"])
+            child_todo = self.service.sessions.agent_todo(child_session)
+            self.assertEqual(
+                child_todo["roomLineage"]["dispatchId"],
+                child_id,
+            )
+            self.assertEqual(
+                child_todo["phases"][0]["name"],
+                "功能实现与验证",
+            )
+            self.assertEqual(child_todo["counts"]["inProgress"], 1)
+            active_todo_task = next(
+                item["content"]
+                for phase in child_todo["phases"]
+                for item in phase["tasks"]
+                if item["status"] == "in_progress"
+            )
             nested = self.service.delegate_tasks(
                 child_session,
                 {
@@ -8294,6 +8375,7 @@ class RoomKernelServiceTests(unittest.TestCase):
                     "task": f"为第 {ordinal} 条工作线执行一次私有有界核验",
                     "expectedOutput": "返回有界核验结果供所属伙伴验证",
                     "acceptanceCriteria": ["结果回到所属伙伴且不直接发布到 Room"],
+                    "todoTask": active_todo_task,
                 },
             )["batch"]
             nested_batches.append(nested)
@@ -8303,7 +8385,7 @@ class RoomKernelServiceTests(unittest.TestCase):
                 nested["causalMetadata"],
                 {
                     "todoId": f"todo:{child_session}",
-                    "todoRevision": 0,
+                    "todoRevision": child_todo["revision"],
                     "goalId": "",
                     "goalRevision": 0,
                     "roomBound": True,
@@ -8437,7 +8519,7 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         self.assertIn("最终汇总", projected_work_item["resultSummary"])
 
-    def test_room_define_cannot_assign_reviewer_as_implementation_partner(
+    def test_room_define_can_assign_any_active_peer_as_implementation_partner(
         self,
     ) -> None:
         reviewer = self.service.rooms.get(self.room_id)["participants"][2]
@@ -8456,18 +8538,17 @@ class RoomKernelServiceTests(unittest.TestCase):
         alignment = accepted["alignmentDispatches"][0]
         self.assertTrue(self.service.room_kernel_worker.run_once())
 
-        with self.assertRaisesRegex(
-            RoomKernelFenceError,
-            "Reviewer enters only after integration",
-        ):
-            self.service.room_application.define_room(
+        defined = self.service.room_application.define_room(
                 self.room_id,
                 dispatch_id=str(alignment["dispatchId"]),
                 invocation_receipt_id="invoke:reviewer-as-implementer",
                 arguments={
                     "objective": "完成实现并经过独立复核",
                     "expectedOutput": "可验证的最终结果",
-                    "requirements": ["Reviewer 不参与实现"],
+                    "entrySurface": "协作任务页中的实现入口",
+                    "primaryInteraction": "伙伴完成实现并运行验证步骤",
+                    "observableCompletion": "任务页显示实现结果和验证证据",
+                    "requirements": ["角色标签不限制实现能力"],
                     "acceptanceCriteria": [
                         {
                             "statement": "实现完成后独立复核",
@@ -8475,16 +8556,13 @@ class RoomKernelServiceTests(unittest.TestCase):
                             "expectedReceiptTypes": ["evidence"],
                         }
                     ],
-                    "implementationParticipantRef": "P3",
+                    "implementationParticipantRef": str(reviewer["id"]),
                     "independentReviewRequired": False,
                 },
             )
-
-        self.assertIsNone(
-            self.service.room_kernel.definition_fence(
-                root_id=str(accepted["rootId"]),
-                dispatch_id=str(alignment["dispatchId"]),
-            )
+        self.assertEqual(
+            defined["implementationParticipant"]["id"],
+            reviewer["id"],
         )
 
     def test_active_reviewer_roster_does_not_infer_root_review_policy(
@@ -9175,6 +9253,19 @@ class RoomKernelServiceTests(unittest.TestCase):
             ],
             "implementationParticipantRef": str(target["id"]),
             "independentReviewRequired": False,
+            "executionPlan": {
+                "sharedContracts": ["先锁定任务、消息和状态事件契约"],
+                "featureTasks": [
+                    {
+                        "title": "需求对齐任务框",
+                        "participantRef": str(target["id"]),
+                        "userOutcome": "问题、回答和确认结论归属同一个 Agent 大框",
+                        "dependencies": [],
+                    }
+                ],
+                "integrationPlan": "负责人合并完整功能后再执行全链路验证",
+                "acceptancePlan": ["真实 Room GUI 验证开始、运行和完成状态"],
+            },
         }
         define_loaded = self.service.room_capability_tool_load(
             {
@@ -9196,6 +9287,11 @@ class RoomKernelServiceTests(unittest.TestCase):
             load_receipt_id=str(define_loaded["receiptId"]),
         )["result"]
         self.assertTrue(defined["requiresStartAction"])
+        stored_plan = defined["definitionReceipt"]["details"]["executionPlan"]
+        self.assertEqual(stored_plan["sharedContracts"], define_arguments["executionPlan"]["sharedContracts"])
+        self.assertEqual(stored_plan["featureTasks"][0]["title"], "需求对齐任务框")
+        self.assertEqual(stored_plan["featureTasks"][0]["ownerDisplayName"], target["displayName"])
+        self.assertEqual(stored_plan["featureTasks"][0]["wave"], 1)
         self.assertIsNone(defined["executionDispatch"])
         self.assertEqual(defined["intake"]["phase"], "awaiting_start")
         alignment_post = defined["alignmentPost"]

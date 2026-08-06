@@ -19,11 +19,10 @@ weakens the requirements.
 
 ## Source Contract
 
-- Start an immutable `User Source` block with the original request and vision
-  verbatim in the user's language and order; never invent, translate, or overwrite it.
+- Start an immutable `User Source` block with the original request and vision verbatim in
+  the user's language and order; never invent, translate, or overwrite it.
 - Append corrections verbatim. Keep every AI explanation in a
-  separate derived section; original bytes, hashes, and RequirementAnchor outrank
-  summaries, and planning consumes its ref.
+  separate section; source bytes, hashes, and RequirementAnchor outrank summaries.
 - Inspect source, tests, config, docs, and runtime before asking. Separate facts,
   reversible defaults, and user-owned choices.
 - Lock the requirements before comparing solutions. Reopen only for a user
@@ -42,10 +41,8 @@ weakens the requirements.
    compatibility, observable behavior, reversibility, or cost.
 5. Use the user's language; append only corrections or extensions, and
    challenge the decision, not the user.
-6. Confirm material interpretations, permissions, acceptance, and user-owned
-   choices. A complete request needs no fixed phrase.
-7. Compare only genuinely different routes; record evidence, rejections, risks,
-   and invalidation.
+6. Confirm material choices; a complete request needs no fixed phrase.
+7. For genuine routes, record evidence, rejections, risks, and invalidation.
 8. Write a glossary, ADR, or decision record only on explicit request and
    approved write; glossary terms need a confirmed meaning. Every persisted
    decision needs a direct user choice and approved write. Proceed only when
@@ -65,27 +62,28 @@ weakens the requirements.
 
 - The facilitator/reporter owns one alignment Root/Task/Dispatch. Inspect
   `room_state`; never fan out work before requirements are settled.
-- Ask about one user-owned decision at a time, in dependency order. Never bundle
-  the target surface, required interactions, and acceptance boundary into one prompt.
-- Use `room_commit` with `decision="wait"`,
-  `waitingFor="user"`, `questionKind="bounded"`,
-  `question="<one prompt>"`, and `questionOptions=[...]` with 2-5 distinct
-  options and at most one `recommended`. Each needs a stable `value`, short `label`, and one-paragraph `description` of scope, effort, or tradeoff instead of repeating the label. The interface supplies `Other`; never write an Other option or replace choices with an open text box. This is not a second
-  question Tool.
-- Keep `publicSummary` and `question` a natural continuation of the user's message: acknowledge the goal and briefly explain why this choice matters. Never announce a work-card read, declare the request insufficient, or recite goal/deliverable/acceptance categories.
+- Infer inspectable facts and reversible defaults; never ask a serial checklist.
+- Ask at most one clarification round. For 2-4 independent material questions,
+  put numbered A/B/C choices in `question="<numbered prompts with A/B/C choices>"`;
+  use `room_commit`, `decision="wait"`, `waitingFor="user"`,
+  `questionKind="unbounded"`, omit `questionOptions`, and accept a compact answer
+  such as `1A 2C`. Never continue past an unanswered choice.
+- For exactly one genuinely mutually exclusive decision, use `questionKind="bounded"`
+  and `questionOptions=[...]` with 2-5 distinct options and at most one `recommended`.
+  Each needs a stable `value`, short `label`, and one-paragraph `description` of
+  scope, effort, or tradeoff instead of repeating the label. The interface supplies `Other`;
+  never write it as an option. This is not a second question Tool.
+- Keep `publicSummary` and `question` a natural continuation of the user's message;
+  acknowledge the goal and explain why the choice matters. Never announce a work-card read,
+  declare the request insufficient, or recite goal/deliverable/acceptance categories.
 - The next ordinary Room message answers the wait: append its source span to the
-  RequirementAnchor and make one new resume Dispatch under the same Root; never
-  reuse the alignment Dispatch.
-- Once settled, re-read `room_state`, use `tool_search`, then one `tool_load` for
-  `room_define`. It binds one RequirementCatalog and is terminal for that model
-  turn. When no material clarification was needed, call it directly without a
-  confirmation message; never substitute `room_commit deliver` for definition.
+  RequirementAnchor, create one resume Dispatch, and never reuse the alignment Dispatch.
+- Once settled, use `room_state`, then `room_define` with the durable requirements
+  packet and a visible vertical plan of 1-4 peer Agent tasks; show the proposed execution plan before `开始行动`.
+  With no material choice call it without a
+  confirmation message; Start approval still authorizes work; never substitute `room_commit deliver`.
 - The Facilitator owns decomposition. `room_collaborate` creates only bounded,
   non-overlapping implementation work, never intake or review.
-- `room_post` is not a second clarification channel; it carries material progress.
-  Only the facilitator/reporter emits the final public summary.
-- Filesystem roots prove neither participant identity nor worktree isolation;
-  require receipts.
 
 ## Explicit Grill Mode
 

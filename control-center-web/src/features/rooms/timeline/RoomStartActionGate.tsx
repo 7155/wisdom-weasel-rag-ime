@@ -4,6 +4,22 @@ import { Button } from '@/components/primitives';
 import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
 import type { RootProjection } from '@/contracts/room-kernel-reducer';
 
+export interface RoomExecutionPlanFeature {
+  title: string;
+  ownerDisplayName: string;
+  userOutcome: string;
+  dependencies: string[];
+  wave?: number;
+  writeBoundary: string;
+}
+
+export interface RoomExecutionPlan {
+  sharedContracts: string[];
+  featureTasks: RoomExecutionPlanFeature[];
+  integrationPlan: string;
+  acceptancePlan: string[];
+}
+
 export function roomRootRequiresStartAction(
   root: RootProjection | undefined,
   receipts: readonly RoomKernelReceiptV1[],
@@ -27,27 +43,112 @@ export function roomRootRequiresStartAction(
       right.createdAtMs - left.createdAtMs
       || right.receiptId.localeCompare(left.receiptId)
     ))[0];
-  return Boolean(
-    latestIntake
-    && latestIntake.details.phase === 'awaiting_start'
-    && latestIntake.details.clarificationOccurred === true,
-  );
+  return latestIntake?.details.phase === 'awaiting_start';
+}
+
+export function roomRootExecutionPlan(
+  root: RootProjection | undefined,
+  receipts: readonly RoomKernelReceiptV1[],
+): RoomExecutionPlan | undefined {
+  if (!root) return undefined;
+  const definition = [...receipts]
+    .filter((receipt) => (
+      receipt.rootId === root.rootId
+      && receipt.generation === root.generation
+      && receipt.status === 'applied'
+      && receipt.details.operation === 'room_define'
+    ))
+    .sort((left, right) => (
+      right.createdAtMs - left.createdAtMs
+      || right.receiptId.localeCompare(left.receiptId)
+    ))[0];
+  const raw = definition?.details.executionPlan;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const source = raw as Record<string, unknown>;
+  const featureTasks = Array.isArray(source.featureTasks)
+    ? source.featureTasks.slice(0, 4).flatMap((value) => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+        const feature = value as Record<string, unknown>;
+        const title = cleanText(feature.title);
+        const userOutcome = cleanText(feature.userOutcome);
+        if (!title || !userOutcome) return [];
+        return [{
+          title,
+          ownerDisplayName: cleanText(feature.ownerDisplayName) || '待分配伙伴',
+          userOutcome,
+          dependencies: textList(feature.dependencies),
+          wave: typeof feature.wave === 'number' && Number.isInteger(feature.wave)
+            ? feature.wave
+            : undefined,
+          writeBoundary: cleanText(feature.writeBoundary),
+        }];
+      })
+    : [];
+  if (!featureTasks.length) return undefined;
+  return {
+    sharedContracts: textList(source.sharedContracts),
+    featureTasks,
+    integrationPlan: cleanText(source.integrationPlan),
+    acceptancePlan: textList(source.acceptancePlan),
+  };
 }
 
 export function RoomStartActionGate({
   onStart,
+  plan,
   starting,
 }: {
   onStart: () => void;
+  plan?: RoomExecutionPlan;
   starting: boolean;
 }) {
   return <div aria-label="确认开始行动" className="room-start-action" role="group">
-    <span>现在开始行动吗？</span>
-    <Button
-      disabled={starting}
-      leadingIcon={starting ? <LoaderCircle className="ui-spin" size={14} /> : <Play size={14} />}
-      onClick={onStart}
-      variant="primary"
-    >{starting ? '正在开始' : '开始行动'}</Button>
+    <header>
+      <strong>开始行动前，请确认这套分工</strong>
+      <small>确认后才会让伙伴写代码、运行测试或进入后续任务。</small>
+    </header>
+    {plan ? <div className="room-start-action__plan">
+      {plan.sharedContracts.length ? <section>
+        <strong>先锁定的公共契约</strong>
+        <ul>{plan.sharedContracts.map((item) => <li key={item}>{item}</li>)}</ul>
+      </section> : null}
+      <section>
+        <strong>纵向功能分工</strong>
+        <ol>{plan.featureTasks.map((feature) => <li key={`${feature.title}:${feature.ownerDisplayName}`}>
+          <span><b>{feature.title}</b><small>{feature.wave ? `第 ${feature.wave} 波 · ` : ''}{feature.ownerDisplayName}</small></span>
+          <p>{feature.userOutcome}</p>
+          {feature.dependencies.length
+            ? <small>依赖：{feature.dependencies.join('、')}</small>
+            : <small>无前置任务，可首批开始</small>}
+          {feature.writeBoundary ? <small>写入边界：{feature.writeBoundary}</small> : null}
+        </li>)}</ol>
+      </section>
+      {plan.integrationPlan ? <section>
+        <strong>集成方式</strong><p>{plan.integrationPlan}</p>
+      </section> : null}
+      {plan.acceptancePlan.length ? <section>
+        <strong>最终验收</strong>
+        <ul>{plan.acceptancePlan.map((item) => <li key={item}>{item}</li>)}</ul>
+      </section> : null}
+    </div> : <p>当前任务作为一个端到端功能由负责人完成，完成后统一集成和验收。</p>}
+    <footer>
+      <span>你仍可先补充或调整分工。</span>
+      <Button
+        disabled={starting}
+        leadingIcon={starting ? <LoaderCircle className="ui-spin" size={14} /> : <Play size={14} />}
+        onClick={onStart}
+        variant="primary"
+      >{starting ? '正在开始' : '开始行动'}</Button>
+    </footer>
   </div>;
+}
+
+function textList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map(cleanText).filter(Boolean).slice(0, 16)
+    : [];
+}
+
+function cleanText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
 }

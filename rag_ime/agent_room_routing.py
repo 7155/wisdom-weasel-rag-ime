@@ -104,28 +104,6 @@ def plan_room_routes(
     authority = by_id.get(authority_id) if authority_id else None
     if authority_id and authority is None:
         raise ValueError("authoritative room participant is unavailable")
-    if policy == "parallel" and not conversation_only:
-        if (
-            authority is not None
-            and canonical_collaboration_role_id(
-                authority.get("collaborationRole")
-            )
-            == "reviewer"
-        ):
-            raise ValueError(
-                "Reviewer cannot own managed implementation ingress; "
-                "use the post-integration review handoff"
-            )
-        if any(
-            canonical_collaboration_role_id(item.get("collaborationRole"))
-            == "reviewer"
-            for item in selected
-        ):
-            raise ValueError(
-                "Reviewer cannot enter the implementation wave; "
-                "use the post-integration review handoff"
-            )
-
     if authority is not None and policy != "parallel":
         if selected and (
             len(selected) != 1 or str(selected[0]["id"]) != str(authority["id"])
@@ -151,17 +129,7 @@ def plan_room_routes(
                 "Room participant selection conflicts with the WorkItem current owner"
             )
         if not selected:
-            # A dedicated Reviewer enters only after the Facilitator has integrated
-            # the implementation. Implicit parallel ingress must not make review
-            # race the work it is meant to inspect.
-            selected = [
-                item
-                for item in participants
-                if canonical_collaboration_role_id(
-                    item.get("collaborationRole")
-                )
-                != "reviewer"
-            ]
+            selected = list(participants)
             reason = "parallel"
         if authority is not None:
             selected = [

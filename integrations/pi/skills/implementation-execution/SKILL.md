@@ -14,7 +14,7 @@ notFor:
 
 ## Suite Contract
 
-This is one code stage in one continuous suite:
+one continuous suite:
 `alignment-and-decision -> implementation-planning -> implementation-execution
 -> quality-gate -> independent-review`.
 
@@ -23,15 +23,14 @@ This is one code stage in one continuous suite:
 - Reread the upstream `User Source` before each slice. Original request,
   vision, and corrections outrank plans. Return changed choices to alignment
   and changed seams or dependencies to planning.
-- This outer Skill is the outer owner of code changes and loads one conditional inner
-  method at a time: `test-driven-implementation` for known work, or
+- This Skill owns code changes and loads one conditional inner
+  method at a time: `test-driven-implementation` for known work or
   `systematic-debugging` while the cause is unknown.
-- Runtime state is authority. Recovery documents are navigation, never
-  permission, task state, or completion evidence.
+- Runtime state is authority; recovery notes navigate, not grant permission.
 
 ## Workflow
 
-1. Confirm active Runtime responsibility, acceptance aliases, permissions,
+1. Confirm Runtime responsibility, acceptance aliases, permissions,
    cancellation, blockers, budget, and latest handoff.
 2. Read only the bounded continuity block at the top of
    `docs/agent/chat-summary.md`, then inspect source needed for the next action.
@@ -42,7 +41,7 @@ This is one code stage in one continuous suite:
 4. Preserve the WorkDocument's top `User Source`: `Original User Request` and
    `Original User Vision` stay byte-for-byte; corrections append verbatim and
    AI material stays below. Recheck hashes after recovery.
-5. Choose the smallest dependency-ready vertical slice producing evidence for
+5. Choose a dependency-ready vertical slice producing evidence for
    one unmet acceptance alias.
 6. For known behavior, load TDD and follow its red/green loop. For an
    unexplained failure, debug until the cause is located. Return here after
@@ -68,19 +67,16 @@ no automatic deletion timer.
 
 ## Managed Room Boundary
 
-- Start only after governed handoff; reuse the bound Root, WorkItem, aliases,
-  participant, and workspace.
-- A Worker owns one slice. The Facilitator owns decomposition,
-  reassignment, integration, and the final summary.
-- Filesystem authority comes from the receipted workspace, not identity.
-  Read-only work may share a baseline; concurrent writes need separate Root
-  worktrees. Never claim a worktree exists without its receipt.
+- Do not start writes or tests before user approval of the visible execution plan.
+- After governed handoff, reuse the bound Root, WorkItem, participant, and workspace.
+- A Worker owns one slice; Facilitator owns decomposition, integration, and summary.
+- Receipted workspaces grant filesystem authority. Concurrent writes need
+  separate Root worktrees; never claim one without its receipt.
 - Never clean a workspace with `git stash/reset/clean/checkout/restore`;
   preserve existing work and repair its Room/worktree owner.
-- Use this pair, not adjectives: recoverable batch processing through the project's existing public entry—with per-item validation, progress, failures, retry and a
-  verifiable result—splits into contract, processing/recovery and acceptance. Invite
-  a peer unless source proves one owner; a located boundary fix plus a focused test
-  is single-owner. Apply the analogy to any project type.
+- One Room Agent owns a user-visible feature end-to-end; helpers may do bounded read-only checks.
+- Recoverable batch processing through the project's existing public entry is one feature and stays single-owner unless other independent features exist.
+- Treat that example as a located boundary fix, then apply the analogy to any project type: preserve failures, retry decisions, and evidence inside the owning feature.
 - Use `room_collaborate` after definition for non-overlapping implementation,
   never intake or review. Return evidence with `room_commit`.
 - Keep one concrete Session Todo. After material progress, call
@@ -90,9 +86,9 @@ no automatic deletion timer.
 
 ## No-Progress And Cancellation
 
-Stop when two consecutive attempts leave the same acceptance, blocker,
-evidence, and next action, or budget ends. Handoff, wait, or block with a
-resume condition. On cancellation, stop immediately and make no late write.
+Stop when two consecutive attempts leave the same acceptance, blocker, evidence and next
+action, or budget ends. Handoff, wait, or block with a resume condition. On
+cancellation, stop immediately and make no late write.
 
 ## Output Contract
 

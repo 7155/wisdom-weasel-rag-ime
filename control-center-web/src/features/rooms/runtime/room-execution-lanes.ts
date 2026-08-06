@@ -29,7 +29,22 @@ export interface RoomTurnExecution {
 export function selectPublicRoomTurnOrder(
   projection: RoomProjectionState,
 ): string[] {
-  return projection.turnOrder.filter((turnId) => turnId !== 'unscoped');
+  const originalIndex = new Map(
+    projection.turnOrder.map((turnId, index) => [turnId, index]),
+  );
+  return projection.turnOrder
+    .filter((turnId) => turnId !== 'unscoped')
+    .sort((leftId, rightId) => {
+      const createdOrder = (
+        projection.turnsById[leftId]?.createdAtMs ?? Number.MAX_SAFE_INTEGER
+      ) - (
+        projection.turnsById[rightId]?.createdAtMs ?? Number.MAX_SAFE_INTEGER
+      );
+      return createdOrder
+        || (originalIndex.get(leftId) ?? Number.MAX_SAFE_INTEGER)
+          - (originalIndex.get(rightId) ?? Number.MAX_SAFE_INTEGER)
+        || leftId.localeCompare(rightId);
+    });
 }
 
 /** Build stable root + participant + dispatch slots for one public Room turn. */
@@ -111,6 +126,15 @@ export function selectRoomTurnExecution(
     const message = projection.messagesById[messageId];
     if (!message) continue;
     messageIds.push(messageId);
+    if (message.role === 'user' && message.answerToPostId) {
+      const answerLane = [...lanes.values()].find((candidate) => (
+        candidate.messageIds.includes(message.answerToPostId ?? '')
+      ));
+      if (answerLane && !answerLane.messageIds.includes(messageId)) {
+        answerLane.messageIds.push(messageId);
+      }
+      continue;
+    }
     if (message.role === 'user') {
       continue;
     }
@@ -138,9 +162,9 @@ export function selectRoomTurnExecution(
       || (canonicalTaskLane && lanes.has(canonicalTaskLane) ? canonicalTaskLane : '')
       || (exactKey && lanes.has(exactKey)
       ? exactKey
-      : participantLaneKeys
+      : !canonicalTaskLane ? participantLaneKeys
           .get(participantKey(message.participantId, message.sourceSessionId))
-          ?.at(-1));
+          ?.at(-1) : undefined);
     const laneKey = existingKey || canonicalTaskLane || [
       turn.rootId || turnId,
       message.participantId || message.sourceSessionId || 'participant',
@@ -167,6 +191,11 @@ export function selectRoomTurnExecution(
     }
     if (!lane.messageIds.includes(messageId)) lane.messageIds.push(messageId);
     lanes.set(laneKey, lane);
+    appendLaneKey(
+      participantLaneKeys,
+      participantKey(message.participantId, message.sourceSessionId),
+      laneKey,
+    );
   }
 
   if (lanes.size === 0 && ['queued', 'running'].includes(turn.status)) {

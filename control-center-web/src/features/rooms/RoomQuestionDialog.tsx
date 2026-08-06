@@ -162,6 +162,11 @@ export function RoomQuestionDialog({
           value={freeformValue}
         />
       </Field>}
+      {hasOptions && !customAnswer && selectedValue ? <p
+        aria-label="回答尚未发送"
+        className="room-question-card__selection-status"
+        role="status"
+      >已选择“{question.options.find((option) => option.value === selectedValue)?.label ?? selectedValue}”，尚未发送；点击“确认并发送”后伙伴才会继续。</p> : null}
       {submitError ? <p className="room-question-card__error" role="alert">{submitError}</p> : null}
       <footer>
         {hasOptions ? <Button

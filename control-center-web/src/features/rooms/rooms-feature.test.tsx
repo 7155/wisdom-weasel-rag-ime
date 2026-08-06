@@ -1,4 +1,4 @@
-import type { Key, ReactNode } from 'react';
+import { forwardRef, useImperativeHandle, type Key, type ReactNode } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -17,12 +17,18 @@ import { RoomTurn, RoomsFeature, type RoomSummary } from './index';
 import { RoomStatusPanel } from './RoomStatusPanel';
 import { useRoomLiveStore } from './state/live-store';
 
+const virtuosoMock = vi.hoisted(() => ({
+  atBottomStateChange: undefined as ((atBottom: boolean) => void) | undefined,
+  scrollToIndex: vi.fn(),
+}));
+
 vi.mock('react-virtuoso', () => ({
-  Virtuoso: ({
+  Virtuoso: forwardRef(function MockVirtuoso({
     components,
     context,
     computeItemKey,
     data,
+    atBottomStateChange,
     initialTopMostItemIndex,
     itemContent,
   }: {
@@ -30,9 +36,12 @@ vi.mock('react-virtuoso', () => ({
     context?: unknown;
     computeItemKey?: (index: number, item: string) => Key;
     data: string[];
+    atBottomStateChange?: (atBottom: boolean) => void;
     initialTopMostItemIndex?: { index: string | number; align?: string };
     itemContent: (index: number, item: string) => ReactNode;
-  }) => {
+  }, ref) {
+    useImperativeHandle(ref, () => ({ scrollToIndex: virtuosoMock.scrollToIndex }));
+    virtuosoMock.atBottomStateChange = atBottomStateChange;
     const Header = components?.Header;
     return (
       <div
@@ -44,12 +53,14 @@ vi.mock('react-virtuoso', () => ({
         {data.map((item, index) => <div key={computeItemKey?.(index, item) ?? index}>{itemContent(index, item)}</div>)}
       </div>
     );
-  },
+  }),
 }));
 describe('Rooms experience', () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    virtuosoMock.atBottomStateChange = undefined;
+    virtuosoMock.scrollToIndex.mockReset();
     useRoomLiveStore.getState().reset();
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
   });
@@ -311,6 +322,8 @@ describe('Rooms experience', () => {
     const optionB = questionCard.getByRole('radio', { name: '方案 B' });
     fireEvent.click(optionB);
     expect(questionCard.getByRole('radio', { name: '方案 B' })).toBeChecked();
+    expect(questionCard.getByRole('status', { name: '回答尚未发送' }))
+      .toHaveTextContent('已选择“方案 B”，尚未发送');
     expect(transport.requests.filter(({ request }) => (
       request.pathId === 'agent.room.message'
     ))).toHaveLength(0);
@@ -332,7 +345,7 @@ describe('Rooms experience', () => {
       answerToRootId: 'room-a:turn-1',
     });
     expect(request.body).not.toHaveProperty('participantIds');
-    const optimisticAnswer = document.querySelector('.room-user-message');
+    const optimisticAnswer = document.querySelector('.room-agent-lane__user-answer');
     expect(optimisticAnswer).toHaveTextContent('方案 B');
     expect(optimisticAnswer).not.toHaveTextContent(/^B(?:正在发送)?$/);
     expect(screen.getByRole('region', { name: '需要回答：这次采用哪一种发布方式？' })).toBeInTheDocument();
@@ -359,13 +372,16 @@ describe('Rooms experience', () => {
     expect(resolvedQuestion.getByText('已收到回答')).toBeInTheDocument();
     expect(resolvedQuestion.queryByText('已锁定')).not.toBeInTheDocument();
     expect(resolvedQuestion.queryByText('回答保留在下一条用户消息中')).not.toBeInTheDocument();
-    const answerMessage = document.querySelector('.room-user-message');
+    const answerMessage = document.querySelector('.room-agent-lane__user-answer');
     if (!answerMessage) {
-      throw new Error('expected the accepted answer to render as a chronological user message');
+      throw new Error('expected the accepted answer inside its chronological Agent card');
     }
     expect(answerMessage).toHaveTextContent('B');
     expect(resolvedPrompt.compareDocumentPosition(answerMessage) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
-    expect(document.querySelectorAll('.room-user-message')).toHaveLength(1);
+    expect(document.querySelectorAll('.room-agent-lane__user-answer')).toHaveLength(1);
+    expect(document.querySelectorAll('.room-user-message')).toHaveLength(0);
+    expect(screen.getByRole('status', { name: '当前协作状态' }))
+      .toHaveTextContent('回答已送达，伙伴正在继续处理');
     expect(screen.getByRole('button', { name: '等待当前任务完成' })).toBeDisabled();
     await waitFor(() => expect(screen.getByRole('textbox', { name: '协作消息' })).toHaveFocus());
   });
@@ -610,8 +626,9 @@ describe('Rooms experience', () => {
     expect(resolvedQuestion.getByText('已收到回答')).toBeInTheDocument();
     expect(resolvedQuestion.queryByText('已锁定')).not.toBeInTheDocument();
     expect(resolvedQuestion.queryByText('回答保留在下一条用户消息中')).not.toBeInTheDocument();
-    expect(screen.getByText('请保留现有 API，并补充错误状态。').closest('.room-user-message')).toBeInTheDocument();
-    expect(document.querySelectorAll('.room-user-message')).toHaveLength(1);
+    expect(screen.getByText('请保留现有 API，并补充错误状态。').closest('.room-agent-lane__user-answer')).toBeInTheDocument();
+    expect(document.querySelectorAll('.room-agent-lane__user-answer')).toHaveLength(1);
+    expect(document.querySelectorAll('.room-user-message')).toHaveLength(0);
   });
 
   it('ignores optimistic-shaped and unrelated user events until the same Root publishes the accepted answer', async () => {
@@ -661,8 +678,9 @@ describe('Rooms experience', () => {
     const answeredQuestion = within(screen.getByRole('region', { name: '需要回答：采用哪一种发布方式？' }));
     expect(answeredQuestion.queryByText('已锁定')).not.toBeInTheDocument();
     expect(answeredQuestion.queryByText('回答保留在下一条用户消息中')).not.toBeInTheDocument();
-    expect(screen.getByText('稳定版').closest('.room-user-message')).toBeInTheDocument();
-    expect(document.querySelectorAll('.room-user-message')).toHaveLength(3);
+    expect(screen.getByText('稳定版').closest('.room-agent-lane__user-answer')).toBeInTheDocument();
+    expect(document.querySelectorAll('.room-agent-lane__user-answer')).toHaveLength(1);
+    expect(document.querySelectorAll('.room-user-message')).toHaveLength(2);
   });
   it('never exposes a historical native participant question as a second Room answer surface', async () => {
     const groupedRequest = roomEvent('room-a', 1, 'participant_activity', {
@@ -722,7 +740,8 @@ describe('Rooms experience', () => {
     expect(await screen.findByRole('region', { name: questionName })).toBeInTheDocument();
     await user.keyboard('{Escape}');
     expect(screen.getByRole('region', { name: questionName })).toBeInTheDocument();
-    expect(within(screen.getByLabelText('协作对话时间线')).getByText('请选择发布方式，回答后我会继续。')).toBeInTheDocument();
+    expect(within(screen.getByLabelText('协作对话时间线')).getAllByText('请选择发布方式，回答后我会继续。').length)
+      .toBeGreaterThanOrEqual(1);
     expect(transport.requests.filter(({ request }) => request.pathId === 'agent.room.message')).toHaveLength(0);
 
     view.unmount();
@@ -763,11 +782,11 @@ describe('Rooms experience', () => {
     const timeline = within(screen.getByLabelText('协作对话时间线'));
     expect((await timeline.findAllByText('请直接在对话中说明希望怎样继续。')).length)
       .toBeGreaterThanOrEqual(1);
-    expect(timeline.getByText('先选择一个发布方式。')).toBeInTheDocument();
+    expect(timeline.getAllByText('先选择一个发布方式。').length).toBeGreaterThanOrEqual(1);
     const answeredCard = within(timeline.getByRole('region', { name: '需要回答：选择发布方式' }));
     expect(answeredCard.queryByText('已锁定')).not.toBeInTheDocument();
     expect(answeredCard.queryByText('回答保留在下一条用户消息中')).not.toBeInTheDocument();
-    expect(timeline.getByText('B').closest('.room-user-message')).toBeInTheDocument();
+    expect(timeline.getByText('B').closest('.room-agent-lane__user-answer')).toBeInTheDocument();
     expect(answeredCard.queryByRole('button', { name: '其他' })).not.toBeInTheDocument();
     expect(answeredCard.queryAllByRole('radio')).toHaveLength(0);
     expect(document.querySelectorAll('.room-question-option')).toHaveLength(0);
@@ -2383,6 +2402,47 @@ describe('Rooms experience', () => {
     expect(screen.getByText('说出你想完成的事；只有遇到会影响实现的歧义，伙伴才会继续提问。')).toBeInTheDocument();
     expect(screen.getByText('还没有公开消息').closest('.ui-empty-state')?.querySelector('img')).toBeNull();
     expect(screen.getByRole('textbox', { name: '协作消息' })).toBeEnabled();
+  });
+
+  it('shows who took over immediately even before the first public progress arrives', async () => {
+    const room = roomSummary('room-running-empty', '刚开始执行 Room');
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [room] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot(room.id, [], room.title),
+      'agent.room.kernel.snapshot': roomKernelSnapshot(room.id),
+    } });
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    const status = await screen.findByRole('status', { name: '当前协作状态' });
+    expect(status).toHaveTextContent('澄 已接手，正在安排分工');
+    expect(status).toHaveTextContent('分工和交接会出现在最新进度中');
+    expect(screen.getByText('还没有公开消息')).toBeInTheDocument();
+  });
+
+  it('keeps active work visible away from the bottom and returns to the newest progress', async () => {
+    const room = roomSummary('room-running', '运行状态 Room');
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [room] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot(room.id, [
+        roomEvent(room.id, 1, 'user_message', { text: '开始处理这项任务' }),
+      ], room.title),
+      'agent.room.kernel.snapshot': roomKernelSnapshot(room.id),
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    const status = await screen.findByRole('status', { name: '当前协作状态' });
+    expect(status).toHaveTextContent('澄 已接手，正在安排分工');
+    act(() => virtuosoMock.atBottomStateChange?.(false));
+    const latest = screen.getByRole('button', { name: '回到最新进度' });
+    await user.click(latest);
+    expect(virtuosoMock.scrollToIndex).toHaveBeenCalledWith({
+      index: 'LAST',
+      align: 'end',
+      behavior: 'smooth',
+    });
   });
 
   it('opens the shared status experience for the selected Room', async () => {
