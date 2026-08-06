@@ -1,10 +1,10 @@
 # Room production acceptance handoff
 
-> as_of: 2026-08-06 20:45 CST
-> status: `f6e41175` is committed and cleanly installed; the installed-component audit is `ok: true` at full commit `f6e41175c743da7569f96c8af5a684690d5901fe`. A fresh four-person full-auto Room created entirely from an ordinary user request visibly showed `澄·远：梳理需求`, produced a Chinese user-facing four-feature vertical plan, and waited for `开始行动`. That run exposed one remaining projection defect: the expanded work summary reached `已更新 9 次` while the collapsed card kept `正在继续任务`, displayed task-check recovery copy as `要交付`, and later said `正在等待` although the turn was still processing. The current five-file source follow-up fixes those projections and its red-capable focused tests plus TypeScript now pass. A scoped commit, clean reinstall, and another fresh natural-language GUI run remain.
+> as_of: 2026-08-06 20:58 CST
+> status: `021c9780` is committed. Its focused Room regression is `148/148`, the complete frontend regression is `1005/1005`, and TypeScript plus `git diff --check` pass. The parent `f6e41175` was installed and audited green, but the latest commit has not been installed: the real install retry is blocked by permissions while cleaning the existing Browser Co-pilot extension, and an isolated dry-run install was stopped during a long frontend build. A fresh natural-language GUI run after `021c9780` therefore remains open.
 > canonical worktree: `/Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix`
 > branch: `codex/room-production-acceptance-final`
-> current HEAD: `f6e41175c743da7569f96c8af5a684690d5901fe`
+> current HEAD: `021c97807b58f885e6c3b047a38d40446c7804a4`
 
 ## 0. Mandatory takeover gate: do not start by running commands
 
@@ -21,12 +21,12 @@ Then wait for the user to confirm or correct that understanding. This is a hando
 
 ### Current problems at the handoff moment
 
-- The latest installed Room source is commit `f6e41175`, installed from a clean detached worktree. Exact component audit reports every required component current and provenance-aligned at full commit `f6e41175c743da7569f96c8af5a684690d5901fe`.
+- The latest installed Room source is the parent commit `f6e41175`, installed from a clean detached worktree. Its exact component audit was green and provenance-aligned at full commit `f6e41175c743da7569f96c8af5a684690d5901fe`; `021c9780` is the current source but has not reached the user install.
 - A fresh creation modal at that installed commit shows all four companions as `已邀请` and says they have equal capability; the earlier permanent `主持/实现/调研/最终复核` presentation defect is fixed in the installed GUI.
 - The earlier internal-instruction GUI attempt remains invalid acceptance evidence and must never be reused.
 - The valid natural-language run used only this ordinary product request: `我想把这个小客户目录做得更好用：可以批量导入 CSV 客户并先看看每一行有没有问题；能按邮箱后缀筛选；发现重复客户时能先对比、合并，合并错了还能撤销；还能查看每位客户是谁在什么时候改过什么。`
-- That run verified the compact attributed state and natural Chinese vertical plan, but exposed a new card-projection defect: the expanded summary updated nine times while the collapsed header stayed generic, an internal recovery sentence appeared as a promised deliverable, and stale timing copy said the companion was waiting although the turn remained active. The current uncommitted five-file follow-up projects the live summary/update count into the collapsed header, suppresses recovery copy from deliverables, and distinguishes active silence from a real wait.
-- Evidence for this newest follow-up is green: its red-capable focused RoomTurn/Room feature tests and TypeScript pass. Complete frontend regression, scoped commit, clean reinstall, and a repeat natural-language GUI Room are still required. Backend Room code did not change after its existing complete `561/561` pass.
+- That run verified the compact attributed state and natural Chinese vertical plan, but exposed a card-projection defect: the expanded summary updated nine times while the collapsed header stayed generic, an internal recovery sentence appeared as a promised deliverable, and stale timing copy said the companion was waiting although the turn remained active. Commit `021c9780` projects the live summary/update count into the collapsed header, suppresses recovery copy from deliverables, and distinguishes active silence from a real wait.
+- Evidence for `021c9780` is green: focused Room tests `148/148`, complete frontend `104 files / 1005/1005`, TypeScript, and `git diff --check`. Backend Room code did not change after its existing complete `561/561` pass. A clean reinstall and a repeat natural-language GUI Room are still required.
 - No fresh full-auto GUI Room has completed the required end-to-end path after this follow-up. The installed/Web UI must still prove the compact composer status, user-language planning, governed requirement/execution document, clarification, real parallel Tasks, peer review without self-review, recovery, integration, and a single final delivery.
 - Several user-reported requirements remain GUI-only acceptance items. The next owner must use the ledger in section 4.1 and may only call a row fixed after its stated evidence boundary passes.
 - Existing screenshots and old Rooms still contain known failures such as stale `执行中`, duplicate/overlapping cards, weak tool results, meaningless citation placeholders, missing delivery reports, or fake visual parallelism. They are reproduction evidence, not proof of the current source.
@@ -174,9 +174,9 @@ The labels below are intentionally strict:
 
 This table is an acceptance ledger, not a claim that every recorded item is already fixed. Only rows explicitly marked **code + regression passed** may be treated as implemented before the fresh installed GUI journey.
 
-## 5. Exact intended residual-fix commit scope
+## 5. Exact residual-fix commit scope
 
-The compact attributed-status/private-brief follow-up is already commit `f6e41175`. Stage only these five newest projection-fix files now:
+The compact attributed-status/private-brief follow-up is commit `f6e41175`; the newest collapsed-progress projection fix is already commit `021c9780`. No files from either commit should be restaged. The five files in `021c9780` are recorded here for provenance:
 
 1. `control-center-web/src/features/rooms/rooms-feature.test.tsx`
 2. `control-center-web/src/features/rooms/timeline/RoomTurn.tsx`
@@ -209,13 +209,11 @@ tests/test_tui.py
 1. Read this file, the canonical requirements, and the worktree `AGENTS.md`/README before acting.
 2. Recheck `git status --short` and `git diff --check`.
 3. Run complete proportional frontend and backend Room regression plus `git diff --check`.
-4. Stage the five explicit files above with path-qualified `git add`. Both authority documents are tracked; do not force-add the whole ignored docs tree. Verify `git diff --cached --name-only` is exactly that list and run `git diff --cached --check`.
-5. Commit the scoped follow-up. Suggested message: `fix(room): refresh collapsed live progress`.
-6. Create a clean detached worktree at that new commit. Do not install from this dirty implementation worktree.
-7. From the clean worktree, install the current product stack into `RagImeControl.app`. The standard installer is `scripts/install_product_stack.sh`; Room acceptance needs the managed Pi runtime. Use the current Pi source at `/Volumes/undo 4t/git/learnA/pi` without modifying or staging its dirty work.
-8. Run `scripts/check_installed_product_components.py --require-current` and record exact component evidence.
-9. Create a **fresh** full-auto Room in the installed/Web shell and complete the GUI acceptance below. Hidden APIs and browser internals may diagnose failures but do not replace the visible journey.
-10. Only after the fresh Room genuinely completes may the temporary physical install worktree be cleaned. Keep the permanent worktree ledger required by the product contract.
+4. Create a clean detached worktree at `021c9780`. Do not install from this dirty implementation worktree.
+5. From the clean worktree, install the current product stack into `RagImeControl.app`. The standard installer is `scripts/install_product_stack.sh`; Room acceptance needs the managed Pi runtime. The last real retry was blocked while cleaning the existing Browser Co-pilot extension; resolve that environment permission boundary before retrying.
+6. Run `scripts/check_installed_product_components.py --require-current` and record exact component evidence for `021c9780`.
+7. Create a **fresh** full-auto Room in the installed/Web shell and complete the GUI acceptance below. Hidden APIs and browser internals may diagnose failures but do not replace the visible journey.
+8. Only after the fresh Room genuinely completes may the temporary physical install worktree be cleaned. Keep the permanent Room/requirement/owner/base/result ledger required by the product contract.
 
 ## 7. Fresh GUI acceptance journey
 
