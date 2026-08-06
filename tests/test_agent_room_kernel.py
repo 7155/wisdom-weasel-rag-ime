@@ -1214,6 +1214,10 @@ class RoomKernelCoreTests(unittest.TestCase):
             retry_receipt["details"]["retriedDispatchIds"][0]
         )
         self.assertEqual(
+            self.store.dispatch(retry_dispatch_id)["capabilityEpoch"],
+            2,
+        )
+        self.assertEqual(
             retry_receipt["details"]["retryLineage"],
             [
                 {
@@ -1281,6 +1285,73 @@ class RoomKernelCoreTests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_control_retry_keeps_active_parallel_wave_capability_epoch(
+        self,
+    ) -> None:
+        self.seed(criteria=())
+        parallel_peer_task = task("task:parallel-peer", criteria=())
+        parallel_peer_task["currentOwnerParticipantId"] = "participant:b"
+        self.store.create_task(parallel_peer_task, now_ms=3)
+        failed_dispatch_id = "dispatch:parallel-failed"
+        active_dispatch_id = "dispatch:parallel-active"
+        self.store.enqueue_dispatch(
+            dispatch(failed_dispatch_id, key="parallel-failed"),
+            now_ms=10,
+        )
+        self.store.enqueue_dispatch(
+            dispatch(
+                active_dispatch_id,
+                key="parallel-active",
+                target="participant:b",
+                task_id="task:parallel-peer",
+                session_id="session:parallel-b",
+            ),
+            now_ms=11,
+        )
+        self.accept_runtime_attempt(
+            failed_dispatch_id,
+            turn_id="turn:parallel-failed",
+            now_ms=12,
+        )
+        self.accept_runtime_attempt(
+            active_dispatch_id,
+            turn_id="turn:parallel-active",
+            now_ms=13,
+        )
+        self.store.record_runtime_failure(
+            failed_dispatch_id,
+            generation=0,
+            source_event_id="event:parallel-failed",
+            runtime_turn_id="turn:parallel-failed",
+            dispatch_attempt=0,
+            now_ms=14,
+        )
+
+        retry_receipt = self.store.apply_control_command(
+            control_command(
+                "command:parallel-retry",
+                "retry_root",
+                now_ms=15,
+            )
+        )
+        retry_dispatch_id = str(
+            retry_receipt["details"]["retriedDispatchIds"][0]
+        )
+
+        self.assertEqual(
+            self.store.dispatch(active_dispatch_id)["state"],
+            "running",
+        )
+        self.assertEqual(
+            self.store.dispatch(active_dispatch_id)["capabilityEpoch"],
+            1,
+        )
+        self.assertEqual(
+            self.store.dispatch(retry_dispatch_id)["capabilityEpoch"],
+            1,
+        )
+        self.assertEqual(self.store.root("root:1")["state"], "running")
 
     def test_explicit_control_center_retry_can_extend_exhausted_automatic_budget(
         self,

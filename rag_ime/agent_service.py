@@ -150,6 +150,7 @@ ROOM_MESSAGE_CHAR_LIMIT = 8_000
 # followed by one final settle decision that must stop the cancel scope.
 GOAL_SETTLE_ATTEMPT_LIMIT = 5
 GOAL_CONTINUATION_LIMIT = 4
+ROOM_RUNTIME_ORPHAN_GRACE_MS = 5_000
 
 
 class AgentService:
@@ -4389,6 +4390,11 @@ class AgentService:
         self.room_kernel_worker_loop = RoomKernelWorkerLoop(
             self.room_kernel_worker,
             on_change=self._sync_all_room_kernel_projections,
+            recover_interrupted=(
+                lambda: self._recover_interrupted_room_runtime_dispatches(
+                    minimum_inactive_ms=ROOM_RUNTIME_ORPHAN_GRACE_MS,
+                )
+            ),
             poll_seconds=self._room_kernel_poll_seconds,
         )
         self.room_application = RoomApplicationService(
@@ -4482,6 +4488,7 @@ class AgentService:
         self,
         *,
         observed_at_ms: int | None = None,
+        minimum_inactive_ms: int = 0,
     ) -> int:
         """Resume accepted Kernel turns that have no live local Runtime owner."""
 
@@ -4499,6 +4506,12 @@ class AgentService:
         )
         for room_id in self.room_kernel.room_ids():
             for target in self.room_kernel.room_active_runtime_targets(room_id):
+                if not _runtime_target_inactive_long_enough(
+                    target,
+                    observed_at_ms=timestamp,
+                    minimum_inactive_ms=minimum_inactive_ms,
+                ):
+                    continue
                 session_id = str(target.get("sessionId") or "")
                 if not session_id or session_id in active_session_ids:
                     continue
@@ -5361,6 +5374,25 @@ def _required_text(payload: Mapping[str, object], key: str) -> str:
     if not value:
         raise ValueError(f"{key} must not be empty")
     return value
+
+
+def _runtime_target_inactive_long_enough(
+    target: Mapping[str, object],
+    *,
+    observed_at_ms: int,
+    minimum_inactive_ms: int,
+) -> bool:
+    grace_ms = max(0, int(minimum_inactive_ms))
+    if grace_ms == 0:
+        return True
+    try:
+        updated_at_ms = int(target.get("updatedAtMs") or 0)
+    except (TypeError, ValueError):
+        return False
+    return (
+        updated_at_ms > 0
+        and max(0, int(observed_at_ms) - updated_at_ms) >= grace_ms
+    )
 
 
 def _media_owner_input(

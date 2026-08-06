@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 import unittest
 from threading import Event
 from pathlib import Path
@@ -582,6 +583,108 @@ class RoomKernelWorkerTests(unittest.TestCase):
             self.assertTrue(loop.running)
         finally:
             loop.close()
+
+    def test_loop_recovers_an_interrupted_runtime_without_new_outbox_work(self) -> None:
+        recovered = Event()
+        projected = Event()
+        recovery_calls = 0
+
+        class FakeStore:
+            mode = "cohort"
+
+        class FakeWorker:
+            store = FakeStore()
+
+            @staticmethod
+            def reconcile() -> bool:
+                return False
+
+            @staticmethod
+            def run_once() -> None:
+                return None
+
+        def recover_interrupted() -> int:
+            nonlocal recovery_calls
+            recovery_calls += 1
+            recovered.set()
+            return 1
+
+        loop = RoomKernelWorkerLoop(
+            FakeWorker(),  # type: ignore[arg-type]
+            on_change=projected.set,
+            recover_interrupted=recover_interrupted,
+            recovery_poll_seconds=0.01,
+            poll_seconds=0.01,
+        )
+        try:
+            self.assertTrue(loop.start())
+            self.assertTrue(recovered.wait(1.0))
+            self.assertTrue(projected.wait(1.0))
+            self.assertGreaterEqual(recovery_calls, 1)
+            self.assertTrue(loop.running)
+        finally:
+            loop.close()
+
+    def test_interrupted_runtime_recovery_failures_back_off_without_stopping_work(self) -> None:
+        recovered = Event()
+        worker_iterations = Event()
+        recovery_times: list[float] = []
+
+        class FakeStore:
+            mode = "cohort"
+
+        class FakeWorker:
+            store = FakeStore()
+
+            @staticmethod
+            def reconcile() -> bool:
+                worker_iterations.set()
+                return False
+
+            @staticmethod
+            def run_once() -> None:
+                return None
+
+        def recover_interrupted() -> int:
+            recovery_times.append(time.monotonic())
+            if len(recovery_times) < 3:
+                raise OSError("ENOSPC")
+            recovered.set()
+            return 1
+
+        loop = RoomKernelWorkerLoop(
+            FakeWorker(),  # type: ignore[arg-type]
+            recover_interrupted=recover_interrupted,
+            recovery_poll_seconds=0.02,
+            poll_seconds=0.001,
+        )
+        try:
+            self.assertTrue(loop.start())
+            self.assertTrue(worker_iterations.wait(1.0))
+            self.assertTrue(recovered.wait(1.0))
+            self.assertGreaterEqual(recovery_times[1] - recovery_times[0], 0.015)
+            self.assertGreaterEqual(recovery_times[2] - recovery_times[1], 0.035)
+            self.assertTrue(loop.running)
+        finally:
+            loop.close()
+
+    def test_active_runtime_target_exposes_dispatch_age_for_safe_recovery(self) -> None:
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:age", key="worker:age"),
+            now_ms=3,
+        )
+        worker = RoomKernelWorker(
+            self.store,
+            FakeRoomRuntime(),
+            clock_ms=self.clock,
+        )
+        worker.run_once()
+
+        targets = self.store.room_active_runtime_targets("room:1")
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["dispatchId"], "dispatch:age")
+        self.assertEqual(targets[0]["updatedAtMs"], self.now_ms)
 
     def test_shadow_worker_never_leases_or_calls_runtime(self) -> None:
         shadow = RoomKernelStore(self.db_path, mode="shadow")

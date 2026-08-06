@@ -2310,7 +2310,8 @@ class RoomKernelStore:
     def room_active_runtime_targets(self, room_id: str) -> list[dict[str, object]]:
         with self._connect() as conn:
             rows = conn.execute(
-                """SELECT d.dispatch_id, d.root_id, d.target_session_id, d.generation
+                """SELECT d.dispatch_id, d.root_id, d.target_session_id, d.generation,
+                          d.updated_at_ms
                    FROM room_kernel_dispatches d
                    JOIN room_kernel_roots r ON r.root_id = d.root_id
                    WHERE r.room_id = ?
@@ -2325,6 +2326,7 @@ class RoomKernelStore:
                     "rootId": str(row["root_id"]),
                     "sessionId": str(row["target_session_id"]),
                     "generation": int(row["generation"]),
+                    "updatedAtMs": int(row["updated_at_ms"]),
                 }
                 for row in rows
             ]
@@ -4349,6 +4351,34 @@ class RoomKernelStore:
             raise RoomKernelFenceError(
                 "blocked Root has no failed Dispatch that can be continued"
             )
+        active_epoch_rows = conn.execute(
+            f"""SELECT payload_json FROM room_kernel_dispatches
+                WHERE root_id=?
+                  AND state IN ({','.join('?' for _ in _ACTIVE_DISPATCH_STATES)})""",
+            (root_id, *_ACTIVE_DISPATCH_STATES),
+        ).fetchall()
+        active_capability_epochs = {
+            int(json.loads(str(row["payload_json"])).get("capabilityEpoch") or 0)
+            for row in active_epoch_rows
+        }
+        if len(active_capability_epochs) > 1:
+            raise RoomKernelFenceError(
+                "active parallel Dispatches disagree on capability epoch"
+            )
+        retry_capability_epoch = (
+            next(iter(active_capability_epochs))
+            if active_capability_epochs
+            else max(
+                int(
+                    json.loads(str(row["payload_json"])).get(
+                        "capabilityEpoch"
+                    )
+                    or 0
+                )
+                for row in selected
+            )
+            + 1
+        )
         limits = conn.execute(
             """SELECT retry_limit,retry_used,deadline_at_ms
                FROM room_kernel_root_limits WHERE root_id=?""",
@@ -4404,7 +4434,11 @@ class RoomKernelStore:
                     ),
                     "triggerId": command_id,
                     "attempt": retried_attempt,
-                    "capabilityEpoch": int(payload.get("capabilityEpoch") or 0) + 1,
+                    # A partial retry remains in the active parallel wave.
+                    # Only a quiescent Root advances the shared capability
+                    # epoch; Dispatch identity and revoked Session bindings
+                    # still fence the failed attempt.
+                    "capabilityEpoch": retry_capability_epoch,
                 }
             )
             validate_kernel_contract("dispatchEnvelope", payload)

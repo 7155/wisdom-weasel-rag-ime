@@ -431,10 +431,17 @@ class RoomKernelWorkerLoop:
         worker: RoomKernelWorker,
         *,
         on_change: Callable[[], object] | None = None,
+        recover_interrupted: Callable[[], int] | None = None,
+        recovery_poll_seconds: float = 2.0,
         poll_seconds: float = 0.25,
     ) -> None:
         self.worker = worker
         self.on_change = on_change or (lambda: None)
+        self.recover_interrupted = recover_interrupted
+        self.recovery_poll_seconds = max(
+            0.01,
+            float(recovery_poll_seconds),
+        )
         self.poll_seconds = max(0.01, float(poll_seconds))
         self._stop = threading.Event()
         self._wake = threading.Event()
@@ -469,9 +476,29 @@ class RoomKernelWorkerLoop:
         self._wake.set()
 
     def _run(self) -> None:
+        next_recovery_at = 0.0
+        recovery_delay = self.recovery_poll_seconds
         while not self._stop.is_set():
             try:
-                changed = bool(self.worker.reconcile())
+                changed = False
+                now = time.monotonic()
+                if (
+                    self.recover_interrupted is not None
+                    and now >= next_recovery_at
+                ):
+                    next_recovery_at = now + recovery_delay
+                    try:
+                        changed = bool(self.recover_interrupted())
+                    except Exception:
+                        recovery_delay = min(recovery_delay * 2, 30.0)
+                        _LOG.exception(
+                            "Room Kernel interrupted-runtime recovery failed; "
+                            "retrying after backoff"
+                        )
+                    else:
+                        recovery_delay = self.recovery_poll_seconds
+                        next_recovery_at = now + recovery_delay
+                changed = bool(self.worker.reconcile()) or changed
                 changed = self.worker.run_once() is not None or changed
                 if changed:
                     self.on_change()
