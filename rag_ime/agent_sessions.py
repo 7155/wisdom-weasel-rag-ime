@@ -2878,6 +2878,7 @@ def _active_room_todo_lineage(
             participant.participant_status,
             work_item.id AS work_item_id,
             work_item.room_id AS work_item_room_id,
+            work_item.root_turn_id AS work_item_root_turn_id,
             work_item.current_owner_participant_id AS work_item_owner_id,
             work_item.state AS work_item_state,
             work_item.revision AS work_item_revision
@@ -2945,7 +2946,11 @@ def _active_room_todo_lineage(
         bool(work_item_id),
         str(row["work_item_id"] or "") == work_item_id,
         str(row["work_item_room_id"] or "") == room_id,
-        str(row["work_item_owner_id"] or "") == participant_id,
+        str(row["work_item_root_turn_id"] or "") in {"", root_id},
+        (
+            bool(str(task.get("parentTaskId") or ""))
+            or str(row["work_item_owner_id"] or "") == participant_id
+        ),
         str(row["task_state"] or "") not in {
             "completed",
             "failed",

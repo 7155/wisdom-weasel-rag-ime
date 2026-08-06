@@ -1,7 +1,7 @@
 # Room production acceptance handoff
 
-> as_of: 2026-08-06 21:13 CST
-> status: `021c9780` is committed, installed from clean worktree `/tmp/paw-room-live-progress-install.XitWK5`, and component-audited green at the exact full hash. Its complete frontend regression is `104 files / 1005/1005`; TypeScript and `git diff --check` pass. A fresh natural-language Room reached a user-facing four-feature plan and correctly waited for “开始行动”. Replaying its real event order exposed one narrower card-priority bug: a later generic “完成了一步” event could replace the nine-update work summary in the collapsed header. The current three-file follow-up fixes that priority and has focused Room tests plus TypeScript green; full frontend regression, commit, reinstall and GUI replay remain.
+> as_of: 2026-08-06 21:34 CST
+> status: collapsed-card priority fix `d30901ab` is committed, installed from clean worktree `/tmp/paw-room-meaningful-progress-install.6Z2yR7`, and component-audited green at full hash `d30901ab96debf76d2743bc8cde3ed938b5caf19`. Complete frontend regression is `104 files / 1005/1005`; TypeScript and `git diff --check` pass. Installed GUI replay shows the card now retains meaningful live progress and the natural-language Room correctly waited for Start. After Start, four vertical Tasks were created, but three peers remained queued because child Todo authority rejected the parent WorkItem lineage. The single-file `agent_sessions.py` fix is proven by the same focused test failing on clean `d30901ab` and passing in the implementation worktree; the complete backend Room suite passes `561/561` in `884.261s`. Commit, reinstall and GUI recovery remain.
 > canonical worktree: `/Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix`
 > branch: `codex/room-production-acceptance-final`
 > current source commit: `021c97807b58f885e6c3b047a38d40446c7804a4` (this checkpoint document is maintained in a follow-up commit)
@@ -27,7 +27,8 @@ Then wait for the user to confirm or correct that understanding. This is a hando
 - The valid natural-language run used only this ordinary product request: `我想把这个小客户目录做得更好用：可以批量导入 CSV 客户并先看看每一行有没有问题；能按邮箱后缀筛选；发现重复客户时能先对比、合并，合并错了还能撤销；还能查看每位客户是谁在什么时候改过什么。`
 - That run verified the compact attributed state, natural Chinese vertical plan, four equal peers, and the no-work-before-Start gate. Commit `021c9780` projects live summary/update counts into the collapsed header, suppresses task-check recovery copy from deliverables, and distinguishes active silence from a real wait.
 - Installed replay then exposed a narrower ordering defect: after the nine-update `reasoning_summary`, a later generic `participant_status` event (“完成了一步”) became the collapsed-card focus, so the header regressed to `澄·远 正在继续任务`. The current follow-up excludes generic participant bookkeeping when a meaningful public work summary exists. Its red-capable fixture reproduces the real ordering; focused Room tests and TypeScript pass.
-- Evidence for installed `021c9780` is green: complete frontend `104 files / 1005/1005`, TypeScript, `git diff --check`, clean install, and current-component audit. Backend Room code did not change after its existing complete `561/561` pass. The three-file follow-up still needs complete frontend regression, commit, clean reinstall and replay of the same natural-language Room.
+- That follow-up is now installed commit `d30901ab`. The same Room shows a meaningful current headline, update count, Todo and “有新进展 · 回到最新” instead of the generic card reported by the user.
+- Start produced four real vertical Tasks in the task view, but only the Facilitator ran; the other three stayed queued. Production logs show `_active_room_todo_lineage` rejecting bounded child Tasks because their shared parent WorkItem remains owned by the Facilitator. The existing `agent_sessions.py` change accepts a `parentTaskId` child while retaining exact Room/root/task/session/participant checks. The existing two-peer nested-lineage regression fails on clean `d30901ab` with the production exception and passes with this change.
 - No fresh full-auto GUI Room has completed the required end-to-end path after this follow-up. The installed/Web UI must still prove the compact composer status, user-language planning, governed requirement/execution document, clarification, real parallel Tasks, peer review without self-review, recovery, integration, and a single final delivery.
 - Several user-reported requirements remain GUI-only acceptance items. The next owner must use the ledger in section 4.1 and may only call a row fixed after its stated evidence boundary passes.
 - Existing screenshots and old Rooms still contain known failures such as stale `执行中`, duplicate/overlapping cards, weak tool results, meaningless citation placeholders, missing delivery reports, or fake visual parallelism. They are reproduction evidence, not proof of the current source.
@@ -164,6 +165,7 @@ The labels below are intentionally strict:
 | Requirement and execution context lives only in chat and is lost after compaction/handoff | **canonical document + all workflow Skills + WorkDocument regression passed; fresh full-auto GUI required** | After Start, one governed WorkDocument separately preserves user source/current requirements and execution plan/Todo/progress/evidence/failures/risks/handoff/next action. Later user changes and every owner's material progress update it; recovery reads it before source/runtime verification. |
 | Complete workflow Skills are compressed to 6 KiB/120 lines | **canonical document + Skill regression passed** | Only compact routing cards are always loaded; the selected full Skill and its required references load progressively without the obsolete whole-file cap. |
 | “Parallel” is only drawn in the graph and only one companion actually works | **backend policy/tests passed; fresh full-auto GUI required** | An approved multi-feature plan creates multiple real Tasks and at least two concurrently active companion cards with distinct work/results. |
+| Four vertical Tasks exist but peer Tasks remain `排队中` while only the Facilitator runs | **installed GUI and gateway log reproduced; focused red/green plus complete backend `561/561` passed** | Bounded child Tasks may inherit the parent Room WorkItem and still bind their own Session Todo, so the worker starts independent peers concurrently. Reinstall and GUI recovery remain. |
 | Companion local error becomes a user blocker | **recovery contract and regression recorded; fresh full-auto GUI required** | Ordinary file/command/parameter/Provider errors show `正在恢复 / 已恢复` in expandable history and continue without user intervention. |
 | Independent Luna approval runs on ordinary safe workspace writes | **requirement recorded; not part of this scoped UI patch** | In full-auto mode, ordinary bounded workspace operations proceed; Luna arbitration is reserved for genuinely dangerous operations. |
 | Provider/model/token/cache shows misleading `未上报` failure copy | **recorded, fresh GUI required** | Real telemetry appears when supplied; absent optional telemetry is quiet and does not look like a task failure. |
@@ -177,11 +179,10 @@ This table is an acceptance ledger, not a claim that every recorded item is alre
 
 ## 5. Exact residual-fix commit scope
 
-The compact attributed-status/private-brief follow-up is commit `f6e41175`; the collapsed-progress projection fix is installed commit `021c9780`. The current late-generic-status follow-up must contain exactly these three files:
+The compact attributed-status/private-brief follow-up is commit `f6e41175`; collapsed-progress projection is `021c9780`; meaningful live-summary priority is installed commit `d30901ab`. The current child Todo-lineage follow-up must contain exactly these two files:
 
-1. `control-center-web/src/features/rooms/timeline/RoomTurn.tsx`
-2. `control-center-web/src/features/rooms/timeline/RoomTurn.activity.test.tsx`
-3. `docs/agent/room-production-acceptance-handoff.md`
+1. `rag_ime/agent_sessions.py`
+2. `docs/agent/room-production-acceptance-handoff.md`
 
 Do not stage, reset, discard, clean, or overwrite these unrelated user/other-agent changes:
 
@@ -190,7 +191,6 @@ README.md
 rag_ime/agent_approval_model.py
 rag_ime/agent_execution_policy.py
 rag_ime/agent_room_settlement.py
-rag_ime/agent_sessions.py
 rag_ime/agent_workspace.py
 tests/test_agent_execution_policy.py
 tests/test_agent_room_settlement.py
@@ -205,13 +205,13 @@ tests/test_tui.py
 
 ## 6. Exact next steps
 
-1. Run the complete frontend regression, TypeScript and `git diff --check` for the current three-file follow-up.
-2. Stage only the three files in section 5 and commit them as `fix(room): prefer meaningful live summaries`.
+1. Run the focused two-peer nested-lineage regression plus the complete backend Room suite and `git diff --check` for the current two-file follow-up.
+2. Stage only the two files in section 5 and commit them as `fix(room): start bounded peer todos`.
 3. Create a clean detached worktree at that commit. Do not install from this dirty implementation worktree.
 4. From the clean worktree, run `scripts/install_product_stack.sh --include-pi --pi-worktree '/Volumes/undo 4t/git/learnA/.worktrees/pi-room-runtime-98cfe6a3'` with the configured Xcode beta developer directory.
 5. Run `scripts/check_installed_product_components.py --require-current` and record exact component evidence for the new commit.
-6. Reload the existing natural-language Room whose real event order contains `reasoning_summary` followed by generic `participant_status`; verify the collapsed card itself shows the meaningful current summary and update count.
-7. Continue that Room through “开始行动” and the remaining full-auto GUI journey below. Hidden APIs and browser internals may diagnose failures but do not replace the visible journey.
+6. Reload the existing natural-language Room and verify the three queued child Tasks recover into running companion work without a manual user retry; confirm at least two peers are active concurrently and their dialogue cards appear.
+7. Continue that Room through the remaining full-auto GUI journey below. Hidden APIs and browser internals may diagnose failures but do not replace the visible journey.
 8. Only after the fresh Room genuinely completes may the temporary physical install worktree be cleaned. Keep the permanent Room/requirement/owner/base/result ledger required by the product contract.
 
 ## 7. Fresh GUI acceptance journey
