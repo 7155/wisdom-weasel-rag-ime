@@ -10,6 +10,7 @@ from contextlib import closing
 from pathlib import Path
 
 from rag_ime.agent_command_receipts import AgentCommandReceiptStore
+from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.db.migration_runner import (
     DEFAULT_MIGRATIONS_DIR,
     MigrationChecksumError,
@@ -18,7 +19,7 @@ from rag_ime.db.migration_runner import (
     migration_status,
 )
 
-POST_0126_MIGRATIONS = tuple(range(127, 146))
+POST_0126_MIGRATIONS = tuple(range(127, 147))
 
 
 class DatabaseMigrationTests(unittest.TestCase):
@@ -41,7 +42,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 145)
+            self.assertEqual(status["currentVersion"], 146)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -464,6 +465,128 @@ class DatabaseMigrationTests(unittest.TestCase):
                 conn.execute(
                     """UPDATE room_kernel_continuations SET state='resumed'
                        WHERE continuation_id='continuation:unproven'"""
+                )
+
+    def test_0146_backfills_room_execution_mode_without_trusting_mixed_leases(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="rag-ime-migrations-0145-"
+        ) as temporary:
+            root = Path(temporary)
+            migrations_0145 = root / "migrations-0145"
+            migrations_0146 = root / "migrations-0146"
+            migrations_0145.mkdir()
+            migrations_0146.mkdir()
+            for migration in load_migrations():
+                if migration.version <= 145:
+                    shutil.copy2(
+                        migration.path,
+                        migrations_0145 / migration.path.name,
+                    )
+                if migration.version <= 146:
+                    shutil.copy2(
+                        migration.path,
+                        migrations_0146 / migration.path.name,
+                    )
+
+            db_path = root / "migration.sqlite"
+            with closing(sqlite3.connect(db_path)) as conn, conn:
+                initial = apply_database_migrations(
+                    conn,
+                    migrations_dir=migrations_0145,
+                )
+                self.assertEqual(initial.current_version, 145)
+
+            sessions = AgentSessionStore(db_path)
+
+            def session(title: str, mode: str) -> str:
+                return str(
+                    sessions.create(
+                        title=title,
+                        mode="coordinator",
+                        execution_mode=mode,
+                        workspace_roots=[str(root)],
+                    )["id"]
+                )
+
+            session_ids = {
+                "full-a": session("full-a", "full_trust"),
+                "full-b": session("full-b", "full_trust"),
+                "mixed-full": session("mixed-full", "full_trust"),
+                "mixed-read": session("mixed-read", "read_only"),
+                "roleplay-a": session("roleplay-a", "full_trust"),
+                "roleplay-b": session("roleplay-b", "full_trust"),
+            }
+            rooms = (
+                ("room:full", "collaboration", ("full-a", "full-b")),
+                ("room:mixed", "collaboration", ("mixed-full", "mixed-read")),
+                ("room:roleplay", "roleplay", ("roleplay-a", "roleplay-b")),
+            )
+            with closing(sqlite3.connect(db_path)) as conn, conn:
+                for room_id, room_kind, members in rooms:
+                    conn.execute(
+                        """
+                        INSERT INTO agent_rooms(
+                            id, title, routing_policy, moderator_participant_id,
+                            status, room_file, workspace_roots_json, room_kind,
+                            avatar, description, scenario_prompt, routing_mode,
+                            routing_config_json, next_speaker_ordinal,
+                            active_topic_id, config_revision,
+                            created_at_ms, updated_at_ms
+                        ) VALUES (?, ?, 'manual_mentions', ?, 'active', ?, '[]',
+                                  ?, 'members', '', '', 'manual_mentions', '{}',
+                                  0, '', 1, 1, 1)
+                        """,
+                        (
+                            room_id,
+                            room_id,
+                            f"participant:{room_id}:0",
+                            str(root / f"{room_id}.jsonl"),
+                            room_kind,
+                        ),
+                    )
+                    for ordinal, member in enumerate(members):
+                        conn.execute(
+                            """
+                            INSERT INTO agent_room_participants(
+                                id, room_id, session_id, role_id, role_version,
+                                display_name, collaboration_role,
+                                collaboration_role_key, participant_status,
+                                ordinal, created_at_ms
+                            ) VALUES (?, ?, ?, 'companion-present-v1', '1', ?,
+                                      'executor', 'implementer', 'active', ?, 1)
+                            """,
+                            (
+                                f"participant:{room_id}:{ordinal}",
+                                room_id,
+                                session_ids[member],
+                                member,
+                                ordinal,
+                            ),
+                        )
+
+                upgraded = apply_database_migrations(
+                    conn,
+                    migrations_dir=migrations_0146,
+                )
+                replay = apply_database_migrations(
+                    conn,
+                    migrations_dir=migrations_0146,
+                )
+
+                self.assertEqual(upgraded.applied_versions, (146,))
+                self.assertEqual(replay.applied_versions, ())
+                self.assertEqual(
+                    conn.execute(
+                        """SELECT id, execution_mode FROM agent_rooms
+                           ORDER BY id"""
+                    ).fetchall(),
+                    [
+                        ("room:full", "full_trust"),
+                        ("room:mixed", "per_action"),
+                        ("room:roleplay", "per_action"),
+                    ],
                 )
 
     def test_0122_backfills_failed_command_for_explicit_retry_lineage(
@@ -945,7 +1068,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 upgraded = apply_database_migrations(conn)
 
                 self.assertEqual(upgraded.applied_versions, (94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126) + POST_0126_MIGRATIONS)
-                self.assertEqual(upgraded.current_version, 145)
+                self.assertEqual(upgraded.current_version, 146)
                 self.assertEqual(
                     conn.execute(
                         "SELECT checksum FROM schema_migrations WHERE version=93"
@@ -1082,7 +1205,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
                 status = migration_status(conn)
                 self.assertTrue(status["ok"])
-                self.assertEqual(status["currentVersion"], 145)
+                self.assertEqual(status["currentVersion"], 146)
 
     def test_legacy_atoms_preserve_supersession_lineage_and_require_evidence(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0058-") as temporary:
@@ -1821,7 +1944,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 self.assertEqual(
                     result.applied_versions,
-                    (135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145),
+                    (135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146),
                 )
                 todo = conn.execute(
                     """

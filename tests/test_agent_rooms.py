@@ -1771,6 +1771,53 @@ class AgentRoomServiceTests(unittest.TestCase):
             ["read_only", "per_action", "workspace_managed", "full_trust"],
         )
 
+    def test_room_execution_mode_survives_temporary_participant_lease(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "Room 全自动租约恢复",
+                "workspaceRoots": [str(self.root)],
+                "executionMode": "full_trust",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        room_id = str(room["id"])
+        worker_session_id = str(room["participants"][1]["sessionId"])
+
+        self.service.sessions.set_runtime_policy(
+            worker_session_id,
+            mode="coordinator",
+            tool_profile_version="subagent-readonly-v1",
+            execution_mode="read_only",
+            grant_workspace_scope=False,
+            allowed_tools=None,
+            workspace_roots=[str(self.root)],
+        )
+        coordinator_session_id = str(room["participants"][0]["sessionId"])
+        coordinator = self.service.sessions.get(coordinator_session_id)
+        worker = self.service.sessions.get(worker_session_id)
+        self.assertEqual(coordinator["executionMode"], "full_trust")
+        self.assertTrue(coordinator["workspaceScopeGranted"])
+        self.assertEqual(worker["executionMode"], "read_only")
+        self.assertEqual(worker["toolProfileVersion"], "subagent-readonly-v1")
+        self.assertFalse(worker["workspaceScopeGranted"])
+        self.assertEqual(worker["workspaceRoots"], [str(self.root.resolve())])
+
+        projected = self.service.rooms.get(room_id)
+        self.assertEqual(projected["executionMode"], "full_trust")
+
+        restored = self.service.room(room_id)["room"]
+        self.assertEqual(restored["executionMode"], "full_trust")
+        for participant in restored["participants"]:
+            session = self.service.sessions.get(str(participant["sessionId"]))
+            self.assertEqual(session["executionMode"], "full_trust")
+            self.assertEqual(session["toolProfileVersion"], "control-center-v1")
+            self.assertTrue(session["workspaceScopeGranted"])
+            self.assertEqual(session["workspaceRoots"], [str(self.root.resolve())])
+
     def test_room_configuration_and_execution_mode_share_one_transaction(self) -> None:
         room = self.service.create_room(
             {

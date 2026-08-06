@@ -288,6 +288,11 @@ class RoomLifecycleService:
                         workspace_roots=roots,
                         connection=conn,
                     )
+                self.rooms.set_execution_mode(
+                    room_id,
+                    execution_mode,
+                    connection=conn,
+                )
                 if configuration:
                     updated = self.rooms.update_config(
                         room_id,
@@ -390,6 +395,7 @@ class RoomLifecycleService:
                     )
                     else None
                 ),
+                execution_mode=plan.execution_mode,
             )
         except Exception:
             for session_id in reversed(

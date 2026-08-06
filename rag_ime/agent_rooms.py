@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .agent_definitions import canonical_collaboration_role_id
+from .agent_execution_policy import normalize_execution_mode
 from .agent_role_identity import canonical_agent_role_id
 from .agent_room_routing import (
     normalize_room_kind,
@@ -109,6 +110,7 @@ class AgentRoomStore:
         description: str = "",
         scenario_prompt: str = "",
         routing_config: Mapping[str, object] | None = None,
+        execution_mode: str = "per_action",
         created_at_ms: int | None = None,
     ) -> dict[str, object]:
         normalized_title = " ".join(str(title).split())[:120]
@@ -120,6 +122,7 @@ class AgentRoomStore:
         normalized_avatar = " ".join(str(avatar or "members").split())[:80] or "members"
         normalized_description = " ".join(str(description or "").split())[:500]
         normalized_scenario = str(scenario_prompt or "").strip()[:8_000]
+        normalized_execution_mode = normalize_execution_mode(execution_mode)
         values = [dict(item) for item in participants]
         if not 2 <= len(values) <= 4:
             raise ValueError("agent room requires between 2 and 4 participants")
@@ -142,9 +145,9 @@ class AgentRoomStore:
                     id, title, routing_policy, moderator_participant_id, status,
                     room_file, workspace_roots_json, room_kind, avatar, description,
                     scenario_prompt, routing_mode, routing_config_json,
-                    next_speaker_ordinal, active_topic_id, config_revision,
+                    next_speaker_ordinal, active_topic_id, config_revision, execution_mode,
                     created_at_ms, updated_at_ms
-                ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, ?, ?)
+                ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, ?, ?, ?)
                 """,
                 (
                     room_id,
@@ -160,6 +163,7 @@ class AgentRoomStore:
                     policy,
                     json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
                     topic_id,
+                    normalized_execution_mode,
                     timestamp,
                     timestamp,
                 ),
@@ -223,9 +227,8 @@ class AgentRoomStore:
             raise AgentRoomNotFound(room_id)
         participants = conn.execute(
             """
-            SELECT p.*, s.execution_mode AS session_execution_mode
+            SELECT p.*
             FROM agent_room_participants AS p
-            LEFT JOIN agent_sessions AS s ON s.id = p.session_id
             WHERE room_id = ? ORDER BY ordinal ASC
             """,
             (room_id,),
@@ -321,6 +324,57 @@ class AgentRoomStore:
             WHERE id = ?
             """,
             (timestamp, room_id),
+        )
+        if cursor.rowcount != 1:
+            raise AgentRoomNotFound(room_id)
+
+    def set_execution_mode(
+        self,
+        room_id: str,
+        execution_mode: str,
+        *,
+        updated_at_ms: int | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, object]:
+        normalized = normalize_execution_mode(execution_mode)
+        timestamp = _timestamp(updated_at_ms)
+        if connection is not None:
+            self._set_execution_mode(
+                connection,
+                room_id,
+                normalized,
+                timestamp=timestamp,
+            )
+            return self._get(connection, room_id)
+        with self._connect() as conn:
+            self._set_execution_mode(
+                conn,
+                room_id,
+                normalized,
+                timestamp=timestamp,
+            )
+            self._touch_config(
+                conn,
+                room_id,
+                timestamp=timestamp,
+            )
+        return self.get(room_id)
+
+    @staticmethod
+    def _set_execution_mode(
+        conn: sqlite3.Connection,
+        room_id: str,
+        execution_mode: str,
+        *,
+        timestamp: int,
+    ) -> None:
+        cursor = conn.execute(
+            """
+            UPDATE agent_rooms
+            SET execution_mode = ?, updated_at_ms = ?
+            WHERE id = ?
+            """,
+            (execution_mode, timestamp, room_id),
         )
         if cursor.rowcount != 1:
             raise AgentRoomNotFound(room_id)
@@ -1732,9 +1786,8 @@ class AgentRoomStore:
                 raise AgentRoomNotFound(room_id)
             participant_rows = conn.execute(
                 """
-                SELECT p.*, s.execution_mode AS session_execution_mode
+                SELECT p.*
                 FROM agent_room_participants AS p
-                LEFT JOIN agent_sessions AS s ON s.id = p.session_id
                 WHERE room_id = ? ORDER BY ordinal ASC
                 """,
                 (room_id,),
@@ -2015,7 +2068,7 @@ def _room_payload(
         "avatar": str(row["avatar"] or "members"),
         "description": str(row["description"] or ""),
         "scenarioPrompt": str(row["scenario_prompt"] or ""),
-        "executionMode": _room_execution_mode(participants),
+        "executionMode": normalize_execution_mode(row["execution_mode"]),
         "routingPolicy": routing_policy,
         "routingConfig": normalize_routing_config(
             json.loads(str(row["routing_config_json"] or "{}"))
@@ -2039,24 +2092,6 @@ def _room_payload(
     }
     validate_contract(payload, "agent-room.v1.json")
     return payload
-
-
-def _room_execution_mode(participants: Sequence[sqlite3.Row]) -> str:
-    active = {
-        str(
-            row["session_execution_mode"]
-            if "session_execution_mode" in row.keys()
-            and row["session_execution_mode"]
-            else "per_action"
-        )
-        for row in participants
-        if str(row["participant_status"] or "") == "active"
-    }
-    if len(active) == 1:
-        return next(iter(active))
-    # A mixed participant policy is never treated as trusted. Lifecycle repair
-    # will converge it before the next managed Dispatch.
-    return "per_action"
 
 
 def _participant_payload(row: sqlite3.Row) -> dict[str, object]:
