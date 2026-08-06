@@ -1,7 +1,7 @@
 # Room production acceptance handoff
 
-> as_of: 2026-08-06 20:58 CST
-> status: `021c9780` is committed. Its focused Room regression is `148/148`, the complete frontend regression is `1005/1005`, and TypeScript plus `git diff --check` pass. The parent `f6e41175` was installed and audited green, but the latest commit has not been installed: the real install retry is blocked by permissions while cleaning the existing Browser Co-pilot extension, and an isolated dry-run install was stopped during a long frontend build. A fresh natural-language GUI run after `021c9780` therefore remains open.
+> as_of: 2026-08-06 21:13 CST
+> status: `021c9780` is committed, installed from clean worktree `/tmp/paw-room-live-progress-install.XitWK5`, and component-audited green at the exact full hash. Its complete frontend regression is `104 files / 1005/1005`; TypeScript and `git diff --check` pass. A fresh natural-language Room reached a user-facing four-feature plan and correctly waited for “开始行动”. Replaying its real event order exposed one narrower card-priority bug: a later generic “完成了一步” event could replace the nine-update work summary in the collapsed header. The current three-file follow-up fixes that priority and has focused Room tests plus TypeScript green; full frontend regression, commit, reinstall and GUI replay remain.
 > canonical worktree: `/Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix`
 > branch: `codex/room-production-acceptance-final`
 > current source commit: `021c97807b58f885e6c3b047a38d40446c7804a4` (this checkpoint document is maintained in a follow-up commit)
@@ -21,12 +21,13 @@ Then wait for the user to confirm or correct that understanding. This is a hando
 
 ### Current problems at the handoff moment
 
-- The latest installed Room source is the parent commit `f6e41175`, installed from a clean detached worktree. Its exact component audit was green and provenance-aligned at full commit `f6e41175c743da7569f96c8af5a684690d5901fe`; `021c9780` is the current source but has not reached the user install.
+- The latest installed Room source is `021c97807b58f885e6c3b047a38d40446c7804a4`, installed from clean worktree `/tmp/paw-room-live-progress-install.XitWK5`. Its exact component audit is green and the managed Pi runtime is `pi-0.80.7-98cfe6a3a0a4-raghost-727365f27d` from source `98cfe6a3a0a420ac6de4f85153c55fbc8809b845`.
 - A fresh creation modal at that installed commit shows all four companions as `已邀请` and says they have equal capability; the earlier permanent `主持/实现/调研/最终复核` presentation defect is fixed in the installed GUI.
 - The earlier internal-instruction GUI attempt remains invalid acceptance evidence and must never be reused.
 - The valid natural-language run used only this ordinary product request: `我想把这个小客户目录做得更好用：可以批量导入 CSV 客户并先看看每一行有没有问题；能按邮箱后缀筛选；发现重复客户时能先对比、合并，合并错了还能撤销；还能查看每位客户是谁在什么时候改过什么。`
-- That run verified the compact attributed state and natural Chinese vertical plan, but exposed a card-projection defect: the expanded summary updated nine times while the collapsed header stayed generic, an internal recovery sentence appeared as a promised deliverable, and stale timing copy said the companion was waiting although the turn remained active. Commit `021c9780` projects the live summary/update count into the collapsed header, suppresses recovery copy from deliverables, and distinguishes active silence from a real wait.
-- Evidence for `021c9780` is green: focused Room tests `148/148`, complete frontend `104 files / 1005/1005`, TypeScript, and `git diff --check`. Backend Room code did not change after its existing complete `561/561` pass. A clean reinstall and a repeat natural-language GUI Room are still required.
+- That run verified the compact attributed state, natural Chinese vertical plan, four equal peers, and the no-work-before-Start gate. Commit `021c9780` projects live summary/update counts into the collapsed header, suppresses task-check recovery copy from deliverables, and distinguishes active silence from a real wait.
+- Installed replay then exposed a narrower ordering defect: after the nine-update `reasoning_summary`, a later generic `participant_status` event (“完成了一步”) became the collapsed-card focus, so the header regressed to `澄·远 正在继续任务`. The current follow-up excludes generic participant bookkeeping when a meaningful public work summary exists. Its red-capable fixture reproduces the real ordering; focused Room tests and TypeScript pass.
+- Evidence for installed `021c9780` is green: complete frontend `104 files / 1005/1005`, TypeScript, `git diff --check`, clean install, and current-component audit. Backend Room code did not change after its existing complete `561/561` pass. The three-file follow-up still needs complete frontend regression, commit, clean reinstall and replay of the same natural-language Room.
 - No fresh full-auto GUI Room has completed the required end-to-end path after this follow-up. The installed/Web UI must still prove the compact composer status, user-language planning, governed requirement/execution document, clarification, real parallel Tasks, peer review without self-review, recovery, integration, and a single final delivery.
 - Several user-reported requirements remain GUI-only acceptance items. The next owner must use the ledger in section 4.1 and may only call a row fixed after its stated evidence boundary passes.
 - Existing screenshots and old Rooms still contain known failures such as stale `执行中`, duplicate/overlapping cards, weak tool results, meaningless citation placeholders, missing delivery reports, or fake visual parallelism. They are reproduction evidence, not proof of the current source.
@@ -150,7 +151,7 @@ The labels below are intentionally strict:
 | Answer or Start is accepted but the user sees no immediate feedback, or a floating status box covers content | **code + complete frontend regression passed; fresh GUI required** | Composer size stays unchanged; a compact spinner/status appears to the right of `@`, says the answer was received, and becomes “有新进展 · 回到最新” when the reader is above the tail. No standalone status card covers validation or conversation content. |
 | Compact status only says `协作进行中`, so the user still cannot tell who is doing what | **code + focused regression passed; fresh GUI required** | The same toolbar area shows a short attributed action such as `澄·远：梳理需求`; concurrent work lists the active companions and compact task labels without enlarging the composer. |
 | A private alignment brief containing `questionOptions` is shown as “选项没有准备完整” even though no question failed | **code + focused regression passed; fresh GUI required** | Internal orchestration briefs never become public objectives or false failures; the card falls back to a natural phase summary while real schema failures retain the recovery message. |
-| Expanded work summary says `已更新 9 次` while the collapsed card stays on `正在继续任务`, shows task-check recovery copy as `要交付`, or calls active silence `正在等待` | **red-capable regression reproduced and fixed; reinstall/fresh GUI required** | The collapsed card refreshes to the current user-facing phase and update count, recovery guidance is not a deliverable, and an active turn with no new public event remains `仍在处理` unless a real wait exists. |
+| Expanded work summary says `已更新 9 次` while the collapsed card stays on `正在继续任务`, shows task-check recovery copy as `要交付`, or calls active silence `正在等待` | **installed replay reproduced the late-status ordering case; follow-up focused regression passed** | The collapsed card prefers the newest meaningful public summary over later generic bookkeeping, refreshes its update count, hides recovery guidance from deliverables, and treats active silence as `仍在处理` unless a real wait exists. Full regression, reinstall and GUI replay remain. |
 | Option selection submits immediately or free text appears before options | **code + regression passed; fresh GUI required** | Options show explanatory descriptions first; selection requires explicit confirmation; only “其他” opens free input. |
 | Mechanical copy such as `需求对齐`, `已锁定`, `回答保留在下一条用户消息中`, protocol IDs, or JSON | **public-copy requirement recorded; fresh GUI required** | The companion speaks naturally from the user's perspective and exposes no internal protocol vocabulary. |
 | Plan mixes Chinese with raw English schemas/camelCase or speaks from the system's perspective | **code + capability/Skill/frontend regression passed; fresh GUI required** | Main plan uses the user's language and describes what the user can do and see. Internal type/field inventories and unverified entry points stay in the WorkDocument or expandable technical details. |
@@ -176,13 +177,11 @@ This table is an acceptance ledger, not a claim that every recorded item is alre
 
 ## 5. Exact residual-fix commit scope
 
-The compact attributed-status/private-brief follow-up is commit `f6e41175`; the newest collapsed-progress projection fix is already commit `021c9780`. No files from either commit should be restaged. The five files in `021c9780` are recorded here for provenance:
+The compact attributed-status/private-brief follow-up is commit `f6e41175`; the collapsed-progress projection fix is installed commit `021c9780`. The current late-generic-status follow-up must contain exactly these three files:
 
-1. `control-center-web/src/features/rooms/rooms-feature.test.tsx`
-2. `control-center-web/src/features/rooms/timeline/RoomTurn.tsx`
-3. `control-center-web/src/features/rooms/timeline/RoomTurn.activity.test.tsx`
-4. `docs/agent/room-facilitated-workflow-requirements.md`
-5. `docs/agent/room-production-acceptance-handoff.md`
+1. `control-center-web/src/features/rooms/timeline/RoomTurn.tsx`
+2. `control-center-web/src/features/rooms/timeline/RoomTurn.activity.test.tsx`
+3. `docs/agent/room-production-acceptance-handoff.md`
 
 Do not stage, reset, discard, clean, or overwrite these unrelated user/other-agent changes:
 
@@ -206,13 +205,13 @@ tests/test_tui.py
 
 ## 6. Exact next steps
 
-1. Read this file, the canonical requirements, and the worktree `AGENTS.md`/README before acting.
-2. Recheck `git status --short` and `git diff --check`.
-3. Run complete proportional frontend and backend Room regression plus `git diff --check`.
-4. Create a clean detached worktree at `021c9780`. Do not install from this dirty implementation worktree.
-5. From the clean worktree, install the current product stack into `RagImeControl.app`. The standard installer is `scripts/install_product_stack.sh`; Room acceptance needs the managed Pi runtime. The last real retry was blocked while cleaning the existing Browser Co-pilot extension; resolve that environment permission boundary before retrying.
-6. Run `scripts/check_installed_product_components.py --require-current` and record exact component evidence for `021c9780`.
-7. Create a **fresh** full-auto Room in the installed/Web shell and complete the GUI acceptance below. Hidden APIs and browser internals may diagnose failures but do not replace the visible journey.
+1. Run the complete frontend regression, TypeScript and `git diff --check` for the current three-file follow-up.
+2. Stage only the three files in section 5 and commit them as `fix(room): prefer meaningful live summaries`.
+3. Create a clean detached worktree at that commit. Do not install from this dirty implementation worktree.
+4. From the clean worktree, run `scripts/install_product_stack.sh --include-pi --pi-worktree '/Volumes/undo 4t/git/learnA/.worktrees/pi-room-runtime-98cfe6a3'` with the configured Xcode beta developer directory.
+5. Run `scripts/check_installed_product_components.py --require-current` and record exact component evidence for the new commit.
+6. Reload the existing natural-language Room whose real event order contains `reasoning_summary` followed by generic `participant_status`; verify the collapsed card itself shows the meaningful current summary and update count.
+7. Continue that Room through “开始行动” and the remaining full-auto GUI journey below. Hidden APIs and browser internals may diagnose failures but do not replace the visible journey.
 8. Only after the fresh Room genuinely completes may the temporary physical install worktree be cleaned. Keep the permanent Room/requirement/owner/base/result ledger required by the product contract.
 
 ## 7. Fresh GUI acceptance journey

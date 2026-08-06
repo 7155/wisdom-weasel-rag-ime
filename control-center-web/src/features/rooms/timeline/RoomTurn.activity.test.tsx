@@ -138,10 +138,26 @@ describe('RoomTurn public activity detail', () => {
       createdAtMs: 3_200,
       updatedAtMs: 3_900,
     };
+    projection.activitiesById['status-after-summary'] = {
+      id: 'status-after-summary',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_status',
+      status: 'completed',
+      summary: '协作进度已经同步',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'participant_status',
+      },
+      createdAtMs: 4_000,
+      updatedAtMs: 4_000,
+    };
     projection.turnsById['turn-a'] = {
       ...projection.turnsById['turn-a']!,
-      activityIds: ['route-a', 'wait-a', 'tool-a', 'reasoning-live'],
-      updatedAtMs: 3_900,
+      activityIds: ['route-a', 'wait-a', 'tool-a', 'reasoning-live', 'status-after-summary'],
+      updatedAtMs: 4_000,
     };
 
     const view = render(roomTurn(projection, {
@@ -149,9 +165,11 @@ describe('RoomTurn public activity detail', () => {
       expectedOutput: '定义后由 Facilitator 展示方案；用户批准后用 room_collaborate 分配任务。',
     }));
     const laneSummary = view.container.querySelector('.room-agent-lane > summary')!;
+    const laneTask = laneSummary.querySelector('.room-agent-lane__task')!;
+    const laneProgress = laneSummary.querySelector('.room-agent-lane__progress')!;
 
-    expect(laneSummary).toHaveTextContent('正在整理你的需求和执行方案');
-    expect(laneSummary).toHaveTextContent('工作摘要已更新 9 次');
+    expect(laneTask).toHaveTextContent('正在整理你的需求和执行方案');
+    expect(laneProgress).toHaveTextContent('工作摘要已更新 9 次');
     expect(laneSummary).not.toHaveTextContent('这一步没有通过任务检查');
     expect(laneSummary).not.toHaveTextContent('要交付：');
   });

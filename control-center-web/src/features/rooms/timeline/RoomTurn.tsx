@@ -1152,9 +1152,13 @@ function roomLaneWorkSummary(
   const activeFocus = laneState === 'running'
     ? [...orderedActivities].reverse().find((candidate) => (
         ['running', 'waiting'].includes(roomActivityDisplayStatus(candidate))
+        && !roomActivityIsGenericStatus(candidate)
       ))
     : undefined;
-  const focus = activeFocus ?? latest;
+  const latestMeaningful = [...orderedActivities].reverse().find((candidate) => (
+    !roomActivityIsGenericStatus(candidate)
+  ));
+  const focus = activeFocus ?? latestMeaningful ?? latest;
   if (
     laneState === 'running'
     && focus
@@ -1214,6 +1218,11 @@ function roomLaneWorkSummary(
           ? `${participantName} 正在等待后续`
           : `${participantName} 正在准备任务`;
   return { title, detail: '尚未收到公开工作进度' };
+}
+
+function roomActivityIsGenericStatus(activity: RoomActivityProjection): boolean {
+  return activity.kind === 'participant_status'
+    || textValue(activity.payload.sourceEventType) === 'participant_status';
 }
 
 function roomExpectedOutputText(value: string): string {
