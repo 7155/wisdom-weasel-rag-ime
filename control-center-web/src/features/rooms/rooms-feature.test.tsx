@@ -383,7 +383,7 @@ describe('Rooms experience', () => {
     expect(document.querySelectorAll('.room-agent-lane__user-answer')).toHaveLength(1);
     expect(document.querySelectorAll('.room-user-message')).toHaveLength(0);
     expect(screen.getByRole('status', { name: '当前协作状态' }))
-      .toHaveTextContent('已收到 · 继续处理中');
+      .toHaveTextContent('澄：继续处理');
     expect(screen.getByRole('button', { name: '等待当前任务完成' })).toBeDisabled();
     await waitFor(() => expect(screen.getByRole('textbox', { name: '协作消息' })).toHaveFocus());
   });
@@ -2418,7 +2418,7 @@ describe('Rooms experience', () => {
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     const status = await screen.findByRole('status', { name: '当前协作状态' });
-    expect(status).toHaveTextContent('协作进行中');
+    expect(status).toHaveTextContent('澄：安排分工');
     expect(status).not.toHaveTextContent('分工和交接会出现在最新进度中');
     expect(status.closest('.room-composer__controls')).not.toBeNull();
     expect(document.querySelector('.room-live-status')).toBeNull();
@@ -2439,7 +2439,7 @@ describe('Rooms experience', () => {
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     const status = await screen.findByRole('status', { name: '当前协作状态' });
-    expect(status).toHaveTextContent('协作进行中');
+    expect(status).toHaveTextContent('澄：安排分工');
     act(() => virtuosoMock.atBottomStateChange?.(false));
     const latest = screen.getByRole('button', { name: '回到最新进度' });
     await user.click(latest);
@@ -2448,6 +2448,47 @@ describe('Rooms experience', () => {
       align: 'end',
       behavior: 'smooth',
     });
+  });
+
+  it('shows the active companion and their concrete work beside the composer', async () => {
+    const room = roomSummary('room-a', '具体进度 Room');
+    const kernelSnapshot = roomKernelSnapshot(room.id) as Record<string, unknown>;
+    kernelSnapshot.tasks = [{
+      ...roomKernelTask('task-import', 'work', 'active'),
+      objective: '批量导入并逐行预览',
+      currentOwnerParticipantId: 'room-a:p2',
+    }];
+    kernelSnapshot.dispatches = [{
+      schemaVersion: 'wisdom-weasel.room-dispatch-envelope.v2',
+      dispatchId: 'dispatch-import',
+      rootId: 'root-a',
+      taskId: 'task-import',
+      parentDispatchId: null,
+      generation: 1,
+      hopCount: 0,
+      depth: 1,
+      budgetCost: 1,
+      targetSessionId: 'room-a:s2',
+      targetParticipantId: 'room-a:p2',
+      triggerId: 'trigger-import',
+      intentKind: 'execute',
+      idempotencyKey: 'dispatch-import',
+      attempt: 0,
+      capabilityEpoch: 1,
+      runtimeProfileRevision: 'runtime-profile:test-v1',
+      dependsOnDispatchIds: [],
+      state: 'running',
+    }];
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [room] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot(room.id, [], room.title),
+      'agent.room.kernel.snapshot': kernelSnapshot,
+    } });
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    expect(await screen.findByRole('status', { name: '当前协作状态' }))
+      .toHaveTextContent('澄·初：批量导入并逐行预览');
   });
 
   it('opens the shared status experience for the selected Room', async () => {

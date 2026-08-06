@@ -6,6 +6,17 @@
 - Acceptance state: current source now has focused regressions for persisted full-auto mode, one role/Task work frame across retry Dispatches, terminal user-facing delivery summaries, default-collapsed truthful motion, multiline Tool output, a visible execution plan before every start, peer feature ownership, and one governed requirement/execution WorkDocument. The installed build remains older than the latest fixes. The latest foreground Room proved real parallel Dispatches but did not reach integration, independent review, and one final report; production acceptance remains open.
 - Status rule: source, test, installed, and foreground evidence are reported separately
 
+## Latest user corrections (verbatim)
+
+> 可以显示具体谁在干什么。字少一些就行
+
+> 说了测试问题要用用户语言，用户不可能说这些我想把这个小客户目录做得更能用：增加 CSV 批量导入并逐行预览、按邮箱域名筛选、重复客户合并并可撤销、查看客户变更历史。请先对齐真正影响方案的关键需求，已有合理默认值就直接决定，一次最多问 4 个问题；然后展示按完整用户功能纵向拆分的分工、依赖和波次。必须等我确认并点击“开始行动”后再读写文件、运行命令、测试或分派伙伴。开始后请让多位平等伙伴真正并行交付，最后由没有参与对应实现或集成范围的伙伴独立复核。
+
+Derived acceptance: the compact composer status names the active companion and
+her current user-facing work with few words. GUI acceptance prompts contain
+only what an ordinary user wants to achieve; they never teach the Room its own
+question, planning, dispatch, testing, or review policy.
+
 Older handoffs, ignored local notes under `docs/`, screenshots, prototypes, tests,
 and README summaries are evidence or navigation only. They cannot override this
 file. A later product correction must update this contract and its status ledger
@@ -461,6 +472,14 @@ because a client timer pretends work happened.
   status paraphrases are never promoted into public companion speech.
 - New real events receive subtle one-shot arrival feedback and bottom-aware
   follow. Scrolling up never yanks the user down; `回到最新` restores follow.
+- The compact live indicator beside `@` names who is doing what in a short
+  user-facing phrase, for example `澄·远：梳理需求` or
+  `澄·初：批量导入`. A generic `协作进行中` label does not meet this
+  requirement, and the composer does not grow to accommodate the label.
+- Private orchestration objectives are never promoted as user-facing work.
+  Merely containing a schema word such as `questionOptions` cannot turn an
+  internal instruction into a false “选项没有准备完整” failure; real Tool
+  validation failures still get the bounded recovery message.
 - A freshness timeout changes motion to truthful waiting/stalled state. Network
   heartbeat and elapsed-time repaint never masquerade as work.
 - Terminal and final events still auto-follow and announce once when the user is

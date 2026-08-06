@@ -79,6 +79,7 @@ import type {
   RoomWorkState,
 } from './room-types';
 import { RoomTurn } from './timeline/RoomTurn';
+import { roomPublicActivityText } from './timeline/room-tool-presentation';
 import { selectPublicRoomTurnOrder } from './runtime/room-execution-lanes';
 import { useRoomLiveSession } from './runtime/use-room-live-session';
 import { useRoomLiveStore } from './state/live-store';
@@ -116,6 +117,29 @@ const ROOM_QUESTION_ROOT_STATES: ReadonlySet<RootProjection['state']> = new Set(
   'running',
   'waiting',
 ]);
+
+function compactRoomWorkLabel(value: string, fallback: string): string {
+  const publicText = roomPublicActivityText(value).replace(/^正在(?:处理|完成|检查|整理)/u, '').trim();
+  const firstClause = publicText.split(/[，。；：:\n]/u)[0]?.trim() ?? '';
+  if (!firstClause) return fallback;
+  const characters = Array.from(firstClause);
+  return characters.length > 12 ? `${characters.slice(0, 12).join('')}…` : firstClause;
+}
+
+function roomDispatchWorkLabel(
+  dispatch: RoomDispatchEnvelopeV2,
+  task?: RoomTaskV3,
+): string {
+  if (dispatch.intentKind === 'align') return '梳理需求';
+  if (dispatch.intentKind === 'review') {
+    return compactRoomWorkLabel(task?.objective ?? '', '复核结果');
+  }
+  if (dispatch.intentKind === 'close') return '整理结果';
+  if (dispatch.intentKind === 'revise') {
+    return compactRoomWorkLabel(task?.objective ?? '', '修改问题');
+  }
+  return compactRoomWorkLabel(task?.objective ?? '', '处理任务');
+}
 
 interface RoomQuestionAnswerAttempt {
   clientMessageId: string;
@@ -705,8 +729,9 @@ export function RoomsFeature() {
       : openKernelRoots.length || activeWork
         ? 'running'
         : undefined;
-  const activeDispatchParticipantIds = [...new Set(Object.values(kernelDispatchesById)
-    .filter((dispatch) => ['pending', 'leased', 'running', 'retry_wait', 'timer_wait'].includes(dispatch.state))
+  const activeDispatches = Object.values(kernelDispatchesById)
+    .filter((dispatch) => ['pending', 'leased', 'running', 'retry_wait', 'timer_wait'].includes(dispatch.state));
+  const activeDispatchParticipantIds = [...new Set(activeDispatches
     .map((dispatch) => dispatch.targetParticipantId)
     .filter(Boolean))];
   const liveParticipantIds = activeDispatchParticipantIds.length
@@ -720,6 +745,24 @@ export function RoomsFeature() {
         .map((participantId) => participantName(room, participantId))
         .filter(Boolean)
     : [];
+  const liveWorkLabels = room
+    ? activeDispatches.reduce<string[]>((labels, dispatch) => {
+        if (labels.some((label) => label.startsWith(`${participantName(room, dispatch.targetParticipantId)}：`))) {
+          return labels;
+        }
+        return [
+          ...labels,
+          `${participantName(room, dispatch.targetParticipantId)}：${roomDispatchWorkLabel(
+            dispatch,
+            kernelTasksById[dispatch.taskId],
+          )}`,
+        ];
+      }, [])
+    : [];
+  const liveLeadName = liveParticipantNames[0]
+    ?? room?.participants.find((participant) => participant.id === room.moderatorParticipantId)?.displayName
+    ?? room?.participants[0]?.displayName
+    ?? '伙伴';
   const continuedAfterAnswer = Boolean(room && continuedAfterAnswerRoomIds.has(room.id));
   const startingExecution = openKernelRoots.some((root) => (
     startingRootIds.has(root.rootId)
@@ -746,6 +789,15 @@ export function RoomsFeature() {
         : liveParticipantNames.length === 1
           ? `${liveParticipantNames[0]} 已接手，${activeDispatchParticipantIds.length ? '正在处理' : '正在安排分工'}`
           : '任务已送达，主持伙伴正在接手';
+  const liveStatusLabel = continuedAfterAnswer
+    ? `${liveLeadName}：继续处理`
+    : startingExecution
+      ? `${liveLeadName}：正在启动`
+      : liveWorkLabels.length
+        ? liveWorkLabels.join(' · ')
+        : liveParticipantNames.length
+          ? `${liveParticipantNames.join('、')}：安排分工`
+          : '伙伴：正在接手';
 
   useEffect(() => {
     if (!selectedId || (managedTaskBusyState === 'running' && !answerablePendingQuestion)) return;
@@ -1538,13 +1590,7 @@ export function RoomsFeature() {
           sending={sendingRoomIds.has(room.id)}
           taskBusyState={managedTaskBusyState}
           activityStatus={showLiveStatus ? {
-            label: continuedAfterAnswer
-              ? '已收到 · 继续处理中'
-              : startingExecution
-                ? '正在启动协作'
-                : liveParticipantNames.length > 1
-                  ? '多人并行中'
-                  : '协作进行中',
+            label: liveStatusLabel,
             detail: liveStatusTitle,
             awayFromLatest: !timelineAtBottom && Boolean(visibleTurnOrder.length),
             onReturnToLatest: () => roomTimelineRef.current?.scrollToIndex({

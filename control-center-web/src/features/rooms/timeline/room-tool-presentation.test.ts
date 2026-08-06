@@ -166,6 +166,24 @@ describe('roomPublicToolResultView', () => {
     expect(text).not.toMatch(/验收短名|工作卡片|room_state/iu);
   });
 
+  it('does not mistake an internal alignment brief for a failed question', () => {
+    const text = roomPublicActivityText([
+      '澄·远作为本轮主持伙伴，先弄清用户到底要完成什么。',
+      '先调用 room_state，再调用 room_define。',
+      '单个互斥决定使用 questionOptions；executionPlan 只保存执行方案。',
+      '其余内部说明。'.repeat(80),
+    ].join(' '));
+
+    expect(text).toBe('');
+    expect(text).not.toContain('选项没有准备完整');
+  });
+
+  it('still translates a real question schema failure', () => {
+    expect(roomPublicActivityText('questionOptions[0].value is required')).toBe(
+      '这个问题的选项没有准备完整，伙伴会修正后重新发送。',
+    );
+  });
+
   it('keeps protocol filtering deterministic across consecutive values', () => {
     expect([
       'dispatchId: dispatch-room-a',

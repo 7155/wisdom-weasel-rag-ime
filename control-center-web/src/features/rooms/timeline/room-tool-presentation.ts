@@ -160,6 +160,12 @@ function sanitizeOutput(value: string): string {
 function sanitizeText(value: string): string {
   const normalized = value.trim();
   if (!normalized || technicalLine.test(normalized) || isRawJson(normalized)) return '';
+  // Managed alignment tasks carry a private orchestration brief as their
+  // objective. It can contain schema names such as `questionOptions`, but it
+  // is neither a user-facing objective nor a Tool failure. Hiding the brief
+  // lets the caller fall back to a short phase label instead of leaking policy
+  // prose or falsely claiming that a question failed validation.
+  if (looksLikeInternalRoomInstruction(normalized)) return '';
   const naturalFailure = naturalRoomFailure(normalized);
   if (naturalFailure) return naturalFailure;
   return normalized
@@ -182,8 +188,24 @@ function sanitizeText(value: string): string {
     .trim();
 }
 
+function looksLikeInternalRoomInstruction(value: string): boolean {
+  if (value.length < 500) return false;
+  const markers = [
+    /\broom_state\b/iu,
+    /\broom_define\b/iu,
+    /\broom_collaborate\b/iu,
+    /\bquestionOptions\b/iu,
+    /\bexecutionPlan\b/iu,
+    /\bFacilitator\b/iu,
+  ];
+  return markers.filter((pattern) => pattern.test(value)).length >= 2;
+}
+
 function naturalRoomFailure(value: string): string {
-  if (/questionOptions|answerKind|questionKind/iu.test(value)) {
+  if (
+    /(?:questionOptions|answerKind|questionKind)[^\n]{0,100}(?:must|required|requires?|invalid|missing|unsupported|只能|必须|缺少|无效|不支持)/iu.test(value)
+    || /(?:missing|invalid|required|缺少|无效)[^\n]{0,100}(?:questionOptions|answerKind|questionKind)/iu.test(value)
+  ) {
     return '这个问题的选项没有准备完整，伙伴会修正后重新发送。';
   }
   if (/(?:验收短名|acceptanceAliases?).*(?:不一致|之外|unknown|mismatch)/iu.test(value)) {
