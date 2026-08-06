@@ -1,10 +1,10 @@
 # Room production acceptance handoff
 
-> as_of: 2026-08-07 00:10 CST
-> status: source commit `958054b664cb919af80d90e9f2a2168b85ee00eb` is installed and verified for the previous Room/approval/WorkDocument follow-up. A new recovery follow-up is now red/green verified: a collaboration Room that already crossed typed Start but lost its WorkDocument is lazily repaired from the durable definition and root WorkItem before the next Dispatch reads context; a Room still waiting for Start remains fail-closed. A full Room backend discovery run passed `563/563`; the combined approval/execution-plan/Room/WorkDocument gate passed `200/200`; focused WorkDocument `15/15`, focused Kernel Worker `22/22`, the typed-start recovery regression `1/1`, Python compile, and `git diff --check` pass. One discovered regression was fixed: an unchanged WorkDocument context refresh no longer rewrites `updatedAtMs` and invalidates read-only workspace snapshots. A verified `5.0G` external backup exists at `/Volumes/undo 4t/agent-workbench-backups/20260806-2349`. A clean install and a new GUI Room are still required for installed acceptance.
+> as_of: 2026-08-07 02:35 CST
+> status: clean source commit `eb39c7d21ca89cc1785aad56bb13e0f94ae17084` is installed from `/private/tmp/paw-room-eb39c7d2-install`. It includes the governed WorkDocument follow-up and post-Start missing-document recovery. Two later user-visible fixes are now red/green verified but not yet installed: a Kernel Root in authoritative `waiting` state keeps its claimed parent card blocked even when a child remains open, and alignment may publish one natural-language grouped question without forcing an option box. Their complete Room work/settlement module gate passed `55/55`; the current full Room backend discovery passed `563/563` in `642.853s`; the complete frontend passed `104 files / 1005 tests`; TypeScript passed. Earlier evidence remains valid for the combined approval/execution-plan/Room/WorkDocument gate `200/200`, focused WorkDocument `15/15`, and focused Kernel Worker `22/22`. A verified `5.0G` external backup exists at `/Volumes/undo 4t/agent-workbench-backups/20260806-2349`. The new follow-up now needs only Python compile/diff verification, a limited commit, clean reinstall, and a new full GUI Room acceptance.
 > canonical worktree: `/Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix`
 > branch: `codex/room-production-acceptance-final`
-> current source commit: `53089a7b5003a7a2b720648b315a8c65c5b88dad` plus the verified uncommitted Room/approval/WorkDocument follow-up described below
+> current source commit: `eb39c7d21ca89cc1785aad56bb13e0f94ae17084` plus the four verified uncommitted Room work/settlement files listed in section 5
 
 ## 0. Mandatory takeover gate: do not start by running commands
 
@@ -129,6 +129,9 @@ Current expanded code state:
 - focused WorkDocument gate after the idempotent context-refresh fix: `15/15` passed;
 - the original read-only snapshot regression test: `1/1` passed after the fix;
 - current Python compile and `git diff --check`: passed;
+- current full Room backend discovery with the waiting/grouped-question follow-up: `563/563` passed in `642.853s`;
+- current complete frontend with the follow-up: `104 files / 1005/1005` passed;
+- current TypeScript with the follow-up: passed;
 - pre-cleanup backup: `5.0G` at `/Volumes/undo 4t/agent-workbench-backups/20260806-2349`; all Git bundles passed `git bundle verify`, the SQLite copy passed `PRAGMA integrity_check`, and `SHA256SUMS` records the critical artifacts.
 
 Earlier regression counts remain historical evidence for commit `8461079f`; use
@@ -164,7 +167,7 @@ The labels below are intentionally strict:
 | Option selection submits immediately or free text appears before options | **code + regression passed; fresh GUI required** | Options show explanatory descriptions first; selection requires explicit confirmation; only “其他” opens free input. |
 | Mechanical copy such as `需求对齐`, `已锁定`, `回答保留在下一条用户消息中`, protocol IDs, or JSON | **public-copy requirement recorded; fresh GUI required** | The companion speaks naturally from the user's perspective and exposes no internal protocol vocabulary. |
 | Plan mixes Chinese with raw English schemas/camelCase or speaks from the system's perspective | **code + capability/Skill/frontend regression passed; fresh GUI required** | Main plan uses the user's language and describes what the user can do and see. Internal type/field inventories and unverified entry points stay in the WorkDocument or expandable technical details. |
-| Clarification becomes a slow formal questionnaire | **code + skill regression passed; fresh GUI required** | Inspectable facts are inferred; at most one round asks 2–4 independent numbered questions, or one option box for one mutually exclusive choice. |
+| Clarification becomes a slow formal questionnaire or every question is forced into an option box | **code + skill/settlement regression passed; fresh GUI required** | Inspectable facts are inferred; at most one round asks 2–4 independent numbered questions in one natural-language prompt, while one mutually exclusive choice may use the option box. |
 | “开始行动” fires before the user sees the split | **code + backend/frontend regression passed; fresh GUI required** | The card shows shared contracts, 1–4 vertical feature tasks, owners, dependencies/waves, write boundaries, integration and acceptance; nothing executes before the typed start action. |
 | One feature is split horizontally across peer Agents | **code + skill regression passed; fresh full-auto GUI required** | Each user-visible feature has one end-to-end Room Agent owner; multiple peer Agents appear only for multiple independent features. |
 | Static Reviewer/Researcher labels reduce a peer's ability | **code + backend regression passed; fresh full-auto GUI required** | Any active peer may own implementation; independent review is selected later from provenance, not a permanent low-capability role. |
@@ -186,20 +189,20 @@ The labels below are intentionally strict:
 
 This table is an acceptance ledger, not a claim that every recorded item is already fixed. Only rows explicitly marked **code + regression passed** may be treated as implemented before the fresh installed GUI journey.
 
-## 5. Exact current recovery-fix commit scope
+## 5. Exact current follow-up commit scope
 
-The compact attributed-status/private-brief follow-up is commit `f6e41175`; collapsed-progress projection is `021c9780`; meaningful live-summary priority is `d30901ab`; peer Todo recovery is `53089a7b`; the previous WorkDocument/approval follow-up is `958054b6`. The current post-Start recovery regression and fix must contain exactly these files:
+The compact attributed-status/private-brief follow-up is commit `f6e41175`; collapsed-progress projection is `021c9780`; meaningful live-summary priority is `d30901ab`; peer Todo recovery is `53089a7b`; WorkDocument/approval governance is `958054b6`; post-Start WorkDocument recovery is `eb39c7d2`. The next Room follow-up must contain exactly these files:
 
-1. `rag_ime/agent_service.py`
-2. `tests/test_agent_room_kernel_service.py`
-3. `docs/agent/room-production-acceptance-handoff.md`
+1. `rag_ime/agent_room_work.py`
+2. `tests/test_agent_room_work.py`
+3. `rag_ime/agent_room_settlement.py`
+4. `tests/test_agent_room_settlement.py`
+5. `docs/agent/room-production-acceptance-handoff.md`
 
 Do not stage, reset, discard, clean, or overwrite these unrelated user/other-agent changes:
 
 ```text
 README.md
-rag_ime/agent_room_settlement.py
-tests/test_agent_room_settlement.py
 md-link-check
 rag_ime/md_link_check.py
 rag_ime/tui.py
@@ -211,13 +214,14 @@ tests/test_tui.py
 
 ## 6. Exact next steps
 
-1. Stage only the three files in section 5 and commit the verified post-Start WorkDocument recovery fix.
-2. Create a clean detached worktree at that commit. Do not install from this dirty implementation worktree.
-3. From the clean worktree, run `scripts/install_product_stack.sh --include-pi --pi-worktree '/Volumes/undo 4t/git/learnA/.worktrees/pi-room-runtime-98cfe6a3'` with the configured Xcode beta developer directory.
-4. Run `scripts/check_installed_product_components.py --require-current` and record exact component evidence for the new commit.
-5. Create a new natural-language Room. Verify wave 1 starts its independent peers while every wave 2 card remains visibly waiting and has no running Dispatch; complete and integrate wave 1, then verify wave 2 opens automatically through the Facilitator's next governed action.
-6. The old recovered Room may continue to provide peer recovery/card/WorkDocument evidence, but it cannot prove wave ordering because all children were created under the pre-gate runtime. Continue the new Room through the remaining full-auto GUI journey below. Hidden APIs and browser internals may diagnose failures but do not replace the visible journey.
-7. Only after the fresh Room genuinely completes may temporary physical install worktrees, old test Rooms, and superseded Pi runtimes be cleaned. Keep the permanent Room/requirement/owner/base/result ledger required by the product contract.
+1. Run Python compile and `git diff --check` for the five files in section 5.
+2. Stage only the five files in section 5 and commit the verified waiting-state and grouped-question fixes.
+3. Create a clean detached worktree at that commit. Do not install from this dirty implementation worktree.
+4. From the clean worktree, run `scripts/install_product_stack.sh --include-pi --pi-worktree '/Volumes/undo 4t/git/learnA/.worktrees/pi-room-runtime-98cfe6a3'` with the configured Xcode beta developer directory.
+5. Run `scripts/check_installed_product_components.py --require-current` and record exact component evidence for the new commit.
+6. Create a new natural-language Room. Verify wave 1 starts its independent peers while every wave 2 card remains visibly waiting and has no running Dispatch; complete and integrate wave 1, then verify wave 2 opens automatically through the Facilitator's next governed action.
+7. The old recovered Room may continue to provide peer recovery/card/WorkDocument evidence, but it cannot prove wave ordering because all children were created under the pre-gate runtime. Continue the new Room through the remaining full-auto GUI journey below. Hidden APIs and browser internals may diagnose failures but do not replace the visible journey.
+8. Only after the fresh Room genuinely completes may temporary physical install worktrees, old test Rooms, and superseded Pi runtimes be cleaned. Keep the permanent Room/requirement/owner/base/result ledger required by the product contract.
 
 ## 7. Fresh GUI acceptance journey
 

@@ -1860,7 +1860,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             settled["reason"],
         )
 
-    def test_alignment_wait_requires_bounded_options(self) -> None:
+    def test_alignment_wait_accepts_one_grouped_free_text_question(self) -> None:
         self._invoke_commit(
             "wait",
             waitingFor="user",
@@ -1876,11 +1876,15 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         ):
             settled = self._settle()
 
-        self.assertEqual(settled["state"], "repair_commit")
-        self.assertIn(
-            "alignment questions must be bounded",
-            settled["reason"],
+        self.assertEqual(settled["state"], "committed")
+        continuation = self.service.room_kernel.continuation(
+            str(settled["settleResult"]["receipt"]["details"]["commitId"])
+        )["payload"]
+        self.assertEqual(
+            continuation["question"],
+            "首版更看重哪个交付边界？",
         )
+        self.assertNotIn("questionOptions", continuation)
 
     def test_user_wait_preserves_completed_acceptance_evidence(self) -> None:
         self._invoke_commit(

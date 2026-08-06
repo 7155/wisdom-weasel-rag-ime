@@ -1621,9 +1621,6 @@ class RoomSettleLifecycleService:
             waiting_for=str(arguments.get("waitingFor") or "").strip(),
             question=arguments.get("question"),
             question_kind=arguments.get("questionKind"),
-            require_bounded=self.kernel.dispatch_is_active_alignment(
-                str(dispatch["dispatchId"])
-            ),
         )
         try:
             public_content = public_room_report_content(

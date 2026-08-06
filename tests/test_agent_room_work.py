@@ -250,7 +250,7 @@ class AgentRoomWorkTests(unittest.TestCase):
             [],
         )
 
-    def test_kernel_waiting_keeps_parent_active_with_open_kernel_child(self) -> None:
+    def test_kernel_waiting_surfaces_parent_as_blocked_even_with_open_kernel_child(self) -> None:
         assigned, _ = self.work.assign(
             str(self.coordinator["id"]),
             self._assignment(
@@ -275,17 +275,6 @@ class AgentRoomWorkTests(unittest.TestCase):
             room_turn_id=root_id,
             claimed_at_ms=30,
         )
-
-        blocked = self.work.project_kernel_root(
-            {
-                "rootId": root_id,
-                "roomId": self.room["id"],
-                "state": "waiting",
-                "terminalReceiptId": None,
-                "updatedAtMs": 35,
-            }
-        )
-        self.assertEqual(blocked[0]["state"], "blocked")
 
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
@@ -320,7 +309,7 @@ class AgentRoomWorkTests(unittest.TestCase):
                 (root_id,),
             )
 
-        resumed = self.work.project_kernel_root(
+        waiting = self.work.project_kernel_root(
             {
                 "rootId": root_id,
                 "roomId": self.room["id"],
@@ -329,9 +318,9 @@ class AgentRoomWorkTests(unittest.TestCase):
                 "updatedAtMs": 45,
             }
         )
-        self.assertEqual(len(resumed), 1)
-        self.assertEqual(resumed[0]["state"], "active")
-        self.assertEqual(resumed[0]["blocker"], {})
+        self.assertEqual(len(waiting), 1)
+        self.assertEqual(waiting[0]["state"], "blocked")
+        self.assertEqual(waiting[0]["blocker"]["kernelRootState"], "waiting")
 
     def test_assignment_is_idempotent_and_rejects_ancestor_bounce(self) -> None:
         payload = self._assignment("root-2", self.worker_participant["id"])
