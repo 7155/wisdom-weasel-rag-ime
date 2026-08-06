@@ -87,7 +87,7 @@ _GENERIC_OBSERVABLE_COMPLETION = re.compile(
     re.IGNORECASE,
 )
 _ENTRY_SURFACE_SIGNAL = re.compile(
-    r"(?:任务页|页面|界面|视图|窗口|菜单|按钮|命令|终端|文件|模块|接口|API|"
+    r"(?:任务页|对话页|页面|界面|视图|窗口|菜单|按钮|列表|时间线|卡片|命令|终端|文件|模块|接口|API|"
     r"服务|脚本|测试|工作区|仓库|目录|路径|应用|page|view|window|menu|"
     r"button|command|terminal|file|module|endpoint|service|script|test|"
     r"workspace|repository|directory|path|app|[A-Za-z0-9_./-]+\.[A-Za-z0-9]{1,8})",
@@ -96,6 +96,7 @@ _ENTRY_SURFACE_SIGNAL = re.compile(
 _PRIMARY_INTERACTION_SIGNAL = re.compile(
     r"(?:点击|输入|选择|按下|按|打开|启动|运行|执行|提交|发送|编辑|修改|"
     r"创建|添加|删除|标记|停止|退出|展开|切换|调用|读取|检查|核对|"
+    r"滚动|拖动|加载|刷新|重试|恢复|"
     r"点名|接手|实施|"
     r"click|type|select|press|open|start|run|submit|send|edit|update|"
     r"create|add|delete|mark|stop|exit|expand|switch|call|read|check)",

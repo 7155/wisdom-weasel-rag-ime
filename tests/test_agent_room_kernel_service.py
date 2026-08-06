@@ -7659,6 +7659,28 @@ class RoomKernelServiceTests(unittest.TestCase):
             criteria=[{"statement": "真实命令输出可见"}],
         )
 
+    def test_room_definition_accepts_natural_scroll_and_retry_journey(
+        self,
+    ) -> None:
+        _assert_concrete_room_definition(
+            objective="完善 Room 对话历史自动加载",
+            expected_output="失败可恢复且不会重复请求的历史分页",
+            entry_surface=(
+                "Room 对话页中的历史消息虚拟列表；用户从当前消息区域"
+                "向上滚动到历史边界时触发更早消息的分页加载"
+            ),
+            primary_interaction=(
+                "用户向上滚动触发加载更早一页历史消息；请求失败后再次"
+                "触发同一页加载应能重试"
+            ),
+            observable_completion=(
+                "失败页可再次加载且成功后历史连续；重复触发不会重复"
+                "请求或插入，相关自动化测试通过"
+            ),
+            requirements=["保留现有历史分页契约"],
+            criteria=[{"statement": "失败重试和请求去重测试通过"}],
+        )
+
     def test_room_definition_accepts_concise_scope_with_concrete_journey(
         self,
     ) -> None:
