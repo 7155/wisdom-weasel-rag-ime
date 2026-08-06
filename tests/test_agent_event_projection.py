@@ -1206,7 +1206,11 @@ class AgentEventProjectionTests(unittest.TestCase):
                     "path": "rag_ime/agent_event_projection.py",
                     "offset": 640,
                     "limit": 220,
-                    "outputPreview": "def _room_tool_disclosure(...):",
+                    "outputPreview": (
+                        "640 def _room_tool_disclosure(...):\n"
+                        "641     public_result = project_result()\n"
+                        "642     return public_result"
+                    ),
                     "outputTruncated": False,
                     "startLine": 640,
                     "endLine": 859,
@@ -1219,7 +1223,11 @@ class AgentEventProjectionTests(unittest.TestCase):
                     "limit": 220,
                 },
                 {
-                    "outputPreview": "def _room_tool_disclosure(...):",
+                    "outputPreview": (
+                        "640 def _room_tool_disclosure(...):\n"
+                        "641     public_result = project_result()\n"
+                        "642     return public_result"
+                    ),
                     "outputTruncated": False,
                     "startLine": 640,
                     "endLine": 859,
@@ -1295,6 +1303,15 @@ class AgentEventProjectionTests(unittest.TestCase):
                     data["result"],
                     expected_result,
                 )
+                if tool_name == "read":
+                    self.assertEqual(
+                        data["result"]["outputPreview"].splitlines(),
+                        [
+                            "640 def _room_tool_disclosure(...):",
+                            "641     public_result = project_result()",
+                            "642     return public_result",
+                        ],
+                    )
                 encoded = repr(data)
                 self.assertNotIn("apiKey", encoded)
                 self.assertNotIn("sk-private-credential", encoded)

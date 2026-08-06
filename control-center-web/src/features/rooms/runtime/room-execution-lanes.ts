@@ -68,7 +68,10 @@ export function selectRoomTurnExecution(
     const existingParticipantLane = !hasAuthoritativeWorkIdentity
       ? participantLaneKeys.get(participantIdentity)?.at(-1)
       : undefined;
-    const laneKey = existingParticipantLane ?? identity.key;
+    const canonicalTaskLane = identity.taskId
+      ? taskLaneKey(identity.rootId, participantId, identity.taskId)
+      : '';
+    const laneKey = existingParticipantLane || canonicalTaskLane || identity.key;
     const lane = lanes.get(laneKey) ?? {
       key: laneKey,
       rootId: identity.rootId,
@@ -114,6 +117,16 @@ export function selectRoomTurnExecution(
     const dispatchKey = message.dispatchId
       ? dispatchLaneKeys.get(message.dispatchId) ?? ''
       : '';
+    const messageTaskId = message.dispatchId
+      ? taskIdByDispatchId[message.dispatchId] ?? ''
+      : '';
+    const canonicalTaskLane = messageTaskId
+      ? taskLaneKey(
+          message.rootId || turn.rootId || turnId,
+          message.participantId,
+          messageTaskId,
+        )
+      : '';
     const exactKey = message.dispatchId
       ? [
           message.rootId || turn.rootId || turnId,
@@ -122,12 +135,13 @@ export function selectRoomTurnExecution(
         ].join('\u001f')
       : '';
     const existingKey = dispatchKey
+      || (canonicalTaskLane && lanes.has(canonicalTaskLane) ? canonicalTaskLane : '')
       || (exactKey && lanes.has(exactKey)
       ? exactKey
       : participantLaneKeys
           .get(participantKey(message.participantId, message.sourceSessionId))
           ?.at(-1));
-    const laneKey = existingKey ?? [
+    const laneKey = existingKey || canonicalTaskLane || [
       turn.rootId || turnId,
       message.participantId || message.sourceSessionId || 'participant',
       message.dispatchId || message.id,
@@ -135,7 +149,7 @@ export function selectRoomTurnExecution(
     const lane = lanes.get(laneKey) ?? {
       key: laneKey,
       rootId: message.rootId || turn.rootId || turnId,
-      taskId: message.dispatchId ? taskIdByDispatchId[message.dispatchId] ?? '' : '',
+      taskId: messageTaskId,
       dispatchId: message.dispatchId || '',
       dispatchIds: message.dispatchId ? [message.dispatchId] : [],
       participantId: message.participantId,
@@ -143,6 +157,14 @@ export function selectRoomTurnExecution(
       activities: [],
       messageIds: [],
     };
+    if (messageTaskId) lane.taskId = messageTaskId;
+    if (message.dispatchId) {
+      lane.dispatchId = message.dispatchId;
+      if (!lane.dispatchIds.includes(message.dispatchId)) {
+        lane.dispatchIds.push(message.dispatchId);
+      }
+      dispatchLaneKeys.set(message.dispatchId, laneKey);
+    }
     if (!lane.messageIds.includes(messageId)) lane.messageIds.push(messageId);
     lanes.set(laneKey, lane);
   }
@@ -171,6 +193,35 @@ export function selectRoomTurnExecution(
       originalMessageIndexById.get(rightId) ?? Number.MAX_SAFE_INTEGER,
     )
   ));
+  // Activities are grouped before posts, so the message pass must not make an
+  // older attempt authoritative merely because it ran second. Resolve the
+  // current Dispatch from the canonical cross-message event chronology after
+  // every lane has been assembled.
+  for (const lane of lanes.values()) {
+    const latestDispatch = [
+      ...lane.activities.map((activity, index) => ({
+        dispatchId: textValue(activity.payload.dispatchId),
+        sequence: activity.sequence,
+        createdAtMs: activity.updatedAtMs ?? activity.createdAtMs,
+        identity: activity.id,
+        ordinal: index,
+      })),
+      ...lane.messageIds.map((messageId, index) => {
+        const message = projection.messagesById[messageId]!;
+        return {
+          dispatchId: message.dispatchId ?? '',
+          sequence: message.chronology?.roomEventSequence ?? message.sequence,
+          createdAtMs: message.chronology?.createdAtMs ?? message.createdAtMs,
+          identity: message.sourceEventId || message.sourceMessageId || message.id,
+          ordinal: lane.activities.length + index,
+        };
+      }),
+    ]
+      .filter((item) => Boolean(item.dispatchId))
+      .sort(compareRoomExecutionChronology)
+      .at(-1);
+    if (latestDispatch) lane.dispatchId = latestDispatch.dispatchId;
+  }
   return {
     activities,
     lanes: [...lanes.values()],
@@ -179,6 +230,36 @@ export function selectRoomTurnExecution(
       projection.messagesById[messageId]?.role === 'user'
     )),
   };
+}
+
+function compareRoomExecutionChronology(
+  left: { sequence?: number; createdAtMs: number; identity: string; ordinal: number },
+  right: { sequence?: number; createdAtMs: number; identity: string; ordinal: number },
+): number {
+  // Historical projections may contain legacy entries without a Room event
+  // sequence alongside current sequenced entries. Treat all legacy entries as
+  // preceding the authoritative event stream so a delayed old attempt cannot
+  // reclaim the card. This must remain one transitive total order: falling
+  // back to timestamp whenever only one side lacks a sequence makes sort
+  // results depend on the input permutation.
+  if (left.sequence !== undefined || right.sequence !== undefined) {
+    if (left.sequence === undefined) return -1;
+    if (right.sequence === undefined) return 1;
+    const sequenceOrder = left.sequence - right.sequence;
+    if (sequenceOrder !== 0) return sequenceOrder;
+  }
+  const timeOrder = left.createdAtMs - right.createdAtMs;
+  if (timeOrder !== 0) return timeOrder;
+  const identityOrder = left.identity.localeCompare(right.identity);
+  return identityOrder || left.ordinal - right.ordinal;
+}
+
+function taskLaneKey(
+  rootId: string,
+  participantId: string | null,
+  taskId: string,
+): string {
+  return [rootId, participantId || 'participant', `task:${taskId}`].join('\u001f');
 }
 
 function compareRoomMessages(

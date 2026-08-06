@@ -269,7 +269,7 @@ describe('selectRoomTurnExecution', () => {
     ]);
   });
 
-  it('keeps two dispatches owned by the same participant in separate slots', () => {
+  it('keeps retry dispatches for the same participant and Task in one work frame', () => {
     const projection = createRoomProjection('room-1');
     projection.turnOrder.push('root-1');
     projection.turnsById['root-1'] = {
@@ -305,13 +305,176 @@ describe('selectRoomTurnExecution', () => {
       'dispatch-b': 'task-shared',
     });
 
-    expect(selected.lanes.map((lane) => lane.dispatchId)).toEqual([
-      'dispatch-a',
-      'dispatch-b',
-    ]);
-    expect(selected.lanes.map((lane) => lane.taskId)).toEqual([
-      'task-shared',
-      'task-shared',
+    expect(selected.lanes).toHaveLength(1);
+    expect(selected.lanes[0]).toMatchObject({
+      dispatchId: 'dispatch-b',
+      dispatchIds: ['dispatch-a', 'dispatch-b'],
+      taskId: 'task-shared',
+      participantId: 'participant-1',
+    });
+    expect(selected.lanes[0].messageIds).toEqual(['reply-a', 'reply-b']);
+  });
+
+  it('selects the same latest retry for every mixed sequence and legacy replay order', () => {
+    const replayOrders = [
+      ['sequenced-old', 'legacy-middle', 'sequenced-new'],
+      ['legacy-middle', 'sequenced-new', 'sequenced-old'],
+      ['sequenced-new', 'sequenced-old', 'legacy-middle'],
+    ];
+
+    for (const messageIds of replayOrders) {
+      const projection = createRoomProjection('room-1');
+      projection.turnOrder.push('root-1');
+      projection.turnsById['root-1'] = {
+        id: 'root-1',
+        rootId: 'root-1',
+        status: 'running',
+        messageIds,
+        activityIds: [],
+        participantIds: ['participant-1'],
+        createdAtMs: 1,
+        updatedAtMs: 300,
+      };
+      const messages = [
+        {
+          id: 'sequenced-old',
+          dispatchId: 'dispatch-old',
+          sequence: 1,
+          createdAtMs: 300,
+        },
+        {
+          id: 'legacy-middle',
+          dispatchId: 'dispatch-legacy',
+          createdAtMs: 200,
+        },
+        {
+          id: 'sequenced-new',
+          dispatchId: 'dispatch-new',
+          sequence: 2,
+          createdAtMs: 100,
+        },
+      ];
+      for (const message of messages) {
+        projection.messagesById[message.id] = {
+          roomId: 'room-1',
+          turnId: 'root-1',
+          participantId: 'participant-1',
+          sourceSessionId: 'session-1',
+          role: 'assistant',
+          status: 'completed',
+          text: message.id,
+          projectionKind: 'post',
+          postKind: 'progress',
+          rootId: 'root-1',
+          ...message,
+        };
+      }
+
+      const selected = selectRoomTurnExecution(projection, 'root-1', {
+        'dispatch-old': 'task-shared',
+        'dispatch-legacy': 'task-shared',
+        'dispatch-new': 'task-shared',
+      });
+
+      expect(selected.lanes).toHaveLength(1);
+      expect(selected.lanes[0]?.dispatchId).toBe('dispatch-new');
+    }
+  });
+
+  it('does not let a delayed legacy event from an old attempt reclaim a retry card', () => {
+    const projection = createRoomProjection('room-1');
+    projection.turnOrder.push('root-1');
+    projection.turnsById['root-1'] = {
+      id: 'root-1',
+      rootId: 'root-1',
+      status: 'running',
+      messageIds: ['new-retry', 'delayed-old-result'],
+      activityIds: [],
+      participantIds: ['participant-1'],
+      createdAtMs: 1,
+      updatedAtMs: 10_000,
+    };
+    projection.messagesById['new-retry'] = {
+      id: 'new-retry',
+      roomId: 'room-1',
+      turnId: 'root-1',
+      participantId: 'participant-1',
+      sourceSessionId: 'session-new',
+      role: 'assistant',
+      status: 'streaming',
+      text: '新的重试正在继续',
+      projectionKind: 'execution',
+      rootId: 'root-1',
+      dispatchId: 'dispatch-new',
+      sequence: 10,
+      createdAtMs: 100,
+    };
+    projection.messagesById['delayed-old-result'] = {
+      id: 'delayed-old-result',
+      roomId: 'room-1',
+      turnId: 'root-1',
+      participantId: 'participant-1',
+      sourceSessionId: 'session-old',
+      role: 'assistant',
+      status: 'completed',
+      text: '旧尝试迟到的失败结果',
+      projectionKind: 'post',
+      postKind: 'blocked',
+      rootId: 'root-1',
+      dispatchId: 'dispatch-old',
+      createdAtMs: 9_999,
+    };
+
+    const selected = selectRoomTurnExecution(projection, 'root-1', {
+      'dispatch-old': 'task-shared',
+      'dispatch-new': 'task-shared',
+    });
+
+    expect(selected.lanes).toHaveLength(1);
+    expect(selected.lanes[0]?.dispatchId).toBe('dispatch-new');
+  });
+
+  it('keeps separate Tasks for the same participant in separate work frames', () => {
+    const projection = createRoomProjection('room-1');
+    projection.turnOrder.push('root-1');
+    projection.turnsById['root-1'] = {
+      id: 'root-1',
+      rootId: 'root-1',
+      status: 'running',
+      messageIds: ['reply-a', 'reply-b'],
+      activityIds: [],
+      participantIds: ['participant-1'],
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    };
+    for (const dispatchId of ['dispatch-a', 'dispatch-b']) {
+      const messageId = `reply-${dispatchId.at(-1)}`;
+      projection.messagesById[messageId] = {
+        id: messageId,
+        roomId: 'room-1',
+        turnId: 'root-1',
+        participantId: 'participant-1',
+        sourceSessionId: 'session-1',
+        role: 'assistant',
+        status: 'streaming',
+        text: dispatchId,
+        projectionKind: 'execution',
+        rootId: 'root-1',
+        dispatchId,
+        createdAtMs: 2,
+      };
+    }
+
+    const selected = selectRoomTurnExecution(projection, 'root-1', {
+      'dispatch-a': 'task-a',
+      'dispatch-b': 'task-b',
+    });
+
+    expect(selected.lanes).toHaveLength(2);
+    expect(selected.lanes.map((lane) => lane.taskId)).toEqual(['task-a', 'task-b']);
+    expect(selected.lanes.map((lane) => lane.dispatchIds)).toEqual([
+      ['dispatch-a'],
+      ['dispatch-b'],
     ]);
   });
 

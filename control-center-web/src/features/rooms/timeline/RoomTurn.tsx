@@ -72,6 +72,7 @@ import {
   type RoomTaskSubagentRun,
 } from '../kernel/RoomTaskFlowGraph';
 import {
+  RoomTaskDeliveryDetails,
   roomTaskTodoSummary,
   RoomTaskTodoDetails,
 } from '../kernel/RoomTaskAuthorityDetails';
@@ -637,18 +638,28 @@ export function RoomTurn({
         roomSyncState,
         laneTaskId ? kernelTaskUpdatedAtMsById?.[laneTaskId] : undefined,
       );
-      const laneOutcome = cardMessages.reduce((outcome, message) => (
+      // A Task lane can contain several retry Dispatches. Historical attempts
+      // remain visible in the body, but only the newest authoritative attempt
+      // may drive the card header, motion, and terminal state.
+      const authoritativeOutcomeMessages = lane.dispatchId
+        ? cardMessages.filter((message) => message.dispatchId === lane.dispatchId)
+        : cardMessages;
+      const laneOutcome = authoritativeOutcomeMessages.reduce((outcome, message) => (
         roomTerminalPostLabels[message.postKind ?? '']
           ? message.postKind ?? outcome
           : outcome
       ), '');
+      const laneOutcomeMessage = [...authoritativeOutcomeMessages].reverse().find((message) => (
+        Boolean(roomTerminalPostLabels[message.postKind ?? ''])
+      ));
+      const laneComplete = (laneTerminal || Boolean(laneOutcome)) && !laneFailed && !laneAborted;
       const laneOperationallyActive = laneActive
+        && !laneComplete
         && !laneAction
         && laneOutcome !== 'wait'
         && laneOutcome !== 'blocked';
       const laneMotionActive = laneOperationallyActive
         && laneFreshness.state === 'fresh';
-      const laneComplete = (laneTerminal || Boolean(laneOutcome)) && !laneFailed && !laneAborted;
       const authoritativeStatusLabel = laneAction
         ? '等待审阅'
         : laneOutcome === 'blocked'
@@ -675,12 +686,12 @@ export function RoomTurn({
             ? 'waiting'
             : laneOutcome === 'wait'
               ? 'waiting'
-              : laneOutcome === 'blocked'
+            : laneOutcome === 'blocked'
                 ? 'failed'
-                : laneActive
-                  ? 'running'
-                  : laneComplete
-                    ? 'completed'
+                : laneComplete
+                  ? 'completed'
+                  : laneActive
+                    ? 'running'
                     : 'waiting';
       const laneTask = laneTaskId ? kernelTasksById?.[laneTaskId] : undefined;
       const laneSession = roomLaneSession(
@@ -689,31 +700,24 @@ export function RoomTurn({
         kernelSessionsById,
       );
       const laneTodo = roomLaneAuthoritativeTodo(lane, laneTask, laneSession);
-      const showLaneTodo = Boolean(laneTodo)
-        && !laneFailed
-        && !laneAborted
-        && (
-          laneAction !== undefined
-          || laneOutcome === 'wait'
-          || laneOutcome === 'blocked'
-          || (laneActive && !laneComplete)
-        );
+      const showLaneTodo = Boolean(laneTodo && roomTodoHasUnsettledItems(laneTodo));
       const laneWork = roomLaneWorkSummary(
         segmentActivities,
         participant?.displayName,
         laneState,
         laneTask,
+        laneOutcomeMessage,
       );
       const laneTodoSummary = showLaneTodo ? roomTaskTodoSummary(laneTodo) : '';
       const laneSubagents = laneTaskId ? subagentsByTaskId[laneTaskId] ?? [] : [];
       return <RoomLaneDisclosure
         active={laneMotionActive}
-        collapsedPreview={<RoomLaneCollapsedPreview
+        collapsedPreview={laneComplete ? undefined : <RoomLaneCollapsedPreview
           activities={segmentActivities}
           participantName={participant?.displayName}
           workspaceTask={laneTask}
         />}
-        defaultOpen={laneActive && !cardMessages.length}
+        defaultOpen={false}
         data-motion={laneOperationallyActive ? laneFreshness.state : 'settled'}
         data-outcome={laneOutcome || undefined}
         data-state={laneState}
@@ -748,7 +752,9 @@ export function RoomTurn({
             </small>
           </span>
           <RoomLaneTiming
-            freshness={laneFreshness}
+            freshness={laneComplete
+              ? { ...laneFreshness, state: 'fresh', detail: '' }
+              : laneFreshness}
             nowMs={nowMs}
             startedAtMs={turn.createdAtMs}
             endedAtMs={laneActive && !laneAction ? undefined : turn.updatedAtMs}
@@ -798,6 +804,12 @@ export function RoomTurn({
           />
           {message.id === finalAlignmentId ? startActionGate : null}
         </div>)}
+        {includePersistentDetails && laneComplete && laneTask?.workspaceDelivery
+          ? <RoomTaskDeliveryDetails
+              delivery={laneTask.workspaceDelivery}
+              owner={participant?.displayName ?? '协作伙伴'}
+            />
+          : null}
         {includePersistentDetails && !lane.activities.length && laneActive && !messages.length ? <div className="room-agent-lane__waiting">
           {laneMotionActive ? <LoaderCircle size={14} /> : <Clock3 size={14} />}
           <span>{laneMotionActive
@@ -1065,6 +1077,7 @@ function roomLaneWorkSummary(
   participantName = '协作成员',
   laneState: string,
   workspaceTask?: RoomTaskV3,
+  outcomeMessage?: RoomMessageProjection,
 ): { title: string; detail: string } {
   const digest = roomActivityDigest(activities, laneState === 'running');
   const orderedActivities = roomActivityFeedEntries(activities).map((entry) => entry.activity);
@@ -1074,6 +1087,28 @@ function roomLaneWorkSummary(
         ? `${participantName} 的任务未完成`
         : `${participantName} 的任务已停止`,
       detail: digest.detail,
+    };
+  }
+  if (outcomeMessage) {
+    const report = roomReportPreview(outcomeMessage.text);
+    const label = roomTerminalPostLabels[outcomeMessage.postKind ?? ''] ?? '已完成';
+    return {
+      title: report || `${participantName}${label}`,
+      detail: outcomeMessage.postKind === 'handoff'
+        ? `${label} · 交接对象与时间见本框详情`
+        : `${label} · 本轮面向你的结果已经记录`,
+    };
+  }
+  if (laneState === 'completed') {
+    const deliverySummary = roomPublicActivityText(
+      workspaceTask?.workspaceDelivery?.resultSummary ?? '',
+    );
+    const expectedOutput = roomPublicActivityText(workspaceTask?.expectedOutput ?? '');
+    return {
+      title: deliverySummary || `${participantName} 已完成本轮工作`,
+      detail: expectedOutput
+        ? `交付已返回 · ${expectedOutput}`
+        : '交付已返回，结果与验证记录可在本框中查看',
     };
   }
   const latest = orderedActivities.at(-1);
@@ -1193,6 +1228,13 @@ function roomLaneAuthoritativeTodo(
     && lineage.workItemId !== session.workItemId
   ) return undefined;
   return todo;
+}
+
+function roomTodoHasUnsettledItems(
+  todo: NonNullable<PrivateSessionProjection['todo']>,
+): boolean {
+  const { total, completed, abandoned } = todo.counts;
+  return total > completed + abandoned;
 }
 
 interface RoomActivityFeedEntry {

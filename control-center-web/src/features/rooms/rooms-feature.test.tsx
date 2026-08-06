@@ -761,7 +761,8 @@ describe('Rooms experience', () => {
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     const timeline = within(screen.getByLabelText('协作对话时间线'));
-    expect(await timeline.findByText('请直接在对话中说明希望怎样继续。')).toBeInTheDocument();
+    expect((await timeline.findAllByText('请直接在对话中说明希望怎样继续。')).length)
+      .toBeGreaterThanOrEqual(1);
     expect(timeline.getByText('先选择一个发布方式。')).toBeInTheDocument();
     const answeredCard = within(timeline.getByRole('region', { name: '需要回答：选择发布方式' }));
     expect(answeredCard.queryByText('已锁定')).not.toBeInTheDocument();
@@ -789,7 +790,8 @@ describe('Rooms experience', () => {
       </ControlTransportProvider>,
     );
 
-    expect(await within(screen.getByLabelText('协作对话时间线')).findByText('交付已经完成。')).toBeInTheDocument();
+    expect((await within(screen.getByLabelText('协作对话时间线'))
+      .findAllByText('交付已经完成。')).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('澄 → 澄·初')).toBeInTheDocument();
     expect(Array.from(container.querySelectorAll('.room-agent-lane__post-kind')).map(
       (element) => element.textContent,
@@ -846,7 +848,7 @@ describe('Rooms experience', () => {
     );
 
     expect(screen.getByText('先同步一条公开进展')).toBeInTheDocument();
-    expect(screen.getByText('最终任务汇报')).toBeInTheDocument();
+    expect(screen.getAllByText('最终任务汇报')).not.toHaveLength(0);
     expect(screen.getByText('旧的等待说明')).toBeInTheDocument();
     expect(screen.getByText('正在等待继续条件')).toBeInTheDocument();
     expect(Array.from(container.querySelectorAll('.room-agent-lane__post-kind')).map(
@@ -991,8 +993,8 @@ describe('Rooms experience', () => {
       />,
     );
 
-    expect(screen.getByText('唯一最终汇报人总结')).toBeInTheDocument();
-    expect(screen.getByText('参与者提交了可检查的工作结果')).toBeInTheDocument();
+    expect(screen.getAllByText('唯一最终汇报人总结')).not.toHaveLength(0);
+    expect(screen.getAllByText('参与者提交了可检查的工作结果')).not.toHaveLength(0);
     expect(screen.queryByText('较早的汇报人总结')).not.toBeInTheDocument();
     expect(screen.getByText('工作交付')).toBeInTheDocument();
     expect(screen.getByText('最终答复')).toBeInTheDocument();
@@ -2858,7 +2860,7 @@ describe('Rooms experience', () => {
     const onAbortTurn = vi.fn();
     const user = userEvent.setup();
 
-    render(<RoomTurn
+    const { container } = render(<RoomTurn
       turnId="turn-a"
       room={room}
       projection={projection}
@@ -2866,7 +2868,8 @@ describe('Rooms experience', () => {
       onAbortTurn={onAbortTurn}
     />);
 
-    const toolTitle = screen.getByText('正在搜索 …/project/rag_ime 中的 “协作记录”');
+    const tool = container.querySelector<HTMLElement>('.room-agent-activity--tool')!;
+    const toolTitle = within(tool).getByText('正在搜索 …/project/rag_ime 中的 “协作记录”');
     expect(toolTitle).toBeInTheDocument();
     const toolSummary = toolTitle.closest('summary')!;
     expect(toolSummary).toHaveTextContent('运行记录 · 搜索文本 · 进行中');
@@ -3026,7 +3029,7 @@ describe('Rooms experience', () => {
           path: '…/project/src/runtime.ts',
           offset: 80,
           limit: 24,
-          outputPreview: '80:export function settleRoom() {\\n81:  return receipt;\\n82:}',
+          outputPreview: '80:export function settleRoom() {\n81:  return receipt;\n82:}',
           outputTruncated: false,
         },
       },
@@ -3050,10 +3053,18 @@ describe('Rooms experience', () => {
 
     expect(within(row).getByLabelText('工具调用参数')).toHaveTextContent('80');
     expect(within(row).getByLabelText('工具调用参数')).toHaveTextContent('24');
-    expect(within(row).getByLabelText('工具返回片段')).toHaveTextContent('settleRoom');
+    const output = within(row).getByLabelText('工具返回片段');
+    expect(output).toHaveTextContent('settleRoom');
+    const codeLines = output.querySelectorAll<HTMLElement>('.agent-code-block__line');
+    expect(codeLines).toHaveLength(3);
+    expect(Array.from(codeLines).map((line) => line.dataset.lineNumber)).toEqual([
+      '80',
+      '81',
+      '82',
+    ]);
     await user.click(within(row).getByRole('button', { name: '复制代码' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(
-      '80:export function settleRoom() {\\n81:  return receipt;\\n82:}',
+      '80:export function settleRoom() {\n81:  return receipt;\n82:}',
     ));
   });
 
@@ -3600,7 +3611,7 @@ describe('Rooms experience', () => {
       <RoomTurn turnId="turn-a" room={room} projection={projection} personas={previewPersonas} />,
     );
 
-    expect(screen.getByText('最终交付')).toBeInTheDocument();
+    expect(screen.getAllByText('最终交付')).not.toHaveLength(0);
     expect(screen.getAllByText('已完成')).not.toHaveLength(0);
     expect(screen.queryByText('未完成')).not.toBeInTheDocument();
     expect(container.querySelector('.room-agent-lane')).toHaveAttribute('data-state', 'completed');
@@ -3714,7 +3725,9 @@ describe('Rooms experience', () => {
     />;
 
     const view = render(roomTurn());
-    expect(screen.getAllByText('澄 正在等待第 2 次尝试')).toHaveLength(2);
+    expect(view.container.querySelector('.room-agent-lane > summary'))
+      .toHaveTextContent('澄 正在等待第 2 次尝试');
+    expect(screen.getAllByText('澄 正在等待第 2 次尝试')).not.toHaveLength(0);
     expect(screen.getByText(/1s 后重试/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '停止本轮任务' }));
     expect(onAbortTurn).toHaveBeenCalledWith(rootTurnId);

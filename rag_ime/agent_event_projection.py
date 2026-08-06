@@ -1025,6 +1025,16 @@ _ROOM_TOOL_RESULT_KEYS = (
     "automatic",
 )
 
+_ROOM_TOOL_MULTILINE_RESULT_KEYS = frozenset(
+    {
+        "outputPreview",
+        "stdoutPreview",
+        "stderrPreview",
+        "diff",
+        "patch",
+    }
+)
+
 _ROOM_TOOL_FILE_MIME_TYPES = frozenset(
     {
         "text/html",
@@ -1724,18 +1734,22 @@ def _bounded_room_tool_value(
     value: object,
     *,
     depth: int = 0,
+    field_name: str = "",
 ) -> object:
     if depth >= 4:
         return "[TRUNCATED]"
     if isinstance(value, Mapping):
-        return {
-            bounded_text(key, maximum=120): _bounded_room_tool_value(
+        projected: dict[str, object] = {}
+        for key, child in list(value.items())[:32]:
+            public_key = bounded_text(key, maximum=120)
+            if not public_key:
+                continue
+            projected[public_key] = _bounded_room_tool_value(
                 child,
                 depth=depth + 1,
+                field_name=public_key,
             )
-            for key, child in list(value.items())[:32]
-            if bounded_text(key, maximum=120)
-        }
+        return projected
     if isinstance(value, list):
         return [
             _bounded_room_tool_value(item, depth=depth + 1)
@@ -1743,6 +1757,8 @@ def _bounded_room_tool_value(
         ]
     if value is None or isinstance(value, (bool, int, float)):
         return value
+    if field_name in _ROOM_TOOL_MULTILINE_RESULT_KEYS:
+        return public_tool_output_text(value, maximum=2_000)
     return bounded_text(value, maximum=2_000)
 
 

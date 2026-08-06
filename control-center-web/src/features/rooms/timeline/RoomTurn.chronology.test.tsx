@@ -76,6 +76,109 @@ describe('RoomTurn canonical conversation chronology', () => {
     expect(view.container.querySelectorAll('.agent-persona-avatar')).toHaveLength(1);
   });
 
+  it('turns a delivered work frame into a settled user-facing report even if its old activity still says running', () => {
+    const projection = liveProjection([
+      userEvent(1, 'opening', '请核对前端时间线'),
+      activityEvent(2, '正在处理前端时间线核对', 'participant-a', 'dispatch-a'),
+      postEvent(
+        3,
+        'delivered',
+        'work_result',
+        '前端时间线审计已交付：角色任务卡、Todo、工具详情和折叠状态均已核对，171 项前端回归通过。结果已交给澄·远整合。',
+        'participant-a',
+        'dispatch-a',
+      ),
+    ]);
+
+    const view = render(roomTurn(projection));
+    const lane = view.container.querySelector<HTMLDetailsElement>('.room-agent-lane')!;
+    const summary = lane.querySelector<HTMLElement>(':scope > summary')!;
+
+    expect(lane).toHaveAttribute('data-state', 'completed');
+    expect(lane).toHaveAttribute('data-motion', 'settled');
+    expect(lane).not.toHaveAttribute('data-live');
+    expect(lane).not.toHaveAttribute('open');
+    expect(summary).toHaveTextContent('已交付');
+    expect(summary).toHaveTextContent('前端时间线审计已交付');
+    expect(summary).toHaveTextContent('171 项前端回归通过');
+    expect(summary).not.toHaveTextContent('正在处理');
+    expect(summary).not.toHaveTextContent('正在等待下一条进展');
+
+    view.rerender(roomTurn(projection, {
+      kernelDispatchesById: {
+        'dispatch-a': { dispatchId: 'dispatch-a', taskId: 'task-delivery' } as never,
+      },
+      kernelTasksById: {
+        'task-delivery': {
+          taskId: 'task-delivery',
+          workspaceDelivery: {
+            schemaVersion: 'wisdom-weasel.room-workspace-delivery.v1',
+            ownerParticipantId: 'participant-a',
+            ownerSessionId: 'session-a',
+            workItemId: 'work-item-a',
+            taskId: 'task-delivery',
+            deliveryRevision: 'delivery:1',
+            baseCommit: 'base',
+            workspaceSnapshotSha256: 'a'.repeat(64),
+            patchSha256: 'b'.repeat(64),
+            deliveredAtMs: 3_000,
+            resultSummary: '已完成前端时间线审计并交回负责人',
+            manifestSha256: 'c'.repeat(64),
+            files: [{
+              path: 'control-center-web/src/features/rooms/timeline/RoomTurn.tsx',
+              additions: 18,
+              deletions: 4,
+              binary: false,
+              generated: false,
+              redacted: false,
+            }],
+            totals: {
+              fileCount: 1,
+              additions: 18,
+              deletions: 4,
+              binaryFiles: 0,
+              generatedFiles: 0,
+              redactedFiles: 0,
+            },
+            artifactRefs: [],
+            verificationCount: 1,
+            verifications: [{ label: 'Room 前端聚焦回归', result: 'pass', source: 'quality_gate' }],
+            verificationRefs: [],
+            residualRisks: ['尚待安装态复验'],
+          },
+        } as never,
+      },
+    }));
+    expect(lane).toHaveTextContent('RoomTurn.tsx');
+    expect(lane).toHaveTextContent('+18 −4');
+    expect(lane).toHaveTextContent('Room 前端聚焦回归');
+    expect(lane).toHaveTextContent('尚待安装态复验');
+  });
+
+  it('stops stale running language as soon as the latest Dispatch becomes terminal', () => {
+    const projection = liveProjection([
+      userEvent(1, 'opening', '请核对当前实现'),
+      activityEvent(2, '正在处理当前实现核对', 'participant-a', 'dispatch-a'),
+    ]);
+    projection.turnsById['root-a'] = {
+      ...projection.turnsById['root-a']!,
+      status: 'completed',
+      terminalDispatchIds: ['dispatch-a'],
+      terminalParticipantIds: ['participant-a'],
+    };
+
+    const view = render(roomTurn(projection));
+    const lane = view.container.querySelector<HTMLDetailsElement>('.room-agent-lane')!;
+    const summary = lane.querySelector<HTMLElement>(':scope > summary')!;
+
+    expect(lane).toHaveAttribute('data-state', 'completed');
+    expect(lane).toHaveAttribute('data-motion', 'settled');
+    expect(summary).toHaveTextContent('已完成');
+    expect(summary).toHaveTextContent('澄·今 已完成本轮工作');
+    expect(summary).not.toHaveTextContent('正在处理');
+    expect(summary).not.toHaveTextContent('正在等待');
+  });
+
   it('uses one role identity when activity is followed by the same role public reply', () => {
     const projection = liveProjection([
       userEvent(1, 'opening', '请完成这个入口'),
@@ -111,7 +214,7 @@ describe('RoomTurn canonical conversation chronology', () => {
     expect(view.container).toHaveTextContent('澄·今完成收尾');
   });
 
-  it('keeps a fresh recovery dispatch as a new card in the same Task lineage', () => {
+  it('keeps a fresh recovery dispatch in the same role Task card', () => {
     const sourceEvents = [
       userEvent(1, 'opening', '请完成并验证这个功能'),
       activityEvent(2, '开始读取现有实现', 'participant-a', 'dispatch-a', 'task-shared'),
@@ -136,14 +239,54 @@ describe('RoomTurn canonical conversation chronology', () => {
       },
     }));
     const lanes = view.container.querySelectorAll<HTMLElement>('.room-agent-lane');
-    expect(lanes).toHaveLength(2);
+    expect(lanes).toHaveLength(1);
     expect(lanes[0]).toHaveTextContent('开始读取现有实现');
-    expect(lanes[0]).not.toHaveTextContent('恢复后继续编辑文件');
-    expect(lanes[1]).toHaveTextContent('恢复后继续编辑文件');
-    expect(lanes[1]).toHaveTextContent('我已经恢复，继续完成验证');
+    expect(lanes[0]).toHaveTextContent('恢复后继续编辑文件');
+    expect(lanes[0]).toHaveTextContent('我已经恢复，继续完成验证');
     expect(lanes[0]!.querySelectorAll('.agent-persona-avatar')).toHaveLength(1);
-    expect(lanes[1]!.querySelectorAll('.agent-persona-avatar')).toHaveLength(1);
     expect(messageOrder(view.container)).toEqual(['opening', 'recovered']);
+  });
+
+  it.each([
+    ['blocked', '旧尝试暂时无法继续'],
+    ['work_result', '旧尝试已经交付'],
+  ])('keeps a new retry running after an old %s outcome in the same Task card', (
+    oldPostKind,
+    oldPostText,
+  ) => {
+    const projection = liveProjection([
+      userEvent(1, 'opening', '请完成并验证这个功能'),
+      activityEvent(2, '旧尝试开始执行', 'participant-a', 'dispatch-old', 'task-shared'),
+      postEvent(3, 'old-outcome', oldPostKind, oldPostText, 'participant-a', 'dispatch-old'),
+      activityEvent(4, '新一轮已经恢复并继续执行', 'participant-a', 'dispatch-new', 'task-shared'),
+    ]);
+    projection.turnsById['root-a'] = {
+      ...projection.turnsById['root-a']!,
+      status: 'running',
+      terminalDispatchIds: ['dispatch-old'],
+      terminalParticipantIds: [],
+      failedDispatchIds: oldPostKind === 'blocked' ? ['dispatch-old'] : [],
+      failedParticipantIds: [],
+    };
+
+    const view = render(roomTurn(projection, {
+      kernelDispatchesById: {
+        'dispatch-old': { dispatchId: 'dispatch-old', taskId: 'task-shared' } as never,
+        'dispatch-new': { dispatchId: 'dispatch-new', taskId: 'task-shared' } as never,
+      },
+    }));
+    const lanes = view.container.querySelectorAll<HTMLDetailsElement>('.room-agent-lane');
+    const summary = lanes[0]!.querySelector<HTMLElement>(':scope > summary')!;
+
+    expect(lanes).toHaveLength(1);
+    expect(lanes[0]).toHaveAttribute('data-state', 'running');
+    expect(summary).toHaveTextContent('执行中');
+    expect(summary).toHaveTextContent('新一轮已经恢复并继续执行');
+    expect(summary).not.toHaveTextContent(oldPostText);
+
+    lanes[0]!.open = true;
+    expect(lanes[0]).toHaveTextContent(oldPostText);
+    expect(lanes[0]).toHaveTextContent('新一轮已经恢复并继续执行');
   });
 
   it('stops live motion when a companion is waiting for the user', () => {
@@ -235,6 +378,10 @@ describe('RoomTurn canonical conversation chronology', () => {
     expectTextOrder(view.container, [
       '同一时刻并行完成并复核',
       '澄·今先完成状态模型',
+    ]);
+    const reviewerLane = [...view.container.querySelectorAll<HTMLElement>('.room-agent-lane')]
+      .find((lane) => lane.textContent?.includes('澄·初最后提交复核结果'))!;
+    expectTextOrder(reviewerLane.querySelector('.room-agent-lane__body')!, [
       '澄·初随后开始独立复核',
       '澄·初最后提交复核结果',
     ]);

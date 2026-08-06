@@ -2,8 +2,8 @@
 
 - Document class: sole tracked authority for current Room product behavior and acceptance status
 - Approved vision window: user decisions made on or after 2026-08-02
-- Contract revision: 2026-08-05
-- Acceptance state: targeted current-source regressions and the clean committed production/native Web plus signed App build pass at `bffbd5a2`; installation is blocked by this Codex filesystem sandbox, and no current-build foreground Room has yet completed peer work, integration, review, and final delivery, so production acceptance remains open
+- Contract revision: 2026-08-06
+- Acceptance state: current source now has focused regressions for persisted full-auto mode, one role/Task work frame across retry Dispatches, terminal user-facing delivery summaries, default-collapsed truthful motion, and multiline Tool output. The installed build remains older than these fixes. The latest foreground Room proved real parallel Dispatches but did not reach integration, independent review, and one final report; production acceptance remains open.
 - Status rule: source, test, installed, and foreground evidence are reported separately
 
 Older handoffs, ignored local notes under `docs/`, screenshots, prototypes, tests,
@@ -306,6 +306,17 @@ because a client timer pretends work happened.
 - Each active companion has one readable lane with avatar, current semantic
   state, current action, latest update time, elapsed time, completion summary,
   and a continuous chronological activity stream beneath it.
+- One public work frame represents one companion responsibility for one
+  authoritative Task/WorkItem. Recovery, retry, resume, and replacement
+  Dispatches for that same owner and work are attempts inside the same frame;
+  they do not create another avatar card. A later genuinely different Task may
+  create another chronological frame for the same companion.
+- Companion frames are collapsed by default. The header always remains useful:
+  while truly active it shows the current action, restrained live motion,
+  latest update, elapsed time, and Todo progress; when terminal it stops motion
+  and replaces all `正在处理` / `等待下一条进展` copy with the companion's
+  user-facing result, concrete files or artifacts, focused verification,
+  residual risk, and explicit handoff source/target when applicable.
 - Every bound companion resolves to her configured portrait in the conversation
   lane, Tasks graph, WorkItem detail, and partner progress view. An initial,
   generic route glyph, missing image, or another companion's portrait is only a
@@ -358,6 +369,11 @@ because a client timer pretends work happened.
   per-file Diff or created-file preview and `+N/-N`. Internal evidence handles,
   protocol fields, and a second `状态：已完成 / 结果摘要` box are audit-only and
   never substitute for these user-meaningful results.
+- A persisted multiline result must retain semantic line boundaries. If a read
+  reports a 260-line requested/returned window, the bounded preview renders its
+  actual multiple lines with the correct starting line and a truthful
+  truncation notice; collapsing those lines into one horizontal row while still
+  claiming `260 行` is an acceptance failure.
 - A long-running edit has its own truthful active treatment: the file and
   current edit stage remain visible, real progress events update the row, and a
   restrained edit indicator continues only while that Tool call is active.
@@ -379,6 +395,11 @@ because a client timer pretends work happened.
 - The active companion's Todo summary is always visible in her lane: completed,
   active, waiting, blocked, and abandoned counts plus the current item. Expanding
   it reveals the durable list without creating a second checklist.
+- Visibility follows Todo convergence, not the lane label. Any pending,
+  in-progress, or blocked item remains anchored at the card bottom after a
+  failure, stop, retry, or terminal delivery so recovery checkpoints are not
+  lost. The Todo block disappears only when every item is completed or
+  abandoned; a finished checklist must not keep occupying the conversation.
 - Todo is a dedicated live region anchored at the bottom of the companion lane,
   after the chronological activity stream. It is not rendered as a generic Tool
   row or a result panel. The default view shows every Todo title with its real
@@ -548,6 +569,22 @@ because a client timer pretends work happened.
   contribution as distinct responsibilities. Reviewer participation alone does
   not satisfy the two-WorkItem implementation requirement.
 
+### Clarification acceptance prompt discipline
+
+- The foreground clarification test starts from an ordinary product request
+  with at least one real user-owned choice, but does not embed the desired
+  answers, role assignments, decomposition, tools, review policy, or acceptance
+  procedure. A suitable general example is `我想给这个项目加一个能批量导入数据的功能`:
+  the existing product surface determines what is already knowable, while the
+  entry surface, accepted data form, and failure/result behavior may require
+  one-at-a-time choices.
+- A fully specified audit prompt is valid only for the direct-execution branch.
+  It cannot be cited as evidence that option-first clarification, confirmed
+  answers, the natural understanding summary, or the typed start action works.
+- This is an acceptance-fixture discipline, not a phrase-specific route. The
+  runtime must decide material ambiguity from current facts and the selected
+  stage Skill, never from matching `批量导入`, `TUI`, or another canned request.
+
 ## Public language and persona
 
 Companions use natural language understandable to ordinary users. Public copy
@@ -593,6 +630,31 @@ Current product scope is voice input only. Room companions do not produce TTS.
   response, Session, participant, WorkItem, baseline, and revision that produced
   them.
 
+## Local storage and external-volume boundary
+
+- High-growth durable Room data is configurable and should use the user's
+  external SSD when it is present: Agent/Room data, SQLite, debug context,
+  models, Knowledge runtime/data, managed Pi runtime, worktree ledgers, and
+  bounded logs. The app bundle and the minimal launch integration may remain on
+  the system volume.
+- Migration is controlled and reversible. Stop all owners first; make a
+  consistent SQLite backup and pass `PRAGMA quick_check`; copy or rebuild each
+  supported owner at the configured external root; update every producer and
+  consumer to the same root; restart; then verify health, Room/Session replay,
+  Pi canary, Knowledge CRUD, model health, and real foreground input. Never move
+  a live SQLite/WAL pair or a physical Git worktree behind its permanent ledger.
+- The product must not solve this with unsupported partial symlinks. Managed Pi
+  and Knowledge reject symlinked roots, worktree metadata contains absolute
+  bindings, and a split desktop-bridge/socket root would create two runtimes.
+  Until every launcher supports the same external root and log directory, keep
+  the old system directory as a recoverable fallback and report the remaining
+  split-owner gap explicitly.
+- External capacity alone is not the whole durability contract. Before treating
+  personal conversation, Knowledge, or SQLite data as permanently migrated,
+  ownership and encryption of the target APFS volume must be verified or the
+  user must explicitly accept that residual risk. Rebuildable models and caches
+  may move independently.
+
 ## Read-only source references, not product owners
 
 External and adjacent sources may supply interaction and implementation
@@ -623,17 +685,51 @@ or acceptance evidence above.
 
 ## Implementation and acceptance ledger
 
+### 2026-08-06 current checkpoint
+
+- Commit `8f9221a6048bbb3f46d543dc5e157741f842eb2e` persists the Room full-auto
+  execution policy through creation, SQLite reload, migration `0146`, and
+  participant workspace recovery. Its focused source regressions passed before
+  installation.
+- Foreground Room `room:dee4e68f-c011-4958-b1b5-bf17f1549320` proved two
+  independently directed worker Dispatches and one returned frontend audit, but
+  backend recovery did not converge to Facilitator integration, independent
+  review, and one final report. It is evidence of real parallel release and a
+  failed closure, not a production pass.
+- That foreground run exposed deterministic presentation defects now covered by
+  source regressions: retry Dispatches for one companion/Task created duplicate
+  avatar cards; an older attempt could overwrite a newer retry's card state; a
+  terminal delivery still inherited old running copy and stale motion; an
+  unfinished Todo disappeared after failure or stop; and persisted multiline
+  Tool output lost its newline structure. The current source passes the 65-test
+  focused lane/chronology set, the complete Room frontend set (22 files,
+  286/286), TypeScript, the production Web build, and the 124-test event
+  projection/Kernel service set. Import-boundary, route-ownership, and diff
+  checks also pass; the Python run retains pre-existing unclosed SQLite/file
+  `ResourceWarning`s that are not treated as assertion failures.
+  The first unconstrained full Web run reached 992/994; both non-Room failures
+  passed together on immediate isolated rerun (18/18), and the complete suite
+  then passed 104 files and 994/994 tests with four workers. These are not
+  installed foreground evidence yet.
+- The system volume reached `No space left on device` during the run. Four old
+  inactive debug-context directories were moved intact to the external SSD and
+  `privacy.debugContextDirectory` now targets the external debug-context root,
+  recovering approximately 2.5 GiB. A complete app-support migration remains
+  open because desktop bridge/log roots and physical worktree/SQLite ownership
+  must be made coherent before a controlled stop, copy, restart, and rollback
+  verification.
+
 | Area | Source/test state | Installed foreground state |
 | --- | --- | --- |
-| opening Facilitator, conditional clarification, crash-safe chronological answers and typed start | implemented; current complete Web suite 976/976, Room core 104/104, and focused backend/runtime regressions passed; prior command receipt and injected-crash gates also passed | open |
+| opening Facilitator, conditional clarification, crash-safe chronological answers and typed start | implemented; current Room frontend 286/286, TypeScript, production build, focused backend/runtime regressions, and the complete Web suite (104 files, 994/994 with four workers) passed; the preceding unconstrained run's two non-Room timing failures also passed together on isolated rerun 18/18 | open |
 | fresh execute Dispatch, peer work, nested delegation, integration, review, one report | source now exposes the parallel execution policy to the fresh Facilitator Dispatch and rejects a parallel Facilitator final before at least one eligible peer has returned real execute work; review policy can be durably raised at definition and cannot be downgraded; focused gates passed | open; a fresh installed Room must still prove the positive peer/integration/review/final path |
 | stage Skills and capability receipts | implemented; Skill 25/25 and Pi runtime 70/70 passed | open |
 | permanent workspace ledger, same-baseline isolation, integration-before-cleanup, red retention | source now permits an unrelated dirty target by pinning `HEAD`, storing the target snapshot/status/path receipt permanently, and creating the child from that commit; integration rejects any changed-path overlap before target mutation while non-overlapping delivery preserves the user's dirt. The complete 42-test workspace coordinator module, 7-test ledger module, compilation, and diff checks passed | open; a fresh Room must still prove two simultaneous isolated writers, integration, cleanup, and permanent ledger readback |
-| continuous conversation activity and lower-density Tasks projection | source now reorders mutable activity by its latest authoritative timestamp, derives concrete role copy from the owned task and expected delivery, keeps Todo as the final sticky block, removes the redundant answered-question notice, makes the whole companion lane foldable, and gives the graph compact status markers, concrete current/next action, dependency labels, and truthful active-edge motion; focused Room tests, the complete 976-test Web suite, TypeScript, and the prior production Web build passed | prior foreground failure remains authoritative until the coherent build is installed and rechecked |
+| continuous conversation activity and lower-density Tasks projection | source now reorders mutable activity by its latest authoritative timestamp, derives concrete role copy from the owned task and expected delivery, keeps any unfinished Todo as the final sticky block, removes the redundant answered-question notice, makes the whole companion lane foldable, and gives the graph compact status markers, concrete current/next action, dependency labels, and truthful active-edge motion; Room frontend 286/286, complete Web 994/994, TypeScript, and the current production Web build passed | prior foreground failure remains authoritative until the coherent build is installed and rechecked |
 | canonical `read` / `edit` / `write` / `bash` surface, streaming and personalized result views | implemented in source: public catalog projection exposes the four basic coding Tools once, historical aliases upcast into them, Agent and Room share the artifact/Diff renderer, active mutations animate without publishing a half-built Diff, and completed bash rows preserve bounded stdout/stderr plus exit status. Structured read/search payloads now survive the Room event boundary as numbered source windows and matched file/line/snippet rows instead of generic result cards; focused Python projection, TypeScript, and 75 Agent/Room activity tests passed | open; all four tools must be exercised in one coherent foreground build |
 | history loading, cached transcript continuity, bounded initial page and older-history loading | explicit loading/empty/failed projection plus newest 80-event and newest 100-complete-turn windows, stable `beforeEventId` / `beforeMessageId` older-page merge, and total-count reconciliation are implemented; 138 backend/policy/route tests, focused Web paging/loading checks, the complete 974-test Web suite, TypeScript, and the prior local no-false-welcome checks passed | source Web shell passed; coherent installed foreground timing open |
 | risk-based full-auto approval | scoped hash-bound text write/edit/patch now bypass Luna by deterministic policy; focused policy and Agent-service regression passed while R3, sensitive, and out-of-scope cases remain model-routed | fresh full-auto Room foreground open |
-| Session Todo, per-owner result/diff, subagent grouping | implemented on one authoritative Session Todo: every item may persist a current checkpoint, categorized file/Diff/artifact/test reference, and authoritative update time; migration 0145 preserves prior event history while admitting checkpoint events; writable and read-only Room roles can maintain their own Todo; Agent and Room task surfaces project the same fields at different density. The affected 97-test backend/runtime set, focused gateway checks, complete 976-test Web suite, TypeScript, and generated-contract reproduction passed | open; a fresh installed multi-companion Room must show distinct live Todo and attributed results for every real owner |
+| Session Todo, per-owner result/diff, subagent grouping | implemented on one authoritative Session Todo: every item may persist a current checkpoint, categorized file/Diff/artifact/test reference, and authoritative update time; migration 0145 preserves prior event history while admitting checkpoint events; writable and read-only Room roles can maintain their own Todo; Agent and Room task surfaces project the same fields at different density. An unfinished Todo now survives failed, stopped, and terminal lanes at the card bottom and disappears only after every item completes or is abandoned. Room frontend 286/286, TypeScript, production build, and the affected backend/runtime checks passed | open; a fresh installed multi-companion Room must show distinct live Todo and attributed results for every real owner |
 | real Provider/model/token/cache provenance on Tool-only Room replies | implemented through one post-bound `response_evidence` path shared with the existing reply footer; the settled lookup is fenced by exact Session, runtime turn, `room_commit` Tool call, applied receipt, committed Dispatch, and resulting Post; terminal Room replay admits only that matching provenance; focused v1, v2, projection, real SQLite kernel, and Web regressions passed; incomplete evidence renders no misleading placeholder | open; corrected installed Room must show the real fields on its resulting reply |
 | day-scale full-auto recovery, durable checkpoints, automatic repair/retry/reassignment/model fallback | partially implemented; durable Dispatch attempts, Todo, workspace ledger, reconnect state, direct failed-Tool retry lineage, and Provider retry projection exist and passed source regression; restart-resume plus injected native recovery acceptance remain open | open |
 | historical continuation recovery and Report-stat filtering | implemented; historical upcast 7/7 and settlement regression passed | open |
@@ -927,8 +1023,9 @@ Use one coherent installed build and one fresh Room in the foreground
 
 1. Record installed app version/build/commit/hash/signature and matching
    App/Web/Python/runtime/managed-Pi provenance.
-2. Submit a natural bounded request such as `我要完成 TUI`; do not include
-   protocol instructions or canned answers.
+2. Submit a natural bounded request with a real material choice, such as
+   `我想给这个项目加一个能批量导入数据的功能`; do not include protocol
+   instructions, canned answers, role assignments, or the intended task split.
 3. If real ambiguity exists, answer the inline option-first questions and click
    `开始行动` only after the natural understanding summary. Also preserve the direct path for a
    fully specified request.

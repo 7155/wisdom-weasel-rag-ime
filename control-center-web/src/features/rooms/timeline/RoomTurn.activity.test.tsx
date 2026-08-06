@@ -284,7 +284,7 @@ describe('RoomTurn public activity detail', () => {
     expect(within(lane).queryByRole('region', { name: '澄·今 的 Todo' })).not.toBeInTheDocument();
     expect(lane.querySelector('summary')).not.toHaveTextContent('Todo');
 
-    session.state = 'completed';
+    session.state = 'failed';
     session.todo = {
       ...session.todo!,
       roomLineage: {
@@ -294,11 +294,85 @@ describe('RoomTurn public activity detail', () => {
     };
     projection.turnsById['turn-a'] = {
       ...projection.turnsById['turn-a']!,
-      status: 'completed',
-      terminalDispatchIds: ['dispatch-a'],
-      terminalParticipantIds: ['participant-a'],
+      status: 'failed',
+      failedDispatchIds: ['dispatch-a'],
+      failedParticipantIds: ['participant-a'],
       updatedAtMs: 4_100,
     };
+    view.rerender(roomTurn(
+      projection,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      sessionsById,
+    ));
+    expect(within(lane).getByRole('region', { name: '澄·今 的 Todo' })).toBeInTheDocument();
+    expect(lane.querySelector('summary')).toHaveTextContent('Todo 3/4');
+
+    session.state = 'cancelled';
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      status: 'aborted',
+      failedDispatchIds: [],
+      failedParticipantIds: [],
+      abortedDispatchIds: ['dispatch-a'],
+      abortedParticipantIds: ['participant-a'],
+      updatedAtMs: 4_200,
+    };
+    view.rerender(roomTurn(
+      projection,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      sessionsById,
+    ));
+    expect(within(lane).getByRole('region', { name: '澄·今 的 Todo' })).toBeInTheDocument();
+
+    session.state = 'completed';
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      status: 'completed',
+      abortedDispatchIds: [],
+      abortedParticipantIds: [],
+      terminalDispatchIds: ['dispatch-a'],
+      terminalParticipantIds: ['participant-a'],
+      updatedAtMs: 4_300,
+    };
+    view.rerender(roomTurn(
+      projection,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      sessionsById,
+    ));
+    expect(within(lane).getByRole('region', { name: '澄·今 的 Todo' })).toBeInTheDocument();
+
+    session.todo = {
+      ...session.todo!,
+      revision: 5,
+      updatedAtMs: 4_400,
+      phases: [{
+        name: '实现与验证',
+        tasks: [
+          { content: '定位 TUI 入口', status: 'completed' },
+          { content: '实现交互闭环', status: 'completed' },
+          { content: '运行真实流程验收', status: 'completed' },
+          { content: '整理交付结果', status: 'completed' },
+        ],
+      }],
+      counts: {
+        total: 4,
+        pending: 0,
+        inProgress: 0,
+        blocked: 0,
+        completed: 4,
+        abandoned: 0,
+      },
+    };
+    session.updatedAtMs = 4_400;
     view.rerender(roomTurn(
       projection,
       {},
@@ -477,7 +551,7 @@ describe('RoomTurn public activity detail', () => {
     expect(tool).not.toHaveTextContent('sha256');
   });
 
-  it('lets the whole role activity collapse while keeping every tool independently clickable', () => {
+  it('keeps the whole role activity collapsed by default while every tool remains independently clickable', () => {
     vi.useFakeTimers();
     vi.setSystemTime(4_200);
     const projection = roomProjection();
@@ -490,18 +564,22 @@ describe('RoomTurn public activity detail', () => {
     const laneSummary = lane.querySelector<HTMLElement>(':scope > summary')!;
 
     expect(lane.tagName).toBe('DETAILS');
-    expect(lane).toHaveAttribute('open');
-    expect(laneSummary).toHaveAttribute('aria-label', '收起澄·今的实时进展');
+    expect(lane).not.toHaveAttribute('open');
+    expect(laneSummary).toHaveAttribute('aria-label', '展开澄·今的实时进展');
     expect(lane.querySelector('.room-agent-lane__live-indicator')).toHaveAttribute(
       'data-active',
       'true',
     );
 
     fireEvent.click(laneSummary);
+    expect(lane).toHaveAttribute('open');
+    expect(laneSummary).toHaveAttribute('aria-label', '收起澄·今的实时进展');
+
+    fireEvent.click(lane.querySelector('.room-agent-lane__disclosure')!);
     expect(lane).not.toHaveAttribute('open');
     expect(laneSummary).toHaveAttribute('aria-label', '展开澄·今的实时进展');
 
-    fireEvent.click(lane.querySelector('.room-agent-lane__disclosure')!);
+    fireEvent.click(laneSummary);
     expect(lane).toHaveAttribute('open');
     expect(laneSummary).toHaveAttribute('aria-label', '收起澄·今的实时进展');
 
@@ -789,6 +867,93 @@ describe('RoomTurn public activity detail', () => {
       expect.arrayContaining([expect.stringContaining('const ready = true;')]),
     );
     expect(diff.querySelector('tr[data-kind="remove"]')).toHaveTextContent('const oldValue = true;');
+  });
+
+  it('streams a Room write operation and renders its completed file Diff', () => {
+    const projection = roomProjection();
+    projection.activitiesById['write-live'] = {
+      id: 'write-live',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'running',
+      summary: '写入文件',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'tool_started',
+        toolName: 'write',
+        toolCallId: 'write-live',
+        arguments: { path: 'src/new-report.ts' },
+        result: {
+          fileName: 'new-report.ts',
+          path: 'src/new-report.ts',
+          lineCount: 2,
+          additions: 2,
+          deletions: 0,
+        },
+      },
+      createdAtMs: 3_700,
+      updatedAtMs: 3_700,
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: [...projection.turnsById['turn-a']!.activityIds, 'write-live'],
+      updatedAtMs: 3_700,
+    };
+
+    const view = render(roomTurn(projection));
+    const write = [...view.container.querySelectorAll<HTMLDetailsElement>(
+      '.room-agent-activity--tool',
+    )].find((item) => item.dataset.toolKind === 'write')!;
+
+    expect(write).toHaveAttribute('data-state', 'running');
+    expect(write).toHaveAttribute('data-edit-active', 'true');
+    expect(write).toHaveAttribute('open');
+    expect(write.querySelector('summary')).toHaveTextContent('正在写入 new-report.ts');
+    expect(within(write).getByRole('status', { name: '正在接收文件编辑进度' }))
+      .toBeInTheDocument();
+    expect(within(write).getByRole('status', { name: '正在写入 new-report.ts' }))
+      .toHaveTextContent('正在保存并核对产物，完成后会展示实际文件与 Diff。');
+
+    projection.activitiesById['write-live'] = {
+      ...projection.activitiesById['write-live']!,
+      status: 'completed',
+      payload: {
+        ...projection.activitiesById['write-live']!.payload,
+        sourceEventType: 'tool_finished',
+        agentBlocks: [{
+          schemaVersion: 'rag-ime.agent-block.v1',
+          id: 'tool-artifact:diff:new-report',
+          type: 'diff',
+          status: 'completed',
+          presentationKind: 'diff',
+          data: {
+            fileName: 'new-report.ts',
+            diff: [
+              '@@ -0,0 +1,2 @@',
+              '+export const ready = true;',
+              '+export const source = \'room\';',
+            ].join('\n'),
+            additions: 2,
+            deletions: 0,
+          },
+        }],
+      },
+      updatedAtMs: 3_800,
+    };
+    view.rerender(roomTurn(projection));
+
+    expect(write).toHaveAttribute('data-state', 'completed');
+    expect(write).not.toHaveAttribute('data-edit-active');
+    expect(write).not.toHaveAttribute('open');
+    expect(write.querySelector('summary')).toHaveTextContent('已写入 new-report.ts');
+    fireEvent.click(write.querySelector('summary')!);
+    const diff = within(write).getByLabelText('文件变更');
+    expect(diff).toHaveTextContent('new-report.ts');
+    expect(diff.querySelectorAll('tr[data-kind="add"]')).toHaveLength(2);
+    expect(diff).toHaveTextContent("export const source = 'room';");
   });
 
   it('keeps running read and bash tools open with concrete live summaries', () => {
