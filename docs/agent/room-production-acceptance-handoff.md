@@ -1,10 +1,10 @@
 # Room production acceptance handoff
 
-> as_of: 2026-08-06 20:20 CST
-> status: the equal-peer follow-up is committed and cleanly installed at `570b5506`; the installer component audit is green and a fresh creation modal visibly shows four equal-capability invited companions. The first post-install task exposed two presentation defects: the composer only said `协作进行中`, and a private alignment brief containing `questionOptions` was falsely rendered as a failed question. The current source shows short attributed work such as `澄·远：梳理需求`, hides the private brief, and has passed the focused `114/114`, complete frontend `1004/1004`, and TypeScript checks. One scoped commit, clean reinstall, and a valid natural-user-language GUI run remain.
+> as_of: 2026-08-06 20:45 CST
+> status: `f6e41175` is committed and cleanly installed; the installed-component audit is `ok: true` at full commit `f6e41175c743da7569f96c8af5a684690d5901fe`. A fresh four-person full-auto Room created entirely from an ordinary user request visibly showed `澄·远：梳理需求`, produced a Chinese user-facing four-feature vertical plan, and waited for `开始行动`. That run exposed one remaining projection defect: the expanded work summary reached `已更新 9 次` while the collapsed card kept `正在继续任务`, displayed task-check recovery copy as `要交付`, and later said `正在等待` although the turn was still processing. The current five-file source follow-up fixes those projections and its red-capable focused tests plus TypeScript now pass. A scoped commit, clean reinstall, and another fresh natural-language GUI run remain.
 > canonical worktree: `/Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix`
 > branch: `codex/room-production-acceptance-final`
-> current HEAD: `570b55068a762893c4278e2d32c5e72daf72dcba`
+> current HEAD: `f6e41175c743da7569f96c8af5a684690d5901fe`
 
 ## 0. Mandatory takeover gate: do not start by running commands
 
@@ -21,11 +21,12 @@ Then wait for the user to confirm or correct that understanding. This is a hando
 
 ### Current problems at the handoff moment
 
-- The equal-peer follow-up is commit `570b5506`, installed from a clean detached worktree. Exact component audit reports every required component current and provenance-aligned at that commit.
+- The latest installed Room source is commit `f6e41175`, installed from a clean detached worktree. Exact component audit reports every required component current and provenance-aligned at full commit `f6e41175c743da7569f96c8af5a684690d5901fe`.
 - A fresh creation modal at that installed commit shows all four companions as `已邀请` and says they have equal capability; the earlier permanent `主持/实现/调研/最终复核` presentation defect is fixed in the installed GUI.
-- The first natural-flow attempt after creation was invalid as acceptance evidence because the tester sent internal workflow instructions that an ordinary user would never say. Do not reuse it.
-- That attempt nevertheless exposed two real UI projection defects: the compact composer status named no companion or work, and a long private alignment objective containing `questionOptions` was mistaken for a question-schema failure. The current uncommitted six-file follow-up hides internal orchestration briefs and shows short attributed work labels.
-- Evidence for the new follow-up is green: focused frontend `114/114`, complete frontend `104 files / 1004/1004`, TypeScript, and `git diff --check`. Backend Room code did not change after its existing complete `561/561` pass. A scoped commit, clean reinstall, and a new natural-language GUI Room are still required.
+- The earlier internal-instruction GUI attempt remains invalid acceptance evidence and must never be reused.
+- The valid natural-language run used only this ordinary product request: `我想把这个小客户目录做得更好用：可以批量导入 CSV 客户并先看看每一行有没有问题；能按邮箱后缀筛选；发现重复客户时能先对比、合并，合并错了还能撤销；还能查看每位客户是谁在什么时候改过什么。`
+- That run verified the compact attributed state and natural Chinese vertical plan, but exposed a new card-projection defect: the expanded summary updated nine times while the collapsed header stayed generic, an internal recovery sentence appeared as a promised deliverable, and stale timing copy said the companion was waiting although the turn remained active. The current uncommitted five-file follow-up projects the live summary/update count into the collapsed header, suppresses recovery copy from deliverables, and distinguishes active silence from a real wait.
+- Evidence for this newest follow-up is green: its red-capable focused RoomTurn/Room feature tests and TypeScript pass. Complete frontend regression, scoped commit, clean reinstall, and a repeat natural-language GUI Room are still required. Backend Room code did not change after its existing complete `561/561` pass.
 - No fresh full-auto GUI Room has completed the required end-to-end path after this follow-up. The installed/Web UI must still prove the compact composer status, user-language planning, governed requirement/execution document, clarification, real parallel Tasks, peer review without self-review, recovery, integration, and a single final delivery.
 - Several user-reported requirements remain GUI-only acceptance items. The next owner must use the ledger in section 4.1 and may only call a row fixed after its stated evidence boundary passes.
 - Existing screenshots and old Rooms still contain known failures such as stale `执行中`, duplicate/overlapping cards, weak tool results, meaningless citation placeholders, missing delivery reports, or fake visual parallelism. They are reproduction evidence, not proof of the current source.
@@ -149,6 +150,7 @@ The labels below are intentionally strict:
 | Answer or Start is accepted but the user sees no immediate feedback, or a floating status box covers content | **code + complete frontend regression passed; fresh GUI required** | Composer size stays unchanged; a compact spinner/status appears to the right of `@`, says the answer was received, and becomes “有新进展 · 回到最新” when the reader is above the tail. No standalone status card covers validation or conversation content. |
 | Compact status only says `协作进行中`, so the user still cannot tell who is doing what | **code + focused regression passed; fresh GUI required** | The same toolbar area shows a short attributed action such as `澄·远：梳理需求`; concurrent work lists the active companions and compact task labels without enlarging the composer. |
 | A private alignment brief containing `questionOptions` is shown as “选项没有准备完整” even though no question failed | **code + focused regression passed; fresh GUI required** | Internal orchestration briefs never become public objectives or false failures; the card falls back to a natural phase summary while real schema failures retain the recovery message. |
+| Expanded work summary says `已更新 9 次` while the collapsed card stays on `正在继续任务`, shows task-check recovery copy as `要交付`, or calls active silence `正在等待` | **red-capable regression reproduced and fixed; reinstall/fresh GUI required** | The collapsed card refreshes to the current user-facing phase and update count, recovery guidance is not a deliverable, and an active turn with no new public event remains `仍在处理` unless a real wait exists. |
 | Option selection submits immediately or free text appears before options | **code + regression passed; fresh GUI required** | Options show explanatory descriptions first; selection requires explicit confirmation; only “其他” opens free input. |
 | Mechanical copy such as `需求对齐`, `已锁定`, `回答保留在下一条用户消息中`, protocol IDs, or JSON | **public-copy requirement recorded; fresh GUI required** | The companion speaks naturally from the user's perspective and exposes no internal protocol vocabulary. |
 | Plan mixes Chinese with raw English schemas/camelCase or speaks from the system's perspective | **code + capability/Skill/frontend regression passed; fresh GUI required** | Main plan uses the user's language and describes what the user can do and see. Internal type/field inventories and unverified entry points stay in the WorkDocument or expandable technical details. |
@@ -174,14 +176,13 @@ This table is an acceptance ledger, not a claim that every recorded item is alre
 
 ## 5. Exact intended residual-fix commit scope
 
-The equal-peer follow-up is already commit `570b5506`. Stage only these six latest residual-fix files now:
+The compact attributed-status/private-brief follow-up is already commit `f6e41175`. Stage only these five newest projection-fix files now:
 
-1. `control-center-web/src/features/rooms/index.tsx`
-2. `control-center-web/src/features/rooms/rooms-feature.test.tsx`
-3. `control-center-web/src/features/rooms/timeline/room-tool-presentation.ts`
-4. `control-center-web/src/features/rooms/timeline/room-tool-presentation.test.ts`
-5. `docs/agent/room-facilitated-workflow-requirements.md`
-6. `docs/agent/room-production-acceptance-handoff.md`
+1. `control-center-web/src/features/rooms/rooms-feature.test.tsx`
+2. `control-center-web/src/features/rooms/timeline/RoomTurn.tsx`
+3. `control-center-web/src/features/rooms/timeline/RoomTurn.activity.test.tsx`
+4. `docs/agent/room-facilitated-workflow-requirements.md`
+5. `docs/agent/room-production-acceptance-handoff.md`
 
 Do not stage, reset, discard, clean, or overwrite these unrelated user/other-agent changes:
 
@@ -208,8 +209,8 @@ tests/test_tui.py
 1. Read this file, the canonical requirements, and the worktree `AGENTS.md`/README before acting.
 2. Recheck `git status --short` and `git diff --check`.
 3. Run complete proportional frontend and backend Room regression plus `git diff --check`.
-4. Stage the six explicit files above with path-qualified `git add`. Both authority documents are tracked; do not force-add the whole ignored docs tree. Verify `git diff --cached --name-only` is exactly that list and run `git diff --cached --check`.
-5. Commit the scoped follow-up. Suggested message: `fix(room): attribute compact live work`.
+4. Stage the five explicit files above with path-qualified `git add`. Both authority documents are tracked; do not force-add the whole ignored docs tree. Verify `git diff --cached --name-only` is exactly that list and run `git diff --cached --check`.
+5. Commit the scoped follow-up. Suggested message: `fix(room): refresh collapsed live progress`.
 6. Create a clean detached worktree at that new commit. Do not install from this dirty implementation worktree.
 7. From the clean worktree, install the current product stack into `RagImeControl.app`. The standard installer is `scripts/install_product_stack.sh`; Room acceptance needs the managed Pi runtime. Use the current Pi source at `/Volumes/undo 4t/git/learnA/pi` without modifying or staging its dirty work.
 8. Run `scripts/check_installed_product_components.py --require-current` and record exact component evidence.

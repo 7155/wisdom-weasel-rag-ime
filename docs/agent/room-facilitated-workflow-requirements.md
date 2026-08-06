@@ -413,6 +413,17 @@ because a client timer pretends work happened.
   is doing now, why that action matters, what she will do next, and how much of
   her Todo is complete. `执行中`, `当前任务推进有新进展`, a Tool family such as
   `bash`, or a step count is not a sufficient current-action summary.
+- A coalesced work summary must refresh the collapsed role header as well as
+  the expanded activity row. The header names the current user-facing phase
+  and, when the same summary has changed repeatedly, exposes the authoritative
+  update count; it must not keep an older `正在继续任务` headline while the
+  expanded row says `已更新 9 次`.
+- While a turn remains active, an old public timestamp means only that no new
+  public-safe event has arrived. The header says the companion is still
+  processing and that no new public progress is available; it must not claim
+  the companion is `正在等待` unless an authoritative wait or user decision is
+  actually present. Internal task-check recovery copy is never presented as a
+  promised deliverable.
 - Activity is one vertical stream, not a stack of nested cards and columns.
   Tool activity, public-safe work summaries, results, waits, handoffs, and
   workspace transitions share the same time order.

@@ -1140,7 +1140,7 @@ function roomLaneWorkSummary(
     const deliverySummary = roomPublicActivityText(
       workspaceTask?.workspaceDelivery?.resultSummary ?? '',
     );
-    const expectedOutput = roomPublicActivityText(workspaceTask?.expectedOutput ?? '');
+    const expectedOutput = roomExpectedOutputText(workspaceTask?.expectedOutput ?? '');
     return {
       title: deliverySummary || `${participantName} 已完成本轮工作`,
       detail: expectedOutput
@@ -1171,10 +1171,21 @@ function roomLaneWorkSummary(
   if (
     laneState === 'running'
     && focus
+    && textValue(focus.payload.sourceEventType) === 'reasoning_summary'
+  ) {
+    const expectedOutput = roomExpectedOutputText(workspaceTask?.expectedOutput ?? '');
+    return {
+      title: roomReasoningSummary(focus, workspaceTask),
+      detail: `${digest.detail} · 工作摘要已更新 ${roomReasoningUpdateCount(focus)} 次${expectedOutput ? ` · 要交付：${expectedOutput}` : ''}`,
+    };
+  }
+  if (
+    laneState === 'running'
+    && focus
     && roomActivityDisplayStatus(focus) === 'completed'
   ) {
     const objective = roomPublicActivityText(workspaceTask?.objective ?? '');
-    const expectedOutput = roomPublicActivityText(workspaceTask?.expectedOutput ?? '');
+    const expectedOutput = roomExpectedOutputText(workspaceTask?.expectedOutput ?? '');
     return {
       title: objective
         ? `正在处理「${objective}」`
@@ -1187,7 +1198,7 @@ function roomLaneWorkSummary(
     const title = sourceEventType === 'reasoning_summary'
       ? roomReasoningSummary(focus, workspaceTask)
       : describeRoomActivity(focus, participantName).title;
-    const expectedOutput = roomPublicActivityText(workspaceTask?.expectedOutput ?? '');
+    const expectedOutput = roomExpectedOutputText(workspaceTask?.expectedOutput ?? '');
     return {
       title,
       detail: `${digest.detail} · ${digest.title}${expectedOutput ? ` · 要交付：${expectedOutput}` : ''}`,
@@ -1203,6 +1214,14 @@ function roomLaneWorkSummary(
           ? `${participantName} 正在等待后续`
           : `${participantName} 正在准备任务`;
   return { title, detail: '尚未收到公开工作进度' };
+}
+
+function roomExpectedOutputText(value: string): string {
+  const text = roomPublicActivityText(value);
+  if (/^(?:这一步没有通过任务检查|提交的完成条件与当前任务不一致|还缺少能证明任务完成的验证结果|这个问题的选项没有准备完整)/u.test(text)) {
+    return '';
+  }
+  return text;
 }
 
 function roomLaneSession(
@@ -1727,7 +1746,13 @@ function roomReasoningSummary(
       general: `正在继续「${objective}」`,
     }[summaryKind];
   }
-  return roomPublicWorkSummaries[summaryKind];
+  return {
+    alignment: '正在整理你的需求和执行方案',
+    implementation: '正在推进当前功能',
+    review: '正在核对结果是否符合要求',
+    closure: '正在整理结果和验证',
+    general: '正在整理下一步',
+  }[summaryKind];
 }
 
 function roomReasoningUpdateCount(activity: RoomActivityProjection): number {
@@ -2716,7 +2741,7 @@ function roomFallbackFreshness(
     return {
       state: 'stale',
       updatedAtMs,
-      detail: '正在等待下一条进展；如有短暂中断，伙伴会自动恢复并继续',
+      detail: '仍在处理，暂时没有新的公开进展；如有短暂中断会自动恢复',
     };
   }
   return { state: 'fresh', updatedAtMs, detail: '实时进展已同步' };

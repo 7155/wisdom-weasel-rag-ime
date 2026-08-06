@@ -3350,7 +3350,7 @@ describe('Rooms experience', () => {
     expect(work).toHaveTextContent('3 个步骤');
     expect(rows).toHaveLength(3);
     expect(work).toHaveTextContent('工作摘要');
-    expect(rows[0]).toHaveTextContent('当前任务推进有新进展');
+    expect(rows[0]).toHaveTextContent('正在推进当前功能');
     expect(rows[0]).toHaveTextContent('实时进展 · 工作摘要');
     expect(rows[0]).toHaveTextContent('已更新 2 次');
     expect(within(rows[0] as HTMLElement).queryByRole('list', { name: '最近工作进展' })).not.toBeInTheDocument();

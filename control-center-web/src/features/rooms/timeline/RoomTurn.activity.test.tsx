@@ -112,6 +112,50 @@ describe('RoomTurn public activity detail', () => {
     expect(view.container).not.toHaveTextContent('当前任务推进有新进展');
   });
 
+  it('refreshes the collapsed card from a completed summary while the Room turn is still running', () => {
+    const projection = roomProjection();
+    projection.activitiesById['wait-a'] = {
+      ...projection.activitiesById['wait-a']!,
+      status: 'completed',
+    };
+    projection.activitiesById['reasoning-live'] = {
+      id: 'reasoning-live',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'completed',
+      summary: '需求与交付边界梳理有新进展',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'reasoning_summary',
+        source: 'provider_reasoning_summary',
+        publicSummaryVersion: 'room-work-summary.v1',
+        publicSummaryKind: 'alignment',
+        updateCount: 9,
+      },
+      createdAtMs: 3_200,
+      updatedAtMs: 3_900,
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: ['route-a', 'wait-a', 'tool-a', 'reasoning-live'],
+      updatedAtMs: 3_900,
+    };
+
+    const view = render(roomTurn(projection, {
+      objective: 'room_state room_define room_collaborate questionOptions executionPlan Facilitator '.repeat(12),
+      expectedOutput: '定义后由 Facilitator 展示方案；用户批准后用 room_collaborate 分配任务。',
+    }));
+    const laneSummary = view.container.querySelector('.room-agent-lane > summary')!;
+
+    expect(laneSummary).toHaveTextContent('正在整理你的需求和执行方案');
+    expect(laneSummary).toHaveTextContent('工作摘要已更新 9 次');
+    expect(laneSummary).not.toHaveTextContent('这一步没有通过任务检查');
+    expect(laneSummary).not.toHaveTextContent('要交付：');
+  });
+
   it('does not render a generic progress post made only of empty citation placeholders', () => {
     const projection = roomProjection();
     projection.turnsById['turn-a'] = {
@@ -1280,7 +1324,7 @@ describe('RoomTurn public activity detail', () => {
 
     act(() => vi.advanceTimersByTime(58_000));
     expect(lane).toHaveAttribute('data-motion', 'stale');
-    expect(lane).toHaveTextContent('正在等待下一条进展；如有短暂中断，伙伴会自动恢复并继续');
+    expect(lane).toHaveTextContent('仍在处理，暂时没有新的公开进展；如有短暂中断会自动恢复');
     expect(lane.querySelector('.agent-persona-avatar')).not.toHaveAttribute('data-presence', 'thinking');
     expect(lane.querySelector('.room-agent-lane__activity')).toHaveAttribute('data-state', 'running');
     expect(lane.querySelector('.room-agent-lane__activity')).toHaveAttribute('data-motion', 'paused');
