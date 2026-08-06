@@ -1790,12 +1790,13 @@ describe('Rooms experience', () => {
 
     await user.click(await screen.findByRole('button', { name: '开始新的协作' }));
     expect(screen.getByRole('button', { name: '开始协作' })).toBeDisabled();
-    expect(screen.getByRole('checkbox', { name: /澄·远/ })).toHaveAccessibleName(/澄·远.*主持整合与回复/);
+    expect(screen.getByRole('checkbox', { name: /澄·远/ })).toHaveAccessibleName(/澄·远.*已邀请/);
     expect(screen.getByRole('checkbox', { name: /澄·远/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /澄·今/ })).toHaveAccessibleName(/澄·今.*实现与验证/);
+    expect(screen.getByRole('checkbox', { name: /澄·今/ })).toHaveAccessibleName(/澄·今.*已邀请/);
     expect(screen.getByRole('checkbox', { name: /澄·今/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /澄·初/ })).toHaveAccessibleName(/澄·初.*最终独立复核/);
-    expect(screen.getByText(/主持整合者负责拆分、集成和最终回复/)).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /澄·初/ })).toHaveAccessibleName(/澄·初.*已邀请/);
+    expect(screen.getByText(/所有伙伴能力相同，也都可以端到端负责完整功能/)).toBeInTheDocument();
+    expect(screen.queryByText(/独立复核者只在集成后进入/)).not.toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /澄·初/ })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: /澄·瞬/ })).toHaveAccessibleName(/澄·瞬.*可邀请/);
     expect(screen.queryByRole('combobox', { name: '主持伙伴' })).not.toBeInTheDocument();
@@ -2127,15 +2128,15 @@ describe('Rooms experience', () => {
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     await user.click(await screen.findByRole('button', { name: '设置这个协作空间' }));
-    await user.click(screen.getByRole('combobox', { name: `${target.displayName} 负责什么` }));
-    await user.click(screen.getByRole('option', { name: '最终独立复核' }));
+    await user.click(screen.getByRole('combobox', { name: `${target.displayName} 下一轮优先接手方向` }));
+    await user.click(screen.getByRole('option', { name: '本轮复核' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.participant.update')).toBe(true));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.room.participant.update')?.request).toMatchObject({
       params: { roomId: room.id },
       body: { participantId: target.id, collaborationRole: 'reviewer' },
     });
-    expect(screen.getByRole('combobox', { name: `${target.displayName} 负责什么` })).toHaveTextContent('最终独立复核');
+    expect(screen.getByRole('combobox', { name: `${target.displayName} 下一轮优先接手方向` })).toHaveTextContent('本轮复核');
   });
 
   it('permanently deletes only an archived Room after exact-title confirmation', async () => {

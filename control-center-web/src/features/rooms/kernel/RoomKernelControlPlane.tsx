@@ -646,20 +646,16 @@ function RoomParallelWorkPhase({
               : ownedTasks.some((task) => task.workspacePolicy === 'read_only')
                 ? 'researcher'
                 : participantRoles[participantId];
-        const roleLabel = currentRole
+        const roleLabel = currentRole && (hasOwnWork || participantId === root.facilitatorParticipantId)
           ? roomCollaborationRoleLabel(currentRole)
           : '';
         const roleSummary = [
-          roleLabel && (hasOwnWork || participantId === root.facilitatorParticipantId)
-            ? roleLabel
-            : roleLabel
-              ? `默认岗位：${roleLabel}`
-              : '',
+          roleLabel,
           participantId === (root.reporterParticipantId ?? root.facilitatorParticipantId) ? '唯一最终回复' : '',
           ownsReview && currentRole !== 'reviewer'
             ? '独立复核'
             : '',
-          hasOwnWork ? '已有本角色分工' : '等待本角色分工',
+          hasOwnWork ? '已有本轮分工' : '等待本轮分工',
         ].filter(Boolean).join(' · ');
         return <article
           className="room-kernel-participant-lane"

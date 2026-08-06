@@ -71,15 +71,10 @@ export function recommendedCreateRole(
 export function roomCreateParticipantLabel(
   roomKind: RoomKind,
   selected: boolean,
-  roleId: string,
-  selectedRoleIds: string[],
-  coordinatorRoleId: string,
 ): string {
   if (!selected) return '可邀请';
   if (roomKind === 'roleplay') return '一起聊天';
-  return roomCollaborationRoleLabel(
-    recommendedCreateRole(roleId, selectedRoleIds, coordinatorRoleId),
-  );
+  return '已邀请';
 }
 
 export function participantName(room: RoomSummary, participantId: string): string {

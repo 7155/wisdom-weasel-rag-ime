@@ -331,7 +331,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                 "写入。acceptance 只能使用当前工作卡片的验收短名。"
             ),
             "when": (
-                "Facilitator/Reporter 把明确、互不重叠的实现或调查交给一位伙伴",
+                "当前负责人把明确、互不重叠的完整功能或调查交给一位平级伙伴",
             ),
             "notFor": (
                 "Room worker 需要更小的只读检查；使用有界 Agent delegation 路径",

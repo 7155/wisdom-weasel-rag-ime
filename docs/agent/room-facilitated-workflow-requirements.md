@@ -133,6 +133,11 @@ remaining choice would change.
 
 ### Facilitator
 
+- Room creation and invitation surfaces present all companions as equal-capability
+  peers. They do not pre-label one companion as the permanent implementer,
+  researcher, or final reviewer. Any stored collaboration role is only an
+  opening-routing preference; the visible plan and actual provenance determine
+  current responsibilities.
 - Owns requirements, decomposition, WorkItem assignment, dependencies,
   integration, review policy, and the only final report.
 - May implement and integrate, but cannot independently review its own work.

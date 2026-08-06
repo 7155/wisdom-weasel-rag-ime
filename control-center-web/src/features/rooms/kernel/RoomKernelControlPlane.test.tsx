@@ -291,8 +291,8 @@ describe('RoomKernelControlPlane', () => {
     const lanes = phase.querySelectorAll('.room-kernel-participant-lane');
     expect(lanes).toHaveLength(2);
     expect([...lanes].every((lane) => lane.className === 'room-kernel-participant-lane')).toBe(true);
-    expect(phase).toHaveTextContent('主持整合与回复 · 唯一最终回复 · 已有本角色分工');
-    expect(phase).toHaveTextContent('最终独立复核 · 已有本角色分工');
+    expect(phase).toHaveTextContent('本轮主持与集成 · 唯一最终回复 · 已有本轮分工');
+    expect(phase).toHaveTextContent('本轮复核 · 已有本轮分工');
     expect(phase).toHaveTextContent('说明目标与分工');
     expect(phase).toHaveTextContent('正在核对恢复后的任务边界');
     expect(phase).toHaveTextContent('读取文件正在处理');

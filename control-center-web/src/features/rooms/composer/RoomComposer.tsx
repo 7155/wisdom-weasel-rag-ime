@@ -13,7 +13,6 @@ import { IconButton } from '@/components/primitives';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { RoomAttachmentReceipt } from '@/contracts/room-reducer';
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
-import { roomCollaborationRoleLabel } from '../room-copy';
 
 interface ComposerParticipant {
   id: string;
@@ -224,7 +223,7 @@ export function RoomComposer({
             ))}
             size="small"
           />
-          <span><strong>{participant.displayName}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)}</small></span>
+          <span><strong>{participant.displayName}</strong><small>{room?.roomKind === 'roleplay' ? '一起聊天' : '可负责完整任务'}</small></span>
           <kbd>{index === activeIndex ? 'Enter' : `@${participant.displayName}`}</kbd>
         </button>)}
       </div> : null}

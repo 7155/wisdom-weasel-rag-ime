@@ -54,19 +54,19 @@ export type RoomCollaborationRoleValue =
   | undefined;
 
 export function roomCollaborationRoleLabel(role: RoomCollaborationRoleValue): string {
-  if (role === 'coordinator') return '主持整合与回复';
-  if (role === 'researcher') return '调研与证据';
-  if (role === 'reviewer') return '最终独立复核';
+  if (role === 'coordinator') return '本轮主持与集成';
+  if (role === 'researcher') return '本轮查证';
+  if (role === 'reviewer') return '本轮复核';
   if (role === 'specialist') return '专项伙伴（尚未设置）';
-  if (role === 'implementer') return '实现与验证';
+  if (role === 'implementer') return '本轮功能负责人';
   return '协作伙伴';
 }
 
 export function roomCollaborationRoleDescription(role: RoomCollaborationRoleValue): string {
-  if (role === 'coordinator') return '拆分和分派工作，整合伙伴结果，并给出唯一最终回复';
-  if (role === 'researcher') return '查清事实和来源，提交证据与不确定性，不替代实现';
-  if (role === 'reviewer') return '只在整合完成后独立检查完整结果，不参与原实现';
+  if (role === 'coordinator') return '这是当前一轮的协调责任，不代表能力或层级更高';
+  if (role === 'researcher') return '这是当前一轮的查证责任，同样可以在其他任务负责完整功能';
+  if (role === 'reviewer') return '只复核自己未参与实现或集成的范围，不是固定岗位';
   if (role === 'specialist') return '尚未设置具体领域，不会冒充专家';
-  if (role === 'implementer') return '完成分配的改动与验证，提交可直接整合的结果';
-  return '根据当前任务完成自己这一轮的部分';
+  if (role === 'implementer') return '端到端完成当前分配的用户功能、验证和交接';
+  return '所有伙伴能力相同，具体责任按每轮任务动态分配';
 }

@@ -1,10 +1,10 @@
 # Room production acceptance handoff
 
-> as_of: 2026-08-06 19:06 CST
-> status: the planning/card baseline is committed and installed at `8461079f`; the latest human-language planning, governed WorkDocument, peer-review, and composer-status follow-up is uncommitted but has passed expanded automated regression; scoped follow-up commit, clean reinstall, and fresh real GUI Room acceptance remain
+> as_of: 2026-08-06 19:45 CST
+> status: the human-language planning, governed WorkDocument, peer-review, and composer-status follow-up is committed and installed at `dc45b71f`, and the exact installed-component audit is green. A fresh GUI pass exposed one remaining static-role presentation defect in Room creation/settings; the current source fixes it and has passed complete frontend/backend regression. One scoped peer-presentation commit, clean reinstall, and a new full-auto GUI Room remain.
 > canonical worktree: `/Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix`
 > branch: `codex/room-production-acceptance-final`
-> current HEAD: `8461079f70865b229cac98ce3830835874e0d89b`
+> current HEAD: `dc45b71f8ec78cea76c0aabaeaf1311d3f5bddc1`
 
 ## 0. Mandatory takeover gate: do not start by running commands
 
@@ -21,8 +21,9 @@ Then wait for the user to confirm or correct that understanding. This is a hando
 
 ### Current problems at the handoff moment
 
-- The baseline Room patch is committed as `8461079f`. A follow-up remains **uncommitted** inside a dirty worktree. Twenty-two owned files are listed in section 5; the remaining dirty files belong to the user or other work and must not enter the commit.
-- Automated evidence is green, and the installed stack was previously proven at `8461079f`, but it has **not** been proven to contain this latest follow-up. Source tests are not installed-product acceptance.
+- The main Room follow-up is committed as `dc45b71f` and installed from a clean detached worktree. Exact component audit reports every required component current and provenance-aligned at that commit.
+- The first fresh GUI check found that Room creation/settings still advertised permanent `主持/实现/调研/最终复核` classes. The current uncommitted eleven-file follow-up presents all companions as equal-capability peers and describes stored roles only as next-round opening preferences.
+- Evidence for that residual fix is green: focused frontend `125/125`, focused backend capability/plan `24/24`, complete frontend `1001/1001`, complete backend Room `561/561`, and TypeScript. A scoped commit, clean reinstall, and a second fresh GUI Room are still required.
 - No fresh full-auto GUI Room has completed the required end-to-end path after this follow-up. The installed/Web UI must still prove the compact composer status, user-language planning, governed requirement/execution document, clarification, real parallel Tasks, peer review without self-review, recovery, integration, and a single final delivery.
 - Several user-reported requirements remain GUI-only acceptance items. The next owner must use the ledger in section 4.1 and may only call a row fixed after its stated evidence boundary passes.
 - Existing screenshots and old Rooms still contain known failures such as stale `执行中`, duplicate/overlapping cards, weak tool results, meaningless citation placeholders, missing delivery reports, or fake visual parallelism. They are reproduction evidence, not proof of the current source.
@@ -63,7 +64,7 @@ Older Room screenshots, v1/v2 prototypes, historical handoffs, and earlier stopp
 
 The most recent user-visible requirement is non-negotiable: when a companion card reaches **已交付 / 已转交**, the card must immediately report in natural user-facing language what was delivered and who receives it. A bare state label or stale “正在处理” text is not a delivery.
 
-## 2. Product behavior now implemented in the uncommitted Room patch
+## 2. Product behavior now implemented in the current Room source
 
 - One companion + one Task is one card. Retries of the same Task remain in that card; different Tasks assigned to the same companion remain separate cards.
 - The current retry is selected from a deterministic total event order. Legacy events cannot reclaim a card after an authoritative sequenced retry, even when an old result arrives later by timestamp.
@@ -83,6 +84,7 @@ The most recent user-visible requirement is non-negotiable: when a companion car
 - Live answer/start/task feedback is now rendered in the unchanged composer toolbar instead of a standalone status card. When the reader is above the newest activity, that compact indicator becomes the “有新进展 · 回到最新” action.
 - Alignment reasoning now says it is organizing requirements and the execution plan; it no longer pretends the user still owes a decision while the model is merely planning.
 - Facilitator and peer ownership are capability-neutral. The Facilitator may own a complete feature; review is selected later against bounded targets from actual provenance, not by pre-freezing an idle Reviewer.
+- Room creation, settings, the partner view, task lanes, and the `@` menu no longer present stored routing roles as capability levels. Every companion is presented as able to own a complete task; current responsibilities come from the approved plan and actual provenance.
 
 ## 3. Independent review result
 
@@ -105,10 +107,11 @@ All three are now fixed. The final follow-up review returned `fixed`:
 Current expanded code state:
 
 - latest Room plan/Skill/capability/WorkDocument focus: `51/51` passed;
-- latest complete backend Room discovery suite: `561/561` passed in `767.255s`; injected `Pi host exited`, `ENOSPC`, `stale projection`, and preflight failures were expected negative-path output;
+- latest complete backend Room discovery suite: `561/561` passed in `719.332s`; injected `Pi host exited`, `ENOSPC`, `stale projection`, and preflight failures were expected negative-path output;
 - latest complete frontend suite: `104 files, 1001/1001` passed;
 - latest Room composer focus after removing the old standalone task-lock copy: `4/4` passed;
 - latest TypeScript: `pnpm typecheck` passed;
+- latest equal-peer creation/settings focus: frontend `125/125` and backend capability/plan `24/24` passed;
 - current `git diff --check`: passed.
 
 Earlier regression counts remain historical evidence for commit `8461079f`; use
@@ -146,6 +149,7 @@ The labels below are intentionally strict:
 | One feature is split horizontally across peer Agents | **code + skill regression passed; fresh full-auto GUI required** | Each user-visible feature has one end-to-end Room Agent owner; multiple peer Agents appear only for multiple independent features. |
 | Static Reviewer/Researcher labels reduce a peer's ability | **code + backend regression passed; fresh full-auto GUI required** | Any active peer may own implementation; independent review is selected later from provenance, not a permanent low-capability role. |
 | Four-person planning permanently keeps one companion idle as Reviewer or treats the Facilitator as a master | **code + Skill/plan regression passed; fresh full-auto GUI required** | All companions are peers and may own complete features, including the Facilitator. Review targets are assigned after integration from actual provenance; a peer may review another non-overlapping target but never its own implementation or integration. |
+| Room creation or settings advertise permanent `主持/实现/调研/最终复核` capability classes | **code + focused regression passed; reinstall/fresh GUI required** | Creation shows every invited companion as an equal-capability peer. Stored routing preferences are described only as next-round opening preferences; the accepted plan and real provenance determine current responsibilities. |
 | Requirement and execution context lives only in chat and is lost after compaction/handoff | **canonical document + all workflow Skills + WorkDocument regression passed; fresh full-auto GUI required** | After Start, one governed WorkDocument separately preserves user source/current requirements and execution plan/Todo/progress/evidence/failures/risks/handoff/next action. Later user changes and every owner's material progress update it; recovery reads it before source/runtime verification. |
 | Complete workflow Skills are compressed to 6 KiB/120 lines | **canonical document + Skill regression passed** | Only compact routing cards are always loaded; the selected full Skill and its required references load progressively without the obsolete whole-file cap. |
 | “Parallel” is only drawn in the graph and only one companion actually works | **backend policy/tests passed; fresh full-auto GUI required** | An approved multi-feature plan creates multiple real Tasks and at least two concurrently active companion cards with distinct work/results. |
@@ -160,32 +164,21 @@ The labels below are intentionally strict:
 
 This table is an acceptance ledger, not a claim that every recorded item is already fixed. Only rows explicitly marked **code + regression passed** may be treated as implemented before the fresh installed GUI journey.
 
-## 5. Exact intended commit scope
+## 5. Exact intended residual-fix commit scope
 
-Stage only these 22 follow-up files:
+The prior 22-file follow-up is already commit `dc45b71f`. Stage only these 11 residual-fix files now:
 
-1. `control-center-web/src/features/rooms/composer/RoomComposer.test.tsx`
-2. `control-center-web/src/features/rooms/composer/RoomComposer.tsx`
-3. `control-center-web/src/features/rooms/index.tsx`
-4. `control-center-web/src/features/rooms/rooms-feature.test.tsx`
-5. `control-center-web/src/features/rooms/rooms.css`
-6. `control-center-web/src/features/rooms/timeline/RoomStartActionGate.tsx`
-7. `control-center-web/src/features/rooms/timeline/RoomTurn.chronology.test.tsx`
-8. `control-center-web/src/features/rooms/timeline/RoomTurn.tsx`
-9. `docs/agent/room-facilitated-workflow-requirements.md`
-10. `docs/agent/room-production-acceptance-handoff.md`
-11. `integrations/pi/skills/alignment-and-decision/SKILL.md`
-12. `integrations/pi/skills/implementation-execution/SKILL.md`
-13. `integrations/pi/skills/implementation-execution/references/execution-continuity-contract.md`
-14. `integrations/pi/skills/implementation-planning/SKILL.md`
-15. `integrations/pi/skills/independent-review/SKILL.md`
-16. `integrations/pi/skills/quality-gate/SKILL.md`
-17. `integrations/pi/skills/structured-handoff/SKILL.md`
-18. `rag_ime/agent_room_application.py`
-19. `rag_ime/agent_room_capabilities.py`
-20. `tests/test_agent_room_capabilities.py`
-21. `tests/test_agent_room_execution_plan.py`
-22. `tests/test_agent_room_skills.py`
+1. `control-center-web/src/features/rooms/composer/RoomComposer.tsx`
+2. `control-center-web/src/features/rooms/index.tsx`
+3. `control-center-web/src/features/rooms/kernel/RoomKernelControlPlane.test.tsx`
+4. `control-center-web/src/features/rooms/kernel/RoomKernelControlPlane.tsx`
+5. `control-center-web/src/features/rooms/room-copy.ts`
+6. `control-center-web/src/features/rooms/room-presentation.tsx`
+7. `control-center-web/src/features/rooms/rooms-feature.test.tsx`
+8. `docs/agent/room-facilitated-workflow-requirements.md`
+9. `docs/agent/room-production-acceptance-handoff.md`
+10. `rag_ime/agent_room_capabilities.py`
+11. `tests/test_agent_room_capabilities.py`
 
 Do not stage, reset, discard, clean, or overwrite these unrelated user/other-agent changes:
 
@@ -211,8 +204,8 @@ tests/test_tui.py
 
 1. Read this file, the canonical requirements, and the worktree `AGENTS.md`/README before acting.
 2. Recheck `git status --short` and `git diff --check`.
-3. Stage the 22 explicit files above with path-qualified `git add`. Both authority documents are already tracked; do not force-add the whole ignored docs tree. Verify `git diff --cached --name-only` is exactly that list and run `git diff --cached --check`.
-4. Commit the scoped follow-up. Suggested message: `fix(room): humanize planning and preserve workflow context`.
+3. Stage the 11 explicit files above with path-qualified `git add`. Both authority documents are tracked; do not force-add the whole ignored docs tree. Verify `git diff --cached --name-only` is exactly that list and run `git diff --cached --check`.
+4. Commit the scoped follow-up. Suggested message: `fix(room): present companions as peers`.
 5. Create a clean detached worktree at that new commit. Do not install from this dirty implementation worktree.
 6. From the clean worktree, install the current product stack into `RagImeControl.app`. The standard installer is `scripts/install_product_stack.sh`; Room acceptance needs the managed Pi runtime. Use the current Pi source at `/Volumes/undo 4t/git/learnA/pi` without modifying or staging its dirty work.
 7. Run `scripts/check_installed_product_components.py --require-current` and record exact component evidence.

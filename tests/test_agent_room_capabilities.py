@@ -259,9 +259,7 @@ class RoomCapabilityManifestTests(unittest.TestCase):
     ) -> None:
         tool = room_runtime_registry()["room_collaborate"]
         schema = tool["inputSchema"]
-        self.assertTrue(
-            any("Facilitator" in value for value in tool["when"])
-        )
+        self.assertTrue(any("平级伙伴" in value for value in tool["when"]))
         self.assertTrue(
             any("review handoff" in value for value in tool["notFor"])
         )
