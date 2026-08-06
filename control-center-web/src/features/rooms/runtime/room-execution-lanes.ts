@@ -64,8 +64,19 @@ export function selectRoomTurnExecution(
     const participantId = activity.participantId
       || textValue(activity.payload.targetParticipantId)
       || null;
-    const lane = lanes.get(identity.key) ?? {
-      key: identity.key,
+    const participantIdentity = participantKey(participantId, activity.sourceSessionId);
+    // Work-item lifecycle updates may omit Dispatch/Task ids even though they
+    // belong to the same participant Session. Keep them in the existing role
+    // card instead of introducing a second avatar/card for one assignment.
+    const hasAuthoritativeWorkIdentity = Boolean(
+      textValue(activity.payload.taskId) || textValue(activity.payload.dispatchId),
+    );
+    const existingParticipantLane = !hasAuthoritativeWorkIdentity
+      ? participantLaneKeys.get(participantIdentity)?.at(-1)
+      : undefined;
+    const laneKey = existingParticipantLane ?? identity.key;
+    const lane = lanes.get(laneKey) ?? {
+      key: laneKey,
       rootId: identity.rootId,
       taskId: identity.taskId,
       dispatchId: identity.dispatchId,
@@ -77,23 +88,24 @@ export function selectRoomTurnExecution(
     };
     lane.activities.push(activity);
     if (identity.taskId) lane.taskId = identity.taskId;
-    if (identity.dispatchId) {
-      lane.dispatchId = identity.dispatchId;
-      if (!lane.dispatchIds.includes(identity.dispatchId)) {
-        lane.dispatchIds.push(identity.dispatchId);
+    const authoritativeDispatchId = textValue(activity.payload.dispatchId);
+    if (authoritativeDispatchId) {
+      lane.dispatchId = authoritativeDispatchId;
+      if (!lane.dispatchIds.includes(authoritativeDispatchId)) {
+        lane.dispatchIds.push(authoritativeDispatchId);
       }
-      dispatchLaneKeys.set(identity.dispatchId, identity.key);
+      dispatchLaneKeys.set(authoritativeDispatchId, laneKey);
     }
     if (activity.sourceSessionId) lane.sourceSessionId = activity.sourceSessionId;
     if (!lane.participantId && participantId) lane.participantId = participantId;
     if (!lane.sourceSessionId && activity.sourceSessionId) {
       lane.sourceSessionId = activity.sourceSessionId;
     }
-    lanes.set(identity.key, lane);
+    lanes.set(laneKey, lane);
     appendLaneKey(
       participantLaneKeys,
-      participantKey(participantId, activity.sourceSessionId),
-      identity.key,
+      participantIdentity,
+      laneKey,
     );
   }
 

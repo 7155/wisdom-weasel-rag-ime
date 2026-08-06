@@ -74,6 +74,69 @@ describe('selectRoomTurnExecution', () => {
     expect(selected.lanes[0].activities.map((item) => item.id)).toEqual(['route-1']);
   });
 
+  it('keeps an unscoped lifecycle update in the existing participant task card', () => {
+    const projection = createRoomProjection('room-1');
+    projection.turnOrder.push('root-1');
+    projection.activityOrder.push('tool-1', 'work-cancelled');
+    projection.turnsById['root-1'] = {
+      id: 'root-1',
+      rootId: 'root-1',
+      status: 'aborted',
+      messageIds: [],
+      activityIds: ['tool-1', 'work-cancelled'],
+      participantIds: ['participant-1'],
+      dispatchIds: ['dispatch-1'],
+      dispatchParticipantIds: { 'dispatch-1': 'participant-1' },
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    };
+    projection.activitiesById['tool-1'] = {
+      id: 'tool-1',
+      turnId: 'root-1',
+      participantId: 'participant-1',
+      sourceSessionId: 'session-1',
+      kind: 'participant_activity',
+      status: 'completed',
+      summary: '运行命令已完成',
+      payload: {
+        rootId: 'root-1',
+        taskId: 'task-1',
+        dispatchId: 'dispatch-1',
+        sourceEventType: 'tool_finished',
+        toolName: 'bash',
+      },
+      createdAtMs: 1,
+    };
+    projection.activitiesById['work-cancelled'] = {
+      id: 'work-cancelled',
+      turnId: 'root-1',
+      participantId: 'participant-1',
+      sourceSessionId: 'session-1',
+      kind: 'participant_activity',
+      status: 'completed',
+      summary: '这项工作已停止',
+      payload: {
+        rootId: 'root-1',
+        activityKind: 'work',
+        phase: 'cancelled',
+      },
+      createdAtMs: 2,
+    };
+
+    const selected = selectRoomTurnExecution(projection, 'root-1');
+
+    expect(selected.lanes).toHaveLength(1);
+    expect(selected.lanes[0]).toMatchObject({
+      participantId: 'participant-1',
+      taskId: 'task-1',
+      dispatchId: 'dispatch-1',
+    });
+    expect(selected.lanes[0].activities.map((item) => item.id)).toEqual([
+      'tool-1',
+      'work-cancelled',
+    ]);
+  });
+
   it('keeps an accepted answer in canonical message order after its question', () => {
     const projection = createRoomProjection('room-1');
     projection.turnOrder.push('root-1');
