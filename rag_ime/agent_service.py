@@ -4534,10 +4534,33 @@ class AgentService:
             return document
         root = self.room_kernel.root(root_id)
         room = self.rooms.get(str(root["roomId"]))
+        definition = self.room_kernel.definition_fence(root_id=root_id)
         if (
             str(room.get("roomKind") or "collaboration") == "collaboration"
-            and self.room_kernel.definition_fence(root_id=root_id) is not None
+            and definition is not None
         ):
+            intake = self.room_kernel.intake_state(root_id)
+            if str(intake.get("phase") or "") in {
+                "execution_ready",
+                "executing",
+            }:
+                planned_dispatch = definition.get("plannedExecuteDispatch")
+                task_id = (
+                    str(planned_dispatch.get("taskId") or "").strip()
+                    if isinstance(planned_dispatch, Mapping)
+                    else ""
+                )
+                application = getattr(self, "room_application", None)
+                if task_id and application is not None:
+                    task = self.room_kernel.task(task_id)
+                    application._ensure_started_work_document(
+                        room=room,
+                        root=root,
+                        task=task,
+                    )
+                    repaired = self.work_documents.room_root_context(root_id)
+                    if repaired is not None:
+                        return repaired
             raise RoomKernelFenceError(
                 "defined collaboration Room cannot prepare work without its WorkDocument"
             )

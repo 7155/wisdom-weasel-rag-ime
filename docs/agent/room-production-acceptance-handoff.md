@@ -1,7 +1,7 @@
 # Room production acceptance handoff
 
 > as_of: 2026-08-07 00:10 CST
-> status: peer Todo recovery commit `53089a7b5003a7a2b720648b315a8c65c5b88dad` remains the latest installed Room source. The current verified follow-up makes approved execution waves backend gates, creates exactly one governed Room WorkDocument at typed Start, injects a bounded read-only snapshot into every participant context, fails closed when a defined collaboration Room has no document, and lets approved isolated work use trusted scope evidence without weakening dangerous-operation review. A full Room backend discovery run passed `563/563`; the combined approval/execution-plan/Room/WorkDocument gate passed `200/200`; focused WorkDocument `15/15`, Python compile, and `git diff --check` pass. One discovered regression was fixed: an unchanged WorkDocument context refresh no longer rewrites `updatedAtMs` and invalidates read-only workspace snapshots. A verified `5.0G` external backup exists at `/Volumes/undo 4t/agent-workbench-backups/20260806-2349`. A clean install and a new GUI Room are still required for installed acceptance.
+> status: source commit `958054b664cb919af80d90e9f2a2168b85ee00eb` is installed and verified for the previous Room/approval/WorkDocument follow-up. A new recovery follow-up is now red/green verified: a collaboration Room that already crossed typed Start but lost its WorkDocument is lazily repaired from the durable definition and root WorkItem before the next Dispatch reads context; a Room still waiting for Start remains fail-closed. A full Room backend discovery run passed `563/563`; the combined approval/execution-plan/Room/WorkDocument gate passed `200/200`; focused WorkDocument `15/15`, focused Kernel Worker `22/22`, the typed-start recovery regression `1/1`, Python compile, and `git diff --check` pass. One discovered regression was fixed: an unchanged WorkDocument context refresh no longer rewrites `updatedAtMs` and invalidates read-only workspace snapshots. A verified `5.0G` external backup exists at `/Volumes/undo 4t/agent-workbench-backups/20260806-2349`. A clean install and a new GUI Room are still required for installed acceptance.
 > canonical worktree: `/Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix`
 > branch: `codex/room-production-acceptance-final`
 > current source commit: `53089a7b5003a7a2b720648b315a8c65c5b88dad` plus the verified uncommitted Room/approval/WorkDocument follow-up described below
@@ -31,6 +31,7 @@ Then wait for the user to confirm or correct that understanding. This is a hando
 - Start produced four real vertical Tasks in the task view, but only the Facilitator initially ran; the other three stayed queued. Production logs showed `_active_room_todo_lineage` rejecting bounded child Tasks because their shared parent WorkItem remains owned by the Facilitator. Commit `53089a7b` accepts a `parentTaskId` child while retaining exact Room/root/task/session/participant checks. It is installed, and reloading the original Room recovered all three peers into genuine running Dispatches without a user retry.
 - The recovered run also proves that an approved feature `wave` was presentation-only: all three peer Tasks were created together even though duplicate merge was explicitly wave 2. The current follow-up resolves the approved feature for each target, exposes the current/ready/waiting wave through `room_state`, and rejects later-wave collaboration until every earlier peer feature is committed and each isolated worktree is integrated. Because the old Room started before this gate existed, it may continue as recovery evidence but cannot prove correct wave scheduling.
 - No fresh full-auto GUI Room has completed the required end-to-end path after this follow-up. The installed/Web UI must still prove the compact composer status, user-language planning, governed requirement/execution document, clarification, real parallel Tasks, peer review without self-review, recovery, integration, and a single final delivery.
+- A real installed run exposed a queue-head blocker in an older Room: it had already reached `executing` but had no `work_documents` row. The old Room was stopped and is cancelled, so it remains diagnostic evidence only. The current source now repairs this exact post-Start loss at the context boundary; a fresh installed Room must still prove the visible recovery path.
 - Several user-reported requirements remain GUI-only acceptance items. The next owner must use the ledger in section 4.1 and may only call a row fixed after its stated evidence boundary passes.
 - Existing screenshots and old Rooms still contain known failures such as stale `执行中`, duplicate/overlapping cards, weak tool results, meaningless citation placeholders, missing delivery reports, or fake visual parallelism. They are reproduction evidence, not proof of the current source.
 - Both Room authority documents are already tracked. Stage their existing changes explicitly; do not use a broad forced add for the ignored `/docs/` tree.
@@ -185,26 +186,13 @@ The labels below are intentionally strict:
 
 This table is an acceptance ledger, not a claim that every recorded item is already fixed. Only rows explicitly marked **code + regression passed** may be treated as implemented before the fresh installed GUI journey.
 
-## 5. Exact residual-fix commit scope
+## 5. Exact current recovery-fix commit scope
 
-The compact attributed-status/private-brief follow-up is commit `f6e41175`; collapsed-progress projection is `021c9780`; meaningful live-summary priority is `d30901ab`; peer Todo recovery is installed commit `53089a7b`. The current verified backend follow-up must contain exactly these files:
+The compact attributed-status/private-brief follow-up is commit `f6e41175`; collapsed-progress projection is `021c9780`; meaningful live-summary priority is `d30901ab`; peer Todo recovery is `53089a7b`; the previous WorkDocument/approval follow-up is `958054b6`. The current post-Start recovery regression and fix must contain exactly these files:
 
-1. `rag_ime/agent_approval_model.py`
-2. `rag_ime/agent_execution_policy.py`
-3. `rag_ime/agent_room_application.py`
-4. `rag_ime/agent_room_kernel_application.py`
-5. `rag_ime/agent_room_runtime_coordinator.py`
-6. `rag_ime/agent_room_task_context.py`
-7. `rag_ime/agent_service.py`
-8. `rag_ime/agent_workspace.py`
-9. `rag_ime/work_documents.py`
-10. `tests/test_agent_approval_model.py`
-11. `tests/test_agent_execution_policy.py`
-12. `tests/test_agent_room_execution_plan.py`
-13. `tests/test_agent_room_kernel_service.py`
-14. `tests/test_agent_room_requirements.py`
-15. `tests/test_work_documents.py`
-16. `docs/agent/room-production-acceptance-handoff.md`
+1. `rag_ime/agent_service.py`
+2. `tests/test_agent_room_kernel_service.py`
+3. `docs/agent/room-production-acceptance-handoff.md`
 
 Do not stage, reset, discard, clean, or overwrite these unrelated user/other-agent changes:
 
@@ -223,7 +211,7 @@ tests/test_tui.py
 
 ## 6. Exact next steps
 
-1. Stage only the sixteen files in section 5 and commit the verified Room/approval/WorkDocument follow-up.
+1. Stage only the three files in section 5 and commit the verified post-Start WorkDocument recovery fix.
 2. Create a clean detached worktree at that commit. Do not install from this dirty implementation worktree.
 3. From the clean worktree, run `scripts/install_product_stack.sh --include-pi --pi-worktree '/Volumes/undo 4t/git/learnA/.worktrees/pi-room-runtime-98cfe6a3'` with the configured Xcode beta developer directory.
 4. Run `scripts/check_installed_product_components.py --require-current` and record exact component evidence for the new commit.
@@ -272,5 +260,5 @@ Do not start these before Room passes:
 ## 9. Direct resume prompt
 
 ```text
-先完整阅读 /Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix/docs/agent/room-production-acceptance-handoff.md、同目录的 room-facilitated-workflow-requirements.md，以及该 worktree 的 AGENTS.md/README。严格执行 handoff 第 0 节：第一条回复不要调用工具、运行命令、改文件、测试、提交、安装或分派伙伴；先用中文向我复述“当前做到哪里、现在仍有哪些问题、你理解的 Room 愿景、确认后准备做的第一步”，等我确认或纠正。确认后才继续第 6 节：只提交列出的二十二个文件，从新提交创建干净 worktree，安装当前构建，并在真实前端用全自动 Room 完成第 7 节的紧凑输入栏状态、成组澄清、用户语言纵向分工、显式开始批准、对等伙伴并行、受管 WorkDocument 持续更新、工具/Todo/交接/无自审复核闭环。不要混入列出的其他脏文件，也不要在 Room 通过前开始 Knowledge 或岛屿任务。
+先完整阅读 /Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix/docs/agent/room-production-acceptance-handoff.md、同目录的 room-facilitated-workflow-requirements.md，以及该 worktree 的 AGENTS.md/README。严格执行 handoff 第 0 节：第一条回复不要调用工具、运行命令、改文件、测试、提交、安装或分派伙伴；先用中文向我复述“当前做到哪里、现在仍有哪些问题、你理解的 Room 愿景、确认后准备做的第一步”，等我确认或纠正。确认后才继续第 6 节：只提交列出的三个恢复修复文件，从新提交创建干净 worktree，安装当前构建，并在真实前端用全自动 Room 完成第 7 节的紧凑输入栏状态、成组澄清、用户语言纵向分工、显式开始批准、对等伙伴并行、受管 WorkDocument 持续更新、工具/Todo/交接/无自审复核闭环。不要混入列出的其他脏文件，也不要在 Room 通过前开始 Knowledge 或岛屿任务。
 ```

@@ -9597,6 +9597,38 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertIn("## 下一步", work_document_text)
         self.assertIn("不得另建副本文档", work_document_text)
         self.assertIn(original_request, work_document_text)
+
+        # A Room may have crossed the typed Start gate before a process crash
+        # or an upgrade.  Recovery must recreate the one bound document before
+        # the next dispatch reads its context, instead of blocking the queue.
+        document_id = str(work_document["documentId"])
+        canonical_path = Path(str(work_document["canonicalPath"]))
+        canonical_path.unlink()
+        with sqlite3.connect(self.service.db_path) as conn:
+            conn.execute(
+                "DELETE FROM work_document_operation_receipts WHERE document_id=?",
+                (document_id,),
+            )
+            conn.execute(
+                "DELETE FROM work_document_observer_failures WHERE document_id=?",
+                (document_id,),
+            )
+            conn.execute(
+                "DELETE FROM work_documents WHERE document_id=?",
+                (document_id,),
+            )
+            conn.commit()
+        repaired_document = self.service._room_work_document_context(
+            str(accepted["rootId"])
+        )
+        self.assertIsNotNone(repaired_document)
+        assert repaired_document is not None
+        self.assertEqual(
+            repaired_document["authorityId"],
+            started["workDocument"]["authorityId"],
+        )
+        self.assertTrue(Path(str(repaired_document["canonicalPath"])).is_file())
+
         with (
             patch.object(
                 self.service.room_application,
