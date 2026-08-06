@@ -21,6 +21,7 @@ from .client import LocalKnowledgeClient
 from .identity import knowledge_worker_fingerprint, normalized_knowledge_root
 from .models import AssetBlob, KNOWLEDGE_SCHEMA_VERSION, KnowledgeConflictError, KnowledgeLibraryConfig, KnowledgeLibraryError, KnowledgeNotFoundError
 from .permissions import secure_directory, secure_file
+from .rerank import knowledge_reranker_from_env, knowledge_reranker_profile_sha256
 from .service import KnowledgeLibraryService
 
 
@@ -59,6 +60,23 @@ class KnowledgeWorkerServer(ThreadingHTTPServer):
             embedding_provider=os.environ.get("RAG_IME_EMBEDDING_PROVIDER", "none"),
             embedding_model=os.environ.get("RAG_IME_EMBEDDING_MODEL", ""),
             dense_backend=os.environ.get("RAG_IME_KNOWLEDGE_DENSE_BACKEND", "sqlite-exact"),
+            embedding_profile_sha256=os.environ.get(
+                "RAG_IME_KNOWLEDGE_EMBEDDING_PROFILE_SHA256",
+                "",
+            ),
+            reranker_provider=os.environ.get(
+                "RAG_IME_KNOWLEDGE_RERANK_PROVIDER",
+                "none",
+            ),
+            reranker_model_path=os.environ.get(
+                "RAG_IME_KNOWLEDGE_RERANK_MODEL_PATH",
+                "",
+            ),
+            reranker_model_revision=os.environ.get(
+                "RAG_IME_KNOWLEDGE_RERANK_MODEL_REVISION",
+                "",
+            ),
+            reranker_profile_sha256=knowledge_reranker_profile_sha256(),
         )
 
 
@@ -289,6 +307,12 @@ class KnowledgeWorkerHandler(BaseHTTPRequestHandler):
                     else None
                 ),
                 threshold=float(body["threshold"]) if body.get("threshold") is not None else None,
+                rerank=body.get("rerank") if "rerank" in body else None,
+                rerank_candidate_depth=(
+                    body.get("rerankCandidateDepth")
+                    if "rerankCandidateDepth" in body
+                    else None
+                ),
                 file_name=str(body.get("fileName") or ""),
             ), HTTPStatus.OK
         if method == "POST" and path == "/v1/knowledge/find":
@@ -464,7 +488,11 @@ def main(argv: list[str] | None = None) -> int:
         mineru_enabled=bool(args.mineru_enabled),
         mineru_port=int(args.mineru_port),
     )
-    service = KnowledgeLibraryService(config, background_jobs=True)
+    service = KnowledgeLibraryService(
+        config,
+        reranker=knowledge_reranker_from_env(config.root_dir),
+        background_jobs=True,
+    )
     server = KnowledgeWorkerServer(
         (args.host, args.port),
         service,

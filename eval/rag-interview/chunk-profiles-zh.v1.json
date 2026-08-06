@@ -1,0 +1,32 @@
+[
+  {
+    "id": "general-600-80",
+    "strategy": "general",
+    "size": 600,
+    "overlap": 80
+  },
+  {
+    "id": "general-900-120",
+    "strategy": "general",
+    "size": 900,
+    "overlap": 120
+  },
+  {
+    "id": "general-1200-160",
+    "strategy": "general",
+    "size": 1200,
+    "overlap": 160
+  },
+  {
+    "id": "markdown-900-120",
+    "strategy": "markdown",
+    "size": 900,
+    "overlap": 120
+  },
+  {
+    "id": "fixed-900-120",
+    "strategy": "fixed",
+    "size": 900,
+    "overlap": 120
+  }
+]

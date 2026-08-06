@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from rag_ime.mlx_bert import replace_huggingface_key
+from scripts.convert_bge_to_mlx import _is_huggingface_parameter_key
 
 
 class MlxBertTests(unittest.TestCase):
@@ -20,6 +21,17 @@ class MlxBertTests(unittest.TestCase):
             "encoder.layers.0.linear2.weight",
         )
         self.assertEqual(replace_huggingface_key("pooler.dense.bias"), "pooler.bias")
+
+    def test_converter_filters_huggingface_runtime_buffers(self) -> None:
+        self.assertFalse(
+            _is_huggingface_parameter_key("embeddings.position_ids")
+        )
+        self.assertFalse(
+            _is_huggingface_parameter_key("embeddings.token_type_ids")
+        )
+        self.assertTrue(
+            _is_huggingface_parameter_key("embeddings.position_embeddings.weight")
+        )
 
 
 if __name__ == "__main__":

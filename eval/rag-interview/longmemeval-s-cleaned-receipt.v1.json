@@ -1,0 +1,82 @@
+{
+  "schemaVersion": "rag-ime.longmemeval-public-summary.v1",
+  "publication": "manifest_only_no_corpus_no_results",
+  "caseCount": 500,
+  "retrievalEvaluableCounts": {
+    "official-user": 419,
+    "product-all-turn": 470
+  },
+  "adapter": {
+    "name": "longmemeval",
+    "duplicateRelevantSessionIdCount": 0,
+    "duplicateSessionAffectedCaseCount": 13,
+    "duplicateSessionIdGroupCount": 13,
+    "duplicateSessionOccurrenceCount": 13,
+    "duplicateSessionPolicy": {
+      "preserveEveryOccurrence": true,
+      "preserveSourceSessionId": true,
+      "rejectAnswerRelevantDuplicates": true,
+      "requireIdenticalTurns": true,
+      "version": "preserve-identical-nonrelevant-v1"
+    },
+    "emptyAnswerTurnCount": 0,
+    "emptyTurnAffectedCaseCount": 7,
+    "emptyTurnCount": 12,
+    "emptyTurnPolicy": {
+      "preserveEmptyTurns": true,
+      "rejectEmptyAnswerTurns": true,
+      "requireNonEmptySession": true,
+      "version": "preserve-nonanswer-placeholder-v1"
+    },
+    "officialNoUserTargetCount": 51,
+    "officialPartialQrelMismatchCount": 32,
+    "officialQrelMismatchCount": 83,
+    "retrievalProfiles": {
+      "default": "official-user",
+      "official-user": {
+        "content": "user-turns-only",
+        "excludeAbstention": true,
+        "excludeCasesWithoutUserTarget": true,
+        "qrels": "user-side-has_answer"
+      },
+      "product-all-turn": {
+        "content": "user-and-assistant-turns",
+        "excludeAbstention": true,
+        "excludeCasesWithoutUserTarget": false,
+        "qrels": "answer_session_ids"
+      }
+    },
+    "sliceCounts": {
+      "abstention": 30,
+      "knowledge-update": 72,
+      "multi-session": 121,
+      "single-session-assistant": 56,
+      "single-session-preference": 30,
+      "single-session-user": 64,
+      "temporal-reasoning": 127
+    },
+    "splitSeed": "paw-longmemeval-s-v1"
+  },
+  "source": {
+    "corpusIncluded": false,
+    "licenseReference": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/blob/98d7416c24c778c2fee6e6f3006e7a073259d48f/README.md",
+    "sourceSha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+    "sourceUrl": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/98d7416c24c778c2fee6e6f3006e7a073259d48f/longmemeval_s_cleaned.json",
+    "version": "hf:98d7416c24c778c2fee6e6f3006e7a073259d48f; cleaned:2025-09"
+  },
+  "sourceArtifact": {
+    "byteSize": 277383467,
+    "fileName": "longmemeval_s_cleaned.json",
+    "sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442"
+  },
+  "splitCounts": {
+    "held_out": 99,
+    "train": 300,
+    "validation": 101
+  },
+  "splitHashes": {
+    "held_out": "639574c17f422e7facf2b0ec65de8bd09fd476904e30bbc8836680cec6f22e6b",
+    "train": "36ef77d6795d85e91a9a96232868f35688498ebe949b4ec6b1971e82abe58bc5",
+    "validation": "5a0e7d23f55ff57f2afc50f4a6cdaae134ad5a9be64bbd97b7c61e44b4163ea6"
+  }
+}

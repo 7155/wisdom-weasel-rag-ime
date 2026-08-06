@@ -21,6 +21,9 @@ embedding-mlx = [
   "mlx>=0.29,<1",
   "transformers>=4.50,<6",
 ]
+rerank-mlx = [
+  "mlx-lm>=0.31.3,<1",
+]
 knowledge-ann = [
   "numpy>=2.0,<3",
   "usearch>=2.23,<3",

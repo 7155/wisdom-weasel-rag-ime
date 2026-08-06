@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import mimetypes
 import os
 import re
@@ -31,6 +32,7 @@ from .models import (
 )
 from .parsers import ParserRouter
 from .permissions import harden_knowledge_tree, secure_directory, secure_file
+from .rerank import KnowledgeReranker
 from .store import KnowledgeStore, decode_metadata, now_ms
 
 
@@ -48,10 +50,14 @@ DEFAULT_RETRIEVAL_CONFIG: dict[str, Any] = {
     "threshold": 0.0,
     "lexicalWeight": 1.0,
     "denseWeight": 1.0,
+    "graphEnabled": True,
+    "graphWeight": 0.7,
     "rrfK": 60,
     "candidateMultiplier": 4,
+    "rerankEnabled": False,
+    "rerankCandidateDepth": 40,
 }
-_GRAPH_RETRIEVAL_WEIGHT = 0.7
+AGENT_SEARCH_TOP_K_LIMIT = 12
 CHUNKING_STRATEGIES = ("general", "markdown", "book", "qa", "laws", "separator", "fixed")
 _IMAGE_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp"})
 _SOURCE_PREVIEW_MIME_TYPES = _IMAGE_MIME_TYPES | frozenset(
@@ -83,6 +89,7 @@ class KnowledgeLibraryService:
         *,
         parser_router: ParserRouter | None = None,
         dense_index: DenseIndex | None = None,
+        reranker: KnowledgeReranker | None = None,
         background_jobs: bool = False,
     ):
         self.config = config
@@ -97,6 +104,7 @@ class KnowledgeLibraryService:
             config.database_path,
             embedding_provider_from_env(),
         )
+        self.reranker = reranker
         self._dense_error = ""
         self._ingest_lock = threading.Lock()
         self._job_executor = (
@@ -667,6 +675,8 @@ class KnowledgeLibraryService:
         limit: int | None = None,
         mode: str | None = None,
         threshold: float | None = None,
+        rerank: bool | None = None,
+        rerank_candidate_depth: int | None = None,
         file_name: str = "",
         agent_only: bool = False,
     ) -> dict[str, Any]:
@@ -695,7 +705,19 @@ class KnowledgeLibraryService:
                 retrieval_config["topK"] = limit
             if threshold is not None:
                 retrieval_config["threshold"] = threshold
+            if rerank is not None:
+                retrieval_config["rerankEnabled"] = rerank
+            if rerank_candidate_depth is not None:
+                retrieval_config["rerankCandidateDepth"] = rerank_candidate_depth
             retrieval_config = _normalize_retrieval_config(retrieval_config)
+            if agent_only:
+                # Base-level tuning remains authoritative when the Tool does not
+                # override topK, but an Agent read must stay bounded even if a
+                # management profile is configured for a wider analyst view.
+                retrieval_config["topK"] = min(
+                    AGENT_SEARCH_TOP_K_LIMIT,
+                    int(retrieval_config["topK"]),
+                )
             resolved_configs.append(retrieval_config)
             requested_mode = str(retrieval_config["mode"])
             document_ids: Sequence[str] = ()
@@ -721,7 +743,15 @@ class KnowledgeLibraryService:
                     continue
             candidate_limit = min(
                 100,
-                int(retrieval_config["topK"]) * int(retrieval_config["candidateMultiplier"]),
+                max(
+                    int(retrieval_config["topK"])
+                    * int(retrieval_config["candidateMultiplier"]),
+                    (
+                        int(retrieval_config["rerankCandidateDepth"])
+                        if retrieval_config["rerankEnabled"]
+                        else 0
+                    ),
+                ),
             )
             lexical_hits = (
                 self.store.search(
@@ -753,7 +783,14 @@ class KnowledgeLibraryService:
             )
             graph_result: dict[str, Any] = {"status": "not-requested", "items": [], "matchedNodes": []}
             graph_hits: list[Any] = []
-            if requested_mode == "hybrid":
+            graph_requested = (
+                requested_mode == "hybrid"
+                and bool(retrieval_config["graphEnabled"])
+                and float(retrieval_config["graphWeight"]) > 0.0
+            )
+            if requested_mode == "hybrid" and not graph_requested:
+                graph_result["status"] = "disabled"
+            if graph_requested:
                 seed_chunk_ids = tuple(dict.fromkeys(
                     [hit.chunk_id for hit in lexical_hits[:10]]
                     + [hit.chunk_id for hit in dense_hits[:10]]
@@ -793,9 +830,24 @@ class KnowledgeLibraryService:
                 requested_mode=requested_mode,
                 config=retrieval_config,
             )
-            ranked = [
+            ranked_candidates = [
                 hit for hit in ranked if hit.score >= float(retrieval_config["threshold"])
-            ][: int(retrieval_config["topK"])]
+            ]
+            rerank_applied = bool(retrieval_config["rerankEnabled"])
+            rerank_candidate_count = 0
+            if rerank_applied:
+                rerank_candidate_count = min(
+                    len(ranked_candidates),
+                    int(retrieval_config["rerankCandidateDepth"]),
+                )
+                ranked = self._rerank_hits(
+                    query,
+                    ranked_candidates[:rerank_candidate_count],
+                    limit=int(retrieval_config["topK"]),
+                    candidate_limit=int(retrieval_config["rerankCandidateDepth"]),
+                )
+            else:
+                ranked = ranked_candidates[: int(retrieval_config["topK"])]
             all_hits.extend(ranked)
             library_diagnostics.append(
                 {
@@ -809,6 +861,13 @@ class KnowledgeLibraryService:
                     "graphCandidates": len(graph_hits),
                     "graphStatus": str(graph_result.get("status") or "unavailable"),
                     "graphMatchedNodes": len(list(graph_result.get("matchedNodes") or [])),
+                    "graphRelationRanking": (
+                        dict(graph_result["relationRanking"])
+                        if isinstance(graph_result.get("relationRanking"), dict)
+                        else None
+                    ),
+                    "rerankApplied": rerank_applied,
+                    "rerankCandidates": rerank_candidate_count,
                     "returned": len(ranked),
                 }
             )
@@ -831,6 +890,7 @@ class KnowledgeLibraryService:
                 "libraries": library_diagnostics,
                 "lexicalAvailable": True,
                 "dense": self._dense_status(),
+                "reranker": self._reranker_status(),
             },
         }
 
@@ -1093,8 +1153,117 @@ class KnowledgeLibraryService:
                 "semanticChunking": False,
             },
             "dense": self._dense_status(),
+            "reranker": self._reranker_status(),
             **self.store.counts(),
         }
+
+    def _rerank_hits(
+        self,
+        query: str,
+        hits: Sequence[Any],
+        *,
+        limit: int,
+        candidate_limit: int,
+    ) -> list[Any]:
+        reranker = self.reranker
+        status = self._reranker_status()
+        if reranker is None or status.get("configured") is not True:
+            raise KnowledgeLibraryError(
+                "knowledge reranker is enabled but not configured",
+                code="reranker_unavailable",
+            )
+        bounded_candidates = list(hits[: max(1, min(100, int(candidate_limit)))])
+        if not bounded_candidates:
+            return []
+        original_by_id = {hit.chunk_id: hit for hit in bounded_candidates}
+        original_ranks = {
+            hit.chunk_id: rank for rank, hit in enumerate(bounded_candidates, start=1)
+        }
+        payloads = [hit.to_dict() for hit in bounded_candidates]
+        try:
+            reranked = reranker.rerank(
+                query,
+                payloads,
+                limit=max(1, min(int(limit), len(payloads))),
+                candidate_limit=len(payloads),
+            )
+        except Exception as exc:
+            raise KnowledgeLibraryError(
+                "knowledge reranker failed",
+                code="reranker_failed",
+            ) from exc
+        output: list[Any] = []
+        seen: set[str] = set()
+        public_status = self._reranker_status()
+        for final_rank, item in enumerate(reranked, start=1):
+            if not isinstance(item, dict):
+                raise KnowledgeLibraryError(
+                    "knowledge reranker returned an invalid result",
+                    code="reranker_invalid_result",
+                )
+            chunk_id = str(item.get("chunkId") or "")
+            if not chunk_id or chunk_id in seen or chunk_id not in original_by_id:
+                raise KnowledgeLibraryError(
+                    "knowledge reranker returned an unknown or duplicate candidate",
+                    code="reranker_invalid_result",
+                )
+            raw_score = item.get("rerankScore")
+            if isinstance(raw_score, bool):
+                raw_score = None
+            try:
+                score = float(raw_score)
+            except (TypeError, ValueError) as exc:
+                raise KnowledgeLibraryError(
+                    "knowledge reranker omitted a numeric score",
+                    code="reranker_invalid_result",
+                ) from exc
+            if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+                raise KnowledgeLibraryError(
+                    "knowledge reranker score must be between 0 and 1",
+                    code="reranker_invalid_result",
+                )
+            seen.add(chunk_id)
+            hit = original_by_id[chunk_id]
+            output.append(
+                replace(
+                    hit,
+                    score=round(score, 8),
+                    diagnostics={
+                        **dict(hit.diagnostics),
+                        "retrievalScore": hit.score,
+                        "retrievalRank": original_ranks[chunk_id],
+                        "rerankScore": round(score, 8),
+                        "rerankRank": final_rank,
+                        "rerankProvider": str(public_status.get("provider") or ""),
+                        "rerankFingerprint": str(public_status.get("fingerprint") or ""),
+                        "independentRerankStage": True,
+                        "subagentSubstitute": False,
+                    },
+                )
+            )
+        return output
+
+    def _reranker_status(self) -> dict[str, Any]:
+        if self.reranker is None:
+            return {
+                "provider": "none",
+                "configured": False,
+                "independentStage": True,
+                "subagentSubstitute": False,
+                "fallbackCount": 0,
+            }
+        try:
+            status = dict(self.reranker.status())
+        except Exception:
+            status = {
+                "provider": "unknown",
+                "configured": False,
+                "errorCount": 1,
+            }
+        status["independentStage"] = True
+        status["subagentSubstitute"] = False
+        status.setdefault("fallbackCount", 0)
+        return status
 
     def mineru_health(self) -> dict[str, Any]:
         if not self.config.mineru_enabled:
@@ -1454,7 +1623,7 @@ def _rank_retrieval_hits(
 
     lexical_weight = float(config["lexicalWeight"])
     dense_weight = float(config["denseWeight"])
-    graph_weight = _GRAPH_RETRIEVAL_WEIGHT if graph_hits else 0.0
+    graph_weight = float(config["graphWeight"]) if graph_hits else 0.0
     rrf_k = int(config["rrfK"])
     lexical_ranks = {hit.chunk_id: rank for rank, hit in enumerate(lexical_hits, start=1)}
     dense_ranks = {hit.chunk_id: rank for rank, hit in enumerate(dense_hits, start=1)}
@@ -2109,8 +2278,12 @@ def _normalize_retrieval_config(
         "threshold",
         "lexicalWeight",
         "denseWeight",
+        "graphEnabled",
+        "graphWeight",
         "rrfK",
         "candidateMultiplier",
+        "rerankEnabled",
+        "rerankCandidateDepth",
     }
     unknown = sorted(set(provided) - allowed)
     if unknown:
@@ -2134,6 +2307,12 @@ def _normalize_retrieval_config(
     dense_weight = _strict_float(
         merged["denseWeight"], field="retrieval denseWeight", minimum=0.0, maximum=10.0
     )
+    if not isinstance(merged["graphEnabled"], bool):
+        raise KnowledgeLibraryError("graphEnabled must be boolean", code="invalid_argument")
+    graph_enabled = merged["graphEnabled"]
+    graph_weight = _strict_float(
+        merged["graphWeight"], field="retrieval graphWeight", minimum=0.0, maximum=10.0
+    )
     if lexical_weight + dense_weight <= 0:
         raise KnowledgeLibraryError("retrieval weights cannot both be zero", code="invalid_argument")
     rrf_k = _strict_int(merged["rrfK"], field="retrieval rrfK", minimum=1, maximum=1_000)
@@ -2143,14 +2322,36 @@ def _normalize_retrieval_config(
         minimum=1,
         maximum=20,
     )
+    if not isinstance(merged["rerankEnabled"], bool):
+        raise KnowledgeLibraryError("rerankEnabled must be boolean", code="invalid_argument")
+    rerank_candidate_depth = _strict_int(
+        merged["rerankCandidateDepth"],
+        field="retrieval rerankCandidateDepth",
+        minimum=1,
+        maximum=100,
+    )
+    if merged["rerankEnabled"] and top_k > 20:
+        raise KnowledgeLibraryError(
+            "reranked retrieval topK must not exceed 20",
+            code="invalid_argument",
+        )
+    if merged["rerankEnabled"] and rerank_candidate_depth < top_k:
+        raise KnowledgeLibraryError(
+            "rerankCandidateDepth must be at least topK",
+            code="invalid_argument",
+        )
     return {
         "mode": mode,
         "topK": top_k,
         "threshold": threshold,
         "lexicalWeight": lexical_weight,
         "denseWeight": dense_weight,
+        "graphEnabled": graph_enabled,
+        "graphWeight": graph_weight,
         "rrfK": rrf_k,
         "candidateMultiplier": candidate_multiplier,
+        "rerankEnabled": merged["rerankEnabled"],
+        "rerankCandidateDepth": rerank_candidate_depth,
     }
 
 

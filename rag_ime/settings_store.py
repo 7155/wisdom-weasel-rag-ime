@@ -22,6 +22,7 @@ from .settings_schema import (
     stable_settings_hash,
     unflatten_settings,
 )
+from .knowledge_embedding_profile import normalize_knowledge_embedding_profile
 from .text_utils import now_ms
 from .voice_control import normalize_voice_hotwords, voice_hotword_config_from_settings
 
@@ -142,6 +143,7 @@ class ManagementSettingsStore:
         before_flat = flatten_settings(before)
         after = deep_merge_settings(before, normalized)
         voice_hotword_config_from_settings(after)
+        normalize_knowledge_embedding_profile(after)
         changed = tuple(
             sorted(
                 key

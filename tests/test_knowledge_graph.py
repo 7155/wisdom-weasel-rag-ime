@@ -8,7 +8,12 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from rag_ime.contracts.json_schema import validate_contract
-from rag_ime.knowledge_library import KnowledgeConflictError, KnowledgeLibraryConfig, KnowledgeLibraryService
+from rag_ime.knowledge_library import (
+    KnowledgeConflictError,
+    KnowledgeLibraryConfig,
+    KnowledgeLibraryError,
+    KnowledgeLibraryService,
+)
 from rag_ime.knowledge_library.graph_extractors import (
     ExtractedEntity,
     ExtractedRelation,
@@ -60,6 +65,41 @@ class _StubModelExtractor:
                 relations = [
                     ExtractedRelation("Agent Runtime", "SQLite", "stores evidence in", "Agent Runtime", 0.9)
                 ]
+            result[item.chunk_id] = GraphExtraction(
+                item.chunk_id,
+                entities=tuple(entities),
+                relations=tuple(relations),
+            )
+        return result
+
+
+class _ChainModelExtractor:
+    mode = "model"
+    fingerprint = "model:relation-chain-v1"
+    configured = True
+    config = type("Config", (), {"model": "relation-chain-model"})()
+
+    def extract(self, inputs):
+        pairs = (
+            ("Alpha", "Beta"),
+            ("Beta", "Gamma"),
+            ("Gamma", "Delta"),
+        )
+        result = {}
+        for item in inputs:
+            entities = []
+            relations = []
+            for source, target in pairs:
+                evidence = f"{source} links {target}"
+                if evidence in item.content:
+                    entities = [
+                        ExtractedEntity(source, "Concept", source),
+                        ExtractedEntity(target, "Concept", target),
+                    ]
+                    relations = [
+                        ExtractedRelation(source, target, "links", evidence, 0.95)
+                    ]
+                    break
             result[item.chunk_id] = GraphExtraction(
                 item.chunk_id,
                 entities=tuple(entities),
@@ -159,11 +199,78 @@ class KnowledgeGraphTests(unittest.TestCase):
         library = result["retrieval"]["libraries"][0]
         self.assertEqual("ready", library["graphStatus"])
         self.assertGreater(library["graphCandidates"], 0)
+        self.assertEqual(
+            "bounded-personalized-rank-v1",
+            library["graphRelationRanking"]["algorithm"],
+        )
         graph_hits = [hit for hit in result["hits"] if hit["diagnostics"].get("graphRank")]
         self.assertTrue(graph_hits)
         self.assertEqual("weighted-rrf-graph", graph_hits[0]["diagnostics"]["fusion"])
         self.assertTrue(graph_hits[0]["diagnostics"]["graphMatches"])
         self.assertTrue(graph_hits[0]["diagnostics"]["graphPaths"])
+
+    def test_retrieval_config_can_disable_and_weight_graph_candidates_for_ablation(self) -> None:
+        self.assertTrue(self.base["retrievalConfig"]["graphEnabled"])
+        self.assertEqual(0.7, self.base["retrievalConfig"]["graphWeight"])
+        self.service.rebuild_knowledge_graph(self.base["id"], expected_revision=0)
+
+        disabled_base = self.service.update_base(
+            self.base["id"],
+            retrieval_config={
+                **self.base["retrievalConfig"],
+                "graphEnabled": False,
+            },
+            expected_revision=self.base["configRevision"],
+        )
+        disabled = self.service.search(
+            "SQLite",
+            base_ids=(self.base["id"],),
+            mode="hybrid",
+            threshold=0.0,
+            limit=10,
+        )
+
+        disabled_library = disabled["retrieval"]["libraries"][0]
+        self.assertFalse(disabled["retrieval"]["config"]["graphEnabled"])
+        self.assertEqual("disabled", disabled_library["graphStatus"])
+        self.assertEqual(0, disabled_library["graphCandidates"])
+        self.assertFalse(any(hit["diagnostics"].get("graphRank") for hit in disabled["hits"]))
+
+        self.service.update_base(
+            self.base["id"],
+            retrieval_config={
+                **disabled_base["retrievalConfig"],
+                "graphEnabled": True,
+                "graphWeight": 1.25,
+            },
+            expected_revision=disabled_base["configRevision"],
+        )
+        weighted = self.service.search(
+            "SQLite",
+            base_ids=(self.base["id"],),
+            mode="hybrid",
+            threshold=0.0,
+            limit=10,
+        )
+
+        weighted_library = weighted["retrieval"]["libraries"][0]
+        self.assertEqual("ready", weighted_library["graphStatus"])
+        self.assertGreater(weighted_library["graphCandidates"], 0)
+        weighted_graph_hits = [hit for hit in weighted["hits"] if hit["diagnostics"].get("graphRank")]
+        self.assertTrue(weighted_graph_hits)
+        self.assertEqual(1.25, weighted_graph_hits[0]["diagnostics"]["graphWeight"])
+
+    def test_retrieval_config_rejects_non_boolean_graph_toggle_and_out_of_range_weight(self) -> None:
+        with self.assertRaisesRegex(KnowledgeLibraryError, "graphEnabled must be boolean"):
+            self.service.create_base(
+                "Invalid graph toggle",
+                retrieval_config={"graphEnabled": "yes"},
+            )
+        with self.assertRaisesRegex(KnowledgeLibraryError, "graphWeight"):
+            self.service.create_base(
+                "Invalid graph weight",
+                retrieval_config={"graphWeight": 10.1},
+            )
 
     def test_graph_becomes_stale_when_document_revision_changes(self) -> None:
         self.service.store.update_document(self.document["documentId"], {"status": "stale"})
@@ -345,6 +452,76 @@ class KnowledgeGraphTests(unittest.TestCase):
         self.assertGreater(cached["extractor"]["cachedChunkCount"], 0)
         cached_graph = self.service.knowledge_graph(self.base["id"])
         self.assertTrue(cached_graph["extractor"]["configured"])
+
+    def test_relation_ranking_expands_three_relation_hops_to_new_evidence(self) -> None:
+        base = self.service.create_base(
+            "Relation chain",
+            chunking_config={"strategy": "fixed", "size": 400, "overlap": 0},
+        )
+        documents = []
+        for index, content in enumerate(
+            ("Alpha links Beta", "Beta links Gamma", "Gamma links Delta"),
+            start=1,
+        ):
+            source = self.root / f"chain-{index}.txt"
+            source.write_text(content, encoding="utf-8")
+            documents.append(self.service.import_document(base["id"], source))
+        extractor = _ChainModelExtractor()
+        self.service.graph.extractor_factory = lambda *_args, **_kwargs: extractor
+        rebuilt = self.service.rebuild_knowledge_graph(
+            base["id"],
+            expected_revision=0,
+            extractor_mode="model",
+        )
+        self.assertEqual("ready", rebuilt["status"])
+        rows = self.service.store.all(
+            "SELECT document_id, id FROM knowledge_chunks WHERE base_id=?",
+            (base["id"],),
+        )
+        chunks = {str(row["document_id"]): str(row["id"]) for row in rows}
+
+        result = self.service.graph.retrieval_candidates(
+            base["id"],
+            "Alpha",
+            seed_chunk_ids=(chunks[documents[0]["documentId"]],),
+            limit=10,
+        )
+
+        self.assertEqual("bounded-personalized-rank-v1", result["relationRanking"]["algorithm"])
+        self.assertEqual(
+            "query-concept-required-v1",
+            result["relationRanking"]["activation"],
+        )
+        self.assertTrue(result["relationRanking"]["activated"])
+        self.assertGreaterEqual(result["relationRanking"]["expandedNodeCount"], 2)
+        self.assertIn(
+            chunks[documents[2]["documentId"]],
+            {item["chunkId"] for item in result["items"]},
+        )
+        delta = next(item for item in result["matchedNodes"] if item["label"] == "Delta")
+        self.assertEqual("relation", delta["source"])
+        self.assertEqual(3, delta["hop"])
+
+    def test_graph_does_not_expand_unrelated_first_stage_chunk_concepts(self) -> None:
+        self.service.rebuild_knowledge_graph(self.base["id"], expected_revision=0)
+        chunk = self.service.store.one(
+            "SELECT id FROM knowledge_chunks WHERE base_id=? ORDER BY id LIMIT 1",
+            (self.base["id"],),
+        )
+
+        result = self.service.graph.retrieval_candidates(
+            self.base["id"],
+            "不存在于图谱中的专有查询",
+            seed_chunk_ids=(str(chunk["id"]),),
+            limit=10,
+        )
+
+        self.assertEqual([], result["items"])
+        self.assertFalse(result["relationRanking"]["activated"])
+        self.assertEqual(
+            "no-query-concept-match",
+            result["relationRanking"]["reason"],
+        )
 
 
 if __name__ == "__main__":

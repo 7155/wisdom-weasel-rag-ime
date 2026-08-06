@@ -1,0 +1,4 @@
+interface:
+  display_name: "RAG Retrieval Optimization"
+  short_description: "Build and optimize a Knowledge RAG pipeline"
+  default_prompt: "Use $rag-retrieval-optimization to inspect, build, and safely optimize this Knowledge RAG pipeline end to end."

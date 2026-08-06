@@ -18,6 +18,12 @@ from .models import (
     SearchHit,
 )
 from .parsers import BuiltinDocumentParser, MinerULocalParser, ParserRouter
+from .rerank import (
+    KnowledgeReranker,
+    MlxQwen3KnowledgeReranker,
+    knowledge_reranker_from_env,
+    knowledge_reranker_profile_sha256,
+)
 from .service import KnowledgeLibraryService
 
 __all__ = [
@@ -33,9 +39,11 @@ __all__ = [
     "KnowledgeLibraryConfig",
     "KnowledgeLibraryError",
     "KnowledgeLibraryService",
+    "KnowledgeReranker",
     "KnowledgeNotFoundError",
     "LocalKnowledgeClient",
     "MinerULocalParser",
+    "MlxQwen3KnowledgeReranker",
     "PARSER_MODES",
     "ParsedAsset",
     "ParsedDocument",
@@ -44,4 +52,6 @@ __all__ = [
     "SqliteDenseIndex",
     "USearchDenseIndex",
     "dense_index_from_env",
+    "knowledge_reranker_from_env",
+    "knowledge_reranker_profile_sha256",
 ]

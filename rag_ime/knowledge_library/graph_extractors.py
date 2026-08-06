@@ -18,7 +18,11 @@ _LINK_OR_QUOTE_RE = re.compile(
 )
 _CODE_TERM_RE = re.compile(r"`([^`\n]{2,80})`")
 _CODE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_./:+-]{2,64}$")
-_RELATION_TYPE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_ -]{0,47}$")
+# ``\w`` is Unicode-aware in Python. Require a letter-like first character,
+# then allow bounded letters, digits, spaces, underscores, and hyphens. The
+# previous ASCII-only contract silently discarded valid Chinese relation types
+# such as “审批” after otherwise successful model extraction.
+_RELATION_TYPE_RE = re.compile(r"^[^\W\d_][\w -]{0,47}$", re.UNICODE)
 
 
 @dataclass(frozen=True)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import importlib.util
 import os
+import sqlite3
 import tempfile
 import threading
 import time
@@ -30,6 +31,42 @@ from rag_ime.knowledge_library.dense import dense_index_from_env
 from rag_ime.knowledge_library.models import DocumentParseError
 from rag_ime.knowledge_library.parsers import BuiltinDocumentParser, MinerULocalParser, ZipSafetyLimits, inspect_mineru_zip
 from rag_ime.knowledge_library.service import _chunk_block_heading, _chunk_strategy_blocks
+
+
+class _RecordingKnowledgeReranker:
+    configured = True
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def rerank(self, query, candidates, *, limit, candidate_limit=100):
+        selected = [dict(item) for item in candidates[:candidate_limit]]
+        self.calls.append(
+            {
+                "query": query,
+                "candidateIds": [item["chunkId"] for item in selected],
+                "limit": limit,
+                "candidateLimit": candidate_limit,
+            }
+        )
+        output = []
+        for rank, item in enumerate(list(reversed(selected))[:limit], start=1):
+            item["rerankScore"] = 1.0 - ((rank - 1) * 0.1)
+            item["rerankRank"] = rank
+            output.append(item)
+        return output
+
+    def status(self):
+        return {
+            "provider": "fixture-reranker",
+            "configured": True,
+            "fingerprint": "fixture:sha256:" + "1" * 64,
+            "calls": len(self.calls),
+            "errorCount": 0,
+            "fallbackCount": 0,
+            "independentStage": True,
+            "subagentSubstitute": False,
+        }
 
 
 class KnowledgeLibraryServiceTests(unittest.TestCase):
@@ -140,6 +177,23 @@ class KnowledgeLibraryServiceTests(unittest.TestCase):
         self.service.update_base(base["id"], agent_enabled=True)
         self.assertEqual(1, len(client.list_bases({})["items"]))
         self.assertEqual(1, len(client.search({"query": "satellite"})["items"]))
+
+    def test_agent_open_enforces_the_requested_knowledge_base_scope(self) -> None:
+        first_base = self.service.create_base("First scope", agent_enabled=True)
+        second_base = self.service.create_base("Second scope", agent_enabled=True)
+        second_document = self.service.import_document(
+            second_base["id"],
+            self._document("second-scope.md"),
+        )
+        client = LocalKnowledgeClient(self.service)
+
+        with self.assertRaisesRegex(Exception, "outside the selected knowledge base"):
+            client.open(
+                {
+                    "kbId": first_base["id"],
+                    "fileId": second_document["documentId"],
+                }
+            )
 
     def test_fts_scores_preserve_bm25_order_instead_of_flattening_every_hit(self) -> None:
         base = self.service.create_base("Ranking papers", agent_enabled=True)
@@ -565,6 +619,90 @@ class KnowledgeLibraryServiceTests(unittest.TestCase):
         self.assertEqual(0.5, diagnostics["denseWeight"])
         self.assertEqual(15, hybrid["retrieval"]["libraries"][0]["candidateLimit"])
 
+    def test_agent_search_uses_base_defaults_but_caps_the_result_budget(self) -> None:
+        base = self.service.create_base(
+            "Bounded agent retrieval",
+            agent_enabled=True,
+            retrieval_config={"mode": "lexical", "topK": 100, "threshold": 0.0},
+        )
+        self.service.import_document(base["id"], self._document("bounded-agent.md"))
+
+        agent_result = LocalKnowledgeClient(self.service).search(
+            {"kbId": base["id"], "query": "glacier"}
+        )
+        management_result = self.service.search(
+            "glacier",
+            base_ids=(base["id"],),
+        )
+
+        self.assertEqual(
+            12,
+            agent_result["retrieval"]["libraries"][0]["config"]["topK"],
+        )
+        self.assertEqual(
+            100,
+            management_result["retrieval"]["libraries"][0]["config"]["topK"],
+        )
+
+    def test_product_search_runs_independent_reranker_before_final_top_k(self) -> None:
+        reranker = _RecordingKnowledgeReranker()
+        service = KnowledgeLibraryService(
+            KnowledgeLibraryConfig(self.root / "RerankedKnowledge", chunk_chars=400),
+            reranker=reranker,
+        )
+        self.addCleanup(service.close)
+        base = service.create_base(
+            "Reranked papers",
+            agent_enabled=True,
+            retrieval_config={
+                "mode": "lexical",
+                "topK": 1,
+                "candidateMultiplier": 1,
+                "rerankEnabled": True,
+                "rerankCandidateDepth": 2,
+            },
+        )
+        strong = self.root / "rerank-strong.md"
+        weak = self.root / "rerank-weak.md"
+        strong.write_text(("glacier " * 12) + "strong evidence", encoding="utf-8")
+        weak.write_text("glacier weak evidence", encoding="utf-8")
+        service.import_document(base["id"], strong)
+        service.import_document(base["id"], weak)
+
+        result = LocalKnowledgeClient(service).search(
+            {"kbId": base["id"], "query": "glacier"}
+        )
+
+        self.assertEqual(["rerank-weak.md"], [item["fileName"] for item in result["items"]])
+        self.assertEqual(2, len(reranker.calls[0]["candidateIds"]))
+        self.assertEqual(2, reranker.calls[0]["candidateLimit"])
+        diagnostics = result["items"][0]["diagnostics"]
+        self.assertEqual(2, diagnostics["retrievalRank"])
+        self.assertEqual(1, diagnostics["rerankRank"])
+        self.assertTrue(diagnostics["independentRerankStage"])
+        self.assertFalse(diagnostics["subagentSubstitute"])
+        self.assertEqual("fixture-reranker", result["retrieval"]["reranker"]["provider"])
+        self.assertEqual(2, result["retrieval"]["libraries"][0]["rerankCandidates"])
+
+    def test_enabled_product_rerank_fails_closed_without_a_model(self) -> None:
+        base = self.service.create_base(
+            "Missing reranker",
+            agent_enabled=True,
+            retrieval_config={
+                "mode": "lexical",
+                "topK": 1,
+                "rerankEnabled": True,
+                "rerankCandidateDepth": 2,
+            },
+        )
+        self.service.import_document(base["id"], self._document("missing-reranker.md"))
+
+        with self.assertRaisesRegex(Exception, "not configured") as raised:
+            LocalKnowledgeClient(self.service).search(
+                {"kbId": base["id"], "query": "glacier"}
+            )
+        self.assertEqual("reranker_unavailable", raised.exception.code)
+
     def test_find_pages_over_more_than_130_chunks_without_truncation(self) -> None:
         target_blocks = {131: "DEEP-TARGET-FIRST", 139: "DEEP-TARGET-SECOND"}
 
@@ -691,6 +829,112 @@ class KnowledgeLibraryServiceTests(unittest.TestCase):
         )
         self.assertEqual([(["content 0", "content 1", "content 2"], 2)], provider.calls)
         self.assertEqual(3, dense.status()["vectorCount"])
+
+    def test_embedding_rebuild_retains_previous_fingerprint_for_rollback(self) -> None:
+        database = self.root / "embedding-rollback.sqlite"
+        previous = SqliteDenseIndex(
+            database,
+            HashingEmbeddingProvider(dimensions=32),
+        )
+        replacement = SqliteDenseIndex(
+            database,
+            HashingEmbeddingProvider(dimensions=64),
+        )
+        chunks = [
+            {
+                "id": "chunk-rollback",
+                "base_id": "base-rollback",
+                "content": "embedding rollback evidence",
+            }
+        ]
+
+        previous.replace_document("doc-rollback", chunks)
+        replacement.replace_document("doc-rollback", chunks)
+
+        self.assertEqual(1, replacement.status()["vectorCount"])
+        self.assertEqual(1, previous.status()["vectorCount"])
+        self.assertEqual(
+            "chunk-rollback",
+            previous.search(
+                "rollback evidence",
+                base_ids=("base-rollback",),
+                limit=1,
+            )[0][0],
+        )
+
+        replacement.delete_document("doc-rollback")
+        self.assertEqual(0, replacement.status()["vectorCount"])
+        self.assertEqual(0, previous.status()["vectorCount"])
+
+    def test_usearch_projection_retains_previous_fingerprint_mapping_for_rollback(self) -> None:
+        database = self.root / "ann-embedding-rollback.sqlite"
+        chunks = [
+            {
+                "id": "chunk-ann-rollback",
+                "document_id": "doc-ann-rollback",
+                "base_id": "base-ann-rollback",
+                "content": "ann rollback evidence",
+            }
+        ]
+        with (
+            mock.patch.object(USearchDenseIndex, "_dependencies", return_value=(object(), object())),
+            mock.patch.object(USearchDenseIndex, "rebuild_base", return_value=None),
+        ):
+            previous = USearchDenseIndex(
+                database,
+                HashingEmbeddingProvider(dimensions=32),
+            )
+            previous.replace_document("doc-ann-rollback", chunks)
+            replacement = USearchDenseIndex(
+                database,
+                HashingEmbeddingProvider(dimensions=64),
+            )
+            replacement.replace_document("doc-ann-rollback", chunks)
+
+        self.assertEqual(1, previous._base_vector_count("base-ann-rollback"))
+        self.assertEqual(1, replacement._base_vector_count("base-ann-rollback"))
+
+    def test_usearch_legacy_chunk_unique_projection_migrates_without_losing_mapping(self) -> None:
+        database = self.root / "ann-legacy-migration.sqlite"
+        fingerprint = "local-hash:32:v1"
+        with sqlite3.connect(database) as connection:
+            connection.execute(
+                "CREATE TABLE knowledge_dense_chunks ("
+                "chunk_id TEXT PRIMARY KEY, document_id TEXT NOT NULL, base_id TEXT NOT NULL, "
+                "fingerprint TEXT NOT NULL, vector_json TEXT NOT NULL)"
+            )
+            connection.execute(
+                "INSERT INTO knowledge_dense_chunks VALUES (?, ?, ?, ?, ?)",
+                ("chunk-legacy", "doc-legacy", "base-legacy", fingerprint, "[1.0, 0.0]"),
+            )
+            connection.execute(
+                "CREATE TABLE knowledge_ann_keys ("
+                "ann_key INTEGER PRIMARY KEY AUTOINCREMENT, chunk_id TEXT NOT NULL UNIQUE, "
+                "document_id TEXT NOT NULL, base_id TEXT NOT NULL, fingerprint TEXT NOT NULL)"
+            )
+            connection.execute(
+                "INSERT INTO knowledge_ann_keys(chunk_id, document_id, base_id, fingerprint) "
+                "VALUES (?, ?, ?, ?)",
+                ("chunk-legacy", "doc-legacy", "base-legacy", fingerprint),
+            )
+
+        with (
+            mock.patch.object(USearchDenseIndex, "_dependencies", return_value=(object(), object())),
+            mock.patch.object(USearchDenseIndex, "rebuild_base", return_value=None),
+        ):
+            migrated = USearchDenseIndex(
+                database,
+                HashingEmbeddingProvider(dimensions=32),
+            )
+
+        self.assertEqual(1, migrated._base_vector_count("base-legacy"))
+        with sqlite3.connect(database) as connection:
+            unique_indexes = [
+                [row[2] for row in connection.execute(f"PRAGMA index_info('{index[1]}')")]
+                for index in connection.execute("PRAGMA index_list(knowledge_ann_keys)")
+                if index[2] == 1
+            ]
+        self.assertIn(["chunk_id", "fingerprint"], unique_indexes)
 
     def test_dense_factory_falls_back_honestly_when_usearch_is_unavailable(self) -> None:
         with mock.patch("rag_ime.knowledge_library.dense.USearchDenseIndex._dependencies", side_effect=RuntimeError("missing usearch")):

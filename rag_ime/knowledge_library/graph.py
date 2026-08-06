@@ -53,6 +53,155 @@ class _Edge:
     chunk_id: str | None
 
 
+_RELATION_RANK_MAX_HOPS = 3
+_RELATION_RANK_MAX_NODES = 160
+_RELATION_RANK_RESTART = 0.35
+_RELATION_RANK_ITERATIONS = 6
+
+
+def _expand_relation_concepts(
+    connection: sqlite3.Connection,
+    base_id: str,
+    concepts: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Bounded personalized propagation over evidence-grounded relations."""
+
+    initial_ids = tuple(concepts)
+    if not initial_ids:
+        return {
+            "algorithm": "bounded-personalized-rank-v1",
+            "maxHops": _RELATION_RANK_MAX_HOPS,
+            "expandedNodeCount": 0,
+        }
+    adjacency: dict[str, dict[str, float]] = {node_id: {} for node_id in initial_ids}
+    hops = {node_id: 0 for node_id in initial_ids}
+    frontier = list(initial_ids)
+    for hop in range(1, _RELATION_RANK_MAX_HOPS + 1):
+        if not frontier or len(hops) >= _RELATION_RANK_MAX_NODES:
+            break
+        placeholders = ", ".join("?" for _ in frontier)
+        rows = connection.execute(
+            "SELECT source_id, target_id, weight FROM knowledge_graph_edges "
+            "WHERE base_id=? AND kind='relation' "
+            f"AND (source_id IN ({placeholders}) OR target_id IN ({placeholders})) "
+            "ORDER BY weight DESC, id LIMIT 3000",
+            [base_id, *frontier, *frontier],
+        ).fetchall()
+        discovered: list[str] = []
+        for row in rows:
+            source_id = str(row["source_id"])
+            target_id = str(row["target_id"])
+            if source_id == target_id:
+                continue
+            for node_id in (source_id, target_id):
+                if node_id not in hops:
+                    if len(hops) >= _RELATION_RANK_MAX_NODES:
+                        break
+                    hops[node_id] = hop
+                    discovered.append(node_id)
+                    adjacency[node_id] = {}
+            if source_id not in hops or target_id not in hops:
+                continue
+            weight = max(0.05, min(1.0, float(row["weight"])))
+            adjacency[source_id][target_id] = max(
+                adjacency[source_id].get(target_id, 0.0),
+                weight,
+            )
+            adjacency[target_id][source_id] = max(
+                adjacency[target_id].get(source_id, 0.0),
+                weight,
+            )
+        frontier = list(dict.fromkeys(discovered))
+
+    missing_ids = [node_id for node_id in hops if node_id not in concepts]
+    if missing_ids:
+        placeholders = ", ".join("?" for _ in missing_ids)
+        rows = connection.execute(
+            "SELECT id, label, kind, weight FROM knowledge_graph_nodes "
+            f"WHERE base_id=? AND kind IN ('entity', 'term', 'topic') AND id IN ({placeholders})",
+            [base_id, *missing_ids],
+        ).fetchall()
+        found = {str(row["id"]) for row in rows}
+        for node_id in missing_ids:
+            if node_id not in found:
+                adjacency.pop(node_id, None)
+                hops.pop(node_id, None)
+        for row in rows:
+            node_id = str(row["id"])
+            concepts[node_id] = {
+                "label": " ".join(str(row["label"] or "").split()),
+                "kind": str(row["kind"]),
+                "source": "relation",
+                "seedRank": None,
+                "weight": float(row["weight"]),
+                "hop": hops[node_id],
+            }
+    valid_ids = set(concepts)
+    adjacency = {
+        source_id: {
+            target_id: weight
+            for target_id, weight in neighbors.items()
+            if target_id in valid_ids
+        }
+        for source_id, neighbors in adjacency.items()
+        if source_id in valid_ids
+    }
+
+    personalization: dict[str, float] = {}
+    for node_id in initial_ids:
+        concept = concepts[node_id]
+        if concept["source"] == "query":
+            source_weight = 1.0
+        else:
+            source_weight = 0.8 / (1.0 + 0.08 * int(concept.get("seedRank") or 1))
+        personalization[node_id] = source_weight * max(
+            0.05,
+            min(1.0, float(concept.get("weight") or 0.0)),
+        )
+    total_personalization = sum(personalization.values()) or 1.0
+    personalization = {
+        node_id: score / total_personalization
+        for node_id, score in personalization.items()
+    }
+    scores = {node_id: personalization.get(node_id, 0.0) for node_id in valid_ids}
+    for _ in range(_RELATION_RANK_ITERATIONS):
+        next_scores = {
+            node_id: _RELATION_RANK_RESTART * personalization.get(node_id, 0.0)
+            for node_id in valid_ids
+        }
+        dangling = 0.0
+        for source_id, score in scores.items():
+            neighbors = adjacency.get(source_id, {})
+            total_weight = sum(neighbors.values())
+            if total_weight <= 0:
+                dangling += (1.0 - _RELATION_RANK_RESTART) * score
+                continue
+            for target_id, weight in neighbors.items():
+                next_scores[target_id] += (
+                    (1.0 - _RELATION_RANK_RESTART)
+                    * score
+                    * weight
+                    / total_weight
+                )
+        if dangling:
+            for node_id, weight in personalization.items():
+                next_scores[node_id] += dangling * weight
+        scores = next_scores
+    maximum_score = max(scores.values(), default=1.0) or 1.0
+    for node_id, concept in concepts.items():
+        concept.setdefault("hop", hops.get(node_id, 0))
+        concept["graphScore"] = max(0.0, min(1.0, scores.get(node_id, 0.0) / maximum_score))
+    return {
+        "algorithm": "bounded-personalized-rank-v1",
+        "maxHops": _RELATION_RANK_MAX_HOPS,
+        "maxNodes": _RELATION_RANK_MAX_NODES,
+        "restartProbability": _RELATION_RANK_RESTART,
+        "iterations": _RELATION_RANK_ITERATIONS,
+        "seedNodeCount": len(initial_ids),
+        "expandedNodeCount": max(0, len(concepts) - len(initial_ids)),
+    }
+
+
 class KnowledgeGraph:
     """Deterministic document graph stored only in the isolated knowledge database."""
 
@@ -133,58 +282,53 @@ class KnowledgeGraph:
                 if len(concepts) >= 40:
                     break
 
-            seed_ranks = {chunk_id: rank for rank, chunk_id in enumerate(unique_seed_ids, start=1)}
-            if unique_seed_ids:
-                placeholders = ", ".join("?" for _ in unique_seed_ids)
-                seed_nodes = connection.execute(
-                    f"SELECT id, chunk_id FROM knowledge_graph_nodes WHERE base_id=? AND kind='chunk' "
-                    f"AND chunk_id IN ({placeholders})",
-                    [base_id, *unique_seed_ids],
-                ).fetchall()
-                seed_node_ranks = {
-                    str(row["id"]): seed_ranks.get(str(row["chunk_id"]), len(seed_ranks) + 1)
-                    for row in seed_nodes
-                }
-                if seed_node_ranks:
-                    node_placeholders = ", ".join("?" for _ in seed_node_ranks)
-                    incident = connection.execute(
-                        "SELECT source_id, target_id FROM knowledge_graph_edges WHERE base_id=? "
-                        f"AND kind IN ('mentions', 'covers') AND (source_id IN ({node_placeholders}) "
-                        f"OR target_id IN ({node_placeholders}))",
-                        [base_id, *seed_node_ranks, *seed_node_ranks],
-                    ).fetchall()
-                    related_ranks: dict[str, int] = {}
-                    for edge in incident:
-                        source_id = str(edge["source_id"])
-                        target_id = str(edge["target_id"])
-                        seed_node_id = source_id if source_id in seed_node_ranks else target_id
-                        concept_id = target_id if seed_node_id == source_id else source_id
-                        related_ranks[concept_id] = min(
-                            related_ranks.get(concept_id, len(seed_ranks) + 1),
-                            seed_node_ranks[seed_node_id],
-                        )
-                    if related_ranks:
-                        related_placeholders = ", ".join("?" for _ in related_ranks)
-                        related_rows = connection.execute(
-                            "SELECT id, label, kind, weight FROM knowledge_graph_nodes WHERE base_id=? "
-                            f"AND kind IN ('entity', 'term', 'topic') AND id IN ({related_placeholders})",
-                            [base_id, *related_ranks],
-                        ).fetchall()
-                        for row in related_rows:
-                            node_id = str(row["id"])
-                            concepts.setdefault(
-                                node_id,
-                                {
-                                    "label": " ".join(str(row["label"] or "").split()),
-                                    "kind": str(row["kind"]),
-                                    "source": "seed",
-                                    "seedRank": related_ranks[node_id],
-                                    "weight": float(row["weight"]),
-                                },
-                            )
-
             if not concepts:
-                return {"status": status, "items": [], "matchedNodes": []}
+                return {
+                    "status": status,
+                    "items": [],
+                    "matchedNodes": [],
+                    "relationRanking": {
+                        "algorithm": "bounded-personalized-rank-v1",
+                        "activation": "query-concept-required-v1",
+                        "activated": False,
+                        "reason": "no-query-concept-match",
+                        "querySeedNodeCount": 0,
+                        "firstStageChunkCount": len(unique_seed_ids),
+                        "firstStageSupportedSeedCount": 0,
+                        "expandedNodeCount": 0,
+                    },
+                }
+            first_stage_supported: set[str] = set()
+            if unique_seed_ids:
+                chunk_placeholders = ", ".join("?" for _ in unique_seed_ids)
+                concept_placeholders = ", ".join("?" for _ in concepts)
+                support_rows = connection.execute(
+                    "SELECT source_id, target_id FROM knowledge_graph_edges WHERE base_id=? "
+                    "AND kind IN ('mentions', 'covers') AND chunk_id IN ("
+                    f"{chunk_placeholders}) AND (source_id IN ({concept_placeholders}) "
+                    f"OR target_id IN ({concept_placeholders}))",
+                    [base_id, *unique_seed_ids, *concepts, *concepts],
+                ).fetchall()
+                for edge in support_rows:
+                    for node_id in (str(edge["source_id"]), str(edge["target_id"])):
+                        if node_id in concepts:
+                            first_stage_supported.add(node_id)
+            relation_ranking = _expand_relation_concepts(
+                connection,
+                base_id,
+                concepts,
+            )
+            relation_ranking.update(
+                {
+                    "activation": "query-concept-required-v1",
+                    "activated": True,
+                    "querySeedNodeCount": sum(
+                        item.get("source") == "query" for item in concepts.values()
+                    ),
+                    "firstStageChunkCount": len(unique_seed_ids),
+                    "firstStageSupportedSeedCount": len(first_stage_supported),
+                }
+            )
             concept_ids = tuple(concepts)
             placeholders = ", ".join("?" for _ in concept_ids)
             evidence_edges = connection.execute(
@@ -208,14 +352,14 @@ class KnowledgeGraph:
             best_concept_id = max(
                 linked_ids,
                 key=lambda node_id: (
-                    concepts[node_id]["source"] == "query",
-                    -int(concepts[node_id]["seedRank"] or 0),
+                    float(concepts[node_id].get("graphScore") or 0.0),
+                    {"query": 2, "seed": 1}.get(str(concepts[node_id]["source"]), 0),
+                    -int(concepts[node_id].get("hop") or 0),
                     float(concepts[node_id]["weight"]),
                 ),
             )
             concept = concepts[best_concept_id]
-            seed_rank = int(concept["seedRank"] or 0)
-            source_score = 1.0 if concept["source"] == "query" else 1.0 / (1.0 + 0.08 * seed_rank)
+            source_score = max(0.05, float(concept.get("graphScore") or 0.0))
             score = source_score * (0.7 + 0.3 * max(0.0, min(1.0, float(edge["weight"]))))
             candidate = candidates.setdefault(
                 chunk_id,
@@ -230,10 +374,22 @@ class KnowledgeGraph:
                 candidate["paths"].append(path)
         ranked = sorted(candidates.values(), key=lambda item: (-float(item["score"]), str(item["chunkId"])))
         matched_nodes = [
-            {"id": node_id, "label": item["label"], "kind": item["kind"], "source": item["source"]}
+            {
+                "id": node_id,
+                "label": item["label"],
+                "kind": item["kind"],
+                "source": item["source"],
+                "hop": int(item.get("hop") or 0),
+                "score": round(float(item.get("graphScore") or 0.0), 8),
+            }
             for node_id, item in concepts.items()
         ][:40]
-        return {"status": status, "items": ranked[:candidate_limit], "matchedNodes": matched_nodes}
+        return {
+            "status": status,
+            "items": ranked[:candidate_limit],
+            "matchedNodes": matched_nodes,
+            "relationRanking": relation_ranking,
+        }
 
     def reserve_rebuild(
         self,
@@ -1002,7 +1158,7 @@ class KnowledgeGraph:
             filters.append(f"d.id IN ({', '.join('?' for _ in document_ids)})")
             params.extend(document_ids)
         rows = connection.execute(
-            "SELECT d.id, d.revision, d.status, d.output_hash, d.indexed_config_revision, COUNT(c.id) AS chunk_count, "
+            "SELECT d.id, d.revision, d.status, d.output_hash, COUNT(c.id) AS chunk_count, "
             "COALESCE(GROUP_CONCAT(c.content_hash, ','), '') AS chunk_hashes "
             "FROM knowledge_documents d LEFT JOIN knowledge_chunks c ON c.document_id=d.id "
             f"WHERE {' AND '.join(filters)} GROUP BY d.id HAVING COUNT(c.id) > 0 ORDER BY d.id",
@@ -1010,7 +1166,7 @@ class KnowledgeGraph:
         ).fetchall()
         payload = [
             [str(row["id"]), int(row["revision"]), str(row["status"]), str(row["output_hash"] or ""),
-             int(row["indexed_config_revision"]), int(row["chunk_count"]), str(row["chunk_hashes"])]
+             int(row["chunk_count"]), str(row["chunk_hashes"])]
             for row in rows
         ]
         return "sha256:" + hashlib.sha256(

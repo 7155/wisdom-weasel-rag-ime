@@ -114,14 +114,42 @@ class SqliteDenseIndex:
 
     def _migrate(self) -> None:
         with self._connection() as connection:
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS knowledge_dense_chunks ("
-                "chunk_id TEXT PRIMARY KEY, document_id TEXT NOT NULL, base_id TEXT NOT NULL, "
-                "fingerprint TEXT NOT NULL, vector_json TEXT NOT NULL)"
-            )
+            columns = connection.execute(
+                "PRAGMA table_info(knowledge_dense_chunks)"
+            ).fetchall()
+            primary_key = [
+                str(row["name"])
+                for row in sorted(columns, key=lambda row: int(row["pk"]))
+                if int(row["pk"]) > 0
+            ]
+            if columns and primary_key != ["chunk_id", "fingerprint"]:
+                connection.execute("DROP INDEX IF EXISTS idx_knowledge_dense_base")
+                connection.execute(
+                    "ALTER TABLE knowledge_dense_chunks "
+                    "RENAME TO knowledge_dense_chunks_legacy_v1"
+                )
+                self._create_projection_table(connection)
+                connection.execute(
+                    "INSERT OR REPLACE INTO knowledge_dense_chunks"
+                    "(chunk_id, document_id, base_id, fingerprint, vector_json) "
+                    "SELECT chunk_id, document_id, base_id, fingerprint, vector_json "
+                    "FROM knowledge_dense_chunks_legacy_v1"
+                )
+                connection.execute("DROP TABLE knowledge_dense_chunks_legacy_v1")
+            else:
+                self._create_projection_table(connection)
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_knowledge_dense_base ON knowledge_dense_chunks(base_id, fingerprint)"
             )
+
+    @staticmethod
+    def _create_projection_table(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS knowledge_dense_chunks ("
+            "chunk_id TEXT NOT NULL, document_id TEXT NOT NULL, base_id TEXT NOT NULL, "
+            "fingerprint TEXT NOT NULL, vector_json TEXT NOT NULL, "
+            "PRIMARY KEY(chunk_id, fingerprint))"
+        )
 
     def replace_document(self, document_id: str, chunks: Sequence[dict[str, Any]]) -> None:
         records: list[tuple[str, str, str, str, str]] = []
@@ -147,7 +175,10 @@ class SqliteDenseIndex:
                 )
             )
         with self._connection() as connection:
-            connection.execute("DELETE FROM knowledge_dense_chunks WHERE document_id=?", (document_id,))
+            connection.execute(
+                "DELETE FROM knowledge_dense_chunks WHERE document_id=? AND fingerprint=?",
+                (document_id, str(self.provider.fingerprint)),
+            )
             connection.executemany(
                 "INSERT INTO knowledge_dense_chunks(chunk_id, document_id, base_id, fingerprint, vector_json) "
                 "VALUES (?, ?, ?, ?, ?)",
@@ -259,15 +290,50 @@ class USearchDenseIndex(SqliteDenseIndex):
 
     def _migrate_ann(self) -> None:
         with self._connection() as connection:
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS knowledge_ann_keys ("
-                "ann_key INTEGER PRIMARY KEY AUTOINCREMENT, chunk_id TEXT NOT NULL UNIQUE, "
-                "document_id TEXT NOT NULL, base_id TEXT NOT NULL, fingerprint TEXT NOT NULL)"
-            )
+            columns = connection.execute(
+                "PRAGMA table_info(knowledge_ann_keys)"
+            ).fetchall()
+            unique_columns = [
+                [
+                    str(row["name"])
+                    for row in connection.execute(
+                        f"PRAGMA index_info('{str(index['name'])}')"
+                    ).fetchall()
+                ]
+                for index in connection.execute(
+                    "PRAGMA index_list(knowledge_ann_keys)"
+                ).fetchall()
+                if int(index["unique"]) == 1
+            ]
+            if columns and ["chunk_id", "fingerprint"] not in unique_columns:
+                connection.execute("DROP INDEX IF EXISTS idx_knowledge_ann_base")
+                connection.execute(
+                    "ALTER TABLE knowledge_ann_keys "
+                    "RENAME TO knowledge_ann_keys_legacy_v1"
+                )
+                self._create_ann_projection_table(connection)
+                connection.execute(
+                    "INSERT OR REPLACE INTO knowledge_ann_keys"
+                    "(ann_key, chunk_id, document_id, base_id, fingerprint) "
+                    "SELECT ann_key, chunk_id, document_id, base_id, fingerprint "
+                    "FROM knowledge_ann_keys_legacy_v1"
+                )
+                connection.execute("DROP TABLE knowledge_ann_keys_legacy_v1")
+            else:
+                self._create_ann_projection_table(connection)
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_knowledge_ann_base "
                 "ON knowledge_ann_keys(base_id, fingerprint)"
             )
+
+    @staticmethod
+    def _create_ann_projection_table(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS knowledge_ann_keys ("
+            "ann_key INTEGER PRIMARY KEY AUTOINCREMENT, chunk_id TEXT NOT NULL, "
+            "document_id TEXT NOT NULL, base_id TEXT NOT NULL, fingerprint TEXT NOT NULL, "
+            "UNIQUE(chunk_id, fingerprint))"
+        )
 
     def _dependencies(self) -> tuple[Callable[..., Any], Callable[[Sequence[Any], str], Any]]:
         if self._index_factory is not None and self._array_factory is not None:
@@ -286,7 +352,10 @@ class USearchDenseIndex(SqliteDenseIndex):
             old_bases = self._document_bases(document_id)
             super().replace_document(document_id, chunks)
             with self._connection() as connection:
-                connection.execute("DELETE FROM knowledge_ann_keys WHERE document_id=?", (document_id,))
+                connection.execute(
+                    "DELETE FROM knowledge_ann_keys WHERE document_id=? AND fingerprint=?",
+                    (document_id, str(self.provider.fingerprint)),
+                )
                 connection.execute(
                     "INSERT INTO knowledge_ann_keys(chunk_id, document_id, base_id, fingerprint) "
                     "SELECT chunk_id, document_id, base_id, fingerprint FROM knowledge_dense_chunks "

@@ -189,31 +189,95 @@ class MlxBertEmbeddingProvider:
         return self._encode(text, role="query", prefix=self.query_prefix)
 
     def embed_many(self, texts: list[str], *, batch_size: int = 32) -> list[list[float]]:
-        # MLX execution remains serialized by the provider lock; this contract
-        # still lets the projection layer batch providers that support it.
-        return [self.embed(text) for text in texts]
+        return self._encode_many(
+            texts,
+            role="document",
+            prefix=self.document_prefix,
+            batch_size=batch_size,
+        )
 
     def _encode(self, text: str, *, role: str, prefix: str) -> list[float]:
-        normalized = compact_whitespace(text)
-        if not normalized:
-            return []
-        key = (role, normalized)
-        with self._lock:
-            cached = self._cache.get(key)
-            if cached is not None:
-                self._cache.move_to_end(key)
-                return list(cached)
-            model, tokenizer = self._load_model()
-            import mlx.core as mx
+        return self._encode_many(
+            [text],
+            role=role,
+            prefix=prefix,
+            batch_size=1,
+        )[0]
 
-            tokens = tokenizer(prefix + normalized, return_tensors="np", padding=True, truncation=True, max_length=512)
-            hidden, _ = model(**{name: mx.array(value) for name, value in tokens.items()})
-            vector = normalize_vector([float(value) for value in mx.array(hidden[0, 0]).tolist()])
-            if vector and self.cache_size > 0:
-                self._cache[key] = vector
-                while len(self._cache) > self.cache_size:
-                    self._cache.popitem(last=False)
-            return list(vector)
+    def _encode_many(
+        self,
+        texts: list[str],
+        *,
+        role: str,
+        prefix: str,
+        batch_size: int,
+    ) -> list[list[float]]:
+        normalized = [compact_whitespace(text) for text in texts]
+        results: list[list[float]] = [[] for _ in normalized]
+        with self._lock:
+            missing_by_text: OrderedDict[str, list[int]] = OrderedDict()
+            for index, text in enumerate(normalized):
+                if not text:
+                    continue
+                key = (role, text)
+                cached = self._cache.get(key)
+                if cached is not None:
+                    self._cache.move_to_end(key)
+                    results[index] = list(cached)
+                    continue
+                missing_by_text.setdefault(text, []).append(index)
+
+            # BERT activations at 512 tokens are large on a 16 GB Mac. Keep
+            # MLX batches intentionally small even when a generic caller asks
+            # for 32, and release allocator cache after every evaluated batch.
+            step = max(1, min(8, int(batch_size)))
+            missing_texts = list(missing_by_text)
+            for offset in range(0, len(missing_texts), step):
+                batch = missing_texts[offset : offset + step]
+                vectors = self._encode_uncached_batch(batch, prefix=prefix)
+                if len(vectors) != len(batch):
+                    raise RuntimeError("MLX BERT embedding batch returned the wrong size")
+                for text, vector in zip(batch, vectors, strict=True):
+                    normalized_vector = normalize_vector(
+                        [float(value) for value in vector]
+                    )
+                    for index in missing_by_text[text]:
+                        results[index] = list(normalized_vector)
+                    if normalized_vector and self.cache_size > 0:
+                        self._cache[(role, text)] = normalized_vector
+                        self._cache.move_to_end((role, text))
+                        while len(self._cache) > self.cache_size:
+                            self._cache.popitem(last=False)
+        return results
+
+    def _encode_uncached_batch(
+        self,
+        texts: list[str],
+        *,
+        prefix: str,
+    ) -> list[list[float]]:
+        model, tokenizer = self._load_model()
+        import mlx.core as mx
+
+        tokens = tokenizer(
+            [prefix + text for text in texts],
+            return_tensors="np",
+            padding=True,
+            truncation=True,
+            max_length=512,
+        )
+        hidden, _ = model(**{name: mx.array(value) for name, value in tokens.items()})
+        pooled = hidden[:, 0]
+        mx.eval(pooled)
+        vectors = [
+            [float(value) for value in row]
+            for row in pooled.tolist()
+        ]
+        del hidden, pooled, tokens
+        clear_cache = getattr(mx, "clear_cache", None)
+        if callable(clear_cache):
+            clear_cache()
+        return vectors
 
     def _load_model(self):
         if self._model is None:

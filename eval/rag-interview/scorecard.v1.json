@@ -1,0 +1,362 @@
+{
+  "agent": {
+    "eligible": false,
+    "metrics": {},
+    "reason": "No formal four-lane Luna report supplied.",
+    "status": "pending_formal_run",
+    "system": "agent"
+  },
+  "fourLaneContract": {
+    "formalEvidenceAvailable": false,
+    "heldOutLabelsVisibleToAgent": false,
+    "lanes": [
+      "baseline",
+      "skill",
+      "tuned",
+      "agentic"
+    ],
+    "sameModel": "openai-codex/gpt-5.6-luna",
+    "samePermissions": true
+  },
+  "knowledge": {
+    "baselineLabel": "productionLexicalFloor",
+    "caseCount": 60,
+    "configs": {
+      "baseline": {
+        "candidateMultiplier": 4,
+        "denseWeight": 1.0,
+        "graphEnabled": false,
+        "graphWeight": 0.0,
+        "lexicalWeight": 1.0,
+        "mode": "lexical",
+        "rrfK": 60,
+        "threshold": 0.0,
+        "topK": 10
+      },
+      "optimized": {
+        "candidateMultiplier": 4,
+        "denseWeight": 1.5,
+        "graphEnabled": false,
+        "graphWeight": 0.0,
+        "lexicalWeight": 0.5,
+        "mode": "hybrid",
+        "rerankCandidateDepth": 40,
+        "rerankDiversityKey": "externalDocumentId",
+        "rerankEnabled": true,
+        "rerankFinalDepth": 10,
+        "rerankInstructionSha256": "6e6d918f9399ee72346621d3cf8bc354594e69e6df461140f30c209ba397cbc5",
+        "rerankMaxChunksPerDocument": 1,
+        "rerankMaxLength": 1536,
+        "rerankProvider": "mlx-qwen3-reranker",
+        "rerankerFingerprint": "mlx-qwen3-reranker:sha256:6bf8d4df70374b0ed0b592ade3c76bf6e3d2a1826e50f13eb2e8632e886dca44",
+        "rerankerModelReference": "mlx-community/Qwen3-Reranker-0.6B-4bit@5f324548f1d20c2b5a450f126fc6ef2fb1126524",
+        "rrfK": 60,
+        "threshold": 0.0,
+        "topK": 10
+      }
+    },
+    "eligible": true,
+    "metrics": {
+      "mrr": {
+        "absoluteDelta": 0.6722222222222223,
+        "baseline": 0.25,
+        "optimized": 0.9222222222222223,
+        "relativeDelta": 2.688888888888889
+      },
+      "ndcgAt1": {
+        "absoluteDelta": 0.6333333333333333,
+        "baseline": 0.23333333333333334,
+        "optimized": 0.8666666666666667,
+        "relativeDelta": 2.714285714285714
+      },
+      "ndcgAt10": {
+        "absoluteDelta": 0.6898844171640423,
+        "baseline": 0.23694477065183175,
+        "optimized": 0.926829187815874,
+        "relativeDelta": 2.9115832152200696
+      },
+      "ndcgAt3": {
+        "absoluteDelta": 0.6510955993971216,
+        "baseline": 0.2271821625595243,
+        "optimized": 0.8782777619566459,
+        "relativeDelta": 2.8659626797351536
+      },
+      "ndcgAt5": {
+        "absoluteDelta": 0.6799028448413004,
+        "baseline": 0.23694477065183175,
+        "optimized": 0.9168476154931321,
+        "relativeDelta": 2.869457059427381
+      },
+      "recallAt1": {
+        "absoluteDelta": 0.3694444444444444,
+        "baseline": 0.17222222222222222,
+        "optimized": 0.5416666666666666,
+        "relativeDelta": 2.1451612903225805
+      },
+      "recallAt10": {
+        "absoluteDelta": 0.7444444444444445,
+        "baseline": 0.24444444444444444,
+        "optimized": 0.9888888888888889,
+        "relativeDelta": 3.0454545454545454
+      },
+      "recallAt3": {
+        "absoluteDelta": 0.6694444444444445,
+        "baseline": 0.22777777777777777,
+        "optimized": 0.8972222222222223,
+        "relativeDelta": 2.939024390243903
+      },
+      "recallAt5": {
+        "absoluteDelta": 0.7222222222222222,
+        "baseline": 0.24444444444444444,
+        "optimized": 0.9666666666666667,
+        "relativeDelta": 2.9545454545454546
+      }
+    },
+    "optimizedLabel": "tuned",
+    "reason": "",
+    "source": {
+      "fileName": "crud-rag-qwen3-rerank-diverse-exact-heldout60-final-v1.json",
+      "fileSha256": "66ebccfa6ce6df70622f733b76afcee418773b8fec1dcba5e7fe82c5c0c2a027",
+      "reportSha256": "91d370e844350d03acb82f5f30a5c74ce96841dc3b09b42ff212bbc2fa061d41"
+    },
+    "system": "knowledge"
+  },
+  "localOnly": true,
+  "memory": {
+    "abstention": {
+      "abstentionF1": 0.05555555555555555,
+      "abstentionPrecision": 0.03333333333333333,
+      "abstentionRecall": 0.16666666666666666,
+      "accuracy": 0.6136363636363636,
+      "balancedAccuracy": 0.4065040650406504
+    },
+    "baselineLabel": "baseline",
+    "caseCount": 82,
+    "configs": {
+      "baseline": {
+        "denseWeight": 1.0,
+        "granularity": "session",
+        "lexicalWeight": 1.0,
+        "metadataEnabled": false,
+        "metadataWeight": 0.5,
+        "mode": "lexical",
+        "threshold": 0.0,
+        "topK": 10
+      },
+      "optimized": {
+        "candidateMultiplier": 2,
+        "denseWeight": 1.0,
+        "fusionRrfK": 60,
+        "granularity": "session_turn",
+        "lexicalWeight": 1.0,
+        "metadataEnabled": false,
+        "metadataWeight": 0.5,
+        "mode": "lexical",
+        "sessionWeight": 3.0,
+        "threshold": 0.0,
+        "topK": 10,
+        "turnWeight": 1.0
+      }
+    },
+    "eligible": true,
+    "metrics": {
+      "mrr": {
+        "absoluteDelta": 0.0011856368563686326,
+        "baseline": 0.8366192411924119,
+        "optimized": 0.8378048780487806,
+        "relativeDelta": 0.0014171761752440391
+      },
+      "ndcgAt1": {
+        "absoluteDelta": 0.012195121951219523,
+        "baseline": 0.7439024390243902,
+        "optimized": 0.7560975609756098,
+        "relativeDelta": 0.016393442622950834
+      },
+      "ndcgAt10": {
+        "absoluteDelta": 0.001136675647425034,
+        "baseline": 0.8363287094193002,
+        "optimized": 0.8374653850667252,
+        "relativeDelta": 0.0013591254666054425
+      },
+      "ndcgAt3": {
+        "absoluteDelta": -0.011130244215890595,
+        "baseline": 0.8020724715677946,
+        "optimized": 0.790942227351904,
+        "relativeDelta": -0.013876856032890064
+      },
+      "ndcgAt5": {
+        "absoluteDelta": -0.003450865821094329,
+        "baseline": 0.8202591078778867,
+        "optimized": 0.8168082420567924,
+        "relativeDelta": -0.004207043588972943
+      },
+      "recallAt1": {
+        "absoluteDelta": 0.014227642276422758,
+        "baseline": 0.433739837398374,
+        "optimized": 0.4479674796747968,
+        "relativeDelta": 0.03280224929709464
+      },
+      "recallAt10": {
+        "absoluteDelta": 0.0,
+        "baseline": 0.9284552845528456,
+        "optimized": 0.9284552845528456,
+        "relativeDelta": 0.0
+      },
+      "recallAt3": {
+        "absoluteDelta": -0.026422764227642115,
+        "baseline": 0.8333333333333333,
+        "optimized": 0.8069105691056911,
+        "relativeDelta": -0.03170731707317054
+      },
+      "recallAt5": {
+        "absoluteDelta": -0.009146341463414642,
+        "baseline": 0.8869918699186992,
+        "optimized": 0.8778455284552845,
+        "relativeDelta": -0.010311640696608625
+      }
+    },
+    "optimizedLabel": "tuned",
+    "reason": "",
+    "slices": {
+      "temporalReasoning": {
+        "caseCount": 25,
+        "metrics": {
+          "mrr": {
+            "absoluteDelta": 0.02200000000000002,
+            "baseline": 0.7396666666666667,
+            "optimized": 0.7616666666666667,
+            "relativeDelta": 0.029743127534925667
+          },
+          "ndcgAt1": {
+            "absoluteDelta": 0.040000000000000036,
+            "baseline": 0.6,
+            "optimized": 0.64,
+            "relativeDelta": 0.06666666666666674
+          },
+          "ndcgAt10": {
+            "absoluteDelta": 0.019127410532170486,
+            "baseline": 0.7674645726009076,
+            "optimized": 0.7865919831330781,
+            "relativeDelta": 0.024922857959877462
+          },
+          "ndcgAt3": {
+            "absoluteDelta": 0.004623768820793628,
+            "baseline": 0.7157537345122279,
+            "optimized": 0.7203775033330215,
+            "relativeDelta": 0.006459999575055847
+          },
+          "ndcgAt5": {
+            "absoluteDelta": 0.017762065915779,
+            "baseline": 0.7401703157689272,
+            "optimized": 0.7579323816847062,
+            "relativeDelta": 0.023997268652049156
+          },
+          "recallAt1": {
+            "absoluteDelta": 0.046666666666666634,
+            "baseline": 0.276,
+            "optimized": 0.32266666666666666,
+            "relativeDelta": 0.1690821256038646
+          },
+          "recallAt10": {
+            "absoluteDelta": 0.0,
+            "baseline": 0.9386666666666666,
+            "optimized": 0.9386666666666666,
+            "relativeDelta": 0.0
+          },
+          "recallAt3": {
+            "absoluteDelta": -0.020000000000000018,
+            "baseline": 0.78,
+            "optimized": 0.76,
+            "relativeDelta": -0.025641025641025664
+          },
+          "recallAt5": {
+            "absoluteDelta": 0.0,
+            "baseline": 0.8693333333333334,
+            "optimized": 0.8693333333333334,
+            "relativeDelta": 0.0
+          }
+        },
+        "sourceSlice": "temporal-reasoning"
+      },
+      "updateOrConflict": {
+        "caseCount": 14,
+        "metrics": {
+          "mrr": {
+            "absoluteDelta": 0.0,
+            "baseline": 0.9642857142857143,
+            "optimized": 0.9642857142857143,
+            "relativeDelta": 0.0
+          },
+          "ndcgAt1": {
+            "absoluteDelta": 0.0,
+            "baseline": 0.9285714285714286,
+            "optimized": 0.9285714285714286,
+            "relativeDelta": 0.0
+          },
+          "ndcgAt10": {
+            "absoluteDelta": 0.0,
+            "baseline": 0.9750657807005094,
+            "optimized": 0.9750657807005094,
+            "relativeDelta": 0.0
+          },
+          "ndcgAt3": {
+            "absoluteDelta": 0.0,
+            "baseline": 0.9562037719453244,
+            "optimized": 0.9562037719453244,
+            "relativeDelta": 0.0
+          },
+          "ndcgAt5": {
+            "absoluteDelta": 0.0,
+            "baseline": 0.9750657807005094,
+            "optimized": 0.9750657807005094,
+            "relativeDelta": 0.0
+          },
+          "recallAt1": {
+            "absoluteDelta": 0.0,
+            "baseline": 0.4642857142857143,
+            "optimized": 0.4642857142857143,
+            "relativeDelta": 0.0
+          },
+          "recallAt10": {
+            "absoluteDelta": 0.0,
+            "baseline": 1.0,
+            "optimized": 1.0,
+            "relativeDelta": 0.0
+          },
+          "recallAt3": {
+            "absoluteDelta": 0.0,
+            "baseline": 0.9642857142857143,
+            "optimized": 0.9642857142857143,
+            "relativeDelta": 0.0
+          },
+          "recallAt5": {
+            "absoluteDelta": 0.0,
+            "baseline": 1.0,
+            "optimized": 1.0,
+            "relativeDelta": 0.0
+          }
+        },
+        "sourceSlice": "knowledge-update"
+      }
+    },
+    "source": {
+      "fileName": "longmemeval-memory-official-user-lexical-full-v2.json",
+      "fileSha256": "0102d5c161c41aa3d34c12bda386fb12c1dde639c6ed4f2d122e1c4a7d1de0c8",
+      "reportSha256": "534f9a956e6be96d001c671beeaeeb64be31a10bb936d0192e58f65d9766dd13"
+    },
+    "system": "memory"
+  },
+  "metricNamespaces": [
+    "knowledge",
+    "memory",
+    "agent"
+  ],
+  "safety": {
+    "failedAgentRunsExcluded": true,
+    "memoryKnowledgeSeparated": true,
+    "noCombinedHeadline": true
+  },
+  "schemaVersion": "rag-ime.rag-interview-scorecard.v1",
+  "scorecardSha256": "dbcbd4e3b6213151ab77f21b390f59902545cb04d7dda156d63fd59bda3fcfd1",
+  "uploaded": false
+}

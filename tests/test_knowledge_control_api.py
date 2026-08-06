@@ -5,21 +5,38 @@ import hashlib
 import tempfile
 import threading
 import unittest
+import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+
+_LOOPBACK_URLOPEN = urllib.request.build_opener(urllib.request.ProxyHandler({})).open
+
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
 from rag_ime.knowledge_control import KnowledgeControlFacade
+from rag_ime.knowledge_embedding_profile import probe_knowledge_embedding_profile
 from rag_ime.knowledge_library import HttpKnowledgeClient, KnowledgeLibraryConfig, KnowledgeLibraryService
 from rag_ime.knowledge_library.worker import KnowledgeWorkerServer, _database_intake_validator
 
 
 class _DirectWorker:
-    def __init__(self, client: HttpKnowledgeClient) -> None:
+    def __init__(self, client: HttpKnowledgeClient, settings: dict[str, object]) -> None:
         self.client = client
+        self._settings = settings
+
+    def settings_provider(self) -> dict[str, object]:
+        return self._settings
+
+    def probe_embedding_profile(self, payload: dict[str, object]) -> dict[str, Any]:
+        settings = {
+            "knowledgeLibrary": {
+                "embedding": dict(payload),
+            }
+        }
+        return probe_knowledge_embedding_profile(settings, environ={})
 
     def management_call(self, operation: str, *args: object, **kwargs: object) -> dict[str, Any]:
         handler = getattr(self.client, operation)
@@ -49,10 +66,25 @@ class KnowledgeControlApiTests(unittest.TestCase):
                 knowledge_client=worker_client,
             )
         )
+        self.embedding_settings = {
+            "knowledgeLibrary": {
+                "embedding": {
+                    "provider": "local-hash",
+                    "model": "deterministic-term-vector-v1",
+                    "dimensions": 32,
+                    "baseUrl": "",
+                    "secretReference": "",
+                    "queryPrefix": "",
+                    "documentPrefix": "",
+                    "denseBackend": "sqlite-exact",
+                }
+            }
+        }
         self.service.knowledge_control = KnowledgeControlFacade(
-            worker=_DirectWorker(worker_client),  # type: ignore[arg-type]
+            worker=_DirectWorker(worker_client, self.embedding_settings),  # type: ignore[arg-type]
             work_contract=self.service.management.work_contract,
         )
+        self.service.agent_tools.knowledge_control = self.service.knowledge_control
 
         class Handler(DebugRequestHandler):
             pass
@@ -74,6 +106,34 @@ class KnowledgeControlApiTests(unittest.TestCase):
         self.service.pi_provider_auth.close()
         self.service.agent.close()
         self.service.management.close()
+
+    def test_embedding_profile_probe_and_impact_are_secret_free(self) -> None:
+        created = self._json_request(
+            "POST",
+            self.base_url,
+            {"name": "Embedding impact", "description": "profile test"},
+        )["base"]
+        profile = self._json_request("GET", f"{self.base_url}/embedding-profile")
+        candidate = dict(self.embedding_settings["knowledgeLibrary"]["embedding"])
+        probe = self._json_request(
+            "POST",
+            f"{self.base_url}/embedding-probe",
+            {"profile": candidate},
+        )
+        impact = self._json_request(
+            "POST",
+            f"{self.base_url}/embedding-impact",
+            {"profile": candidate},
+        )
+
+        self.assertEqual("local-hash", profile["profile"]["provider"])
+        self.assertTrue(probe["ready"])
+        self.assertEqual(32, probe["dimensions"])
+        self.assertEqual(1, impact["affectedBaseCount"])
+        self.assertEqual(created["id"], impact["affectedBases"][0]["kbId"])
+        self.assertTrue(impact["approvalRequiredForApply"])
+        self.assertFalse(profile["secretsVisible"])
+        self.assertNotIn("apiKey", json.dumps([profile, probe, impact]))
 
     def test_document_library_management_and_agent_tool_round_trip(self) -> None:
         listed = self._json_request("GET", self.base_url)
@@ -301,6 +361,112 @@ class KnowledgeControlApiTests(unittest.TestCase):
         self.assertTrue(applied["ok"])
         self.assertEqual([], self._json_request("GET", self.base_url)["items"])
 
+    def test_agent_tool_can_create_import_tune_search_and_rebuild_after_approval(self) -> None:
+        session = self.service.agent.create_session(
+            {"title": "Governed knowledge builder"}
+        )["session"]
+
+        def call(operation: str, **args: object) -> dict[str, Any]:
+            return self.service.agent_tools.execute(
+                {
+                    "schemaVersion": "rag-ime.agent-tool-call.v1",
+                    "sessionId": session["id"],
+                    "tool": "knowledge",
+                    "toolCallId": f"tool:knowledge:{operation}",
+                    "args": {"op": operation, **args},
+                }
+            )["result"]
+
+        def approve(prepared: dict[str, Any]) -> dict[str, Any]:
+            approval = prepared["approval"]
+            decided = self.service.agent.sessions.decide_approval(
+                approval["approvalId"],
+                approved=True,
+                payload_sha256=approval["payloadSha256"],
+            )
+            return self.service.agent_tools.apply_approval(decided)
+
+        created_pending = call(
+            "create_base",
+            name="Agent-built interview KB",
+            description="Local acceptance fixture",
+            agentEnabled=True,
+            parserProvider="builtin",
+            chunkingConfig={"strategy": "markdown", "size": 600, "overlap": 80},
+            retrievalConfig={
+                "mode": "hybrid",
+                "topK": 8,
+                "threshold": 0.0,
+                "lexicalWeight": 1.0,
+                "denseWeight": 1.0,
+                "graphEnabled": True,
+                "graphWeight": 0.7,
+                "rrfK": 60,
+                "candidateMultiplier": 4,
+            },
+        )
+        self.assertTrue(created_pending["approvalRequired"])
+        self.assertEqual([], self.service.knowledge_control.list_bases()["items"])
+        created = approve(created_pending)["base"]
+        kb_id = created["id"]
+
+        imported_pending = call(
+            "import_text",
+            kbId=kb_id,
+            expectedRevision=created["revision"],
+            fileName="agentic-rag.md",
+            text=(
+                "# Agentic RAG\n\n"
+                "Agentic retrieval rewrites a query, checks evidence, and searches again.\n\n"
+                "The final answer cites the retrieved document."
+            ),
+            parserProvider="builtin",
+        )
+        self.assertEqual([], self.service.knowledge_control.list_documents(kb_id)["items"])
+        imported = approve(imported_pending)
+        self.assertEqual("ready", imported["receipt"]["status"])
+
+        searched = call("search", kbId=kb_id, query="how does retrieval search again")
+        self.assertIn("searches again", searched["items"][0]["content"])
+        self.assertEqual("hybrid", searched["retrieval"]["mode"])
+
+        configured_pending = call(
+            "configure_base",
+            kbId=kb_id,
+            expectedRevision=created["revision"],
+            chunkingConfig={"strategy": "fixed", "size": 300, "overlap": 30},
+            retrievalConfig={
+                "mode": "lexical",
+                "topK": 6,
+                "threshold": 0.0,
+                "lexicalWeight": 1.0,
+                "denseWeight": 1.0,
+                "graphEnabled": False,
+                "graphWeight": 0.0,
+                "rrfK": 40,
+                "candidateMultiplier": 3,
+            },
+        )
+        configured = approve(configured_pending)["base"]
+        self.assertTrue(configured["reindexRequired"])
+        self.assertEqual("lexical", configured["retrievalConfig"]["mode"])
+
+        rebuild_preview = call("rebuild_preview", kbId=kb_id)
+        rebuilt_pending = call(
+            "rebuild",
+            kbId=kb_id,
+            expectedRevision=rebuild_preview["configRevision"],
+        )
+        rebuilt = approve(rebuilt_pending)
+        self.assertEqual(1, rebuilt["ready"])
+        self.assertEqual(1, len(self.service.knowledge_control.list_documents(kb_id)["items"]))
+        retuned_search = call("search", kbId=kb_id, query="final answer cites document")
+        self.assertEqual("lexical", retuned_search["retrieval"]["mode"])
+        self.assertEqual(
+            6,
+            retuned_search["retrieval"]["libraries"][0]["config"]["topK"],
+        )
+
     @staticmethod
     def _json_request(method: str, url: str, payload: dict[str, object] | None = None) -> dict[str, Any]:
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
@@ -310,7 +476,7 @@ class KnowledgeControlApiTests(unittest.TestCase):
             method=method,
             headers={"Content-Type": "application/json", "Accept": "application/json"},
         )
-        with urlopen(request, timeout=10) as response:
+        with _LOOPBACK_URLOPEN(request, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))
 
     @staticmethod
@@ -321,12 +487,12 @@ class KnowledgeControlApiTests(unittest.TestCase):
             method="POST",
             headers={"Content-Type": mime_type, "Accept": "application/json"},
         )
-        with urlopen(request, timeout=10) as response:
+        with _LOOPBACK_URLOPEN(request, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))
 
     @staticmethod
     def _binary_request(url: str) -> tuple[bytes, dict[str, str]]:
-        with urlopen(Request(url, method="GET"), timeout=10) as response:
+        with _LOOPBACK_URLOPEN(Request(url, method="GET"), timeout=10) as response:
             return response.read(), {key: value for key, value in response.headers.items()}
 
 

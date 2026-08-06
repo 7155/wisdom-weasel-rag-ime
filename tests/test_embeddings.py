@@ -106,6 +106,34 @@ class EmbeddingProviderTests(unittest.TestCase):
         self.assertEqual(provider.model, "/tmp/bge-mlx-q8")
         self.assertTrue(provider.query_prefix)
 
+    def test_mlx_provider_deduplicates_and_bounds_uncached_batches(self) -> None:
+        provider = MlxBertEmbeddingProvider(
+            model="/tmp/fake-mlx-bert",
+            document_prefix="document: ",
+            cache_size=4,
+        )
+        calls: list[tuple[list[str], str]] = []
+
+        def encode_batch(texts: list[str], *, prefix: str) -> list[list[float]]:
+            calls.append((list(texts), prefix))
+            return [
+                [float(index + 1), 1.0]
+                for index, _text in enumerate(texts)
+            ]
+
+        provider._encode_uncached_batch = encode_batch  # type: ignore[method-assign]
+        inputs = [f"item-{index}" for index in range(10)] + ["item-0", ""]
+
+        first = provider.embed_many(inputs, batch_size=32)
+        second = provider.embed("item-9")
+
+        self.assertEqual([8, 2], [len(items) for items, _prefix in calls])
+        self.assertTrue(all(prefix == "document: " for _items, prefix in calls))
+        self.assertEqual(first[0], first[10])
+        self.assertEqual([], first[11])
+        self.assertEqual(first[9], second)
+        self.assertEqual(2, len(calls))
+
     def test_openai_provider_caches_by_fingerprint_and_normalized_text(self) -> None:
         server, thread = self._start_server([[1.0, 0.0, 0.0]])
         try:

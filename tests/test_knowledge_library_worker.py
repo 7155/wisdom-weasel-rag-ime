@@ -78,7 +78,10 @@ class KnowledgeWorkerTests(unittest.TestCase):
         self.assertEqual(0o600, stored.stat().st_mode & 0o777)
 
     def test_health_exposes_worker_identity_without_ambiguity(self) -> None:
-        with urllib.request.urlopen(
+        loopback_urlopen = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+        ).open
+        with loopback_urlopen(
             f"http://127.0.0.1:{self.server.server_port}/v1/health",
             timeout=1.0,
         ) as response:
@@ -88,6 +91,22 @@ class KnowledgeWorkerTests(unittest.TestCase):
         self.assertEqual(str(self.server.service.config.root_dir.resolve()), payload["root"])
         self.assertRegex(payload["configFingerprint"], r"^[a-f0-9]{64}$")
         self.assertRegex(payload["owner"], r"^standalone:\d+$")
+
+    def test_loopback_client_bypasses_process_proxy(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "http_proxy": "http://127.0.0.1:9",
+                "HTTP_PROXY": "http://127.0.0.1:9",
+                "https_proxy": "http://127.0.0.1:9",
+                "HTTPS_PROXY": "http://127.0.0.1:9",
+                "no_proxy": "",
+                "NO_PROXY": "",
+            },
+            clear=False,
+        ):
+            listed = self.client.list_bases({})
+        self.assertEqual(self.base["id"], listed["bases"][0]["kbId"])
 
     def test_management_jobs_find_and_status(self) -> None:
         self._import(
@@ -363,6 +382,76 @@ class KnowledgeWorkerSupervisorTests(unittest.TestCase):
             self.assertNotEqual(first, second)
             self.assertNotEqual(second, third)
 
+    def test_persisted_embedding_profile_controls_worker_identity_and_environment(self) -> None:
+        settings = {
+            "knowledgeLibrary": {
+                "parser": {"mineru": {"enabled": False, "port": 30_001}},
+                "embedding": {
+                    "provider": "local-hash",
+                    "model": "deterministic-term-vector-v1",
+                    "dimensions": 32,
+                    "baseUrl": "",
+                    "secretReference": "",
+                    "queryPrefix": "",
+                    "documentPrefix": "",
+                    "denseBackend": "sqlite-exact",
+                },
+            }
+        }
+        with tempfile.TemporaryDirectory(prefix="rag-ime-knowledge-profile-") as tmp:
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "RAG_IME_EMBEDDING_PROVIDER": "none",
+                    "RAG_IME_EMBEDDING_API_KEY": "must-not-reach-worker",
+                    "RAG_IME_KNOWLEDGE_DENSE_BACKEND": "usearch",
+                },
+                clear=False,
+            ):
+                supervisor = KnowledgeWorkerSupervisor(
+                    settings_provider=lambda: settings,
+                    root_dir=Path(tmp) / "Knowledge",
+                    base_url=f"http://127.0.0.1:{_free_port()}",
+                )
+                first = supervisor._worker_settings()[0]
+                environment = supervisor._worker_environment(settings)
+                settings["knowledgeLibrary"]["embedding"]["dimensions"] = 64
+                second = supervisor._worker_settings()[0]
+
+        self.assertNotEqual(first, second)
+        self.assertEqual("local-hash", environment["RAG_IME_EMBEDDING_PROVIDER"])
+        self.assertEqual("32", environment["RAG_IME_EMBEDDING_DIMENSIONS"])
+        self.assertEqual("sqlite-exact", environment["RAG_IME_KNOWLEDGE_DENSE_BACKEND"])
+        self.assertNotIn("RAG_IME_EMBEDDING_API_KEY", environment)
+
+    def test_candidate_embedding_probe_uses_worker_python_without_restarting_worker(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-knowledge-probe-") as tmp:
+            supervisor = KnowledgeWorkerSupervisor(
+                settings_provider=_disabled_mineru_settings,
+                root_dir=Path(tmp) / "Knowledge",
+                base_url=f"http://127.0.0.1:{_free_port()}",
+            )
+
+            result = supervisor.probe_embedding_profile(
+                {
+                    "provider": "local-hash",
+                    "model": "deterministic-term-vector-v1",
+                    "dimensions": 40,
+                    "baseUrl": "",
+                    "secretReference": "",
+                    "queryPrefix": "",
+                    "documentPrefix": "",
+                    "denseBackend": "sqlite-exact",
+                }
+            )
+
+        self.assertTrue(result["ready"])
+        self.assertEqual("local-hash", result["provider"])
+        self.assertEqual(40, result["dimensions"])
+        self.assertEqual(64, len(result["profileSha256"]))
+        self.assertFalse(result["secretsVisible"])
+        self.assertIsNone(supervisor._process)
+
     def test_worker_identity_distinguishes_virtualenv_paths(self) -> None:
         common = {
             "mineru_enabled": False,
@@ -385,6 +474,36 @@ class KnowledgeWorkerSupervisorTests(unittest.TestCase):
         )
 
         self.assertNotEqual(first, second)
+
+    def test_worker_identity_changes_with_the_independent_reranker_profile(self) -> None:
+        common = {
+            "mineru_enabled": False,
+            "mineru_port": 30_001,
+            "idle_seconds": 900,
+            "python_executable": "/tmp/knowledge-runtime/bin/python",
+            "python_version": "3.13.12",
+            "embedding_provider": "local-bge-mlx",
+            "embedding_model": "model",
+            "dense_backend": "usearch",
+        }
+        disabled = knowledge_worker_fingerprint(Path("/tmp/Knowledge"), **common)
+        enabled = knowledge_worker_fingerprint(
+            Path("/tmp/Knowledge"),
+            reranker_provider="mlx-qwen3-reranker",
+            reranker_model_path="/tmp/models/qwen3-reranker",
+            reranker_model_revision="revision-a",
+            **common,
+        )
+        replacement = knowledge_worker_fingerprint(
+            Path("/tmp/Knowledge"),
+            reranker_provider="mlx-qwen3-reranker",
+            reranker_model_path="/tmp/models/qwen3-reranker-v2",
+            reranker_model_revision="revision-b",
+            **common,
+        )
+
+        self.assertNotEqual(disabled, enabled)
+        self.assertNotEqual(enabled, replacement)
 
     def test_relative_worker_python_is_rejected_before_process_launch(self) -> None:
         with mock.patch.dict(os.environ, {"RAG_IME_KNOWLEDGE_PYTHON": "python3"}, clear=False):

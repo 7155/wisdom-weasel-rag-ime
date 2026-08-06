@@ -3,7 +3,9 @@
 
 The script intentionally never accepts the production database path. It seeds
 synthetic current facts, sends paraphrased updates through the real organizer,
-and checks claim lineage, source dispositions, and Topic Book references.
+and checks claim lineage, source dispositions, and Topic Book references.  The
+configured Provider remains available for historical comparison; the interview
+lane uses the governed private Luna/max evaluation boundary.
 """
 
 from __future__ import annotations
@@ -26,14 +28,24 @@ if str(ROOT) not in sys.path:
 from rag_ime.agent_memory_sources import AgentMemorySourceStore
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.deepseek_config import load_deepseek_config
-from rag_ime.deepseek_memory_organizer import DeepSeekMemoryOrganizer
+from rag_ime.deepseek_memory_organizer import (
+    DeepSeekMemoryOrganizer,
+    ManagedPiMemoryOrganizer,
+)
 from rag_ime.owner_memory_curation import OwnerMemoryCurator
+from rag_ime.personal_memory_luna_evaluation import PrivateCodexLunaMemoryExecutor
 
 
 PROJECT = "wisdom-weasel-rag-ime"
 OWNER_KIND = "user"
 OWNER_ID = "default"
 DEFAULT_MODEL_ENV = Path.home() / "Library/Application Support/RagIme/deepseek.env"
+FORGET_CLAIM_KEY = "user:collaboration:completion-sound"
+FORGET_BASELINE = "用户偏好在重要工作完成后播放提示音。"
+FORGET_INPUT = "请忘掉我在重要工作完成后偏好播放提示音这条记忆，不要再记住它。"
+CONFLICT_CLAIM_KEY = "user:communication:answer-length"
+CONFLICT_BASELINE = "用户长期偏好简短回答。"
+CONFLICT_INPUT = "这一次临时请给长回答，但不改变我长期偏好简短回答。"
 
 
 @dataclass(frozen=True)
@@ -260,6 +272,41 @@ class CapturingOrganizer:
     def provider_name(self) -> str:
         return self.delegate.provider_name
 
+    @property
+    def curation_protocol_version(self) -> str:
+        """Preserve the governed organizer protocol through the audit wrapper."""
+
+        return str(getattr(self.delegate, "curation_protocol_version", ""))
+
+    def begin_run(
+        self,
+        run_id: str,
+        *,
+        frozen_input_sha256: str = "",
+    ) -> dict[str, object]:
+        begin = getattr(self.delegate, "begin_run", None)
+        if not callable(begin):
+            return {}
+        return dict(
+            begin(
+                run_id,
+                frozen_input_sha256=frozen_input_sha256,
+            )
+        )
+
+    def finish_run(self) -> dict[str, object]:
+        finish = getattr(self.delegate, "finish_run", None)
+        return dict(finish()) if callable(finish) else {}
+
+    def fail_run(self, error: BaseException) -> dict[str, object]:
+        fail = getattr(self.delegate, "fail_run", None)
+        return dict(fail(error)) if callable(fail) else {}
+
+    def close(self) -> None:
+        close = getattr(self.delegate, "close", None)
+        if callable(close):
+            close()
+
     def curate_owner_memory(self, **kwargs: Any) -> dict[str, object]:
         bundle = dict(kwargs.get("bundle") or {})
         result = self.delegate.curate_owner_memory(**kwargs)
@@ -308,6 +355,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--model-env-path",
         default=str(DEFAULT_MODEL_ENV),
     )
+    parser.add_argument(
+        "--organizer",
+        choices=("configured", "luna"),
+        default="configured",
+        help=(
+            "Use the historical configured Provider or the fixed "
+            "openai-codex/gpt-5.6-luna thinking=max evaluation boundary."
+        ),
+    )
+    parser.add_argument("--codex-bin", default="codex")
+    parser.add_argument("--timeout-seconds", type=float, default=1_200.0)
+    parser.add_argument(
+        "--artifact-root",
+        default="",
+        help=(
+            "Optional private mode-0700 directory for resumable Luna prompts, "
+            "outputs and failure logs. Omit it for disposable temporary artifacts."
+        ),
+    )
     parser.add_argument("--report", default="")
     parser.add_argument(
         "--summary-only",
@@ -345,6 +411,52 @@ def _seed_current_memory(db_path: Path, scenarios: tuple[Scenario, ...]) -> None
                     f"lineage:{scenario.claim_key}",
                 ),
             )
+        forget_atom_id = "atom:live-eval:forget:v1"
+        members_by_topic.setdefault("个人协作偏好", []).append(forget_atom_id)
+        conn.execute(
+            """
+            INSERT INTO memory_atoms(
+                id, kind, text, canonical_text, scope_project,
+                confidence, quality_score, status, created_at_ms,
+                updated_at_ms, owner_kind, owner_id, claim_key,
+                lineage_id, claim_state, valid_from_ms
+            ) VALUES (?, 'durable_preference', ?, ?, ?, 0.99, 0.99,
+                      'active', 10, 10, ?, ?, ?, ?, 'current', 10)
+            """,
+            (
+                forget_atom_id,
+                FORGET_BASELINE,
+                FORGET_BASELINE,
+                PROJECT,
+                OWNER_KIND,
+                OWNER_ID,
+                FORGET_CLAIM_KEY,
+                f"lineage:{FORGET_CLAIM_KEY}",
+            ),
+        )
+        conflict_atom_id = "atom:live-eval:conflict:v1"
+        members_by_topic.setdefault("个人协作偏好", []).append(conflict_atom_id)
+        conn.execute(
+            """
+            INSERT INTO memory_atoms(
+                id, kind, text, canonical_text, scope_project,
+                confidence, quality_score, status, created_at_ms,
+                updated_at_ms, owner_kind, owner_id, claim_key,
+                lineage_id, claim_state, valid_from_ms
+            ) VALUES (?, 'durable_preference', ?, ?, ?, 0.99, 0.99,
+                      'active', 10, 10, ?, ?, ?, ?, 'current', 10)
+            """,
+            (
+                conflict_atom_id,
+                CONFLICT_BASELINE,
+                CONFLICT_BASELINE,
+                PROJECT,
+                OWNER_KIND,
+                OWNER_ID,
+                CONFLICT_CLAIM_KEY,
+                f"lineage:{CONFLICT_CLAIM_KEY}",
+            ),
+        )
         for topic_index, (topic, atom_ids) in enumerate(members_by_topic.items()):
             conn.execute(
                 """
@@ -398,7 +510,11 @@ def _checkpoint(
             source_id=source_id,
             kind="decision",
             claim=text[:800],
-            scope="project",
+            # These are synthetic user-grounded facts/preferences evaluated in
+            # the personal Memory domain. ``project`` scope is intentionally
+            # quarantined from canonical personal Evidence and would make the
+            # governed Luna curator correctly ignore the entire fixture.
+            scope="user",
             basis="explicit_user_statement",
             future_use="评估该用户声明是否构成跨 Session 持续的项目约束。",
             created_at_ms=created_at_ms + 1,
@@ -464,7 +580,11 @@ def _add_wave(
             label=f"{created_at_ms}:{label}",
             text=text,
             created_at_ms=created_at_ms,
-            capture_candidate=kind != "deterministic-noise",
+            # Let the real capture/admission gates reject workflow noise. Any
+            # deterministic item that survives those gates must still be
+            # presented as canonical Evidence so the Curator's own rules are
+            # exercised rather than leaving an unobservable legacy source.
+            capture_candidate=True,
         )
         created_at_ms += 1
         if kind == "update":
@@ -568,7 +688,22 @@ def _database_snapshot(db_path: Path) -> dict[str, object]:
                 """
             ).fetchall()
         ]
-    return {"atoms": atoms, "books": books, "supersessions": supersessions}
+        tombstones = [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT target_type, target_value, reason, active
+                FROM memory_tombstones
+                ORDER BY id
+                """
+            ).fetchall()
+        ]
+    return {
+        "atoms": atoms,
+        "books": books,
+        "supersessions": supersessions,
+        "tombstones": tombstones,
+    }
 
 
 def _evaluate(
@@ -579,6 +714,8 @@ def _evaluate(
     update_sources: dict[str, str],
     semantic_noise_sources: dict[str, str],
     deterministic_noise_sources: dict[str, str],
+    forget_source_id: str,
+    conflict_source_id: str,
     organizer: CapturingOrganizer,
     reports: list[dict[str, object]],
 ) -> dict[str, object]:
@@ -647,16 +784,77 @@ def _evaluate(
                 }
             )
 
+    forget_history = history_by_claim.get(FORGET_CLAIM_KEY, [])
+    forget_current = current_by_claim.get(FORGET_CLAIM_KEY, [])
+    forget_retracted = [
+        row
+        for row in forget_history
+        if row.get("status") == "tombstoned"
+        and row.get("claim_state") == "retracted"
+    ]
+    active_forget_tombstones = [
+        row
+        for row in snapshot["tombstones"]
+        if row.get("target_type") == "memory_id"
+        and row.get("target_value") == "atom:live-eval:forget:v1"
+        and int(row.get("active") or 0) == 1
+    ]
+    if (
+        len(forget_history) != 1
+        or forget_current
+        or len(forget_retracted) != 1
+        or len(active_forget_tombstones) != 1
+    ):
+        failures.append(
+            {
+                "kind": "explicit_forget_not_retracted",
+                "historyCount": len(forget_history),
+                "currentCount": len(forget_current),
+                "retractedCount": len(forget_retracted),
+                "activeTombstoneCount": len(active_forget_tombstones),
+            }
+        )
+
+    conflict_history = history_by_claim.get(CONFLICT_CLAIM_KEY, [])
+    conflict_current = current_by_claim.get(CONFLICT_CLAIM_KEY, [])
+    conflict_preserved = (
+        len(conflict_history) == 1
+        and len(conflict_current) == 1
+        and str(conflict_current[0].get("canonical_text") or "")
+        == CONFLICT_BASELINE
+        and conflict_current[0].get("status") == "active"
+        and conflict_current[0].get("claim_state") == "current"
+    )
+    if not conflict_preserved:
+        failures.append(
+            {
+                "kind": "temporary_conflict_overrode_current_claim",
+                "historyCount": len(conflict_history),
+                "currentCount": len(conflict_current),
+                "currentTexts": [row.get("canonical_text") for row in conflict_current],
+            }
+        )
+
     update_dispositions = {
         label: str(source_rows.get(source_id, {}).get("disposition") or "missing")
         for label, source_id in update_sources.items()
     }
+    forget_disposition = str(
+        source_rows.get(forget_source_id, {}).get("disposition") or "missing"
+    )
+    conflict_disposition = str(
+        source_rows.get(conflict_source_id, {}).get("disposition") or "missing"
+    )
     semantic_noise_dispositions = {
         label: str(source_rows.get(source_id, {}).get("disposition") or "missing")
         for label, source_id in semantic_noise_sources.items()
     }
     deterministic_noise_dispositions = {
-        label: str(source_rows.get(source_id, {}).get("disposition") or "missing")
+        label: (
+            str(source_rows.get(source_id, {}).get("disposition") or "missing")
+            if source_id
+            else "precheck_rejected"
+        )
         for label, source_id in deterministic_noise_sources.items()
     }
     for label, disposition in update_dispositions.items():
@@ -664,13 +862,27 @@ def _evaluate(
             failures.append(
                 {"kind": "update_source_not_consolidated", "source": label, "disposition": disposition}
             )
+    if forget_disposition != "consolidated":
+        failures.append(
+            {
+                "kind": "forget_source_not_consolidated",
+                "disposition": forget_disposition,
+            }
+        )
+    if conflict_disposition != "not_for_memory":
+        failures.append(
+            {
+                "kind": "temporary_conflict_not_rejected",
+                "disposition": conflict_disposition,
+            }
+        )
     for label, disposition in semantic_noise_dispositions.items():
         if disposition != "not_for_memory":
             failures.append(
                 {"kind": "semantic_noise_not_rejected", "source": label, "disposition": disposition}
             )
     for label, disposition in deterministic_noise_dispositions.items():
-        if disposition != "not_for_memory":
+        if disposition not in {"not_for_memory", "precheck_rejected"}:
             failures.append(
                 {"kind": "deterministic_noise_not_rejected", "source": label, "disposition": disposition}
             )
@@ -711,7 +923,17 @@ def _evaluate(
         "passed": not failures,
         "metrics": {
             "scenarioCount": len(scenarios),
-            "expectedUpdateCount": len(scenarios) + v3_count,
+            "expectedUpdateCount": len(scenarios) + v3_count + 1,
+            "forgetCaseCount": 1,
+            "forgetRetractedCount": int(
+                len(forget_retracted) == 1
+                and not forget_current
+                and len(active_forget_tombstones) == 1
+            ),
+            "temporaryConflictCaseCount": 1,
+            "temporaryConflictPreservedCount": int(
+                conflict_preserved and conflict_disposition == "not_for_memory"
+            ),
             "correctCurrentValueCount": correct_current,
             "correctClaimHistoryCount": correct_history_depth,
             "updateSourceCount": len(update_sources),
@@ -725,7 +947,11 @@ def _evaluate(
             ),
             "deterministicNoiseCount": len(deterministic_noise_sources),
             "deterministicNoiseRejectedCount": sum(
-                disposition == "not_for_memory"
+                disposition in {"not_for_memory", "precheck_rejected"}
+                for disposition in deterministic_noise_dispositions.values()
+            ),
+            "deterministicNoisePrecheckRejectedCount": sum(
+                disposition == "precheck_rejected"
                 for disposition in deterministic_noise_dispositions.values()
             ),
             "modelCallCount": len(organizer.calls),
@@ -747,7 +973,77 @@ def _evaluate(
     }
 
 
-def run(profile: str, model_env_path: Path) -> dict[str, object]:
+def _build_organizer(
+    *,
+    organizer_kind: str,
+    db_path: Path,
+    artifact_root: Path,
+    model_env_path: Path,
+    codex_bin: str,
+    timeout_seconds: float,
+) -> tuple[CapturingOrganizer, dict[str, str]]:
+    if organizer_kind == "luna":
+        executor = PrivateCodexLunaMemoryExecutor(
+            artifact_root,
+            audit_db_path=db_path,
+            timeout_seconds=timeout_seconds,
+            codex_bin=codex_bin,
+        )
+        return CapturingOrganizer(ManagedPiMemoryOrganizer(executor)), {
+            "provider": executor.provider,
+            "model": executor.model_id,
+            "thinking": executor.thinking_level,
+            "transport": executor.transport,
+        }
+    if organizer_kind != "configured":
+        raise ValueError(f"unsupported organizer: {organizer_kind}")
+    config = load_deepseek_config(model_env_path)
+    if not config.api_key:
+        raise RuntimeError(f"no model credential found in {model_env_path}")
+    return CapturingOrganizer(DeepSeekMemoryOrganizer(config)), {
+        "provider": config.provider_name,
+        "model": config.model,
+        "thinking": "configured",
+        "transport": "configured_http",
+    }
+
+
+def _model_execution_summary(
+    organizer: CapturingOrganizer,
+    reports: list[dict[str, object]],
+) -> dict[str, object]:
+    failed_results = [
+        dict(result)
+        for report in reports
+        if isinstance(report, dict)
+        for result in report.get("results") or []
+        if isinstance(result, dict) and result.get("ok") is not True
+    ]
+    model_call_count = len(organizer.calls)
+    if failed_results:
+        status = "failed_before_completion" if model_call_count == 0 else "failed_after_partial_completion"
+    elif model_call_count > 0:
+        status = "completed"
+    else:
+        status = "not_started"
+    return {
+        "status": status,
+        "modelCallCount": model_call_count,
+        "curationRunCount": len(reports),
+        "failedResultCount": len(failed_results),
+        "completed": status == "completed",
+    }
+
+
+def run(
+    profile: str,
+    model_env_path: Path,
+    *,
+    organizer_kind: str = "configured",
+    codex_bin: str = "codex",
+    timeout_seconds: float = 1_200.0,
+    artifact_root: Path | None = None,
+) -> dict[str, object]:
     scenario_count = 6 if profile == "calibration" else len(SCENARIOS)
     v3_count = 0 if profile == "calibration" else 9
     scenarios = SCENARIOS[:scenario_count]
@@ -756,9 +1052,6 @@ def run(profile: str, model_env_path: Path) -> dict[str, object]:
     semantic_noise_v3 = 0 if profile == "calibration" else 6
     deterministic_noise_v3 = 0 if profile == "calibration" else 30
 
-    config = load_deepseek_config(model_env_path)
-    if not config.api_key:
-        raise RuntimeError(f"no model credential found in {model_env_path}")
     with tempfile.TemporaryDirectory(prefix="rag-ime-live-model-eval-") as tmp:
         db_path = Path(tmp) / "rag-ime-live-eval.sqlite"
         sessions = AgentSessionStore(db_path)
@@ -771,7 +1064,18 @@ def run(profile: str, model_env_path: Path) -> dict[str, object]:
         )
         sources = AgentMemorySourceStore(db_path, project=PROJECT)
         sources.initialize()
-        organizer = CapturingOrganizer(DeepSeekMemoryOrganizer(config))
+        organizer, model_identity = _build_organizer(
+            organizer_kind=organizer_kind,
+            db_path=db_path,
+            artifact_root=(
+                artifact_root.expanduser().resolve(strict=False)
+                if artifact_root is not None
+                else Path(tmp) / "model-artifacts"
+            ),
+            model_env_path=model_env_path,
+            codex_bin=codex_bin,
+            timeout_seconds=timeout_seconds,
+        )
         curator = OwnerMemoryCurator(
             db_path,
             organizer=organizer,
@@ -802,6 +1106,24 @@ def run(profile: str, model_env_path: Path) -> dict[str, object]:
         update_sources.update(update)
         semantic_noise_sources.update({f"v2:{key}": value for key, value in semantic.items()})
         deterministic_noise_sources.update({f"v2:{key}": value for key, value in deterministic.items()})
+        forget_source_id = _checkpoint(
+            sources,
+            session_id=str(session["id"]),
+            label=f"{created_at_ms}:forget:completion-sound",
+            text=FORGET_INPUT,
+            created_at_ms=created_at_ms,
+            capture_candidate=True,
+        )
+        created_at_ms += 1
+        conflict_source_id = _checkpoint(
+            sources,
+            session_id=str(session["id"]),
+            label=f"{created_at_ms}:conflict:answer-length",
+            text=CONFLICT_INPUT,
+            created_at_ms=created_at_ms,
+            capture_candidate=True,
+        )
+        created_at_ms += 1
         reports = _drain(curator, current_ms=1_000_000)
 
         if v3_count:
@@ -830,23 +1152,66 @@ def run(profile: str, model_env_path: Path) -> dict[str, object]:
             update_sources=update_sources,
             semantic_noise_sources=semantic_noise_sources,
             deterministic_noise_sources=deterministic_noise_sources,
+            forget_source_id=forget_source_id,
+            conflict_source_id=conflict_source_id,
             organizer=organizer,
             reports=reports,
         )
+        model_execution = _model_execution_summary(organizer, reports)
+        identity_gate = bool(model_identity["provider"] and model_identity["model"])
+        if organizer_kind == "luna":
+            identity_gate = (
+                model_identity["provider"] == "openai-codex"
+                and model_identity["model"] == "gpt-5.6-luna"
+                and model_identity["thinking"] == "max"
+                and model_identity["transport"] == "codex_cli_ephemeral"
+            )
+        hard_gates = {
+            "isolatedTemporaryDatabase": True,
+            "productionDatabaseUntouched": True,
+            "modelIdentity": identity_gate,
+            "modelExecution": bool(model_execution["completed"]),
+            "claimLifecycleAndNoiseQuality": bool(evaluation.get("passed")),
+        }
         return {
-            "schemaVersion": "rag-ime.owner-memory-live-model-eval.v1",
+            "schemaVersion": "rag-ime.owner-memory-live-model-eval.v3",
             "profile": profile,
             "database": "temporary-isolated-sqlite",
             "productionDatabaseTouched": False,
-            "provider": config.provider_name,
-            "model": config.model,
+            "localOnly": True,
+            "uploaded": False,
+            "organizer": organizer_kind,
+            **model_identity,
             **evaluation,
+            "execution": model_execution,
+            "scoreEligible": all(
+                hard_gates[name]
+                for name in (
+                    "isolatedTemporaryDatabase",
+                    "productionDatabaseUntouched",
+                    "modelIdentity",
+                    "modelExecution",
+                )
+            ),
+            "hardGates": hard_gates,
+            "passed": all(hard_gates.values()),
         }
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    report = run(args.profile, Path(args.model_env_path).expanduser())
+    report = run(
+        args.profile,
+        Path(args.model_env_path).expanduser(),
+        organizer_kind=str(args.organizer),
+        codex_bin=str(args.codex_bin),
+        timeout_seconds=float(args.timeout_seconds),
+        artifact_root=(
+            Path(args.artifact_root)
+            if str(args.artifact_root).strip()
+            else None
+        ),
+    )
     serialized = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
     if args.report:
         report_path = Path(args.report).expanduser()
@@ -859,8 +1224,14 @@ def main(argv: list[str] | None = None) -> int:
                 "profile": report["profile"],
                 "database": report["database"],
                 "productionDatabaseTouched": report["productionDatabaseTouched"],
+                "organizer": report["organizer"],
                 "provider": report["provider"],
                 "model": report["model"],
+                "thinking": report["thinking"],
+                "transport": report["transport"],
+                "execution": report["execution"],
+                "scoreEligible": report["scoreEligible"],
+                "hardGates": report["hardGates"],
                 "metrics": report["metrics"],
                 "failures": report["failures"],
                 "claimKeyReconciliations": [

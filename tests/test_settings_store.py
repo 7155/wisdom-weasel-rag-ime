@@ -83,6 +83,30 @@ class SettingsStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must be <= 65535"):
             self.store.update_settings({"knowledgeLibrary.parser.mineru.port": 65536})
 
+    def test_knowledge_embedding_profile_is_persisted_without_a_secret_value(self) -> None:
+        result = self.store.update_settings(
+            {
+                "knowledgeLibrary.embedding.provider": "openai-compatible",
+                "knowledgeLibrary.embedding.model": "bge-small-zh",
+                "knowledgeLibrary.embedding.baseUrl": "https://embedding.example.test",
+                "knowledgeLibrary.embedding.dimensions": 1024,
+                "knowledgeLibrary.embedding.secretReference": "PAW_EMBEDDING_API_KEY",
+                "knowledgeLibrary.embedding.queryPrefix": "query: ",
+                "knowledgeLibrary.embedding.documentPrefix": "passage: ",
+                "knowledgeLibrary.embedding.denseBackend": "usearch",
+            }
+        )
+
+        embedding = result.settings["knowledgeLibrary"]["embedding"]
+        self.assertEqual("openai-compatible", embedding["provider"])
+        self.assertEqual("bge-small-zh", embedding["model"])
+        self.assertEqual("PAW_EMBEDDING_API_KEY", embedding["secretReference"])
+        self.assertNotIn("apiKey", embedding)
+        with self.assertRaisesRegex(ValueError, "must be one of"):
+            self.store.update_settings(
+                {"knowledgeLibrary.embedding.provider": "unknown-provider"}
+            )
+
     def test_debug_context_archive_requires_a_bounded_absolute_directory(self) -> None:
         result = self.store.update_settings(
             {

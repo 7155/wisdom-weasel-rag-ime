@@ -9,6 +9,7 @@ from typing import Any
 from .knowledge_library import AssetBlob, KnowledgeLibraryError
 from .agent_knowledge_promotion import KnowledgePromotionStore
 from .knowledge_worker_supervisor import KnowledgeWorkerSupervisor
+from .knowledge_embedding_profile import normalize_knowledge_embedding_profile
 from .management_work_contract import ManagementWorkContract, ManagementWorkError, WorkExecution
 
 
@@ -30,6 +31,109 @@ class KnowledgeControlFacade:
         result = self.worker.management_call("management_list_bases")
         bases = [_public_base(item) for item in _items(result, "bases")]
         return {"schemaVersion": "rag-ime.knowledge-bases.v1", "ok": True, "items": bases, "total": len(bases)}
+
+    def embedding_profile(self) -> dict[str, object]:
+        settings = self.worker.settings_provider()
+        profile = normalize_knowledge_embedding_profile(settings)
+        runtime = self.health()
+        dense = runtime.get("dense") if isinstance(runtime.get("dense"), Mapping) else {}
+        provider = dense.get("provider") if isinstance(dense.get("provider"), Mapping) else {}
+        vector_count = int(dense.get("vectorCount") or 0)
+        chunk_count = int(runtime.get("chunkCount") or 0)
+        provider_matches = (
+            str(provider.get("provider") or "") == str(profile["provider"])
+            and (
+                not str(profile["model"])
+                or str(provider.get("model") or "") == str(profile["model"])
+            )
+        )
+        lexical_only = profile["provider"] == "none"
+        active = lexical_only or (
+            dense.get("available") is True
+            and provider_matches
+            and vector_count >= chunk_count
+        )
+        phase = "active" if active else (
+            "applied_pending_rebuild" if provider_matches else "applied_pending_restart"
+        )
+        return {
+            "schemaVersion": "rag-ime.knowledge-embedding-profile.v1",
+            "ok": True,
+            "profile": profile,
+            "phase": phase,
+            "runtime": {
+                "provider": dict(provider),
+                "fingerprint": str(dense.get("fingerprint") or ""),
+                "dimensions": dense.get("dimensions"),
+                "vectorCount": vector_count,
+                "chunkCount": chunk_count,
+                "coverage": vector_count / chunk_count if chunk_count else 1.0,
+                "available": dense.get("available") is True,
+                "degraded": dense.get("degraded") is True,
+                "reason": str(dense.get("reason") or ""),
+            },
+            "secretsVisible": False,
+        }
+
+    def embedding_probe(self, payload: Mapping[str, object]) -> dict[str, object]:
+        candidate = _embedding_candidate(payload)
+        probe = self.worker.probe_embedding_profile(candidate)
+        return {
+            "schemaVersion": "rag-ime.knowledge-embedding-probe.v1",
+            "ok": True,
+            **probe,
+            "secretsVisible": False,
+        }
+
+    def embedding_impact(self, payload: Mapping[str, object]) -> dict[str, object]:
+        candidate = _embedding_candidate(payload)
+        probe = self.worker.probe_embedding_profile(candidate)
+        bases = self.list_bases()["items"]
+        current = self.embedding_profile()
+        current_runtime = (
+            current.get("runtime") if isinstance(current.get("runtime"), Mapping) else {}
+        )
+        affected = [
+            {
+                "kbId": str(base.get("id") or ""),
+                "name": str(base.get("name") or ""),
+                "documentCount": int(base.get("documentCount") or 0),
+                "chunkCount": int(base.get("chunkCount") or 0),
+            }
+            for base in bases
+            if isinstance(base, Mapping)
+        ]
+        requires_restart = (
+            str(current_runtime.get("fingerprint") or "")
+            != str(probe.get("fingerprint") or "")
+        )
+        return {
+            "schemaVersion": "rag-ime.knowledge-embedding-impact.v1",
+            "ok": True,
+            "candidate": candidate,
+            "probe": probe,
+            "currentProfileSha256": str(
+                (current.get("profile") or {}).get("profileSha256")
+                if isinstance(current.get("profile"), Mapping)
+                else ""
+            ),
+            "configurationChanges": {
+                f"knowledgeLibrary.embedding.{key}": value
+                for key, value in candidate.items()
+            },
+            "requiresWorkerRestart": requires_restart,
+            "requiresRebuild": requires_restart and any(
+                int(item["documentCount"]) > 0 for item in affected
+            ),
+            "affectedBases": affected,
+            "affectedBaseCount": len(affected),
+            "affectedDocumentCount": sum(
+                int(item["documentCount"]) for item in affected
+            ),
+            "affectedChunkCount": sum(int(item["chunkCount"]) for item in affected),
+            "approvalRequiredForApply": True,
+            "secretsVisible": False,
+        }
 
     def create_base(self, payload: Mapping[str, object]) -> dict[str, object]:
         name = _required_text(payload.get("name"), "name", maximum=300)
@@ -434,6 +538,33 @@ def _parser_mode(value: object) -> str:
     if raw not in {"auto", "builtin", "mineru"}:
         raise KnowledgeLibraryError("parserProvider is not allowlisted", code="invalid_argument")
     return raw
+
+
+def _embedding_candidate(payload: Mapping[str, object]) -> dict[str, object]:
+    raw = payload.get("profile") if isinstance(payload.get("profile"), Mapping) else payload
+    allowed = (
+        "provider",
+        "model",
+        "baseUrl",
+        "dimensions",
+        "secretReference",
+        "queryPrefix",
+        "documentPrefix",
+        "denseBackend",
+    )
+    unknown = sorted(str(key) for key in set(raw) - set(allowed))
+    if unknown:
+        raise KnowledgeLibraryError(
+            f"unsupported embedding profile field: {unknown[0]}",
+            code="invalid_argument",
+        )
+    missing = [key for key in allowed if key not in raw]
+    if missing:
+        raise KnowledgeLibraryError(
+            f"embedding profile is missing {missing[0]}",
+            code="invalid_argument",
+        )
+    return {key: raw[key] for key in allowed}
 
 
 def _identifier(value: object, field: str) -> str:

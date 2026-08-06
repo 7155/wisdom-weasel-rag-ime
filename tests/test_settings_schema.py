@@ -107,6 +107,14 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(defaults["memory"]["dreaming"]["runsPerDay"], 2)
         self.assertNotIn("externalSources", defaults["memory"])
         self.assertEqual(defaults["memory"]["recall"]["detailLevel"], "compact")
+        self.assertEqual(
+            defaults["knowledgeLibrary"]["embedding"]["provider"],
+            "environment",
+        )
+        self.assertEqual(
+            defaults["knowledgeLibrary"]["embedding"]["denseBackend"],
+            "sqlite-exact",
+        )
 
         fields = {field["key"]: field for section in settings_schema()["sections"] for field in section["fields"]}
         self.assertEqual(fields["identity.productName"]["maxLength"], 24)
@@ -143,6 +151,25 @@ class SettingsSchemaTests(unittest.TestCase):
         # raw role id as a second, conflicting UI owner.
         self.assertNotIn("agent.pi.defaultRoleId", fields)
         self.assertNotIn("agent.pi.toolProfile", fields)
+        self.assertEqual(
+            fields["knowledgeLibrary.embedding.provider"]["options"],
+            [
+                "environment",
+                "none",
+                "local-hash",
+                "sentence-transformers",
+                "mlx-bert",
+                "openai-compatible",
+            ],
+        )
+        self.assertEqual(
+            fields["knowledgeLibrary.embedding.provider"]["applyMode"],
+            "restart_knowledge_worker",
+        )
+        self.assertEqual(
+            fields["knowledgeLibrary.embedding.dimensions"]["max"],
+            65536,
+        )
         self.assertNotIn("agent.pi.startup", fields)
         self.assertEqual(fields["activeRag.quickModel"]["type"], "pi-model")
         self.assertEqual(fields["activeRag.latencyBudgetMs"]["label"], "生成框最长等待")

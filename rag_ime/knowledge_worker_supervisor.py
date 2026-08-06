@@ -16,6 +16,11 @@ from typing import Any
 
 from .knowledge_library import AssetBlob, HttpKnowledgeClient, KnowledgeLibraryError
 from .knowledge_library.identity import knowledge_worker_fingerprint, normalized_knowledge_root
+from .knowledge_library.rerank import knowledge_reranker_profile_sha256
+from .knowledge_embedding_profile import (
+    embedding_environment_from_settings,
+    normalize_knowledge_embedding_profile,
+)
 
 
 class KnowledgeWorkerSupervisor:
@@ -50,6 +55,9 @@ class KnowledgeWorkerSupervisor:
         )
         self.python_executable, self.python_version = _knowledge_python_runtime()
         self._client = HttpKnowledgeClient(self.base_url)
+        self._loopback_urlopen = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+        ).open
         self._process: subprocess.Popen[bytes] | None = None
         self._started_fingerprint = ""
         self._owner = f"sidecar:{secrets.token_hex(16)}"
@@ -84,9 +92,95 @@ class KnowledgeWorkerSupervisor:
     def management_call(self, operation: str, *args: object, **kwargs: object) -> dict[str, Any] | AssetBlob:
         return self._call(operation, *args, **kwargs)
 
+    def probe_embedding_profile(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, Any]:
+        allowed = {
+            "provider",
+            "model",
+            "baseUrl",
+            "dimensions",
+            "secretReference",
+            "queryPrefix",
+            "documentPrefix",
+            "denseBackend",
+        }
+        unknown = sorted(str(key) for key in set(payload) - allowed)
+        if unknown:
+            raise KnowledgeLibraryError(
+                f"unsupported embedding profile field: {unknown[0]}",
+                code="invalid_argument",
+            )
+        current = json.loads(json.dumps(self.settings_provider()))
+        if not isinstance(current, dict):
+            current = {}
+        knowledge = current.get("knowledgeLibrary")
+        if not isinstance(knowledge, dict):
+            knowledge = {}
+            current["knowledgeLibrary"] = knowledge
+        embedding = knowledge.get("embedding")
+        if not isinstance(embedding, dict):
+            embedding = {}
+            knowledge["embedding"] = embedding
+        embedding.update(dict(payload))
+        profile = normalize_knowledge_embedding_profile(current, environ=os.environ)
+        environment = self._worker_environment(current)
+        try:
+            completed = subprocess.run(
+                [self.python_executable, "-m", "rag_ime.knowledge_embedding_probe"],
+                check=False,
+                cwd=str(Path(__file__).resolve().parents[1]),
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=180.0,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise KnowledgeLibraryError(
+                "Knowledge embedding probe process failed",
+                code="embedding_probe_failed",
+            ) from exc
+        try:
+            result = json.loads(str(completed.stdout or "")[:32_768])
+        except json.JSONDecodeError as exc:
+            raise KnowledgeLibraryError(
+                "Knowledge embedding probe returned an invalid receipt",
+                code="embedding_probe_failed",
+            ) from exc
+        if (
+            completed.returncode != 0
+            or not isinstance(result, Mapping)
+            or result.get("ready") is not True
+            or result.get("secretsVisible") is not False
+        ):
+            error_type = (
+                str(result.get("errorType") or "")
+                if isinstance(result, Mapping)
+                else ""
+            )
+            raise KnowledgeLibraryError(
+                "Knowledge embedding probe failed"
+                + (f" ({error_type})" if error_type else ""),
+                code="embedding_probe_failed",
+            )
+        if str(result.get("provider") or "") != str(profile["provider"]):
+            raise KnowledgeLibraryError(
+                "Knowledge embedding probe provider does not match the candidate profile",
+                code="embedding_probe_mismatch",
+            )
+        return {
+            **dict(result),
+            "profileSha256": str(profile["profileSha256"]),
+            "secretsVisible": False,
+        }
+
     def ensure_running(self) -> None:
         with self._lock:
-            fingerprint, mineru_enabled, mineru_port = self._worker_settings()
+            settings = self.settings_provider()
+            fingerprint, mineru_enabled, mineru_port = self._worker_settings(settings)
             health = self._worker_health()
             if health is not None and self._health_matches(health, fingerprint):
                 if self._process is None:
@@ -149,7 +243,7 @@ class KnowledgeWorkerSupervisor:
                 command.extend(["--intake-db", str(self.intake_db_path)])
             if mineru_enabled:
                 command.append("--mineru-enabled")
-            worker_env = _knowledge_worker_env(os.environ)
+            worker_env = self._worker_environment(settings)
             self._process = self._popen(
                 command,
                 stdin=subprocess.DEVNULL,
@@ -215,7 +309,7 @@ class KnowledgeWorkerSupervisor:
             method="GET",
         )
         try:
-            with urllib.request.urlopen(request, timeout=0.35) as response:
+            with self._loopback_urlopen(request, timeout=0.35) as response:
                 if int(getattr(response, "status", 0)) != 200:
                     return None
                 raw = response.read(16_384)
@@ -241,8 +335,11 @@ class KnowledgeWorkerSupervisor:
             health = self._worker_health()
         return health
 
-    def _worker_settings(self) -> tuple[str, bool, int]:
-        settings = self.settings_provider()
+    def _worker_settings(
+        self,
+        settings: Mapping[str, object] | None = None,
+    ) -> tuple[str, bool, int]:
+        settings = settings if settings is not None else self.settings_provider()
         knowledge = settings.get("knowledgeLibrary") if isinstance(settings, Mapping) else None
         parser = knowledge.get("parser") if isinstance(knowledge, Mapping) else None
         mineru = parser.get("mineru") if isinstance(parser, Mapping) else None
@@ -250,6 +347,7 @@ class KnowledgeWorkerSupervisor:
         raw_port = mineru.get("port", 30_001) if isinstance(mineru, Mapping) else 30_001
         port = int(raw_port) if isinstance(raw_port, (int, float)) and not isinstance(raw_port, bool) else 30_001
         port = max(1_024, min(65_535, port))
+        embedding = normalize_knowledge_embedding_profile(settings, environ=os.environ)
         fingerprint = knowledge_worker_fingerprint(
             self.root_dir,
             mineru_enabled=enabled,
@@ -257,11 +355,48 @@ class KnowledgeWorkerSupervisor:
             idle_seconds=self.idle_seconds,
             python_executable=self.python_executable,
             python_version=self.python_version,
-            embedding_provider=os.environ.get("RAG_IME_EMBEDDING_PROVIDER", "none"),
-            embedding_model=os.environ.get("RAG_IME_EMBEDDING_MODEL", ""),
-            dense_backend=os.environ.get("RAG_IME_KNOWLEDGE_DENSE_BACKEND", "sqlite-exact"),
+            embedding_provider=str(embedding["provider"]),
+            embedding_model=str(embedding["model"]),
+            dense_backend=str(embedding["denseBackend"]),
+            embedding_profile_sha256=(
+                str(embedding["profileSha256"])
+                if embedding["source"] == "settings"
+                else ""
+            ),
+            reranker_provider=os.environ.get(
+                "RAG_IME_KNOWLEDGE_RERANK_PROVIDER",
+                "none",
+            ),
+            reranker_model_path=os.environ.get(
+                "RAG_IME_KNOWLEDGE_RERANK_MODEL_PATH",
+                "",
+            ),
+            reranker_model_revision=os.environ.get(
+                "RAG_IME_KNOWLEDGE_RERANK_MODEL_REVISION",
+                "",
+            ),
+            reranker_profile_sha256=knowledge_reranker_profile_sha256(),
         )
         return fingerprint, enabled, port
+
+    def _worker_environment(
+        self,
+        settings: Mapping[str, object],
+    ) -> dict[str, str]:
+        environment = _knowledge_worker_env(os.environ)
+        for key in tuple(environment):
+            if key.startswith("RAG_IME_EMBEDDING_") or key == "RAG_IME_KNOWLEDGE_DENSE_BACKEND":
+                environment.pop(key, None)
+        environment.pop("RAG_IME_KNOWLEDGE_EMBEDDING_PROFILE_SHA256", None)
+        environment.update(
+            embedding_environment_from_settings(settings, environ=os.environ)
+        )
+        profile = normalize_knowledge_embedding_profile(settings, environ=os.environ)
+        if profile["source"] == "settings":
+            environment["RAG_IME_KNOWLEDGE_EMBEDDING_PROFILE_SHA256"] = str(
+                profile["profileSha256"]
+            )
+        return environment
 
     def _stop_owned_worker(self) -> None:
         process = self._process

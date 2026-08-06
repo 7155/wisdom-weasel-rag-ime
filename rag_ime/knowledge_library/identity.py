@@ -20,6 +20,11 @@ def knowledge_worker_fingerprint(
     embedding_provider: str,
     embedding_model: str,
     dense_backend: str,
+    embedding_profile_sha256: str = "",
+    reranker_provider: str = "none",
+    reranker_model_path: str = "",
+    reranker_model_revision: str = "",
+    reranker_profile_sha256: str = "",
 ) -> str:
     payload = {
         "idleSeconds": float(idle_seconds),
@@ -33,7 +38,12 @@ def knowledge_worker_fingerprint(
         "pythonVersion": str(python_version),
         "embeddingProvider": str(embedding_provider).strip().lower(),
         "embeddingModel": str(embedding_model).strip(),
+        "embeddingProfileSha256": str(embedding_profile_sha256).strip().lower(),
         "denseBackend": str(dense_backend).strip().lower(),
+        "rerankerProvider": str(reranker_provider).strip().lower(),
+        "rerankerModelPath": str(reranker_model_path).strip(),
+        "rerankerModelRevision": str(reranker_model_revision).strip(),
+        "rerankerProfileSha256": str(reranker_profile_sha256).strip().lower(),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

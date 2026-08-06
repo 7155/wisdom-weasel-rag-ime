@@ -50,6 +50,12 @@ class LocalKnowledgeClient:
                     else None
                 ),
                 threshold=float(payload["threshold"]) if payload.get("threshold") is not None else None,
+                rerank=_optional_bool(payload, "rerank"),
+                rerank_candidate_depth=(
+                    payload["rerankCandidateDepth"]
+                    if payload.get("rerankCandidateDepth") is not None
+                    else None
+                ),
                 file_name=str(payload.get("fileName") or ""),
                 agent_only=True,
             )
@@ -98,6 +104,12 @@ class LocalKnowledgeClient:
             )
         else:
             raise KnowledgeLibraryError("open requires fileId or chunkId", code="invalid_argument")
+        requested_bases = _kb_ids(payload)
+        if requested_bases and str(result.get("baseId") or "") not in requested_bases:
+            raise KnowledgeLibraryError(
+                "document is outside the selected knowledge base",
+                code="scope_mismatch",
+            )
         return _agent_open(result)
 
     def status(self, payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -124,7 +136,13 @@ class HttpKnowledgeClient:
             raise ValueError("knowledge worker URL must use loopback HTTP")
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = max(0.1, float(timeout_seconds))
-        self.urlopen = urlopen or urllib.request.urlopen
+        # A loopback worker must never traverse the process-wide HTTP/SOCKS
+        # proxy.  CI, desktop shells, and interview sandboxes often export a
+        # proxy while leaving NO_PROXY empty; urllib would otherwise send a
+        # local management request to that proxy (typically returning 403).
+        self.urlopen = urlopen or urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+        ).open
 
     def list_bases(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         return self._request("GET", "/v1/agent/knowledge/bases")
@@ -542,6 +560,15 @@ def _kb_ids(payload: Mapping[str, Any]) -> tuple[str, ...]:
 
 def _top_k(payload: Mapping[str, Any], default: int) -> int:
     return max(1, min(100, int(payload.get("topK") or payload.get("limit") or default)))
+
+
+def _optional_bool(payload: Mapping[str, Any], field: str) -> bool | None:
+    if field not in payload:
+        return None
+    value = payload.get(field)
+    if not isinstance(value, bool):
+        raise KnowledgeLibraryError(f"{field} must be a boolean", code="invalid_argument")
+    return value
 
 
 def _find_patterns(payload: Mapping[str, Any]) -> tuple[str, ...]:
