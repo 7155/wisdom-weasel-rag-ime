@@ -23,6 +23,7 @@ REQUIRED_MEMORY_MODEL_REFERENCE = "openai-codex/gpt-5.6-luna"
 REQUIRED_MEMORY_THINKING_LEVEL = "max"
 MINIMUM_MEMORY_CONTEXT_TOKENS = 272_000
 MAXIMUM_MEMORY_PROMPT_CHARS = 1_000_000
+DEFAULT_MEMORY_CURATION_TIMEOUT_SECONDS = 1_200.0
 
 
 class MemoryModelUnavailable(RuntimeError):
@@ -82,7 +83,7 @@ class GovernedMemoryModelExecutor:
     provider: str
     model_id: str
     thinking_level: str
-    timeout_seconds: float = 600.0
+    timeout_seconds: float = DEFAULT_MEMORY_CURATION_TIMEOUT_SECONDS
     sessions: AgentSessionStore | None = None
     events: AgentEventHub | None = None
     db_path: str | Path | None = None
@@ -852,7 +853,7 @@ def build_governed_memory_model_executor(
     model_reference: object,
     thinking_level: object,
     *,
-    timeout_seconds: float = 600.0,
+    timeout_seconds: float = DEFAULT_MEMORY_CURATION_TIMEOUT_SECONDS,
     db_path: str | Path | None = None,
     sessions: AgentSessionStore | None = None,
     events: AgentEventHub | None = None,
@@ -875,7 +876,7 @@ def build_managed_pi_memory_model_executor(
     model_reference: object,
     thinking_level: object,
     *,
-    timeout_seconds: float = 600.0,
+    timeout_seconds: float = DEFAULT_MEMORY_CURATION_TIMEOUT_SECONDS,
 ) -> GovernedMemoryModelExecutor:
     del db_path, model_reference, thinking_level, timeout_seconds
     raise MemoryModelUnavailable(

@@ -166,6 +166,18 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
             db_path=self.db_path,
         )
 
+    def test_default_timeout_covers_the_verified_luna_production_lease(self) -> None:
+        runtime = FakeMemoryRuntime(self.sessions, self.events)
+
+        executor = build_governed_memory_model_executor(
+            runtime,
+            "openai-codex/gpt-5.6-luna",
+            "max",
+            db_path=self.db_path,
+        )
+
+        self.assertEqual(executor.timeout_seconds, 1_200.0)
+
     def test_selected_model_profile_and_thinking_reach_session_prompt(self) -> None:
         runtime = FakeMemoryRuntime(self.sessions, self.events)
         executor = self._executor(runtime)
