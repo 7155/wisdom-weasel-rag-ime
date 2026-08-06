@@ -479,6 +479,7 @@ describe('RoomTurn canonical conversation chronology', () => {
             ],
             integrationPlan: '负责人按共享契约合并，再执行独立复核',
             acceptancePlan: ['真实 GUI 验证提问、启动、并行、交付和恢复'],
+            continuityPlan: '开始后用一份受管工作文档分别记录需求、执行进度、证据和下一步，交接时先读它。',
           },
         }),
         receipt(2, {
@@ -503,6 +504,8 @@ describe('RoomTurn canonical conversation chronology', () => {
     expect(gate).toHaveTextContent('实时进度与回到最新');
     expect(gate).toHaveTextContent('负责人按共享契约合并，再执行独立复核');
     expect(gate).toHaveTextContent('真实 GUI 验证提问、启动、并行、交付和恢复');
+    expect(gate).toHaveTextContent('需求、进度和交接如何留存');
+    expect(gate).toHaveTextContent('开始后用一份受管工作文档分别记录需求、执行进度、证据和下一步');
   });
 
   it('does not render an unanchored start action before the canonical alignment post arrives', () => {
@@ -615,6 +618,39 @@ describe('RoomTurn canonical conversation chronology', () => {
     }));
 
     expect(screen.queryByRole('button', { name: '开始行动' })).not.toBeInTheDocument();
+  });
+
+  it('describes alignment work without pretending the user still owes a decision', () => {
+    const projection = liveProjection([
+      userEvent(1, 'opening', '请先给出四个功能的纵向分工'),
+      event(2, 'participant_activity', {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        taskId: 'task-alignment',
+        sourceEventType: 'reasoning_summary',
+        source: 'provider_reasoning_summary',
+        publicSummaryVersion: 'room-work-summary.v1',
+        publicSummaryKind: 'alignment',
+        summary: '正在整理执行方案',
+        status: 'running',
+      }),
+    ]);
+    const view = render(roomTurn(projection, {
+      kernelDispatchesById: {
+        'dispatch-a': { dispatchId: 'dispatch-a', taskId: 'task-alignment' } as never,
+      },
+      kernelTasksById: {
+        'task-alignment': {
+          taskId: 'task-alignment',
+          objective: '完成四个客户管理功能的纵向拆分',
+        } as never,
+      },
+    }));
+
+    expect(view.container).toHaveTextContent(
+      '正在整理「完成四个客户管理功能的纵向拆分」的需求与执行方案',
+    );
+    expect(view.container).not.toHaveTextContent('还需要你决定什么');
   });
 });
 

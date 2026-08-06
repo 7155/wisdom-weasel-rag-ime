@@ -738,7 +738,7 @@ export function RoomsFeature() {
     )
   );
   const liveStatusTitle = continuedAfterAnswer
-    ? '回答已送达，伙伴正在继续处理'
+    ? '已收到你的回答，伙伴正在继续处理'
     : startingExecution
       ? '正在开始行动，主持伙伴正在接手'
       : liveParticipantNames.length > 1
@@ -1528,24 +1528,7 @@ export function RoomsFeature() {
             : catalogLoading
               ? <p className="room-empty">正在读取协作空间…</p>
               : <EmptyState icon={MessagesSquare} title="选择一个协作空间" description="从左侧选择，或新建一个协作空间。" />}
-        </div>{showLiveStatus ? <div
-          aria-label="当前协作状态"
-          className="room-live-status"
-          data-away-from-latest={!timelineAtBottom || undefined}
-          role="status"
-        >
-          <span className="room-live-status__signal" aria-hidden="true"><LoaderCircle size={18} /></span>
-          <span><strong>{liveStatusTitle}</strong><small>分工和交接会出现在最新进度中。</small></span>
-          {!timelineAtBottom && visibleTurnOrder.length ? <Button
-            onClick={() => roomTimelineRef.current?.scrollToIndex({
-              index: 'LAST',
-              align: 'end',
-              behavior: 'smooth',
-            })}
-            size="small"
-            variant="quiet"
-          >回到最新进度</Button> : null}
-        </div> : null}{!(room && answerablePendingQuestion?.roomId === room.id) ? <div className="room-composer-dock"><div className="room-composer-cluster">{room ? <RoomComposer
+        </div>{!(room && answerablePendingQuestion?.roomId === room.id) ? <div className="room-composer-dock"><div className="room-composer-cluster">{room ? <RoomComposer
           key={room.id}
           inputRef={roomComposerRef}
           room={room}
@@ -1554,6 +1537,25 @@ export function RoomsFeature() {
           attachments={attachments}
           sending={sendingRoomIds.has(room.id)}
           taskBusyState={managedTaskBusyState}
+          activityStatus={showLiveStatus ? {
+            label: continuedAfterAnswer
+              ? '已收到 · 继续处理中'
+              : startingExecution
+                ? '正在启动协作'
+                : liveParticipantNames.length > 1
+                  ? '多人并行中'
+                  : '协作进行中',
+            detail: liveStatusTitle,
+            awayFromLatest: !timelineAtBottom && Boolean(visibleTurnOrder.length),
+            onReturnToLatest: () => roomTimelineRef.current?.scrollToIndex({
+              index: 'LAST',
+              align: 'end',
+              behavior: 'smooth',
+            }),
+          } : managedTaskBusyState === 'blocked' ? {
+            label: '协作待处理',
+            detail: '当前任务已暂停，请在上方继续或停止任务',
+          } : undefined}
           onDraftChange={(value) => {
             persistRoomDraft(room.id, value);
             if (roomErrorsRef.current.get(room.id)?.source === 'operation') setRoomError(room.id, '');

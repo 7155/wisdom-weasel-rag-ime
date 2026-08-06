@@ -44,6 +44,11 @@ authority.
 7. Report findings under their original axes and order only by severity within
    each axis. Do not merge or rerank findings across axes.
 8. Separate required fixes, residual risk, test gaps, and optional improvement.
+9. Record the review outcome in the bound WorkDocument through the current
+   review authority, or return a bounded proposed delta when the document is
+   owned elsewhere. Preserve the reviewed fixed point, findings, reproduced
+   evidence, required repair, residual risk, and next action without rewriting
+   the original user source.
 
 ## Managed Room Boundary
 

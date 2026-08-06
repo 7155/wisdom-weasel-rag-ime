@@ -27,6 +27,11 @@ context, leaving an explicit redaction marker when material.
    never wake an owner through a free-text mention.
 2. Reconcile the packet with original user text, append-only corrections,
    current responsibility, accepted decisions, artifacts, and evidence.
+   Before transfer, update the one bound WorkDocument from the latest user
+   requirements and your own material progress: completed behavior, evidence,
+   failed routes, remaining risks, exact next action, and proposed owner. If
+   this owner lacks write authority, return that bounded delta to the
+   authoritative owner instead of creating another document.
 3. Map complete and remaining work to exact acceptance aliases in private
    fields. Evidence must be fresh and eligible under the active
    lifecycle schema; prose claims alone are not evidence.
@@ -41,6 +46,9 @@ context, leaving an explicit redaction marker when material.
    expected output, remaining aliases, evidence, risks, and public report.
 7. Stop editing transferred work after acceptance. If rejected, ownership has
    not moved; repair only the named contract problem.
+8. The receiver first reads the project continuity index and referenced
+   WorkDocument, then verifies current source, Git state, receipts, and runtime.
+   A handoff summary or chat transcript is not sufficient recovery context.
 
 ## Managed Room Boundary
 
@@ -67,7 +75,8 @@ context, leaving an explicit redaction marker when material.
 - Transfer only accepted evidence receipts; a filesystem path or participant
   prose cannot establish completion or ownership.
 - A review receiver must be a distinct participant, never the author or
-  Integrator.
+  Integrator of the bounded review target. A peer may have implemented another
+  non-overlapping feature; that does not create a permanent Reviewer tier.
 
 ## Private Receiver Packet
 
@@ -96,6 +105,7 @@ receipt changes ownership.
 ## Self-Check
 
 - Can the receiver start with one concrete action at the exact takeover point?
+- Is the shared WorkDocument current with both user changes and my progress?
 - Are complete, failed, and unverified work distinguishable?
 - Does every completion claim cite inspectable evidence?
 - Are referenced artifacts stable and sensitive content redacted?

@@ -1,4 +1,4 @@
-import { AtSign, Paperclip, Send, X } from 'lucide-react';
+import { AtSign, LoaderCircle, Paperclip, Send, X } from 'lucide-react';
 import {
   startTransition,
   useCallback,
@@ -45,6 +45,7 @@ export function RoomComposer({
   attachments,
   sending,
   taskBusyState,
+  activityStatus,
   inputRef,
   onDraftChange,
   onSend,
@@ -59,6 +60,12 @@ export function RoomComposer({
   attachments: RoomAttachmentReceipt[];
   sending: boolean;
   taskBusyState?: 'running' | 'blocked';
+  activityStatus?: {
+    label: string;
+    detail: string;
+    awayFromLatest?: boolean;
+    onReturnToLatest?: () => void;
+  };
   inputRef?: { current: HTMLTextAreaElement | null };
   onDraftChange: (value: string) => void;
   onAttachmentsChange: (value: RoomAttachmentReceipt[]) => void;
@@ -234,11 +241,6 @@ export function RoomComposer({
           ><X size={12} /></button>
         </span>)}
       </div> : null}
-      {taskBusyState ? <p className="room-composer__task-lock" role="status">
-        {taskBusyState === 'blocked'
-          ? '当前任务已暂停。请在上方继续或停止任务；你可以先在这里准备下一条消息。'
-          : '当前任务仍在执行。完成或停止后才能发送下一项任务；你可以先在这里起草。'}
-      </p> : null}
       <div className="room-composer">
         <textarea
           ref={setTextareaRef}
@@ -326,6 +328,18 @@ export function RoomComposer({
               onClick={openMentionMenu}
               tooltip
             /> : null}
+            {activityStatus ? <span
+              aria-label="当前协作状态"
+              className="room-composer__activity"
+              data-away-from-latest={activityStatus.awayFromLatest || undefined}
+              role="status"
+              title={activityStatus.detail}
+            >
+              <LoaderCircle aria-hidden="true" size={13} />
+              {activityStatus.awayFromLatest && activityStatus.onReturnToLatest
+                ? <button aria-label="回到最新进度" type="button" onClick={activityStatus.onReturnToLatest}>有新进展 · 回到最新</button>
+                : <span>{activityStatus.label}</span>}
+            </span> : null}
           </div>
           <IconButton
             className="room-composer__send"

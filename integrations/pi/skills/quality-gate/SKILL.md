@@ -49,6 +49,10 @@ integration; review is not mandatory for every task.
 8. For `decision=deliver`, send only loaded-schema fields. Do not send
    `acceptanceAliases`; it belongs to `decision=handoff`, while current-task
    coverage belongs in `evidence`.
+9. Update the bound WorkDocument's execution section with fresh evidence,
+   failures, unverified boundaries, residual risk, and the resulting next
+   action. If this Skill does not hold document-write authority, return the
+   bounded delta to the current owner; never create a parallel evidence file.
 
 ## Evidence Matrix
 

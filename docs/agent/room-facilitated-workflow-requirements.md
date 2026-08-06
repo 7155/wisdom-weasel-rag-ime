@@ -3,7 +3,7 @@
 - Document class: sole tracked authority for current Room product behavior and acceptance status
 - Approved vision window: user decisions made on or after 2026-08-02
 - Contract revision: 2026-08-06
-- Acceptance state: current source now has focused regressions for persisted full-auto mode, one role/Task work frame across retry Dispatches, terminal user-facing delivery summaries, default-collapsed truthful motion, and multiline Tool output. The installed build remains older than these fixes. The latest foreground Room proved real parallel Dispatches but did not reach integration, independent review, and one final report; production acceptance remains open.
+- Acceptance state: current source now has focused regressions for persisted full-auto mode, one role/Task work frame across retry Dispatches, terminal user-facing delivery summaries, default-collapsed truthful motion, multiline Tool output, a visible execution plan before every start, peer feature ownership, and one governed requirement/execution WorkDocument. The installed build remains older than the latest fixes. The latest foreground Room proved real parallel Dispatches but did not reach integration, independent review, and one final report; production acceptance remains open.
 - Status rule: source, test, installed, and foreground evidence are reported separately
 
 Older handoffs, ignored local notes under `docs/`, screenshots, prototypes, tests,
@@ -43,41 +43,53 @@ overview, not an editor, execution gate, or second orchestrator.
 - Facilitator is a responsibility for this work, not a permanent hierarchy or a
   replacement for a companion's persona.
 
-### Conditional clarification
+### Conditional clarification and visible start
 
 The receiving companion first inspects facts already available from the
-repository and runtime, then chooses one of two branches.
+repository and runtime, then chooses one of two intake branches. Both branches
+converge on the same visible execution-plan review and explicit start action.
 
-1. If no material user-owned choice is missing, the opening request authorizes
-   action. Do not ask for confirmation and do not show `开始行动`.
-2. If a material choice is missing, ask one question at a time in the normal
-   message stream.
-3. Each question presents 2–5 honest single-select options, with at most one
+1. If no material user-owned choice is missing, do not ask ceremonial questions.
+   Continue directly to the visible execution plan, but do not write code, run
+   tests, install, or dispatch implementation work yet.
+2. If material user-owned choices remain, ask at most one clarification round.
+   Put two to four independent questions together in one ordinary companion
+   message, number them, and label compact choices `A/B/C` so the user can reply
+   concisely, for example `1A 2C`. Do not turn requirement discovery into a
+   serial questionnaire.
+3. When there is exactly one genuinely mutually exclusive decision, use the
+   native option box with 2–5 honest single-select options and at most one
    recommendation. Every option has a short name and a natural paragraph that
-   explains the resulting scope, the concrete user action and visible outcome,
-   the important exclusion or constraint, and the effort or tradeoff instead of
-   repeating the name. A user must be able to predict what will be built and how
-   it will be judged from the option copy alone. Free text remains hidden until
-   the user chooses `其他`.
-4. Clicking an option only selects it. The user must then click `确认并发送`;
-   selection alone never advances the Room. `其他` reveals the text field and
-   is the only free-text branch for an active alignment question. Active
-   alignment never emits an optionless question.
+   explains the resulting scope, concrete user action and visible outcome,
+   important exclusion or constraint, and effort or tradeoff instead of merely
+   repeating the name. The interface supplies `其他`; choosing it reveals free
+   text.
+4. Clicking a native option only selects it. The user must then click
+   `确认并发送`; selection alone never advances the Room. Ordinary grouped
+   questions are answered by one normal user message, not by several stacked
+   option cards.
 5. Option and custom answers carry an explicit answer kind. Custom text is never
    relabelled merely because it equals an option's internal value.
-6. The answer appears as a separate chronological user message. The prior
+6. Each answer appears as a separate chronological user message. The prior
    question remains in place, becomes read-only, and is never the sole record of
    the answer.
-7. Only after that answer appears may the Facilitator ask the next dependent
-   question.
+7. A dependent follow-up is allowed only when the received answer exposes one
+   new high-impact choice that cannot be safely inspected or inferred. It stays
+   inside the same bounded clarification exchange; repeated minor questions are
+   a product defect.
 8. Before defining work, the companion must be able to name the concrete entry
    or surface, what the user will do and see, the real deliverables, and an
    observable completion check. `端到端可用`, `完整`, and `可运行闭环` describe
    scope but do not replace those specifics; `当前项目`, `规定入口`, `核心操作`,
    and `真实结果` are placeholders and must not release execution.
-9. After the last necessary answer, the Facilitator summarizes what she now
-   understands and asks `现在开始行动吗？`. The one-shot `开始行动` control exists only on
-   this clarification branch.
+9. On either branch, the Facilitator summarizes the understood user outcome and
+   shows the proposed execution plan before asking `现在开始行动吗？`. The plan
+   includes shared behavior/contracts, one to four vertical user-visible
+   feature tasks, peer owners, dependencies and waves, write boundaries,
+   integration, acceptance, and document continuity. It uses the user's
+   language and point of view; internal English type names, camelCase fields,
+   protocol vocabulary, and unverified entry points stay in expandable
+   technical detail or the post-start WorkDocument.
 10. Clicking it appends an ordinary user message such as `开始行动`. That message
    is durably ordered before the fresh execute Dispatch is released; a crash or
    retry cannot begin a Worker or Reviewer without the visible authorization.
@@ -85,22 +97,23 @@ repository and runtime, then chooses one of two branches.
 Canonical ordering:
 
 ```text
-用户：@澄·今 我准备写 TUI
-澄·今：我来接手，还有一个会影响实现方式的问题
-        [选项]
-用户：终端原生 TUI
-澄·今：首版最重要的交付边界是什么？
-        [选项]
-用户：先完成可运行闭环
-澄·今：我明白了……现在开始行动吗？
+用户：@澄·今 给客户管理补上批量导入、筛选保存、合并撤销和编辑回滚
+澄·今：我来接手。还有两项会影响四个功能怎样落地的选择：
+        1. 写入前的确认强度：A 逐项确认 / B 按整批确认
+        2. 历史保留范围：A 永久保留 / B 按项目现有策略
+用户：1A 2B
+澄·今：我明白了……这是开始前的功能分工、依赖和验收方案
+        [公共约定、伙伴功能任务、波次、集成、验收、文档留存]
+        现在开始行动吗？
         [开始行动]
 用户：开始行动
-澄·今：我把工作拆成两项并行任务……
-澄·远：我负责 TUI 界面实现……
-澄·今：我正在完成状态模型与集成准备……
+澄·今：我负责批量导入的完整用户操作，同时组织公共约定和最终集成……
+澄·远：我负责筛选保存的完整用户操作……
+澄·瞬：我负责合并、差异预览和撤销的完整用户操作……
+澄·初：我负责编辑历史和单条回滚的完整用户操作……
 澄·远：实现和测试完成，交回澄·今
-澄·今：已完成集成，交给澄·初独立复核
-澄·初：提交审查 Findings……
+澄·今：已完成集成，系统正按真实参与记录分配互不自审的复核目标……
+复核伙伴：提交自己未实现、未集成部分的审查 Findings……
 澄·今：最终总结……
 ```
 
@@ -125,6 +138,9 @@ remaining choice would change.
 - May implement and integrate, but cannot independently review its own work.
 - Parallelizes only independent, non-overlapping slices when that materially
   reduces waiting.
+- Remains a peer companion. Coordination responsibility never makes the
+  Facilitator a permanent commander or a reason to give other companions only
+  read-only summary work.
 
 ### Room companion
 
@@ -146,9 +162,14 @@ remaining choice would change.
 
 ### Reviewer
 
-- Reviews the integrated target against the latest requirements and evidence.
-- Is independent from authors and Integrator, normally using fresh read-only
-  context.
+- Reviews its bounded target against the latest requirements and integrated
+  evidence.
+- Is independent from the author and Integrator of that bounded target,
+  normally using fresh read-only context. A peer who implemented another
+  non-overlapping feature may review this target, but never its own work.
+- Is selected after integration from actual authorship, integration, and
+  delivery provenance. Planning must not permanently reserve an idle companion
+  or turn review into a lower-capability role.
 - Submits structured Findings. Runtime policy derives the verdict; the Reviewer
   cannot fix a finding and approve the same fix.
 
@@ -161,8 +182,21 @@ prove completion.
 
 ## Stage-resident Skills
 
-One exact governed Skill is bound to the current managed-Pi work stage. This is
-not a permanent prompt containing every workflow.
+One exact governed Skill is bound to the current managed-Pi work stage. Skills
+use Claude-style progressive disclosure rather than one permanent prompt
+containing every workflow:
+
+1. Startup context contains only the compact routing card needed to decide
+   whether a Skill applies.
+2. Entering a stage loads that one Skill's complete `SKILL.md`; the full body may
+   exceed an old uniform 6 KiB or 120-line budget when the workflow genuinely
+   needs the detail.
+3. References, scripts, and examples load only when the selected Skill links to
+   them and the current action requires them.
+
+The routing card stays compact. Completeness belongs in the progressively loaded
+body and references; deleting required workflow rules merely to satisfy a flat
+file-size cap is a contract violation.
 
 - intake and pre-definition resume: `alignment-and-decision`
 - planning: `implementation-planning`
@@ -180,6 +214,36 @@ Tools, bypass approval, or settle completion. The exact Skill name, content
 hash, policy revision, work lineage, Session, capability epoch, and load reason
 are receipted; stale or mismatched loads fail closed.
 
+## Governed requirement and execution record
+
+After the user approves the visible plan, the active WorkItem binds exactly one
+governed Markdown WorkDocument. It is one physical record with two clearly
+separated logical sections, not two files that can drift apart:
+
+- the requirement section preserves the original user request and vision
+  byte-for-byte, appends later user corrections or withdrawals verbatim, and
+  keeps a replaceable current confirmed interpretation below the immutable
+  source;
+- the execution section keeps the approved vertical plan, current owner and
+  slice, Todo/checkpoint, material progress, evidence, failed routes, blockers,
+  remaining risk, handoff, and smallest next action.
+
+Every stage updates the record from its own authoritative progress. A new user
+requirement, correction, removal, or priority change is appended immediately and
+the current interpretation/plan is reconciled without rewriting history. An
+implementation, integration, verification, review, failure, recovery, or
+handoff updates the execution section when material state changes. It is not a
+per-Tool transcript, token log, or commit diary.
+
+Only the current authorized owner writes the shared record; concurrent helpers
+return a bounded proposed delta. After compaction, restart, replacement, or
+handoff, the next owner reads the project continuity index, then this
+WorkDocument, then verifies the current source, Git state, receipts, and runtime
+before acting. Chat history and AI summaries cannot replace the user source or
+fresh evidence. Runtime/RequirementCatalog state remains authoritative; the
+document is the durable navigation and recovery surface. The backend archives
+it on authoritative terminal state and never deletes it on a timer.
+
 ## Authoritative lifecycle
 
 1. Capture the opening request and initial Facilitator.
@@ -189,10 +253,13 @@ are receipted; stale or mismatched loads fail closed.
    CAS-release the one resume Dispatch. A crash in any window remains
    non-executable or exactly replayable, and a specific question revision
    resumes at most once.
-4. If clarification occurred, wait for the typed start action, durably prepare
-   its one-shot identity, publish the user message, and only then CAS-release
-   execution. Any partial transaction remains non-executable and retryable.
-5. Define the accepted work atomically and fence the intake Dispatch.
+4. Present the visible execution plan on both intake branches, wait for the
+   typed start action, durably prepare its one-shot identity, publish the user
+   message, and only then CAS-release execution. Any partial transaction remains
+   non-executable and retryable.
+5. Define the accepted work atomically, fence the intake Dispatch, and bind the
+   one governed WorkDocument to the accepted WorkItem before the first approved
+   implementation write.
 6. Create one fresh execute-capable Facilitator Dispatch with a new identity,
    capability lease, epoch, and implementation Skill. The intake Dispatch never
    gains execute capability.
@@ -225,6 +292,10 @@ of looping forever.
   state, and remaining work. A model turn or process may end without losing
   these facts; the next authorized run resumes from the checkpoint instead of
   starting the task again or relying on chat prose.
+- Every material requirement change and every material execution transition is
+  also reflected in the WorkItem's governed WorkDocument. The active owner
+  updates it from current user instructions and her own real progress; helpers
+  propose deltas instead of racing to write the same file.
 - The Facilitator supervises recovery. Within configured policy she may retry
   the same step, revise its approach, reassign unfinished work, turn unsafe
   parallel work into ordered work, rebind a retained workspace, select another
@@ -1026,9 +1097,11 @@ Use one coherent installed build and one fresh Room in the foreground
 2. Submit a natural bounded request with a real material choice, such as
    `我想给这个项目加一个能批量导入数据的功能`; do not include protocol
    instructions, canned answers, role assignments, or the intended task split.
-3. If real ambiguity exists, answer the inline option-first questions and click
-   `开始行动` only after the natural understanding summary. Also preserve the direct path for a
-   fully specified request.
+3. If real ambiguity exists, answer the single bounded clarification round.
+   Verify grouped questions when several independent choices exist and the
+   native option box when exactly one mutually exclusive choice exists. On both
+   ambiguous and fully specified paths, inspect the user-language vertical plan
+   and click `开始行动` only after the natural understanding summary.
 4. Observe distinct Facilitator and peer ownership, at least two real parallel
    WorkItems when appropriate, each owner's Todo and attributed result/diff,
    real Tool/activity updates, one bounded nested subagent, delivery,
@@ -1060,7 +1133,7 @@ Use one coherent installed build and one fresh Room in the foreground
 
 ## Explicit non-goals
 
-- mandatory alignment or confirmation for every request
+- mandatory clarification questions for every request
 - a user-editable task graph or frontend orchestrator
 - a permanent global commander or master/slave companion tree
 - ownership inferred from display names or later mentions

@@ -400,6 +400,15 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         self.assertIn("executionPlan", schema["properties"])
         plan_schema = schema["properties"]["executionPlan"]
         self.assertEqual(plan_schema["properties"]["featureTasks"]["maxItems"], 4)
+        self.assertIn("continuityPlan", plan_schema["properties"])
+        self.assertIn(
+            "用户的语言",
+            plan_schema["description"],
+        )
+        self.assertIn(
+            "受管工作文档",
+            plan_schema["properties"]["continuityPlan"]["description"],
+        )
         self.assertNotIn(
             "implementationParticipantRef",
             schema["required"],

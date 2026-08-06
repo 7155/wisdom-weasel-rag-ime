@@ -492,7 +492,9 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
 "room_define": {
     "description": (
         "需求对齐和执行规划完成后，把最终目标、可观察验收条件以及用户可审核的"
-        "纵向功能分工一次性写入当前 Room Root；只允许当前对齐 Dispatch 调用。"
+        "纵向功能分工一次性写入当前 Room Root；主界面文案必须使用用户正在使用的"
+        "语言和用户视角，内部类型与字段只进入开始后的工作文档或技术详情。"
+        "只允许当前对齐 Dispatch 调用。"
     ),
     "when": (
         "已经读取原始用户请求并完成必要澄清，准备进入实现阶段",
@@ -603,8 +605,8 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                 "maxLength": 320,
                 "description": (
                     "可选的首位建议实施伙伴；必须是活跃 Room 成员。"
-                    "省略或指向 Facilitator 时，由 Facilitator 先执行并按真实依赖决定"
-                    "是否再用 room_collaborate 分工"
+                    "包括 Facilitator 在内的所有活跃伙伴能力对等，均可端到端负责功能；"
+                    "主持、实现、集成和复核只是当前责任，不是永久能力等级。"
                 ),
             },
             "executionPlan": {
@@ -612,7 +614,12 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                 "description": (
                     "开始行动前展示给用户的执行方案。先锁定公共契约；每个 featureTask "
                     "必须由一位伙伴端到端负责一个用户可见功能，不能按前端、后端、"
-                    "解析、测试等技术层横向拆开。Room 最多同时规划 4 位同能力伙伴。"
+                    "解析、测试等技术层横向拆开。所有可见文案沿用用户的语言，从用户"
+                    "能做什么、能看到什么来写；禁止把英文类型名、camelCase 字段清单"
+                    "或未核实的代码入口当成已确认事实。Room 最多规划 4 个功能；同一"
+                    "伙伴同一波只承担一个功能。不要在计划阶段固定一个闲置 Reviewer；"
+                    "独立复核应在集成后按真实贡献记录选择没有参与待审成果的伙伴。"
+                    "角色标签只表示责任，不表示模型能力高低。"
                 ),
                 "required": [
                     "sharedContracts",
@@ -624,6 +631,10 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     "sharedContracts": {
                         "type": "array",
                         "maxItems": 8,
+                        "description": (
+                            "用用户能理解的行为说明跨功能共同遵守什么；内部对象名和"
+                            "字段表放到开始后的工作文档，不在这里展示。"
+                        ),
                         "items": {"type": "string", "minLength": 1, "maxLength": 1000},
                     },
                     "featureTasks": {
@@ -659,6 +670,16 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                         "minItems": 1,
                         "maxItems": 12,
                         "items": {"type": "string", "minLength": 1, "maxLength": 1000},
+                    },
+                    "continuityPlan": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000,
+                        "description": (
+                            "用用户语言说明开始后如何在当前任务唯一的受管工作文档中"
+                            "分别保存用户原话与愿景、确认需求、执行方案、证据和下一步，"
+                            "以及交接或上下文恢复时如何读取它。省略时由服务端补入标准说明。"
+                        ),
                     },
                 },
                 "additionalProperties": False,

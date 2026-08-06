@@ -86,10 +86,8 @@ class RoomNativeSkillTests(unittest.TestCase):
                     420,
                     encoded_routing,
                 )
-                # Full bodies arrive only through skill_load Tool Results. They
-                # may be structured enough to guide real work, but stay bounded.
-                self.assertLessEqual(len(body.splitlines()), 120)
-                self.assertLessEqual(len(body.encode()), 6_000)
+                # Claude-style progressive disclosure keeps only the routing
+                # card in the prompt; the selected Skill body may stay complete.
                 self.assertIn("## Self-Check", body)
                 self.assertNotIn("create a Dispatch", body)
                 self.assertNotIn("mark work complete", body)
@@ -116,6 +114,9 @@ class RoomNativeSkillTests(unittest.TestCase):
         review = (SKILLS_ROOT / "independent-review/SKILL.md").read_text(
             encoding="utf-8"
         )
+        handoff = (SKILLS_ROOT / "structured-handoff/SKILL.md").read_text(
+            encoding="utf-8"
+        )
         alignment_ui = (
             SKILLS_ROOT / "alignment-and-decision/agents/openai.yaml"
         ).read_text(encoding="utf-8")
@@ -138,13 +139,15 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertIn("Use the user's language", alignment)
         self.assertIn("Do not dump the packet into the public reply", alignment)
         self.assertIn("use native `ask`", alignment)
-        self.assertIn("without a\n  confirmation message", alignment)
+        self.assertIn("skip clarification but still show this plan", alignment)
+        self.assertIn("newest requirement solely in chat prose", alignment)
         self.assertIn("never substitute `room_commit deliver`", alignment)
         self.assertIn("Original User Request", alignment)
         self.assertIn("Original User Vision", alignment)
         self.assertIn("every AI explanation in a\n  separate", alignment)
         self.assertIn("original request and vision outrank every AI summary", planning)
         self.assertIn("each persisted plan with that block byte-for-byte", planning)
+        self.assertIn("WorkDocument delta from the latest user requirements", planning)
         self.assertIn('display_name: "Align and Decide"', alignment_ui)
         self.assertIn("$alignment-and-decision", alignment_ui)
         self.assertIn("one continuous suite", execution)
@@ -153,6 +156,8 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertIn("one conditional inner\n  method at a time", execution)
         self.assertIn("red/green loop", execution)
         self.assertIn("The active execution owner writes it", execution)
+        self.assertIn("your own real progress", execution)
+        self.assertIn("newest user requirements", execution)
         self.assertIn("two consecutive attempts", execution)
         self.assertIn("Public updates mention only material behavior", execution)
         self.assertIn("Never create a document per commit or code slice", execution)
@@ -166,10 +171,12 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertIn("below 100 lines and 8 KiB", continuity_contract)
         self.assertIn("read only the project index", continuity_contract)
         self.assertIn("Do not read chronological project history", continuity_contract)
-        self.assertIn("Only the active implementation owner writes", continuity_contract)
+        self.assertIn("Only the active authorized owner writes", continuity_contract)
         self.assertIn("One Work Item, One WorkDocument", continuity_contract)
         self.assertIn("Both files are navigation, never authority", continuity_contract)
         self.assertIn("Rewriting unchanged content is a no-op", continuity_contract)
+        self.assertIn("user changes a requirement", continuity_contract)
+        self.assertIn("Todo/checkpoint", continuity_contract)
         self.assertNotIn("[Delivery Page]", continuity_contract)
         self.assertNotIn("[Execution Recovery]", continuity_contract)
         self.assertIn("Do not\nmark acceptance complete in these files", continuity_contract)
@@ -186,6 +193,8 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertIn("decision=handoff", quality)
         self.assertIn("do not send", review)
         self.assertIn("acceptanceAliases", review)
+        self.assertIn("update the one bound WorkDocument", handoff)
+        self.assertIn("chat transcript is not sufficient recovery context", handoff)
 
     def test_user_owned_room_choices_use_grouped_text_or_one_bounded_choice(
         self,
@@ -236,6 +245,25 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertIn("lock shared contracts before parallel work", planning)
         self.assertIn("Do not start writes or tests before user approval", execution)
 
+    def test_canonical_requirements_match_the_latest_room_intake_contract(self) -> None:
+        requirements = (
+            REPO_ROOT / "docs/agent/room-facilitated-workflow-requirements.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("Both branches", requirements)
+        self.assertIn("at most one clarification round", requirements)
+        self.assertIn("two to four independent questions", requirements)
+        self.assertIn("On either branch", requirements)
+        self.assertIn("Claude-style progressive disclosure", requirements)
+        self.assertIn("governed Markdown WorkDocument", requirements)
+        self.assertIn("Every stage updates the record", requirements)
+        self.assertIn("May implement and integrate", requirements)
+        self.assertIn("selected after integration from actual authorship", requirements)
+        self.assertNotIn(
+            "Do not ask for confirmation and do not show `开始行动`",
+            requirements,
+        )
+
     def test_work_document_archive_is_progressive_adapter_not_room_stage(
         self,
     ) -> None:
@@ -276,9 +304,6 @@ class RoomNativeSkillTests(unittest.TestCase):
             len(json.dumps(card, ensure_ascii=False, separators=(",", ":"))),
             420,
         )
-        self.assertLessEqual(len(body.splitlines()), 120)
-        self.assertLessEqual(len(body.encode()), 6_000)
-
         policy = RoomSkillPolicy(POLICY_PATH, SKILLS_ROOT)
         self.assertNotIn(skill_id, policy.skill_ids)
         self.assertIn("progressively loaded adapter", normalized_body)
@@ -623,8 +648,6 @@ class RoomNativeSkillTests(unittest.TestCase):
             separators=(",", ":"),
         )
         self.assertLessEqual(len(encoded_routing.encode()), 450, encoded_routing)
-        self.assertLessEqual(len(body.splitlines()), 120)
-        self.assertLessEqual(len(body.encode()), 6_000)
         self.assertNotIn("cat cafe", normalized_body)
         self.assertNotIn("worktree", normalized_body)
         self.assertNotIn("pull request", normalized_body)
@@ -664,7 +687,6 @@ class RoomNativeSkillTests(unittest.TestCase):
                 encoded = json.dumps(routing, ensure_ascii=False, separators=(",", ":"))
                 self.assertLessEqual(len(encoded.encode()), 450, encoded)
                 body = path.read_text(encoding="utf-8").split("---", 2)[2]
-                self.assertLessEqual(len(body.encode()), 6_000)
                 self.assertIn("## Workflow", body)
                 self.assertIn("## Output Contract", body)
                 self.assertIn("## Self-Check", body)

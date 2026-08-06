@@ -52,7 +52,17 @@ notFor:
    authoritative workspace. For concurrent writable children, require a
    separate receipted workspace from the same Root baseline; read-only work
    may share a baseline.
-9. Keep the smallest plan covering all acceptance without widening scope.
+9. Every active Room companion is a peer. The Facilitator may own a complete
+   feature while coordinating and integrating; an owner may return in a later
+   wave, never twice in one wave. Select any required Reviewer after integration
+   from actual provenance, not from a permanent capability tier.
+10. Keep the smallest plan covering all acceptance without widening scope.
+11. Produce a bounded WorkDocument delta from the latest user requirements and
+    planning progress: current interpretation, accepted/rejected route,
+    vertical candidates, dependencies, waves, risks, and next action. Before
+    Start this is a proposed delta only; after approval the execution owner
+    writes it to the one bound WorkDocument instead of creating a second plan
+    file.
 
 ## Managed Room Boundary
 
@@ -111,8 +121,10 @@ non-goals, rollback, and `ready_for_kernel_start`,
 accepts the plan, route the accepted plan reference and exact acceptance
 aliases to `implementation-execution`.
 
-Publicly show titles, blocking graph, material risks, and status. Do not repeat the
-confirmed requirements or dump every field unless requested.
+Publicly show titles, blocking graph, material risks, continuity, and status in
+the user's language and from the user's point of view. Do not repeat the
+confirmed requirements, expose internal type or field inventories, assert an
+uninspected entry point as fact, or dump every field unless requested.
 
 ## Self-Check
 

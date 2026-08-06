@@ -65,7 +65,13 @@ Source: <message/event or RequirementAnchor ref>; UTF-8 SHA-256: <required>
 <!-- user-source:end -->
 
 ## AI Interpretation
-<derived scope, decisions, plan, progress, and explanation>
+
+### Current Confirmed Requirements
+<replaceable interpretation reconciled against every user source entry>
+
+### Execution Record
+<accepted plan, current owner and slice, Todo/checkpoint, evidence, failed
+routes, blockers, remaining risk, handoff, and smallest next action>
 ```
 
 For Room implementation, keep one compact block below the interpretation:
@@ -86,11 +92,13 @@ cancelled, blocked, incomplete, or orphaned work stays unresolved until a
 receipted retry/rebind or snapshot/hash-bound abandonment. This mirror never
 creates a workspace, authorizes integration or cleanup, or overrides Runtime.
 
-The original request and vision are immutable. Later corrections append; they
-never rewrite history. AI interpretation may be replaced as understanding
-improves. In a Room, copy original RequirementAnchor bytes, not a derived
-RequirementCatalog sentence. If credentials appear, persist an explicit
-redaction marker instead of the secret and alter no other user text.
+The original request and vision are immutable. Later corrections append
+verbatim; additions, withdrawals, and priority changes do too. They never
+rewrite history.
+The current confirmed interpretation and execution plan may be replaced as
+understanding improves. In a Room, copy original RequirementAnchor bytes, not
+a derived RequirementCatalog sentence. If credentials appear, persist an
+explicit redaction marker instead of the secret and alter no other user text.
 
 ## Read and Update
 
@@ -100,11 +108,14 @@ redaction marker instead of the secret and alter no other user text.
 2. Before each slice, recheck source hashes and compare plan and acceptance
    against the verbatim request, vision, and corrections. Repair drift first.
 3. Inspect source before editing it. Source wins over stale navigation notes.
-4. Update the same WorkDocument only when interpretation, decision, slice,
-   evidence, blocker, failed approach, next action, or authoritative workspace
-   lifecycle changes. Do not append a Tool or commit transcript.
-5. Only the active implementation owner writes it. Helpers return proposed
-   deltas so concurrent Agents do not race on one file.
+4. Update the same WorkDocument immediately when the user changes a requirement
+   and whenever the active owner's material progress changes interpretation,
+   decision, plan, Todo/checkpoint, slice, artifact, evidence, blocker, failed
+   approach, risk, handoff, next action, or authoritative workspace lifecycle.
+   Do not append a Tool or commit transcript.
+5. Only the active authorized owner writes it. Helpers and owners without the
+   document lease return proposed deltas so concurrent Agents do not race on
+   one file.
 6. Rewriting unchanged content is a no-op.
 
 ## Archive and Retention

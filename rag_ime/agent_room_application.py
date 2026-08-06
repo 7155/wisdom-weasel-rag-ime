@@ -109,6 +109,9 @@ _OBSERVABLE_COMPLETION_SIGNAL = re.compile(
     r"file|record|list|result)",
     re.IGNORECASE,
 )
+_USER_FACING_CODE_IDENTIFIER = re.compile(
+    r"(?:`[^`\n]+`|\b[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*\b)"
+)
 
 
 def _definition_specific_remainder(value: str) -> str:
@@ -172,6 +175,29 @@ def _assert_concrete_room_definition(
         ("completion", observable_completion),
     ):
         _assert_specific_definition_field(value, field=field)
+
+
+def _assert_user_facing_execution_plan_language(
+    values: Sequence[str],
+    *,
+    reference: str,
+) -> None:
+    """Keep the start gate in the user's language instead of leaking schemas."""
+
+    if not any("\u3400" <= char <= "\u9fff" for char in reference):
+        return
+    for value in values:
+        if not value:
+            continue
+        if not any("\u3400" <= char <= "\u9fff" for char in value):
+            raise ValueError(
+                "开始行动前展示的方案必须使用用户正在使用的语言，不能直接展示英文数据结构。"
+            )
+        if _USER_FACING_CODE_IDENTIFIER.search(value):
+            raise ValueError(
+                "开始行动前展示的方案应从用户能做什么、能看到什么来描述；"
+                "内部类型名和字段名请留到开始后的工作文档或技术详情。"
+            )
 
 
 def _resolve_room_answer_display(
@@ -2769,7 +2795,17 @@ def _alignment_task(
             "一个无法安全推断的高风险决定时才允许再问一次，不得形成逐题问卷。定义前先锁定"
             "公共契约；若有多个用户可见功能，按功能纵向拆成最多四项，每项由一位同能力伙伴端到端"
             "负责并写明依赖波次、写入边界、集成和验收。单个功能只能交给一位 Room Agent，不能按"
-            "前端、后端、解析或测试横向拆分。room_define 后始终展示方案并询问“现在开始行动吗？”，"
+            "前端、后端、解析或测试横向拆分。同一伙伴同一波只能负责一个功能；所有伙伴能力对等，"
+            "主持伙伴只是额外承担分工、集成和最终汇报，也可以和其他伙伴一样端到端负责功能。不要在"
+            "计划阶段把某位伙伴永久留作低能力的只读者或只复核者；独立复核在集成后依据真实实现、"
+            "集成和交付记录选择没有参与待审成果的伙伴。角色名称只表示本轮责任，不代表模型能力高低。开始行动前的"
+            "所有文案必须沿用用户正在使用的语言和用户视角：说清用户能做什么、会看到什么；不得把"
+            "英文类型名、camelCase 字段表或协议术语直接展示在主方案中，这些细节留到开始后的工作"
+            "文档或可展开技术详情。若真实页面、命令或代码入口尚未读取，只能明确写成用户提出的入口"
+            "假设，并说明开始后先核对，不能冒充已确认的项目事实。executionPlan 的 continuityPlan"
+            "还要说明：批准后先建立当前 WorkItem 唯一的受管工作文档，在不同章节保存用户原话与愿景、"
+            "确认需求、执行方案、进度证据、失败路径和下一步；任何交接或上下文恢复都先读它再核对"
+            "当前源码与运行状态。room_define 后始终展示方案并询问“现在开始行动吗？”，"
             "用户批准前不得分派、写入或测试。公开消息里不要使用“对齐、澄清、需求不足、"
             "工作卡片、门禁”，应自然说明“我明白了”或“还差一个会影响做法的问题”。"
             "如果 room_define 拒绝了占位定义，就继续问下一个具体问题，不要把工具"
@@ -2778,7 +2814,8 @@ def _alignment_task(
         )[:4_000],
         "expectedOutput": (
             "一个具体且可执行的目标，以及开始行动前可审核的公共契约、纵向功能分工、"
-            "依赖波次、写入边界、集成和验收方案。定义后由 Facilitator 先执行方案展示与等待；"
+            "依赖波次、写入边界、集成、验收和上下文记录方案。所有用户可见内容沿用用户语言，"
+            "不展示内部数据结构。定义后由 Facilitator 先执行方案展示与等待；"
             "用户批准后，Facilitator 才按方案用"
             "room_collaborate 分配真正独立的完整功能。"
         ),
@@ -2831,6 +2868,7 @@ def _normalize_room_execution_plan(
     ):
         raise ValueError("room_define executionPlan featureTasks must contain 1-4 items")
     feature_tasks: list[dict[str, object]] = []
+    feature_owner_ids: list[str] = []
     titles: set[str] = set()
     for ordinal, raw_task in enumerate(raw_tasks):
         if not isinstance(raw_task, Mapping):
@@ -2856,6 +2894,7 @@ def _normalize_room_execution_plan(
             raise RoomKernelFenceError(
                 "room_define executionPlan participant is not active"
             )
+        feature_owner_ids.append(participant_id)
         dependencies = [
             " ".join(str(item or "").split())[:200]
             for item in (
@@ -2891,6 +2930,14 @@ def _normalize_room_execution_plan(
                 )[:1_000],
             }
         )
+    owner_waves = [
+        (owner_id, int(task["wave"]))
+        for owner_id, task in zip(feature_owner_ids, feature_tasks, strict=True)
+    ]
+    if len(owner_waves) != len(set(owner_waves)):
+        raise ValueError(
+            "同一位伙伴不能在同一波并行承担两个功能；请调整波次或负责人。"
+        )
     shared_contracts = [
         " ".join(str(item or "").split())[:1_000]
         for item in (
@@ -2914,7 +2961,24 @@ def _normalize_room_execution_plan(
     ][:12]
     if not normalized_acceptance:
         raise ValueError("room_define executionPlan acceptancePlan is required")
-    return {
+    chinese_plan = any("\u3400" <= char <= "\u9fff" for char in objective)
+    continuity_plan = " ".join(
+        str(value.get("continuityPlan") or "").split()
+    )[:2_000]
+    if not continuity_plan:
+        continuity_plan = (
+            "批准开始后，负责人先建立并登记当前任务唯一的受管工作文档；"
+            "其中分开保存用户原话与愿景、已确认需求、执行方案、进度证据、"
+            "失败路径和下一步。任何伙伴接手或上下文恢复时都先读取这份文档，"
+            "再核对最新代码和运行状态。"
+            if chinese_plan
+            else
+            "After approval, the facilitator registers the task's single governed work "
+            "document. It separately preserves the user's source and vision, confirmed "
+            "requirements, execution plan, evidence, failed paths, and next action; every "
+            "handoff or recovery reads it before checking current source and runtime state."
+        )
+    normalized = {
         "sharedContracts": shared_contracts,
         "featureTasks": feature_tasks,
         "integrationPlan": clean_text(
@@ -2923,7 +2987,29 @@ def _normalize_room_execution_plan(
             limit=2_000,
         ),
         "acceptancePlan": normalized_acceptance,
+        "continuityPlan": continuity_plan,
     }
+    _assert_user_facing_execution_plan_language(
+        [
+            *shared_contracts,
+            *[
+                text
+                for task in feature_tasks
+                for text in (
+                    str(task["title"]),
+                    str(task["userOutcome"]),
+                    *[str(item) for item in task["dependencies"]],
+                    str(task["writeBoundary"]),
+                )
+                if text
+            ],
+            str(normalized["integrationPlan"]),
+            *normalized_acceptance,
+            continuity_plan,
+        ],
+        reference=f"{objective} {expected_output}",
+    )
+    return normalized
 
 
 def _texts(value: object) -> tuple[str, ...]:

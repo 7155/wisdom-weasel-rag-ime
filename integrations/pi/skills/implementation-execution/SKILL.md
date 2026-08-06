@@ -41,6 +41,14 @@ one continuous suite:
 4. Preserve the WorkDocument's top `User Source`: `Original User Request` and
    `Original User Vision` stay byte-for-byte; corrections append verbatim and
    AI material stays below. Recheck hashes after recovery.
+   Treat the same governed Markdown file as two clearly separated logical
+   records: the requirement record (`User Source` plus confirmed interpretation)
+   and the execution record (accepted plan, current slice, evidence, failures,
+   and next action). Do not create two independently drifting documents.
+   If the user adds, corrects, withdraws, or reprioritizes a requirement, append
+   the exact words immediately, reconcile the current interpretation and plan,
+   and return to alignment or planning when the change affects a user-owned
+   choice or task boundary. Never continue from a stale summary.
 5. Choose a dependency-ready vertical slice producing evidence for
    one unmet acceptance alias.
 6. For known behavior, load TDD and follow its red/green loop. For an
@@ -49,8 +57,11 @@ one continuous suite:
    load both inner Skills at once.
 7. Change the owning seam, inspect the real effect, and map fresh evidence to
    the exact alias. A Tool call, file, checkbox, or model claim is not proof.
-8. Update the same WorkDocument and continuity block only when material state
-   changes. In a Room, mirror the Runtime-owned workspace lifecycle in its one
+8. Update the same WorkDocument and continuity block from your own real progress
+   whenever material state changes: current slice/Todo, changed artifacts,
+   evidence, failed route, blocker, recovery decision, remaining risk, handoff,
+   or next action. Do not wait until the final summary and do not copy a Tool
+   transcript. In a Room, mirror the Runtime-owned workspace lifecycle in its one
    compact `Workspace Ledger`; follow the continuity reference and never infer
    ownership or success from a path.
    The active execution owner writes it; helpers return a small proposed delta.
@@ -108,6 +119,7 @@ verification, risk, and the next user-relevant action.
 
 - Am I following the accepted plan and preserving original request and vision?
 - Is one authority-bound document reused instead of a commit diary?
+- Does it reflect the newest user requirements and my latest material progress?
 - Is exactly one inner method active and producing fresh evidence?
 - Did I verify owning source rather than trust a recovery note?
 - Is continuity small enough to read before project files?

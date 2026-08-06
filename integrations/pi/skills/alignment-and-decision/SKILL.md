@@ -23,6 +23,9 @@ weakens the requirements.
   the user's language and order; never invent, translate, or overwrite it.
 - Append corrections verbatim. Keep every AI explanation in a
   separate section; source bytes, hashes, and RequirementAnchor outrank summaries.
+- Whenever the user adds, corrects, withdraws, or reprioritizes a requirement,
+  append those exact words immediately and replace only the derived current
+  interpretation. Never leave the newest requirement solely in chat prose.
 - Inspect source, tests, config, docs, and runtime before asking. Separate facts,
   reversible defaults, and user-owned choices.
 - Lock the requirements before comparing solutions. Reopen only for a user
@@ -80,8 +83,23 @@ weakens the requirements.
   RequirementAnchor, create one resume Dispatch, and never reuse the alignment Dispatch.
 - Once settled, use `room_state`, then `room_define` with the durable requirements
   packet and a visible vertical plan of 1-4 peer Agent tasks; show the proposed execution plan before `开始行动`.
-  With no material choice call it without a
-  confirmation message; Start approval still authorizes work; never substitute `room_commit deliver`.
+  Write every user-visible plan field in the user's language and from the user's
+  point of view. Describe shared behavior, not English type declarations,
+  camelCase field inventories, protocol names, or unverified repository entry
+  points. Put those implementation details in the post-start WorkDocument or an
+  expandable technical detail instead.
+  All active Room companions are peers. The Facilitator owns decomposition,
+  integration, and the final report but may also own a complete feature. An
+  owner may take another feature in a later wave, not two in the same wave.
+  Do not keep a permanent idle Reviewer; after integration, choose review from
+  actual authorship and integration provenance so nobody reviews their own target.
+  Include a continuity statement: after approval the execution owner registers
+  the WorkItem's single governed WorkDocument, with separate sections for the
+  verbatim user source and vision, confirmed requirements, execution plan,
+  evidence, failed routes, and next action. Recovery and handoff read it before
+  current source and runtime state.
+  With no material choice, skip clarification but still show this plan and wait
+  for the typed Start approval; never substitute `room_commit deliver`.
 - The Facilitator owns decomposition. `room_collaborate` creates only bounded,
   non-overlapping implementation work, never intake or review.
 

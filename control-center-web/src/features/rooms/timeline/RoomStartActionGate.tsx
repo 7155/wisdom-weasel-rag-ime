@@ -18,6 +18,7 @@ export interface RoomExecutionPlan {
   featureTasks: RoomExecutionPlanFeature[];
   integrationPlan: string;
   acceptancePlan: string[];
+  continuityPlan: string;
 }
 
 export function roomRootRequiresStartAction(
@@ -90,6 +91,7 @@ export function roomRootExecutionPlan(
     featureTasks,
     integrationPlan: cleanText(source.integrationPlan),
     acceptancePlan: textList(source.acceptancePlan),
+    continuityPlan: cleanText(source.continuityPlan),
   };
 }
 
@@ -109,25 +111,28 @@ export function RoomStartActionGate({
     </header>
     {plan ? <div className="room-start-action__plan">
       {plan.sharedContracts.length ? <section>
-        <strong>先锁定的公共契约</strong>
+        <strong>所有功能先共同遵守</strong>
         <ul>{plan.sharedContracts.map((item) => <li key={item}>{item}</li>)}</ul>
       </section> : null}
       <section>
-        <strong>纵向功能分工</strong>
+        <strong>各位伙伴分别交付</strong>
         <ol>{plan.featureTasks.map((feature) => <li key={`${feature.title}:${feature.ownerDisplayName}`}>
           <span><b>{feature.title}</b><small>{feature.wave ? `第 ${feature.wave} 波 · ` : ''}{feature.ownerDisplayName}</small></span>
           <p>{feature.userOutcome}</p>
           {feature.dependencies.length
-            ? <small>依赖：{feature.dependencies.join('、')}</small>
+            ? <small>开始条件：{feature.dependencies.join('、')}</small>
             : <small>无前置任务，可首批开始</small>}
-          {feature.writeBoundary ? <small>写入边界：{feature.writeBoundary}</small> : null}
+          {feature.writeBoundary ? <small>这位伙伴负责：{feature.writeBoundary}</small> : null}
         </li>)}</ol>
       </section>
+      {plan.continuityPlan ? <section>
+        <strong>需求、进度和交接如何留存</strong><p>{plan.continuityPlan}</p>
+      </section> : null}
       {plan.integrationPlan ? <section>
-        <strong>集成方式</strong><p>{plan.integrationPlan}</p>
+        <strong>伙伴如何合并结果</strong><p>{plan.integrationPlan}</p>
       </section> : null}
       {plan.acceptancePlan.length ? <section>
-        <strong>最终验收</strong>
+        <strong>你最终如何确认完成</strong>
         <ul>{plan.acceptancePlan.map((item) => <li key={item}>{item}</li>)}</ul>
       </section> : null}
     </div> : <p>当前任务作为一个端到端功能由负责人完成，完成后统一集成和验收。</p>}

@@ -1720,7 +1720,7 @@ function roomReasoningSummary(
   const objective = roomPublicActivityText(workspaceTask?.objective ?? '');
   if (objective) {
     return {
-      alignment: `正在确认「${objective}」还需要你决定什么`,
+      alignment: `正在整理「${objective}」的需求与执行方案`,
       implementation: `正在处理「${objective}」`,
       review: `正在检查「${objective}」是否达到要求`,
       closure: `正在整理「${objective}」的结果和验证`,

@@ -162,12 +162,20 @@ describe('RoomComposer macOS input methods', () => {
     };
     const view = render(
       <TooltipProvider>
-        <RoomComposer {...common} taskBusyState="running" />
+        <RoomComposer
+          {...common}
+          taskBusyState="running"
+          activityStatus={{
+            label: '多人并行中',
+            detail: '澄·远、澄·瞬正在并行处理两个功能',
+          }}
+        />
       </TooltipProvider>,
     );
 
     expect(screen.getByRole('button', { name: '等待当前任务完成' })).toBeDisabled();
-    expect(screen.getByText(/完成或停止后才能发送下一项任务/)).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: '当前协作状态' })).toHaveTextContent('多人并行中');
+    expect(screen.queryByText(/完成或停止后才能发送下一项任务/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '等待当前任务完成' }));
     expect(onSend).not.toHaveBeenCalled();
     view.unmount();

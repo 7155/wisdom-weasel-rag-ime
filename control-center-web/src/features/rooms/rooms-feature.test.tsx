@@ -237,7 +237,9 @@ describe('Rooms experience', () => {
     expect(screen.getByText(/已阻塞 · 澄·初 · 核对失败证据/)).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: '协作消息' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '先继续或停止当前任务' })).toBeDisabled();
-    expect(screen.getByText(/当前任务已暂停/)).toBeInTheDocument();
+    const compactStatus = screen.getByRole('status', { name: '当前协作状态' });
+    expect(compactStatus).toHaveTextContent('协作待处理');
+    expect(compactStatus.closest('.room-composer__controls')).not.toBeNull();
   });
 
   it('submits the pending wait answer through the busy gate and clears it only from the accepted user RoomPost', async () => {
@@ -381,7 +383,7 @@ describe('Rooms experience', () => {
     expect(document.querySelectorAll('.room-agent-lane__user-answer')).toHaveLength(1);
     expect(document.querySelectorAll('.room-user-message')).toHaveLength(0);
     expect(screen.getByRole('status', { name: '当前协作状态' }))
-      .toHaveTextContent('回答已送达，伙伴正在继续处理');
+      .toHaveTextContent('已收到 · 继续处理中');
     expect(screen.getByRole('button', { name: '等待当前任务完成' })).toBeDisabled();
     await waitFor(() => expect(screen.getByRole('textbox', { name: '协作消息' })).toHaveFocus());
   });
@@ -2415,8 +2417,10 @@ describe('Rooms experience', () => {
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     const status = await screen.findByRole('status', { name: '当前协作状态' });
-    expect(status).toHaveTextContent('澄 已接手，正在安排分工');
-    expect(status).toHaveTextContent('分工和交接会出现在最新进度中');
+    expect(status).toHaveTextContent('协作进行中');
+    expect(status).not.toHaveTextContent('分工和交接会出现在最新进度中');
+    expect(status.closest('.room-composer__controls')).not.toBeNull();
+    expect(document.querySelector('.room-live-status')).toBeNull();
     expect(screen.getByText('还没有公开消息')).toBeInTheDocument();
   });
 
@@ -2434,7 +2438,7 @@ describe('Rooms experience', () => {
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     const status = await screen.findByRole('status', { name: '当前协作状态' });
-    expect(status).toHaveTextContent('澄 已接手，正在安排分工');
+    expect(status).toHaveTextContent('协作进行中');
     act(() => virtuosoMock.atBottomStateChange?.(false));
     const latest = screen.getByRole('button', { name: '回到最新进度' });
     await user.click(latest);
