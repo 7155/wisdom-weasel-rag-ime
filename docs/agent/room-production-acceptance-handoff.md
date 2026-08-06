@@ -4,7 +4,7 @@
 > status: `021c9780` is committed. Its focused Room regression is `148/148`, the complete frontend regression is `1005/1005`, and TypeScript plus `git diff --check` pass. The parent `f6e41175` was installed and audited green, but the latest commit has not been installed: the real install retry is blocked by permissions while cleaning the existing Browser Co-pilot extension, and an isolated dry-run install was stopped during a long frontend build. A fresh natural-language GUI run after `021c9780` therefore remains open.
 > canonical worktree: `/Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix`
 > branch: `codex/room-production-acceptance-final`
-> current HEAD: `021c97807b58f885e6c3b047a38d40446c7804a4`
+> current source commit: `021c97807b58f885e6c3b047a38d40446c7804a4` (this checkpoint document is maintained in a follow-up commit)
 
 ## 0. Mandatory takeover gate: do not start by running commands
 
