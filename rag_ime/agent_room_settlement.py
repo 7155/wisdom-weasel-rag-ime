@@ -38,6 +38,7 @@ from .agent_room_quality_gate import (
 from .agent_room_references import (
     ParticipantReferenceError,
     participant_ref_map,
+    ref_for_participant,
     resolve_participant_ref,
 )
 from .agent_room_public_timeline import (
@@ -52,6 +53,36 @@ _RE_REVIEW_BLOCKING_EXCEPTION_CATEGORIES = (
 
 class RoomCommitProposalError(ValueError):
     """The model's proposal is repairable without weakening Kernel fences."""
+
+
+class _RoomCommitParticipantWait(RoomCommitProposalError):
+    """A final-delivery proposal must first wait for one active peer Dispatch."""
+
+    def __init__(self, *, participant_id: str, dispatch_id: str) -> None:
+        super().__init__("active participant work must finish before delivery")
+        self.participant_id = participant_id
+        self.dispatch_id = dispatch_id
+
+
+def _active_peer_wait_target(
+    children: Sequence[Mapping[str, object]],
+    *,
+    facilitator_id: str,
+) -> Mapping[str, object] | None:
+    for child in children:
+        participant_id = str(child.get("targetParticipantId") or "")
+        if (
+            not participant_id
+            or participant_id == facilitator_id
+            or child.get("resultPublic") is True
+            or str(child.get("intentKind") or "") not in {"execute", "revise"}
+            or str(child.get("state") or "")
+            in {"committed", "failed", "cancelled", "stale"}
+        ):
+            continue
+        if str(child.get("dispatchId") or ""):
+            return child
+    return None
 
 
 class RequirementContextSource(Protocol):
@@ -575,6 +606,7 @@ class RoomSettleLifecycleService:
         facilitator_id = str(
             root.get("facilitatorParticipantId") or ""
         )
+        managed_children: list[dict[str, object]] = []
         if routing_policy == "parallel":
             managed_children = self.kernel.collaboration_children(
                 str(root["rootId"])
@@ -588,6 +620,17 @@ class RoomSettleLifecycleService:
                 != facilitator_id
             }
             if len(public_peer_ids) < required_peer_count:
+                waiting_child = _active_peer_wait_target(
+                    managed_children,
+                    facilitator_id=facilitator_id,
+                )
+                if waiting_child is not None:
+                    raise _RoomCommitParticipantWait(
+                        participant_id=str(
+                            waiting_child["targetParticipantId"]
+                        ),
+                        dispatch_id=str(waiting_child["dispatchId"]),
+                    )
                 raise RoomCommitProposalError(
                     "Facilitator 尚未通过 room_collaborate 收齐隔离并行结果；"
                     "先拆分可独立工作并等待伙伴公开结果，再完成串行集成。"
@@ -606,13 +649,24 @@ class RoomSettleLifecycleService:
                 != facilitator_id
             }
             if len(public_participant_ids) < required_peer_count:
+                waiting_child = _active_peer_wait_target(
+                    managed_children,
+                    facilitator_id=facilitator_id,
+                )
+                if waiting_child is not None:
+                    raise _RoomCommitParticipantWait(
+                        participant_id=str(
+                            waiting_child["targetParticipantId"]
+                        ),
+                        dispatch_id=str(waiting_child["dispatchId"]),
+                    )
                 raise RoomCommitProposalError(
                     "其他伙伴的公开结果尚未到齐；先邀请缺少的伙伴继续工作，"
                     "再选择等待，结果到齐后才能发布最终回复。"
                     f"需要 {required_peer_count} 位，已公开 "
                     f"{len(public_participant_ids)} 位"
                 )
-        children = self.kernel.collaboration_children(
+        children = managed_children or self.kernel.collaboration_children(
             str(root["rootId"])
         )
         records = [
@@ -626,6 +680,15 @@ class RoomSettleLifecycleService:
             and child_task.get("state") != "completed"
         ]
         if unfinished_work:
+            waiting_child = _active_peer_wait_target(
+                children,
+                facilitator_id=facilitator_id,
+            )
+            if waiting_child is not None:
+                raise _RoomCommitParticipantWait(
+                    participant_id=str(waiting_child["targetParticipantId"]),
+                    dispatch_id=str(waiting_child["dispatchId"]),
+                )
             raise RoomCommitProposalError(
                 "仍有实现或检查子任务没有完成；先等待其公开工作结果，"
                 "不要提前发布最终回复"
@@ -1444,13 +1507,40 @@ class RoomSettleLifecycleService:
                 "only the Root Facilitator may wait for user input; "
                 "return the blocker to the Facilitator instead"
             )
-        self._assert_managed_collaboration_ready(
-            decision=decision,
-            handoff_intent=handoff_intent,
-            root=root,
-            task=task,
-            dispatch=dispatch,
-        )
+        try:
+            self._assert_managed_collaboration_ready(
+                decision=decision,
+                handoff_intent=handoff_intent,
+                root=root,
+                task=task,
+                dispatch=dispatch,
+            )
+        except _RoomCommitParticipantWait as waiting:
+            room = self.rooms.get(str(root["roomId"]))
+            participant_refs = participant_ref_map(room["participants"])
+            target_ref = ref_for_participant(
+                waiting.participant_id,
+                participant_refs,
+            )
+            if target_ref is None:
+                raise RoomCommitProposalError(
+                    "等待中的伙伴无法映射到当前 Room，不能安全继续"
+                ) from waiting
+            decision = "wait"
+            summary = "等待并行伙伴完成当前工作后继续整合"
+            arguments = {
+                **dict(arguments),
+                "decision": decision,
+                "summary": summary,
+                "publicSummary": (
+                    "还有伙伴正在完成这项工作，结果回来后会继续整合。"
+                ),
+                "evidence": [],
+                "residualRisks": ["伙伴任务尚未公开交付"],
+                "waitingFor": "participant",
+                "waitingForParticipantRef": target_ref,
+                "resumeCondition": "该伙伴已公开当前任务的交付结果",
+            }
         task_criteria = [
             str(item)
             for item in task.get("acceptanceCriterionIds", [])

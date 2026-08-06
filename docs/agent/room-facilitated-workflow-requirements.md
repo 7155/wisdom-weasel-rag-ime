@@ -2,9 +2,15 @@
 
 - Document class: sole tracked authority for current Room product behavior and acceptance status
 - Approved vision window: user decisions made on or after 2026-08-02
-- Contract revision: 2026-08-06
-- Acceptance state: current source now has focused regressions for persisted full-auto mode, one role/Task work frame across retry Dispatches, terminal user-facing delivery summaries, default-collapsed truthful motion, multiline Tool output, a visible execution plan before every start, peer feature ownership, and one governed requirement/execution WorkDocument. The installed build remains older than the latest fixes. The latest foreground Room proved real parallel Dispatches but did not reach integration, independent review, and one final report; production acceptance remains open.
+- Contract revision: 2026-08-07
+- Acceptance state: current source also covers durable peer waiting after a premature Facilitator delivery, visible waiting cards for approved later-wave features, and Kernel Root precedence over stale legacy WorkItems. The current full Room backend passes `564/564`, the complete frontend passes `104 files / 1007/1007`, Python compile, TypeScript, and diff checks pass. These are source/regression facts only: the follow-up still needs a clean install and a fresh natural-language GUI Room that reaches integration, independent review, and one final report.
 - Status rule: source, test, installed, and foreground evidence are reported separately
+
+### Current follow-up evidence
+
+- A premature Facilitator `deliver` while an active peer Dispatch exists is converted into a durable wait bound to that exact peer. The peer's public delivery creates one Facilitator resume Dispatch and returns the Root to running; this is covered by the settlement regression and the complete backend run.
+- Approved execution-plan features without a real Dispatch remain visible as compact plan cards. A later wave is marked `等待前置` until earlier work is completed and integrated; a real Task replaces the plan card when released. The projection regression and complete frontend/backend runs pass.
+- The Rooms projection chooses the newest Kernel Root and its generation before consulting legacy WorkItems. Header, context bar, busy state, and active Dispatches therefore share the same authoritative Root; the stale-WorkItem regression and complete frontend run pass.
 
 ## Latest user corrections (verbatim)
 

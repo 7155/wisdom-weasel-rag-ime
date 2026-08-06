@@ -2278,6 +2278,120 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             target_dispatch_id,
         )
 
+    def test_premature_facilitator_deliver_converges_to_participant_wait(
+        self,
+    ) -> None:
+        self.service.rooms.get(self.room_id)["routingPolicy"] = "parallel"
+        loaded = self.service.room_capability_tool_load(
+            {
+                "sessionId": self.session_id,
+                "receiptId": "load:premature-deliver-collaborate",
+                "toolName": "room_collaborate",
+                "createdAtMs": self.now_ms + 3,
+            }
+        )["result"]
+        refs = participant_ref_map(
+            self.service.rooms.get(self.room_id)["participants"]
+        )
+        target_ref = ref_for_participant(self.target["id"], refs)
+        self.assertIsNotNone(target_ref)
+        collaboration = self.service.execute_room_capability_tool(
+            self.session_id,
+            "room_collaborate",
+            {
+                "targetParticipantRef": target_ref,
+                "objective": "完成一项并行用户功能并公开结果。",
+                "expectedOutput": "一份可供主持人继续集成的公开交付。",
+                "intent": "execute",
+                "acceptance": ["AC-1"],
+                "workspacePolicy": "read_only",
+            },
+            tool_call_id="call:premature-deliver-collaborate",
+            load_receipt_id=str(loaded["receiptId"]),
+        )
+        self.assertTrue(collaboration["result"]["enqueued"])
+        child_dispatch = next(
+            item
+            for item in self.service.room_kernel_snapshot(self.room_id)[
+                "dispatches"
+            ]
+            if item["dispatchId"] != "dispatch:settle"
+        )
+        target_dispatch_id = str(child_dispatch["dispatchId"])
+        self.service.room_kernel_worker.clock_ms = lambda: self.now_ms + 60_000
+        self.assertIsNotNone(self.service.room_kernel_worker.run_once())
+        self.assertEqual(
+            self.service.room_kernel.dispatch(target_dispatch_id)["state"],
+            "running",
+        )
+
+        self._invoke_commit("deliver")
+        settled = self._settle()
+
+        self.assertEqual(settled["state"], "committed", settled)
+        receipt = settled["settleResult"]["receipt"]
+        continuation = self.service.room_kernel.continuation(
+            str(receipt["details"]["commitId"])
+        )
+        self.assertEqual(continuation["decision"], "wait")
+        self.assertEqual(
+            continuation["payload"]["waitingFor"],
+            "participant",
+        )
+        self.assertEqual(
+            continuation["payload"]["waitingForParticipantId"],
+            self.target["id"],
+        )
+        self.assertEqual(
+            continuation["payload"]["waitingForDispatchId"],
+            target_dispatch_id,
+        )
+        self.assertEqual(
+            self.service.room_kernel.task("task:settle")["state"],
+            "waiting",
+        )
+        self.assertEqual(
+            self.service.room_kernel.root("root:settle")["state"],
+            "waiting",
+        )
+        post = settled["settleResult"]["post"]
+        self.assertEqual(post["kind"], "wait")
+        self.assertIn(self.target["id"], post["mentions"])
+
+        child_evidence = self._record_workspace_evidence(
+            session_id=str(self.target["sessionId"]),
+            suffix="premature-deliver-child",
+        )
+        child_settled = self._commit_and_settle_dispatch(
+            session_id=str(self.target["sessionId"]),
+            dispatch_id=target_dispatch_id,
+            decision="deliver",
+            suffix="premature-deliver-child",
+            evidence_ref=child_evidence,
+        )
+
+        self.assertEqual(child_settled["state"], "committed", child_settled)
+        resumed_ids = child_settled["settleResult"]["receipt"]["details"][
+            "resumedDispatchIds"
+        ]
+        self.assertEqual(len(resumed_ids), 1)
+        resume_dispatch = self.service.room_kernel.dispatch(
+            str(resumed_ids[0])
+        )
+        self.assertEqual(resume_dispatch["intentKind"], "resume")
+        self.assertEqual(
+            resume_dispatch["targetParticipantId"],
+            self.owner["id"],
+        )
+        self.assertEqual(
+            self.service.room_kernel.task("task:settle")["state"],
+            "active",
+        )
+        self.assertEqual(
+            self.service.room_kernel.root("root:settle")["state"],
+            "running",
+        )
+
     def test_commit_wakes_worker_after_public_projection(self) -> None:
         order: list[str] = []
         original_publish = self.service.room_context_ledger.publish_post

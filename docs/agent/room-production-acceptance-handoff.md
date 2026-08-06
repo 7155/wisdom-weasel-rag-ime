@@ -1,10 +1,10 @@
 # Room production acceptance handoff
 
-> as_of: 2026-08-07 02:35 CST
-> status: clean source commit `eb39c7d21ca89cc1785aad56bb13e0f94ae17084` is installed from `/private/tmp/paw-room-eb39c7d2-install`. It includes the governed WorkDocument follow-up and post-Start missing-document recovery. Two later user-visible fixes are now red/green verified but not yet installed: a Kernel Root in authoritative `waiting` state keeps its claimed parent card blocked even when a child remains open, and alignment may publish one natural-language grouped question without forcing an option box. Their complete Room work/settlement module gate passed `55/55`; the current full Room backend discovery passed `563/563` in `642.853s`; the complete frontend passed `104 files / 1005 tests`; TypeScript passed. Earlier evidence remains valid for the combined approval/execution-plan/Room/WorkDocument gate `200/200`, focused WorkDocument `15/15`, and focused Kernel Worker `22/22`. A verified `5.0G` external backup exists at `/Volumes/undo 4t/agent-workbench-backups/20260806-2349`. The new follow-up now needs only Python compile/diff verification, a limited commit, clean reinstall, and a new full GUI Room acceptance.
+> as_of: 2026-08-07 04:12 CST
+> status: source commit `2c87fd110bc1a1cc36873e646835e6d51dd1a392` has eight verified, uncommitted Room source/test files. The follow-up covers three user-visible defects: a Facilitator premature delivery now becomes a durable peer wait and resumes automatically after that peer delivers; approved later-wave features remain visible as waiting plan cards until their predecessors integrate; and the latest Kernel Root state takes precedence over stale WorkItem state. The focused settlement gate passed `50/50`; the complete Room backend discovery passed `564/564` in `668.937s`; the complete frontend passed `104 files / 1007 tests`; Python compile, TypeScript, and `git diff --check` passed. A prior `5.0G` backup exists at `/Volumes/undo 4t/agent-workbench-backups/20260806-2349`, but a new backup of the committed follow-up is still required before cleanup. The remaining Room gates are a limited commit, clean reinstall, and a fresh full GUI Room acceptance.
 > canonical worktree: `/Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix`
 > branch: `codex/room-production-acceptance-final`
-> current source commit: `eb39c7d21ca89cc1785aad56bb13e0f94ae17084` plus the four verified uncommitted Room work/settlement files listed in section 5
+> current source commit: `2c87fd110bc1a1cc36873e646835e6d51dd1a392` plus the eight verified uncommitted Room source/test files and the two tracked authority documents listed in section 5
 
 ## 0. Mandatory takeover gate: do not start by running commands
 
@@ -33,6 +33,7 @@ Then wait for the user to confirm or correct that understanding. This is a hando
 - No fresh full-auto GUI Room has completed the required end-to-end path after this follow-up. The installed/Web UI must still prove the compact composer status, user-language planning, governed requirement/execution document, clarification, real parallel Tasks, peer review without self-review, recovery, integration, and a single final delivery.
 - A real installed run exposed a queue-head blocker in an older Room: it had already reached `executing` but had no `work_documents` row. The old Room was stopped and is cancelled, so it remains diagnostic evidence only. The current source now repairs this exact post-Start loss at the context boundary; a fresh installed Room must still prove the visible recovery path.
 - Several user-reported requirements remain GUI-only acceptance items. The next owner must use the ledger in section 4.1 and may only call a row fixed after its stated evidence boundary passes.
+- The current automated run is green, but no fresh installed Room has yet shown the new peer-wait recovery, later-wave waiting card, or Kernel-over-WorkItem projection in one natural-language journey. These remain GUI acceptance items, not source-only completion claims.
 - Existing screenshots and old Rooms still contain known failures such as stale `执行中`, duplicate/overlapping cards, weak tool results, meaningless citation placeholders, missing delivery reports, or fake visual parallelism. They are reproduction evidence, not proof of the current source.
 - Both Room authority documents are already tracked. Stage their existing changes explicitly; do not use a broad forced add for the ignored `/docs/` tree.
 - Installation must come from a clean detached worktree at the new commit. Do not install the dirty source tree or overwrite unrelated Pi/product changes.
@@ -84,6 +85,9 @@ The most recent user-visible requirement is non-negotiable: when a companion car
 - Questions and confirmed answers render inside the asking companion's card; the answer appears immediately, followed by persistent live status and a “回到最新进度” action when the user has scrolled away.
 - The live status is a compact abstract indicator inside the composer toolbar to the right of `@`; it must not create a separate floating box, cover validation content, or change the composer size. After an answer or Start action, it immediately says that the input was received and work continues.
 - `room_define` now requires a visible one-to-four-item execution plan. It locks shared contracts, vertical feature owners, dependency waves, write boundaries, integration, and acceptance; even a clear request waits for the typed “开始行动” authorization before dispatch, writes, or tests.
+- A premature Facilitator delivery proposal with an active peer is normalized to a durable wait bound to that peer's exact Dispatch; the peer's public delivery creates a Facilitator resume Dispatch and returns the Root to running.
+- The Task view renders approved features without a Task as compact plan cards. Later-wave cards remain visibly waiting until every earlier feature is complete and its isolated worktree is integrated; a real Task replaces the plan card when dispatched.
+- The main Room projection selects the newest Kernel Root and its generation before falling back to legacy WorkItems, so a blocked or waiting Root cannot be masked by stale active bookkeeping.
 - All active peer role labels are capability-neutral. Parallel work requirements derive from the approved feature plan rather than the Room's routing label or a static Reviewer/Researcher class.
 - Automatic Session Todo initialization recognizes both immediate legacy execution and the approved planned dispatch released after “开始行动”; Todo wording no longer changes implementation capability from a static role label.
 - Durable workflow skills preserve the immutable user source, visible plan, execution evidence, quality gate, and independent review across compaction or handoff.
@@ -177,7 +181,9 @@ The labels below are intentionally strict:
 | Complete workflow Skills are compressed to 6 KiB/120 lines | **canonical document + Skill regression passed** | Only compact routing cards are always loaded; the selected full Skill and its required references load progressively without the obsolete whole-file cap. |
 | “Parallel” is only drawn in the graph and only one companion actually works | **backend policy/tests passed; fresh full-auto GUI required** | An approved multi-feature plan creates multiple real Tasks and at least two concurrently active companion cards with distinct work/results. |
 | Four vertical Tasks exist but peer Tasks remain `排队中` while only the Facilitator runs | **installed commit `53089a7b`; existing Room recovered three peers into real running Dispatches** | Bounded child Tasks inherit the parent Room WorkItem while binding their own Session Todo. Database state and visible peer cards now prove concurrent execution; a new Room still needs to carry this through final delivery. |
-| Plan labels features as wave 1/wave 2 but `room_collaborate` starts every peer together | **backend cause confirmed; wave-gate code + focused regression passed; full suite/install/fresh GUI pending** | Only current-wave features may be assigned. A later wave is rejected until earlier peer work is committed and every isolated worktree is integrated; the next `room_state` exposes current, ready and waiting features. A fresh installed Room must visibly keep wave 2 waiting and open it only after wave 1 integration. |
+| Plan labels features as wave 1/wave 2 but `room_collaborate` starts every peer together | **backend cause confirmed; wave-gate code + focused regression + full Room regression passed; install/fresh GUI pending** | Only current-wave features may be assigned. A later wave is rejected until earlier peer work is committed and every isolated worktree is integrated; the next `room_state` exposes current, ready and waiting features. A fresh installed Room must visibly keep wave 2 waiting and open it only after wave 1 integration. |
+| Facilitator proposes final delivery while an active peer is still working | **code + settlement regression + full Room regression passed; fresh GUI required** | The Room visibly waits for the named peer, keeps the same task card alive, resumes the Facilitator after that peer's public delivery, and never emits a false final completion. |
+| Stale legacy WorkItem says `执行中` after the latest Kernel Root is blocked or waiting | **code + frontend regression + full Room regression passed; fresh GUI required** | Header, context bar, task view, and compact status all use the newest Root generation; legacy WorkItem data is only a fallback when no Kernel Root exists. |
 | Companion local error becomes a user blocker | **recovery contract and regression recorded; fresh full-auto GUI required** | Ordinary file/command/parameter/Provider errors show `正在恢复 / 已恢复` in expandable history and continue without user intervention. |
 | Independent Luna approval runs on ordinary safe workspace writes | **requirement recorded; not part of this scoped UI patch** | In full-auto mode, ordinary bounded workspace operations proceed; Luna arbitration is reserved for genuinely dangerous operations. |
 | Provider/model/token/cache shows misleading `未上报` failure copy | **recorded, fresh GUI required** | Real telemetry appears when supplied; absent optional telemetry is quiet and does not look like a task failure. |
@@ -191,13 +197,18 @@ This table is an acceptance ledger, not a claim that every recorded item is alre
 
 ## 5. Exact current follow-up commit scope
 
-The compact attributed-status/private-brief follow-up is commit `f6e41175`; collapsed-progress projection is `021c9780`; meaningful live-summary priority is `d30901ab`; peer Todo recovery is `53089a7b`; WorkDocument/approval governance is `958054b6`; post-Start WorkDocument recovery is `eb39c7d2`. The next Room follow-up must contain exactly these files:
+The compact attributed-status/private-brief follow-up is commit `f6e41175`; collapsed-progress projection is `021c9780`; meaningful live-summary priority is `d30901ab`; peer Todo recovery is `53089a7b`; WorkDocument/approval governance is `958054b6`; post-Start WorkDocument recovery is `eb39c7d2`; the current waiting/wave/root follow-up is based on `2c87fd11`. The next Room follow-up must contain exactly these files:
 
-1. `rag_ime/agent_room_work.py`
-2. `tests/test_agent_room_work.py`
-3. `rag_ime/agent_room_settlement.py`
-4. `tests/test_agent_room_settlement.py`
-5. `docs/agent/room-production-acceptance-handoff.md`
+1. `rag_ime/agent_room_settlement.py`
+2. `tests/test_agent_room_settlement.py`
+3. `control-center-web/src/features/rooms/index.tsx`
+4. `control-center-web/src/features/rooms/kernel/RoomKernelControlPlane.tsx`
+5. `control-center-web/src/features/rooms/kernel/RoomKernelControlPlane.test.tsx`
+6. `control-center-web/src/features/rooms/kernel/RoomTaskFlowGraph.tsx`
+7. `control-center-web/src/features/rooms/rooms-feature.test.tsx`
+8. `control-center-web/src/features/rooms/timeline/RoomStartActionGate.tsx`
+9. `docs/agent/room-production-acceptance-handoff.md`
+10. `docs/agent/room-facilitated-workflow-requirements.md`
 
 Do not stage, reset, discard, clean, or overwrite these unrelated user/other-agent changes:
 
@@ -214,8 +225,8 @@ tests/test_tui.py
 
 ## 6. Exact next steps
 
-1. Run Python compile and `git diff --check` for the five files in section 5.
-2. Stage only the five files in section 5 and commit the verified waiting-state and grouped-question fixes.
+1. Run Python compile and `git diff --check` for the ten files in section 5.
+2. Stage only the ten files in section 5 and commit the verified waiting-state, later-wave-card, and Kernel-priority fixes.
 3. Create a clean detached worktree at that commit. Do not install from this dirty implementation worktree.
 4. From the clean worktree, run `scripts/install_product_stack.sh --include-pi --pi-worktree '/Volumes/undo 4t/git/learnA/.worktrees/pi-room-runtime-98cfe6a3'` with the configured Xcode beta developer directory.
 5. Run `scripts/check_installed_product_components.py --require-current` and record exact component evidence for the new commit.
@@ -264,5 +275,5 @@ Do not start these before Room passes:
 ## 9. Direct resume prompt
 
 ```text
-先完整阅读 /Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix/docs/agent/room-production-acceptance-handoff.md、同目录的 room-facilitated-workflow-requirements.md，以及该 worktree 的 AGENTS.md/README。严格执行 handoff 第 0 节：第一条回复不要调用工具、运行命令、改文件、测试、提交、安装或分派伙伴；先用中文向我复述“当前做到哪里、现在仍有哪些问题、你理解的 Room 愿景、确认后准备做的第一步”，等我确认或纠正。确认后才继续第 6 节：只提交列出的三个恢复修复文件，从新提交创建干净 worktree，安装当前构建，并在真实前端用全自动 Room 完成第 7 节的紧凑输入栏状态、成组澄清、用户语言纵向分工、显式开始批准、对等伙伴并行、受管 WorkDocument 持续更新、工具/Todo/交接/无自审复核闭环。不要混入列出的其他脏文件，也不要在 Room 通过前开始 Knowledge 或岛屿任务。
+先完整阅读 /Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix/docs/agent/room-production-acceptance-handoff.md、同目录的 room-facilitated-workflow-requirements.md，以及该 worktree 的 AGENTS.md/README。严格执行 handoff 第 0 节：第一条回复不要调用工具、运行命令、改文件、测试、提交、安装或分派伙伴；先用中文向我复述“当前做到哪里、现在仍有哪些问题、你理解的 Room 愿景、确认后准备做的第一步”，等我确认或纠正。确认后才继续第 6 节：只提交本节列出的十个 Room 文件，从新提交创建干净 worktree，安装当前构建，并在真实前端用全自动 Room 完成第 7 节的紧凑输入栏状态、成组澄清、用户语言纵向分工、显式开始批准、对等伙伴并行、受管 WorkDocument 持续更新、工具/Todo/交接/无自审复核闭环。不要混入列出的其他脏文件，也不要在 Room 通过前开始 Knowledge 或岛屿任务。
 ```

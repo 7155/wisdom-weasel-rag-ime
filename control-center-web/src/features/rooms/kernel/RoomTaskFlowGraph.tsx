@@ -94,6 +94,18 @@ type TaskVerification = {
 
 type WorkspaceLifecycleState = NonNullable<RoomTaskV3['workspaceLifecycleState']>;
 
+export type RoomPlannedFeatureTask = {
+  planId: string;
+  title: string;
+  ownerDisplayName: string;
+  ownerParticipantId?: string;
+  userOutcome: string;
+  dependencies: string[];
+  wave: number;
+  state: 'ready' | 'waiting';
+  blocker?: string;
+};
+
 export type RoomTaskWorkspaceLifecycleView = {
   attention: boolean;
   detail: string;
@@ -297,6 +309,7 @@ export function RoomTaskWorkList({
   participantLabels,
   participantPersonas = {},
   participantProgress,
+  plannedFeatures = [],
   posts,
   root,
   sessionsById = {},
@@ -310,6 +323,7 @@ export function RoomTaskWorkList({
   participantLabels: Record<string, string>;
   participantPersonas?: Record<string, AgentPersonaV1>;
   participantProgress: RoomParticipantPublicProgressProjection[];
+  plannedFeatures?: RoomPlannedFeatureTask[];
   posts: RoomPostV2[];
   root: RootProjection;
   sessionsById?: Record<string, PrivateSessionProjection>;
@@ -324,16 +338,18 @@ export function RoomTaskWorkList({
     participantProgress,
     posts,
   );
-  if (!nodes.length) return null;
+  if (!nodes.length && !plannedFeatures.length) return null;
   return <section aria-label="每项工作的详细进展" className="room-task-work-list">
     <header>
       <span>
         <strong>每项工作的详细进展</strong>
         <small>默认只显示摘要、负责人、状态和完成情况</small>
       </span>
-      <b>{nodes.length} 项</b>
+      <b>{nodes.length + plannedFeatures.length} 项</b>
     </header>
-    <div>{nodes.map((node) => {
+    <div>
+      {plannedFeatures.map((feature) => <PlannedFeatureCard feature={feature} key={feature.planId} />)}
+      {nodes.map((node) => {
       const task = node.task;
       const owner = participantLabel(task.currentOwnerParticipantId, participantLabels);
       const ownerPersona = participantPersonas[task.currentOwnerParticipantId];
@@ -442,8 +458,42 @@ export function RoomTaskWorkList({
           {showTodo ? <RoomTaskTodoDetails owner={owner} todo={authority.todo} /> : null}
         </div>
       </details>;
-    })}</div>
+      })}
+    </div>
   </section>;
+}
+
+function PlannedFeatureCard({ feature }: { feature: RoomPlannedFeatureTask }) {
+  const owner = feature.ownerDisplayName || '待分配伙伴';
+  const stateLabel = feature.state === 'waiting' ? '等待前置' : '待分派';
+  return <details
+    aria-label={`${feature.title}，负责人 ${owner}，${stateLabel}`}
+    className="room-task-work-card room-task-work-card--planned"
+    data-plan-state={feature.state}
+    data-state="waiting"
+  >
+    <summary>
+      <span className="room-task-work-card__state" aria-hidden="true">
+        <FlowStateIcon state="waiting" />
+      </span>
+      <span className="room-task-work-card__summary">
+        <strong>{feature.title}</strong>
+        <small>{owner} · 第 {feature.wave} 波 · {stateLabel}</small>
+      </span>
+      <span className="room-task-work-card__completion">
+        <small>完成情况</small>
+        <strong>{stateLabel}</strong>
+      </span>
+      <ChevronRight aria-hidden="true" size={15} />
+    </summary>
+    <div className="room-task-work-card__body">
+      <dl className="room-task-work-card__facts">
+        <div><dt>用户能得到</dt><dd>{feature.userOutcome}</dd></div>
+        <div><dt>下一步</dt><dd>{feature.blocker || '当前波次开放后分派给负责人'}</dd></div>
+        {feature.dependencies.length ? <div><dt>前置工作</dt><dd>{feature.dependencies.join('、')}</dd></div> : null}
+      </dl>
+    </div>
+  </details>;
 }
 
 type WorkspaceAuditField = {

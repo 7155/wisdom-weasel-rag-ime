@@ -30,6 +30,10 @@ import { RoomRequirementsControlPlane } from '../requirements/RoomRequirementsCo
 import type { RoomRequirementsReadProjection } from '../requirements/room-requirements-read-model';
 import { ROOM_PUBLIC_PROGRESS_KIND_LABELS as PUBLIC_PROGRESS_KIND_LABELS, roomCollaborationRoleLabel, roomParticipantPublicProgressSummary } from '../room-copy';
 import type { RoomCollaborationRole, RoomWorkItem } from '../room-types';
+import {
+  roomRootExecutionPlan,
+  type RoomExecutionPlanFeature,
+} from '../timeline/RoomStartActionGate';
 import { roomPublicActivityText } from '../timeline/room-tool-presentation';
 import {
   buildCancelRootCommand,
@@ -41,6 +45,7 @@ import {
   roomTaskIsVisibleWork,
   RoomTaskFlowGraph,
   RoomTaskWorkList,
+  type RoomPlannedFeatureTask,
   type RoomTaskSubagentRun,
 } from './RoomTaskFlowGraph';
 import './room-kernel-control-plane.css';
@@ -268,6 +273,12 @@ function RootControlSection({
     .sort((left, right) => left.taskId.localeCompare(right.taskId));
   const dispatches = Object.values(projection.dispatchesById)
     .filter((dispatch) => dispatch.rootId === root.rootId);
+  const plannedFeatures = unstartedPlanFeatures({
+    participantLabels,
+    projection,
+    root,
+    tasks,
+  });
   const completedTasks = tasks.filter((task) => task.state === 'completed').length;
   const settledDispatches = dispatches.filter((dispatch) => (
     ['committed', 'dead_letter', 'failed', 'cancelled'].includes(dispatch.state)
@@ -366,6 +377,7 @@ function RootControlSection({
       participantLabels={participantLabels}
       participantPersonas={participantPersonas}
       participantProgress={participantProgress}
+      plannedFeatures={plannedFeatures}
       posts={posts}
       root={root}
       subagentsByTaskId={subagentsByTaskId}
@@ -512,6 +524,97 @@ function RootControlSection({
       <RoomRequirementsControlPlane projection={requirements} />
     </details> : null}
   </article>;
+}
+
+function unstartedPlanFeatures({
+  participantLabels,
+  projection,
+  root,
+  tasks,
+}: {
+  participantLabels: Record<string, string>;
+  projection: RoomKernelProjection;
+  root: RootProjection;
+  tasks: RoomTaskV3[];
+}): RoomPlannedFeatureTask[] {
+  const plan = roomRootExecutionPlan(
+    root,
+    Object.values(projection.receiptsById),
+  );
+  if (!plan || roomRootIsTerminal(root)) return [];
+  const childTasks = tasks.filter((task) => (
+    task.parentTaskId !== null
+    && task.taskKind === 'work'
+    && task.currentOwnerParticipantId !== root.facilitatorParticipantId
+  ));
+  const tasksByOwner = new Map<string, RoomTaskV3[]>();
+  for (const task of childTasks) {
+    const owned = tasksByOwner.get(task.currentOwnerParticipantId);
+    if (owned) owned.push(task);
+    else tasksByOwner.set(task.currentOwnerParticipantId, [task]);
+  }
+  for (const owned of tasksByOwner.values()) {
+    owned.sort((left, right) => left.taskId.localeCompare(right.taskId));
+  }
+  const usedByOwner = new Map<string, number>();
+  const assignments = plan.featureTasks.map((feature, index) => {
+    const ownerParticipantId = planFeatureOwnerId(
+      feature,
+      participantLabels,
+    );
+    if (!ownerParticipantId || ownerParticipantId === root.facilitatorParticipantId) {
+      return { feature, index, ownerParticipantId, task: undefined, complete: true };
+    }
+    const ownerTasks = tasksByOwner.get(ownerParticipantId) ?? [];
+    const position = usedByOwner.get(ownerParticipantId) ?? 0;
+    const task = ownerTasks[position];
+    if (task) usedByOwner.set(ownerParticipantId, position + 1);
+    return {
+      feature,
+      index,
+      ownerParticipantId,
+      task,
+      complete: task ? plannedTaskIsComplete(task) : false,
+    };
+  });
+  return assignments.flatMap((assignment) => {
+    if (assignment.task || assignment.complete) return [];
+    const wave = assignment.feature.wave ?? 1;
+    const blockers = assignments.filter((candidate) => (
+      (candidate.feature.wave ?? 1) < wave && !candidate.complete
+    ));
+    return [{
+      planId: `${root.rootId}:planned-feature:${assignment.index}`,
+      title: assignment.feature.title,
+      ownerDisplayName: assignment.feature.ownerDisplayName,
+      ownerParticipantId: assignment.ownerParticipantId,
+      userOutcome: assignment.feature.userOutcome,
+      dependencies: assignment.feature.dependencies,
+      wave,
+      state: blockers.length ? 'waiting' as const : 'ready' as const,
+      blocker: blockers.length
+        ? `等待 ${blockers.map((item) => item.feature.title).join('、')} 完成并合入`
+        : undefined,
+    }];
+  });
+}
+
+function planFeatureOwnerId(
+  feature: RoomExecutionPlanFeature,
+  participantLabels: Record<string, string>,
+): string {
+  if (feature.participantRef && participantLabels[feature.participantRef]) {
+    return feature.participantRef;
+  }
+  return Object.entries(participantLabels).find(([, label]) => (
+    label === feature.ownerDisplayName
+  ))?.[0] ?? '';
+}
+
+function plannedTaskIsComplete(task: RoomTaskV3): boolean {
+  if (task.state !== 'completed') return false;
+  return task.workspacePolicy !== 'isolated_writable'
+    || task.workspaceIntegrationState === 'applied';
 }
 
 type ParticipantLaneState = 'idle' | 'waiting' | 'running' | 'review' | 'blocked' | 'settled';

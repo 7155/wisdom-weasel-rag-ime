@@ -242,6 +242,56 @@ describe('Rooms experience', () => {
     expect(compactStatus.closest('.room-composer__controls')).not.toBeNull();
   });
 
+  it('prefers a blocked Kernel Root over a stale active WorkItem', async () => {
+    const room = roomSummary('room-a', 'Kernel 权威 Room');
+    const staleWork: NonNullable<RoomSummary['workItems']>[number] = {
+      id: 'room-work:stale-active',
+      roomId: room.id,
+      topicId: '',
+      rootTurnId: 'root-a',
+      rootWorkId: 'room-work:stale-active',
+      parentWorkId: '',
+      objective: '整合伙伴结果',
+      expectedOutput: '最终交付',
+      acceptanceCriteria: ['状态以 Kernel 为准'],
+      accountableParticipantId: 'room-a:p1',
+      currentOwnerParticipantId: 'room-a:p1',
+      offeredToParticipantId: '',
+      createdByParticipantId: 'room-a:p1',
+      clientMessageId: 'stale-active-work',
+      state: 'active',
+      depth: 0,
+      revision: 1,
+      resultSummary: '',
+      artifactRefs: [],
+      evidenceRefs: [],
+      blocker: {},
+      acceptedTurnId: 'root-a',
+      createdAtMs: 1,
+      updatedAtMs: 2,
+      completedAtMs: null,
+    };
+    room.workItems = [staleWork];
+    const kernelSnapshot = roomKernelSnapshot(room.id);
+    kernelSnapshot.roots = [{ ...kernelSnapshot.roots[0]!, state: 'blocked' }];
+    const snapshot = roomSnapshot(room.id, []);
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [room] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': {
+        ...snapshot,
+        room: { ...snapshot.room, workItems: [staleWork] },
+      },
+      'agent.room.kernel.snapshot': kernelSnapshot,
+    } });
+
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    expect(await screen.findByText('learnA · 已阻塞')).toBeInTheDocument();
+    expect(screen.queryByText('learnA · 执行中')).not.toBeInTheDocument();
+    expect(screen.getByText(/已阻塞 · 澄 · 整合伙伴结果/)).toBeInTheDocument();
+  });
+
   it('submits the pending wait answer through the busy gate and clears it only from the accepted user RoomPost', async () => {
     const pendingSend = deferred<Record<string, unknown>>();
     const room = roomSummary('room-a', '澄清 Room');

@@ -163,6 +163,49 @@ describe('RoomKernelControlPlane', () => {
     expect(completedCard).toHaveTextContent('已记录 1 项验证证据，等待验收');
   });
 
+  it('shows an approved later-wave feature while it waits for its predecessor', () => {
+    const state = projection();
+    state.receiptsById['receipt:define-plan'] = receipt({
+      receiptId: 'receipt:define-plan',
+      details: {
+        operation: 'room_define',
+        executionPlan: {
+          sharedContracts: ['共享客户数据契约'],
+          featureTasks: [
+            {
+              title: '第一波：客户导入',
+              participantRef: 'reviewer',
+              ownerDisplayName: '审查员',
+              userOutcome: '用户可以导入客户并看到结果',
+              dependencies: [],
+              wave: 1,
+              writeBoundary: '只修改导入功能',
+            },
+            {
+              title: '第二波：重复客户处理',
+              participantRef: 'reviewer',
+              ownerDisplayName: '审查员',
+              userOutcome: '用户可以预览、合并并撤销重复客户',
+              dependencies: ['第一波：客户导入'],
+              wave: 2,
+              writeBoundary: '只修改重复处理功能',
+            },
+          ],
+          integrationPlan: '负责人统一整合',
+          acceptancePlan: ['真实界面验证'],
+          continuityPlan: '持续更新工作文档',
+        },
+      },
+    });
+
+    renderPlane(state);
+
+    const workList = screen.getAllByRole('region', { name: '每项工作的详细进展' })[0]!;
+    expect(workList).toHaveTextContent('第二波：重复客户处理');
+    expect(workList).toHaveTextContent('等待前置');
+    expect(workList).toHaveTextContent('审查员');
+  });
+
   it('shows privacy-bounded task collaborators with human labels, budget, public result, generic failure, and timing', () => {
     const subagents: RoomTaskSubagentRun[] = [
       {

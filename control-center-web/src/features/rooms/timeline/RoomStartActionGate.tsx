@@ -6,6 +6,7 @@ import type { RootProjection } from '@/contracts/room-kernel-reducer';
 
 export interface RoomExecutionPlanFeature {
   title: string;
+  participantRef?: string;
   ownerDisplayName: string;
   userOutcome: string;
   dependencies: string[];
@@ -75,6 +76,7 @@ export function roomRootExecutionPlan(
         if (!title || !userOutcome) return [];
         return [{
           title,
+          participantRef: cleanText(feature.participantRef) || undefined,
           ownerDisplayName: cleanText(feature.ownerDisplayName) || '待分配伙伴',
           userOutcome,
           dependencies: textList(feature.dependencies),
