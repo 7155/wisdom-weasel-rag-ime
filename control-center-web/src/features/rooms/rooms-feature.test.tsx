@@ -790,7 +790,7 @@ describe('Rooms experience', () => {
     );
 
     expect(await within(screen.getByLabelText('协作对话时间线')).findByText('交付已经完成。')).toBeInTheDocument();
-    expect(screen.getByText('已交接给 澄·初')).toBeInTheDocument();
+    expect(screen.getByText('澄 → 澄·初')).toBeInTheDocument();
     expect(Array.from(container.querySelectorAll('.room-agent-lane__post-kind')).map(
       (element) => element.textContent,
     )).toEqual(['最终答复', '交接说明', '等待说明', '遇到的问题']);

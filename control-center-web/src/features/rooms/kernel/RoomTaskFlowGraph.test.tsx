@@ -553,7 +553,7 @@ describe('RoomTaskWorkList workspace lifecycle projection', () => {
   describe('RoomTaskWorkList participant authority projection', () => {
   afterEach(cleanup);
 
-  it('shows one participant Todo and receipted delivery in the Task card without leaking raw refs into the main result', () => {
+  it('replaces a completed participant Todo with receipted delivery without leaking raw refs', () => {
     const manifestSha256 = '9'.repeat(64);
     const task = workspaceTask({
       workItemId: 'work-item-owner',
@@ -656,13 +656,9 @@ describe('RoomTaskWorkList workspace lifecycle projection', () => {
     />);
 
     const card = document.querySelector<HTMLDetailsElement>('.room-task-work-card')!;
-    expect(card.querySelector('summary')).toHaveTextContent('Todo 1/2 · 当前：完成交付清单');
+    expect(card.querySelector('summary')).not.toHaveTextContent('Todo');
     fireEvent.click(card.querySelector('summary')!);
-    const todoRegion = within(card).getByRole('region', { name: '澄·今 的 Todo' });
-    expect(todoRegion).toHaveTextContent('实现权威 Todo 投影');
-    expect(todoRegion).toHaveTextContent('完成交付清单');
-    expect(todoRegion).toHaveTextContent('1 / 2 已收束');
-    expect(card.querySelector('.room-task-work-card__body')?.lastElementChild).toBe(todoRegion);
+    expect(within(card).queryByRole('region', { name: '澄·今 的 Todo' })).not.toBeInTheDocument();
 
     const deliveryRegion = within(card).getByRole('region', { name: '澄·今 的交付结果' });
     expect(deliveryRegion.querySelector('.room-task-delivery__summary')).toHaveTextContent(

@@ -283,6 +283,32 @@ describe('RoomTurn public activity detail', () => {
     ));
     expect(within(lane).queryByRole('region', { name: '澄·今 的 Todo' })).not.toBeInTheDocument();
     expect(lane.querySelector('summary')).not.toHaveTextContent('Todo');
+
+    session.state = 'completed';
+    session.todo = {
+      ...session.todo!,
+      roomLineage: {
+        ...session.todo!.roomLineage!,
+        dispatchId: 'dispatch-a',
+      },
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      status: 'completed',
+      terminalDispatchIds: ['dispatch-a'],
+      terminalParticipantIds: ['participant-a'],
+      updatedAtMs: 4_100,
+    };
+    view.rerender(roomTurn(
+      projection,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      sessionsById,
+    ));
+    expect(within(lane).queryByRole('region', { name: '澄·今 的 Todo' })).not.toBeInTheDocument();
+    expect(lane.querySelector('summary')).not.toHaveTextContent('Todo');
   });
 
   it('groups automatic retries into one clickable tool result without losing attempt details', () => {

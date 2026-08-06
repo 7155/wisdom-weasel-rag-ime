@@ -34,6 +34,7 @@ export interface RoomMessageProjection {
   chronology?: RoomPostV2['chronology'];
   createdAtMs: number;
   postKind?: RoomPostV2['kind'];
+  authorActorRef?: string;
   mentionedParticipantIds?: string[];
   question?: RoomMessageQuestionProjection;
   answerToPostId?: string;
@@ -446,10 +447,10 @@ export function roomActivityLaneIdentity(
     participantId,
     taskId,
     dispatchId,
-    // A retry or runtime recovery creates a fresh Dispatch, but it is still
-    // the same piece of user-visible work. Keep the visual lane stable by
-    // Task whenever the authoritative runtime projection supplies one.
-    key: `${rootId}\u001f${participantId}\u001f${taskId || dispatchId}`,
+    // Every Dispatch is one visible work round. A retry keeps the same Task
+    // lineage, but it must not merge its tools, timing, Todo, or commit into
+    // the failed card that preceded it.
+    key: `${rootId}\u001f${participantId}\u001f${dispatchId}`,
   };
 }
 export function selectRoomParticipantPublicProgress(
@@ -1026,6 +1027,7 @@ function applyRoomPost(
     text: publicPostContent,
     projectionKind: 'post',
     postKind: post.kind,
+    authorActorRef: post.authorActorRef,
     rootId: post.rootId,
     ...(state.pendingUserQuestion?.postId === post.postId ? {
       question: {

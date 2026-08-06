@@ -300,11 +300,18 @@ describe('selectRoomTurnExecution', () => {
       };
     }
 
-    const selected = selectRoomTurnExecution(projection, 'root-1');
+    const selected = selectRoomTurnExecution(projection, 'root-1', {
+      'dispatch-a': 'task-shared',
+      'dispatch-b': 'task-shared',
+    });
 
     expect(selected.lanes.map((lane) => lane.dispatchId)).toEqual([
       'dispatch-a',
       'dispatch-b',
+    ]);
+    expect(selected.lanes.map((lane) => lane.taskId)).toEqual([
+      'task-shared',
+      'task-shared',
     ]);
   });
 

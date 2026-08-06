@@ -40,7 +40,7 @@ describe('RoomTurn canonical conversation chronology', () => {
     ]);
   });
 
-  it('preserves A/B/A public posts across participant lanes', () => {
+  it('keeps A/B/A public posts inside one dispatch card per participant', () => {
     const projection = liveProjection([
       userEvent(1, 'opening', '请一起完成跨角色任务'),
       postEvent(2, 'a-first', 'work_result', '澄·今先确认边界', 'participant-a', 'dispatch-a'),
@@ -49,22 +49,13 @@ describe('RoomTurn canonical conversation chronology', () => {
     ]);
     const view = render(roomTurn(projection));
 
-    expectTextOrder(view.container, [
-      '请一起完成跨角色任务',
-      '澄·今先确认边界',
-      '澄·初补充独立检查',
-      '澄·今完成最终整合',
-    ]);
-    expect(messageOrder(view.container)).toEqual([
-      'opening',
-      'a-first',
-      'b-middle',
-      'a-last',
-    ]);
+    const lanes = [...view.container.querySelectorAll<HTMLElement>('.room-agent-lane')];
+    const laneA = lanes.find((lane) => lane.textContent?.includes('澄·今先确认边界'))!;
+    const laneB = lanes.find((lane) => lane.textContent?.includes('澄·初补充独立检查'))!;
+    expect(laneA).toHaveTextContent('澄·今完成最终整合');
+    expect(laneB).not.toHaveTextContent('澄·今完成最终整合');
     expect(view.container.querySelectorAll('.agent-persona-avatar')).toHaveLength(2);
-    expect(
-      view.container.querySelector('[data-room-message-id="a-last"]'),
-    ).toHaveAttribute('data-continuation', 'true');
+    expect(view.container.querySelectorAll('.room-participant-message')).toHaveLength(0);
   });
 
   it('keeps one role task card while public replies remain in server order', () => {
@@ -94,10 +85,8 @@ describe('RoomTurn canonical conversation chronology', () => {
     const view = render(roomTurn(projection));
 
     expect(view.container.querySelectorAll('.agent-persona-avatar')).toHaveLength(1);
-    expect(view.container.querySelector('.room-participant-message')).toHaveAttribute(
-      'data-continuation',
-      'true',
-    );
+    expect(view.container.querySelector('.room-participant-message')).not.toBeInTheDocument();
+    expect(view.container.querySelector('.room-agent-lane [data-room-message-id="reply"]')).toBeInTheDocument();
     expect(view.container).toHaveTextContent('入口已经找到，我继续处理');
   });
 
@@ -113,15 +102,16 @@ describe('RoomTurn canonical conversation chronology', () => {
     ]);
     const view = render(roomTurn(projection));
 
-    expect(messageOrder(view.container)).toEqual(['opening', 'b-handoff', 'a-update']);
     expect(view.container.querySelectorAll('.room-agent-lane')).toHaveLength(2);
     expect(view.container.querySelectorAll('.room-agent-lane[data-continuation="true"]')).toHaveLength(0);
     expect(view.container.querySelectorAll('.room-agent-lane .agent-persona-avatar')).toHaveLength(2);
+    expect(view.container.querySelector('.room-agent-lane [data-room-message-id="b-handoff"]')).toBeInTheDocument();
+    expect(view.container.querySelector('.room-agent-lane [data-room-message-id="a-update"]')).toBeInTheDocument();
     expect(view.container).toHaveTextContent('澄·初继续验证');
     expect(view.container).toHaveTextContent('澄·今完成收尾');
   });
 
-  it('merges a fresh recovery dispatch into the original role task card', () => {
+  it('keeps a fresh recovery dispatch as a new card in the same Task lineage', () => {
     const sourceEvents = [
       userEvent(1, 'opening', '请完成并验证这个功能'),
       activityEvent(2, '开始读取现有实现', 'participant-a', 'dispatch-a', 'task-shared'),
@@ -146,10 +136,13 @@ describe('RoomTurn canonical conversation chronology', () => {
       },
     }));
     const lanes = view.container.querySelectorAll<HTMLElement>('.room-agent-lane');
-    expect(lanes).toHaveLength(1);
+    expect(lanes).toHaveLength(2);
     expect(lanes[0]).toHaveTextContent('开始读取现有实现');
-    expect(lanes[0]).toHaveTextContent('恢复后继续编辑文件');
+    expect(lanes[0]).not.toHaveTextContent('恢复后继续编辑文件');
+    expect(lanes[1]).toHaveTextContent('恢复后继续编辑文件');
+    expect(lanes[1]).toHaveTextContent('我已经恢复，继续完成验证');
     expect(lanes[0]!.querySelectorAll('.agent-persona-avatar')).toHaveLength(1);
+    expect(lanes[1]!.querySelectorAll('.agent-persona-avatar')).toHaveLength(1);
     expect(messageOrder(view.container)).toEqual(['opening', 'recovered']);
   });
 
@@ -197,11 +190,9 @@ describe('RoomTurn canonical conversation chronology', () => {
     ]);
     const view = render(roomTurn(projection));
 
-    expectTextOrder(view.container, [
-      '核对同一时间的顺序',
-      '先公开这条说明',
-      '随后记录工具进展',
-    ]);
+    const lane = view.container.querySelector('.room-agent-lane')!;
+    expect(lane).toHaveTextContent('先公开这条说明');
+    expect(lane).toHaveTextContent('随后记录工具进展');
   });
 
   it('uses authoritative sequence across lanes when every update shares a timestamp', () => {

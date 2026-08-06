@@ -197,7 +197,7 @@ class RoomKernelApplicationService:
     ) -> dict[str, object]:
         """Bridge a private Pi turn failure into the canonical Kernel once."""
 
-        self.rooms.get(room_id)
+        room = self.rooms.get(room_id)
         dispatch = self.kernel.dispatch(dispatch_id)
         root = self.kernel.root(str(dispatch["rootId"]))
         if (
@@ -229,7 +229,7 @@ class RoomKernelApplicationService:
                 str(dispatch["targetSessionId"]),
                 created_at_ms,
             )
-            self._retain_isolated_task(
+            retained_task = self._retain_isolated_task(
                 self.kernel.task(str(dispatch["taskId"])),
                 state="failed",
                 reason=(
@@ -251,9 +251,35 @@ class RoomKernelApplicationService:
                     source_event_id=source_event_id,
                     created_at_ms=created_at_ms,
                 )
+                rebound: dict[str, object] | None = None
                 try:
+                    if retained_task is not None:
+                        rebound = self._rebind_retained_runtime_workspace(
+                            room=room,
+                            dispatch=dispatch,
+                            task=retained_task,
+                            reason=(
+                                "automatic Room runtime recovery after "
+                                + str(reason_code or "runtime_turn_failed")
+                            ),
+                            now_ms=created_at_ms,
+                        )
                     control_result = self.commands.control(command)
-                except RoomKernelFenceError as exc:
+                    if rebound is not None:
+                        self.kernel.record_workspace_lifecycle(
+                            str(dispatch["taskId"]),
+                            operation="retry",
+                            workspace_result=rebound,
+                            now_ms=created_at_ms,
+                        )
+                except (RoomKernelFenceError, RoomWorkspaceError) as exc:
+                    if rebound is not None:
+                        self._rollback_runtime_workspace_rebind(
+                            room=room,
+                            task_id=str(dispatch["taskId"]),
+                            reason=str(exc),
+                            now_ms=created_at_ms,
+                        )
                     receipt = {
                         **receipt,
                         "recoveryBlockedReason": str(exc)[:240],
@@ -276,6 +302,104 @@ class RoomKernelApplicationService:
         ):
             self.wake_worker()
         return receipt
+
+    def _rebind_retained_runtime_workspace(
+        self,
+        *,
+        room: Mapping[str, object],
+        dispatch: Mapping[str, object],
+        task: Mapping[str, object],
+        reason: str,
+        now_ms: int,
+    ) -> dict[str, object]:
+        if self.workspaces is None:
+            raise RoomWorkspaceError(
+                "isolated workspace recovery has no workspace coordinator"
+            )
+        target_participant_id = str(
+            dispatch.get("targetParticipantId") or ""
+        )
+        participants = {
+            str(value.get("id") or ""): value
+            for value in room.get("participants") or []
+            if isinstance(value, Mapping) and value.get("status") == "active"
+        }
+        target = participants.get(target_participant_id)
+        if target is None:
+            raise RoomWorkspaceError(
+                "automatic workspace recovery target is not active"
+            )
+        target_session_id = str(target.get("sessionId") or "").strip()
+        target_ref = ref_for_participant(
+            target_participant_id,
+            participant_ref_map(room.get("participants") or []),
+        )
+        if not target_session_id or not target_ref:
+            raise RoomWorkspaceError(
+                "automatic workspace recovery target has no active Session reference"
+            )
+        rebound = self.workspaces.retry_retained(
+            binding_id=str(task.get("workspaceBindingId") or ""),
+            participant_id=target_participant_id,
+            participant_ref=target_ref,
+            session_id=target_session_id,
+            reason=reason,
+            now_ms=now_ms,
+        )
+        return {**rebound, "targetParticipantRef": target_ref}
+
+    def _rollback_runtime_workspace_rebind(
+        self,
+        *,
+        room: Mapping[str, object],
+        task_id: str,
+        reason: str,
+        now_ms: int,
+    ) -> None:
+        if self.workspaces is None:
+            return
+        task = self.kernel.task(task_id)
+        retained = self.workspaces.retain_task(
+            task,
+            state="failed",
+            reason=(
+                "automatic runtime recovery could not enqueue its bounded work: "
+                + reason
+            ),
+            actor_ref="system:room-runtime-recovery",
+            now_ms=now_ms,
+        )
+        self.kernel.record_workspace_lifecycle(
+            task_id,
+            operation="retain",
+            workspace_result=retained,
+            now_ms=now_ms,
+        )
+        self.workspaces.restore(
+            session_id=str(
+                next(
+                    (
+                        value.get("sessionId")
+                        for value in room.get("participants") or []
+                        if isinstance(value, Mapping)
+                        and value.get("id")
+                        == task.get("currentOwnerParticipantId")
+                    ),
+                    "",
+                )
+                or ""
+            ),
+            base_roots=[
+                str(value)
+                for value in room.get("workspaceRoots") or []
+                if str(value).strip()
+            ],
+            restore_policy=(
+                task.get("workspaceRestorePolicy")
+                if isinstance(task.get("workspaceRestorePolicy"), Mapping)
+                else None
+            ),
+        )
 
     def _retain_isolated_task(
         self,

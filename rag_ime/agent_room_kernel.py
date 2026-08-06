@@ -9144,9 +9144,9 @@ class RoomKernelStore:
         workspace_result: Mapping[str, object],
         now_ms: int,
     ) -> dict[str, object]:
-        """Project a receipted retain/abandon transition onto one Task."""
+        """Project a receipted retain/retry/abandon transition onto one Task."""
 
-        if operation not in {"retain", "abandon"}:
+        if operation not in {"retain", "retry", "abandon"}:
             raise RoomKernelFenceError(
                 "workspace lifecycle operation is invalid"
             )
@@ -9181,6 +9181,13 @@ class RoomKernelStore:
             desired_lifecycle = str(
                 result.get("workspaceLifecycleState") or ""
             )
+            if operation == "retry" and (
+                desired_lifecycle != "retry_bound"
+                or result.get("attentionRequired") is not False
+            ):
+                raise RoomKernelFenceError(
+                    "workspace retry projection requires an active retry lease"
+                )
             if current_lifecycle in {"integrated", "cleaned", "abandoned"}:
                 if current_lifecycle != desired_lifecycle:
                     return task
@@ -9200,6 +9207,9 @@ class RoomKernelStore:
             if all(task.get(key) == value for key, value in desired.items()):
                 return task
             task.update(desired)
+            if operation == "retry":
+                task["workspaceIntegrationState"] = "pending"
+                task["workspaceTerminalReason"] = ""
             task["revision"] = int(task.get("revision") or 0) + 1
             if operation == "abandon" and str(row["state"]) in {
                 "pending",

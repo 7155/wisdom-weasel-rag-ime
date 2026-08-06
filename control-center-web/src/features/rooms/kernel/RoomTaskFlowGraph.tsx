@@ -360,7 +360,10 @@ export function RoomTaskWorkList({
         task,
         workItems,
       });
-      const todoSummary = roomTaskTodoSummary(authority.todo);
+      const showTodo = ['pending', 'active', 'review', 'waiting', 'blocked'].includes(
+        task.state,
+      );
+      const todoSummary = showTodo ? roomTaskTodoSummary(authority.todo) : '';
       return <details
         aria-label={`${objective}，负责人 ${owner}，${taskNodeStateLabel(node)}`}
         className="room-task-work-card"
@@ -436,7 +439,7 @@ export function RoomTaskWorkList({
             })}</ol>
           </section> : <p className="room-task-work-card__empty">这项工作还没有公开活动。</p>}
           {subagents.length ? <RoomTaskSubagentRuns heading={objective} runs={subagents} /> : null}
-          <RoomTaskTodoDetails owner={owner} todo={authority.todo} />
+          {showTodo ? <RoomTaskTodoDetails owner={owner} todo={authority.todo} /> : null}
         </div>
       </details>;
     })}</div>

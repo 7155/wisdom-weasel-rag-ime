@@ -1482,6 +1482,93 @@ class RoomKernelCoreTests(unittest.TestCase):
         revoke_session.assert_called_once_with("session:participant:a", 12)
         wake_worker.assert_called_once_with()
 
+    def test_application_rebinds_isolated_workspace_before_waking_fresh_retry(
+        self,
+    ) -> None:
+        self.seed()
+        failed_dispatch_id = "dispatch:isolated-runtime-host-exit"
+        self.store.enqueue_dispatch(
+            dispatch(failed_dispatch_id, key="isolated-runtime-host-exit"),
+            now_ms=10,
+        )
+        self.accept_runtime_attempt(
+            failed_dispatch_id,
+            turn_id="turn:isolated-runtime-host-exit",
+            now_ms=11,
+        )
+        wake_worker = Mock()
+        application = object.__new__(RoomKernelApplicationService)
+        application.rooms = SimpleNamespace(
+            get=lambda room_id: {
+                "id": room_id,
+                "workspaceRoots": ["/tmp/project"],
+                "participants": [
+                    {
+                        "id": "participant:a",
+                        "sessionId": "session:participant:a",
+                        "status": "active",
+                    }
+                ],
+            }
+        )
+        application.kernel = self.store
+        application.commands = KernelCommandBus(
+            self.store,
+            object(),  # type: ignore[arg-type]
+            runtime_effects_enabled=False,
+        )
+        application.projection = SimpleNamespace(sync_room=Mock())
+        application.workspaces = Mock()
+        application.wake_worker = wake_worker
+        application.revoke_session = Mock()
+        application.root_state_observer = Mock()
+        application._retain_isolated_task = Mock(  # type: ignore[method-assign]
+            return_value={
+                "taskId": "task:1",
+                "workspaceBindingId": "binding:1",
+                "workspacePolicy": "isolated_writable",
+            }
+        )
+        application._rebind_retained_runtime_workspace = Mock(  # type: ignore[method-assign]
+            return_value={
+                "workspaceBindingId": "binding:1",
+                "workspaceLifecycleState": "retry_bound",
+                "attentionRequired": False,
+            }
+        )
+
+        with patch.object(
+            self.store,
+            "record_workspace_lifecycle",
+            return_value={"taskId": "task:1"},
+        ) as project_workspace:
+            receipt = application.record_runtime_failure(
+                room_id="room:1",
+                dispatch_id=failed_dispatch_id,
+                generation=0,
+                source_event_id="event:isolated-runtime-host-exit",
+                runtime_turn_id="turn:isolated-runtime-host-exit",
+                dispatch_attempt=0,
+                created_at_ms=12,
+                retryable=True,
+                had_tool_activity=True,
+                reason_code="runtime_host_exit",
+            )
+
+        self.assertEqual(receipt["recoveryReceipt"]["status"], "applied")
+        application._rebind_retained_runtime_workspace.assert_called_once()
+        project_workspace.assert_called_once_with(
+            "task:1",
+            operation="retry",
+            workspace_result={
+                "workspaceBindingId": "binding:1",
+                "workspaceLifecycleState": "retry_bound",
+                "attentionRequired": False,
+            },
+            now_ms=12,
+        )
+        wake_worker.assert_called_once_with()
+
     def test_control_retry_tampered_root_ordinal_cannot_resolve_failure(
         self,
     ) -> None:

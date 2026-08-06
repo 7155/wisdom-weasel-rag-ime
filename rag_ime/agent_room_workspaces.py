@@ -1524,6 +1524,13 @@ class RoomWorkspaceCoordinator:
                 [source],
                 policy="isolated_writable",
                 grant_workspace_scope=True,
+                restore_policy=(
+                    binding.get("workspaceRestorePolicy")
+                    if isinstance(
+                        binding.get("workspaceRestorePolicy"), Mapping
+                    )
+                    else None
+                ),
             )
             granted = True
             self.ledger.assert_retry_lease(

@@ -2123,6 +2123,71 @@ class RoomWorkspaceIdentityTests(unittest.TestCase):
             self.sessions.get(str(self.owner_b["id"]))["workspaceRoots"],
         )
 
+    def test_retry_restores_full_auto_policy_and_exact_isolated_root(self) -> None:
+        owner_id = str(self.owner_a["id"])
+        self.sessions.set_runtime_policy(
+            owner_id,
+            mode="coordinator",
+            tool_profile_version="control-center-auto-approve-v1",
+            execution_mode="full_trust",
+            grant_workspace_scope=True,
+            allowed_tools=None,
+            workspace_roots=[str(self.root)],
+            updated_at_ms=3,
+        )
+        prepared = self.coordinator.prepare(
+            root_id="root:full-auto-retry",
+            task_id="task:full-auto-retry",
+            target_session_id=owner_id,
+            base_roots=[str(self.root)],
+            policy="isolated_writable",
+            participant_id="participant:a",
+            now_ms=4,
+        )
+        worktree = Path(str(prepared["workspaceRoot"])).resolve()
+        task = {
+            "taskId": "task:full-auto-retry",
+            "state": "failed",
+            **prepared,
+        }
+        self.coordinator.retain_task(
+            task,
+            state="failed",
+            reason="synthetic runtime host exit",
+            actor_ref="system:test",
+            now_ms=5,
+        )
+        # Reproduce startup recovery clobbering the runtime Session before the
+        # retained worktree is rebound.
+        self.sessions.set_runtime_policy(
+            owner_id,
+            mode="coordinator",
+            tool_profile_version="control-center-v1",
+            execution_mode="per_action",
+            grant_workspace_scope=False,
+            allowed_tools=None,
+            workspace_roots=[str(self.root)],
+            updated_at_ms=6,
+        )
+
+        rebound = self.coordinator.retry_retained(
+            binding_id=str(prepared["workspaceBindingId"]),
+            participant_id="participant:a",
+            participant_ref="@worker-a",
+            session_id=owner_id,
+            reason="automatic runtime recovery",
+            now_ms=7,
+        )
+
+        session = self.sessions.get(owner_id)
+        self.assertEqual(rebound["workspaceLifecycleState"], "retry_bound")
+        self.assertEqual(session["executionMode"], "full_trust")
+        self.assertEqual(
+            [Path(value).resolve() for value in session["workspaceRoots"]],
+            [worktree],
+        )
+        self.assertTrue(session["workspaceScopeGranted"])
+
     def test_concurrent_retry_uses_one_ledger_cas_and_one_session_lease(
         self,
     ) -> None:

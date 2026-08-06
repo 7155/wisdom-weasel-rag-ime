@@ -198,11 +198,19 @@ function roomTurnChronologicalStream(
       message,
     }));
   }
-  const atoms: RoomTurnChronologicalAtom[] = messages.map((message, sourceIndex) => ({
-    kind: 'message',
-    message,
-    sourceIndex,
-  }));
+  const cardMessageIds = new Set(
+    messages.filter(roomMessageBelongsInExecutionCard).map((message) => message.id),
+  );
+  const laneMessageIds = new Set(
+    lanes.flatMap((lane) => lane.messageIds.filter((id) => cardMessageIds.has(id))),
+  );
+  const atoms: RoomTurnChronologicalAtom[] = messages
+    .filter((message) => message.role === 'user' || !laneMessageIds.has(message.id))
+    .map((message, sourceIndex) => ({
+      kind: 'message',
+      message,
+      sourceIndex,
+    }));
   let activityIndex = 0;
   for (const lane of lanes) {
     for (const activity of lane.activities) {
@@ -247,6 +255,12 @@ function roomTurnChronologicalStream(
     });
   }
   return result;
+}
+
+function roomMessageBelongsInExecutionCard(message: RoomMessageProjection): boolean {
+  return message.role !== 'user'
+    && !message.question
+    && message.postKind !== 'alignment';
 }
 
 function compareRoomTurnChronologicalAtoms(
@@ -583,6 +597,7 @@ export function RoomTurn({
         || message.postKind !== 'result'
         || message.id === reporterSummaryId
       ));
+      const cardMessages = visibleMessages.filter(roomMessageBelongsInExecutionCard);
       const participantId = lane.participantId ?? '';
       const explicitlyTerminal = lane.dispatchId
         ? (turn.terminalDispatchIds ?? []).includes(lane.dispatchId)
@@ -622,7 +637,7 @@ export function RoomTurn({
         roomSyncState,
         laneTaskId ? kernelTaskUpdatedAtMsById?.[laneTaskId] : undefined,
       );
-      const laneOutcome = visibleMessages.reduce((outcome, message) => (
+      const laneOutcome = cardMessages.reduce((outcome, message) => (
         roomTerminalPostLabels[message.postKind ?? '']
           ? message.postKind ?? outcome
           : outcome
@@ -674,15 +689,23 @@ export function RoomTurn({
         kernelSessionsById,
       );
       const laneTodo = roomLaneAuthoritativeTodo(lane, laneTask, laneSession);
+      const showLaneTodo = Boolean(laneTodo)
+        && !laneFailed
+        && !laneAborted
+        && (
+          laneAction !== undefined
+          || laneOutcome === 'wait'
+          || laneOutcome === 'blocked'
+          || (laneActive && !laneComplete)
+        );
       const laneWork = roomLaneWorkSummary(
         segmentActivities,
         participant?.displayName,
         laneState,
         laneTask,
       );
-      const laneTodoSummary = roomTaskTodoSummary(laneTodo);
+      const laneTodoSummary = showLaneTodo ? roomTaskTodoSummary(laneTodo) : '';
       const laneSubagents = laneTaskId ? subagentsByTaskId[laneTaskId] ?? [] : [];
-      const identityContinuation = identityContinuationByItemKey.get(streamItem.key) ?? false;
       return <RoomLaneDisclosure
         active={laneMotionActive}
         collapsedPreview={<RoomLaneCollapsedPreview
@@ -690,15 +713,14 @@ export function RoomTurn({
           participantName={participant?.displayName}
           workspaceTask={laneTask}
         />}
-        defaultOpen={laneActive && !visibleMessages.length}
-        data-continuation={identityContinuation || undefined}
+        defaultOpen={laneActive && !cardMessages.length}
         data-motion={laneOperationallyActive ? laneFreshness.state : 'settled'}
         data-outcome={laneOutcome || undefined}
         data-state={laneState}
         key={streamItem.key}
         participantName={participant?.displayName ?? '协作伙伴'}
         summary={<>
-          {!identityContinuation && participant
+          {participant
             ? <PersonaAvatar
                 persona={persona}
                 presence={laneState === 'running' && laneMotionActive
@@ -709,9 +731,7 @@ export function RoomTurn({
                       ? 'done'
                       : 'warning'}
               />
-            : !identityContinuation
-              ? <span className="room-agent-lane__route"><Route size={15} /></span>
-              : null}
+            : <span className="room-agent-lane__route"><Route size={15} /></span>}
           <span className="room-agent-lane__work">
             <span className="room-agent-lane__identity">
               <strong>{participant?.displayName ?? '正在选择伙伴'}</strong>
@@ -754,6 +774,30 @@ export function RoomTurn({
           heading={laneTask?.objective || `${participant?.displayName ?? '这位伙伴'}的临时协作者`}
           runs={laneSubagents}
         /> : null}
+        {cardMessages.map((message) => <div
+          className="room-agent-lane__commit room-conversation-post"
+          data-post-kind={message.postKind || undefined}
+          data-room-message-id={message.id}
+          data-status={message.status}
+          key={message.id}
+        >
+          <RoomLanePost
+            activeWait={
+              message.postKind === 'wait'
+              && !rootTerminal
+              && (!message.question || pendingQuestion?.postId === message.id)
+            }
+            evidence={roomResponseEvidenceForPost(message, responseUsageActivities)}
+            message={message}
+            onAnswerQuestion={onAnswerQuestion}
+            participants={room?.participants ?? []}
+            pendingQuestion={pendingQuestion?.postId === message.id ? pendingQuestion : undefined}
+            showEvidence={Boolean(roomTerminalPostLabels[message.postKind ?? ''])}
+            streamingMotion={laneMotionActive}
+            turnStartedAtMs={turn.createdAtMs}
+          />
+          {message.id === finalAlignmentId ? startActionGate : null}
+        </div>)}
         {includePersistentDetails && !lane.activities.length && laneActive && !messages.length ? <div className="room-agent-lane__waiting">
           {laneMotionActive ? <LoaderCircle size={14} /> : <Clock3 size={14} />}
           <span>{laneMotionActive
@@ -763,14 +807,14 @@ export function RoomTurn({
             : laneFreshness.detail}
           </span>
         </div> : null}
-        {includePersistentDetails && !terminalIssue && (laneFailed || laneAborted) && !visibleMessages.length ? (
+        {includePersistentDetails && !terminalIssue && (laneFailed || laneAborted) && !cardMessages.length ? (
           <p className="room-agent-lane__failure">
             {laneFailed
               ? publicFailure
               : '这位伙伴的任务已经停止。'}
           </p>
         ) : null}
-        {includePersistentDetails && laneTodo ? <RoomTaskTodoDetails
+        {includePersistentDetails && showLaneTodo && laneTodo ? <RoomTaskTodoDetails
           live
           owner={participant?.displayName ?? '协作伙伴'}
           todo={laneTodo}
@@ -1786,10 +1830,16 @@ function RoomPostLifecycle({
     ))
     .filter((value): value is string => Boolean(value));
   const target = targetNames.join('、');
+  const sourceParticipant = participants.find((participant) => (
+    participant.id === message.participantId
+    || participant.id === message.authorActorRef
+    || `participant:${participant.id}` === message.authorActorRef
+  ));
+  const source = sourceParticipant?.displayName ?? '协作伙伴';
   const title = message.postKind === 'handoff'
     ? target
-      ? `已交接给 ${target}`
-      : '已进入下一段协作'
+      ? `${source} → ${target}`
+      : `${source} → 交接目标待确认`
     : message.postKind === 'wait'
       ? target
         ? `正在等待 ${target}`

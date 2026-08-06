@@ -54,13 +54,7 @@ export function selectRoomTurnExecution(
     const taskId = sourceIdentity.taskId
       || taskIdByDispatchId[sourceIdentity.dispatchId]
       || '';
-    const identity = {
-      ...sourceIdentity,
-      taskId,
-      key: taskId
-        ? `${sourceIdentity.rootId}\u001f${sourceIdentity.participantId}\u001f${taskId}`
-        : sourceIdentity.key,
-    };
+    const identity = { ...sourceIdentity, taskId };
     const participantId = activity.participantId
       || textValue(activity.payload.targetParticipantId)
       || null;
@@ -141,7 +135,7 @@ export function selectRoomTurnExecution(
     const lane = lanes.get(laneKey) ?? {
       key: laneKey,
       rootId: message.rootId || turn.rootId || turnId,
-      taskId: '',
+      taskId: message.dispatchId ? taskIdByDispatchId[message.dispatchId] ?? '' : '',
       dispatchId: message.dispatchId || '',
       dispatchIds: message.dispatchId ? [message.dispatchId] : [],
       participantId: message.participantId,

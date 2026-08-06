@@ -165,6 +165,20 @@
 .room-participant-message header small { color: var(--color-text-tertiary); font-size: 13px; }
 .room-conversation-post > div { min-width: 0; }
 .room-conversation-post .room-agent-lane__post { margin: 0; }
+.room-agent-lane__commit {
+  min-width: 0;
+  margin: var(--space-2) var(--space-3) var(--space-3);
+  border-block-start: 1px solid var(--color-border-soft);
+  padding-block-start: var(--space-3);
+  animation: room-commit-arrival 220ms var(--ease-standard) both;
+}
+.room-agent-lane__commit[data-post-kind='handoff'] {
+  border-block-start-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border-soft));
+}
+@keyframes room-commit-arrival {
+  from { opacity: .35; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 .room-agent-lane {
   --room-lane-tone: var(--color-border-strong);
   position: relative;
@@ -1186,6 +1200,7 @@
   .room-agent-lane__task { font-size: 13px; }
   .room-agent-lane__activity,
   .room-agent-lane__waiting,
+  .room-agent-lane__commit,
   .room-agent-lane__post,
   .room-agent-lane__failure { width: auto; margin-inline: 8px; }
   .room-start-action { margin-left: 0; }
@@ -1219,6 +1234,7 @@
   .room-agent-activity--tool[data-state='running'] .room-agent-activity__state > svg,
   .room-agent-edit-progress > i,
   .room-agent-tool-attempt[data-state='running'] > svg,
+  .room-agent-lane__commit,
   .room-agent-activity[data-arriving='true'],
   .room-reasoning-summary[data-arriving='true'],
   .room-turn__terminal[data-arriving='true'] {
@@ -1229,6 +1245,7 @@
 }
 :root[data-reduce-motion='true'] .room-user-message,
 :root[data-reduce-motion='true'] .room-participant-message { animation: none; transition: none; }
+:root[data-reduce-motion='true'] .room-agent-lane__commit { animation: none; transition: none; }
 :root[data-reduce-motion='true'] .room-agent-lane::after,
 :root[data-reduce-motion='true'] .room-agent-lane__body,
 :root[data-reduce-motion='true'] .room-agent-lane__live-indicator > i,
