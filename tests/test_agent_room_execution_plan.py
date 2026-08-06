@@ -3,6 +3,12 @@ from __future__ import annotations
 import unittest
 
 from rag_ime.agent_room_application import _normalize_room_execution_plan
+from rag_ime.agent_room_kernel_application import (
+    _planned_feature_assignments,
+    _planned_feature_is_complete,
+    _planned_wave_blockers,
+    _resolved_execution_plan_features,
+)
 
 
 def _participant(identifier: str, name: str) -> dict[str, object]:
@@ -110,6 +116,114 @@ class RoomExecutionPlanTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "同一波并行承担两个功能"):
             self._normalize(plan)
+
+    def test_later_wave_stays_closed_until_lower_wave_is_integrated(self) -> None:
+        features = _resolved_execution_plan_features(
+            [
+                {
+                    "title": "批量导入客户",
+                    "participantRef": "worker-a",
+                    "wave": 1,
+                },
+                {
+                    "title": "合并重复客户",
+                    "participantRef": "worker-b",
+                    "wave": 2,
+                },
+            ],
+            participant_refs={},
+        )
+        child = {
+            "dispatchId": "dispatch:import",
+            "taskId": "task:import",
+            "targetParticipantId": "worker-a",
+            "intentKind": "execute",
+            "state": "committed",
+        }
+        task = {
+            "workspacePolicy": "isolated_writable",
+            "workspaceIntegrationState": "pending",
+        }
+        assignments = _planned_feature_assignments(
+            features,
+            [child],
+            task_for_dispatch=lambda _child: task,
+        )
+
+        self.assertFalse(
+            _planned_feature_is_complete(assignments["批量导入客户"])
+        )
+        self.assertEqual(
+            [item["title"] for item in _planned_wave_blockers(
+                features[1], features, assignments
+            )],
+            ["批量导入客户"],
+        )
+        task["workspaceIntegrationState"] = "applied"
+        assignments = _planned_feature_assignments(
+            features,
+            [child],
+            task_for_dispatch=lambda _child: task,
+        )
+        self.assertTrue(
+            _planned_feature_is_complete(assignments["批量导入客户"])
+        )
+        self.assertEqual(
+            _planned_wave_blockers(features[1], features, assignments),
+            [],
+        )
+
+    def test_owner_feature_order_follows_approved_waves(self) -> None:
+        features = _resolved_execution_plan_features(
+            [
+                {
+                    "title": "第二波功能",
+                    "participantRef": "worker-a",
+                    "wave": 2,
+                },
+                {
+                    "title": "第一波功能",
+                    "participantRef": "worker-a",
+                    "wave": 1,
+                },
+            ],
+            participant_refs={},
+        )
+        child = {
+            "dispatchId": "dispatch:first",
+            "taskId": "task:first",
+            "targetParticipantId": "worker-a",
+            "intentKind": "execute",
+            "state": "running",
+        }
+        assignments = _planned_feature_assignments(
+            features,
+            [child],
+            task_for_dispatch=lambda _child: {"workspacePolicy": "read_only"},
+        )
+
+        self.assertIn("第一波功能", assignments)
+        self.assertNotIn("第二波功能", assignments)
+
+        revision = {
+            "dispatchId": "dispatch:first-revision",
+            "taskId": "task:first-revision",
+            "targetParticipantId": "worker-a",
+            "intentKind": "revise",
+            "state": "committed",
+        }
+        assignments = _planned_feature_assignments(
+            features,
+            [child, revision],
+            task_for_dispatch=lambda candidate: {
+                "workspacePolicy": "read_only",
+                "taskId": candidate["taskId"],
+            },
+        )
+        self.assertEqual(
+            assignments["第一波功能"][0]["dispatchId"],
+            "dispatch:first-revision",
+        )
 
 
 if __name__ == "__main__":

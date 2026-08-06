@@ -190,6 +190,197 @@ class ApprovalModelArbiterTests(unittest.TestCase):
             "Read the selected workspace file.",
         )
 
+    def test_model_input_keeps_private_paths_redacted_but_proves_scoped_effect(self) -> None:
+        runtime = FakeCompletionRuntime(
+            {
+                "text": json.dumps(
+                    {
+                        "decision": "approve",
+                        "reasonCodes": ["authorized_scope"],
+                        "rationaleSummary": "私有参数已由本地运行时核验在授权范围内。",
+                    },
+                    ensure_ascii=False,
+                )
+            }
+        )
+        scope_sha256 = str(self.session["workspaceScopeSha256"])
+        approval = self.sessions.create_approval(
+            session_id=str(self.session["id"]),
+            tool_name="workspace_job",
+            operation="start",
+            payload_sha256="d" * 64,
+            preview={
+                "actionPayload": {
+                    "command": "python3 -m unittest -q tests.test_catalog",
+                    "cwd": str(self.workspace),
+                    "allowNetwork": False,
+                },
+                "baseState": {"workspaceScopeSha256": scope_sha256},
+            },
+            risk_level="R2",
+            requested_at_ms=31,
+        )
+        arbiter = ApprovalModelArbiter(
+            self.db_path,
+            runtime_provider=lambda: runtime,
+            context_provider=lambda current, session: {
+                "contextAvailable": True,
+                "currentTask": {
+                    "kind": "room_task",
+                    "taskId": "task-private-worktree",
+                    "objective": "Run the focused customer catalog tests.",
+                },
+            },
+            clock_ms=lambda: 151,
+        )
+
+        arbiter.decide(approval, self.session)
+
+        prompt = str(runtime.requests[0]["message"])
+        self.assertNotIn(str(self.workspace), prompt)
+        model_input = json.loads(
+            prompt.split("UNTRUSTED_APPROVAL_EVIDENCE_JSON:\n", 1)[1]
+        )
+        self.assertEqual(
+            model_input["currentApproval"]["arguments"]["cwd"],
+            "[REDACTED]",
+        )
+        canonical = model_input["currentApproval"][
+            "canonicalArgumentEvidence"
+        ]
+        self.assertEqual(canonical["source"], "private_hash_bound_preview")
+        self.assertTrue(canonical["workspaceTargetPresent"])
+        self.assertTrue(canonical["workspaceTargetWithinAuthorizedScope"])
+        self.assertTrue(canonical["previewScopeMatchesAuthorizedScope"])
+        self.assertFalse(canonical["destructiveEffectDetected"])
+        self.assertFalse(canonical["networkEffectDetected"])
+        self.assertNotIn(
+            "cross_workspace",
+            model_input["currentApproval"]["riskClassification"]["signals"],
+        )
+
+    def test_model_input_marks_private_out_of_scope_target_as_cross_workspace(self) -> None:
+        runtime = FakeCompletionRuntime(
+            {
+                "text": json.dumps(
+                    {
+                        "decision": "deny",
+                        "reasonCodes": ["cross_workspace"],
+                        "rationaleSummary": "目标不在授权工作区内。",
+                    },
+                    ensure_ascii=False,
+                )
+            }
+        )
+        outside = Path(self.temporary.name) / "outside"
+        outside.mkdir()
+        approval = self.sessions.create_approval(
+            session_id=str(self.session["id"]),
+            tool_name="workspace_shell",
+            operation="run",
+            payload_sha256="e" * 64,
+            preview={
+                "actionPayload": {
+                    "command": "pwd",
+                    "cwd": str(outside),
+                    "allowNetwork": False,
+                },
+                "baseState": {
+                    "workspaceScopeSha256": str(
+                        self.session["workspaceScopeSha256"]
+                    )
+                },
+            },
+            risk_level="R2",
+            requested_at_ms=32,
+        )
+        arbiter = ApprovalModelArbiter(
+            self.db_path,
+            runtime_provider=lambda: runtime,
+            context_provider=lambda current, session: {
+                "contextAvailable": True,
+                "currentTask": {"taskId": "task-outside"},
+            },
+            clock_ms=lambda: 152,
+        )
+
+        arbiter.decide(approval, self.session)
+
+        prompt = str(runtime.requests[0]["message"])
+        self.assertNotIn(str(outside), prompt)
+        model_input = json.loads(
+            prompt.split("UNTRUSTED_APPROVAL_EVIDENCE_JSON:\n", 1)[1]
+        )
+        canonical = model_input["currentApproval"][
+            "canonicalArgumentEvidence"
+        ]
+        self.assertFalse(canonical["workspaceTargetWithinAuthorizedScope"])
+        self.assertIn(
+            "cross_workspace",
+            model_input["currentApproval"]["riskClassification"]["signals"],
+        )
+
+    def test_private_scope_evidence_does_not_clear_destructive_risk(self) -> None:
+        runtime = FakeCompletionRuntime(
+            {
+                "text": json.dumps(
+                    {
+                        "decision": "deny",
+                        "reasonCodes": ["destructive_effect"],
+                        "rationaleSummary": "删除操作仍需独立审核。",
+                    },
+                    ensure_ascii=False,
+                )
+            }
+        )
+        approval = self.sessions.create_approval(
+            session_id=str(self.session["id"]),
+            tool_name="workspace_shell",
+            operation="run",
+            payload_sha256="f" * 64,
+            preview={
+                "actionPayload": {
+                    "command": "rm -rf build",
+                    "cwd": str(self.workspace),
+                    "allowNetwork": False,
+                },
+                "baseState": {
+                    "workspaceScopeSha256": str(
+                        self.session["workspaceScopeSha256"]
+                    )
+                },
+            },
+            risk_level="R2",
+            requested_at_ms=33,
+        )
+        arbiter = ApprovalModelArbiter(
+            self.db_path,
+            runtime_provider=lambda: runtime,
+            context_provider=lambda current, session: {
+                "contextAvailable": True,
+                "currentTask": {"taskId": "task-clean-build"},
+            },
+            clock_ms=lambda: 153,
+        )
+
+        receipt = arbiter.decide(approval, self.session)
+
+        model_input = json.loads(
+            str(runtime.requests[0]["message"]).split(
+                "UNTRUSTED_APPROVAL_EVIDENCE_JSON:\n", 1
+            )[1]
+        )
+        canonical = model_input["currentApproval"][
+            "canonicalArgumentEvidence"
+        ]
+        self.assertTrue(canonical["workspaceTargetWithinAuthorizedScope"])
+        self.assertTrue(canonical["destructiveEffectDetected"])
+        self.assertIn(
+            "destructive_effect",
+            model_input["currentApproval"]["riskClassification"]["signals"],
+        )
+        self.assertEqual(receipt["decision"], "deny")
+
     def test_invalid_or_unavailable_model_fails_closed_without_leaking_secrets(self) -> None:
         runtime = FakeCompletionRuntime(
             {

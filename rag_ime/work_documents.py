@@ -88,6 +88,14 @@ class WorkDocumentContextItem(TypedDict):
     path: str
     contentSha256: str
     authorityKey: str
+    workspaceRoot: NotRequired[str]
+    canonicalPath: NotRequired[str]
+    authorityKind: NotRequired[str]
+    authorityId: NotRequired[str]
+    authorityRevision: NotRequired[int]
+    documentRevision: NotRequired[int]
+    state: NotRequired[str]
+    snapshot: NotRequired[dict[str, object]]
 
 
 class WorkDocumentContextResponse(TypedDict):
@@ -217,14 +225,37 @@ class WorkDocumentService:
                             now,
                         ),
                     )
+                prior_receipt = conn.execute(
+                    "SELECT status FROM work_document_operation_receipts "
+                    "WHERE operation_key=?",
+                    (operation_key,),
+                ).fetchone()
+                if (
+                    prior_receipt is not None
+                    and str(prior_receipt["status"]) == "applied"
+                    and int(existing["authority_revision"]) == revision
+                    and str(existing["title"]) == title
+                    and str(existing["content_sha256"]) == digest
+                ):
+                    # A context refresh must not mutate workspace bytes when
+                    # the governed document is already at this exact revision.
+                    return _command(
+                        "register",
+                        _payload(existing),
+                        self._receipt(
+                            conn,
+                            operation_key,
+                            document_id,
+                            "register",
+                            "applied",
+                            True,
+                            now,
+                        ),
+                    )
                 document_revision = int(existing["document_revision"]) + int(
                     digest != str(existing["content_sha256"])
                 )
-                duplicate = conn.execute(
-                    "SELECT 1 FROM work_document_operation_receipts "
-                    "WHERE operation_key=?",
-                    (operation_key,),
-                ).fetchone() is not None
+                duplicate = prior_receipt is not None
                 conn.execute(
                     "UPDATE work_documents SET authority_revision=?,document_revision=?,title=?,content_sha256=?,error='',updated_at_ms=? WHERE document_id=?",
                     (revision, document_revision, title, digest, now, document_id),
@@ -260,6 +291,178 @@ class WorkDocumentService:
             )
         receipt["status"] = receipt_status
         return _command("register", document, receipt)
+
+    def ensure_room_work_item(
+        self,
+        *,
+        authority_id: str,
+        workspace_root: str | Path,
+        title: str,
+        content: str,
+    ) -> WorkDocumentPayload:
+        """Create the one governed document for a started Room root WorkItem.
+
+        Typed Room Start is itself the user's write authorization.  This helper
+        turns that authorization into one deterministic staging file and then
+        uses the ordinary WorkDocument registry/reconciler.  Replays return the
+        existing authority-bound document and never create a peer-owned copy.
+        """
+
+        normalized_authority_id = _required(
+            authority_id, "authorityId", 240
+        )
+        normalized_title = _text(title, 240)
+        if not str(content).strip():
+            raise WorkDocumentError("Room work-document content is required")
+        root = Path(workspace_root).expanduser().resolve(strict=True)
+        if not root.is_dir() or root.is_symlink():
+            raise WorkDocumentError("workspaceRoot must be a real directory")
+        authority_key = f"room_work_item:{normalized_authority_id}"
+        document_id = _document_id(authority_key)
+        with self._lock:
+            with sqlite_connection(
+                self.db_path,
+                row_factory=sqlite3.Row,
+                foreign_keys=True,
+            ) as conn:
+                authority = self._authority(
+                    conn, "room_work_item", normalized_authority_id
+                )
+                existing = conn.execute(
+                    "SELECT * FROM work_documents WHERE authority_key=?",
+                    (authority_key,),
+                ).fetchone()
+                if existing is not None:
+                    payload = _payload(existing)
+                    if Path(payload["workspaceRoot"]).resolve() != root:
+                        raise WorkDocumentError(
+                            "Room WorkItem is already bound to another workspace"
+                        )
+                    if payload["state"] != "active":
+                        raise WorkDocumentError(
+                            "started Room WorkItem requires an active WorkDocument"
+                        )
+                    return payload
+                revision = int(authority["revision"])
+            relative = (
+                "docs/agent/work/register/room_work_item/"
+                f"{document_id}.md"
+            )
+            source = _resolve(root, relative)
+            encoded = str(content).encode("utf-8")
+            expected = hashlib.sha256(encoded).hexdigest()
+            source.parent.mkdir(parents=True, exist_ok=True)
+            if source.exists():
+                if (
+                    source.is_symlink()
+                    or not source.is_file()
+                    or _sha256_file(source) != expected
+                ):
+                    raise WorkDocumentError(
+                        "Room work-document staging file changed before registration"
+                    )
+            else:
+                _atomic_bytes(source, encoded)
+            result = self.register(
+                {
+                    "authorityKind": "room_work_item",
+                    "authorityId": normalized_authority_id,
+                    "authorityRevision": revision,
+                    "workspaceRoot": str(root),
+                    "sourcePath": relative,
+                    "title": normalized_title,
+                }
+            )
+            document = result.get("document")
+            if not isinstance(document, Mapping):
+                raise WorkDocumentError(
+                    "Room work-document registration returned no document"
+                )
+            return WorkDocumentPayload(**dict(document))
+
+    def room_root_context(
+        self, root_id: str
+    ) -> WorkDocumentContextItem | None:
+        """Return the single canonical document shared by every Root Dispatch.
+
+        Active documents are re-registered from their canonical path so normal
+        facilitator edits advance the governed content hash before the next
+        participant receives context.  Archived documents remain readable for
+        close/report Dispatches but are never reactivated here.
+        """
+
+        normalized_root_id = _required(root_id, "rootId", 320)
+        with sqlite_connection(
+            self.db_path,
+            row_factory=sqlite3.Row,
+            foreign_keys=True,
+        ) as conn:
+            rows = conn.execute(
+                """
+                SELECT d.*
+                FROM work_documents d
+                JOIN agent_room_work_items w ON w.id=d.authority_id
+                WHERE d.authority_kind='room_work_item'
+                  AND w.root_turn_id=?
+                  AND w.root_work_id=w.id
+                ORDER BY d.created_at_ms,d.document_id
+                """,
+                (normalized_root_id,),
+            ).fetchall()
+            if not rows:
+                return None
+            if len(rows) != 1:
+                raise WorkDocumentError(
+                    "Room Root has more than one governed WorkDocument"
+                )
+            payload = _payload(rows[0])
+            if payload["state"] == "active":
+                authority = self._authority(
+                    conn,
+                    "room_work_item",
+                    str(payload["authorityId"]),
+                )
+                authority_revision = int(authority["revision"])
+            else:
+                authority_revision = int(payload["authorityRevision"])
+        if payload["state"] == "active":
+            refreshed = self.register(
+                {
+                    "authorityKind": "room_work_item",
+                    "authorityId": payload["authorityId"],
+                    "authorityRevision": authority_revision,
+                    "workspaceRoot": payload["workspaceRoot"],
+                    "sourcePath": payload["path"],
+                    "title": payload["title"],
+                }
+            ).get("document")
+            if not isinstance(refreshed, Mapping):
+                raise WorkDocumentError(
+                    "Room work-document refresh returned no document"
+                )
+            payload = WorkDocumentPayload(**dict(refreshed))
+        canonical = _resolve(
+            Path(payload["workspaceRoot"]), str(payload["path"])
+        )
+        snapshot = _bounded_utf8_snapshot(
+            canonical,
+            expected_sha256=str(payload["contentSha256"]),
+        )
+        return {
+            "documentId": str(payload["documentId"]),
+            "title": str(payload["title"]),
+            "path": str(payload["path"]),
+            "contentSha256": str(payload["contentSha256"]),
+            "authorityKey": str(payload["authorityKey"]),
+            "workspaceRoot": str(payload["workspaceRoot"]),
+            "canonicalPath": str(canonical),
+            "authorityKind": str(payload["authorityKind"]),
+            "authorityId": str(payload["authorityId"]),
+            "authorityRevision": int(payload["authorityRevision"]),
+            "documentRevision": int(payload["documentRevision"]),
+            "state": str(payload["state"]),
+            "snapshot": snapshot,
+        }
 
     def list(
         self,
@@ -1052,6 +1255,16 @@ def _atomic_json(path: Path, payload: Mapping[str, object]) -> None:
     _fsync_dir(path.parent)
 
 
+def _atomic_bytes(path: Path, data: bytes) -> None:
+    temporary = path.with_name(f".{path.name}.tmp")
+    with temporary.open("wb") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+    _fsync_dir(path.parent)
+
+
 def _fsync_dir(path: Path) -> None:
     try:
         descriptor = os.open(path, os.O_RDONLY)
@@ -1069,6 +1282,42 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(131072), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _bounded_utf8_snapshot(
+    path: Path,
+    *,
+    expected_sha256: str,
+    maximum_bytes: int = 65_536,
+) -> dict[str, object]:
+    if path.is_symlink() or not path.is_file():
+        raise WorkDocumentError(
+            "canonical Room WorkDocument is unavailable"
+        )
+    data = path.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != expected_sha256:
+        raise WorkDocumentError(
+            "canonical Room WorkDocument changed during context projection"
+        )
+    included = data[:maximum_bytes]
+    while included:
+        try:
+            content = included.decode("utf-8")
+            break
+        except UnicodeDecodeError as exc:
+            included = included[: exc.start]
+    else:
+        content = ""
+    return {
+        "content": content,
+        "contentSha256": digest,
+        "byteCount": len(data),
+        "includedByteCount": len(included),
+        "truncated": len(included) < len(data),
+        "maximumBytes": maximum_bytes,
+        "readOnly": True,
+    }
 
 
 def _json_hash(payload: Mapping[str, object]) -> str:

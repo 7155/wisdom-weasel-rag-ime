@@ -267,6 +267,10 @@ class WorkDocumentTests(unittest.TestCase):
         self.assertTrue(exact_replay["receipt"]["idempotent"])
         self.assertFalse(title_change["receipt"]["idempotent"])
         self.assertTrue(title_replay["receipt"]["idempotent"])
+        self.assertEqual(
+            exact_replay["document"]["updatedAtMs"],
+            document["updatedAtMs"],
+        )
         self.assertEqual(exact_replay["receipt"]["status"], "applied")
         self.assertEqual(title_change["receipt"]["status"], "applied")
         self.assertEqual(title_replay["receipt"]["status"], "applied")
@@ -543,6 +547,105 @@ class WorkDocumentTests(unittest.TestCase):
                 (document["documentId"],),
             ).fetchone()[0]
         self.assertEqual(archive_count, 1)
+
+    def test_room_start_document_is_unique_and_refreshes_its_canonical_hash(
+        self,
+    ) -> None:
+        worker_session = self.sessions.create(title="room worker")
+        rooms = AgentRoomStore(self.db_path, room_dir=self.root / "rooms")
+        rooms.initialize()
+        room = rooms.create(
+            title="governed Room",
+            routing_policy="moderator",
+            workspace_roots=[str(self.root)],
+            participants=[
+                {
+                    "sessionId": self.session_id,
+                    "roleId": "coordinator",
+                    "roleVersion": "1",
+                    "displayName": "Coordinator",
+                    "collaborationRole": "coordinator",
+                },
+                {
+                    "sessionId": worker_session["id"],
+                    "roleId": "worker",
+                    "roleVersion": "1",
+                    "displayName": "Worker",
+                    "collaborationRole": "implementer",
+                },
+            ],
+        )
+        room_work = AgentRoomWorkStore(self.db_path)
+        room_work.initialize()
+        item = room_work.create(
+            room_id=str(room["id"]),
+            objective="deliver the Room",
+            expected_output="verified result",
+            current_owner_participant_id=str(room["participants"][0]["id"]),
+            created_by_participant_id=str(room["participants"][0]["id"]),
+            client_message_id="room-start-work-document",
+            root_turn_id="room-root:document",
+            acceptance_criteria=["result is visible"],
+        )
+        content = "# Room work\n\n## Original vision\n\nKeep this exact brief.\n"
+        first = self.service.ensure_room_work_item(
+            authority_id=str(item["id"]),
+            workspace_root=self.root,
+            title="Room work",
+            content=content,
+        )
+        replay = self.service.ensure_room_work_item(
+            authority_id=str(item["id"]),
+            workspace_root=self.root,
+            title="Room work",
+            content=content,
+        )
+        self.assertEqual(replay["documentId"], first["documentId"])
+        with sqlite3.connect(self.db_path) as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM work_documents WHERE authority_key=?",
+                    (f"room_work_item:{item['id']}",),
+                ).fetchone()[0],
+                1,
+            )
+        canonical = self.root / str(first["path"])
+        changed = content + "\n## Progress\n\nImplemented one feature.\n"
+        canonical.write_text(changed, encoding="utf-8")
+        context = self.service.room_root_context("room-root:document")
+        self.assertIsNotNone(context)
+        assert context is not None
+        self.assertEqual(
+            context["canonicalPath"], str(canonical.resolve())
+        )
+        self.assertNotEqual(context["contentSha256"], first["contentSha256"])
+        self.assertEqual(context["documentRevision"], 2)
+        snapshot = context["snapshot"]
+        self.assertEqual(snapshot["content"], changed)
+        self.assertEqual(
+            snapshot["contentSha256"], context["contentSha256"]
+        )
+        self.assertFalse(snapshot["truncated"])
+
+        large = "# Large Room work\n\n" + ("进展证据。" * 20_000)
+        canonical.write_text(large, encoding="utf-8")
+        bounded = self.service.room_root_context("room-root:document")
+        self.assertIsNotNone(bounded)
+        assert bounded is not None
+        bounded_snapshot = bounded["snapshot"]
+        self.assertTrue(bounded_snapshot["truncated"])
+        self.assertLessEqual(
+            bounded_snapshot["includedByteCount"], 65_536
+        )
+        self.assertGreater(bounded_snapshot["includedByteCount"], 0)
+        self.assertGreater(
+            bounded_snapshot["byteCount"],
+            bounded_snapshot["includedByteCount"],
+        )
+        self.assertEqual(
+            bounded_snapshot["contentSha256"],
+            bounded["contentSha256"],
+        )
 
     def test_goal_and_room_terminal_observation_archive_exactly_once(self) -> None:
         goal = self.sessions.mutate_agent_goal(

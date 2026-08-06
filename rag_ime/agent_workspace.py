@@ -25,6 +25,7 @@ from .agent_execution_policy import (
     FULL_TRUST_EXECUTION_MODE,
     normalize_execution_mode,
     workspace_scope_is_granted,
+    workspace_scope_sha256,
 )
 from .contracts.json_schema import validate_contract
 
@@ -2874,6 +2875,9 @@ class WorkspaceHarness:
                 "preimageSize": prepared.preimage_size,
                 "postimageSha256": prepared.postimage_sha256,
                 "workspaceRootSha256": prepared.roots_digest,
+                "workspaceScopeSha256": workspace_scope_sha256(
+                    [str(prepared.root)]
+                ),
                 **(
                     {"readOrigin": prepared.read_origin.as_dict()}
                     if prepared.read_origin is not None
@@ -3056,6 +3060,9 @@ class WorkspaceHarness:
                 "preimageSize": prepared.preimage_size,
                 "postimageSha256": prepared.postimage_sha256,
                 "workspaceRootSha256": prepared.roots_digest,
+                "workspaceScopeSha256": workspace_scope_sha256(
+                    [str(prepared.root)]
+                ),
                 **(
                     {"readOrigin": prepared.read_origin.as_dict()}
                     if prepared.read_origin is not None
@@ -3184,6 +3191,9 @@ class WorkspaceHarness:
                 "preimageSize": prepared.preimage_size,
                 "postimageSha256": prepared.postimage_sha256,
                 "workspaceRootSha256": prepared.roots_digest,
+                "workspaceScopeSha256": workspace_scope_sha256(
+                    [str(prepared.root)]
+                ),
             },
         }
 
@@ -3366,7 +3376,12 @@ class WorkspaceHarness:
                 "timeoutSeconds": prepared.timeout_seconds,
                 "allowNetwork": prepared.allow_network,
             },
-            "baseState": {"workspaceRootsSha256": prepared.roots_digest},
+            "baseState": {
+                "workspaceRootsSha256": prepared.roots_digest,
+                "workspaceScopeSha256": workspace_scope_sha256(
+                    [str(root) for root in prepared.roots]
+                ),
+            },
         }
 
     def _session_roots(self, session: Mapping[str, object]) -> tuple[Path, ...]:

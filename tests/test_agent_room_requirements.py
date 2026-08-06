@@ -221,6 +221,32 @@ class RequirementGovernanceTests(unittest.TestCase):
             accepted_evidence_provider=lambda root_id: {
                 "criterion:req": [f"accepted:{root_id}"]
             },
+            work_document_provider=lambda root_id: {
+                "documentId": "workdoc_12345678901234567890123456789012",
+                "authorityKind": "room_work_item",
+                "authorityId": "room-work:root",
+                "authorityKey": "room_work_item:room-work:root",
+                "authorityRevision": 3,
+                "documentRevision": 2,
+                "workspaceRoot": "/private/project",
+                "path": "docs/agent/work/active/room_work_item/root.md",
+                "canonicalPath": (
+                    "/private/project/docs/agent/work/active/"
+                    "room_work_item/root.md"
+                ),
+                "contentSha256": "e" * 64,
+                "state": "active",
+                "snapshot": {
+                    "content": "# 唯一工作文档\n\n伙伴读取快照，不写副本。\n",
+                    "contentSha256": "e" * 64,
+                    "byteCount": 59,
+                    "includedByteCount": 59,
+                    "maximumBytes": 65_536,
+                    "truncated": False,
+                    "readOnly": True,
+                },
+                "rootId": root_id,
+            },
         ).render(
             {
                 "taskId": "task:1",
@@ -318,6 +344,38 @@ class RequirementGovernanceTests(unittest.TestCase):
         self.assertEqual(workspace["integration"]["state"], "pending")
         self.assertEqual(workspace["cleanupState"], "not_authorized")
         self.assertFalse(workspace["attentionRequired"])
+        work_document = packet["workDocument"]
+        self.assertEqual(
+            work_document["canonicalPath"],
+            "/private/project/docs/agent/work/active/room_work_item/root.md",
+        )
+        self.assertEqual(work_document["contentSha256"], "e" * 64)
+        self.assertEqual(
+            work_document["authority"]["key"],
+            "room_work_item:room-work:root",
+        )
+        self.assertEqual(
+            work_document["updatePolicy"]["singleWriter"],
+            "facilitator_integration_workspace",
+        )
+        self.assertTrue(
+            work_document["updatePolicy"]["parallelCopiesForbidden"]
+        )
+        self.assertFalse(
+            work_document["canonicalPath"].startswith(
+                packet["workspace"]["workspaceRoot"] + "/"
+            )
+        )
+        self.assertEqual(
+            work_document["snapshot"]["content"],
+            "# 唯一工作文档\n\n伙伴读取快照，不写副本。\n",
+        )
+        self.assertEqual(
+            work_document["snapshot"]["contentSha256"],
+            work_document["contentSha256"],
+        )
+        self.assertFalse(work_document["snapshot"]["truncated"])
+        self.assertTrue(work_document["snapshot"]["readOnly"])
 
     def test_dispatch_packet_references_identical_original_instead_of_copying_it(self) -> None:
         original_text = self.original.decode("utf-8")

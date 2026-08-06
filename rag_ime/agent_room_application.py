@@ -272,6 +272,9 @@ class RoomApplicationService:
         resolve_attachments: Callable[
             [str, Sequence[str], Sequence[str]], list[dict[str, object]]
         ],
+        ensure_work_document: Callable[
+            [Mapping[str, object]], Mapping[str, object] | None
+        ],
         clock_ms: Callable[[], int] | None = None,
     ) -> None:
         self.rooms = rooms
@@ -290,6 +293,7 @@ class RoomApplicationService:
         self.wake_worker = wake_worker
         self.restore_participant_sessions = restore_participant_sessions
         self.resolve_attachments = resolve_attachments
+        self.ensure_work_document = ensure_work_document
         self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
 
     def post_message(
@@ -484,6 +488,11 @@ class RoomApplicationService:
             transaction.close()
         dispatch = started["dispatch"]
         task = self.kernel.task(str(dispatch["taskId"]))
+        work_document = self._ensure_started_work_document(
+            room=room,
+            root=root,
+            task=task,
+        )
         dispatch_result = _queued_dispatch_result(
             facilitator,
             dispatch,
@@ -531,7 +540,86 @@ class RoomApplicationService:
             "intake": started["intake"],
             "receipt": started["receipt"],
             "timelineEvents": timeline_events,
+            "workDocument": work_document,
         }
+
+    def _ensure_started_work_document(
+        self,
+        *,
+        room: Mapping[str, object],
+        root: Mapping[str, object],
+        task: Mapping[str, object],
+    ) -> Mapping[str, object] | None:
+        """Bind one WorkDocument after typed Start and before worker wake."""
+
+        if str(room.get("roomKind") or "collaboration") != "collaboration":
+            return None
+        workspace_roots = [
+            str(value).strip()
+            for value in room.get("workspaceRoots") or []
+            if str(value).strip()
+        ]
+        if not workspace_roots:
+            raise RoomKernelFenceError(
+                "collaboration Room Start requires an authorized workspace"
+            )
+        work_item_id = str(task.get("workItemId") or "").strip()
+        if not work_item_id:
+            raise RoomKernelFenceError(
+                "collaboration Room Start has no root WorkItem authority"
+            )
+        work_item = self.work_items.get(
+            work_item_id,
+            room_id=str(room["id"]),
+        )
+        definition = self.kernel.definition_fence(
+            root_id=str(root["rootId"])
+        )
+        if not isinstance(definition, Mapping):
+            raise RoomKernelFenceError(
+                "collaboration Room Start has no durable definition"
+            )
+        definition_receipt = definition.get("receipt")
+        details = (
+            definition_receipt.get("details")
+            if isinstance(definition_receipt, Mapping)
+            and isinstance(definition_receipt.get("details"), Mapping)
+            else {}
+        )
+        anchor_id = str(root.get("requirementAnchorRef") or "").split(
+            "@", 1
+        )[0].strip()
+        if not anchor_id:
+            raise RoomKernelFenceError(
+                "collaboration Room Start has no original requirement anchor"
+            )
+        original_vision = self.requirements.original_bytes(anchor_id).decode(
+            "utf-8"
+        )
+        content = _room_work_document_markdown(
+            room=room,
+            root=root,
+            work_item=work_item,
+            original_vision=original_vision,
+            execution_plan=(
+                details.get("executionPlan")
+                if isinstance(details, Mapping)
+                else None
+            ),
+        )
+        document = self.ensure_work_document(
+            {
+                "authorityId": work_item_id,
+                "workspaceRoot": workspace_roots[0],
+                "title": f"{str(room.get('title') or 'Room')} 工作文档",
+                "content": content,
+            }
+        )
+        if not isinstance(document, Mapping):
+            raise RoomKernelFenceError(
+                "collaboration Room Start did not establish its WorkDocument"
+            )
+        return dict(document)
 
     def define_room(
         self,
@@ -3077,4 +3165,69 @@ def _work_item_context(
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
+    )
+
+
+def _room_work_document_markdown(
+    *,
+    room: Mapping[str, object],
+    root: Mapping[str, object],
+    work_item: Mapping[str, object],
+    original_vision: str,
+    execution_plan: object,
+) -> str:
+    """Render the durable Room brief without inventing a second authority."""
+
+    criteria = [
+        str(value).strip()
+        for value in work_item.get("acceptanceCriteria") or []
+        if str(value).strip()
+    ]
+    longest_backtick_run = max(
+        (len(match.group(0)) for match in re.finditer(r"`+", original_vision)),
+        default=0,
+    )
+    vision_fence = "`" * max(3, longest_backtick_run + 1)
+    plan_text = (
+        json.dumps(
+            execution_plan,
+            ensure_ascii=False,
+            sort_keys=True,
+            indent=2,
+        )
+        if isinstance(execution_plan, Mapping)
+        else "尚无单独的并行拆分；负责人按已确认目标推进。"
+    )
+    indented_plan = "\n".join(
+        f"    {line}" for line in plan_text.splitlines()
+    )
+    criteria_text = (
+        "\n".join(f"- [ ] {item}" for item in criteria)
+        or "- [ ] 按已确认交付目标完成并提供可复核证据"
+    )
+    return (
+        f"# {str(room.get('title') or 'Room')} 工作文档\n\n"
+        "> 这是本 Room 唯一的权威工作文档。负责人维护正文；伙伴只在交接中返回小型增量，"
+        "不得另建副本文档。\n\n"
+        "## 权威绑定\n\n"
+        f"- Room Root：`{str(root.get('rootId') or '')}`\n"
+        f"- WorkItem：`{str(work_item.get('id') or '')}`\n\n"
+        "## 原始用户愿景\n\n"
+        f"{vision_fence}text\n{original_vision}\n{vision_fence}\n\n"
+        "## 已确认目标\n\n"
+        f"{str(work_item.get('objective') or '').strip()}\n\n"
+        "## 预期交付\n\n"
+        f"{str(work_item.get('expectedOutput') or '').strip()}\n\n"
+        "## 验收条件\n\n"
+        f"{criteria_text}\n\n"
+        "## 已批准执行计划\n\n"
+        f"{indented_plan}\n\n"
+        "## 当前进度\n\n"
+        "- 已由用户确认开始行动。\n\n"
+        "## 证据\n\n"
+        "- 待补充。\n\n"
+        "## 失败与恢复\n\n"
+        "- 暂无。\n\n"
+        "## 下一步\n\n"
+        "- 按执行计划推进当前可运行的功能波次，并在每次实质进展后更新本文件。\n"
     )

@@ -675,18 +675,49 @@ class RoomKernelApplicationService:
             for item in execution_plan.get("featureTasks", [])
             if isinstance(item, Mapping)
         ] if isinstance(execution_plan, Mapping) else []
-        planned_peer_ids: set[str] = set()
-        for planned_task in planned_feature_tasks:
-            try:
-                planned_id = resolve_participant_ref(
-                    planned_task.get("participantRef"),
-                    participant_refs,
-                )
-            except ParticipantReferenceError:
-                planned_id = str(planned_task.get("participantRef") or "")
-            if planned_id and planned_id != facilitator_id:
-                planned_peer_ids.add(planned_id)
+        resolved_feature_tasks = _resolved_execution_plan_features(
+            planned_feature_tasks,
+            participant_refs=participant_refs,
+        )
+        planned_peer_features = [
+            item
+            for item in resolved_feature_tasks
+            if item["participantId"] != facilitator_id
+        ]
+        planned_peer_ids = {
+            str(item["participantId"])
+            for item in planned_peer_features
+        }
         peer_work_required = bool(planned_peer_ids)
+        feature_assignments = _planned_feature_assignments(
+            planned_peer_features,
+            peer_children,
+            task_for_dispatch=lambda child: self.kernel.task(
+                str(child["taskId"])
+            ),
+        )
+        unfinished_peer_features = [
+            item
+            for item in planned_peer_features
+            if not _planned_feature_is_complete(
+                feature_assignments.get(str(item["title"]))
+            )
+        ]
+        current_wave = min(
+            (int(item["wave"]) for item in unfinished_peer_features),
+            default=None,
+        )
+        ready_feature_tasks = [
+            _public_planned_feature(item)
+            for item in unfinished_peer_features
+            if int(item["wave"]) == current_wave
+            and str(item["title"]) not in feature_assignments
+        ]
+        waiting_feature_tasks = [
+            _public_planned_feature(item)
+            for item in unfinished_peer_features
+            if current_wave is not None and int(item["wave"]) > current_wave
+        ]
         # Reviewer presence is roster capacity, not review policy.  The
         # Facilitator owns the risk decision at room_define and the Root keeps
         # its durable, receipted answer.  Showing an inferred requirement here
@@ -706,11 +737,16 @@ class RoomKernelApplicationService:
             "independentReviewRequired": review_required,
             "reviewerParticipantRefs": reviewer_refs,
             "approvedFeatureTasks": planned_feature_tasks,
+            "currentWave": current_wave,
+            "readyFeatureTasks": ready_feature_tasks,
+            "waitingFeatureTasks": waiting_feature_tasks,
             "nextAction": (
                 "assign_independent_peer_work"
-                if peer_work_required and not peer_children
+                if ready_feature_tasks
                 else "integrate_completed_peer_work"
                 if pending_integrations
+                else "await_current_wave_results"
+                if unfinished_peer_features
                 else "continue_owned_work"
             ),
         }
@@ -1477,6 +1513,74 @@ class RoomKernelApplicationService:
                 "another shared_single_writer Task is active; wait or use isolated_writable"
             )
 
+        planned_feature: dict[str, object] | None = None
+        if intent == "execute":
+            definition = self.kernel.definition_fence(
+                root_id=str(root["rootId"])
+            ) or {}
+            definition_receipt = definition.get("receipt")
+            definition_details = (
+                definition_receipt.get("details")
+                if isinstance(definition_receipt, Mapping)
+                and isinstance(definition_receipt.get("details"), Mapping)
+                else {}
+            )
+            execution_plan = (
+                definition_details.get("executionPlan")
+                if isinstance(definition_details, Mapping)
+                and isinstance(definition_details.get("executionPlan"), Mapping)
+                else {}
+            )
+            raw_features = [
+                dict(item)
+                for item in execution_plan.get("featureTasks", [])
+                if isinstance(item, Mapping)
+            ] if isinstance(execution_plan, Mapping) else []
+            planned_peer_features = [
+                item
+                for item in _resolved_execution_plan_features(
+                    raw_features,
+                    participant_refs=participant_refs,
+                )
+                if item["participantId"]
+                != str(root.get("facilitatorParticipantId") or "")
+            ]
+            if planned_peer_features:
+                assignments = _planned_feature_assignments(
+                    planned_peer_features,
+                    children,
+                    task_for_dispatch=lambda child: self.kernel.task(
+                        str(child["taskId"])
+                    ),
+                )
+                candidate_features = [
+                    item
+                    for item in planned_peer_features
+                    if item["participantId"] == target_participant_id
+                    and str(item["title"]) not in assignments
+                ]
+                if not candidate_features:
+                    raise RoomKernelFenceError(
+                        "这位伙伴没有尚未分派的已批准功能；请读取最新 Room 状态。"
+                    )
+                planned_feature = min(
+                    candidate_features,
+                    key=lambda item: (int(item["wave"]), int(item["ordinal"])),
+                )
+                blocked_by = _planned_wave_blockers(
+                    planned_feature,
+                    planned_peer_features,
+                    assignments,
+                )
+                if blocked_by:
+                    blocked_titles = "、".join(
+                        str(item["title"]) for item in blocked_by[:4]
+                    )
+                    raise RoomKernelFenceError(
+                        f"第 {planned_feature['wave']} 波尚未开放；"
+                        f"请先完成并集成前一波的：{blocked_titles}。"
+                    )
+
         objective = str(arguments.get("objective") or "")
         trigger_id = _stable_id(
             "room-collaboration",
@@ -1610,6 +1714,9 @@ class RoomKernelApplicationService:
             "workspacePolicy": workspace_policy,
             "workspaceRoot": prepared_workspace.get("workspaceRoot"),
         }
+        if planned_feature is not None:
+            result["planFeatureTitle"] = str(planned_feature["title"])
+            result["planFeatureWave"] = int(planned_feature["wave"])
         execution_receipt, _ = self.capabilities.record_runtime_execution(
             session_id=session_id,
             invocation_receipt_id=invocation_receipt_id,
@@ -3132,6 +3239,138 @@ def _receipt_completes_root_candidate(receipt: Mapping[str, object]) -> bool:
         and isinstance(details, Mapping)
         and details.get("settleDecision") == "complete"
     )
+
+
+def _resolved_execution_plan_features(
+    features: Sequence[Mapping[str, object]],
+    *,
+    participant_refs: Mapping[str, str],
+) -> list[dict[str, object]]:
+    """Resolve approved feature owners while preserving plan order and waves."""
+
+    resolved: list[dict[str, object]] = []
+    for ordinal, feature in enumerate(features):
+        try:
+            participant_id = resolve_participant_ref(
+                feature.get("participantRef"),
+                participant_refs,
+            )
+        except ParticipantReferenceError:
+            participant_id = str(feature.get("participantRef") or "").strip()
+        title = " ".join(str(feature.get("title") or "").split())
+        if not participant_id or not title:
+            continue
+        wave = feature.get("wave")
+        normalized_wave = (
+            int(wave)
+            if isinstance(wave, int) and not isinstance(wave, bool) and wave > 0
+            else 1
+        )
+        resolved.append(
+            {
+                **dict(feature),
+                "title": title,
+                "participantId": participant_id,
+                "wave": normalized_wave,
+                "ordinal": ordinal,
+            }
+        )
+    return resolved
+
+
+def _planned_feature_assignments(
+    features: Sequence[Mapping[str, object]],
+    children: Sequence[Mapping[str, object]],
+    *,
+    task_for_dispatch: Callable[[Mapping[str, object]], Mapping[str, object]],
+) -> dict[str, tuple[dict[str, object], dict[str, object]]]:
+    """Map canonical child order back to each owner's approved feature order."""
+
+    by_owner: dict[str, list[Mapping[str, object]]] = {}
+    for feature in features:
+        by_owner.setdefault(str(feature.get("participantId") or ""), []).append(
+            feature
+        )
+    for owner_features in by_owner.values():
+        owner_features.sort(
+            key=lambda item: (int(item.get("wave") or 1), int(item.get("ordinal") or 0))
+        )
+
+    assigned_count: dict[str, int] = {}
+    assignments: dict[str, tuple[dict[str, object], dict[str, object]]] = {}
+    for child in children:
+        intent = str(child.get("intentKind") or "")
+        if intent not in {"execute", "revise"}:
+            continue
+        owner_id = str(child.get("targetParticipantId") or "")
+        owner_features = by_owner.get(owner_id, [])
+        position = assigned_count.get(owner_id, 0)
+        if intent == "revise":
+            if position == 0:
+                continue
+            feature = owner_features[position - 1]
+            assignments[str(feature["title"])] = (
+                dict(child),
+                dict(task_for_dispatch(child)),
+            )
+            continue
+        if position >= len(owner_features):
+            continue
+        feature = owner_features[position]
+        assigned_count[owner_id] = position + 1
+        assignments[str(feature["title"])] = (
+            dict(child),
+            dict(task_for_dispatch(child)),
+        )
+    return assignments
+
+
+def _planned_feature_is_complete(
+    assignment: tuple[Mapping[str, object], Mapping[str, object]] | None,
+) -> bool:
+    if assignment is None:
+        return False
+    dispatch, task = assignment
+    if str(dispatch.get("state") or "") != "committed":
+        return False
+    return not (
+        task.get("workspacePolicy") == "isolated_writable"
+        and task.get("workspaceIntegrationState") != "applied"
+    )
+
+
+def _planned_wave_blockers(
+    candidate: Mapping[str, object],
+    features: Sequence[Mapping[str, object]],
+    assignments: Mapping[
+        str,
+        tuple[Mapping[str, object], Mapping[str, object]],
+    ],
+) -> list[Mapping[str, object]]:
+    return [
+        item
+        for item in features
+        if int(item.get("wave") or 1) < int(candidate.get("wave") or 1)
+        and not _planned_feature_is_complete(
+            assignments.get(str(item.get("title") or ""))
+        )
+    ]
+
+
+def _public_planned_feature(feature: Mapping[str, object]) -> dict[str, object]:
+    return {
+        key: feature[key]
+        for key in (
+            "title",
+            "participantRef",
+            "ownerDisplayName",
+            "userOutcome",
+            "dependencies",
+            "wave",
+            "writeBoundary",
+        )
+        if key in feature
+    }
 
 
 def _collaboration_tool_result(

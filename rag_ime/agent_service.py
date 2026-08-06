@@ -4516,6 +4516,33 @@ class AgentService:
             "quiescence": quiescence,
         }
 
+    def _ensure_room_work_document(
+        self, payload: Mapping[str, object]
+    ) -> Mapping[str, object]:
+        return self.work_documents.ensure_room_work_item(
+            authority_id=str(payload.get("authorityId") or ""),
+            workspace_root=str(payload.get("workspaceRoot") or ""),
+            title=str(payload.get("title") or ""),
+            content=str(payload.get("content") or ""),
+        )
+
+    def _room_work_document_context(
+        self, root_id: str
+    ) -> Mapping[str, object] | None:
+        document = self.work_documents.room_root_context(root_id)
+        if document is not None:
+            return document
+        root = self.room_kernel.root(root_id)
+        room = self.rooms.get(str(root["roomId"]))
+        if (
+            str(room.get("roomKind") or "collaboration") == "collaboration"
+            and self.room_kernel.definition_fence(root_id=root_id) is not None
+        ):
+            raise RoomKernelFenceError(
+                "defined collaboration Room cannot prepare work without its WorkDocument"
+            )
+        return None
+
     def _bind_room_kernel_runtime(self, *, start_worker: bool = True) -> None:
         prior = getattr(self, "room_kernel_worker_loop", None)
         if prior is not None:
@@ -4548,6 +4575,7 @@ class AgentService:
             ),
             session_resolver=self.sessions.get,
             product_tool_manifest_provider=self._room_product_tool_manifests,
+            work_document_provider=self._room_work_document_context,
         )
         self.room_kernel_worker = RoomKernelWorker(
             self.room_kernel,
@@ -4592,6 +4620,7 @@ class AgentService:
             wake_worker=self.room_kernel_worker_loop.wake,
             restore_participant_sessions=self._restore_legacy_room_participant_sessions,
             resolve_attachments=self._resolve_room_attachments,
+            ensure_work_document=self._ensure_room_work_document,
         )
         self.room_kernel_application = RoomKernelApplicationService(
             rooms=self.rooms,

@@ -99,7 +99,7 @@ _SAFE_FULL_AUTO_TEXT_EFFECTS = frozenset(
 )
 _DESTRUCTIVE_PREVIEW = re.compile(
     r"(?i)(?:\brm\s+[^\n]*(?:-[^\n]*r|--recursive)|"
-    r"\bgit\s+(?:reset\s+--hard|clean\s+-[^\n]*f)|"
+    r"\bgit\s+(?:stash\b|checkout\b|restore\b|reset\b|clean\s+-[^\n]*f)|"
     r"\b(?:drop|truncate)\s+(?:table|database)\b|"
     r"\bdelete\s+from\b|\b(?:dd|mkfs|shred)\b)"
 )
@@ -225,7 +225,8 @@ def _safe_full_auto_command(
     expected_scope = workspace_scope_sha256(workspace_roots)
     cwd = str(action.get("cwd") or "").strip()
     preview_scope = str(
-        base_state.get("workspaceRootsSha256")
+        base_state.get("workspaceScopeSha256")
+        or base_state.get("workspaceRootsSha256")
         or base_state.get("workspaceRootSha256")
         or ""
     ).strip().lower()
@@ -280,7 +281,8 @@ def _safe_full_auto_text_change(
     workspace_roots = list(session.get("workspaceRoots") or [])
     expected_scope = workspace_scope_sha256(workspace_roots)
     preview_scope = str(
-        base_state.get("workspaceRootsSha256")
+        base_state.get("workspaceScopeSha256")
+        or base_state.get("workspaceRootsSha256")
         or base_state.get("workspaceRootSha256")
         or ""
     ).strip().lower()

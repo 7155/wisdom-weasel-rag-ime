@@ -71,6 +71,9 @@ class RoomKernelRuntimeCoordinator:
         product_tool_manifest_provider: Callable[
             [str], Mapping[str, Sequence[Mapping[str, object]]]
         ],
+        work_document_provider: Callable[
+            [str], Mapping[str, object] | None
+        ],
     ) -> None:
         self.db_path = Path(db_path)
         self.rooms = rooms
@@ -89,6 +92,7 @@ class RoomKernelRuntimeCoordinator:
             accepted_evidence_provider=(
                 kernel.accepted_evidence_by_criterion
             ),
+            work_document_provider=work_document_provider,
         )
         self.learning = learning
         self.learning_runtime = learning_runtime

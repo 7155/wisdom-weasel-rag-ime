@@ -46,9 +46,13 @@ class RoomTaskContextProjector:
         accepted_evidence_provider: Callable[
             [str], Mapping[str, Sequence[object]]
         ] | None = None,
+        work_document_provider: Callable[
+            [str], Mapping[str, object] | None
+        ] | None = None,
     ) -> None:
         self.requirements = requirements
         self.accepted_evidence_provider = accepted_evidence_provider
+        self.work_document_provider = work_document_provider
 
     def render(
         self,
@@ -118,6 +122,12 @@ class RoomTaskContextProjector:
             if self.accepted_evidence_provider is not None
             else {}
         )
+        work_document = (
+            self.work_document_provider(str(dispatch["rootId"]))
+            if self.work_document_provider is not None
+            and str(dispatch.get("intentKind") or "") != "align"
+            else None
+        )
         criteria = [
             _acceptance_criterion(
                 catalog_criteria[criterion_id],
@@ -166,6 +176,7 @@ class RoomTaskContextProjector:
                 room_id=room_id,
                 root_id=str(dispatch["rootId"]),
             ),
+            "workDocument": _work_document_projection(work_document),
             "requirements": {
                 "original": originals,
                 "catalogRevisionId": (
@@ -253,6 +264,95 @@ class RoomTaskContextProjector:
                 raise RoomKernelFenceError(
                     f"Room task context binding mismatch: {key}"
                 )
+
+
+def _work_document_projection(
+    document: Mapping[str, object] | None,
+) -> dict[str, object] | None:
+    if document is None:
+        return None
+    required = (
+        "documentId",
+        "authorityKey",
+        "authorityId",
+        "canonicalPath",
+        "path",
+        "contentSha256",
+        "state",
+    )
+    if any(not str(document.get(key) or "").strip() for key in required):
+        raise RoomKernelFenceError(
+            "Room WorkDocument projection is incomplete"
+        )
+    snapshot = document.get("snapshot")
+    if not isinstance(snapshot, Mapping):
+        raise RoomKernelFenceError(
+            "Room WorkDocument projection has no bounded snapshot"
+        )
+    if str(snapshot.get("contentSha256") or "") != str(
+        document.get("contentSha256") or ""
+    ):
+        raise RoomKernelFenceError(
+            "Room WorkDocument snapshot hash does not match its projection"
+        )
+    snapshot_content = str(snapshot.get("content") or "")
+    included_byte_count = int(
+        snapshot.get("includedByteCount") or 0
+    )
+    if (
+        len(snapshot_content.encode("utf-8")) != included_byte_count
+        or included_byte_count > 65_536
+    ):
+        raise RoomKernelFenceError(
+            "Room WorkDocument snapshot exceeds its bounded byte contract"
+        )
+    return {
+        "documentId": bounded_text(
+            document.get("documentId"), maximum=80
+        ),
+        "authority": {
+            "kind": bounded_text(
+                document.get("authorityKind"), maximum=40
+            ),
+            "id": bounded_text(
+                document.get("authorityId"), maximum=240
+            ),
+            "key": bounded_text(
+                document.get("authorityKey"), maximum=320
+            ),
+            "revision": int(document.get("authorityRevision") or 0),
+        },
+        "workspaceRoot": bounded_text(
+            document.get("workspaceRoot"), maximum=2_000
+        ),
+        "path": bounded_text(document.get("path"), maximum=1_000),
+        "canonicalPath": bounded_text(
+            document.get("canonicalPath"), maximum=3_000
+        ),
+        "contentSha256": bounded_text(
+            document.get("contentSha256"), maximum=128
+        ),
+        "documentRevision": int(
+            document.get("documentRevision") or 0
+        ),
+        "state": bounded_text(document.get("state"), maximum=40),
+        "snapshot": {
+            "content": snapshot_content,
+            "contentSha256": bounded_text(
+                snapshot.get("contentSha256"), maximum=128
+            ),
+            "byteCount": int(snapshot.get("byteCount") or 0),
+            "includedByteCount": included_byte_count,
+            "maximumBytes": int(snapshot.get("maximumBytes") or 0),
+            "truncated": bool(snapshot.get("truncated")),
+            "readOnly": True,
+        },
+        "updatePolicy": {
+            "singleWriter": "facilitator_integration_workspace",
+            "peerContribution": "return_bounded_delta_in_handoff",
+            "parallelCopiesForbidden": True,
+        },
+    }
 
 
 def _workspace_ledger_projection(

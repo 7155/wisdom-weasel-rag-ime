@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from rag_ime.agent_execution_policy import (
     APPROVAL_ASK,
@@ -18,6 +20,7 @@ from rag_ime.agent_execution_policy import (
     workspace_scope_is_granted,
     workspace_scope_sha256,
 )
+from rag_ime.agent_workspace import WorkspaceHarness
 
 
 class AgentExecutionPolicyTests(unittest.TestCase):
@@ -177,6 +180,7 @@ class AgentExecutionPolicyTests(unittest.TestCase):
         )
         for command in (
             "rm -rf /workspace/project/cache",
+            "git stash push --include-untracked",
             "cat /workspace/project/.env",
             "curl https://example.test",
         ):
@@ -214,6 +218,59 @@ class AgentExecutionPolicyTests(unittest.TestCase):
             ),
             APPROVAL_MODEL,
         )
+
+    def test_full_auto_accepts_real_workspace_command_preview_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory).resolve()
+            session = {
+                "mode": "coordinator",
+                "executionMode": FULL_TRUST_EXECUTION_MODE,
+                "toolProfileVersion": "control-center-v1",
+                "workspaceRoots": [str(root)],
+                "workspaceScopeSha256": workspace_scope_sha256([str(root)]),
+                "workspaceScopeGrantedAtMs": 100,
+            }
+            harness = WorkspaceHarness()
+            prepared = harness.prepare_command(
+                session,
+                {
+                    "command": "git status --short",
+                    "cwd": str(root),
+                    "allowNetwork": False,
+                },
+            )
+            preview = harness.preview(prepared)
+
+            self.assertEqual(
+                approval_strategy(
+                    session,
+                    tool="workspace_shell",
+                    operation="run",
+                    preview=preview,
+                    risk_level="R2",
+                ),
+                APPROVAL_AUTO,
+            )
+            write_preview = harness.write_preview(
+                harness.prepare_write(
+                    session,
+                    {
+                        "path": str(root / "created.py"),
+                        "resourceRevision": "missing",
+                        "content": "value = 1\n",
+                    },
+                )
+            )
+            self.assertEqual(
+                approval_strategy(
+                    session,
+                    tool="workspace_write",
+                    operation="apply",
+                    preview=write_preview,
+                    risk_level="R2",
+                ),
+                APPROVAL_AUTO,
+            )
 
     def test_full_auto_skips_model_review_for_hash_bound_scoped_text_changes(self) -> None:
         roots = ["/workspace/project"]

@@ -8994,10 +8994,14 @@ class RoomKernelServiceTests(unittest.TestCase):
     def test_clarified_definition_waits_for_one_typed_start_action(
         self,
     ) -> None:
+        original_request = (
+            "请先确认输出边界，再开始实现。\n\n"
+            "原始愿景里的空行和 `代码` 必须逐字保留。"
+        )
         accepted = self.service.post_room_message(
             self.room_id,
             {
-                "message": "请先确认输出边界，再开始实现。",
+                "message": original_request,
                 "clientMessageId": "client:typed-start-intake",
             },
         )
@@ -9381,6 +9385,13 @@ class RoomKernelServiceTests(unittest.TestCase):
             "rootId": accepted["rootId"],
             "clientActionId": "action:typed-start",
         }
+        with self.assertRaisesRegex(
+            RoomKernelFenceError,
+            "cannot prepare work without its WorkDocument",
+        ):
+            self.service._room_work_document_context(
+                str(accepted["rootId"])
+            )
         with patch.object(
             self.service.room_public_timeline,
             "publish_ingress",
@@ -9555,6 +9566,60 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         self.assertTrue(started["created"])
         self.assertFalse(replay["created"])
+        self.assertEqual(
+            replay["workDocument"]["documentId"],
+            started["workDocument"]["documentId"],
+        )
+        with sqlite3.connect(self.service.db_path) as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM work_documents d "
+                    "JOIN agent_room_work_items w ON w.id=d.authority_id "
+                    "WHERE w.root_turn_id=?",
+                    (str(accepted["rootId"]),),
+                ).fetchone()[0],
+                1,
+            )
+        work_document = self.service._room_work_document_context(
+            str(accepted["rootId"])
+        )
+        self.assertIsNotNone(work_document)
+        assert work_document is not None
+        work_document_text = Path(
+            str(work_document["canonicalPath"])
+        ).read_text(encoding="utf-8")
+        self.assertIn("## 原始用户愿景", work_document_text)
+        self.assertIn("## 已确认目标", work_document_text)
+        self.assertIn("## 已批准执行计划", work_document_text)
+        self.assertIn("## 当前进度", work_document_text)
+        self.assertIn("## 证据", work_document_text)
+        self.assertIn("## 失败与恢复", work_document_text)
+        self.assertIn("## 下一步", work_document_text)
+        self.assertIn("不得另建副本文档", work_document_text)
+        self.assertIn(original_request, work_document_text)
+        with (
+            patch.object(
+                self.service.room_application,
+                "ensure_work_document",
+                side_effect=RuntimeError("WorkDocument unavailable"),
+            ),
+            patch.object(
+                self.service.room_application,
+                "wake_worker",
+            ) as wake_worker,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "WorkDocument unavailable",
+            ):
+                self.service.start_room_execution(
+                    self.room_id,
+                    {
+                        **start_payload,
+                        "clientActionId": "action:typed-start-doc-failure",
+                    },
+                )
+            wake_worker.assert_not_called()
         self.assertEqual(started["post"]["content"], "开始行动")
         self.assertEqual(replay["post"], started["post"])
         chronology = started["post"]["chronology"]
