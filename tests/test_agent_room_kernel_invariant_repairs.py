@@ -528,6 +528,104 @@ class RoomKernelInvariantRepairTests(unittest.TestCase):
                 )
                 self.assertEqual(self.store.root("root:1")["state"], "running")
 
+    def test_completed_managed_retry_recovers_exact_external_wait(self) -> None:
+        self._seed_root(facilitator_id="participant:a")
+        self.store.create_task(
+            child_task(
+                "task:retry",
+                parent="task:1",
+                target="participant:b",
+            ),
+            now_ms=2,
+        )
+        waiter = dispatch(
+            "dispatch:waiter",
+            key="waiter",
+            target="participant:a",
+        )
+        retry = {
+            **dispatch(
+                "dispatch:managed-retry",
+                key="managed-retry",
+                target="participant:b",
+                hop=1,
+                depth=1,
+                parent="dispatch:waiter",
+                task_id="task:retry",
+            ),
+            "intentKind": "retry",
+        }
+        self.store.enqueue_dispatches((waiter, retry), now_ms=3)
+        self.store.set_dispatch_wait_state(
+            "dispatch:waiter",
+            "running",
+            now_ms=4,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:managed-retry",
+            "running",
+            now_ms=4,
+        )
+        wait_post = {
+            **post_proposal(
+                "commit:waiter",
+                "dispatch:waiter",
+                task_id="task:1",
+                author="participant:a",
+            ),
+            "kind": "wait",
+        }
+        waiting = {
+            **commit("commit:waiter", "dispatch:waiter", coverage=()),
+            "action": "post",
+            "postProposal": wait_post,
+            "continuation": {
+                "decision": "wait",
+                "waitingFor": "external",
+                "resumeCondition": "受管重试返回结果",
+            },
+        }
+        waiting["qualityGateReceipt"] = {
+            **waiting["qualityGateReceipt"],
+            "verdict": "not_ready",
+        }
+        self.store.apply_commit(
+            waiting,
+            generation=0,
+            now_ms=5,
+            post_proposal=wait_post,
+        )
+        RoomContextLedgerStore(self.db_path).publish_post(wait_post)
+
+        retry_post = post_proposal(
+            "commit:managed-retry",
+            "dispatch:managed-retry",
+            task_id="task:retry",
+            author="participant:b",
+        )
+        retry_commit = {
+            **commit(
+                "commit:managed-retry",
+                "dispatch:managed-retry",
+                task_id="task:retry",
+            ),
+            "action": "post",
+            "postProposal": retry_post,
+            "continuation": {"decision": "complete"},
+        }
+        receipt = self.store.apply_commit(
+            retry_commit,
+            generation=0,
+            now_ms=6,
+            post_proposal=retry_post,
+        )
+
+        resumed = receipt["details"]["resumedDispatchIds"]
+        self.assertEqual(len(resumed), 1)
+        continuation = self.store.continuation("commit:waiter")
+        self.assertEqual(continuation["state"], "resumed")
+        self.assertEqual(continuation["childDispatchId"], resumed[0])
+
     def test_bad_wait_row_does_not_hide_later_ready_wait(self) -> None:
         self._seed_participant_wait()
         self.store.create_task(

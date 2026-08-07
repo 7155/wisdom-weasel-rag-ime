@@ -3666,12 +3666,33 @@ class RoomKernelStore:
                 # Compatibility with waits resumed before resumeDispatchId was
                 # persisted in the continuation payload.
                 continue
+            managed_retry_dependency = (
+                _managed_external_retry_wait_dependency(
+                    conn,
+                    continuation,
+                    payload,
+                )
+            )
             if payload.get("waitingFor") != "participant":
-                continue
-            runtime_authorized = _participant_wait_runtime_authorized(
-                conn,
-                continuation,
-                payload,
+                if managed_retry_dependency is None:
+                    continue
+                payload = {
+                    **payload,
+                    "waitingFor": "participant",
+                    "waitingForParticipantId": managed_retry_dependency[
+                        "participantId"
+                    ],
+                    "waitingForDispatchId": managed_retry_dependency[
+                        "dispatchId"
+                    ],
+                }
+            runtime_authorized = (
+                managed_retry_dependency is not None
+                or _participant_wait_runtime_authorized(
+                    conn,
+                    continuation,
+                    payload,
+                )
             )
             historical_recovery_required = (
                 _historical_participant_wait_requires_recovery(
@@ -4015,6 +4036,23 @@ class RoomKernelStore:
             )
             conn.execute("SAVEPOINT room_participant_wait_resume")
             try:
+                recovery_receipt: dict[str, object] | None = None
+                if managed_retry_dependency is not None:
+                    recovery_receipt = self._receipt(
+                        conn,
+                        root_id=root_id,
+                        command_id=None,
+                        receipt_kind="accepted",
+                        status="applied",
+                        generation=int(generation),
+                        details={
+                            "purpose": "managed_external_wait_recovered",
+                            "continuationId": continuation_id,
+                            "dependencyDispatchId": dependency_id,
+                            "dependencyParticipantId": participant_id,
+                        },
+                        now_ms=now_ms,
+                    )
                 outcome_receipt: dict[str, object] | None = None
                 if dependency_terminal:
                     outcome_receipt = self._receipt(
@@ -4051,6 +4089,8 @@ class RoomKernelStore:
                     "triggerId": (
                         str(outcome_receipt["receiptId"])
                         if outcome_receipt is not None
+                        else str(recovery_receipt["receiptId"])
+                        if recovery_receipt is not None
                         else continuation_id
                     ),
                     "intentKind": "resume",
@@ -4077,6 +4117,10 @@ class RoomKernelStore:
                 materialized_payload["resumeDispatchId"] = str(
                     child["dispatchId"]
                 )
+                if recovery_receipt is not None:
+                    materialized_payload["managedWaitRecoveryReceiptId"] = str(
+                        recovery_receipt["receiptId"]
+                    )
                 if outcome_receipt is not None:
                     materialized_payload.update(
                         {
@@ -14973,6 +15017,118 @@ def _participant_wait_runtime_authorized(
             str(raw_continuation.get("waitingForDispatchId") or "").strip()
         )
     )
+
+
+def _managed_external_retry_wait_dependency(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    payload: Mapping[str, object],
+) -> dict[str, str] | None:
+    """Recover one current-v4 external wait bound to its exact managed retry."""
+
+    if (
+        str(row["decision"] or "") != "wait"
+        or payload.get("waitingFor") != "external"
+        or row["child_dispatch_id"] is not None
+    ):
+        return None
+    commit_row = conn.execute(
+        "SELECT payload_json FROM room_kernel_commits WHERE commit_id=?",
+        (row["commit_id"],),
+    ).fetchone()
+    if commit_row is None:
+        return None
+    try:
+        raw_commit = json.loads(str(commit_row["payload_json"]))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    raw_continuation = (
+        raw_commit.get("continuation")
+        if isinstance(raw_commit, Mapping)
+        else None
+    )
+    if (
+        not isinstance(raw_commit, Mapping)
+        or raw_commit.get("schemaVersion") != ROOM_COMMIT_SCHEMA_VERSION
+        or str(raw_commit.get("dispatchId") or "")
+        != str(row["parent_dispatch_id"])
+        or not isinstance(raw_continuation, Mapping)
+        or raw_continuation.get("decision") != "wait"
+        or raw_continuation.get("waitingFor") != "external"
+    ):
+        return None
+    parent = conn.execute(
+        """SELECT * FROM room_kernel_dispatches
+           WHERE dispatch_id=? AND root_id=?""",
+        (row["parent_dispatch_id"], row["root_id"]),
+    ).fetchone()
+    root = conn.execute(
+        "SELECT facilitator_participant_id,generation FROM room_kernel_roots WHERE root_id=?",
+        (row["root_id"],),
+    ).fetchone()
+    task = conn.execute(
+        "SELECT payload_json FROM room_kernel_tasks WHERE task_id=? AND root_id=?",
+        (row["task_id"], row["root_id"]),
+    ).fetchone()
+    if parent is None or root is None or task is None:
+        return None
+    try:
+        parent_payload = _dispatch_payload(parent)
+        task_payload = json.loads(str(task["payload_json"]))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if (
+        not isinstance(task_payload, Mapping)
+        or task_payload.get("parentTaskId") is not None
+        or str(parent["target_participant_id"])
+        != str(root["facilitator_participant_id"])
+        or str(parent["intent_kind"]) not in {"execute", "resume"}
+        or int(parent["generation"]) != int(root["generation"])
+    ):
+        return None
+    candidates = conn.execute(
+        """SELECT dispatch.*
+           FROM room_kernel_dispatches dispatch
+           JOIN room_kernel_tasks task ON task.task_id=dispatch.task_id
+           WHERE dispatch.root_id=?
+             AND dispatch.parent_dispatch_id=?
+             AND dispatch.intent_kind='retry'
+             AND dispatch.target_participant_id!=?
+             AND dispatch.task_id!=?
+             AND dispatch.generation=?
+             AND dispatch.created_at_ms<=?
+             AND dispatch.updated_at_ms>?
+             AND (
+               dispatch.state IN ('failed','cancelled','unknown')
+               OR (
+                 dispatch.state='committed'
+                 AND task.state IN ('completed','blocked','failed','cancelled')
+               )
+             )
+           ORDER BY dispatch.created_at_ms,dispatch.dispatch_id""",
+        (
+            row["root_id"],
+            row["parent_dispatch_id"],
+            parent["target_participant_id"],
+            row["task_id"],
+            int(root["generation"]),
+            int(row["created_at_ms"]),
+            int(row["created_at_ms"]),
+        ),
+    ).fetchall()
+    same_wave = [
+        candidate
+        for candidate in candidates
+        if int(_dispatch_payload(candidate).get("capabilityEpoch") or 0)
+        == int(parent_payload.get("capabilityEpoch") or 0)
+    ]
+    if len(same_wave) != 1:
+        return None
+    candidate = same_wave[0]
+    return {
+        "dispatchId": str(candidate["dispatch_id"]),
+        "participantId": str(candidate["target_participant_id"]),
+    }
 
 
 def _historical_participant_wait_requires_recovery(

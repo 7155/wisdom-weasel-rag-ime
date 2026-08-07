@@ -524,6 +524,7 @@ class RoomSettleLifecycleService:
         *,
         decision: str,
         handoff_intent: str = "",
+        waiting_for: str = "",
         root: Mapping[str, object],
         task: Mapping[str, object],
         dispatch: Mapping[str, object],
@@ -535,6 +536,29 @@ class RoomSettleLifecycleService:
             # pre-report Facilitator gate would make the report Task itself
             # appear as a post-review artifact change.
             return
+        if (
+            decision == "wait"
+            and waiting_for == "external"
+            and not task.get("parentTaskId")
+            and str(dispatch.get("intentKind") or "") != "align"
+            and str(dispatch.get("targetParticipantId") or "")
+            == str(root.get("facilitatorParticipantId") or "")
+        ):
+            for candidate_id in self.kernel.active_capability_peer_dispatch_ids(
+                str(dispatch.get("dispatchId") or "")
+            ):
+                candidate = self.kernel.dispatch(candidate_id)
+                if str(candidate.get("intentKind") or "") == "align":
+                    continue
+                candidate_participant_id = str(
+                    candidate.get("targetParticipantId") or ""
+                )
+                if not candidate_participant_id:
+                    continue
+                raise _RoomCommitParticipantWait(
+                    participant_id=candidate_participant_id,
+                    dispatch_id=candidate_id,
+                )
         is_final_delivery = decision == "deliver"
         is_review_handoff = (
             decision == "handoff" and handoff_intent == "review"
@@ -1511,6 +1535,7 @@ class RoomSettleLifecycleService:
             self._assert_managed_collaboration_ready(
                 decision=decision,
                 handoff_intent=handoff_intent,
+                waiting_for=str(arguments.get("waitingFor") or "").strip(),
                 root=root,
                 task=task,
                 dispatch=dispatch,

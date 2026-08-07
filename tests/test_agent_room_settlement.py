@@ -1822,6 +1822,81 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             {"prompt": "请补充必要信息。", "options": []},
         )
 
+    def test_external_wait_converges_to_active_managed_retry(self) -> None:
+        """A managed retry must wake the Root instead of leaving an external wait."""
+
+        self.service.room_kernel.create_task(
+            {
+                "schemaVersion": ROOM_TASK_SCHEMA_VERSION,
+                "taskId": "task:managed-retry",
+                "rootId": "root:settle",
+                "parentTaskId": "task:settle",
+                "taskKind": "work",
+                "currentOwnerParticipantId": str(self.target["id"]),
+                "ownershipRevision": 0,
+                "ownershipReceiptId": None,
+                "invitationId": None,
+                "reviewState": "not_required",
+                "reviewOfTaskIds": [],
+                "reviewAuthorParticipantIds": [],
+                "contextEvidenceRefs": [],
+                "objective": "完成受管重试",
+                "expectedOutput": "公开重试结果",
+                "requirementItemIds": ["requirement:settle"],
+                "acceptanceCriterionIds": ["criterion:settle"],
+                "revision": 0,
+                "state": "active",
+            },
+            now_ms=self.now_ms + 3,
+        )
+        self.service.room_kernel.enqueue_dispatch(
+            {
+                "schemaVersion": DISPATCH_ENVELOPE_SCHEMA_VERSION,
+                "dispatchId": "dispatch:managed-retry",
+                "rootId": "root:settle",
+                "taskId": "task:managed-retry",
+                "parentDispatchId": "dispatch:settle",
+                "generation": 0,
+                "hopCount": 1,
+                "depth": 1,
+                "budgetCost": 1,
+                "targetSessionId": str(self.target["sessionId"]),
+                "targetParticipantId": str(self.target["id"]),
+                "triggerId": "trigger:managed-retry",
+                "intentKind": "retry",
+                "idempotencyKey": "dispatch:managed-retry",
+                "attempt": 1,
+                "capabilityEpoch": 7,
+                "runtimeProfileRevision": "runtime-profile:settle-v1",
+                "state": "pending",
+            },
+            now_ms=self.now_ms + 4,
+        )
+
+        self._invoke_commit(
+            "wait",
+            waitingFor="external",
+            resumeCondition="受管重试返回结果",
+        )
+        settled = self._settle()
+
+        self.assertEqual(settled["state"], "committed")
+        commit_id = str(
+            settled["settleResult"]["receipt"]["details"]["commitId"]
+        )
+        continuation = self.service.room_kernel.continuation(commit_id)[
+            "payload"
+        ]
+        self.assertEqual(continuation["waitingFor"], "participant")
+        self.assertEqual(
+            continuation["waitingForParticipantId"],
+            self.target["id"],
+        )
+        self.assertEqual(
+            continuation["waitingForDispatchId"],
+            "dispatch:managed-retry",
+        )
+
     def test_non_facilitator_cannot_publish_a_user_question(self) -> None:
         self._invoke_commit(
             "wait",
