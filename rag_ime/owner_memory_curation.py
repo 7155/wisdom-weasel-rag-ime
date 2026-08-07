@@ -81,6 +81,11 @@ _FILLER_RE = re.compile(
     r"^(?:(?:嗯+|呃+|额+|啊+|哦+|唉+|那个|这个|然后|就是|对对对|好好好|行行行)[，。！？、,.!?\s]*)+$",
     re.IGNORECASE,
 )
+_REFERENTIAL_FRAGMENT_RE = re.compile(
+    r"^(?:这|那|这个|那个|它|他|她|它们|他们|她们|这些|那些|这里|那里|"
+    r"这边|那边|这样|那样)(?:呢|吧|啊|呀)?[，。！？、,.!?\s]*$",
+    re.IGNORECASE,
+)
 _RANDOM_INPUT_RE = re.compile(r"^[\W_]*$|^[a-z0-9]{1,3}$", re.IGNORECASE)
 _RUNTIME_PROBE_RE = re.compile(
     r"(?:测试一下|test(?:ing)?\s*(?:123)?|hello\s*world|ceshiwendang|"
@@ -98,7 +103,7 @@ _FAILED_TOOL_RECEIPT_RE = re.compile(
 )
 _TRANSIENT_USER_COMMAND_RE = re.compile(
     r"^(?:请)?(?:继续|重试|再试(?:一次)?|刷新|打开|关闭|点击|滚动|切换|"
-    r"合并|提交|编译|安装|运行|检查|看一下|读一下|删除)(?:一下|这个|该|当前)?"
+    r"修改|改|修复|合并|提交|编译|安装|运行|检查|看一下|读一下|删除)(?:一下|这个|该|当前)?"
     r"[^。！？!?]{0,36}[。！？!?]?$",
     re.IGNORECASE,
 )
@@ -602,8 +607,7 @@ class OwnerMemoryCurator:
                     for event_id in item.get("sourceEventIds") or []
                     if isinstance(event_id, int)
                 ]
-                model_bundle = _with_owner_bundle_hash(
-                    {
+                model_bundle_payload = {
                         **bundle,
                         **existing_memory_context,
                         "inputs": model_inputs,
@@ -616,6 +620,7 @@ class OwnerMemoryCurator:
                                 "createdAtMs": item["createdAtMs"],
                                 "sourceOccurredAtMs": item["sourceOccurredAtMs"],
                                 "text": item["text"],
+                                "recentContext": item.get("recentContext", ""),
                                 "source": item["source"],
                                 "project": item["project"],
                                 "app": item["app"],
@@ -629,7 +634,6 @@ class OwnerMemoryCurator:
                             for item in model_inputs
                             for evidence_id in _input_evidence_ids(item)
                         ],
-                        "curationRunId": run_id,
                         "cursor": {
                             **dict(bundle.get("cursor") or {}),
                             "toSourceCreatedAtMs": boundary[0],
@@ -638,11 +642,26 @@ class OwnerMemoryCurator:
                             "batchSourceCount": len(model_inputs),
                         },
                     }
+                model_run_id = _owner_model_run_id(
+                    owner[0],
+                    owner[1],
+                    self.project,
+                    model_bundle_payload,
+                )
+                model_bundle = _with_owner_bundle_hash(
+                    {
+                        **model_bundle_payload,
+                        # This identity belongs to the frozen model request,
+                        # not to a single application attempt. A retry after
+                        # backoff must reopen the database-owned request rather
+                        # than create a fresh Pi Session for the same packet.
+                        "curationRunId": model_run_id,
+                    }
                 )
                 begin_model_run = getattr(self.organizer, "begin_run", None)
                 if callable(begin_model_run):
                     begin_model_run(
-                        run_id,
+                        model_run_id,
                         frozen_input_sha256=hashlib.sha256(
                             json.dumps(
                                 model_bundle,
@@ -4272,6 +4291,8 @@ def _deterministic_disposition(item: Mapping[str, object]) -> str | None:
         return reason
     if _FILLER_RE.fullmatch(text):
         return "input_noise_filler"
+    if _REFERENTIAL_FRAGMENT_RE.fullmatch(text):
+        return "referential_input_fragment"
     if len(text) <= 8 and _RANDOM_INPUT_RE.fullmatch(text):
         return "random_key_input"
     if len(text) <= 80 and _RUNTIME_PROBE_RE.search(text):
@@ -4313,36 +4334,39 @@ def _deterministic_personal_v2_disposition(
         return reason
     if contains_sensitive_content(text):
         return "sensitive_input"
-    if (
+    historical_reconstruction = (
         compact_whitespace(str(item.get("evidenceOriginKind") or ""))
         == "legacy_untyped_input"
         and compact_whitespace(str(item.get("source") or ""))
         == "reconstructed_user_input"
+    )
+    quality = assess_input_text(
+        text,
+        source=FINALIZED_INPUT_SOURCE,
+        finalized=True,
+        tags=("finalized", "complete-input"),
+    )
+    quality_reasons = set(quality.reasons)
+    for reason in (
+        "empty",
+        "symbols_only",
+        "repeated_noise",
+        "known_low_signal_fragment",
+        "isolated_ascii_token",
+        "short_cjk_fragment",
+        "single_word",
+        "incomplete_expression",
+        "insufficient_durable_signal",
     ):
-        quality = assess_input_text(
-            text,
-            source=FINALIZED_INPUT_SOURCE,
-            finalized=True,
-            tags=("finalized", "complete-input"),
-        )
-        quality_reasons = set(quality.reasons)
-        for reason in (
-            "empty",
-            "symbols_only",
-            "repeated_noise",
-            "known_low_signal_fragment",
-            "isolated_ascii_token",
-            "short_cjk_fragment",
-            "single_word",
-            "incomplete_expression",
-            "insufficient_durable_signal",
+        if reason in quality_reasons or (
+            reason == "incomplete_expression" and not quality.injectable
         ):
-            if reason in quality_reasons or (
-                reason == "incomplete_expression" and not quality.injectable
-            ):
-                return f"historical_reconstruction_{reason}"
+            prefix = "historical_reconstruction_" if historical_reconstruction else ""
+            return f"{prefix}{reason}"
     if _FILLER_RE.fullmatch(text):
         return "input_noise_filler"
+    if _REFERENTIAL_FRAGMENT_RE.fullmatch(text):
+        return "referential_input_fragment"
     if len(text) <= 8 and _RANDOM_INPUT_RE.fullmatch(text):
         return "random_key_input"
     if len(text) <= 80 and _RUNTIME_PROBE_RE.search(text):
@@ -4603,6 +4627,29 @@ def _owner(owner_kind: object, owner_id: object) -> tuple[str, str]:
 def _owner_run_id(owner_kind: str, owner_id: str, current_ms: int) -> str:
     owner_hash = hashlib.sha256(f"{owner_kind}\0{owner_id}".encode("utf-8")).hexdigest()[:10]
     return f"memory_book_owner_{current_ms}_{owner_hash}_{uuid.uuid4().hex[:8]}"
+
+
+def _owner_model_run_id(
+    owner_kind: str,
+    owner_id: str,
+    project: str,
+    frozen_payload: Mapping[str, object],
+) -> str:
+    payload = dict(frozen_payload)
+    payload.pop("bundleHash", None)
+    payload.pop("curationRunId", None)
+    input_hash = hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    owner_hash = hashlib.sha256(
+        f"{owner_kind}\0{owner_id}\0{project}".encode("utf-8")
+    ).hexdigest()[:10]
+    return f"memory_model_owner_{owner_hash}_{input_hash[:24]}"
 
 
 def _legal_ints(value: object, legal: set[int]) -> list[int]:

@@ -3,13 +3,13 @@
 - Document class: sole tracked authority for current Room product behavior and acceptance status
 - Approved vision window: user decisions made on or after 2026-08-02
 - Contract revision: 2026-08-07 23:10 CST
-- Acceptance state: the current worktree now implements one frontend `RoomScreenModel`; pure wait/settlement/scheduling policies; transactional domain-event/Outbox writes with lease-token fencing, expired-lease recovery, projection-before-wake ordering and per-Room isolation; Start-time PlanRevision/WorkDocument/RoomTask materialization; dependency-frontier release; scoped integration and review Tasks; same-Root execution-time corrections; and an affected-dependency-closure PlanRevision replacement that leaves unrelated work running. Pi Runtime SDK v2 source is pinned to pushed commit `3e2bac77319571ac0047a83529aae241db4b88a3`, and PAW uses exact `session.settlement.get`/`session.await_settled` recovery with fenced Session/transcript binding checks. PAW parent commit `9467dab096e8699e2f8597d1c6d9af681cf7c312` was pushed and clean-installed with that Pi build; staged/source/install audits passed. A fresh GUI Room proved immediate user-message and compact attributed progress rendering, then exposed a real first-run fault before Provider acknowledgement: Pi had allocated but not yet materialized the transcript, a Room-mode reopen produced a new provisional Pi ID at the same path, and PAW incorrectly treated it as history migration. The follow-up now allows exactly that pre-materialization rebind while keeping every materialized transcript fail-closed; Pi Runtime v2 `89/89` and adjacent Session/build/install/kill-gate `124/124` pass. This follow-up still needs a clean commit, reinstall and a complete TUI Room/ordinary-Session foreground journey. Backup, canonical consolidation and cleanup are also pending. The managed `tests/test_duplicates.py` conflict remains isolated legacy evidence and must not be mixed into this migration.
+- Acceptance state: the current worktree now implements one frontend `RoomScreenModel`; pure wait/settlement/scheduling policies; transactional domain-event/Outbox writes with lease-token fencing, expired-lease recovery, projection-before-wake ordering and per-Room isolation; Start-time PlanRevision/WorkDocument/RoomTask materialization; dependency-frontier release; scoped integration and review Tasks; same-Root execution-time corrections; and an affected-dependency-closure PlanRevision replacement that leaves unrelated work running. Pi Runtime SDK v2 follow-up source is pushed at `30a802eed089f923633a99fab1428847dda20cc9`, while the installed Pi baseline remains `3e2bac77319571ac0047a83529aae241db4b88a3`; PAW uses exact `session.settlement.get`/`session.await_settled` recovery with fenced Session/transcript binding checks. PAW baseline `ca942020aba5aee7c03a6c046e2fe1a0682b4742` was pushed and clean-installed with the older Pi baseline; staged/source/install audits passed. A fresh GUI Room proved immediate user-message and compact attributed progress rendering, then exposed a real first-run fault before Provider acknowledgement: Pi had allocated but not yet materialized the transcript, a Room-mode reopen produced a new provisional Pi ID at the same path, and PAW incorrectly treated it as history migration. The follow-up now allows exactly that pre-materialization rebind while keeping every materialized transcript fail-closed; Pi Runtime v2 `90/90` and adjacent Session/build/install/kill-gate `136/136` pass. The PAW follow-up still needs a clean commit, reinstall and a complete TUI Room/ordinary-Session foreground journey. Backup, canonical consolidation and cleanup are also pending. The managed `tests/test_duplicates.py` conflict remains isolated legacy evidence and must not be mixed into this migration.
 - Status rule: source, test, installed, and foreground evidence are reported separately
 
 ### Current follow-up evidence
 
-- The architecture baseline was clean-installed from PAW `9467dab0` with Pi
-  `3e2bac77`; the current first-transcript correction is a working-tree checkpoint.
+- The current installed baseline is PAW `ca942020` with Pi `3e2bac77`; the Pi
+  follow-up is pushed at `30a802ee` and the PAW follow-up remains a working-tree checkpoint.
   `RoomScreenModel` is the sole frontend selector for active Root, phase, wait,
   frontier, readiness and final identity. The single-worker complete frontend
   run passes `105 files / 1020 tests`; focused selector coverage and TypeScript
@@ -1654,3 +1654,36 @@ PAW 的 protocol v2 接入必须满足：
 Room 捕获并修复了上述未物化 transcript 边界。仍必须从包含该修复的 clean
 PAW commit 重装，并完成已有 Session 原位恢复、普通聊天和真实 TUI Room
 GUI 验收后，才能声称产品迁移完成。
+
+## 22. Pi v2 的全产品消费者迁移门禁（2026-08-07）
+
+Pi Runtime SDK v2 不是只为 Room 服务。升级只有在所有真实消费者都遵守
+同一执行、取消和结算边界后才完成：
+
+- 普通 Session、Room Dispatch 和 Goal/Continuation 通过同一个
+  `PiRuntimeHostManager` 消费精确 Turn settlement。任何 V2 receipt 缺失、
+  identity 漂移或仍有 pending operation 都失败关闭；不得由调用方重新用
+  `isIdle` 猜测。
+- Memory curation 的业务 run/request 仍由 PAW SQLite 持有；每次模型请求
+  必须把 `pi.agent-settled.v2` 写入 Memory receipt。只有
+  `disposition=completed` 且 operation 为零时才能完成 request；缺失或异常
+  receipt 保持 resumable。相同冻结 Evidence packet 重试必须复用稳定 model
+  run 与内部 Session，不能每次另开 transcript。
+- 无状态 completion（前台 Agent surface、审批模型等）必须有独立顶层
+  RunScope。超时先按 `requestId` 调 `completion.cancel`；只有局部取消通道也
+  无响应时，才允许使用持久 kill gate 退役 Host。一个 completion 超时不得
+  默认杀死 Room、Memory 或其他 Session。
+- Memory 正式 Luna 批次默认租约为 1200 秒。延长租约不能替代精确结算；
+  timeout/abort 后的重试仍须由冻结 request identity、Session-scoped abort 和
+  durable receipt 约束。
+- Knowledge/RAG 查询、Memory recall、WorkDocument、角色簿和工具目录作为
+  ContextProvider contribution 进入同一装配管线，但各自保留来源、权限、
+  freshness 和指标。某个 optional provider 失败不得污染其他 provider；
+  Room/WorkDocument 等 required contribution 缺失必须失败关闭。
+- Runtime/Host 重启后，PAW 按 durable binding、turnId、clientMessageId 和
+  settlement journal 对账旧 `running`/busy 状态；不得清空 Session、复制
+  transcript 或把陈旧状态直接标完成。
+
+验收必须分开报告：Pi 源码测试、PAW 调用方契约测试、clean install 审计、
+已有 Session 原位迁移、普通聊天 GUI、Memory 正式批次、真实 Room GUI。
+任何一层通过都不能替代下一层。

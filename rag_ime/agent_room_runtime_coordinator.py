@@ -286,20 +286,26 @@ class RoomKernelRuntimeCoordinator:
             ),
             created_at_ms=prepared_at_ms,
         )
-        context_entry, _ = self.context_ledger.append_entry(
+        context_dedupe_key = f"dispatch:{dispatch_id}:provider-context"
+        context_entry = self.context_ledger.entry_by_dedupe_key(
             root_id=str(dispatch["rootId"]),
-            room_id=room_id,
-            generation=generation,
-            entry_kind="dispatch_state",
-            source_ref=dispatch_id,
-            dedupe_key=f"dispatch:{dispatch_id}:provider-context",
-            content=self.task_context.render(
-                task,
-                dispatch,
-                room_id=room_id,
-            ),
-            created_at_ms=prepared_at_ms,
+            dedupe_key=context_dedupe_key,
         )
+        if context_entry is None:
+            context_entry, _ = self.context_ledger.append_entry(
+                root_id=str(dispatch["rootId"]),
+                room_id=room_id,
+                generation=generation,
+                entry_kind="dispatch_state",
+                source_ref=dispatch_id,
+                dedupe_key=context_dedupe_key,
+                content=self.task_context.render(
+                    task,
+                    dispatch,
+                    room_id=room_id,
+                ),
+                created_at_ms=prepared_at_ms,
+            )
         replay = [
             entry
             for entry in self.context_ledger.replay_root(str(dispatch["rootId"]))

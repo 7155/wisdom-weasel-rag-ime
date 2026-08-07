@@ -25,11 +25,13 @@ class FakeMemoryRuntime:
         events: AgentEventHub,
         *,
         settle: bool = True,
+        settlement_receipt: bool = True,
         models: list[dict[str, object]] | None = None,
     ) -> None:
         self.sessions = sessions
         self.events = events
         self.settle = settle
+        self.settlement_receipt = settlement_receipt
         self.models = models or [
             {
                 "provider": "openai-codex",
@@ -121,7 +123,31 @@ class FakeMemoryRuntime:
             self.events.publish(
                 session_id,
                 "turn_completed",
-                {"terminalEvent": "agent_settled"},
+                {
+                    "terminalEvent": "agent_settled",
+                    **(
+                        {
+                            "runtimeSettlement": {
+                                "schemaVersion": "pi.agent-settled.v2",
+                                "receiptId": f"settled:{turn_id}",
+                                "sessionId": session_id,
+                                "runId": f"run:{turn_id}",
+                                "scopeId": f"scope:{turn_id}",
+                                "generation": 0,
+                                "disposition": "completed",
+                                "stopReason": "natural",
+                                "operations": {
+                                    "pending": 0,
+                                    "pendingByKind": {},
+                                    "registeredByKind": {},
+                                },
+                                "pendingOperations": 0,
+                            }
+                        }
+                        if self.settlement_receipt
+                        else {}
+                    ),
+                },
                 turn_id=turn_id,
             )
         return {"accepted": True, "turnId": turn_id}
@@ -197,7 +223,34 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
             "gateway_internal_session",
         )
         self.assertEqual(response["receipt"]["contextWindow"], 372_000)
+        self.assertEqual(
+            response["receipt"]["runtimeSettlement"]["disposition"],
+            "completed",
+        )
         self.assertNotIn('"messages"', str(runtime.prompts[0]["message"])[:300])
+
+    def test_completed_event_without_exact_settlement_remains_resumable(
+        self,
+    ) -> None:
+        runtime = FakeMemoryRuntime(
+            self.sessions,
+            self.events,
+            settlement_receipt=False,
+        )
+        executor = self._executor(runtime)
+        executor.begin_run("memory_book_missing_settlement")
+
+        with self.assertRaisesRegex(
+            MemoryModelUnavailable,
+            "without an exact Pi settlement receipt",
+        ):
+            executor.complete(
+                messages=[{"role": "user", "content": '{"v":2,"e":[]}'}]
+            )
+
+        status = executor.run_status("memory_book_missing_settlement")
+        self.assertEqual(status["state"], "resumable")
+        self.assertEqual(status["requests"][0]["state"], "resumable")
 
     def test_near_budget_packet_is_not_truncated_or_nested_as_json_messages(self) -> None:
         runtime = FakeMemoryRuntime(self.sessions, self.events)

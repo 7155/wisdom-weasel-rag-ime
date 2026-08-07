@@ -178,7 +178,15 @@ def assess_input_text(
     injectable = complete and not hard_failures.intersection(reasons)
 
     # Long-term memory is intentionally stricter than recent Agent context.
-    durable_signal = sentence_ended or cjk_count >= 8 or len(word_tokens) >= 4
+    # Punctuation can close an utterance, but it cannot turn a short word or
+    # fragment into durable memory. AX/local context may help interpret a
+    # complete input later; it must never supply the missing durable claim.
+    durable_signal = (
+        cjk_count >= 8
+        or len(word_tokens) >= 4
+        or (sentence_ended and cjk_count >= 6)
+        or (sentence_ended and not cjk_count and len(word_tokens) >= 3)
+    )
     explicit_memory_boundary = normalized_source == "squirrel_assistant_remember"
     memory_boundary_trusted = trusted_capture_boundary or explicit_memory_boundary
     memory_eligible = injectable and durable_signal and memory_boundary_trusted

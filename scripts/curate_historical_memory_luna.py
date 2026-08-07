@@ -10,7 +10,7 @@ import os
 import sqlite3
 import sys
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,7 +52,7 @@ RAG_PROBES = (
     ("room-collaboration", "Room 在项目中如何组织协作和上下文？"),
     ("recoverability", "删除或覆盖数据前需要保留什么恢复措施？"),
 )
-DEFAULT_MAX_LOGICAL_INPUTS_PER_BATCH = 70
+DEFAULT_MAX_LOGICAL_INPUTS_PER_BATCH = 200
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -80,6 +80,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--codex-bin", default="codex")
     parser.add_argument("--production-db", type=Path, default=DEFAULT_PRODUCTION_DB)
     parser.add_argument("--skip-timelines", action="store_true")
+    parser.add_argument(
+        "--defer-batch-verifier",
+        action="store_true",
+        help=(
+            "candidate-only migration mode: run one Luna pass per chronological "
+            "batch and require a separate final Atom/Evidence catalog audit"
+        ),
+    )
+    parser.add_argument(
+        "--defer-real-semantic-projection",
+        action="store_true",
+        help=(
+            "curation-only recovery mode for a sandbox without the production "
+            "embedding runtime; a hashing projection may be built for bounded "
+            "organizer recall, but the result remains activation-ineligible "
+            "until the exact candidate is rebuilt and verified with a real "
+            "semantic provider"
+        ),
+    )
     return parser
 
 
@@ -117,7 +136,10 @@ def main(argv: list[str] | None = None) -> int:
             apply_database_migrations(migration_conn)
 
     embedding = embedding_provider_from_env()
-    if isinstance(embedding, (NullEmbeddingProvider, HashingEmbeddingProvider)):
+    if isinstance(embedding, NullEmbeddingProvider):
+        raise SystemExit("full-history acceptance requires a real semantic embedding provider")
+    semantic_projection_deferred = isinstance(embedding, HashingEmbeddingProvider)
+    if semantic_projection_deferred and not bool(args.defer_real_semantic_projection):
         raise SystemExit("full-history acceptance requires a real semantic embedding provider")
     core = private_shadow_core(working_db, embedding_provider=embedding)
     baseline = atom_first_memory_state_summary(working_db)
@@ -156,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
     organizer = ManagedPiMemoryOrganizer(
         executor,
         max_semantic_repair_rounds=5,
+        require_independent_verification=not bool(args.defer_batch_verifier),
     )
     try:
         curation = curate_historical_memory_database(
@@ -176,8 +199,16 @@ def main(argv: list[str] | None = None) -> int:
 
     final_state = atom_first_memory_state_summary(working_db)
     rag = _historical_rag_probe(core, project=str(args.project))
-    requests = redacted_luna_request_summary(executor.receipts)
-    request_contract_ok = _request_contract_ok(requests)
+    requests = redacted_luna_request_summary(
+        _completed_historical_luna_receipts(
+            working_db,
+            current_receipts=executor.receipts,
+        )
+    )
+    request_contract_ok = _request_contract_ok(
+        requests,
+        require_independent_verifier=not bool(args.defer_batch_verifier),
+    )
     source_unchanged = _file_identity(source) == source_identity
     projection_fresh = bool(
         dict(dict(curation.get("projections") or {}).get("freshness") or {}).get("fresh")
@@ -185,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
     pending_sources = int(
         dict(curation.get("ownerCuration") or {}).get("pendingSourceCount") or 0
     )
-    passed = (
+    execution_complete = (
         bool(curation.get("ok"))
         and bool(reset.get("ok"))
         and reset.get("rawInputEventsMutated") is False
@@ -193,16 +224,40 @@ def main(argv: list[str] | None = None) -> int:
         and curation.get("integrityCheck") == "ok"
         and int(curation.get("foreignKeyViolationCount") or 0) == 0
         and bool(final_state.get("allGovernedCurrentAtomsHaveLegalLineage"))
+        and int(final_state.get("legacyUnlinkedCurrentAtomCount") or 0) == 0
         and bool(dict(final_state.get("bookProjection") or {}).get("inSync"))
         and projection_fresh
         and request_contract_ok
         and source_unchanged
         and bool(rag.get("passed"))
     )
+    final_audit_required = bool(args.defer_batch_verifier)
+    passed = (
+        execution_complete
+        and not final_audit_required
+        and not semantic_projection_deferred
+    )
+    awaiting: list[str] = []
+    if execution_complete and semantic_projection_deferred:
+        awaiting.append("semantic_projection")
+    if execution_complete and final_audit_required:
+        awaiting.append("final_catalog_audit")
     summary: dict[str, object] = {
         "schemaVersion": "rag-ime.atom-first-historical-luna-evaluation.v1",
-        "status": "pass" if passed else "iterate",
+        "status": (
+            "pass"
+            if passed
+            else "awaiting_" + "_and_".join(awaiting)
+            if awaiting
+            else "iterate"
+        ),
         "passed": passed,
+        "activationEligible": passed,
+        "executionComplete": execution_complete,
+        "semanticProjectionDeferred": semantic_projection_deferred,
+        "realSemanticProjectionRequired": semantic_projection_deferred,
+        "batchVerifierDeferred": final_audit_required,
+        "finalCatalogAuditRequired": final_audit_required,
         "model": "gpt-5.6-luna",
         "thinking": "max",
         "transport": "codex_cli_ephemeral",
@@ -220,13 +275,18 @@ def main(argv: list[str] | None = None) -> int:
         "modelRequestContractPassed": request_contract_ok,
         "privateArtifactDirectorySha256": _sha256(str(private_root)),
     }
-    _write_private_json(private_root / "historical-evaluation-summary.json", summary)
+    logical_state = str(final_state.get("logicalStateSha256") or "")
+    _write_private_json(
+        private_root / f"historical-evaluation-{logical_state[:16]}-summary.json",
+        summary,
+    )
     if args.public_report is not None:
         _write_public_report(args.public_report.expanduser(), summary)
     print(
         json.dumps(
             {
                 "passed": passed,
+                "executionComplete": execution_complete,
                 "status": summary["status"],
                 "reset": reset,
                 "curation": summary["curation"],
@@ -242,7 +302,7 @@ def main(argv: list[str] | None = None) -> int:
             sort_keys=True,
         )
     )
-    return 0 if passed else 1
+    return 0 if execution_complete else 1
 
 
 def _historical_rag_probe(core: object, *, project: str) -> dict[str, object]:
@@ -287,7 +347,70 @@ def _historical_rag_probe(core: object, *, project: str) -> dict[str, object]:
     }
 
 
-def _request_contract_ok(requests: list[dict[str, object]]) -> bool:
+def _completed_historical_luna_receipts(
+    db_path: Path,
+    *,
+    current_receipts: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """Recover completed model receipts when a long migration resumes."""
+
+    receipts: list[dict[str, object]] = []
+    seen: set[str] = set()
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT request.phase, request.receipt_json
+            FROM memory_curation_model_requests AS request
+            JOIN memory_curation_model_runs AS run ON run.run_id = request.run_id
+            WHERE request.state = 'completed'
+              AND run.provider = 'openai-codex'
+              AND run.model_id = 'gpt-5.6-luna'
+              AND run.thinking_level = 'max'
+              AND request.phase IN (
+                  'atom-first-curation',
+                  'atom-first-repair',
+                  'atom-first-verifier'
+              )
+            ORDER BY request.created_at_ms, request.ordinal, request.request_id
+            """
+        ).fetchall()
+    for phase, raw_receipt in rows:
+        try:
+            decoded = json.loads(str(raw_receipt or "{}"))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(decoded, dict):
+            continue
+        receipt = dict(decoded)
+        receipt.setdefault("phase", str(phase or ""))
+        identity = str(
+            receipt.get("requestId")
+            or receipt.get("inputSha256")
+            or f"{phase}:{len(receipts)}"
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        receipts.append(receipt)
+    for value in current_receipts:
+        receipt = dict(value)
+        identity = str(
+            receipt.get("requestId")
+            or receipt.get("inputSha256")
+            or f"current:{len(receipts)}"
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        receipts.append(receipt)
+    return receipts
+
+
+def _request_contract_ok(
+    requests: list[dict[str, object]],
+    *,
+    require_independent_verifier: bool = True,
+) -> bool:
     if not requests:
         return False
     phases = [str(item.get("phase") or "") for item in requests]
@@ -306,6 +429,19 @@ def _request_contract_ok(requests: list[dict[str, object]]) -> bool:
             return False
         if bool(requests[index].get("isolated")):
             return False
+    if not require_independent_verifier:
+        return (
+            "atom-first-curation" in phases
+            and all(
+                phase
+                in {
+                    "atom-first-curation",
+                    "atom-first-repair",
+                    "atom-first-verifier",
+                }
+                for phase in phases
+            )
+        )
     if phases[-1] != "atom-first-verifier":
         return False
     curation_indexes = [
@@ -344,6 +480,7 @@ def _redacted_historical_summary(report: Mapping[str, object]) -> dict[str, obje
         "after": after,
         "batchCount": len(report.get("batches") or []),
         "reviewedRunCount": len(report.get("reviewedRuns") or []),
+        "lineageQuarantine": dict(report.get("lineageQuarantine") or {}),
         "timelineDateCount": int(timelines.get("dateCount") or 0),
         "approvedTimelineCount": int(timelines.get("approvedNow") or 0),
         "pendingSourceCount": int(owner.get("pendingSourceCount") or 0),
@@ -363,13 +500,23 @@ def _write_public_report(path: Path, summary: Mapping[str, object]) -> None:
     books = dict(state.get("bookProjection") or {})
     reset = dict(summary.get("reset") or {})
     rag = dict(summary.get("rag") or {})
+    semantic_projection_deferred = bool(
+        summary.get("semanticProjectionDeferred")
+    )
     lines = [
         "# Atom-first Historical Memory Luna Evaluation",
         "",
         f"- Result: `{summary.get('status')}`.",
         "- Scope: disposable verified recovery candidate; production SQLite was not opened or modified.",
         f"- Model: `{summary.get('model')}`, thinking `{summary.get('thinking')}`.",
-        f"- Real semantic embedding: `{summary.get('embeddingProviderFingerprint')}`.",
+        (
+            "- Temporary curation-only embedding: "
+            f"`{summary.get('embeddingProviderFingerprint')}`; real semantic "
+            "projection is still required."
+            if semantic_projection_deferred
+            else "- Real semantic embedding: "
+            f"`{summary.get('embeddingProviderFingerprint')}`."
+        ),
         f"- Source recovery shadow unchanged: `{summary.get('sourceShadowUnchanged')}`.",
         "",
         "## Full-history flow",
@@ -386,7 +533,17 @@ def _write_public_report(path: Path, summary: Mapping[str, object]) -> None:
         "",
         "## Interpretation",
         "",
-        "The run validates the single Evidence -> Atom -> Book path on recovered private history, including independent verifier receipts, semantic vector projection, integrity, and raw-input immutability. It does not by itself prove installed Gateway behavior or foreground input-method behavior.",
+        (
+            "The run completes the single Evidence -> Atom -> Book curation path "
+            "on recovered private history, but remains activation-ineligible until "
+            "the same candidate receives a real semantic vector projection."
+            if semantic_projection_deferred
+            else "The run validates the single Evidence -> Atom -> Book path on "
+            "recovered private history, including independent verifier receipts, "
+            "semantic vector projection, integrity, and raw-input immutability. It "
+            "does not by itself prove installed Gateway behavior or foreground "
+            "input-method behavior."
+        ),
         "No raw input, Atom text, Book text, model output, database path, or private identifier is included.",
         "",
     ]

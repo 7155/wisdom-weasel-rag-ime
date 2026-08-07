@@ -7027,6 +7027,104 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertEqual(projected["capabilityManifest"]["manifestHash"], first["manifestHash"])
         self.assertEqual(projected["capabilityManifest"]["status"], "active")
 
+    def test_managed_dispatch_recovery_replays_frozen_context_after_task_changes(
+        self,
+    ) -> None:
+        dispatch = self._dispatch()
+        self.service.room_kernel.enqueue_dispatch(dispatch, now_ms=3)
+        first = self.service._prepare_managed_room_dispatch(dispatch, 3)
+        before = self.service.room_context_ledger.entry_by_dedupe_key(
+            root_id="root:service",
+            dedupe_key="dispatch:dispatch:service:provider-context",
+        )
+        assert before is not None
+
+        with sqlite3.connect(self.service.db_path) as conn:
+            row = conn.execute(
+                """SELECT payload_json FROM room_kernel_tasks
+                   WHERE task_id='task:service'"""
+            ).fetchone()
+            assert row is not None
+            task = json.loads(str(row[0]))
+            task["contextEvidenceRefs"] = [
+                "artifact:arrived-after-first-preparation"
+            ]
+            conn.execute(
+                """UPDATE room_kernel_tasks
+                   SET payload_json=?,updated_at_ms=50
+                   WHERE task_id='task:service'""",
+                (
+                    json.dumps(
+                        task,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                ),
+            )
+
+        replayed = self.service._prepare_managed_room_dispatch(dispatch, 99)
+        after = self.service.room_context_ledger.entry_by_dedupe_key(
+            root_id="root:service",
+            dedupe_key="dispatch:dispatch:service:provider-context",
+        )
+
+        self.assertEqual(replayed, first)
+        self.assertEqual(after, before)
+        self.assertNotIn(
+            "artifact:arrived-after-first-preparation",
+            str(after["content"]),
+        )
+
+    def test_alignment_correction_stays_on_root_before_work_document_exists(
+        self,
+    ) -> None:
+        self.service.room_kernel_worker.cancel_root("root:service")
+        accepted = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": "先把客户目录做成可用的终端界面。",
+                "clientMessageId": "client:alignment-before-correction",
+            },
+        )
+        root_id = str(accepted["rootId"])
+        roots_before = self.service.room_kernel.root_ids(self.room_id)
+
+        corrected = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": "补充：删除前要确认，并且允许撤销。",
+                "clientMessageId": "client:alignment-correction",
+            },
+        )
+
+        self.assertEqual(corrected["rootId"], root_id)
+        self.assertEqual(
+            self.service.room_kernel.root_ids(self.room_id),
+            roots_before,
+        )
+        self.assertTrue(corrected["intervention"]["accepted"])
+        self.assertEqual(corrected["intervention"]["state"], "accepted")
+        self.assertNotIn("workDocumentDelta", corrected)
+        catalog = self.service.room_requirements.latest_catalog_revision(
+            root_id
+        )
+        assert catalog is not None
+        self.assertEqual(catalog["revision"], 2)
+        self.assertIn(
+            "补充：删除前要确认，并且允许撤销。",
+            [str(item["statement"]) for item in catalog["items"]],
+        )
+        with sqlite3.connect(self.service.db_path) as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM room_work_document_deltas "
+                    "WHERE root_id=?",
+                    (root_id,),
+                ).fetchone()[0],
+                0,
+            )
+
     def test_room_private_session_projection_reuses_todo_owner_and_sse_hash(
         self,
     ) -> None:
@@ -9377,17 +9475,14 @@ class RoomKernelServiceTests(unittest.TestCase):
             },
         )
         self.assertFalse(ordinary.get("resumed", False))
-        self.assertNotEqual(ordinary["rootId"], root_id)
+        self.assertEqual(ordinary["rootId"], root_id)
+        self.assertTrue(ordinary["intervention"]["accepted"])
         still_pending = self.service.room_kernel.pending_user_wait(
             self.room_id,
             root_id=root_id,
             question_post_id=question_post_id,
         )
         self.assertIsNotNone(still_pending)
-        self.service.room_kernel.cancel_root(
-            str(ordinary["rootId"]),
-            now_ms=101,
-        )
         answered = self.service.post_room_message(
             self.room_id,
             {

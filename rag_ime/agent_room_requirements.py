@@ -457,17 +457,29 @@ class RequirementGovernanceStore:
         """Return one immutable catalog with source spans preserved."""
 
         with self._connect() as conn:
-            row = self._catalog_row(conn, catalog_revision_id)
-            items = conn.execute(
-                "SELECT * FROM room_v2_requirement_items "
-                "WHERE catalog_revision_id = ? ORDER BY item_id",
-                (catalog_revision_id,),
-            ).fetchall()
-            criteria = conn.execute(
-                "SELECT * FROM room_v2_acceptance_criteria "
-                "WHERE catalog_revision_id = ? ORDER BY criterion_id",
-                (catalog_revision_id,),
-            ).fetchall()
+            return self.catalog_revision_in_transaction(
+                conn,
+                catalog_revision_id,
+            )
+
+    def catalog_revision_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        catalog_revision_id: str,
+    ) -> dict[str, object]:
+        """Return one immutable catalog through the caller's transaction."""
+
+        row = self._catalog_row(conn, catalog_revision_id)
+        items = conn.execute(
+            "SELECT * FROM room_v2_requirement_items "
+            "WHERE catalog_revision_id = ? ORDER BY item_id",
+            (catalog_revision_id,),
+        ).fetchall()
+        criteria = conn.execute(
+            "SELECT * FROM room_v2_acceptance_criteria "
+            "WHERE catalog_revision_id = ? ORDER BY criterion_id",
+            (catalog_revision_id,),
+        ).fetchall()
         return {
             "schemaVersion": "wisdom-weasel.requirement-catalog-revision.v1",
             "catalogRevisionId": str(row["catalog_revision_id"]),
@@ -521,17 +533,29 @@ class RequirementGovernanceStore:
         """Return the latest authoritative requirement revision for one Root."""
 
         with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT catalog_revision_id
-                FROM room_v2_requirement_catalog_revisions
-                WHERE root_id=? ORDER BY revision DESC LIMIT 1
-                """,
-                (_required(root_id, "root_id"),),
-            ).fetchone()
+            return self.latest_catalog_revision_in_transaction(conn, root_id)
+
+    def latest_catalog_revision_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        root_id: str,
+    ) -> dict[str, object] | None:
+        """Return the latest catalog without leaving the caller's transaction."""
+
+        row = conn.execute(
+            """
+            SELECT catalog_revision_id
+            FROM room_v2_requirement_catalog_revisions
+            WHERE root_id=? ORDER BY revision DESC LIMIT 1
+            """,
+            (_required(root_id, "root_id"),),
+        ).fetchone()
         if row is None:
             return None
-        return self.catalog_revision(str(row["catalog_revision_id"]))
+        return self.catalog_revision_in_transaction(
+            conn,
+            str(row["catalog_revision_id"]),
+        )
 
     def latest_gate_observation(self, root_id: str) -> dict[str, object] | None:
         with self._connect() as conn:

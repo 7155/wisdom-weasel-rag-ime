@@ -328,6 +328,26 @@ class RoomContextLedgerStore:
             ).fetchall()
         return [_context_entry_payload(row) for row in rows]
 
+    def entry_by_dedupe_key(
+        self,
+        *,
+        root_id: str,
+        dedupe_key: str,
+    ) -> dict[str, object] | None:
+        """Return the immutable entry previously frozen for one identity."""
+
+        root_id = _required_text(root_id, "rootId")
+        dedupe_key = _required_text(dedupe_key, "dedupeKey")
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM room_v2_context_entries
+                WHERE root_id = ? AND dedupe_key = ?
+                """,
+                (root_id, dedupe_key),
+            ).fetchone()
+        return _context_entry_payload(row) if row is not None else None
+
     def _append_entry_conn(
         self,
         conn: sqlite3.Connection,

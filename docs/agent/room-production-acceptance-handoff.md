@@ -477,3 +477,43 @@ Session 真实 transcript 原位恢复、普通聊天 GUI、同一 Room 中改�
 再整合 Room、Knowledge、Memory、Project Field/岛屿并清理已证实废弃的
 Room、worktree、Pi/runtime、代码和文档；RAG/Memory 正式整理与消融仍是
 独立未完成工作。
+
+## 12. 2026-08-07 current follow-up：全产品 Pi 消费方与同 Root 修正
+
+本节取代第 11 节末尾的“下一步”状态，但保留其已提交基线证据。Pi follow-up
+已提交并推送为 `30a802eed089f923633a99fab1428847dda20cc9`；PAW 当前工作树
+完成了以下尚未提交、尚未安装的修正：
+
+- Room Dispatch 恢复先按 `rootId + dedupeKey` 读取不可变 ContextLedger，
+  已冻结的上下文只重放，不再因 Task/Requirement 后续变化重新渲染。
+- 对齐、规划、执行、等待和阻塞阶段的普通用户修正都留在同一个有权威
+  RequirementCatalog 的 Root。Start 前只更新 RequirementCatalog，不伪造
+  WorkDocument；Start 后同时追加 RequirementAnchor 与同一 WorkDocument delta。
+- pending clarification 的显式回答在同一事务里基于最新 catalog revision
+  继续，先前普通修正不会再造成 `RoomContextConflict`。
+- 无状态 completion 拥有独立顶层 RunScope；PAW 超时先按 `requestId` 调用
+  `completion.cancel`，只有局部取消也失败时才退役共享 Host，避免误伤 Room、
+  Memory 和其他 Session。
+- Pi 的 `agent_settled` 观察者现在在 Agent run 退活后收到事件，同时保留
+  settlement-emission fence，避免 receipt 已终态但 `isIdle()` 仍是假值。
+- Memory model 每次成功都必须持久化精确 `pi.agent-settled.v2`；缺失、非
+  completed 或仍有 operation 的 receipt 保持 resumable。默认正式租约为
+  1200 秒，但延长时间不替代精确结算。
+- 相同冻结 evidence packet 的 Memory 重试复用稳定 model run 与 Session；
+  不完整指代、短命令和低质量片段不会进入 durable memory。正式 Luna 整理
+  支持恢复已完成 receipt、延迟 verifier/semantic projection、最终 catalog 与
+  semantic gate，以及内容寻址审计摘要；延迟模式不得误称 activation eligible。
+
+本 follow-up 当前验证证据：
+
+- Room 核心六组宽回归 `243/243`；
+- Pi Runtime v2 调用方 `90/90`；
+- Session/build/managed runtime/kill-gate 相邻回归 `136/136`；
+- Memory executor `11/11`，owner curation `43/43`；
+- Pi Agent Core `34/34`、Coding Agent `75/75`、Runtime Host `18/18`。
+
+Pi 最终 `npm run check` 和 `diff --check` 已通过。仍需完成：PAW 最终单 worker
+前端回归；限定提交并推送 PAW；从两个新提交干净安装并核对 manifest/source provenance；
+随后在现有 TUI 验收 Room 中验证同 Root 修正、Start 后新执行框、真实并行、
+Todo、工具详情、WorkDocument、交接、恢复、范围独立复核和唯一最终交付，
+并验证普通 Session transcript 原位迁移。只有真实 GUI 全部通过后才备份和清理。

@@ -82,7 +82,7 @@ class GovernedMemoryModelExecutor:
     provider: str
     model_id: str
     thinking_level: str
-    timeout_seconds: float = 600.0
+    timeout_seconds: float = 1_200.0
     sessions: AgentSessionStore | None = None
     events: AgentEventHub | None = None
     db_path: str | Path | None = None
@@ -276,6 +276,10 @@ class GovernedMemoryModelExecutor:
                     raise MemoryModelUnavailable(
                         str(terminal.get("error") or "Memory Session turn failed")
                     )
+                runtime_settlement = _memory_runtime_settlement(
+                    terminal.get("runtimeSettlement"),
+                    turn_id=turn_id,
+                )
                 output_text = str(terminal.get("text") or "").strip()
                 if not output_text:
                     raise MemoryModelUnavailable(
@@ -299,6 +303,7 @@ class GovernedMemoryModelExecutor:
                     "inputChars": len(prompt),
                     "elapsedMs": elapsed_ms,
                     "usage": dict(terminal.get("usage") or {}),
+                    "runtimeSettlement": runtime_settlement,
                     "modelSelection": model_receipt,
                     "thinkingSelection": thinking_receipt,
                 }
@@ -805,7 +810,13 @@ class _MemoryTurnWaiter:
         with self._condition:
             turn = self._turns.setdefault(
                 turn_id,
-                {"state": "running", "text": "", "usage": {}, "error": ""},
+                {
+                    "state": "running",
+                    "text": "",
+                    "usage": {},
+                    "error": "",
+                    "runtimeSettlement": None,
+                },
             )
             if event_type == "message_completed":
                 message = payload.get("message")
@@ -819,6 +830,9 @@ class _MemoryTurnWaiter:
                 turn["error"] = str(payload.get("error") or "Memory Session turn failed")
             elif event_type == "turn_completed":
                 turn["state"] = "completed"
+                runtime_settlement = payload.get("runtimeSettlement")
+                if isinstance(runtime_settlement, Mapping):
+                    turn["runtimeSettlement"] = dict(runtime_settlement)
             self._condition.notify_all()
 
     def wait(self, turn_id: str, *, timeout_seconds: float) -> dict[str, object]:
@@ -832,6 +846,32 @@ class _MemoryTurnWaiter:
                 if remaining <= 0:
                     raise TimeoutError("Memory Session turn timed out")
                 self._condition.wait(min(remaining, 0.25))
+
+
+def _memory_runtime_settlement(
+    value: object,
+    *,
+    turn_id: str,
+) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise MemoryModelUnavailable(
+            "Memory Session completed without an exact Pi settlement receipt"
+        )
+    receipt = dict(value)
+    operations = receipt.get("operations")
+    if (
+        receipt.get("schemaVersion") != "pi.agent-settled.v2"
+        or receipt.get("disposition") != "completed"
+        or int(receipt.get("pendingOperations") or 0) != 0
+        or not isinstance(operations, Mapping)
+        or int(operations.get("pending") or 0) != 0
+        or not str(receipt.get("receiptId") or "").strip()
+        or not str(receipt.get("runId") or "").strip()
+    ):
+        raise MemoryModelUnavailable(
+            f"Memory Session turn {turn_id} has invalid Pi settlement evidence"
+        )
+    return receipt
 
 
 def split_memory_model_reference(value: object) -> tuple[str, str]:
@@ -852,7 +892,7 @@ def build_governed_memory_model_executor(
     model_reference: object,
     thinking_level: object,
     *,
-    timeout_seconds: float = 600.0,
+    timeout_seconds: float = 1_200.0,
     db_path: str | Path | None = None,
     sessions: AgentSessionStore | None = None,
     events: AgentEventHub | None = None,
@@ -875,7 +915,7 @@ def build_managed_pi_memory_model_executor(
     model_reference: object,
     thinking_level: object,
     *,
-    timeout_seconds: float = 600.0,
+    timeout_seconds: float = 1_200.0,
 ) -> GovernedMemoryModelExecutor:
     del db_path, model_reference, thinking_level, timeout_seconds
     raise MemoryModelUnavailable(

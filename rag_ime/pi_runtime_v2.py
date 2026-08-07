@@ -2127,12 +2127,30 @@ class PiRuntimeHostManager:
             return result
         except PiRuntimeError as exc:
             if str(exc) == "Pi Runtime Host command timed out: completion.once":
-                host_retired = True
-                self._retire_timed_out_host(
-                    client,
-                    requested_by=f"completion:{normalized_request_id}",
-                    error=exc,
-                )
+                try:
+                    cancellation = client.send(
+                        "completion.cancel",
+                        {"requestId": normalized_request_id},
+                        timeout=max(
+                            1.0,
+                            min(10.0, self.config.command_timeout_seconds),
+                        ),
+                    )
+                    if (
+                        str(cancellation.get("requestId") or "")
+                        != normalized_request_id
+                        or not isinstance(cancellation.get("cancelled"), bool)
+                    ):
+                        raise PiRuntimeError(
+                            "Pi Runtime Host returned an invalid completion cancellation receipt"
+                        )
+                except Exception:
+                    host_retired = True
+                    self._retire_timed_out_host(
+                        client,
+                        requested_by=f"completion:{normalized_request_id}",
+                        error=exc,
+                    )
             raise
         finally:
             with self._lock:

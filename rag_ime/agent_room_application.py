@@ -2449,6 +2449,16 @@ class RoomApplicationService:
                 raise RoomKernelFenceError(
                     "user wait already has a different prepared answer"
                 )
+            current_catalog = (
+                self.requirements.latest_catalog_revision_in_transaction(
+                    transaction,
+                    root_id,
+                )
+            )
+            if current_catalog is None:
+                raise RoomKernelFenceError(
+                    "pending user wait has no current RequirementCatalog"
+                )
             answer_anchor, _ = self.requirements.append_anchor_in_transaction(
                 transaction,
                 anchor_id=anchor_id,
@@ -2624,20 +2634,19 @@ class RoomApplicationService:
             )
         screen_state = self.kernel.screen_state(room_id)
         active_root_id = str(screen_state.get("activeRootId") or "")
-        active_plan = (
-            self._latest_plan_revision(active_root_id)
+        active_catalog = (
+            self.requirements.latest_catalog_revision(active_root_id)
             if active_root_id
             else None
         )
         if (
             not str(work_item_id or "").strip()
             and active_root_id
-            and isinstance(active_plan, Mapping)
-            and active_plan.get("state") == "active"
+            and isinstance(active_catalog, Mapping)
             and str(screen_state.get("phase") or "")
-            in {"execution", "waiting", "blocked"}
+            in {"alignment", "planning", "execution", "waiting", "blocked"}
         ):
-            return self._post_execution_intervention(
+            return self._post_active_root_intervention(
                 room=room,
                 root_id=active_root_id,
                 message=message,
@@ -3197,7 +3206,7 @@ class RoomApplicationService:
             response["workItem"] = work_item
         return response
 
-    def _post_execution_intervention(
+    def _post_active_root_intervention(
         self,
         *,
         room: Mapping[str, object],
@@ -3240,6 +3249,15 @@ class RoomApplicationService:
             kind != "status_question"
             and isinstance(plan_revision, Mapping)
             and plan_revision.get("state") == "active"
+        )
+        work_document_ref = (
+            plan_revision.get("workDocumentRef")
+            if isinstance(plan_revision, Mapping)
+            else None
+        )
+        has_started_work_document = bool(
+            isinstance(work_document_ref, Mapping)
+            and str(work_document_ref.get("documentId") or "").strip()
         )
         facilitator = self.rooms.participant(
             str(root["facilitatorParticipantId"])
@@ -3368,17 +3386,19 @@ class RoomApplicationService:
                 content=message,
                 created_at_ms=timestamp,
             )
-            document_delta = self.append_work_document_delta(
-                transaction,
-                {
-                    "rootId": root_id,
-                    "deltaId": delta_id,
-                    "deltaKind": "user_correction",
-                    "sourceRef": intervention_id,
-                    "content": message,
-                    "createdAtMs": timestamp,
-                },
-            )
+            document_delta: Mapping[str, object] | None = None
+            if has_started_work_document:
+                document_delta = self.append_work_document_delta(
+                    transaction,
+                    {
+                        "rootId": root_id,
+                        "deltaId": delta_id,
+                        "deltaKind": "user_correction",
+                        "sourceRef": intervention_id,
+                        "content": message,
+                        "createdAtMs": timestamp,
+                    },
+                )
             intervention = {
                 "interventionId": intervention_id,
                 "roomId": room_id,
@@ -3444,7 +3464,7 @@ class RoomApplicationService:
                     payload={
                         "interventionKind": kind,
                         "requiresPlanRevision": requires_plan_revision,
-                        "materializeWorkDocument": True,
+                        "materializeWorkDocument": has_started_work_document,
                     },
                 ),
                 created_at_ms=timestamp,
@@ -3463,7 +3483,8 @@ class RoomApplicationService:
             route_decisions=[],
             dispatches=[],
         )
-        self.materialize_work_document(root_id)
+        if document_delta is not None:
+            self.materialize_work_document(root_id)
         self.application_outbox.drain_room(
             room_id,
             project_room=lambda target_room_id: self.projection.sync_room(
@@ -3472,7 +3493,7 @@ class RoomApplicationService:
             wake_room=lambda _target_room_id: self.wake_worker(),
             now_ms=timestamp,
         )
-        return {
+        response: dict[str, object] = {
             "schemaVersion": "rag-ime.agent-room-message.v1",
             "ok": True,
             "accepted": True,
@@ -3498,10 +3519,12 @@ class RoomApplicationService:
             "post": post,
             "requirementAnchor": anchor,
             "requirementCatalog": dict(revised_catalog),
-            "workDocumentDelta": dict(document_delta),
             "intervention": intervention,
             "timelineEvents": timeline_events,
         }
+        if document_delta is not None:
+            response["workDocumentDelta"] = dict(document_delta)
+        return response
 
     def _work_item_owner(
         self,

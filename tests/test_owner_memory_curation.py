@@ -101,6 +101,28 @@ class _FakeOrganizer:
         }
 
 
+class _ResumableOrganizer(_FakeOrganizer):
+    def __init__(self) -> None:
+        super().__init__(fail=True)
+        self.model_runs: list[tuple[str, str]] = []
+        self.failed_runs = 0
+        self.finished_runs = 0
+
+    def begin_run(
+        self,
+        run_id: str,
+        *,
+        frozen_input_sha256: str = "",
+    ) -> None:
+        self.model_runs.append((run_id, frozen_input_sha256))
+
+    def fail_run(self, _error: BaseException) -> None:
+        self.failed_runs += 1
+
+    def finish_run(self) -> None:
+        self.finished_runs += 1
+
+
 class _MultiTopicOrganizer(_FakeOrganizer):
     def curate_owner_memory(
         self,
@@ -720,6 +742,90 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
                     "text": "输入法继续由 Rime 解码，长期记忆只提供辅助候选。",
                 }
             )
+        )
+
+    def test_historical_reconstruction_drops_short_commands_even_with_ax_context(self) -> None:
+        base = {
+            "sourceKind": "user_final",
+            "evidenceIds": ["evidence:historical:fixture"],
+            "evidenceOriginKind": "legacy_untyped_input",
+            "source": "reconstructed_user_input",
+            "recentContext": "这是能够解释指代的 AX 应用字段上下文。",
+        }
+        for text in (
+            "这",
+            "这个",
+            "它",
+            "继续",
+            "改一下",
+            "界面",
+            "蓝色。",
+            "yes",
+            "fix it.",
+        ):
+            with self.subTest(text=text):
+                self.assertIsNotNone(
+                    _deterministic_personal_v2_disposition(
+                        {**base, "text": text}
+                    )
+                )
+
+    def test_non_historical_ax_context_cannot_promote_short_fragments(self) -> None:
+        for source_kind in ("user_final", "explicit_memory"):
+            for text in (
+                "这",
+                "这个",
+                "它",
+                "继续",
+                "改一下",
+                "界面",
+                "蓝色。",
+                "yes",
+                "fix it.",
+            ):
+                with self.subTest(source_kind=source_kind, text=text):
+                    self.assertIsNotNone(
+                        _deterministic_personal_v2_disposition(
+                            {
+                                "sourceKind": source_kind,
+                                "evidenceIds": ["evidence:native:fixture"],
+                                "evidenceOriginKind": "capture_v2_input",
+                                "source": "squirrel_input_segment",
+                                "text": text,
+                                "recentContext": "AX 上下文可以解释它指向某个长期项目要求。",
+                            }
+                        )
+                    )
+
+    def test_owner_model_bundle_preserves_ax_context_for_complete_input(self) -> None:
+        checkpoint = self._checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:ax-context",
+            turn_id="turn:ax-context",
+            text="记忆整理应保留完整输入与证据的可追溯关系。",
+            created_at_ms=100,
+        )
+        input_event_id = int(checkpoint["source"]["inputEventId"])
+        ax_context = "终端当前目录与上一条命令提供的有界参考。"
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.execute(
+                "UPDATE input_events SET recent_context = ? WHERE id = ?",
+                (ax_context, input_event_id),
+            )
+            conn.commit()
+        organizer = _FakeOrganizer()
+
+        report = OwnerMemoryCurator(
+            self.db_path,
+            organizer=organizer,
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+        ).run_due(current_ms=1_000)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(
+            organizer.calls[0]["recentEvents"][0]["recentContext"],
+            ax_context,
         )
 
     def test_pending_count_starts_from_the_input_event_link_index(self) -> None:
@@ -3428,6 +3534,34 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
         self.assertEqual(scope["pendingSourceCount"], 1)
         self.assertEqual(scope["lastSourceCursor"]["createdAtMs"], 0)
         self.assertGreater(scope["nextDueAtMs"], 1_000)
+
+    def test_failed_model_batch_reuses_stable_model_run_on_retry(self) -> None:
+        self._checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:resumable-model-run",
+            turn_id="turn:resumable-model-run",
+            text="记忆整理失败后必须续跑同一批冻结证据，不能重复创建模型会话。",
+            created_at_ms=100,
+        )
+        organizer = _ResumableOrganizer()
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=organizer,
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            auto_apply=True,
+        )
+
+        failed = curator.run_due(current_ms=1_000)
+        organizer.fail = False
+        resumed = curator.run_due(current_ms=901_001)
+
+        self.assertFalse(failed["ok"], failed)
+        self.assertTrue(resumed["ok"], resumed)
+        self.assertEqual(organizer.failed_runs, 1)
+        self.assertEqual(organizer.finished_runs, 1)
+        self.assertEqual(len(organizer.model_runs), 2)
+        self.assertEqual(organizer.model_runs[0], organizer.model_runs[1])
 
 
 if __name__ == "__main__":

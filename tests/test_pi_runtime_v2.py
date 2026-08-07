@@ -1075,7 +1075,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn("images", params)
         self.assertTrue(self.runtime.runtime_status()["capabilities"]["statelessCompletion"])
 
-    def test_stateless_completion_timeout_retires_host_before_retry(self) -> None:
+    def test_stateless_completion_timeout_cancels_only_its_request(self) -> None:
         first_client = self.runtime._host()
         first_host_identity = first_client.host_identity
         original_send = first_client.send
@@ -1107,15 +1107,24 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 )
 
         timed_out_status = self.runtime.runtime_status()
-        receipt = timed_out_status["runtimeHostKillGate"]["lastKillReceipt"]
-        self.assertIsNotNone(receipt)
-        assert receipt is not None
-        self.assertEqual(receipt["hostIdentity"], first_host_identity)
-        self.assertEqual(receipt["requestKind"], "cancel_timeout")
-        self.assertEqual(receipt["requestedBy"], "completion:surface-timeout-1")
-        self.assertEqual(receipt["state"], "terminated")
-        self.assertEqual(timed_out_status["status"], "faulted")
-        self.assertFalse(first_client.running)
+        self.assertIsNone(
+            timed_out_status["runtimeHostKillGate"]["lastKillReceipt"]
+        )
+        self.assertTrue(first_client.running)
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        self.assertEqual(
+            [request["method"] for request in requests][-1],
+            "completion.cancel",
+        )
+        self.assertEqual(
+            requests[-1]["params"]["requestId"],
+            "surface-timeout-1",
+        )
 
         retried = self.runtime.complete_once(
             request_id="surface-timeout-retry",
@@ -1127,12 +1136,58 @@ class PiRuntimeV2Tests(unittest.TestCase):
         )
 
         self.assertEqual(retried["text"], "one-shot reply")
-        self.assertIsNot(self.runtime._client, first_client)
-        assert self.runtime._client is not None
-        self.assertNotEqual(
-            self.runtime._client.host_identity,
-            first_host_identity,
+        self.assertIs(self.runtime._client, first_client)
+        self.assertEqual(first_client.host_identity, first_host_identity)
+
+    def test_stateless_completion_timeout_retires_host_when_cancel_is_unavailable(
+        self,
+    ) -> None:
+        first_client = self.runtime._host()
+        first_host_identity = first_client.host_identity
+        original_send = first_client.send
+
+        def timeout_completion_and_cancel(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+        ) -> dict[str, object]:
+            if method in {"completion.once", "completion.cancel"}:
+                raise PiRuntimeError(
+                    f"Pi Runtime Host command timed out: {method}"
+                )
+            return original_send(method, params, timeout=timeout)
+
+        with patch.object(
+            first_client,
+            "send",
+            side_effect=timeout_completion_and_cancel,
+        ):
+            with self.assertRaisesRegex(
+                PiRuntimeError,
+                "command timed out: completion.once",
+            ):
+                self.runtime.complete_once(
+                    request_id="surface-timeout-no-cancel",
+                    provider="deepseek",
+                    model_id="deepseek-v4-flash",
+                    thinking_level="high",
+                    message="模拟 Host 无法确认局部取消",
+                    timeout_seconds=15,
+                )
+
+        timed_out_status = self.runtime.runtime_status()
+        receipt = timed_out_status["runtimeHostKillGate"]["lastKillReceipt"]
+        self.assertIsNotNone(receipt)
+        assert receipt is not None
+        self.assertEqual(receipt["hostIdentity"], first_host_identity)
+        self.assertEqual(receipt["requestKind"], "cancel_timeout")
+        self.assertEqual(
+            receipt["requestedBy"],
+            "completion:surface-timeout-no-cancel",
         )
+        self.assertEqual(receipt["state"], "terminated")
+        self.assertFalse(first_client.running)
 
     def test_plugin_mutations_use_a_dedicated_approval_capability(self) -> None:
         self.runtime.stop()
