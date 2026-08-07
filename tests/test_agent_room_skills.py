@@ -137,9 +137,21 @@ class RoomNativeSkillTests(unittest.TestCase):
         )
         self.assertIn("a direct user choice and approved write", alignment)
         self.assertIn("Use the user's language", alignment)
+        self.assertIn(
+            "Never publish internal role words such as `Facilitator`, `Reporter`",
+            " ".join(alignment.split()),
+        )
         self.assertIn("Do not dump the packet into the public reply", alignment)
         self.assertIn("use native `ask`", alignment)
         self.assertIn("skip clarification but still show this plan", alignment)
+        self.assertIn(
+            "A broad multi-feature request is not automatically a complete request",
+            alignment,
+        )
+        self.assertIn(
+            "data identity, destructive merge or undo behavior, import compatibility",
+            " ".join(alignment.split()),
+        )
         self.assertIn("newest requirement solely in chat prose", alignment)
         self.assertIn("never substitute `room_commit deliver`", alignment)
         self.assertIn("Original User Request", alignment)

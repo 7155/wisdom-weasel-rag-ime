@@ -208,7 +208,7 @@ describe('RoomTaskFlowGraph dependency proof', () => {
     expect(dataNode).toHaveTextContent('已交付');
     expect(interfaceNode).toHaveTextContent('已交付');
     expect(integrationNode).toHaveTextContent('正在做');
-    expect(reviewNode).toHaveTextContent('下一步等待 1 项前置任务完成');
+    expect(reviewNode).toHaveTextContent('等待前置工作等待 1 项前置任务完成');
     expect(graph).not.toHaveTextContent(/验证状态|临时协作者/);
 
     const workList = screen.getByRole('region', { name: '每项工作的详细进展' });
@@ -294,6 +294,38 @@ describe('RoomTaskFlowGraph dependency proof', () => {
     expect(childNode).toHaveAttribute('data-task-stage', '任务目标');
     expect(childNode).toHaveAttribute('title', expect.stringContaining('无前置任务，可并行'));
     expect(graph).not.toHaveTextContent('接续 / 汇总');
+  });
+
+  it('keeps task nodes compact, label-free, and able to show Todo progress', () => {
+    const task = workspaceTask({
+      taskId: 'task-long-title',
+      objective: '完成批量导入、逐行校验、重复客户处理与可撤销结果这一完整用户功能',
+      state: 'active',
+    });
+
+    render(<RoomTaskFlowGraph
+      dispatches={[]}
+      finalPostCount={0}
+      goal="让客户列表更容易维护"
+      participantLabels={{ 'participant-owner': '澄·远' }}
+      participantProgress={[]}
+      posts={[]}
+      root={workspaceRoot()}
+      taskTodoSummaries={{ [task.taskId]: 'Todo 2/5' }}
+      tasks={[task]}
+    />);
+
+    const graph = screen.getByRole('region', { name: '任务依赖图' });
+    const node = within(graph).getByRole('article', { name: /完成批量导入/ });
+    expect(node).toHaveTextContent('澄·远');
+    expect(node).toHaveTextContent('Todo 2/5');
+    expect(node).not.toHaveTextContent('当前状态');
+    expect(node).not.toHaveTextContent('任务目标');
+    expect(node.querySelector('.lucide-arrow-right')).not.toBeInTheDocument();
+    expect(node.querySelector('.room-task-flow__task-title')).toHaveAttribute(
+      'data-adaptive-label',
+      'true',
+    );
   });
 
   it('does not describe a blocked committed task as waiting for acceptance', () => {

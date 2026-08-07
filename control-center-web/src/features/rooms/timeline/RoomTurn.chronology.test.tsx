@@ -238,6 +238,70 @@ describe('RoomTurn canonical conversation chronology', () => {
     expect(view.container).toHaveTextContent('澄·今完成收尾');
   });
 
+  it('starts a new facilitator card after the user approves execution', () => {
+    const executionActivity = activityEvent(
+      5,
+      '正在整合伙伴进展并准备下一波任务',
+      'participant-a',
+      'dispatch-execution',
+      'task-facilitator',
+    );
+    (executionActivity.payload as Record<string, unknown>).status = 'running';
+    const projection = liveProjection([
+      userEvent(1, 'opening', '请先对齐需求，再展示分工'),
+      activityEvent(
+        2,
+        '正在确认真正影响方案的需求',
+        'participant-a',
+        'dispatch-alignment',
+        'task-facilitator',
+      ),
+      postEvent(
+        3,
+        'alignment-complete',
+        'alignment',
+        '需求和分工已经确认，可以开始行动。',
+        'participant-a',
+        'dispatch-alignment',
+      ),
+      userEvent(4, 'start', '开始行动'),
+      executionActivity,
+    ]);
+
+    const view = render(roomTurn(projection, {
+      kernelDispatchesById: {
+        'dispatch-alignment': {
+          dispatchId: 'dispatch-alignment',
+          taskId: 'task-facilitator',
+        } as never,
+        'dispatch-execution': {
+          dispatchId: 'dispatch-execution',
+          taskId: 'task-facilitator',
+        } as never,
+      },
+      kernelTaskUpdatedAtMsById: { 'task-facilitator': 6_000 },
+    }));
+    const lanes = [...view.container.querySelectorAll<HTMLElement>('.room-agent-lane')];
+    const start = textElement(view.container, '开始行动');
+
+    expect(lanes).toHaveLength(2);
+    expect(lanes[0]).toHaveTextContent('正在确认真正影响方案的需求');
+    expect(lanes[0]).not.toHaveTextContent('正在整合伙伴进展并准备下一波任务');
+    expect(lanes[1]).toHaveTextContent('正在整合伙伴进展并准备下一波任务');
+    expect(lanes[1]).not.toHaveTextContent('正在确认真正影响方案的需求');
+    expect(lanes[0]!.compareDocumentPosition(start) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(start.compareDocumentPosition(lanes[1]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(lanes[1]!.querySelector(':scope > summary')).toHaveTextContent('执行中');
+    expect(lanes[0]!.querySelector('.room-agent-lane__updated-at time')).toHaveAttribute(
+      'datetime',
+      new Date(3_000).toISOString(),
+    );
+    expect(lanes[1]!.querySelector('.room-agent-lane__updated-at time')).toHaveAttribute(
+      'datetime',
+      new Date(6_000).toISOString(),
+    );
+  });
+
   it('keeps a fresh recovery dispatch in the same role Task card', () => {
     const sourceEvents = [
       userEvent(1, 'opening', '请完成并验证这个功能'),

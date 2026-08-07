@@ -141,10 +141,11 @@ describe('RoomKernelControlPlane', () => {
     expect(graph).toHaveTextContent('3 项 · 1 已完成 · 1 执行中 · 1 等待中');
     expect(graph.querySelector('.room-task-flow__dispatch-node')).not.toBeInTheDocument();
     const completed = within(graph).getByRole('article', { name: /索引证据已经核对完成/ });
-    expect(completed).toHaveTextContent('任务结果');
+    expect(completed).not.toHaveTextContent('任务结果');
     expect(completed).toHaveTextContent('索引证据已经核对完成');
     expect(completed).toHaveTextContent('负责人研究员');
-    expect(completed).toHaveTextContent('当前状态已完成');
+    expect(completed).toHaveTextContent('已交付');
+    expect(completed).not.toHaveTextContent('当前状态');
     expect(completed).not.toHaveTextContent(/下一步|验证状态/);
     expect(completed).toHaveAttribute('title', expect.not.stringMatching(/Dispatch|dispatch/));
     const integration = within(graph).getByRole('article', { name: /整合证据与实现结果/ });

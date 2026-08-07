@@ -9,6 +9,7 @@ import { approvalNeedsHumanDecision } from '@/contracts/approval-decision';
 export interface RoomExecutionLane {
   key: string;
   rootId: string;
+  executionPhase: number;
   taskId: string;
   dispatchId: string;
   dispatchIds: string[];
@@ -60,6 +61,14 @@ export function selectRoomTurnExecution(
     .map((id) => projection.activitiesById[id])
     .filter((activity): activity is RoomActivityProjection => Boolean(activity))
     .filter(isUsefulRoomActivity);
+  const executionPhaseBoundaries = turn.messageIds
+    .map((messageId) => projection.messagesById[messageId])
+    .filter((message): message is RoomMessageProjection => Boolean(message))
+    .filter(isRoomExecutionStartMessage)
+    .map((message) => ({
+      sequence: message.chronology?.roomEventSequence ?? message.sequence,
+      createdAtMs: message.chronology?.createdAtMs ?? message.createdAtMs,
+    }));
   const lanes = new Map<string, RoomExecutionLane>();
   const participantLaneKeys = new Map<string, string[]>();
   const dispatchLaneKeys = new Map<string, string>();
@@ -74,6 +83,11 @@ export function selectRoomTurnExecution(
       || textValue(activity.payload.targetParticipantId)
       || null;
     const participantIdentity = participantKey(participantId, activity.sourceSessionId);
+    const executionPhase = roomExecutionPhaseOrdinal(
+      activity.sequence,
+      activity.updatedAtMs ?? activity.createdAtMs,
+      executionPhaseBoundaries,
+    );
     // Work-item lifecycle updates may omit Dispatch/Task ids even though they
     // belong to the same participant Session. Keep them in the existing role
     // card instead of introducing a second avatar/card for one assignment.
@@ -84,12 +98,13 @@ export function selectRoomTurnExecution(
       ? participantLaneKeys.get(participantIdentity)?.at(-1)
       : undefined;
     const canonicalTaskLane = identity.taskId
-      ? taskLaneKey(identity.rootId, participantId, identity.taskId)
+      ? taskLaneKey(identity.rootId, participantId, identity.taskId, executionPhase)
       : '';
     const laneKey = existingParticipantLane || canonicalTaskLane || identity.key;
     const lane = lanes.get(laneKey) ?? {
       key: laneKey,
       rootId: identity.rootId,
+      executionPhase,
       taskId: identity.taskId,
       dispatchId: identity.dispatchId,
       dispatchIds: [],
@@ -144,11 +159,17 @@ export function selectRoomTurnExecution(
     const messageTaskId = message.dispatchId
       ? taskIdByDispatchId[message.dispatchId] ?? ''
       : '';
+    const executionPhase = roomExecutionPhaseOrdinal(
+      message.chronology?.roomEventSequence ?? message.sequence,
+      message.chronology?.createdAtMs ?? message.createdAtMs,
+      executionPhaseBoundaries,
+    );
     const canonicalTaskLane = messageTaskId
       ? taskLaneKey(
           message.rootId || turn.rootId || turnId,
           message.participantId,
           messageTaskId,
+          executionPhase,
         )
       : '';
     const exactKey = message.dispatchId
@@ -173,6 +194,7 @@ export function selectRoomTurnExecution(
     const lane = lanes.get(laneKey) ?? {
       key: laneKey,
       rootId: message.rootId || turn.rootId || turnId,
+      executionPhase,
       taskId: messageTaskId,
       dispatchId: message.dispatchId || '',
       dispatchIds: message.dispatchId ? [message.dispatchId] : [],
@@ -202,6 +224,7 @@ export function selectRoomTurnExecution(
     lanes.set(`${turnId}\u001frouter\u001fpending`, {
       key: `${turnId}\u001frouter\u001fpending`,
       rootId: turn.rootId || turnId,
+      executionPhase: executionPhaseBoundaries.length,
       taskId: '',
       dispatchId: '',
       dispatchIds: [],
@@ -287,8 +310,33 @@ function taskLaneKey(
   rootId: string,
   participantId: string | null,
   taskId: string,
+  executionPhase: number,
 ): string {
-  return [rootId, participantId || 'participant', `task:${taskId}`].join('\u001f');
+  return [
+    rootId,
+    participantId || 'participant',
+    `task:${taskId}`,
+    `phase:${executionPhase}`,
+  ].join('\u001f');
+}
+
+function isRoomExecutionStartMessage(message: RoomMessageProjection): boolean {
+  return message.role === 'user'
+    && !message.answerToPostId
+    && message.text.trim() === '开始行动';
+}
+
+function roomExecutionPhaseOrdinal(
+  sequence: number | undefined,
+  createdAtMs: number,
+  boundaries: { sequence?: number; createdAtMs: number }[],
+): number {
+  return boundaries.filter((boundary) => {
+    if (sequence !== undefined && boundary.sequence !== undefined) {
+      return sequence > boundary.sequence;
+    }
+    return createdAtMs > boundary.createdAtMs;
+  }).length;
 }
 
 function compareRoomMessages(

@@ -197,18 +197,22 @@ This table is an acceptance ledger, not a claim that every recorded item is alre
 
 ## 5. Exact current follow-up commit scope
 
-The compact attributed-status/private-brief follow-up is commit `f6e41175`; collapsed-progress projection is `021c9780`; meaningful live-summary priority is `d30901ab`; peer Todo recovery is `53089a7b`; WorkDocument/approval governance is `958054b6`; post-Start WorkDocument recovery is `eb39c7d2`; the current waiting/wave/root follow-up is based on `2c87fd11`. The next Room follow-up must contain exactly these files:
+The prior waiting/wave/root and acceptance fixes are committed through
+`5dd42bf1a65d163b076df4613b60a20e6a596750`. The next Room follow-up must
+contain exactly these files:
 
-1. `rag_ime/agent_room_settlement.py`
-2. `tests/test_agent_room_settlement.py`
-3. `control-center-web/src/features/rooms/index.tsx`
-4. `control-center-web/src/features/rooms/kernel/RoomKernelControlPlane.tsx`
-5. `control-center-web/src/features/rooms/kernel/RoomKernelControlPlane.test.tsx`
-6. `control-center-web/src/features/rooms/kernel/RoomTaskFlowGraph.tsx`
-7. `control-center-web/src/features/rooms/rooms-feature.test.tsx`
-8. `control-center-web/src/features/rooms/timeline/RoomStartActionGate.tsx`
-9. `docs/agent/room-production-acceptance-handoff.md`
-10. `docs/agent/room-facilitated-workflow-requirements.md`
+1. `control-center-web/src/features/rooms/runtime/room-execution-lanes.ts`
+2. `control-center-web/src/features/rooms/timeline/RoomTurn.tsx`
+3. `control-center-web/src/features/rooms/timeline/RoomTurn.chronology.test.tsx`
+4. `control-center-web/src/features/rooms/kernel/RoomTaskFlowGraph.tsx`
+5. `control-center-web/src/features/rooms/kernel/RoomTaskFlowGraph.test.tsx`
+6. `control-center-web/src/features/rooms/kernel/RoomKernelControlPlane.tsx`
+7. `control-center-web/src/features/rooms/kernel/RoomKernelControlPlane.test.tsx`
+8. `control-center-web/src/features/rooms/kernel/room-kernel-control-plane.css`
+9. `integrations/pi/skills/alignment-and-decision/SKILL.md`
+10. `tests/test_agent_room_skills.py`
+11. `docs/agent/room-production-acceptance-handoff.md`
+12. `docs/agent/room-facilitated-workflow-requirements.md`
 
 Do not stage, reset, discard, clean, or overwrite these unrelated user/other-agent changes:
 
@@ -225,8 +229,8 @@ tests/test_tui.py
 
 ## 6. Exact next steps
 
-1. Run Python compile and `git diff --check` for the ten files in section 5.
-2. Stage only the ten files in section 5 and commit the verified waiting-state, later-wave-card, and Kernel-priority fixes.
+1. Run TypeScript and `git diff --check` for the twelve files in section 5.
+2. Stage only the twelve files in section 5 and commit the verified execution-frame, current-phase projection, alignment, and task-graph fixes.
 3. Create a clean detached worktree at that commit. Do not install from this dirty implementation worktree.
 4. From the clean worktree, run `scripts/install_product_stack.sh --include-pi --pi-worktree '/Volumes/undo 4t/git/learnA/.worktrees/pi-room-runtime-98cfe6a3'` with the configured Xcode beta developer directory.
 5. Run `scripts/check_installed_product_components.py --require-current` and record exact component evidence for the new commit.
@@ -275,5 +279,50 @@ Do not start these before Room passes:
 ## 9. Direct resume prompt
 
 ```text
-先完整阅读 /Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix/docs/agent/room-production-acceptance-handoff.md、同目录的 room-facilitated-workflow-requirements.md，以及该 worktree 的 AGENTS.md/README。严格执行 handoff 第 0 节：第一条回复不要调用工具、运行命令、改文件、测试、提交、安装或分派伙伴；先用中文向我复述“当前做到哪里、现在仍有哪些问题、你理解的 Room 愿景、确认后准备做的第一步”，等我确认或纠正。确认后才继续第 6 节：只提交本节列出的十个 Room 文件，从新提交创建干净 worktree，安装当前构建，并在真实前端用全自动 Room 完成第 7 节的紧凑输入栏状态、成组澄清、用户语言纵向分工、显式开始批准、对等伙伴并行、受管 WorkDocument 持续更新、工具/Todo/交接/无自审复核闭环。不要混入列出的其他脏文件，也不要在 Room 通过前开始 Knowledge 或岛屿任务。
+先完整阅读 /Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix/docs/agent/room-production-acceptance-handoff.md、同目录的 room-facilitated-workflow-requirements.md，以及该 worktree 的 AGENTS.md/README。严格执行 handoff 第 0 节：第一条回复不要调用工具、运行命令、改文件、测试、提交、安装或分派伙伴；先用中文向我复述“当前做到哪里、现在仍有哪些问题、你理解的 Room 愿景、确认后准备做的第一步”，等我确认或纠正。确认后才继续第 6 节：只提交本节列出的十二个 Room 文件，从新提交创建干净 worktree，安装当前构建，并在真实前端用全自动 Room 完成第 7 节的紧凑输入栏状态、成组澄清、用户语言纵向分工、显式开始批准、对等伙伴并行、受管 WorkDocument 持续更新、工具/Todo/交接/无自审复核闭环。不要混入列出的其他脏文件，也不要在 Room 通过前开始 Knowledge 或岛屿任务。
 ```
+
+## 10. 2026-08-07 08:53 CST latest correction
+
+The installed/GUI journey at commit `5dd42bf1a65d163b076df4613b60a20e6a596750`
+exposed three additional user-visible defects, so that journey is not final
+acceptance evidence:
+
+- the Facilitator's alignment and execution Dispatches shared one Task card,
+  leaving the old card above `开始行动` and no new Facilitator execution card;
+- current Task update time/Todo could be projected into a settled earlier phase;
+- the broad customer-list test request advanced to a plan without a real user
+  clarification round, and the dependency graph still repeated labels/arrows
+  while omitting compact Todo progress.
+
+The current uncommitted follow-up fixes those owners directly:
+
+- Room execution lanes carry an explicit execution phase derived from the typed
+  `开始行动` chronology boundary. Same-phase retry Dispatches still coalesce;
+  pre-Start alignment and post-Start execution do not.
+- Only the newest phase receives current Task timestamps, Todo, workspace,
+  subagent and delivery projections. Each card measures its own start/end time.
+- Managed intake now treats unresolved data identity, import compatibility,
+  merge/undo, retention and permission choices as material instead of silently
+  defaulting a broad multi-feature request.
+- Task graph nodes now contain task, owner, short state/action and authoritative
+  `Todo x/y`; redundant `任务目标`/`当前状态` and arrow decoration are removed,
+  with adaptive long-label styling.
+
+Verification for this uncommitted follow-up:
+
+- focused frontend: `5 files / 80 tests` passed;
+- complete frontend: `104 files / 1009 tests` passed;
+- complete Room backend: `564/564` passed in `883.591s`;
+- TypeScript and `git diff --check` passed.
+
+This is code and automated evidence only. Commit, clean install, installed
+component audit, and a fresh GUI journey that visibly asks the material
+questions and creates the second Facilitator card remain required.
+
+The user's canonical consolidation scope is also explicit: all valid product
+work in `Room`, `Knowledge`, `Memory`, and `Project Field/岛屿` must be preserved
+and integrated. Provenance/conflict/generated-file review determines ordering
+and cleanup, not whether any of those four domains may be dropped. Runtime
+data, caches, superseded generated copies, and genuinely unconsumed obsolete
+code remain excluded from source integration.

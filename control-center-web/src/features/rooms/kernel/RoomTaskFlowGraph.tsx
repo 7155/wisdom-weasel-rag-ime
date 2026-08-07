@@ -1,5 +1,4 @@
 import {
-  ArrowRight,
   Bot,
   CircleAlert,
   CircleCheck,
@@ -10,7 +9,7 @@ import {
   ListChecks,
   ShieldCheck,
 } from 'lucide-react';
-import { useId, type CSSProperties, type ReactNode } from 'react';
+import { type CSSProperties, type ReactNode } from 'react';
 
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
@@ -160,6 +159,7 @@ export function RoomTaskFlowGraph({
   participantProgress,
   posts,
   root,
+  taskTodoSummaries = {},
   tasks,
   terminalReceipt,
 }: {
@@ -171,12 +171,12 @@ export function RoomTaskFlowGraph({
   participantProgress: RoomParticipantPublicProgressProjection[];
   posts: RoomPostV2[];
   root: RootProjection;
+  taskTodoSummaries?: Record<string, string>;
   tasks: RoomTaskV3[];
   subagentsByTaskId?: Record<string, RoomTaskSubagentRun[]>;
   terminalReceipt?: RoomKernelReceiptV1;
 }) {
   const visibleTasks = tasks.filter(roomTaskIsVisibleWork);
-  const markerId = `room-task-edge-${useId().replace(/:/g, '')}`;
   const nodes = taskGraphNodes(visibleTasks, dispatches, participantProgress, posts);
   const rowCount = Math.max(1, ...nodes.map((node) => node.row));
   const flowRowHeight = FLOW_ROW_HEIGHT;
@@ -208,7 +208,7 @@ export function RoomTaskFlowGraph({
     <header className="room-task-flow__header">
       <span>
         <strong>任务依赖图</strong>
-        <small>这里只看先后关系和当前状态；详细进展在下方工作卡中展开</small>
+        <small>这里只看分工和先后关系；详细进展在下方工作卡中展开</small>
       </span>
       <b>{visibleTasks.length
         ? `${visibleTasks.length} 项 · ${counts.completed} 已完成 · ${counts.active} 执行中 · ${counts.waiting} 等待中${counts.attention ? ` · ${counts.attention} 需关注` : ''}`
@@ -224,7 +224,7 @@ export function RoomTaskFlowGraph({
     <div className="room-task-flow__stage-labels" aria-hidden="true">
       <span><GitBranch size={14} />共同目标</span>
       <span><ListChecks size={14} />分工</span>
-      {hasContinuation ? <span><ArrowRight size={14} />接续 / 汇总</span> : <span />}
+      {hasContinuation ? <span>接续 / 汇总</span> : <span />}
       {hasReview ? <span><ShieldCheck size={14} />复核</span> : <span />}
       <span><CircleCheck size={14} />结果</span>
     </div>
@@ -235,23 +235,9 @@ export function RoomTaskFlowGraph({
         preserveAspectRatio="none"
         viewBox={`0 0 1000 ${graphHeight}`}
       >
-        <defs>
-          <marker
-            id={markerId}
-            markerHeight="7"
-            markerWidth="7"
-            orient="auto"
-            refX="6"
-            refY="3.5"
-            viewBox="0 0 7 7"
-          >
-            <path d="M 0 0 L 7 3.5 L 0 7 z" />
-          </marker>
-        </defs>
         {edges.map((edge) => <g data-state={edge.state} key={edge.id}>
           <path
             d={taskGraphEdgePath(edge)}
-            markerEnd={`url(#${markerId})`}
           />
         </g>)}
       </svg>
@@ -272,6 +258,7 @@ export function RoomTaskFlowGraph({
         participantLabels={participantLabels}
         participantPersonas={participantPersonas}
         style={{ gridColumn: node.column, gridRow: node.row }}
+        todoSummary={taskTodoSummaries[node.task.taskId]}
       />)}
       <CompactFlowNode
         className="room-task-flow__result-node"
@@ -981,11 +968,13 @@ function TaskNode({
   participantLabels,
   participantPersonas,
   style,
+  todoSummary,
 }: {
   node: TaskGraphNode;
   participantLabels: Record<string, string>;
   participantPersonas: Record<string, AgentPersonaV1>;
   style: CSSProperties;
+  todoSummary?: string;
 }) {
   const { task } = node;
   const taskLabel = roomPublicActivityText(node.result || task.objective) || '协作任务';
@@ -998,6 +987,7 @@ function TaskNode({
     ? `等待 ${dependencyCount} 项真实前置任务`
     : '无前置任务，可并行';
   const action = taskNodeAction(node, expectedOutput);
+  const compactTodoSummary = todoSummary?.split(' · ')[0] ?? '';
   return <article
     aria-label={`${taskLabel}，负责人 ${owner}，${taskNodeStateLabel(node)}`}
     className="room-task-flow__task-node"
@@ -1008,8 +998,10 @@ function TaskNode({
     title={`交付目标：${expectedOutput}\n前置关系：${dependencyLabel}`}
   >
     <header>
-      <small>{node.result ? '任务结果' : taskStageLabel(node)} · {dependencyLabel}</small>
-      <strong>{taskLabel}</strong>
+      <strong
+        className="room-task-flow__task-title"
+        data-adaptive-label={taskLabel.length > 22 || undefined}
+      >{taskLabel}</strong>
     </header>
     <div className="room-task-flow__task-owner">
       {ownerPersona ? <PersonaAvatar
@@ -1028,12 +1020,14 @@ function TaskNode({
     </div>
     <div className="room-task-flow__task-state">
       <FlowStateIcon state={state} />
-      <span><small>当前状态</small><strong>{taskNodeStateLabel(node)}</strong></span>
+      <span><strong>{action.label}</strong></span>
     </div>
     <div className="room-task-flow__task-action">
-      <ArrowRight aria-hidden="true" size={14} />
-      <span><small>{action.label}</small><strong>{action.detail}</strong></span>
+      <span><strong>{action.detail}</strong></span>
     </div>
+    {compactTodoSummary
+      ? <small className="room-task-flow__task-todo">{compactTodoSummary}</small>
+      : null}
   </article>;
 }
 
@@ -1063,7 +1057,7 @@ function taskNodeAction(
     return { label: '已停止', detail: '这项工作不会继续执行' };
   }
   return node.dependencyIds.length
-    ? { label: '下一步', detail: `等待 ${node.dependencyIds.length} 项前置任务完成` }
+    ? { label: '等待前置工作', detail: `等待 ${node.dependencyIds.length} 项前置任务完成` }
     : { label: '下一步', detail: expectedOutput };
 }
 
@@ -1229,7 +1223,7 @@ function FlowStateIcon({ state }: { state: FlowVisualState }) {
   if (state === 'complete') return <CircleCheck aria-hidden="true" size={13} />;
   if (state === 'attention') return <CircleAlert aria-hidden="true" size={13} />;
   if (state === 'cancelled') return <CircleStop aria-hidden="true" size={13} />;
-  if (state === 'active') return <ArrowRight aria-hidden="true" size={13} />;
+  if (state === 'active') return <span aria-hidden="true" className="room-task-flow__state-dot" />;
   return <Clock3 aria-hidden="true" size={13} />;
 }
 

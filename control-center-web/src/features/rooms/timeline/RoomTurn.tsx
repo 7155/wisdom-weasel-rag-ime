@@ -383,6 +383,11 @@ export function RoomTurn({
       [dispatch.dispatchId, dispatch.taskId]
     ))),
   );
+  const latestTaskLaneKeyByTaskId = roomLatestTaskLaneKeys(
+    lanes,
+    projection,
+    kernelDispatchesById,
+  );
   const responseUsageActivities = turn.activityIds
     .map((activityId) => projection.activitiesById[activityId])
     .filter((activity): activity is RoomActivityProjection => Boolean(activity));
@@ -661,6 +666,9 @@ export function RoomTurn({
       const laneTaskId = lane.taskId || (lane.dispatchId
         ? kernelDispatchesById?.[lane.dispatchId]?.taskId ?? ''
         : '');
+      const laneIsCurrentTaskPhase = !laneTaskId
+        || latestTaskLaneKeyByTaskId.get(laneTaskId) === lane.key;
+      const laneTiming = roomLaneChronologyRange(lane, projection, turn);
       const laneFreshness = roomLaneFreshness(
         lane,
         projection,
@@ -668,7 +676,9 @@ export function RoomTurn({
         nowMs,
         kernelSync,
         roomSyncState,
-        laneTaskId ? kernelTaskUpdatedAtMsById?.[laneTaskId] : undefined,
+        laneTaskId && laneIsCurrentTaskPhase
+          ? kernelTaskUpdatedAtMsById?.[laneTaskId]
+          : undefined,
       );
       // A Task lane can contain several retry Dispatches. Historical attempts
       // remain visible in the body, but only the newest authoritative attempt
@@ -726,11 +736,9 @@ export function RoomTurn({
                     ? 'running'
                     : 'waiting';
       const laneTask = laneTaskId ? kernelTasksById?.[laneTaskId] : undefined;
-      const laneSession = roomLaneSession(
-        lane,
-        laneTaskId,
-        kernelSessionsById,
-      );
+      const laneSession = laneIsCurrentTaskPhase
+        ? roomLaneSession(lane, laneTaskId, kernelSessionsById)
+        : undefined;
       const laneTodo = roomLaneAuthoritativeTodo(lane, laneTask, laneSession);
       const showLaneTodo = Boolean(laneTodo && roomTodoHasUnsettledItems(laneTodo));
       const laneWork = roomLaneWorkSummary(
@@ -741,7 +749,10 @@ export function RoomTurn({
         laneOutcomeMessage,
       );
       const laneTodoSummary = showLaneTodo ? roomTaskTodoSummary(laneTodo) : '';
-      const laneSubagents = laneTaskId ? subagentsByTaskId[laneTaskId] ?? [] : [];
+      const laneSubagents = laneTaskId && laneIsCurrentTaskPhase
+        ? subagentsByTaskId[laneTaskId] ?? []
+        : [];
+      const includeCurrentTaskDetails = includePersistentDetails && laneIsCurrentTaskPhase;
       return <RoomLaneDisclosure
         active={laneMotionActive}
         collapsedPreview={laneComplete ? undefined : <RoomLaneCollapsedPreview
@@ -790,8 +801,8 @@ export function RoomTurn({
               ? { ...laneFreshness, state: 'fresh', detail: '' }
               : laneFreshness}
             nowMs={nowMs}
-            startedAtMs={turn.createdAtMs}
-            endedAtMs={laneActive && !laneAction ? undefined : turn.updatedAtMs}
+            startedAtMs={laneTiming.startedAtMs}
+            endedAtMs={laneActive && !laneAction ? undefined : laneTiming.updatedAtMs}
           />
         </>}
       >
@@ -805,12 +816,12 @@ export function RoomTurn({
           participantName={participant?.displayName}
           attention={laneState === 'failed' || laneState === 'aborted'}
           taskContext={laneTask}
-          workspaceTask={includePersistentDetails ? laneTask : undefined}
-          workspaceUpdatedAtMs={laneTaskId
+          workspaceTask={includeCurrentTaskDetails ? laneTask : undefined}
+          workspaceUpdatedAtMs={laneTaskId && laneIsCurrentTaskPhase
             ? kernelTaskUpdatedAtMsById?.[laneTaskId]
             : undefined}
         /> : null}
-        {includePersistentDetails && laneSubagents.length ? <RoomTaskSubagentRuns
+        {includeCurrentTaskDetails && laneSubagents.length ? <RoomTaskSubagentRuns
           heading={laneTask?.objective || `${participant?.displayName ?? '这位伙伴'}的临时协作者`}
           runs={laneSubagents}
         /> : null}
@@ -841,13 +852,13 @@ export function RoomTurn({
           />}
           {message.id === finalAlignmentId ? startActionGate : null}
         </div>)}
-        {includePersistentDetails && laneComplete && laneTask?.workspaceDelivery
+        {includeCurrentTaskDetails && laneComplete && laneTask?.workspaceDelivery
           ? <RoomTaskDeliveryDetails
               delivery={laneTask.workspaceDelivery}
               owner={participant?.displayName ?? '协作伙伴'}
             />
           : null}
-        {includePersistentDetails && !lane.activities.length && laneActive && !messages.length ? <div className="room-agent-lane__waiting">
+        {includeCurrentTaskDetails && !lane.activities.length && laneActive && !messages.length ? <div className="room-agent-lane__waiting">
           {laneMotionActive ? <LoaderCircle size={14} /> : <Clock3 size={14} />}
           <span>{laneMotionActive
             ? participant
@@ -856,14 +867,14 @@ export function RoomTurn({
             : laneFreshness.detail}
           </span>
         </div> : null}
-        {includePersistentDetails && !terminalIssue && (laneFailed || laneAborted) && !cardMessages.length ? (
+        {includeCurrentTaskDetails && !terminalIssue && (laneFailed || laneAborted) && !cardMessages.length ? (
           <p className="room-agent-lane__failure">
             {laneFailed
               ? publicFailure
               : '这位伙伴的任务已经停止。'}
           </p>
         ) : null}
-        {includePersistentDetails && showLaneTodo && laneTodo ? <RoomTaskTodoDetails
+        {includeCurrentTaskDetails && showLaneTodo && laneTodo ? <RoomTaskTodoDetails
           live
           owner={participant?.displayName ?? '协作伙伴'}
           todo={laneTodo}
@@ -2722,6 +2733,92 @@ function roomLaneFreshness(
     kernelSync,
     roomSyncState,
   );
+}
+
+function roomLatestTaskLaneKeys(
+  lanes: RoomExecutionLane[],
+  projection: RoomProjectionState,
+  dispatchesById?: RoomKernelProjection['dispatchesById'],
+): Map<string, string> {
+  const latestByTaskId = new Map<string, {
+    executionPhase: number;
+    key: string;
+    sequence?: number;
+    updatedAtMs: number;
+  }>();
+  for (const lane of lanes) {
+    const taskId = lane.taskId || (lane.dispatchId
+      ? dispatchesById?.[lane.dispatchId]?.taskId ?? ''
+      : '');
+    if (!taskId) continue;
+    const range = roomLaneChronologyRange(lane, projection);
+    const current = latestByTaskId.get(taskId);
+    if (
+      !current
+      || lane.executionPhase > current.executionPhase
+      || (
+        lane.executionPhase === current.executionPhase
+        && compareRoomLaneRecency(current, range) < 0
+      )
+    ) {
+      latestByTaskId.set(taskId, {
+        executionPhase: lane.executionPhase,
+        key: lane.key,
+        sequence: range.latestSequence,
+        updatedAtMs: range.updatedAtMs,
+      });
+    }
+  }
+  return new Map([...latestByTaskId].map(([taskId, value]) => [taskId, value.key]));
+}
+
+function roomLaneChronologyRange(
+  lane: RoomExecutionLane,
+  projection: RoomProjectionState,
+  fallbackTurn?: RoomTurnProjection,
+): { startedAtMs: number; updatedAtMs: number; latestSequence?: number } {
+  const records = [
+    ...lane.activities.map((activity) => ({
+      sequence: activity.sequence,
+      startedAtMs: activity.createdAtMs,
+      updatedAtMs: activity.updatedAtMs ?? activity.createdAtMs,
+    })),
+    ...lane.messageIds.flatMap((messageId) => {
+      const message = projection.messagesById[messageId];
+      return message ? [{
+        sequence: message.chronology?.roomEventSequence ?? message.sequence,
+        startedAtMs: message.chronology?.createdAtMs ?? message.createdAtMs,
+        updatedAtMs: message.completedAtMs ?? message.createdAtMs,
+      }] : [];
+    }),
+  ];
+  if (!records.length) {
+    const fallbackAtMs = fallbackTurn?.updatedAtMs ?? Date.now();
+    return {
+      startedAtMs: fallbackTurn?.createdAtMs ?? fallbackAtMs,
+      updatedAtMs: fallbackAtMs,
+    };
+  }
+  const sequences = records.flatMap((record) => (
+    record.sequence === undefined ? [] : [record.sequence]
+  ));
+  return {
+    startedAtMs: Math.min(...records.map((record) => record.startedAtMs)),
+    updatedAtMs: Math.max(...records.map((record) => record.updatedAtMs)),
+    ...(sequences.length ? { latestSequence: Math.max(...sequences) } : {}),
+  };
+}
+
+function compareRoomLaneRecency(
+  left: { sequence?: number; updatedAtMs: number },
+  right: { sequence?: number; updatedAtMs: number },
+): number {
+  if (left.sequence !== undefined || right.sequence !== undefined) {
+    if (left.sequence === undefined) return -1;
+    if (right.sequence === undefined) return 1;
+    if (left.sequence !== right.sequence) return left.sequence - right.sequence;
+  }
+  return left.updatedAtMs - right.updatedAtMs;
 }
 
 function roomFallbackFreshness(

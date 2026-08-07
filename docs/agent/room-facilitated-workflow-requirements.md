@@ -1186,3 +1186,24 @@ Use one coherent installed build and one fresh Room in the foreground
 - loading all stage Skills into every prompt
 - exposing hidden reasoning or private subagent transcript
 - claiming production completion from source-only or diagnostic evidence
+
+## 2026-08-07 execution-frame and alignment amendment
+
+- `开始行动` is a visible chronology boundary. The alignment card ends before
+  that user message; the Facilitator's implementation/integration work appears
+  in a new card below it even when both Dispatches retain the same canonical
+  Task. Later retries within the execution phase stay in that execution card.
+- A settled alignment card never receives the current Task's later timestamp,
+  Todo, workspace, subagent, or delivery projection. Those live details belong
+  only to the newest execution phase, so old cards cannot look active or fresh.
+- A broad request containing several user-visible features is not considered
+  aligned merely because defaults are possible. When data identity, import
+  compatibility, destructive merge/undo behavior, retention, permissions, or
+  another observable boundary materially changes the result, ask one natural
+  user-language group of two to four independent questions before presenting
+  the plan. Do not replace that exchange with a formal summary.
+- The dependency graph is a compact overview. A task node shows the task,
+  owner, one short state/next-action phrase, and `Todo x/y` when authoritative
+  Todo exists. It does not repeat `任务目标` or `当前状态`, does not use arrows as
+  status or direction decoration, and adapts long Chinese labels without
+  shifting the fixed graph layout.

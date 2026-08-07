@@ -66,6 +66,12 @@ weakens the requirements.
 - The facilitator/reporter owns one alignment Root/Task/Dispatch. Inspect
   `room_state`; never fan out work before requirements are settled.
 - Infer inspectable facts and reversible defaults; never ask a serial checklist.
+- A broad multi-feature request is not automatically a complete request. Before
+  skipping clarification, explicitly check whether data identity, destructive merge or undo behavior, import compatibility,
+  retention, permissions, or another user-visible boundary is still owned by the
+  user. If one or more of those choices materially change the delivered workflow,
+  ask them together in the single clarification round; do not silently promote
+  them all to defaults or replace the round with a formal summary.
 - Ask at most one clarification round. For 2-4 independent material questions,
   put numbered A/B/C choices in `question="<numbered prompts with A/B/C choices>"`;
   use `room_commit`, `decision="wait"`, `waitingFor="user"`,
@@ -86,8 +92,11 @@ weakens the requirements.
   Write every user-visible plan field in the user's language and from the user's
   point of view. Describe shared behavior, not English type declarations,
   camelCase field inventories, protocol names, or unverified repository entry
-  points. Put those implementation details in the post-start WorkDocument or an
-  expandable technical detail instead.
+  points. Never publish internal role words such as `Facilitator`, `Reporter`,
+  or `Reviewer`; use the companion's display name or natural user-language
+  phrases such as the local equivalents of coordinating or reviewing companion.
+  Put implementation details in the post-start WorkDocument or an expandable
+  technical detail instead.
   All active Room companions are peers. The Facilitator owns decomposition,
   integration, and the final report but may also own a complete feature. An
   owner may take another feature in a later wave, not two in the same wave.

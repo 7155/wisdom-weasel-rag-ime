@@ -48,6 +48,8 @@ import {
   type RoomPlannedFeatureTask,
   type RoomTaskSubagentRun,
 } from './RoomTaskFlowGraph';
+import { roomTaskTodoSummary } from './RoomTaskAuthorityDetails';
+import { projectRoomTaskAuthority } from './room-task-authority';
 import './room-kernel-control-plane.css';
 
 export type RootBudgetSummary = {
@@ -273,6 +275,19 @@ function RootControlSection({
     .sort((left, right) => left.taskId.localeCompare(right.taskId));
   const dispatches = Object.values(projection.dispatchesById)
     .filter((dispatch) => dispatch.rootId === root.rootId);
+  const taskTodoSummaries = Object.fromEntries(tasks.flatMap((task) => {
+    if (!['pending', 'active', 'review', 'waiting', 'blocked'].includes(task.state)) {
+      return [];
+    }
+    const summary = roomTaskTodoSummary(projectRoomTaskAuthority({
+      dispatches,
+      generation: root.generation,
+      sessionsById: projection.sessionsById,
+      task,
+      workItems,
+    }).todo);
+    return summary ? [[task.taskId, summary]] : [];
+  }));
   const plannedFeatures = unstartedPlanFeatures({
     participantLabels,
     projection,
@@ -367,6 +382,7 @@ function RootControlSection({
       participantProgress={participantProgress}
       posts={posts}
       root={root}
+      taskTodoSummaries={taskTodoSummaries}
       tasks={tasks}
       subagentsByTaskId={subagentsByTaskId}
       terminalReceipt={receipt}
