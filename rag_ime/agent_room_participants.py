@@ -353,7 +353,41 @@ class RoomParticipantLifecycleService:
         except AgentSessionNotFound:
             session = None
         if session is not None:
-            return self._ensure_working_policy(room, session)
+            required_mode = (
+                "coordinator"
+                if room.get("roomKind", "collaboration") == "collaboration"
+                else "assistant"
+            )
+            if session.get("mode") == required_mode:
+                return dict(session)
+            execution_mode = normalize_execution_mode(
+                room.get("executionMode"),
+                default=(
+                    WORKSPACE_MANAGED_EXECUTION_MODE
+                    if required_mode == "coordinator"
+                    else PER_ACTION_EXECUTION_MODE
+                ),
+            )
+            return self.sessions.set_runtime_policy(
+                str(session["id"]),
+                mode=required_mode,
+                tool_profile_version=canonical_tool_profile(
+                    session.get("toolProfileVersion"),
+                    execution_mode=execution_mode,
+                ),
+                execution_mode=execution_mode,
+                grant_workspace_scope=execution_mode
+                in {
+                    WORKSPACE_MANAGED_EXECUTION_MODE,
+                    FULL_TRUST_EXECUTION_MODE,
+                },
+                allowed_tools=None,
+                workspace_roots=(
+                    list(room.get("workspaceRoots") or [])
+                    if required_mode == "coordinator"
+                    else []
+                ),
+            )
         role = self.personas.resolve(
             participant.get("roleId"),
             participant.get("roleVersion") or "1",
@@ -381,68 +415,6 @@ class RoomParticipantLifecycleService:
             self.sessions.delete(str(created["id"]))
             raise
         return created
-
-    def _ensure_working_policy(
-        self,
-        room: Mapping[str, object],
-        session: Mapping[str, object],
-    ) -> dict[str, object]:
-        """Keep Room responsibility separate from Agent capability."""
-
-        mode = (
-            "coordinator"
-            if room.get("roomKind", "collaboration")
-            == "collaboration"
-            else "assistant"
-        )
-        workspace_roots = (
-            list(room.get("workspaceRoots") or [])
-            if mode == "coordinator"
-            else []
-        )
-        execution_mode = normalize_execution_mode(
-            room.get("executionMode"),
-            default=(
-                WORKSPACE_MANAGED_EXECUTION_MODE
-                if room.get("roomKind", "collaboration") == "collaboration"
-                else PER_ACTION_EXECUTION_MODE
-            ),
-        )
-        tool_profile = canonical_tool_profile(
-            session.get("toolProfileVersion"),
-            execution_mode=execution_mode,
-        )
-        if (
-            session.get("mode") == mode
-            and session.get("toolProfileVersion")
-            == tool_profile
-            and session.get("executionMode") == execution_mode
-            and session.get("toolAllowlistMode") == "profile"
-            and list(session.get("workspaceRoots") or [])
-            == workspace_roots
-            and (
-                execution_mode
-                not in {
-                    WORKSPACE_MANAGED_EXECUTION_MODE,
-                    FULL_TRUST_EXECUTION_MODE,
-                }
-                or session.get("workspaceScopeGranted") is True
-            )
-        ):
-            return dict(session)
-        return self.sessions.set_runtime_policy(
-            str(session["id"]),
-            mode=mode,
-            tool_profile_version=tool_profile,
-            execution_mode=execution_mode,
-            grant_workspace_scope=execution_mode
-            in {
-                WORKSPACE_MANAGED_EXECUTION_MODE,
-                FULL_TRUST_EXECUTION_MODE,
-            },
-            allowed_tools=None,
-            workspace_roots=workspace_roots,
-        )
 
     def active_runtime_session_ids(self) -> set[str]:
         return {

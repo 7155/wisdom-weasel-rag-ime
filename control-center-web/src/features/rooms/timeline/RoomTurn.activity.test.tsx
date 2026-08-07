@@ -1368,6 +1368,30 @@ describe('RoomTurn public activity detail', () => {
     expect(lane.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'thinking');
   });
 
+  it('does not describe a stopped task as still processing when its last update ages', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(70_000);
+    const projection = roomProjection();
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      status: 'aborted',
+      abortedDispatchIds: ['dispatch-a'],
+      abortedParticipantIds: ['participant-a'],
+      terminalDispatchIds: ['dispatch-a'],
+      terminalParticipantIds: ['participant-a'],
+    };
+
+    const view = render(roomTurn(projection));
+    const lane = view.container.querySelector<HTMLElement>('.room-agent-lane')!;
+
+    expect(lane).toHaveAttribute('data-state', 'aborted');
+    expect(lane).toHaveAttribute('data-motion', 'settled');
+    expect(lane).toHaveTextContent('已停止');
+    expect(lane).not.toHaveTextContent(
+      '仍在处理，暂时没有新的公开进展；如有短暂中断会自动恢复',
+    );
+  });
+
   it('stops motion immediately when only the Room timeline stream disconnects', () => {
     vi.useFakeTimers();
     vi.setSystemTime(10_000);

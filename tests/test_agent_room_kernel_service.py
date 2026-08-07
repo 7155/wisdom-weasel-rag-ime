@@ -376,6 +376,33 @@ class RoomKernelServiceTests(unittest.TestCase):
         finally:
             passive.close()
 
+    def test_room_reads_preserve_isolated_workspace_lease(self) -> None:
+        prepared = self.service.room_workspaces.prepare(
+            root_id="root:read-poll",
+            task_id="task:read-poll",
+            target_session_id=self.session_id,
+            base_roots=[str(self.root)],
+            policy="isolated_writable",
+            room_id=self.room_id,
+            work_item_id="work:read-poll",
+            dispatch_id="dispatch:read-poll",
+            participant_id=str(self.participant["id"]),
+            creation_reason="verify Room read polling preserves the active lease",
+        )
+        isolated_root = str(Path(str(prepared["workspaceRoot"])).resolve())
+        self.assertEqual(
+            self.service.sessions.get(self.session_id)["workspaceRoots"],
+            [isolated_root],
+        )
+
+        self.service.room(self.room_id)
+        self.service.room_snapshot(self.room_id)
+
+        self.assertEqual(
+            self.service.sessions.get(self.session_id)["workspaceRoots"],
+            [isolated_root],
+        )
+
     def test_owner_recovers_rooms_before_starting_runtime_schedulers(self) -> None:
         startup_order: list[str] = []
 
@@ -4216,6 +4243,45 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertEqual(
             resent["alignmentDispatches"][0]["participantId"],
             resent["participant"]["id"],
+        )
+
+    def test_stop_reports_success_when_isolated_task_has_no_allocated_workspace(
+        self,
+    ) -> None:
+        with sqlite3.connect(self.service.db_path) as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM room_kernel_tasks WHERE task_id=?",
+                ("task:service",),
+            ).fetchone()
+            assert row is not None
+            task = json.loads(str(row[0]))
+            task["workspacePolicy"] = "isolated_writable"
+            task.pop("workspaceBindingId", None)
+            conn.execute(
+                "UPDATE room_kernel_tasks SET payload_json=? WHERE task_id=?",
+                (
+                    json.dumps(
+                        task,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                    "task:service",
+                ),
+            )
+
+        cancelled = self.service.abort_room_turn(
+            self.room_id,
+            {
+                "roomTurnId": "root:service",
+                "clientRequestId": "cancel:unallocated-isolated-task",
+            },
+        )
+
+        self.assertEqual(cancelled["status"], "terminated")
+        self.assertEqual(
+            self.service.room_kernel.root("root:service")["state"],
+            "cancelled",
         )
 
     def test_unknown_cancel_snapshot_stays_nonterminal_with_pending_targets(self) -> None:

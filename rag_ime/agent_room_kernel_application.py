@@ -672,6 +672,7 @@ class RoomKernelApplicationService:
             task_state = str(task.get("state") or "")
             if (
                 task.get("workspacePolicy") != "isolated_writable"
+                or not str(task.get("workspaceBindingId") or "").strip()
                 or task_state not in state_map
                 or (root_id and task.get("rootId") != root_id)
             ):

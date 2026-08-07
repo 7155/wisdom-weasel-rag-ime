@@ -735,6 +735,13 @@ export function RoomTurn({
                   : laneActive
                     ? 'running'
                     : 'waiting';
+      const laneTimingFreshness = (
+        laneState === 'completed'
+        || laneState === 'failed'
+        || laneState === 'aborted'
+      )
+        ? { ...laneFreshness, state: 'fresh' as const, detail: '' }
+        : laneFreshness;
       const laneTask = laneTaskId ? kernelTasksById?.[laneTaskId] : undefined;
       const laneSession = laneIsCurrentTaskPhase
         ? roomLaneSession(lane, laneTaskId, kernelSessionsById)
@@ -797,9 +804,7 @@ export function RoomTurn({
             </small>
           </span>
           <RoomLaneTiming
-            freshness={laneComplete
-              ? { ...laneFreshness, state: 'fresh', detail: '' }
-              : laneFreshness}
+            freshness={laneTimingFreshness}
             nowMs={nowMs}
             startedAtMs={laneTiming.startedAtMs}
             endedAtMs={laneActive && !laneAction ? undefined : laneTiming.updatedAtMs}
