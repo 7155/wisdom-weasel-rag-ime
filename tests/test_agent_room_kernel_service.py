@@ -29,7 +29,10 @@ from rag_ime.agent_blocks import normalize_trusted_agent_blocks
 from rag_ime.agent_room_capabilities import ToolAuthorizationError
 from rag_ime.agent_room_application import (
     _assert_concrete_room_definition,
+    _bind_room_plan_revision,
+    _normalize_room_execution_plan,
     _resolve_room_answer_display,
+    participant_ref_map,
 )
 from rag_ime.agent_room_kernel_application import _collaboration_tool_result
 from rag_ime.agent_room_settlement import RoomCommitProposalError
@@ -47,6 +50,8 @@ from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.agent_workspace import WorkspaceHarness
 from rag_ime.debug_server import DebugRequestHandler
 from rag_ime.pi_runtime import PiRuntimeConfig
+from rag_ime.room_application.repositories import RoomDomainEventRepository
+from rag_ime.room_domain.events import past_tense_event
 from tests.test_pi_runtime_v2 import FAKE_HOST
 from rag_ime.agent_room_skills import RoomSkillPolicy
 
@@ -339,6 +344,371 @@ class RoomKernelServiceTests(unittest.TestCase):
             )
         finally:
             passive.close()
+
+    def test_writable_plan_assigns_integration_and_cross_review_as_peer_tasks(
+        self,
+    ) -> None:
+        room = self.service.rooms.get(self.room_id)
+        active = [
+            item
+            for item in room["participants"]
+            if item.get("status") == "active"
+        ]
+        refs = participant_ref_map(active)
+        ref_by_id = {
+            participant_id: participant_ref
+            for participant_ref, participant_id in refs.items()
+        }
+        feature_owner = active[0]
+        integration_owner = active[1]
+        normalized = _normalize_room_execution_plan(
+            {
+                "sharedContracts": ["所有改动遵守同一份可核验结果约定"],
+                "featureTasks": [
+                    {
+                        "title": "用户功能闭环",
+                        "participantRef": ref_by_id[str(feature_owner["id"])],
+                        "userOutcome": "用户可以完成操作并看到保存结果",
+                        "dependencies": [],
+                        "writeBoundary": "只修改这一项用户功能",
+                        "workspacePolicy": "isolated_writable",
+                    }
+                ],
+                "integrationPlan": "合入功能成果并验证共享结果",
+                "integrationParticipantRef": ref_by_id[
+                    str(integration_owner["id"])
+                ],
+                "acceptancePlan": ["用户操作和保存结果均可核对"],
+            },
+            objective="完成一个可写用户功能并独立复核",
+            expected_output="用户能看到可核验的最终结果",
+            default_participant=feature_owner,
+            participant_refs=refs,
+            participants=active,
+            acceptance_plan=["用户操作和保存结果均可核对"],
+        )
+        _, revision = _bind_room_plan_revision(
+            normalized,
+            root_id="root:peer-plan",
+            invocation_receipt_id="receipt:peer-plan",
+            requirement_catalog_revision_id="catalog:peer-plan",
+            participant_refs=refs,
+            facilitator_participant_id=str(active[2]["id"]),
+            independent_review_required=True,
+            acceptance_aliases={"AC-1": "criterion:peer-plan"},
+            acceptance_criterion_ids=["criterion:peer-plan"],
+            created_at_ms=1,
+        )
+        tasks = list(revision["tasks"])
+        feature = next(item for item in tasks if item["kind"] == "feature")
+        integration = next(
+            item for item in tasks if item["kind"] == "integration"
+        )
+        review = next(item for item in tasks if item["kind"] == "review")
+        self.assertEqual(
+            integration["ownerParticipantId"],
+            integration_owner["id"],
+        )
+        self.assertEqual(integration["dependencyTaskIds"], [feature["taskId"]])
+        self.assertEqual(
+            set(review["scopeTaskIds"]),
+            {feature["taskId"], integration["taskId"]},
+        )
+        self.assertNotIn(
+            review["ownerParticipantId"],
+            review["authorParticipantIds"],
+        )
+
+    def test_writable_plan_runs_feature_integration_review_and_one_report(
+        self,
+    ) -> None:
+        room = self.service.rooms.get(self.room_id)
+        participants = list(room["participants"])
+        accepted = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": "增加一个可写功能，合入后由未参与改动的伙伴独立检查。",
+                "clientMessageId": "client:planned-integration-review",
+            },
+        )
+        root_id = str(accepted["rootId"])
+        alignment_id = str(accepted["alignmentDispatches"][0]["dispatchId"])
+        self.assertTrue(self.service.room_kernel_worker.run_once())
+        alignment = self.service.room_kernel.dispatch(alignment_id)
+        facilitator_id = str(alignment["targetParticipantId"])
+        facilitator_session = str(alignment["targetSessionId"])
+        feature_owner = next(
+            item for item in participants if str(item["id"]) != facilitator_id
+        )
+        reviewer = next(
+            item
+            for item in participants
+            if str(item["id"]) not in {facilitator_id, str(feature_owner["id"])}
+        )
+
+        define_load = self.service.room_capability_tool_load(
+            {
+                "sessionId": facilitator_session,
+                "receiptId": "load:planned-flow:define",
+                "toolName": "room_define",
+                "createdAtMs": 20,
+            }
+        )["result"]
+        defined = self.service.execute_room_capability_tool(
+            facilitator_session,
+            "room_define",
+            {
+                "objective": "交付一个写入结果并完成独立检查",
+                "expectedOutput": "合入后的功能、验证证据、独立检查和唯一汇报",
+                "entrySurface": "测试仓库中的用户功能入口",
+                "primaryInteraction": "用户运行功能并看到新结果",
+                "observableCompletion": "共享仓库包含新结果且独立检查通过",
+                "requirements": ["功能结果必须合入共享仓库"],
+                "acceptanceCriteria": [
+                    {
+                        "statement": "共享仓库包含已验证的新功能结果",
+                        "fullNameZh": "新功能结果验收",
+                        "expectedReceiptTypes": ["evidence"],
+                    }
+                ],
+                "implementationParticipantRef": str(feature_owner["id"]),
+                "executionPlan": {
+                    "sharedContracts": ["所有伙伴核对同一份共享结果"],
+                    "featureTasks": [
+                        {
+                            "title": "新功能闭环",
+                            "participantRef": str(feature_owner["id"]),
+                            "userOutcome": "用户运行功能后看到新结果",
+                            "dependencies": [],
+                            "writeBoundary": "只增加计划内的新功能结果",
+                            "workspacePolicy": "isolated_writable",
+                            "acceptance": ["AC-1"],
+                        }
+                    ],
+                    "integrationPlan": "合入新功能并核对共享结果",
+                    "integrationParticipantRef": facilitator_id,
+                    "acceptancePlan": ["共享仓库结果与独立检查均可核对"],
+                },
+                "independentReviewRequired": True,
+            },
+            tool_call_id="call:planned-flow:define",
+            load_receipt_id=str(define_load["receiptId"]),
+        )["result"]
+        settled_alignment = self.service.room_settle_lifecycle.settle(
+            {
+                "sessionId": facilitator_session,
+                "dispatchId": alignment_id,
+                "rootId": root_id,
+                "generation": alignment["generation"],
+                "capabilityEpoch": alignment["capabilityEpoch"],
+                "settleScopeId": "scope:planned-flow:alignment",
+                "settleAttempt": 1,
+                "runtimeTurnId": f"turn:{alignment_id}:1",
+                "dispatchAttempt": alignment["attempt"],
+                "resourceUsage": {},
+            }
+        )
+        self.assertEqual(settled_alignment["state"], "committed")
+        started = self.service.start_room_execution(
+            self.room_id,
+            {
+                "action": "start_execution",
+                "rootId": root_id,
+                "clientActionId": "action:planned-flow:start",
+            },
+        )
+        tasks = list(started["tasks"])
+        feature_task = next(
+            item for item in tasks if item.get("taskKind") == "work"
+        )
+        integration_task = next(
+            item for item in tasks if item.get("taskKind") == "integration"
+        )
+        review_task = next(
+            item for item in tasks if item.get("taskKind") == "review"
+        )
+        self.assertEqual(review_task["currentOwnerParticipantId"], reviewer["id"])
+        self.assertEqual(review_task["acceptanceCriterionIds"], [
+            feature_task["acceptanceCriterionIds"][0]
+        ])
+
+        def state_evidence(
+            session_id: str,
+            dispatch_id: str,
+            suffix: str,
+        ) -> str:
+            loaded = self.service.room_capability_tool_load(
+                {
+                    "sessionId": session_id,
+                    "receiptId": f"load:{suffix}:state",
+                    "toolName": "room_state",
+                    "createdAtMs": int(time.time() * 1000),
+                }
+            )["result"]
+            result = self.service.execute_room_capability_tool(
+                session_id,
+                "room_state",
+                {},
+                tool_call_id=f"call:{suffix}:state",
+                load_receipt_id=str(loaded["receiptId"]),
+            )["result"]
+            return str(result["evidenceRef"])
+
+        def deliver(
+            dispatch_id: str,
+            *,
+            suffix: str,
+            evidence_ref: str | None,
+            review_findings: list[dict[str, object]] | None = None,
+        ) -> dict[str, object]:
+            dispatch = self.service.room_kernel.dispatch(dispatch_id)
+            session_id = str(dispatch["targetSessionId"])
+            loaded = self.service.room_capability_tool_load(
+                {
+                    "sessionId": session_id,
+                    "receiptId": f"load:{suffix}:commit",
+                    "toolName": "room_commit",
+                    "createdAtMs": int(time.time() * 1000),
+                }
+            )["result"]
+            arguments: dict[str, object] = {
+                "decision": "deliver",
+                "summary": f"{suffix} 已完成",
+                "publicSummary": f"{suffix} 已完成并可核对。",
+                "evidence": (
+                    [{"acceptance": "AC-1", "refs": [evidence_ref]}]
+                    if evidence_ref
+                    else []
+                ),
+                "residualRisks": [],
+            }
+            if review_findings is not None:
+                arguments["reviewFindings"] = review_findings
+            self.service.execute_room_capability_tool(
+                session_id,
+                "room_commit",
+                arguments,
+                tool_call_id=f"call:{suffix}:commit",
+                load_receipt_id=str(loaded["receiptId"]),
+            )
+            settled = self.service.room_settle_lifecycle.settle(
+                {
+                    "sessionId": session_id,
+                    "dispatchId": dispatch_id,
+                    "rootId": root_id,
+                    "generation": dispatch["generation"],
+                    "capabilityEpoch": dispatch["capabilityEpoch"],
+                    "settleScopeId": f"scope:{suffix}",
+                    "settleAttempt": 1,
+                    "runtimeTurnId": f"turn:{dispatch_id}:1",
+                    "dispatchAttempt": dispatch["attempt"],
+                    "resourceUsage": {},
+                }
+            )
+            self.assertEqual(settled["state"], "committed", settled)
+            return settled
+
+        feature_dispatch_id = str(started["dispatch"]["dispatchId"])
+        self.assertTrue(self.service.room_kernel_worker.run_once())
+        feature_dispatch = self.service.room_kernel.dispatch(feature_dispatch_id)
+        feature_workspace = Path(
+            str(self.service.room_kernel.task(str(feature_task["taskId"]))["workspaceRoot"])
+        )
+        (feature_workspace / "planned-feature.txt").write_text(
+            "planned feature result\n",
+            encoding="utf-8",
+        )
+        feature_evidence = state_evidence(
+            str(feature_dispatch["targetSessionId"]),
+            feature_dispatch_id,
+            "planned-flow:feature",
+        )
+        deliver(
+            feature_dispatch_id,
+            suffix="新功能",
+            evidence_ref=feature_evidence,
+        )
+        integration_task = self.service.room_kernel.task(
+            str(integration_task["taskId"])
+        )
+        self.assertEqual(integration_task["state"], "active")
+        integration_dispatch = next(
+            item
+            for item in self.service.room_kernel_snapshot(self.room_id)["dispatches"]
+            if item.get("taskId") == integration_task["taskId"]
+        )
+        self.assertTrue(self.service.room_kernel_worker.run_once())
+        integration_session = str(integration_dispatch["targetSessionId"])
+        integrate_load = self.service.room_capability_tool_load(
+            {
+                "sessionId": integration_session,
+                "receiptId": "load:planned-flow:integrate",
+                "toolName": "room_integrate",
+                "createdAtMs": int(time.time() * 1000),
+            }
+        )["result"]
+        integrated = self.service.execute_room_capability_tool(
+            integration_session,
+            "room_integrate",
+            {"childTaskId": feature_task["taskId"], "action": "integrate"},
+            tool_call_id="call:planned-flow:integrate",
+            load_receipt_id=str(integrate_load["receiptId"]),
+        )["result"]
+        self.assertTrue(integrated["integrated"], integrated)
+        self.assertEqual(
+            (self.root / "planned-feature.txt").read_text(encoding="utf-8"),
+            "planned feature result\n",
+        )
+        integration_evidence = state_evidence(
+            integration_session,
+            str(integration_dispatch["dispatchId"]),
+            "planned-flow:integration",
+        )
+        deliver(
+            str(integration_dispatch["dispatchId"]),
+            suffix="成果集成",
+            evidence_ref=integration_evidence,
+        )
+        review_task = self.service.room_kernel.task(str(review_task["taskId"]))
+        self.assertEqual(review_task["state"], "active")
+        review_dispatch = next(
+            item
+            for item in self.service.room_kernel_snapshot(self.room_id)["dispatches"]
+            if item.get("taskId") == review_task["taskId"]
+        )
+        self.assertEqual(review_dispatch["targetParticipantId"], reviewer["id"])
+        self.assertTrue(self.service.room_kernel_worker.run_once())
+        review_evidence = state_evidence(
+            str(review_dispatch["targetSessionId"]),
+            str(review_dispatch["dispatchId"]),
+            "planned-flow:review",
+        )
+        deliver(
+            str(review_dispatch["dispatchId"]),
+            suffix="独立检查",
+            evidence_ref=review_evidence,
+            review_findings=[],
+        )
+        report = self.service.room_kernel.report_readiness(root_id)["existing"]
+        report_dispatch = report["dispatch"]
+        self.assertTrue(self.service.room_kernel_worker.run_once())
+        report_evidence = state_evidence(
+            str(report_dispatch["targetSessionId"]),
+            str(report_dispatch["dispatchId"]),
+            "planned-flow:report",
+        )
+        deliver(
+            str(report_dispatch["dispatchId"]),
+            suffix="最终汇报",
+            evidence_ref=report_evidence,
+        )
+        self.assertEqual(self.service.room_kernel.root(root_id)["state"], "completed")
+        final_posts = [
+            item
+            for item in self.service.room_kernel_snapshot(self.room_id)["posts"]
+            if item.get("rootId") == root_id and item.get("kind") == "result"
+        ]
+        self.assertEqual(len(final_posts), 1)
 
     def _seed(self) -> None:
         self.service.room_kernel.create_root_with_task(
@@ -4146,6 +4516,117 @@ class RoomKernelServiceTests(unittest.TestCase):
             0,
         )
 
+    def test_projection_recovery_isolates_one_room_and_drains_another(self) -> None:
+        room_b = self.service.create_room(
+            {
+                "title": "Independent projection recovery",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        room_b_id = str(room_b["id"])
+        participant_b = room_b["participants"][1]
+        self.service.room_kernel.create_root_with_task(
+            {
+                "schemaVersion": ROOT_EXECUTION_SCHEMA_VERSION,
+                "rootId": "root:projection-b",
+                "roomId": room_b_id,
+                "generation": 0,
+                "state": "running",
+                "facilitatorParticipantId": str(participant_b["id"]),
+                "reporterParticipantId": None,
+                "reporterSelectionReceiptId": None,
+                "requirementAnchorRef": "requirement-anchor:projection-b@sha256:test",
+                "createdByActorRef": "user:local",
+                "terminalReceiptId": None,
+                "activeProfileRef": None,
+                "budgetPolicyRef": "room-budget:test-v1",
+                "independentReviewRequired": False,
+                "createdAtMs": 2,
+            },
+            {
+                "schemaVersion": ROOM_TASK_SCHEMA_VERSION,
+                "taskId": "task:projection-b",
+                "rootId": "root:projection-b",
+                "parentTaskId": None,
+                "taskKind": "work",
+                "currentOwnerParticipantId": str(participant_b["id"]),
+                "ownershipRevision": 0,
+                "ownershipReceiptId": None,
+                "invitationId": None,
+                "reviewState": "not_required",
+                "reviewOfTaskIds": [],
+                "reviewAuthorParticipantIds": [],
+                "contextEvidenceRefs": [],
+                "objective": "Remain visible while another Room is malformed.",
+                "expectedOutput": "An independently projected Room.",
+                "requirementItemIds": ["requirement:projection-b"],
+                "acceptanceCriterionIds": [],
+                "revision": 0,
+                "state": "active",
+            },
+            budget=2,
+            max_hops=1,
+            max_depth=1,
+            acceptance_criteria=(),
+            now_ms=2,
+        )
+        with sqlite3.connect(self.service.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            for room_id, root_id in (
+                (self.room_id, "root:service"),
+                (room_b_id, "root:projection-b"),
+            ):
+                RoomDomainEventRepository.append(
+                    conn,
+                    past_tense_event(
+                        kind="dispatch_completed",
+                        room_id=room_id,
+                        root_id=root_id,
+                        entity_id=f"dispatch:{root_id}",
+                        generation=0,
+                        idempotency_key=f"projection-recovery:{root_id}",
+                        payload={"taskId": f"task:{root_id}"},
+                    ),
+                    created_at_ms=10,
+                )
+
+        original_sync = self.service.room_kernel_projection.sync_room
+
+        def sync_room(room_id: str, *, now_ms: int | None = None):
+            if room_id == self.room_id:
+                raise ValueError("malformed legacy projection")
+            return original_sync(room_id, now_ms=now_ms)
+
+        with patch.object(
+            self.service.room_kernel_projection,
+            "sync_room",
+            side_effect=sync_room,
+        ):
+            recovery = self.service._sync_all_room_kernel_projections()
+
+        self.assertIn(self.room_id, recovery["failedRooms"])
+        self.assertIn(room_b_id, recovery["recoveredEffects"])
+        self.assertIn(room_b_id, recovery["synchronizedRoomIds"])
+        self.assertEqual(
+            self.service.room_kernel_application.application_outbox.pending(
+                room_b_id
+            ),
+            [],
+        )
+        self.assertEqual(
+            len(
+                self.service.room_kernel_application.application_outbox.pending(
+                    self.room_id
+                )
+            ),
+            2,
+        )
+
     def test_capability_manifest_exposes_only_one_canonical_kernel_path(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
         self.service.room_kernel_worker.run_once()
@@ -4154,6 +4635,7 @@ class RoomKernelServiceTests(unittest.TestCase):
             "room_post",
             "room_commit",
             "room_define",
+            "room_reconcile",
             "room_collaborate",
             "room_integrate",
         )
@@ -4181,7 +4663,7 @@ class RoomKernelServiceTests(unittest.TestCase):
         )["result"]
         with self.assertRaisesRegex(
             ValueError,
-            "room_state/room_post/room_commit/room_define/room_collaborate/room_integrate",
+            "room_state/room_post/room_commit/room_define/room_reconcile/room_collaborate/room_integrate",
         ):
             self.service.execute_room_capability_tool(
                 self.session_id,
@@ -4974,8 +5456,12 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "createdAtMs": 4,
             }
         )["result"]
+        parent_task = self.service.room_kernel.task("task:service")
+        child_task_id = "task:application-recovery"
         task = {
             **self.service.room_kernel.task("task:service"),
+            "taskId": child_task_id,
+            "parentTaskId": "task:service",
             "state": "completed",
             "workspacePolicy": "isolated_writable",
             "workspaceBindingId": "workspace-binding:application-recovery",
@@ -5017,8 +5503,15 @@ class RoomKernelServiceTests(unittest.TestCase):
             create=True,
             return_value={"status": "ready", "integrationRef": None},
         )
+        def task_by_id(task_id: str):
+            return task if task_id == child_task_id else parent_task
+
         with (
-            patch.object(self.service.room_kernel, "task", return_value=task),
+            patch.object(
+                self.service.room_kernel,
+                "task",
+                side_effect=task_by_id,
+            ),
             patch.object(
                 self.service.room_workspaces,
                 "integrate",
@@ -5034,7 +5527,7 @@ class RoomKernelServiceTests(unittest.TestCase):
             first = self.service.execute_room_capability_tool(
                 self.session_id,
                 "room_integrate",
-                {"childTaskId": "task:service", "action": "integrate"},
+                {"childTaskId": child_task_id, "action": "integrate"},
                 tool_call_id="call:pending-integration:first",
                 load_receipt_id=str(loaded["receiptId"]),
             )
@@ -5051,7 +5544,7 @@ class RoomKernelServiceTests(unittest.TestCase):
             recovered = self.service.execute_room_capability_tool(
                 self.session_id,
                 "room_integrate",
-                {"childTaskId": "task:service", "action": "integrate"},
+                {"childTaskId": child_task_id, "action": "integrate"},
                 tool_call_id=recovery_tool_call_id,
                 load_receipt_id=str(loaded["receiptId"]),
             )
@@ -5086,8 +5579,12 @@ class RoomKernelServiceTests(unittest.TestCase):
             }
         )["result"]
         integration_ref = "room-workspace-integration:canonical"
+        parent_task = self.service.room_kernel.task("task:service")
+        child_task_id = "task:authority-replay"
         task = {
-            **self.service.room_kernel.task("task:service"),
+            **parent_task,
+            "taskId": child_task_id,
+            "parentTaskId": "task:service",
             "state": "completed",
             "workspacePolicy": "isolated_writable",
             "workspaceBindingId": "workspace-binding:authority-replay",
@@ -5106,8 +5603,15 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "integrationRef": integration_ref,
             },
         )
+        def task_by_id(task_id: str):
+            return task if task_id == child_task_id else parent_task
+
         with (
-            patch.object(self.service.room_kernel, "task", return_value=task),
+            patch.object(
+                self.service.room_kernel,
+                "task",
+                side_effect=task_by_id,
+            ),
             patch.object(
                 self.service.room_workspaces,
                 "integrate",
@@ -5133,7 +5637,7 @@ class RoomKernelServiceTests(unittest.TestCase):
             first = self.service.execute_room_capability_tool(
                 self.session_id,
                 "room_integrate",
-                {"childTaskId": "task:service", "action": "integrate"},
+                {"childTaskId": child_task_id, "action": "integrate"},
                 tool_call_id="call:integration-authority-replay",
                 load_receipt_id=str(loaded["receiptId"]),
             )
@@ -5149,7 +5653,7 @@ class RoomKernelServiceTests(unittest.TestCase):
                 self.service.execute_room_capability_tool(
                     self.session_id,
                     "room_integrate",
-                    {"childTaskId": "task:service", "action": "integrate"},
+                    {"childTaskId": child_task_id, "action": "integrate"},
                     tool_call_id="call:integration-authority-replay",
                     load_receipt_id=str(loaded["receiptId"]),
                 )
@@ -5583,6 +6087,33 @@ class RoomKernelServiceTests(unittest.TestCase):
                 created_at_ms=8,
             )
 
+    def test_screen_snapshot_projects_typed_external_wait_from_kernel(self) -> None:
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.assertTrue(self.service.room_kernel_worker.run_once())
+        self._settle_running_dispatch(
+            session_id=self.session_id,
+            dispatch_id="dispatch:service",
+            capability_epoch=7,
+            scope_id="screen-external-wait",
+        )
+
+        screen = self.service.room_kernel_snapshot(self.room_id)["screenState"]
+
+        self.assertEqual(screen["activeRootId"], "root:service")
+        self.assertEqual(screen["phase"], "waiting")
+        self.assertEqual(
+            screen["waitReason"],
+            {
+                "kind": "external",
+                "reason": "test explicitly resumes the fixture",
+                "requiresUserAction": False,
+            },
+        )
+        self.assertEqual(
+            screen["recommendedNextAction"],
+            "wait_for_progress",
+        )
+
     def _settle_running_dispatch(
         self,
         *,
@@ -5706,13 +6237,15 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         names = [str(item["name"]) for item in runtime_tools]
         self.assertEqual(
-            names[:5],
+            names[:7],
             [
                 "room_state",
                 "room_post",
                 "room_commit",
                 "room_define",
+                "room_reconcile",
                 "room_collaborate",
+                "room_integrate",
             ],
         )
         for name in (
@@ -7916,6 +8449,7 @@ class RoomKernelServiceTests(unittest.TestCase):
             }
         )["result"]
         target = self.service.rooms.get(self.room_id)["participants"][2]
+        dependent_target = self.service.rooms.get(self.room_id)["participants"][1]
         executed = self.service.execute_room_capability_tool(
             session_id,
             "room_define",
@@ -7936,12 +8470,20 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "implementationParticipantRef": str(target["id"]),
                 "executionPlan": {
                     "sharedContracts": ["先锁定实现与验证结果契约"],
-                    "featureTasks": [{
-                        "title": "目标实现闭环",
-                        "participantRef": str(target["id"]),
-                        "userOutcome": "从任务入口完成实现并看到验证结果",
-                        "dependencies": [],
-                    }],
+                    "featureTasks": [
+                        {
+                            "title": "目标实现闭环",
+                            "participantRef": str(target["id"]),
+                            "userOutcome": "从任务入口完成实现并看到验证结果",
+                            "dependencies": [],
+                        },
+                        {
+                            "title": "结果验收闭环",
+                            "participantRef": str(dependent_target["id"]),
+                            "userOutcome": "用户可在真实界面核对完整结果",
+                            "dependencies": ["目标实现闭环"],
+                        },
+                    ],
                     "integrationPlan": "负责人完成集成后执行全链路验证",
                     "acceptancePlan": ["任务页显示实现产物与验证通过状态"],
                 },
@@ -8038,11 +8580,113 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "clientActionId": "action:define-tool",
             },
         )
+        feature_tasks = [
+            task
+            for task in started["tasks"]
+            if task.get("planTaskKind") == "feature"
+        ]
+        review_tasks = [
+            task
+            for task in started["tasks"]
+            if task.get("planTaskKind") == "review"
+        ]
+        self.assertEqual(len(feature_tasks), 2)
+        self.assertEqual(len(review_tasks), 2)
+        self.assertEqual(
+            [task["state"] for task in feature_tasks],
+            ["active", "pending"],
+        )
+        self.assertEqual(len(started["dispatches"]), 1)
         execute_id = str(started["dispatch"]["dispatchId"])
+        self.assertEqual(
+            self.service.room_kernel.dispatch(execute_id)[
+                "targetParticipantId"
+            ],
+            target["id"],
+        )
         self.assertTrue(self.service.room_kernel_worker.run_once())
         self.assertEqual(
             self.factory.runtime.dispatched[-1],
             execute_id,
+        )
+        execute = self.service.room_kernel.dispatch(execute_id)
+        target_session_id = str(execute["targetSessionId"])
+        state_loaded = self.service.room_capability_tool_load(
+            {
+                "sessionId": target_session_id,
+                "receiptId": "load:define-tool:state",
+                "toolName": "room_state",
+                "createdAtMs": 30,
+            }
+        )["result"]
+        state_result = self.service.execute_room_capability_tool(
+            target_session_id,
+            "room_state",
+            {},
+            tool_call_id="call:define-tool:state",
+            load_receipt_id=str(state_loaded["receiptId"]),
+        )["result"]
+        commit_loaded = self.service.room_capability_tool_load(
+            {
+                "sessionId": target_session_id,
+                "receiptId": "load:define-tool:commit",
+                "toolName": "room_commit",
+                "createdAtMs": 31,
+            }
+        )["result"]
+        self.service.execute_room_capability_tool(
+            target_session_id,
+            "room_commit",
+            {
+                "decision": "deliver",
+                "summary": "目标实现闭环已经完成",
+                "publicSummary": "目标实现已经完成并通过核验。",
+                "evidence": [
+                    {
+                        "acceptance": "AC-1",
+                        "refs": [state_result["evidenceRef"]],
+                    }
+                ],
+                "residualRisks": [],
+            },
+            tool_call_id="call:define-tool:commit",
+            load_receipt_id=str(commit_loaded["receiptId"]),
+        )
+        settled = self.service.room_settle_lifecycle.settle(
+            {
+                "sessionId": target_session_id,
+                "dispatchId": execute_id,
+                "rootId": accepted["rootId"],
+                "generation": execute["generation"],
+                "capabilityEpoch": execute["capabilityEpoch"],
+                "settleScopeId": "scope:define-tool:first-wave",
+                "settleAttempt": 1,
+                "runtimeTurnId": "turn:define-tool:first-wave",
+                "dispatchAttempt": execute["attempt"],
+                "resourceUsage": {},
+            }
+        )
+        self.assertEqual(settled["state"], "committed", settled)
+        dependent_task_id = str(feature_tasks[1]["taskId"])
+        self.assertEqual(
+            self.service.room_kernel.task(dependent_task_id)["state"],
+            "active",
+        )
+        dependent_dispatches = [
+            value
+            for value in self.service.room_kernel_snapshot(self.room_id)[
+                "dispatches"
+            ]
+            if value.get("taskId") == dependent_task_id
+        ]
+        self.assertEqual(len(dependent_dispatches), 1)
+        self.assertEqual(
+            dependent_dispatches[0]["targetParticipantId"],
+            dependent_target["id"],
+        )
+        self.assertEqual(
+            dependent_dispatches[0]["dependsOnDispatchIds"],
+            [execute_id],
         )
 
     def test_defined_root_runs_two_peer_lanes_with_nested_lineage_before_one_report(
@@ -8113,30 +8757,35 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "requirements": ["两位伙伴独立工作", "最终只发布一个结果"],
                 "acceptanceCriteria": [
                     {
-                        "statement": "两条独立工作线均有可核验证据",
-                        "fullNameZh": "双工作线验收证据",
+                        "statement": "实现核对工作线有可核验证据",
+                        "fullNameZh": "实现核对验收证据",
+                        "expectedReceiptTypes": ["evidence"],
+                    },
+                    {
+                        "statement": "边界研究工作线有可核验证据",
+                        "fullNameZh": "边界研究验收证据",
                         "expectedReceiptTypes": ["evidence"],
                     }
                 ],
                 "implementationParticipantRef": str(first_peer["id"]),
                 "executionPlan": {
-                    "sharedContracts": ["先锁定页面记录模型、状态事件和结果契约"],
+                    "sharedContracts": ["先锁定协作结果与证据契约"],
                     "featureTasks": [
                         {
-                            "title": "批量导入闭环",
+                            "title": "实现核对闭环",
                             "participantRef": str(first_peer["id"]),
-                            "userOutcome": "用户可上传、预览、确认并核对导入结果",
+                            "userOutcome": "第一位伙伴完成实现核对并提交证据",
                             "dependencies": [],
                         },
                         {
-                            "title": "标签筛选闭环",
+                            "title": "边界研究闭环",
                             "participantRef": str(second_peer["id"]),
-                            "userOutcome": "用户可维护标签并组合筛选当前记录",
+                            "userOutcome": "第二位伙伴完成边界研究并提交证据",
                             "dependencies": [],
                         },
                     ],
-                    "integrationPlan": "负责人按共享契约合并两个完整功能",
-                    "acceptancePlan": ["真实界面分别验证导入与筛选闭环"],
+                    "integrationPlan": "自动汇总两条只读工作线的结果",
+                    "acceptancePlan": ["两条工作线都有证据且只发布一个结果"],
                 },
                 "independentReviewRequired": False,
             },
@@ -8151,85 +8800,10 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "clientActionId": "action:two-peer-start",
             },
         )
-        execute_id = str(started["dispatch"]["dispatchId"])
-        self.assertTrue(self.service.room_kernel_worker.run_once())
-        execute = self.service.room_kernel.dispatch(execute_id)
-        self.assertEqual(execute["targetParticipantId"], facilitator["id"])
-        facilitator_todo = self.service.sessions.agent_todo(
-            facilitator_session
-        )
-        self.assertEqual(
-            facilitator_todo["roomLineage"]["dispatchId"],
-            execute_id,
-        )
-        self.assertGreaterEqual(facilitator_todo["counts"]["total"], 3)
-        self.assertEqual(facilitator_todo["counts"]["inProgress"], 1)
-
-        state_load = self.service.room_capability_tool_load(
-            {
-                "sessionId": facilitator_session,
-                "receiptId": "load:two-peer:state",
-                "toolName": "room_state",
-                "createdAtMs": 21,
-            }
-        )["result"]
-        state = self.service.execute_room_capability_tool(
-            facilitator_session,
-            "room_state",
-            {},
-            tool_call_id="call:two-peer:state",
-            load_receipt_id=str(state_load["receiptId"]),
-        )["result"]
-        execution_policy = state["executionPolicy"]
-        self.assertEqual(execution_policy["routingPolicy"], "parallel")
-        self.assertTrue(execution_policy["facilitatorOwnsIntegration"])
-        self.assertTrue(execution_policy["peerWorkRequired"])
-        self.assertEqual(execution_policy["minimumPeerWorkItems"], 2)
-        self.assertEqual(execution_policy["assignedPeerWorkItems"], 0)
-        self.assertFalse(execution_policy["independentReviewRequired"])
-        self.assertEqual(
-            execution_policy["nextAction"],
-            "assign_independent_peer_work",
-        )
-        self.assertEqual(
-            len(execution_policy["eligiblePeerParticipantRefs"]),
-            3,
-        )
-        self.assertEqual(len(execution_policy["reviewerParticipantRefs"]), 3)
-        refs = {
-            str(item["displayName"]): str(item["participantRef"])
-            for item in state["participants"]
-        }
-        collaborate_load = self.service.room_capability_tool_load(
-            {
-                "sessionId": facilitator_session,
-                "receiptId": "load:two-peer:collaborate",
-                "toolName": "room_collaborate",
-                "createdAtMs": 22,
-            }
-        )["result"]
-        child_ids: list[str] = []
-        for ordinal, peer in enumerate((first_peer, second_peer), start=1):
-            collaboration = self.service.execute_room_capability_tool(
-                facilitator_session,
-                "room_collaborate",
-                {
-                    "targetParticipantRef": refs[str(peer["displayName"])],
-                    "objective": f"独立完成第 {ordinal} 条工作线并提交证据",
-                    "expectedOutput": f"第 {ordinal} 条工作线的核验结果",
-                    "intent": "execute",
-                    "acceptance": ["AC-1"],
-                    "workspacePolicy": "read_only",
-                    "evidenceRefs": [state["evidenceRef"]],
-                },
-                tool_call_id=f"call:two-peer:collaborate:{ordinal}",
-                load_receipt_id=str(collaborate_load["receiptId"]),
-            )["result"]
-            child_ids.append(str(collaboration["childDispatchId"]))
-        self.assertEqual(
-            self.service.room_kernel.dispatch(execute_id)["state"],
-            "running",
-        )
+        child_ids = [
+            str(item["dispatchId"])
+            for item in started["dispatches"]
+        ]
         self.assertEqual(len(set(child_ids)), 2)
 
         def state_evidence(
@@ -8259,7 +8833,7 @@ class RoomKernelServiceTests(unittest.TestCase):
             session_id: str,
             dispatch_id: str,
             suffix: str,
-            evidence_ref: str,
+            evidence_ref: str | list[str],
         ) -> dict[str, object]:
             dispatch = self.service.room_kernel.dispatch(dispatch_id)
             task = self.service.room_kernel.task(str(dispatch["taskId"]))
@@ -8292,6 +8866,9 @@ class RoomKernelServiceTests(unittest.TestCase):
                     "createdAtMs": 31,
                 }
             )["result"]
+            evidence_values = (
+                evidence_ref if isinstance(evidence_ref, list) else [evidence_ref]
+            )
             self.service.execute_room_capability_tool(
                 session_id,
                 "room_commit",
@@ -8300,7 +8877,11 @@ class RoomKernelServiceTests(unittest.TestCase):
                     "summary": f"{suffix} 已完成",
                     "publicSummary": f"{suffix} 已完成并附带可核验证据。",
                     "evidence": [
-                        {"acceptance": "AC-1", "refs": [evidence_ref]}
+                        {
+                            "acceptance": f"AC-{index + 1}",
+                            "refs": [value],
+                        }
+                        for index, value in enumerate(evidence_values)
                     ],
                     "residualRisks": [],
                 },
@@ -8348,8 +8929,12 @@ class RoomKernelServiceTests(unittest.TestCase):
             return settled
 
         nested_batches: list[dict[str, object]] = []
-        for ordinal, child_id in enumerate(child_ids, start=1):
+        remaining_child_ids = set(child_ids)
+        for ordinal in range(1, len(child_ids) + 1):
             self.assertTrue(self.service.room_kernel_worker.run_once())
+            child_id = str(self.factory.runtime.dispatched[-1])
+            self.assertIn(child_id, remaining_child_ids)
+            remaining_child_ids.remove(child_id)
             child = self.service.room_kernel.dispatch(child_id)
             child_session = str(child["targetSessionId"])
             child_todo = self.service.sessions.agent_todo(child_session)
@@ -8416,11 +9001,14 @@ class RoomKernelServiceTests(unittest.TestCase):
             ),
             2,
         )
-        child_projection = self.service.room_kernel.collaboration_children(
-            root_id
-        )
+        child_projection = [
+            self.service.room_kernel.dispatch(dispatch_id)
+            for dispatch_id in child_ids
+        ]
         self.assertEqual(len(child_projection), 2)
-        self.assertTrue(all(item["resultPublic"] for item in child_projection))
+        self.assertTrue(
+            all(item["state"] == "committed" for item in child_projection)
+        )
         defined_work_item_id = str(defined["workItem"]["id"])
         for child in child_projection:
             delivered_task = self.service.room_kernel.task(
@@ -8449,24 +9037,6 @@ class RoomKernelServiceTests(unittest.TestCase):
             self.assertNotIn("AC-", public_verifications)
             self.assertNotIn("criterionId", public_verifications)
             self.assertNotIn("workspaceDelivery", delivered_task)
-        quiescence = self.service._room_root_child_quiescence(
-            root_id,
-            int(execute["generation"]),
-            execute_id,
-        )
-        self.assertTrue(quiescence["quiescent"], quiescence)
-
-        execute_evidence = state_evidence(
-            facilitator_session,
-            execute_id,
-            "two-peer:facilitator",
-        )
-        deliver(
-            facilitator_session,
-            execute_id,
-            "伙伴结果汇总",
-            execute_evidence,
-        )
         report_state = self.service.room_kernel.report_readiness(root_id)
         report = report_state["existing"]
         report_dispatch = report["dispatch"]
@@ -8485,13 +9055,18 @@ class RoomKernelServiceTests(unittest.TestCase):
         report_evidence = state_evidence(
             facilitator_session,
             str(report_dispatch["dispatchId"]),
-            "two-peer:report",
+            "two-peer:report:1",
+        )
+        second_report_evidence = state_evidence(
+            facilitator_session,
+            str(report_dispatch["dispatchId"]),
+            "two-peer:report:2",
         )
         deliver(
             facilitator_session,
             str(report_dispatch["dispatchId"]),
             "最终汇总",
-            report_evidence,
+            [report_evidence, second_report_evidence],
         )
         terminal_root = self.service.room_kernel.root(root_id)
         self.assertEqual(terminal_root["state"], "completed")
@@ -9296,6 +9871,23 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertEqual(stored_plan["featureTasks"][0]["title"], "需求对齐任务框")
         self.assertEqual(stored_plan["featureTasks"][0]["ownerDisplayName"], target["displayName"])
         self.assertEqual(stored_plan["featureTasks"][0]["wave"], 1)
+        plan_revision_id = str(
+            defined["definitionReceipt"]["details"]["planRevisionId"]
+        )
+        planned_feature_task_id = str(
+            stored_plan["featureTasks"][0]["taskId"]
+        )
+        with sqlite3.connect(self.service.db_path) as conn:
+            proposed_plan = conn.execute(
+                "SELECT state FROM room_plan_revisions WHERE plan_revision_id=?",
+                (plan_revision_id,),
+            ).fetchone()
+            materialized_before_start = conn.execute(
+                "SELECT 1 FROM room_kernel_tasks WHERE task_id=?",
+                (planned_feature_task_id,),
+            ).fetchone()
+        self.assertEqual(proposed_plan[0], "proposed")
+        self.assertIsNone(materialized_before_start)
         self.assertIsNone(defined["executionDispatch"])
         self.assertEqual(defined["intake"]["phase"], "awaiting_start")
         alignment_post = defined["alignmentPost"]
@@ -9552,6 +10144,21 @@ class RoomKernelServiceTests(unittest.TestCase):
             ],
             [],
         )
+        with sqlite3.connect(self.service.db_path) as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT state FROM room_plan_revisions "
+                    "WHERE plan_revision_id=?",
+                    (plan_revision_id,),
+                ).fetchone()[0],
+                "proposed",
+            )
+            self.assertIsNone(
+                conn.execute(
+                    "SELECT 1 FROM room_kernel_tasks WHERE task_id=?",
+                    (planned_feature_task_id,),
+                ).fetchone()
+            )
 
         started = self.service.start_room_execution(
             self.room_id,
@@ -9566,6 +10173,34 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         self.assertTrue(started["created"])
         self.assertFalse(replay["created"])
+        self.assertEqual(started["planRevision"]["state"], "active")
+        self.assertEqual(
+            started["planRevision"]["workDocumentRef"]["documentId"],
+            started["workDocument"]["documentId"],
+        )
+        self.assertEqual(
+            [task["taskId"] for task in started["tasks"]],
+            [planned_feature_task_id],
+        )
+        self.assertEqual(started["tasks"][0]["state"], "active")
+        self.assertEqual(
+            self.service.room_kernel.dispatch(
+                str(started["dispatch"]["dispatchId"])
+            )["taskId"],
+            planned_feature_task_id,
+        )
+        self.assertEqual(
+            self.service.room_kernel.task(defined_task_id)["state"],
+            "completed",
+        )
+        self.assertEqual(
+            replay["planRevision"]["planRevisionId"],
+            plan_revision_id,
+        )
+        self.assertEqual(
+            [task["taskId"] for task in replay["tasks"]],
+            [planned_feature_task_id],
+        )
         self.assertEqual(
             replay["workDocument"]["documentId"],
             started["workDocument"]["documentId"],
@@ -9597,6 +10232,87 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertIn("## 下一步", work_document_text)
         self.assertIn("不得另建副本文档", work_document_text)
         self.assertIn(original_request, work_document_text)
+
+        correction_text = (
+            "补充修正：先保留现有并行任务，但把真实界面反馈列为当前最高优先级。\n"
+            "这句话必须逐字进入同一份工作文档。"
+        )
+        roots_before_correction = self.service.room_kernel.root_ids(
+            self.room_id
+        )
+        corrected = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": correction_text,
+                "clientMessageId": "client:typed-start-correction",
+            },
+        )
+        corrected_replay = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": correction_text,
+                "clientMessageId": "client:typed-start-correction",
+            },
+        )
+        self.assertEqual(corrected["rootId"], accepted["rootId"])
+        self.assertTrue(corrected["intervention"]["accepted"])
+        self.assertEqual(
+            corrected["intervention"]["kind"],
+            "priority_change",
+        )
+        self.assertEqual(corrected_replay["post"], corrected["post"])
+        self.assertEqual(
+            self.service.room_kernel.root_ids(self.room_id),
+            roots_before_correction,
+        )
+        corrected_document = self.service._room_work_document_context(
+            str(accepted["rootId"])
+        )
+        self.assertIsNotNone(corrected_document)
+        assert corrected_document is not None
+        corrected_document_text = Path(
+            str(corrected_document["canonicalPath"])
+        ).read_text(encoding="utf-8")
+        self.assertEqual(corrected_document_text.count(correction_text), 1)
+        self.assertIn("## 后续用户修正", corrected_document_text)
+
+        self.assertTrue(self.service.room_kernel_worker.run_once())
+        active_feature_dispatch = self.service.room_kernel.dispatch(
+            str(started["dispatch"]["dispatchId"])
+        )
+        feature_session_id = str(
+            active_feature_dispatch["targetSessionId"]
+        )
+        reconcile_loaded = self.service.room_capability_tool_load(
+            {
+                "sessionId": feature_session_id,
+                "receiptId": "load:typed-start:reconcile",
+                "toolName": "room_reconcile",
+                "createdAtMs": 30,
+            }
+        )["result"]
+        reconciled = self.service.execute_room_capability_tool(
+            feature_session_id,
+            "room_reconcile",
+            {
+                "interventionId": corrected["intervention"][
+                    "interventionId"
+                ],
+                "taskId": planned_feature_task_id,
+                "resolutionSummary": (
+                    "在当前功能内优先完成真实界面反馈，其他功能边界不变"
+                ),
+            },
+            tool_call_id="call:typed-start:reconcile",
+            load_receipt_id=str(reconcile_loaded["receiptId"]),
+        )["result"]
+        self.assertTrue(reconciled["accepted"])
+        self.assertEqual(
+            self.service.room_kernel.report_readiness(
+                str(accepted["rootId"])
+            )["governance"]["pendingInterventions"],
+            [],
+        )
 
         # A Room may have crossed the typed Start gate before a process crash
         # or an upgrade.  Recovery must recreate the one bound document before

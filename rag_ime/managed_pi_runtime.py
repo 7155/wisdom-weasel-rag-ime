@@ -42,10 +42,15 @@ _GIT_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 _MAX_JSON_BYTES = 2 * 1024 * 1024
 _MAX_RUNTIME_FILES = 100_000
 _MAX_RETIRED_GENERATIONS = 64
-REQUIRED_ROOM_RUNTIME_METHODS = ("room.dispatch", "room.cancel")
+REQUIRED_ROOM_RUNTIME_METHODS = (
+    "session.await_settled",
+    "room.dispatch",
+    "room.cancel",
+)
 REQUIRED_ACCEPTANCE_METHODS = (
     "session.open",
     "room.dispatch",
+    "session.await_settled",
     "session.debug.context",
     "room.cancel",
 )

@@ -39,7 +39,7 @@ PROJECT_ROUTING_SKILLS = frozenset(
 ROUTING_CARD_FIELDS = ("name", "when", "notFor", "does", "input", "output")
 MAX_ROUTING_CARD_CHARS = 420
 SKILL_SOURCE_KINDS = ("bundled", "configured", "pi-installed")
-REQUIRED_PI_RUNTIME_BASE_COMMIT = "0fd0564af34cb40bbcd6b8903c01b36191c4f90d"
+REQUIRED_PI_RUNTIME_BASE_COMMIT = "aa3d7f5c41f976264414b8962ebe5a52d728a4d6"
 REQUIRED_GOAL_RUNTIME_SOURCE_MARKERS = {
     "providerContextJournal": (
         '"session_memory_refresh"',
@@ -65,6 +65,9 @@ _ROOM_RUNTIME_SOURCE_KEYS = (
     "agentCore",
     "agentTypes",
     "agentSession",
+    "runtimePrimitives",
+    "runtimeSettlement",
+    "contextProvider",
     "contextInspection",
     "skills",
     "discoveryTools",
@@ -75,6 +78,8 @@ _ROOM_RUNTIME_SOURCE_KEYS = (
     "toolBridge",
     "toolArtifacts",
     "providerContextJournal",
+    "productContextProvider",
+    "turnSettlement",
     "sessionContextRefresh",
     "summarizationCompletion",
     "cancellationReceipts",
@@ -242,7 +247,12 @@ def _verified_room_runtime_contract(pi_root: Path) -> tuple[dict[str, object], s
     ):
         raise ManagedPiRuntimeError("Room runtime source provenance is unsupported")
     methods = contract.get("requiredMethods")
-    if methods != ["session.control_state", "room.dispatch", "room.cancel"]:
+    if methods != [
+        "session.control_state",
+        "session.await_settled",
+        "room.dispatch",
+        "room.cancel",
+    ]:
         raise ManagedPiRuntimeError("Room runtime source contract methods are incomplete")
     minimum_commit = str(contract.get("minimumHandlersCommit") or "").strip()
     if len(minimum_commit) != 40 or any(

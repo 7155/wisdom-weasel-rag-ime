@@ -20,6 +20,7 @@ import { parseContract } from '@/contracts/validators';
 import { useOptionalControlTransport } from '@/app/control-transport';
 import type { ControlTransport } from '@/platform/transport';
 import { RoomKernelControlPlane } from './RoomKernelControlPlane';
+import { buildRoomScreenModel } from '../model/room-screen-model';
 import type { RoomTaskSubagentRun } from './RoomTaskFlowGraph';
 import { parseRoomRequirementsReadProjection, type RoomRequirementsReadProjection } from '../requirements/room-requirements-read-model';
 import type { RoomCollaborationRole, RoomWorkItem } from '../room-types';
@@ -76,6 +77,10 @@ export function RoomKernelLivePanel({
   const transport = useOptionalControlTransport();
   const projection = useRoomLiveStore(
     (state) => visible ? state.kernelProjections[roomId] ?? null : null,
+  );
+  const screenModel = useMemo(
+    () => buildRoomScreenModel(projection),
+    [projection],
   );
   const sync = useRoomLiveStore(
     (state) => visible ? state.kernelSyncByRoomId[roomId] : undefined,
@@ -348,6 +353,7 @@ export function RoomKernelLivePanel({
     {projection && Object.keys(projection.rootsById).length > 0 ? <RoomKernelControlPlane
       activities={publicActivities}
       projection={projection}
+      screenModel={screenModel}
       budgetsByRootId={{}}
       contextReceiptsByRootId={{}}
       capabilityReceiptsByRootId={capabilityReceipts(projection)}
@@ -821,6 +827,12 @@ export function parseSnapshot(value: unknown, roomId: string): RoomKernelSnapsho
   if (typeof item.snapshotHash !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(item.snapshotHash)) {
     throw new TypeError('Room Kernel snapshot hash is invalid');
   }
+  const screenState = item.screenState === undefined
+    ? undefined
+    : parseContract('room-screen-state.v1', item.screenState);
+  if (screenState && screenState.roomId !== roomId) {
+    throw new TypeError('Room screen state belongs to another Room');
+  }
   return {
     roomId,
     lastSequence: Number(item.lastSequence),
@@ -836,6 +848,7 @@ export function parseSnapshot(value: unknown, roomId: string): RoomKernelSnapsho
     sessions: array(item.sessions) as RoomKernelSnapshot['sessions'],
     receipts: array(item.receipts).map((entry) => parseContract('room-kernel-receipt.v1', entry)),
     cancellationSurfaces: array(item.cancellationSurfaces).map(parseCancellationSurface),
+    ...(screenState ? { screenState } : {}),
   };
 }
 

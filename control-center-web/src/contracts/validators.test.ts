@@ -31,7 +31,13 @@ describe('generated JSON contracts', () => {
   });
 
   it('builds a stable schema index for every source contract', () => {
-    expect(Object.keys(contractSchemas)).toHaveLength(151);
+    expect(Object.keys(contractSchemas)).toHaveLength(153);
+    expect(contractSchemas['room-plan-revision.v1'].$id).toBe(
+      'https://wisdom-weasel.local/contracts/room-plan-revision.v1.json',
+    );
+    expect(contractSchemas['room-screen-state.v1'].$id).toBe(
+      'https://wisdom-weasel.local/contracts/room-screen-state.v1.json',
+    );
     expect(contractSchemas['agent-event.v1'].$id).toBe('rag-ime.contract.agent-event.v1');
     expect(contractSchemas['agent-background-job.v1'].$id).toBe(
       'rag-ime.contract.agent-background-job.v1',

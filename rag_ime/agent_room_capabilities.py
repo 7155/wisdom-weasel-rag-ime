@@ -17,6 +17,7 @@ ROOM_PUBLIC_TOOLS = (
     "room_post",
     "room_commit",
     "room_define",
+    "room_reconcile",
     "room_collaborate",
     "room_integrate",
 )
@@ -508,9 +509,8 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
         "确有独立工作时可附一位建议实施伙伴的 participantRef"
     ),
     "output": (
-        "新的不可变 RequirementCatalog、稳定 AC-1... 别名、一个由 Facilitator "
-        "负责的 Root WorkItem 和首位建议实施伙伴；随后用 room_collaborate "
-        "分配一个或多个有边界的实现任务"
+        "新的不可变 RequirementCatalog、稳定 AC-1... 别名、可审核的任务图与"
+        "建议负责人；用户开始行动后由系统按依赖自动释放已批准任务"
     ),
     "does": "只修订当前 Root/Task 的需求与验收，不创建第二个 Root 或任务系统。",
     "risk": "R1",
@@ -660,11 +660,28 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                                 },
                                 "wave": {"type": "integer", "minimum": 1, "maximum": 4},
                                 "writeBoundary": {"type": "string", "minLength": 1, "maxLength": 1000},
+                                "workspacePolicy": {
+                                    "enum": ["read_only", "isolated_writable"],
+                                },
+                                "acceptance": {
+                                    "type": "array",
+                                    "maxItems": 16,
+                                    "items": {"type": "string", "minLength": 1, "maxLength": 320},
+                                },
                             },
                             "additionalProperties": False,
                         },
                     },
                     "integrationPlan": {"type": "string", "minLength": 1, "maxLength": 2000},
+                    "integrationParticipantRef": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 320,
+                        "description": (
+                            "可选的集成负责人；必须是活跃 Room 成员。集成是可分配"
+                            "任务，不是主持伙伴的永久专属职责。"
+                        ),
+                    },
                     "acceptancePlan": {
                         "type": "array",
                         "minItems": 1,
@@ -696,6 +713,51 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
         "additionalProperties": False,
     },
 },
+        "room_reconcile": {
+            "description": (
+                "执行中收到用户补充后，当前功能负责人明确确认该修正只影响自己的"
+                "稳定任务，并把处理决定写回同一份工作文档。跨功能、公共契约或新增"
+                "危险范围不能走这个入口。"
+            ),
+            "when": (
+                "room_state 显示待处理用户修正，且修正只影响当前完整功能",
+            ),
+            "notFor": (
+                "改变其他功能、公共契约、依赖图、权限或危险操作范围",
+                "只询问进度或尚未理解用户修正",
+            ),
+            "input": "待处理修正的 interventionId、当前 taskId 和处理摘要",
+            "output": "修正是否已绑定到当前稳定任务并解除对应终态门禁",
+            "does": "只解决一个当前任务范围内的修正，不创建新任务或暗改其他功能。",
+            "risk": "R1",
+            "operation": "room.reconcile",
+            "inputSchema": {
+                "type": "object",
+                "required": [
+                    "interventionId",
+                    "taskId",
+                    "resolutionSummary",
+                ],
+                "properties": {
+                    "interventionId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 320,
+                    },
+                    "taskId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 320,
+                    },
+                    "resolutionSummary": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000,
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
         "room_commit": {
             "description": (
                 "结束自己当前部分时，选择 deliver（完成）、handoff（交给下一位）、"

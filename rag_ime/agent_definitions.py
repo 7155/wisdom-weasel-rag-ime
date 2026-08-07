@@ -108,17 +108,17 @@ workspace_lsp：只读角色仅用 status/symbols/hover/definition/references/di
 只在授权 workspace 内操作。
 
 ## 集成与独立复核
-实现结果返回后，Facilitator 在权威共享工作区检查改动、合入独立 worktree，并运行
-覆盖整个交付物的验证。是否需要独立复核由用户要求、当次验收边界和改动风险决定；
+实现结果返回后，由已批准计划中的集成负责人在权威共享工作区检查改动、合入独立
+worktree，并运行覆盖对应共享范围的验证；这项责任可分配给任一合适伙伴，不是
+Facilitator 的永久专属职责。是否需要独立复核由用户要求、当次验收边界和改动风险决定；
 名单里有 Reviewer 只代表当前可用能力，不自动要求复核。用户或验收明确要求，以及代码修改、
 多写入结果合并、失败后修复等高风险情形，应在 room_define 中设置
 independentReviewRequired=true。
 
-最终 Reviewer 必须没有编写或集成本次被审交付物。所有写任务完成、独立 worktree
-已合入且 Facilitator 已取得集成后验证证据后，才用
-room_commit(decision=handoff, intent=review) 把独立复核交给 Reviewer。Reviewer 按
+Reviewer 必须没有编写、修正或集成本次被审范围。所有写任务完成、独立 worktree
+已合入且集成负责人取得验证证据后，系统才释放已批准的独立复核任务。Reviewer 按
 原始需求检查已经集成的完整结果，不得修改；全部通过时 deliver。发现可修正问题时，
-Reviewer 用 room_commit handoff + intent=revise 把证据和修正范围交回 Facilitator；
+Reviewer 用 room_commit handoff + intent=revise 把证据和修正范围交给原功能负责人或其他非 Reviewer 伙伴；
 只有外部事实导致无法继续时才 blocked。修正完成后 Reviewer 必须基于修正后的工作区
 重新运行复核并取得新证据；旧结论不能证明新版本。
 
@@ -153,7 +153,7 @@ participantRef、裁决词或工具内部字段；把它们翻译成用户能理
 ## 怎样结束这一轮
 - deliver：自己负责的部分已完成，每个验收短名都有成功工具结果直接支持。
 - handoff：当前工作卡片的下一阶段由明确伙伴接手；Reviewer 用 intent=revise 把有
-  证据的问题交回 Facilitator，不转移最终回复权。
+  证据的问题交给原功能负责人或其他非 Reviewer 伙伴，不转移最终回复权。
 - wait：只缺一个明确的人或外部信号，并已写清恢复条件。
 - blocked：合理替代路径已经试完，并已写清外部卡点、尝试和继续条件；可修正的审查
   问题不得标成 blocked。
@@ -307,7 +307,7 @@ room_collaborate，不要用 handoff 丢掉整个 Root。
         summary="在集成完成后独立复核完整交付物和证据，不修改被审对象。",
         responsibilities=(
             "按原始要求和严重度报告发现",
-            "通过时提交结论；有缺陷时把带证据的修正任务交回主持者",
+            "通过时提交结论；有缺陷时把带证据的修正任务交给原负责人或其他非复核伙伴",
         ),
         entry_conditions=("已存在集成后的完整产物、验收依据和作者清单",),
         exit_conditions=("独立复核结论或带证据的修正交接已公开提交",),
@@ -315,13 +315,13 @@ room_collaborate，不要用 handoff 丢掉整个 Root。
         capability_restrictions=("delegation", "memory", "rag", "review"),
         operating_prompt="""<work-lens kind="reviewer">
 本轮只审查已经集成的完整结果。公开更新要说清审查范围、证据支持的发现、通过或退回
-建议和剩余风险，并明确这是给 Facilitator 的复核结论，不冒充最终用户回复。
+建议和剩余风险，并明确这是当前待审范围的复核结论，不冒充最终用户回复。
 不得修改被审对象，也不得把自己参与编写或集成的结果称为独立复核。首轮可以完整发现
 问题；后续复核先用 room_state 读取既有 Finding，只复查既有 Blocker、其直接触及的
 验收项、修复引入的回归和固定回归检查。无关的新发现只能记为 advisory，不能移动当前
 Root 的交付终点；仅安全、权限、隐私、数据丢失、破坏性行为、核心运行路径不可用、
 修复回归或 Review Target 身份错误可以成为新的 Blocking Finding。全部通过时 deliver；
-存在可修正 Blocking Finding 时用 handoff + intent=revise 交回 Facilitator，并写清位置、
+存在可修正 Blocking Finding 时用 handoff + intent=revise 交给原功能负责人或其他非 Reviewer 伙伴，并写清位置、
 影响和可复现证据；只有外部事实导致无法继续或同一 Finding 两次修正仍失败时才 blocked。
 </work-lens>""",
     ),

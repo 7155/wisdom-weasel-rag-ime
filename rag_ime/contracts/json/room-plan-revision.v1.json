@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-plan-revision.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "planRevisionId",
+    "rootId",
+    "revision",
+    "state",
+    "requirementCatalogRevisionId",
+    "tasks",
+    "createdAtMs",
+    "activatedAtMs",
+    "workDocumentRef"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "wisdom-weasel.room-plan-revision.v1"
+    },
+    "planRevisionId": {"type": "string", "minLength": 1},
+    "rootId": {"type": "string", "minLength": 1},
+    "revision": {"type": "integer", "minimum": 1},
+    "state": {
+      "type": "string",
+      "enum": ["proposed", "active", "superseded", "cancelled"]
+    },
+    "requirementCatalogRevisionId": {"type": "string", "minLength": 1},
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": {"$ref": "#/$defs/task"}
+    },
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "activatedAtMs": {"type": ["integer", "null"], "minimum": 0},
+    "workDocumentRef": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["documentId", "contentSha256", "documentRevision"],
+          "properties": {
+            "documentId": {"type": "string", "minLength": 1},
+            "contentSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "documentRevision": {"type": "integer", "minimum": 1}
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "taskId",
+        "kind",
+        "title",
+        "userOutcome",
+        "ownerParticipantId",
+        "participantRef",
+        "dependencyTaskIds",
+        "dependencyTitles",
+        "wave",
+        "writeBoundary",
+        "workspacePolicy",
+        "acceptanceCriterionIds",
+        "scopeTaskIds",
+        "authorParticipantIds"
+      ],
+      "properties": {
+        "taskId": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "enum": ["feature", "integration", "review"]},
+        "title": {"type": "string", "minLength": 1, "maxLength": 200},
+        "userOutcome": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "ownerParticipantId": {"type": "string", "minLength": 1},
+        "participantRef": {"type": "string", "minLength": 1},
+        "dependencyTaskIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "dependencyTitles": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "wave": {"type": "integer", "minimum": 1},
+        "writeBoundary": {"type": "string", "maxLength": 1000},
+        "workspacePolicy": {
+          "type": "string",
+          "enum": ["read_only", "shared_single_writer", "isolated_writable"]
+        },
+        "acceptanceCriterionIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "scopeTaskIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "authorParticipantIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

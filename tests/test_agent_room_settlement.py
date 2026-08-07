@@ -1651,7 +1651,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         self.assertEqual(report["dispatch"]["state"], "pending")
         self.assertEqual(report["task"]["workspacePolicy"], "read_only")
 
-    def test_reviewer_revision_handoff_returns_writable_lane_to_facilitator(
+    def test_reviewer_revision_handoff_returns_writable_lane_to_nonreviewer(
         self,
     ) -> None:
         base_task = self.service.room_kernel.task("task:settle")
@@ -3236,7 +3236,7 @@ class ReviewEvidenceBindingTests(unittest.TestCase):
     def test_final_delivery_rejects_unbound_review_evidence(self) -> None:
         with self.assertRaisesRegex(
             RoomCommitProposalError,
-            "reviewTargetRevision",
+            "待审结果",
         ):
             self.service._assert_review_evidence_ready(**self.arguments)
 
@@ -3403,8 +3403,26 @@ class ReviewerHandoffAuthorityTests(unittest.TestCase):
             with self.subTest(intent=intent):
                 self._invoke(intent=intent)
 
-    def test_revise_to_any_non_facilitator_is_rejected(self) -> None:
-        self._invoke(intent="revise", target_ref="P3")
+    def test_revise_may_target_an_active_nonreviewer_peer(self) -> None:
+        target_id = self.service._assert_review_revision_target(
+            root=self.service.kernel.root("root:review"),
+            task=self.service.kernel.task("task:review"),
+            dispatch=self.service.kernel.dispatch("dispatch:review"),
+            target_participant_ref="P3",
+        )
+        self.assertEqual(target_id, self.foreign_id)
+
+    def test_revise_cannot_target_the_reviewer(self) -> None:
+        with self.assertRaisesRegex(
+            RoomCommitProposalError,
+            "不能把修正任务交给自己",
+        ):
+            self.service._assert_review_revision_target(
+                root=self.service.kernel.root("root:review"),
+                task=self.service.kernel.task("task:review"),
+                dispatch=self.service.kernel.dispatch("dispatch:review"),
+                target_participant_ref="P1",
+            )
 
 
 class _ReviewerHandoffKernel:
@@ -3484,6 +3502,12 @@ class _ReviewEvidenceKernel:
             "commitId": str(self.commit.get("commitId") or ""),
             "resultPublic": True,
         }
+
+    def latest_review_attempts(
+        self,
+        root_id: str,
+    ) -> list[dict[str, object]]:
+        return [self.latest_review_attempt(root_id)]
 
 
 class _ReviewFindingRooms:

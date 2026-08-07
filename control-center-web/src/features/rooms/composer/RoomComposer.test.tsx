@@ -140,7 +140,7 @@ describe('RoomComposer macOS input methods', () => {
     expect(onAttachmentsChange).toHaveBeenCalledWith([]);
   });
 
-  it('keeps the ordinary composer locked while a managed task is busy', () => {
+  it('keeps the composer available for corrections while managed work runs', () => {
     const onSend = vi.fn();
     const common = {
       room: {
@@ -173,11 +173,11 @@ describe('RoomComposer macOS input methods', () => {
       </TooltipProvider>,
     );
 
-    expect(screen.getByRole('button', { name: '等待当前任务完成' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled();
     expect(screen.getByRole('status', { name: '当前协作状态' })).toHaveTextContent('多人并行中');
     expect(screen.queryByText(/完成或停止后才能发送下一项任务/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '等待当前任务完成' }));
-    expect(onSend).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+    expect(onSend).toHaveBeenCalledWith('补充发布边界');
     view.unmount();
   });
 });

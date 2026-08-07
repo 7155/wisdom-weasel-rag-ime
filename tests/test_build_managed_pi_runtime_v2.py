@@ -45,6 +45,9 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 "agentCore": Path("packages/agent/src/agent.ts"),
                 "agentTypes": Path("packages/agent/src/types.ts"),
                 "agentSession": Path("packages/coding-agent/src/core/agent-session.ts"),
+                "runtimePrimitives": Path("packages/agent/src/runtime-primitives.ts"),
+                "runtimeSettlement": Path("packages/agent/src/runtime-settlement.ts"),
+                "contextProvider": Path("packages/agent/src/context-provider.ts"),
                 "contextInspection": Path("packages/rag-ime-runtime-host/src/debug-context.ts"),
                 "skills": Path("packages/coding-agent/src/core/skills.ts"),
                 "discoveryTools": Path("packages/rag-ime-runtime-host/src/discovery-tools.ts"),
@@ -62,6 +65,12 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 "toolArtifacts": Path("packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts"),
                 "providerContextJournal": Path(
                     "packages/rag-ime-runtime-host/src/provider-context-journal.ts"
+                ),
+                "productContextProvider": Path(
+                    "packages/rag-ime-runtime-host/src/product-context-provider.ts"
+                ),
+                "turnSettlement": Path(
+                    "packages/rag-ime-runtime-host/src/turn-settlement.ts"
                 ),
                 "sessionContextRefresh": Path(
                     "packages/rag-ime-runtime-host/src/session-context-refresh.ts"
@@ -95,11 +104,13 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 if key == "protocol":
                     extra = (
                         'export type RuntimeMethod = | "session.control_state" '
-                        '| "room.dispatch" | "room.cancel";\n'
+                        '| "session.await_settled" | "room.dispatch" '
+                        '| "room.cancel";\n'
                     )
                 elif key == "runtimeHost":
                     extra = (
                         'switch (method) { case "session.control_state": break; '
+                        'case "session.await_settled": break; '
                         'case "room.dispatch": break; '
                         'case "room.cancel": break; }\n'
                     )
@@ -139,6 +150,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                         "minimumHandlersCommit": commit,
                         "requiredMethods": [
                             "session.control_state",
+                            "session.await_settled",
                             "room.dispatch",
                             "room.cancel",
                         ],
@@ -155,6 +167,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             adapter_path.write_text(
                 (
                     'export const methods = ["session.control_state", '
+                    '"session.await_settled", '
                     '"room.dispatch", "room.cancel"] as const;\n'
                 ),
                 encoding="utf-8",
@@ -207,14 +220,17 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 self.assertTrue(set(required).issubset(declared_markers[key]))
 
         blockers = {item["id"] for item in product_status["blockers"]}
-        self.assertIn("managed_pi_0fd0564_runtime_acceptance_pending", blockers)
+        self.assertIn("managed_pi_aa3d7f5c_runtime_acceptance_pending", blockers)
         source_contract = next(
             item
             for item in product_status["resolvedBlockers"]
             if item["id"] == "managed_pi_v2_source_contract"
         )
         self.assertIn(REQUIRED_PI_RUNTIME_BASE_COMMIT, source_contract["evidence"])
-        self.assertIn("not runtime acceptance evidence", source_contract["evidence"])
+        self.assertIn(
+            "not managed-runtime installation or GUI acceptance evidence",
+            source_contract["evidence"],
+        )
 
     def test_default_pi_worktree_prefers_canonical_main_checkout(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-pi-worktree-") as temporary:
@@ -279,7 +295,12 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn('manifest["createdAtMs"] = product_commit_ms', script)
         self.assertIn("_verified_room_runtime_contract", script)
         self.assertIn("source_contract_sha256=room_runtime_contract_sha256", script)
-        for method in ("session.control_state", "room.dispatch", "room.cancel"):
+        for method in (
+            "session.control_state",
+            "session.await_settled",
+            "room.dispatch",
+            "room.cancel",
+        ):
             self.assertIn(f'"{method}"', adapter)
 
     def test_staged_smoke_uses_current_dispatch_and_continuation_contract(self) -> None:
@@ -303,6 +324,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         for method in (
             "session.open",
             "room.dispatch",
+            "session.await_settled",
             "session.debug.context",
             "room.cancel",
         ):

@@ -130,10 +130,12 @@ import type { RoomEventEnvelopeV2 } from './generated/room-event-envelope.v2';
 import type { RoomKernelCommandV1 } from './generated/room-kernel-command.v1';
 import type { RoomKernelReceiptV1 } from './generated/room-kernel-receipt.v1';
 import type { RoomParticipantBindingV2 } from './generated/room-participant-binding.v2';
+import type { RoomPlanRevisionV1 } from './generated/room-plan-revision.v1';
 import type { RoomPostV2 } from './generated/room-post.v2';
 import type { RoomQualityGateReceiptV1 } from './generated/room-quality-gate-receipt.v1';
 import type { RoomRootExecutionV2 } from './generated/room-root-execution.v2';
 import type { RoomRootExecutionV3 } from './generated/room-root-execution.v3';
+import type { RoomScreenStateV1 } from './generated/room-screen-state.v1';
 import type { RoomSettleReceiptV1 } from './generated/room-settle-receipt.v1';
 import type { RoomSettleResultV1 } from './generated/room-settle-result.v1';
 import type { RoomSkillLoadReceiptV1 } from './generated/room-skill-load-receipt.v1';
@@ -283,10 +285,12 @@ export type {
   RoomKernelCommandV1,
   RoomKernelReceiptV1,
   RoomParticipantBindingV2,
+  RoomPlanRevisionV1,
   RoomPostV2,
   RoomQualityGateReceiptV1,
   RoomRootExecutionV2,
   RoomRootExecutionV3,
+  RoomScreenStateV1,
   RoomSettleReceiptV1,
   RoomSettleResultV1,
   RoomSkillLoadReceiptV1,
@@ -437,10 +441,12 @@ export interface ContractTypeMap {
   'room-kernel-command.v1': RoomKernelCommandV1;
   'room-kernel-receipt.v1': RoomKernelReceiptV1;
   'room-participant-binding.v2': RoomParticipantBindingV2;
+  'room-plan-revision.v1': RoomPlanRevisionV1;
   'room-post.v2': RoomPostV2;
   'room-quality-gate-receipt.v1': RoomQualityGateReceiptV1;
   'room-root-execution.v2': RoomRootExecutionV2;
   'room-root-execution.v3': RoomRootExecutionV3;
+  'room-screen-state.v1': RoomScreenStateV1;
   'room-settle-receipt.v1': RoomSettleReceiptV1;
   'room-settle-result.v1': RoomSettleResultV1;
   'room-skill-load-receipt.v1': RoomSkillLoadReceiptV1;

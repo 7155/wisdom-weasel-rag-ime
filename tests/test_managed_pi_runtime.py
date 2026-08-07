@@ -732,8 +732,12 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             config = PiRuntimeConfig.from_environment()
 
         self.assertEqual(discovered.protocol_version, "2")
-        self.assertEqual(discovered.runtime_methods, ("room.dispatch", "room.cancel"))
+        self.assertEqual(
+            discovered.runtime_methods,
+            ("session.await_settled", "room.dispatch", "room.cancel"),
+        )
         self.assertEqual(config.protocol_version, "2")
+        self.assertEqual(config.runtime_version, "runtime-v2")
 
     def test_protocol_v2_manifest_without_complete_room_methods_fails_closed(self) -> None:
         payload, manifest = self._payload("runtime-v2-incomplete", protocol_version="2")
@@ -871,6 +875,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             "verifiedMethods": [
                 "session.open",
                 "room.dispatch",
+                "session.await_settled",
                 "session.debug.context",
                 "room.cancel",
             ],
@@ -973,7 +978,11 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             source_commit=hashlib.sha256(runtime_version.encode("utf-8")).hexdigest()[:12],
             source_package="@earendil-works/pi-coding-agent",
             protocol_version=protocol_version,
-            runtime_methods=("room.dispatch", "room.cancel") if protocol_v2 else (),
+            runtime_methods=(
+                "session.await_settled",
+                "room.dispatch",
+                "room.cancel",
+            ) if protocol_v2 else (),
             source_contract_sha256="a" * 64 if protocol_v2 else "",
             handlers_commit="b" * 40 if protocol_v2 else "",
         )

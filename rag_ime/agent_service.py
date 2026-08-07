@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -140,6 +141,9 @@ from .personal_context import (
 )
 from .session_memory_recall import SessionMemoryRecallBuilder
 from .text_utils import compact_whitespace
+
+
+_LOG = logging.getLogger(__name__)
 
 ROOM_CONTEXT_UNREAD_MESSAGE_LIMIT = 12
 ROOM_CONTEXT_HISTORY_CHAR_BUDGET = 3_600
@@ -679,6 +683,7 @@ class AgentService:
                 self.room_turns.user_priority_sessions
             ),
         )
+        self._sync_all_room_kernel_projections()
         self._recover_interrupted_room_runtime_dispatches()
         self._reconcile_room_work_from_kernel()
         if self._room_kernel_worker_enabled:
@@ -2638,6 +2643,10 @@ class AgentService:
             return "独立复核", _unique_room_todo_items(
                 [objective, "提交独立复核结论与剩余风险"]
             )
+        if str(task.get("taskKind") or "") == "integration":
+            return "成果集成与验证", _unique_room_todo_items(
+                [objective, "逐项合入已批准成果并运行共享验证"]
+            )
         return "功能实现与验证", _unique_room_todo_items(
             [objective, "运行验证并把可核对结果交回负责人"]
         )
@@ -4526,6 +4535,26 @@ class AgentService:
             content=str(payload.get("content") or ""),
         )
 
+    def _append_room_work_document_delta(
+        self,
+        conn: sqlite3.Connection,
+        payload: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        return self.work_documents.append_room_delta_in_transaction(
+            conn,
+            root_id=str(payload.get("rootId") or ""),
+            delta_id=str(payload.get("deltaId") or ""),
+            delta_kind=str(payload.get("deltaKind") or ""),
+            source_ref=str(payload.get("sourceRef") or ""),
+            content=str(payload.get("content") or ""),
+            created_at_ms=int(payload.get("createdAtMs") or 0),
+        )
+
+    def _materialize_room_work_document(
+        self, root_id: str
+    ) -> Mapping[str, object] | None:
+        return self.work_documents.materialize_room_root(root_id)
+
     def _room_work_document_context(
         self, root_id: str
     ) -> Mapping[str, object] | None:
@@ -4644,6 +4673,9 @@ class AgentService:
             restore_participant_sessions=self._restore_legacy_room_participant_sessions,
             resolve_attachments=self._resolve_room_attachments,
             ensure_work_document=self._ensure_room_work_document,
+            append_work_document_delta=self._append_room_work_document_delta,
+            materialize_work_document=self._materialize_room_work_document,
+            workspaces=self.room_workspaces,
         )
         self.room_kernel_application = RoomKernelApplicationService(
             rooms=self.rooms,
@@ -4659,6 +4691,7 @@ class AgentService:
             wake_worker=self.room_kernel_worker_loop.wake,
             revoke_session=self.room_kernel_runtime.revoke_session,
             define_room=self.room_application.define_room,
+            reconcile_room=self.room_application.reconcile_intervention,
             artifact_hash_provider=self._room_artifact_hash_provider,
             workspaces=self.room_workspaces,
             media_receipt_provider=lambda media_id, session_id: self.media.receipt(
@@ -4670,6 +4703,7 @@ class AgentService:
             root_state_observer=(
                 self._project_room_work_from_kernel_root
             ),
+            materialize_work_document=self._materialize_room_work_document,
         )
         self.room_settle_lifecycle = RoomSettleLifecycleService(
             rooms=self.rooms,
@@ -4681,25 +4715,51 @@ class AgentService:
         if start_worker:
             self.room_kernel_worker_loop.start()
 
-    def _sync_all_room_kernel_projections(self) -> None:
+    def _sync_all_room_kernel_projections(self) -> dict[str, object]:
+        recovery = self.room_kernel_application.drain_ready_application_effects()
+        recovered = dict(recovery.get("applied") or {})
+        failures = dict(recovery.get("failed") or {})
+        synchronized: list[str] = []
         for room_id in self.room_kernel.room_ids():
             try:
                 self.rooms.get(room_id)
             except AgentRoomNotFound:
                 continue
-            self.room_kernel_application.reconcile_workspace_retention(
-                room_id=room_id,
-                reason=(
-                    "Room runtime terminal state retained isolated workspace evidence"
-                ),
-            )
-            self.room_kernel_projection.sync_room(room_id)
-            for root_id in self.room_kernel.root_ids(room_id):
-                root = self.room_kernel.root(root_id)
-                self.room_public_timeline.sync_terminal_root(root)
-                self._project_room_work_from_kernel_root(root)
+            if room_id in failures:
+                continue
+            try:
+                self.room_kernel_application.reconcile_workspace_retention(
+                    room_id=room_id,
+                    reason=(
+                        "Room runtime terminal state retained isolated workspace evidence"
+                    ),
+                )
+                # This remains an idempotent repair read. New lifecycle writes
+                # reach it through the transactional application Outbox first.
+                self.room_kernel_projection.sync_room(room_id)
+                for root_id in self.room_kernel.root_ids(room_id):
+                    self.room_kernel_application.release_ready_plan_tasks(
+                        room_id,
+                        root_id,
+                    )
+                    root = self.room_kernel.root(root_id)
+                    self.room_public_timeline.sync_terminal_root(root)
+                    self._project_room_work_from_kernel_root(root)
+                synchronized.append(room_id)
+            except Exception as exc:
+                failures[room_id] = f"{type(exc).__name__}: {exc}"[:500]
+                _LOG.exception(
+                    "Room projection recovery failed; isolating Room %s",
+                    room_id,
+                )
         self._run_room_learning_maintenance()
         self._consume_room_knowledge_cache_tombstones()
+        return {
+            "schemaVersion": "rag-ime.room-projection-recovery.v1",
+            "recoveredEffects": recovered,
+            "synchronizedRoomIds": synchronized,
+            "failedRooms": failures,
+        }
 
     def _reconcile_room_work_from_kernel(self) -> int:
         projected = 0

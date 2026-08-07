@@ -157,9 +157,17 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertIn("Original User Request", alignment)
         self.assertIn("Original User Vision", alignment)
         self.assertIn("every AI explanation in a\n  separate", alignment)
+        self.assertIn("not command authority over peer companions", alignment)
+        self.assertIn("Do not call\n  project file, shell, test, install, write", alignment)
+        self.assertIn("stable feature `RoomTask` identity", alignment)
+        self.assertIn("Kernel, not call order", alignment)
         self.assertIn("original request and vision outrank every AI summary", planning)
         self.assertIn("each persisted plan with that block byte-for-byte", planning)
         self.assertIn("WorkDocument delta from the latest user requirements", planning)
+        self.assertIn("Give every vertical result one stable `RoomTask` identity", planning)
+        self.assertIn("Do not add a parallel FeatureWorkItem", planning)
+        self.assertIn("waves are derived from the graph", planning)
+        self.assertIn("do not turn that lease into\n   a permanent Integrator rank", planning)
         self.assertIn('display_name: "Align and Decide"', alignment_ui)
         self.assertIn("$alignment-and-decision", alignment_ui)
         self.assertIn("one continuous suite", execution)
@@ -173,6 +181,9 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertIn("two consecutive attempts", execution)
         self.assertIn("Public updates mention only material behavior", execution)
         self.assertIn("Never create a document per commit or code slice", execution)
+        self.assertIn("A retry or replacement creates another attempt", execution)
+        self.assertIn("none creates a permanent master/worker rank", execution)
+        self.assertIn("requires a bounded\n    independent review target", execution)
         self.assertIn("active lifecycle Tool's exact private", quality)
         self.assertIn("user-facing\n   `publicSummary`", quality)
         self.assertIn("implementation-continuity:start", continuity_contract)
@@ -203,8 +214,12 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertIn("Do not send", quality)
         self.assertIn("acceptanceAliases", quality)
         self.assertIn("decision=handoff", quality)
+        self.assertIn("A model cannot turn required\nreview off", quality)
+        self.assertIn("per bounded target", quality)
         self.assertIn("do not send", review)
         self.assertIn("acceptanceAliases", review)
+        self.assertIn("review unit is a bounded target", review)
+        self.assertIn("no_independent_reviewer", review)
         self.assertIn("update the one bound WorkDocument", handoff)
         self.assertIn("chat transcript is not sufficient recovery context", handoff)
 
@@ -269,7 +284,10 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertIn("Claude-style progressive disclosure", requirements)
         self.assertIn("governed Markdown WorkDocument", requirements)
         self.assertIn("Every stage updates the record", requirements)
-        self.assertIn("May implement and integrate", requirements)
+        self.assertIn("May own complete features or scoped integration", requirements)
+        self.assertIn("stable `RoomTask` records", requirements)
+        self.assertIn("events/outbox are transactionally coupled", requirements)
+        self.assertIn("Durable user correction", requirements)
         self.assertIn("selected after integration from actual authorship", requirements)
         self.assertNotIn(
             "Do not ask for confirmation and do not show `开始行动`",
@@ -560,8 +578,11 @@ class RoomNativeSkillTests(unittest.TestCase):
 
         execution = text["implementation-execution"]
         self.assertIn("quality-gate -> independent-review", execution)
-        self.assertIn("review is optional", execution)
-        self.assertIn("facilitator decides whether risk warrants", execution)
+        self.assertIn(
+            "code, data, artifact, and integration-changing room work requires",
+            execution,
+        )
+        self.assertIn("a model must not silently disable review", execution)
 
         tdd = text["test-driven-implementation"]
         self.assertIn("independent source of truth", tdd)
@@ -580,9 +601,10 @@ class RoomNativeSkillTests(unittest.TestCase):
 
         quality = text["quality-gate"]
         self.assertIn("matrix is evidence-ready", quality)
-        self.assertIn("review is optional", quality)
+        self.assertIn("the kernel derives review policy", quality)
+        self.assertIn("a model cannot turn required review off", quality)
         self.assertIn("after integration", quality)
-        self.assertIn("without manufacturing a review stage", quality)
+        self.assertIn("explicit pure-discussion/read-only policy exemption", quality)
 
         review = text["independent-review"]
         self.assertIn("pin one review fixed point", review)
@@ -714,7 +736,7 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertTrue(all(set(item) == expected_catalog_keys for item in catalog))
         self.assertEqual(set(loaded), expected_catalog_keys | {"body", "contentRevision"})
         self.assertIn("## Output Contract", loaded["body"])
-        self.assertIn("current model cannot finish", loaded["body"])
+        self.assertIn("current owner cannot finish", loaded["body"])
         self.assertIn("exact takeover point", loaded["body"])
         self.assertIn("## Private Receiver Packet", loaded["body"])
         self.assertIn("Public report:", loaded["body"])

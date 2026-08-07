@@ -5,6 +5,7 @@ import type { RoomEventEnvelopeV2 } from './generated/room-event-envelope.v2';
 import type { RoomKernelReceiptV1 } from './generated/room-kernel-receipt.v1';
 import type { RoomPostV2 } from './generated/room-post.v2';
 import type { RoomRootExecutionV3 } from './generated/room-root-execution.v3';
+import type { RoomScreenStateV1 } from './generated/room-screen-state.v1';
 import type { RoomTaskV3 } from './generated/room-task.v3';
 import {
   applyRoomKernelSnapshot,
@@ -42,6 +43,30 @@ describe('generated-contract Room Kernel projection', () => {
     expect(state.rootsById['root-a']?.state).toBe('running');
     expect(state.tasksById['task-a']?.state).toBe('active');
     expect(state.dispatchesById['dispatch-a']?.state).toBe('running');
+  });
+
+  it('replaces the authoritative screen state through the ordered event stream', () => {
+    let state = createRoomKernelProjection('room-a');
+    state = apply(state, envelope(1, 'root', 'root-a', 'upserted', { root: root() }));
+    const before = state;
+    state = apply(state, envelope(2, 'projection', 'room-a', 'screen_state_changed', {
+      screenState: screenState({
+        phase: 'waiting',
+        waitReason: {
+          kind: 'participant',
+          reason: '正在等待伙伴完成当前工作',
+          requiresUserAction: false,
+        },
+        recommendedNextAction: 'wait_for_progress',
+      }),
+    }));
+
+    expect(before.screenState).toBeUndefined();
+    expect(state.screenState).toMatchObject({
+      activeRootId: 'root-a',
+      phase: 'waiting',
+      waitReason: { kind: 'participant', requiresUserAction: false },
+    });
   });
 
   it('projects the exact participant-owned Agent Todo through live Session updates', () => {
@@ -277,6 +302,25 @@ function root(overrides: Partial<RoomRootExecutionV3> = {}): RoomRootExecutionV3
     reporterSelectionReceiptId: null, requirementAnchorRef: 'requirement:1', createdByActorRef: 'user:1',
     terminalReceiptId: null, activeProfileRef: null, budgetPolicyRef: 'budget:default',
     independentReviewRequired: false, createdAtMs: 1, ...overrides,
+  };
+}
+
+function screenState(
+  overrides: Partial<RoomScreenStateV1> = {},
+): RoomScreenStateV1 {
+  return {
+    schemaVersion: 'wisdom-weasel.room-screen-state.v1',
+    roomId: 'room-a',
+    activeRootId: 'root-a',
+    activeRootGeneration: 3,
+    phase: 'execution',
+    waitReason: null,
+    runnableFrontier: { taskIds: ['task-a'], dispatchIds: ['dispatch-a'] },
+    integrationReadiness: { ready: true, reason: null, pendingTaskIds: [] },
+    reviewReadiness: { ready: true, reason: null, pendingTaskIds: [] },
+    finalDeliveryPostId: null,
+    recommendedNextAction: 'continue_execution',
+    ...overrides,
   };
 }
 

@@ -42,6 +42,10 @@ Preserve the original finding and add, never replace:
    New evidence may change a finding; confidence or tone may not.
 5. Attach returned artifacts and evidence, then mark the finding ready for its
    required re-review. Never self-approve separation-of-duty work.
+6. Return a repair to the original feature owner when eligible, or another
+   non-reviewer authorized for that target. Record every repair and integration
+   author in provenance. The Reviewer who raised or judged the finding cannot
+   implement the repair and approve that same artifact revision.
 
 ## Repeated-Failure Sweep
 

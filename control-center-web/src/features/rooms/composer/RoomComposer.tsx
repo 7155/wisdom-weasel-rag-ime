@@ -83,7 +83,7 @@ export function RoomComposer({
   const [mention, setMention] = useState<RoomMentionDraft>();
   const [activeIndex, setActiveIndex] = useState(0);
   const roomCanCompose = room?.status === 'active';
-  const roomCanSend = roomCanCompose && !taskBusyState;
+  const roomCanSend = roomCanCompose;
   const participants = room?.participants.filter(
     (participant) => participant.status === 'active',
   ) ?? [];
@@ -300,7 +300,7 @@ export function RoomComposer({
             }
           }}
           placeholder={taskBusyState
-            ? '可以先起草下一项任务…'
+            ? '可补充修正、调整优先级或询问进度…'
             : composerPlaceholder(room)}
           aria-label="协作消息"
           aria-autocomplete="list"
@@ -342,11 +342,7 @@ export function RoomComposer({
           </div>
           <IconButton
             className="room-composer__send"
-            label={taskBusyState === 'blocked'
-              ? '先继续或停止当前任务'
-              : taskBusyState
-                ? '等待当前任务完成'
-                : '发送消息'}
+            label="发送消息"
             icon={<Send size={17} />}
             disabled={!canSend}
             onClick={submit}

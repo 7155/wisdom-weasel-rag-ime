@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -30,12 +31,38 @@ class RoomKernelProjectionTests(unittest.TestCase):
     def test_snapshot_and_event_sequence_are_stable_and_gap_requires_snapshot(self) -> None:
         first = self.projection.sync_room("room:1", now_ms=10)
         again = self.projection.sync_room("room:1", now_ms=11)
-        self.assertEqual([item["sequence"] for item in first], [1, 2, 3])
+        self.assertEqual([item["sequence"] for item in first], [1, 2, 3, 4])
+        self.assertEqual(first[-1]["entityKind"], "projection")
+        self.assertEqual(first[-1]["eventKind"], "screen_state_changed")
         self.assertEqual(again, [])
         snapshot = self.projection.snapshot("room:1")
-        self.assertEqual(snapshot["lastSequence"], 3)
+        self.assertEqual(snapshot["lastSequence"], 4)
         self.assertEqual(snapshot["roots"][0]["rootId"], "root:1")
         self.assertEqual(snapshot["taskUpdatedAtMsById"], {"task:1": 2})
+        self.assertEqual(
+            snapshot["screenState"],
+            {
+                "schemaVersion": "wisdom-weasel.room-screen-state.v1",
+                "roomId": "room:1",
+                "activeRootId": "root:1",
+                "activeRootGeneration": 0,
+                "phase": "execution",
+                "waitReason": None,
+                "runnableFrontier": {"taskIds": [], "dispatchIds": []},
+                "integrationReadiness": {
+                    "ready": True,
+                    "reason": None,
+                    "pendingTaskIds": [],
+                },
+                "reviewReadiness": {
+                    "ready": True,
+                    "reason": None,
+                    "pendingTaskIds": [],
+                },
+                "finalDeliveryPostId": None,
+                "recommendedNextAction": "wait_for_progress",
+            },
+        )
         self.assertTrue(str(snapshot["snapshotHash"]).startswith("sha256:"))
 
         gap = self.projection.subscribe(
@@ -72,6 +99,55 @@ class RoomKernelProjectionTests(unittest.TestCase):
         encoded_session = json.dumps(snapshot["sessions"], ensure_ascii=False)
         self.assertNotIn("Explicit delivery", encoded_session)
         self.assertEqual(snapshot["sessions"][0]["state"], "queued")
+
+    def test_backend_selects_the_active_root_instead_of_leaving_it_to_ui_ordering(self) -> None:
+        self.store.create_root(
+            root("root:2"), budget=10, max_hops=3, max_depth=2,
+            acceptance_criteria=("ac:2",), now_ms=20,
+        )
+        self.store.create_task(
+            task("task:2", root_id="root:2", criteria=("ac:2",)),
+            now_ms=21,
+        )
+
+        screen = self.projection.snapshot("room:1")["screenState"]
+
+        self.assertEqual(screen["activeRootId"], "root:2")
+        self.assertEqual(screen["activeRootGeneration"], 0)
+
+    def test_completed_root_does_not_promote_the_last_result_without_report_receipt(self) -> None:
+        self.projection.publish_post(
+            {
+                "schemaVersion": "wisdom-weasel.room-post.v2",
+                "postId": "post:unproven-final",
+                "roomId": "room:1",
+                "rootId": "root:1",
+                "generation": 0,
+                "taskId": "task:1",
+                "authorActorRef": "participant:a",
+                "kind": "result",
+                "visibility": "room",
+                "content": "Looks final but has no reporter terminal authority.",
+                "idempotencyKey": "post:unproven-final",
+                "publicationSource": {
+                    "kind": "room_commit",
+                    "ref": "commit:unproven-final",
+                },
+                "createdAtMs": 30,
+            }
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """UPDATE room_kernel_roots
+                   SET state='completed',reporter_participant_id=?,updated_at_ms=?
+                   WHERE root_id=?""",
+                ("participant:a", 31, "root:1"),
+            )
+
+        screen = self.projection.snapshot("room:1")["screenState"]
+
+        self.assertEqual(screen["phase"], "completed")
+        self.assertIsNone(screen["finalDeliveryPostId"])
 
     def test_resume_token_is_room_scoped(self) -> None:
         with self.assertRaisesRegex(ValueError, "another Room"):

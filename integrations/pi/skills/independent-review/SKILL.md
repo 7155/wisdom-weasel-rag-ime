@@ -15,13 +15,15 @@ notFor:
 
 ## Separation Rule
 
-Review is a risk decision owned by the Facilitator after the authoritative
-integration workspace contains the accepted Worker results; it is not a
-mandatory stage for every task. When review is warranted, rebuild expected
-behavior without the author's narrative. The Reviewer must be a distinct
-participant who did not author or integrate the relevant change, and must not
-review its own implementation. Review evidence grants no edit or delivery
-authority.
+Review policy is derived by the Kernel from the work effect. Code, data,
+artifact, and integration-changing Room work requires independent review after
+the authoritative integration workspace contains the accepted feature results;
+pure discussion or read-only work may have an explicit policy exemption. The
+review unit is a bounded target, not the entire Room author set. Rebuild expected
+behavior without the target authors' narrative. The Reviewer must not have
+authored, repaired, or integrated that target, although the same peer may have
+implemented a different non-overlapping feature. Review evidence grants no edit
+or delivery authority.
 
 ## Workflow
 
@@ -56,10 +58,14 @@ authority.
   participant, not a `room_collaborate` child. Use the existing Root/Task,
   WorkItem, aliases, receipts, and the review participant's bound workspace
   harness; a filesystem root is not participant identity.
-- The Facilitator chooses whether review is warranted and names an eligible
-  existing participant or requests an explicit capability change. This Skill
-  must not require review for every task, select by round-robin, or wake a
-  reviewer through free-text mention.
+- The Kernel exposes required ReviewTargets and eligible peers from actual
+  authorship, repair, and integration provenance. This Skill must not choose by
+  round-robin, exclude a peer merely for work on another non-overlapping target,
+  or wake a reviewer through free-text mention.
+- Multiple non-overlapping ReviewTargets may be reviewed concurrently. If every
+  available peer touched one target, report `no_independent_reviewer` and stop;
+  re-scope provenance or obtain another independent reviewer instead of
+  manufacturing approval.
 - The `room_collaborate for review` route is forbidden; a review before
   integration is invalid.
 - Submit findings and eligible evidence through `room_commit`; the Kernel
@@ -91,9 +97,12 @@ separate Requirement Fidelity and Code Standards findings, evidence, affected
 acceptance, required fixes, residual risks, questions, and per-axis counts.
 These are findings, not the Kernel verdict.
 
-A clear result recommends `candidate_done`; no later workflow Skill owns that
-transition. `changes_required` returns to `implementation-execution`. Use
-`structured-handoff` only when responsibility must move to another owner.
+A clear result recommends acceptance of this target revision; the Kernel checks
+that every required current ReviewTarget is accepted before final delivery.
+`changes_required` returns to the original feature owner or another eligible
+non-reviewer through `implementation-execution`, then requires a fresh
+independent review of the new artifact revision. Use `structured-handoff` only
+when responsibility must move to another owner.
 
 ## Self-Check
 

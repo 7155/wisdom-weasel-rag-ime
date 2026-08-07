@@ -3,9 +3,10 @@
   "sourceRepository": "https://github.com/7155/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "0fd0564af34cb40bbcd6b8903c01b36191c4f90d",
+  "minimumHandlersCommit": "aa3d7f5c41f976264414b8962ebe5a52d728a4d6",
   "requiredMethods": [
     "session.control_state",
+    "session.await_settled",
     "room.dispatch",
     "room.cancel"
   ],
@@ -17,6 +18,9 @@
     "agentCore": "packages/agent/src/agent.ts",
     "agentTypes": "packages/agent/src/types.ts",
     "agentSession": "packages/coding-agent/src/core/agent-session.ts",
+    "runtimePrimitives": "packages/agent/src/runtime-primitives.ts",
+    "runtimeSettlement": "packages/agent/src/runtime-settlement.ts",
+    "contextProvider": "packages/agent/src/context-provider.ts",
     "contextInspection": "packages/rag-ime-runtime-host/src/debug-context.ts",
     "skills": "packages/coding-agent/src/core/skills.ts",
     "discoveryTools": "packages/rag-ime-runtime-host/src/discovery-tools.ts",
@@ -27,6 +31,8 @@
     "toolArtifacts": "packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts",
     "ask": "packages/rag-ime-runtime-host/src/ask.ts",
     "providerContextJournal": "packages/rag-ime-runtime-host/src/provider-context-journal.ts",
+    "productContextProvider": "packages/rag-ime-runtime-host/src/product-context-provider.ts",
+    "turnSettlement": "packages/rag-ime-runtime-host/src/turn-settlement.ts",
     "sessionContextRefresh": "packages/rag-ime-runtime-host/src/session-context-refresh.ts",
     "summarizationCompletion": "packages/coding-agent/src/core/compaction/summarization-completion.ts",
     "cancellationReceipts": "packages/rag-ime-runtime-host/src/cancellation-receipts.ts",
@@ -39,10 +45,12 @@
   "requiredSourceMarkers": {
     "protocol": [
       "export const PROTOCOL_VERSION = \"2\" as const;",
+      "| \"session.await_settled\"",
       "export function parseRoomCancelParams("
     ],
     "runtimeHost": [
       "case \"session.control_state\"",
+      "case \"session.await_settled\"",
       "case \"room.dispatch\"",
       "case \"room.cancel\"",
       "const lineage = parseRoomCancelParams(params);",
@@ -63,7 +71,20 @@
     ],
     "agentSession": [
       "this.agent.onContinuationsLeased = (continuations) => {",
-      "async followUpWithSystemPrompt("
+      "async followUpWithSystemPrompt(",
+      "AgentSettledReceiptV2"
+    ],
+    "runtimePrimitives": [
+      "export class ContinuationQueue",
+      "export class RunScope extends CancelScope"
+    ],
+    "runtimeSettlement": [
+      "export interface AgentSettledReceiptV2",
+      "schemaVersion: \"pi.agent-settled.v2\";"
+    ],
+    "contextProvider": [
+      "export interface ContextProvider",
+      "export class ContextProviderPipeline"
     ],
     "contextInspection": [
       "pi.on(\"before_provider_request\"",
@@ -123,8 +144,18 @@
       "Provider context epoch transition is stale or non-monotonic",
       "clearTurnContext(): void",
       "this.turnContext = {",
-      "<rag-ime-context type=\"${entry.kind}\">",
+      "projectAssembly(systemPrompt: string, assembly: ContextAssembly): string {",
       "\"session_memory_refresh\""
+    ],
+    "productContextProvider": [
+      "export class ProductContextProvider",
+      "ContextProviderPipeline"
+    ],
+    "turnSettlement": [
+      "export class TurnSettlementTracker",
+      "schemaVersion: \"rag-ime.pi-turn-settlement.v1\";",
+      "runtimeSessionId: string;",
+      "receipt.sessionId !== this.runtimeSessionId"
     ],
     "sessionContextRefresh": [
       "Managed Room compaction is missing compactionEntryId",
@@ -182,6 +213,7 @@
       "RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS",
       "this.providerContextJournal.beginEpoch(\"session_memory_refresh\"",
       "this.session.followUpWithSystemPrompt(",
+      "new TurnSettlementTracker(options.externalSessionId, session.sessionId)",
       "cancelRoom(lineage: RoomCancelParams)",
       "Room cancellation does not match the active Room runtime lineage"
     ]

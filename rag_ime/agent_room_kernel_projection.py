@@ -8,6 +8,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 
+from .agent_room_kernel import RoomKernelStore
 from .agent_room_kernel_contracts import (
     upcast_room_root_execution,
     validate_kernel_contract,
@@ -21,6 +22,7 @@ class RoomKernelProjection:
 
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
+        self.kernel = RoomKernelStore(self.db_path, mode="shadow")
 
     def initialize(self) -> int:
         with self._connect(immediate=True) as conn:
@@ -93,6 +95,7 @@ class RoomKernelProjection:
             posts: list[dict[str, object]] = []
             sessions: list[dict[str, object]] = []
             receipts: list[dict[str, object]] = []
+            screen_state: dict[str, object] | None = None
             for kind, _projection_id, _entity_kind, _entity_id, _event_kind, payload in records:
                 value = next(iter(payload.values()))
                 if kind == "root":
@@ -107,6 +110,8 @@ class RoomKernelProjection:
                     sessions.append(value)
                 elif kind == "receipt":
                     receipts.append(value)
+                elif kind == "screen":
+                    screen_state = value
             task_updated_at_ms_by_id = {
                 str(row["task_id"]): int(row["updated_at_ms"])
                 for row in conn.execute(
@@ -135,6 +140,8 @@ class RoomKernelProjection:
             "posts": posts,
             "sessions": sessions,
             "receipts": receipts,
+            "screenState": screen_state
+            or self.kernel.screen_state(room_id),
         }
         return {**material, "snapshotHash": f"sha256:{_hash(material)}"}
 
@@ -235,6 +242,7 @@ class RoomKernelProjection:
 
     def _records(self, conn: sqlite3.Connection, room_id: str):
         records: list[tuple[str, str, str, str, str, dict[str, object]]] = []
+        screen_state = self.kernel.screen_state(room_id, conn=conn)
         roots = conn.execute(
             "SELECT * FROM room_kernel_roots WHERE room_id = ? ORDER BY created_at_ms, root_id",
             (room_id,),
@@ -260,6 +268,14 @@ class RoomKernelProjection:
             validate_kernel_contract("rootExecution", root)
             records.append(("root", str(row["root_id"]), "root", str(row["root_id"]), "state_changed", {"root": root}))
         if not root_ids:
+            records.append((
+                "screen",
+                room_id,
+                "projection",
+                room_id,
+                "screen_state_changed",
+                {"screenState": screen_state},
+            ))
             return records
         placeholders = ",".join("?" for _ in root_ids)
         tasks = conn.execute(
@@ -419,6 +435,14 @@ class RoomKernelProjection:
                     "state": str(requirement["state"]),
                 }
             records.append(("session", session_id, "binding", session_id, "session_projection", {"session": session}))
+        records.append((
+            "screen",
+            room_id,
+            "projection",
+            room_id,
+            "screen_state_changed",
+            {"screenState": screen_state},
+        ))
         return records
 
     @contextmanager
@@ -437,15 +461,12 @@ class RoomKernelProjection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
-        if immediate:
-            conn.execute("BEGIN IMMEDIATE")
+        conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
         try:
             yield conn
-            if immediate:
-                conn.commit()
+            conn.commit()
         except Exception:
-            if immediate:
-                conn.rollback()
+            conn.rollback()
             raise
         finally:
             conn.close()

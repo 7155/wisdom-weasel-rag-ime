@@ -70,7 +70,8 @@ Source: <message/event or RequirementAnchor ref>; UTF-8 SHA-256: <required>
 <replaceable interpretation reconciled against every user source entry>
 
 ### Execution Record
-<accepted plan, current owner and slice, Todo/checkpoint, evidence, failed
+<approved PlanRevision and stable RoomTask identity, current owner and attempt,
+Todo/checkpoint, evidence, failed
 routes, blockers, remaining risk, handoff, and smallest next action>
 ```
 
@@ -111,7 +112,10 @@ explicit redaction marker instead of the secret and alter no other user text.
 4. Update the same WorkDocument immediately when the user changes a requirement
    and whenever the active owner's material progress changes interpretation,
    decision, plan, Todo/checkpoint, slice, artifact, evidence, blocker, failed
-   approach, risk, handoff, next action, or authoritative workspace lifecycle.
+   approach, risk, handoff, next action, review target, or authoritative
+   workspace lifecycle. An execution-time user correction is append-only: mark
+   the affected features, pause only the impacted frontier when required, and
+   bind the resulting PlanRevision before continuing.
    Do not append a Tool or commit transcript.
 5. Only the active authorized owner writes it. Helpers and owners without the
    document lease return proposed deltas so concurrent Agents do not race on

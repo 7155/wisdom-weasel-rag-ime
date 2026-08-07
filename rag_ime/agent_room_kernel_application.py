@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import time
 from collections.abc import Callable, Mapping, Sequence
 from urllib.parse import quote
@@ -49,6 +50,9 @@ from .agent_room_references import (
 from .agent_room_requirements import RequirementGovernanceStore
 from .agent_room_workspaces import RoomWorkspaceCoordinator, RoomWorkspaceError
 from .agent_rooms import AgentRoomStore
+from .room_application.outbox import RoomApplicationOutbox
+from .room_application.plans import RoomPlanRepository
+from .room_application.repositories import RoomInterventionRepository
 
 
 class RoomKernelApplicationService:
@@ -70,6 +74,7 @@ class RoomKernelApplicationService:
         wake_worker: Callable[[], None],
         revoke_session: Callable[[str, int], None],
         define_room: Callable[..., dict[str, object]] | None = None,
+        reconcile_room: Callable[..., dict[str, object]] | None = None,
         artifact_hash_provider: Callable[[str], str] | None = None,
         media_receipt_provider: Callable[[str, str], Mapping[str, object]] | None = None,
         workspaces: RoomWorkspaceCoordinator | None = None,
@@ -82,6 +87,7 @@ class RoomKernelApplicationService:
         root_state_observer: Callable[
             [Mapping[str, object]], object
         ] | None = None,
+        materialize_work_document: Callable[[str], object] | None = None,
     ) -> None:
         self.rooms = rooms
         self.kernel = kernel
@@ -95,6 +101,7 @@ class RoomKernelApplicationService:
         self.public_timeline = public_timeline
         self.wake_worker = wake_worker
         self.define_room = define_room
+        self.reconcile_room = reconcile_room
         self.artifact_hash_provider = artifact_hash_provider
         self.workspaces = workspaces
         self.revoke_session = revoke_session
@@ -142,12 +149,209 @@ class RoomKernelApplicationService:
             lambda _root: None
         )
         self.media_receipt_provider = media_receipt_provider
+        self.materialize_work_document = (
+            materialize_work_document or (lambda _root_id: None)
+        )
         self.continuations = RoomContinuationFactory(
             rooms=rooms,
             kernel=kernel,
             capabilities=capabilities,
             revoke_session=revoke_session,
         )
+        self.application_outbox = RoomApplicationOutbox(kernel.db_path)
+
+    def drain_application_effects(
+        self,
+        room_id: str,
+        *,
+        now_ms: int | None = None,
+    ) -> list[dict[str, object]]:
+        return self.application_outbox.drain_room(
+            room_id,
+            project_room=lambda target_room_id: self._project_room_effect(
+                target_room_id, now_ms=now_ms
+            ),
+            wake_room=lambda _target_room_id: self.wake_worker(),
+            now_ms=now_ms,
+        )
+
+    def drain_ready_application_effects(
+        self,
+        *,
+        now_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Recover ready effects without allowing one Room to stop another."""
+
+        return self.application_outbox.drain_ready_rooms(
+            project_room=lambda target_room_id: self._project_room_effect(
+                target_room_id, now_ms=now_ms
+            ),
+            wake_room=lambda _target_room_id: self.wake_worker(),
+            now_ms=now_ms,
+        )
+
+    def _project_room_effect(
+        self, room_id: str, *, now_ms: int | None
+    ) -> object:
+        for root_id in self.kernel.root_ids(room_id):
+            self.materialize_work_document(root_id)
+        return self.projection.sync_room(room_id, now_ms=now_ms)
+
+    def release_ready_plan_tasks(
+        self,
+        room_id: str,
+        root_id: str,
+        *,
+        now_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Materialize and release the next approved dependency wave."""
+
+        timestamp = int(now_ms if now_ms is not None else time.time() * 1000)
+        frontier = self.kernel.plan_runnable_frontier(root_id)
+        ready = [
+            value
+            for value in frontier.get("tasks", [])
+            if isinstance(value, Mapping)
+            and isinstance(value.get("task"), Mapping)
+            and isinstance(value.get("spec"), Mapping)
+        ]
+        if not ready:
+            return {
+                "released": False,
+                "tasks": [],
+                "dispatches": [],
+            }
+        if self.workspaces is None:
+            raise RoomKernelFenceError(
+                "approved Plan frontier has no workspace coordinator"
+            )
+        room = self.rooms.get(room_id)
+        root = self.kernel.root(root_id)
+        if str(root.get("roomId") or "") != room_id:
+            raise RoomKernelFenceError(
+                "approved Plan frontier belongs to another Room"
+            )
+        participants = {
+            str(value.get("id") or ""): value
+            for value in room.get("participants", [])
+            if isinstance(value, Mapping) and value.get("status") == "active"
+        }
+        base_roots = [
+            str(value)
+            for value in room.get("workspaceRoots") or []
+            if str(value).strip()
+        ]
+        plan = frontier["planRevision"]
+        next_epoch = int(frontier.get("nextCapabilityEpoch") or 0)
+        prepared_workspaces: list[dict[str, object]] = []
+        task_values: list[dict[str, object]] = []
+        dispatch_values: list[dict[str, object]] = []
+        try:
+            for value in ready:
+                task = dict(value["task"])
+                spec = value["spec"]
+                owner_id = str(task.get("currentOwnerParticipantId") or "")
+                owner = participants.get(owner_id)
+                if owner is None or not str(owner.get("sessionId") or "").strip():
+                    raise RoomKernelFenceError(
+                        "approved Plan Task owner is no longer active"
+                    )
+                dispatch_id = _stable_id(
+                    "room-dispatch:plan",
+                    str(plan["planRevisionId"]),
+                    str(task["taskId"]),
+                    "attempt:0",
+                )
+                workspace = self.workspaces.prepare(
+                    root_id=root_id,
+                    task_id=str(task["taskId"]),
+                    target_session_id=str(owner["sessionId"]),
+                    base_roots=base_roots,
+                    policy=str(task.get("workspacePolicy") or "read_only"),
+                    room_id=room_id,
+                    work_item_id=str(task.get("workItemId") or ""),
+                    dispatch_id=dispatch_id,
+                    requirement_revision=str(
+                        plan["requirementCatalogRevisionId"]
+                    ),
+                    participant_id=owner_id,
+                    creation_reason="Approved Room plan dependency frontier",
+                    now_ms=timestamp,
+                )
+                prepared_workspaces.append(dict(workspace))
+                task.update(workspace)
+                task["state"] = "active"
+                if spec.get("kind") == "review":
+                    authors = {
+                        str(author)
+                        for author in spec.get("authorParticipantIds") or []
+                        if str(author).strip()
+                    }
+                    if owner_id in authors:
+                        raise RoomKernelFenceError(
+                            "planned Reviewer participated in the target scope"
+                        )
+                    task.update(
+                        {
+                            "reviewState": "required",
+                            "reviewOfTaskIds": list(
+                                spec.get("scopeTaskIds") or []
+                            ),
+                            "reviewAuthorParticipantIds": sorted(authors),
+                            "reviewEvidenceNotBeforeMs": timestamp,
+                            "reviewRound": 1,
+                            "reviewFindings": [],
+                        }
+                    )
+                    task["reviewTargetRevision"] = (
+                        self.kernel.review_target_revision(
+                            root_id=root_id,
+                            task_ids=task["reviewOfTaskIds"],
+                            review_snapshot=task,
+                        )
+                    )
+                task_values.append(task)
+                dispatch_values.append(
+                    {
+                        "schemaVersion": DISPATCH_ENVELOPE_SCHEMA_VERSION,
+                        "dispatchId": dispatch_id,
+                        "rootId": root_id,
+                        "taskId": str(task["taskId"]),
+                        "parentDispatchId": None,
+                        "generation": int(root["generation"]),
+                        "hopCount": 0,
+                        "depth": 0,
+                        "budgetCost": 1,
+                        "targetSessionId": str(owner["sessionId"]),
+                        "targetParticipantId": owner_id,
+                        "triggerId": str(plan["planRevisionId"]),
+                        "intentKind": (
+                            "review" if spec.get("kind") == "review" else "execute"
+                        ),
+                        "idempotencyKey": (
+                            f"plan-task:{task['taskId']}:attempt:0"
+                        ),
+                        "attempt": 0,
+                        "capabilityEpoch": next_epoch,
+                        "runtimeProfileRevision": DEFAULT_RUNTIME_PROFILE_REVISION,
+                        "dependsOnDispatchIds": list(
+                            value.get("dependencyDispatchIds") or []
+                        ),
+                        "state": "pending",
+                    }
+                )
+            released = self.kernel.release_plan_frontier(
+                root_id,
+                tasks=task_values,
+                dispatches=dispatch_values,
+                now_ms=timestamp,
+            )
+        except BaseException:
+            for workspace in prepared_workspaces:
+                self.workspaces.discard(workspace)
+            raise
+        self.drain_application_effects(room_id, now_ms=timestamp)
+        return {"released": True, **released}
 
     def snapshot(self, room_id: str) -> dict[str, object]:
         self.rooms.get(room_id)
@@ -607,6 +811,12 @@ class RoomKernelApplicationService:
                 self.kernel.accepted_evidence_by_criterion(root_id)
             ),
         )
+        with sqlite3.connect(self.kernel.db_path) as intervention_conn:
+            intervention_conn.row_factory = sqlite3.Row
+            pending_interventions = RoomInterventionRepository.pending(
+                intervention_conn,
+                root_id=root_id,
+            )
         pending_integrations = [
             {
                 "childTaskId": str(candidate.get("taskId") or ""),
@@ -641,112 +851,63 @@ class RoomKernelApplicationService:
             if candidate_id != facilitator_id:
                 eligible_peer_refs.append(candidate_ref)
                 reviewer_refs.append(candidate_ref)
-        peer_children = [
-            child
-            for child in self.kernel.collaboration_children(root_id)
-            if str(child.get("targetParticipantId") or "")
-            != facilitator_id
-            and str(child.get("intentKind") or "")
-            in {"execute", "revise"}
-            and str(child.get("state") or "")
-            not in {"cancelled", "failed"}
-        ]
-        definition = self.kernel.definition_fence(root_id=root_id)
-        definition_receipt = (
-            definition.get("receipt")
-            if isinstance(definition, Mapping)
-            and isinstance(definition.get("receipt"), Mapping)
-            else {}
-        )
-        definition_details = (
-            definition_receipt.get("details")
-            if isinstance(definition_receipt, Mapping)
-            and isinstance(definition_receipt.get("details"), Mapping)
-            else {}
-        )
-        execution_plan = (
-            definition_details.get("executionPlan")
-            if isinstance(definition_details, Mapping)
-            and isinstance(definition_details.get("executionPlan"), Mapping)
-            else {}
-        )
-        planned_feature_tasks = [
-            dict(item)
-            for item in execution_plan.get("featureTasks", [])
-            if isinstance(item, Mapping)
-        ] if isinstance(execution_plan, Mapping) else []
-        resolved_feature_tasks = _resolved_execution_plan_features(
-            planned_feature_tasks,
-            participant_refs=participant_refs,
-        )
-        planned_peer_features = [
-            item
-            for item in resolved_feature_tasks
-            if item["participantId"] != facilitator_id
-        ]
-        planned_peer_ids = {
-            str(item["participantId"])
-            for item in planned_peer_features
+        with sqlite3.connect(self.kernel.db_path) as plan_conn:
+            plan_conn.row_factory = sqlite3.Row
+            plan_revision = RoomPlanRepository.latest(plan_conn, root_id)
+        task_state_by_id = {
+            str(item.get("taskId") or ""): str(item.get("state") or "")
+            for item in snapshot["tasks"]
+            if isinstance(item, Mapping) and item.get("rootId") == root_id
         }
-        peer_work_required = bool(planned_peer_ids)
-        feature_assignments = _planned_feature_assignments(
-            planned_peer_features,
-            peer_children,
-            task_for_dispatch=lambda child: self.kernel.task(
-                str(child["taskId"])
-            ),
-        )
-        unfinished_peer_features = [
-            item
-            for item in planned_peer_features
-            if not _planned_feature_is_complete(
-                feature_assignments.get(str(item["title"]))
+        approved_tasks = [
+            {
+                "taskId": str(item.get("taskId") or ""),
+                "kind": str(item.get("kind") or ""),
+                "title": str(item.get("title") or ""),
+                "userOutcome": str(item.get("userOutcome") or ""),
+                "ownerParticipantRef": ref_for_participant(
+                    item.get("ownerParticipantId"),
+                    participant_refs,
+                ),
+                "dependencyTaskIds": [
+                    str(value)
+                    for value in item.get("dependencyTaskIds") or []
+                ],
+                "state": task_state_by_id.get(
+                    str(item.get("taskId") or ""),
+                    "waiting",
+                ),
+            }
+            for item in (
+                plan_revision.get("tasks", [])
+                if isinstance(plan_revision, Mapping)
+                else []
             )
+            if isinstance(item, Mapping)
         ]
-        current_wave = min(
-            (int(item["wave"]) for item in unfinished_peer_features),
-            default=None,
-        )
-        ready_feature_tasks = [
-            _public_planned_feature(item)
-            for item in unfinished_peer_features
-            if int(item["wave"]) == current_wave
-            and str(item["title"]) not in feature_assignments
-        ]
-        waiting_feature_tasks = [
-            _public_planned_feature(item)
-            for item in unfinished_peer_features
-            if current_wave is not None and int(item["wave"]) > current_wave
-        ]
-        # Reviewer presence is roster capacity, not review policy.  The
-        # Facilitator owns the risk decision at room_define and the Root keeps
-        # its durable, receipted answer.  Showing an inferred requirement here
-        # while settlement reads the Root would give the model and the gate two
-        # different truths.
         review_required = bool(root.get("independentReviewRequired"))
         execution_policy = {
             "routingPolicy": routing_policy,
-            "facilitatorOwnsIntegration": (
-                str(dispatch.get("targetParticipantId") or "")
-                == facilitator_id
-            ),
-            "peerWorkRequired": peer_work_required,
-            "minimumPeerWorkItems": len(planned_peer_ids),
-            "assignedPeerWorkItems": len(peer_children),
             "eligiblePeerParticipantRefs": eligible_peer_refs,
             "independentReviewRequired": review_required,
             "reviewerParticipantRefs": reviewer_refs,
-            "approvedFeatureTasks": planned_feature_tasks,
-            "currentWave": current_wave,
-            "readyFeatureTasks": ready_feature_tasks,
-            "waitingFeatureTasks": waiting_feature_tasks,
+            "planRevisionId": (
+                str(plan_revision.get("planRevisionId") or "")
+                if isinstance(plan_revision, Mapping)
+                else ""
+            ),
+            "planRevision": (
+                int(plan_revision.get("revision") or 0)
+                if isinstance(plan_revision, Mapping)
+                else 0
+            ),
+            "approvedTasks": approved_tasks,
             "nextAction": (
-                "assign_independent_peer_work"
-                if ready_feature_tasks
-                else "integrate_completed_peer_work"
+                "reconcile_user_intervention"
+                if pending_interventions
+                else
+                "integrate_completed_peer_work"
                 if pending_integrations
-                else "await_current_wave_results"
-                if unfinished_peer_features
                 else "continue_owned_work"
             ),
         }
@@ -767,6 +928,7 @@ class RoomKernelApplicationService:
             "participants": participants,
             "executionPolicy": execution_policy,
             "recentPublicChanges": recent_changes,
+            "pendingInterventions": pending_interventions,
             "pendingIntegrations": pending_integrations,
             "reviewContext": (
                 {
@@ -900,6 +1062,12 @@ class RoomKernelApplicationService:
                 live=live,
                 invocation=invocation,
             )
+        elif canonical == "room_reconcile":
+            result, execution_receipt = self._execute_reconcile(
+                session_id=session_id,
+                live=live,
+                invocation=invocation,
+            )
         else:
             result = {
                 "accepted": True,
@@ -925,6 +1093,62 @@ class RoomKernelApplicationService:
         if execution_receipt is not None:
             response["executionReceipt"] = execution_receipt
         return response
+
+    def _execute_reconcile(
+        self,
+        *,
+        session_id: str,
+        live: Mapping[str, object],
+        invocation: Mapping[str, object],
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        if self.reconcile_room is None:
+            raise RoomKernelFenceError(
+                "room_reconcile is not wired to Room execution"
+            )
+        command = invocation.get("canonicalCommand")
+        arguments = (
+            command.get("arguments")
+            if isinstance(command, Mapping)
+            else None
+        )
+        if not isinstance(arguments, Mapping):
+            raise RoomKernelFenceError(
+                "room_reconcile invocation has no canonical arguments"
+            )
+        result = self.reconcile_room(
+            str(live["roomId"]),
+            root_id=str(live["rootId"]),
+            task_id=str(live["taskId"]),
+            dispatch_id=str(live["dispatchId"]),
+            invocation_receipt_id=str(invocation["receiptId"]),
+            arguments=arguments,
+        )
+        result_hash = hashlib.sha256(
+            json.dumps(
+                result,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        execution_receipt, _ = self.capabilities.record_runtime_execution(
+            session_id=session_id,
+            invocation_receipt_id=str(invocation["receiptId"]),
+            status="applied",
+            result_hash=result_hash,
+            created_at_ms=int(time.time() * 1000),
+        )
+        return {
+            **result,
+            "executionPerformed": True,
+            "terminalForModelTurn": False,
+            "next": "continue_current_task",
+            "modelInstruction": (
+                "用户修正已绑定到当前任务。继续完成该功能，并在最终提交前按"
+                "最新工作文档重新验证。"
+            ),
+        }, execution_receipt
+
     def _execute_define(
         self,
         *,
@@ -1247,7 +1471,7 @@ class RoomKernelApplicationService:
         child_task: Mapping[str, object],
         review_findings: Sequence[Mapping[str, object]],
     ) -> dict[str, object]:
-        """Return an independent review finding to the Root Facilitator."""
+        """Return a finding to an active non-reviewing companion."""
 
         root = self.kernel.root(str(parent_dispatch["rootId"]))
         if str(parent_task.get("taskKind") or "") != "review":
@@ -1272,10 +1496,9 @@ class RoomKernelApplicationService:
             raise RoomKernelFenceError(
                 "only the active Reviewer may return a revision handoff"
             )
-        facilitator_id = str(root.get("facilitatorParticipantId") or "")
-        if target_participant_id != facilitator_id:
+        if target_participant_id == caller_id:
             raise RoomKernelFenceError(
-                "Reviewer revisions must return to the Root Facilitator"
+                "Reviewer cannot assign the repair scope to themselves"
             )
         target = next(
             (
@@ -1289,7 +1512,7 @@ class RoomKernelApplicationService:
         )
         if target is None or not str(target.get("sessionId") or "").strip():
             raise RoomKernelFenceError(
-                "revision Facilitator has no active Session"
+                "revision companion has no active Session"
             )
         base_roots = [
             str(value)
@@ -1408,6 +1631,11 @@ class RoomKernelApplicationService:
             raise RoomKernelFenceError(
                 "Room collaboration execution has no canonical Kernel receipt"
             )
+        if str(parent_task.get("planRevisionId") or "").strip():
+            raise RoomKernelFenceError(
+                "已批准方案的任务由依赖前沿自动释放；"
+                "room_collaborate 不能再创建自由文本子任务"
+            )
 
         command = invocation.get("canonicalCommand")
         arguments = (
@@ -1503,84 +1731,6 @@ class RoomKernelApplicationService:
             raise RoomKernelFenceError(
                 "the selected participant already has active matching Room work; wait for it"
             )
-        if workspace_policy == "shared_single_writer" and any(
-            str(child.get("state") or "") in active_states
-            and str(task.get("workspacePolicy") or "")
-            == "shared_single_writer"
-            for child, task in child_records
-        ):
-            raise RoomKernelFenceError(
-                "another shared_single_writer Task is active; wait or use isolated_writable"
-            )
-
-        planned_feature: dict[str, object] | None = None
-        if intent == "execute":
-            definition = self.kernel.definition_fence(
-                root_id=str(root["rootId"])
-            ) or {}
-            definition_receipt = definition.get("receipt")
-            definition_details = (
-                definition_receipt.get("details")
-                if isinstance(definition_receipt, Mapping)
-                and isinstance(definition_receipt.get("details"), Mapping)
-                else {}
-            )
-            execution_plan = (
-                definition_details.get("executionPlan")
-                if isinstance(definition_details, Mapping)
-                and isinstance(definition_details.get("executionPlan"), Mapping)
-                else {}
-            )
-            raw_features = [
-                dict(item)
-                for item in execution_plan.get("featureTasks", [])
-                if isinstance(item, Mapping)
-            ] if isinstance(execution_plan, Mapping) else []
-            planned_peer_features = [
-                item
-                for item in _resolved_execution_plan_features(
-                    raw_features,
-                    participant_refs=participant_refs,
-                )
-                if item["participantId"]
-                != str(root.get("facilitatorParticipantId") or "")
-            ]
-            if planned_peer_features:
-                assignments = _planned_feature_assignments(
-                    planned_peer_features,
-                    children,
-                    task_for_dispatch=lambda child: self.kernel.task(
-                        str(child["taskId"])
-                    ),
-                )
-                candidate_features = [
-                    item
-                    for item in planned_peer_features
-                    if item["participantId"] == target_participant_id
-                    and str(item["title"]) not in assignments
-                ]
-                if not candidate_features:
-                    raise RoomKernelFenceError(
-                        "这位伙伴没有尚未分派的已批准功能；请读取最新 Room 状态。"
-                    )
-                planned_feature = min(
-                    candidate_features,
-                    key=lambda item: (int(item["wave"]), int(item["ordinal"])),
-                )
-                blocked_by = _planned_wave_blockers(
-                    planned_feature,
-                    planned_peer_features,
-                    assignments,
-                )
-                if blocked_by:
-                    blocked_titles = "、".join(
-                        str(item["title"]) for item in blocked_by[:4]
-                    )
-                    raise RoomKernelFenceError(
-                        f"第 {planned_feature['wave']} 波尚未开放；"
-                        f"请先完成并集成前一波的：{blocked_titles}。"
-                    )
-
         objective = str(arguments.get("objective") or "")
         trigger_id = _stable_id(
             "room-collaboration",
@@ -1714,9 +1864,6 @@ class RoomKernelApplicationService:
             "workspacePolicy": workspace_policy,
             "workspaceRoot": prepared_workspace.get("workspaceRoot"),
         }
-        if planned_feature is not None:
-            result["planFeatureTitle"] = str(planned_feature["title"])
-            result["planFeatureWave"] = int(planned_feature["wave"])
         execution_receipt, _ = self.capabilities.record_runtime_execution(
             session_id=session_id,
             invocation_receipt_id=invocation_receipt_id,
@@ -1764,14 +1911,34 @@ class RoomKernelApplicationService:
         task = self.kernel.task(task_id)
         root = self.kernel.root(str(live["rootId"]))
         dispatch = self.kernel.dispatch(str(live["dispatchId"]))
+        integration_task = self.kernel.task(str(dispatch["taskId"]))
+        integration_owner_authorized = (
+            integration_task.get("planTaskKind") == "integration"
+            and task_id
+            in {
+                str(value)
+                for value in integration_task.get("dependencyTaskIds") or []
+            }
+            and str(dispatch.get("targetParticipantId") or "")
+            == str(integration_task.get("currentOwnerParticipantId") or "")
+        )
+        nested_scope_owner_authorized = (
+            not str(integration_task.get("planRevisionId") or "").strip()
+            and str(task.get("parentTaskId") or "")
+            == str(integration_task.get("taskId") or "")
+            and str(dispatch.get("targetParticipantId") or "")
+            == str(integration_task.get("currentOwnerParticipantId") or "")
+        )
         if (
             task.get("rootId") != root.get("rootId")
-            or str(dispatch.get("targetParticipantId") or "")
-            != str(root.get("facilitatorParticipantId") or "")
+            or not (
+                integration_owner_authorized
+                or nested_scope_owner_authorized
+            )
             or task.get("workspacePolicy") != "isolated_writable"
         ):
             raise RoomKernelFenceError(
-                "only the Root Facilitator may act on its isolated child worktree"
+                "only the scoped integration owner may act on this isolated worktree"
             )
         invocation_receipt_id = str(invocation["receiptId"])
         prior = self.capabilities.execution_receipt(invocation_receipt_id)
@@ -1795,6 +1962,11 @@ class RoomKernelApplicationService:
                 )
         if prior is not None:
             if action == "integrate" and authority_status == "accepted":
+                self.release_ready_plan_tasks(
+                    str(live["roomId"]),
+                    str(live["rootId"]),
+                    now_ms=now_ms,
+                )
                 return {
                     "action": "integrate",
                     "childTaskId": task_id,
@@ -2138,7 +2310,7 @@ class RoomKernelApplicationService:
                     integrated = self.workspaces.integrate(
                         task,
                         integration_ref=integration_ref,
-                        actor_ref=str(root["facilitatorParticipantId"]),
+                        actor_ref=str(dispatch["targetParticipantId"]),
                         now_ms=now_ms,
                     )
                 except RoomWorkspaceError as exc:
@@ -2192,6 +2364,12 @@ class RoomKernelApplicationService:
                 not in {"cleaned", "missing"}
             ):
                 return result, None
+            if result.get("integrated") is True:
+                self.release_ready_plan_tasks(
+                    str(live["roomId"]),
+                    str(live["rootId"]),
+                    now_ms=now_ms,
+                )
         execution_receipt, _ = self.capabilities.record_runtime_execution(
             session_id=session_id,
             invocation_receipt_id=invocation_receipt_id,
@@ -2953,15 +3131,27 @@ class RoomKernelApplicationService:
                     or int(time.time() * 1000)
                 ),
             )
-        self.projection.sync_room(room_id)
+        released_plan: dict[str, object] | None = None
+        if (
+            receipt.get("status") == "applied"
+            and isinstance(receipt_details, Mapping)
+            and receipt_details.get("settleDecision") == "complete"
+        ):
+            released_plan = self.release_ready_plan_tasks(
+                room_id,
+                str(root["rootId"]),
+                now_ms=int(
+                    commit.get("createdAtMs")
+                    or int(time.time() * 1000)
+                ),
+            )
+        self.drain_application_effects(
+            room_id,
+            now_ms=int(commit.get("createdAtMs") or int(time.time() * 1000)),
+        )
         self.root_state_observer(
             self.kernel.root(str(root["rootId"]))
         )
-        if receipt.get("status") == "applied":
-            # A child Dispatch may depend on this Commit's public Room fact.
-            # Wake only after the context ledger and UI projection can both
-            # expose that fact; waking earlier races the closer's next prompt.
-            self.wake_worker()
         if _receipt_completes_root_candidate(receipt):
             # Reuse the canonical finalization authority. Parallel commits stay
             # running until the last active Dispatch makes the Root quiescent.
@@ -3153,10 +3343,14 @@ class RoomKernelApplicationService:
             delivery_gate_preview=preview,
         )
         root = self.kernel.root(root_id)
-        self.projection.sync_room(
+        applied_effects = self.drain_application_effects(
             str(root["roomId"]),
             now_ms=timestamp,
         )
+        if not applied_effects:
+            # Rejected/no-op finalization has no domain transition Outbox;
+            # reconcile its diagnostic receipt without inventing a wake.
+            self.projection.sync_room(str(root["roomId"]), now_ms=timestamp)
         self.root_state_observer(root)
         if str(root.get("state") or "") in {
             "completed",
@@ -3239,138 +3433,6 @@ def _receipt_completes_root_candidate(receipt: Mapping[str, object]) -> bool:
         and isinstance(details, Mapping)
         and details.get("settleDecision") == "complete"
     )
-
-
-def _resolved_execution_plan_features(
-    features: Sequence[Mapping[str, object]],
-    *,
-    participant_refs: Mapping[str, str],
-) -> list[dict[str, object]]:
-    """Resolve approved feature owners while preserving plan order and waves."""
-
-    resolved: list[dict[str, object]] = []
-    for ordinal, feature in enumerate(features):
-        try:
-            participant_id = resolve_participant_ref(
-                feature.get("participantRef"),
-                participant_refs,
-            )
-        except ParticipantReferenceError:
-            participant_id = str(feature.get("participantRef") or "").strip()
-        title = " ".join(str(feature.get("title") or "").split())
-        if not participant_id or not title:
-            continue
-        wave = feature.get("wave")
-        normalized_wave = (
-            int(wave)
-            if isinstance(wave, int) and not isinstance(wave, bool) and wave > 0
-            else 1
-        )
-        resolved.append(
-            {
-                **dict(feature),
-                "title": title,
-                "participantId": participant_id,
-                "wave": normalized_wave,
-                "ordinal": ordinal,
-            }
-        )
-    return resolved
-
-
-def _planned_feature_assignments(
-    features: Sequence[Mapping[str, object]],
-    children: Sequence[Mapping[str, object]],
-    *,
-    task_for_dispatch: Callable[[Mapping[str, object]], Mapping[str, object]],
-) -> dict[str, tuple[dict[str, object], dict[str, object]]]:
-    """Map canonical child order back to each owner's approved feature order."""
-
-    by_owner: dict[str, list[Mapping[str, object]]] = {}
-    for feature in features:
-        by_owner.setdefault(str(feature.get("participantId") or ""), []).append(
-            feature
-        )
-    for owner_features in by_owner.values():
-        owner_features.sort(
-            key=lambda item: (int(item.get("wave") or 1), int(item.get("ordinal") or 0))
-        )
-
-    assigned_count: dict[str, int] = {}
-    assignments: dict[str, tuple[dict[str, object], dict[str, object]]] = {}
-    for child in children:
-        intent = str(child.get("intentKind") or "")
-        if intent not in {"execute", "revise"}:
-            continue
-        owner_id = str(child.get("targetParticipantId") or "")
-        owner_features = by_owner.get(owner_id, [])
-        position = assigned_count.get(owner_id, 0)
-        if intent == "revise":
-            if position == 0:
-                continue
-            feature = owner_features[position - 1]
-            assignments[str(feature["title"])] = (
-                dict(child),
-                dict(task_for_dispatch(child)),
-            )
-            continue
-        if position >= len(owner_features):
-            continue
-        feature = owner_features[position]
-        assigned_count[owner_id] = position + 1
-        assignments[str(feature["title"])] = (
-            dict(child),
-            dict(task_for_dispatch(child)),
-        )
-    return assignments
-
-
-def _planned_feature_is_complete(
-    assignment: tuple[Mapping[str, object], Mapping[str, object]] | None,
-) -> bool:
-    if assignment is None:
-        return False
-    dispatch, task = assignment
-    if str(dispatch.get("state") or "") != "committed":
-        return False
-    return not (
-        task.get("workspacePolicy") == "isolated_writable"
-        and task.get("workspaceIntegrationState") != "applied"
-    )
-
-
-def _planned_wave_blockers(
-    candidate: Mapping[str, object],
-    features: Sequence[Mapping[str, object]],
-    assignments: Mapping[
-        str,
-        tuple[Mapping[str, object], Mapping[str, object]],
-    ],
-) -> list[Mapping[str, object]]:
-    return [
-        item
-        for item in features
-        if int(item.get("wave") or 1) < int(candidate.get("wave") or 1)
-        and not _planned_feature_is_complete(
-            assignments.get(str(item.get("title") or ""))
-        )
-    ]
-
-
-def _public_planned_feature(feature: Mapping[str, object]) -> dict[str, object]:
-    return {
-        key: feature[key]
-        for key in (
-            "title",
-            "participantRef",
-            "ownerDisplayName",
-            "userOutcome",
-            "dependencies",
-            "wave",
-            "writeBoundary",
-        )
-        if key in feature
-    }
 
 
 def _collaboration_tool_result(

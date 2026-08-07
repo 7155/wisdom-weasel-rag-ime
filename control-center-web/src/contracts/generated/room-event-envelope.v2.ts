@@ -6,7 +6,7 @@
 
 export interface RoomEventEnvelopeV2 {
   schemaVersion: 'wisdom-weasel.room-event-envelope.v2';
-  entityKind: 'root' | 'task' | 'dispatch' | 'commit' | 'post' | 'binding';
+  entityKind: 'root' | 'task' | 'dispatch' | 'commit' | 'post' | 'binding' | 'projection';
   entityId: string;
   eventKind: string;
   sequence: number;

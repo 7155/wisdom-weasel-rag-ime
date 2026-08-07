@@ -67,13 +67,13 @@
     },
     {
       "id": "managed_pi_v2_source_contract",
-      "evidence": "The public build contract now requires Pi commit 0fd0564af34cb40bbcd6b8903c01b36191c4f90d and source-contract sha256 84fcc9f28401aa6685e91de8081f08af114b804cd456c02e82e3acb1973bfe28, including deterministic Goal continuation, Session memory-refresh epochs, native read/grep/find/ls/edit/write/bash projections, governed Room target binding, bounded semantic tool-result evidence, a pre-dispatch model-context fence, and a line-based native read canary that consumes the same structured receipt as production. Earlier runtime smoke against an older pin is not runtime acceptance evidence for this checkpoint."
+      "evidence": "The public build contract now requires Pi commit aa3d7f5c41f976264414b8962ebe5a52d728a4d6 and source-contract sha256 672dc222241189cd85dc10cf0f08eafa5c5e0691a175cc9f02a2a479956df068. In addition to the existing Goal, memory-refresh, coding-tool and Room fences, this source pin adds leased Continuation, hierarchical RunScope, AgentSettledReceiptV2, ContextProviderPipeline, exact session.await_settled, a cancellation fence that waits until the exact settlement receipt reaches Host listeners, and explicit product-Session/runtime-transcript identity binding. Source review is not managed-runtime installation or GUI acceptance evidence."
     }
   ],
   "blockers": [
     {
-      "id": "managed_pi_0fd0564_runtime_acceptance_pending",
-      "detail": "The source and packager contract now require Pi 0fd0564af34cb40bbcd6b8903c01b36191c4f90d, but a clean managed payload build and deterministic installed Agent Session canary for that exact commit have not yet been recorded."
+      "id": "managed_pi_aa3d7f5c_runtime_acceptance_pending",
+      "detail": "The source and packager contract now require Pi aa3d7f5c41f976264414b8962ebe5a52d728a4d6, but a clean managed payload build, staged exact-settlement canary, installation, Session migration verification and real Room/chat GUI acceptance have not yet been recorded."
     },
     {
       "id": "strict_foreground_soak_not_green",

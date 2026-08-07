@@ -49,12 +49,13 @@ class RoomTaskEffectEvalTests(unittest.TestCase):
                 "room_define",
                 "room_state for final acceptance aliases",
                 "room_commit(handoff)",
-                "Facilitator decomposition and directed Worker Dispatches",
+                "Kernel-owned PlanRevision and stable RoomTasks",
+                "directed peer feature attempts on the dependency-ready frontier",
                 "bounded implementation",
-                "Facilitator-owned integration workspace",
-                "optional distinct-reviewer handoff after integration",
+                "scoped integration lease in the authoritative workspace",
+                "required target-scoped independent review for changing work",
                 "Kernel settlement",
-                "facilitator/reporter-only final public summary",
+                "current reporter responsibility emits the only final public summary",
             ],
         )
 
@@ -70,19 +71,19 @@ class RoomTaskEffectEvalTests(unittest.TestCase):
         )
         boundary = cases["workspace-and-review-boundary"]
         self.assertIn(
-            "Facilitator owns decomposition, assignment, reassignment, and integration",
+            "Kernel owns stable `RoomTask` identity, assignment revisions, dependency readiness, and execution release",
             boundary["required"],
         )
         self.assertIn(
-            "one Facilitator-owned integration workspace",
+            "one active scoped integration lease in the authoritative workspace",
             boundary["required"],
         )
         self.assertIn(
-            "review is optional and only after integration",
+            "changing work requires target-scoped independent review after integration",
             boundary["required"],
         )
         self.assertIn(
-            "integration evidence plus Kernel gates when review is not chosen",
+            "an explicit pure-discussion/read-only exemption is the only no-review path",
             boundary["required"],
         )
         self.assertIn("review before integration", boundary["forbidden"])

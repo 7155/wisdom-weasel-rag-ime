@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-screen-state.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "roomId",
+    "activeRootId",
+    "activeRootGeneration",
+    "phase",
+    "waitReason",
+    "runnableFrontier",
+    "integrationReadiness",
+    "reviewReadiness",
+    "finalDeliveryPostId",
+    "recommendedNextAction"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "wisdom-weasel.room-screen-state.v1"
+    },
+    "roomId": {"type": "string", "minLength": 1},
+    "activeRootId": {"type": ["string", "null"], "minLength": 1},
+    "activeRootGeneration": {"type": ["integer", "null"], "minimum": 0},
+    "phase": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "alignment",
+        "planning",
+        "execution",
+        "waiting",
+        "blocked",
+        "cancelling",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "waitReason": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "reason", "requiresUserAction"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": ["user", "participant", "external", "managed", "blocked"]
+            },
+            "reason": {"type": "string", "minLength": 1},
+            "requiresUserAction": {"type": "boolean"}
+          }
+        }
+      ]
+    },
+    "runnableFrontier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskIds", "dispatchIds"],
+      "properties": {
+        "taskIds": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "dispatchIds": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        }
+      }
+    },
+    "integrationReadiness": {"$ref": "#/$defs/readiness"},
+    "reviewReadiness": {"$ref": "#/$defs/readiness"},
+    "finalDeliveryPostId": {"type": ["string", "null"], "minLength": 1},
+    "recommendedNextAction": {
+      "type": "string",
+      "enum": [
+        "align_requirement",
+        "confirm_plan",
+        "answer_question",
+        "resolve_blocker",
+        "continue_execution",
+        "integrate_results",
+        "complete_independent_review",
+        "wait_for_progress",
+        "start_new_task"
+      ]
+    }
+  },
+  "$defs": {
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ready", "reason", "pendingTaskIds"],
+      "properties": {
+        "ready": {"type": "boolean"},
+        "reason": {"type": ["string", "null"]},
+        "pendingTaskIds": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

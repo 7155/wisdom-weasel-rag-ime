@@ -17,7 +17,8 @@ _REQUIRED_SKILL_HEADINGS = (
     "## Output Contract",
     "## Boundaries",
 )
-_PLACEHOLDER_TERMS = ("tbd", "todo", "待补充", "placeholder")
+_PLACEHOLDER_TERMS = ("tbd", "待补充", "placeholder")
+_PLACEHOLDER_LINES = ("todo", "todo:", "todo：")
 
 
 def evaluate_room_task_effects(
@@ -221,6 +222,8 @@ def _skill_contract_errors(policy: RoomSkillPolicy) -> list[str]:
         for placeholder in _PLACEHOLDER_TERMS:
             if placeholder in text.casefold():
                 errors.append(f"{skill_id}:placeholder:{placeholder}")
+        if any(line.strip().casefold() in _PLACEHOLDER_LINES for line in text.splitlines()):
+            errors.append(f"{skill_id}:placeholder:todo")
         if any(line.strip() in {"未定", "未定。"} for line in text.splitlines()):
             errors.append(f"{skill_id}:placeholder:未定")
     return errors

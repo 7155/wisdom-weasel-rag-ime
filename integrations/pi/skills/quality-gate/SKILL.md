@@ -20,9 +20,11 @@ authoritative result.
 No completion claim without fresh, claim-shaped evidence. Tests, diffs, UI
 inspection, Provider payloads, installed-runtime receipts, and external results
 prove different things. The Kernel binds aliases and derives coverage and readiness.
-For code, a complete matrix is evidence-ready. Review is optional:
-the Facilitator decides whether risk warrants `independent-review` after
-integration; review is not mandatory for every task.
+For code, a complete matrix is evidence-ready. The Kernel derives review policy
+from the effect: code, data, artifact, and integration-changing Room work
+requires bounded `independent-review` after integration. Pure discussion or
+read-only work may carry an explicit exemption. A model cannot turn required
+review off.
 
 ## Workflow
 
@@ -85,24 +87,27 @@ Match evidence to the claim:
 ## Managed Room Boundary
 
 - Work only on the current participant's bounded responsibility. The Kernel
-  owns WorkItem settlement and any review handoff; the Facilitator owns
-  integration and decides whether review is warranted. This Skill cannot
-  complete the Root or choose the Reviewer.
-- When review is chosen, implementation evidence hands off after integration
-  to a distinct Reviewer. Do not self-review or use `room_collaborate` as the
-  review route. When review is not chosen, integrated evidence proceeds to the
-  same Kernel gates without manufacturing a review stage.
+  owns WorkItem settlement, scoped integration readiness, review targets, and
+  review handoff. This Skill cannot complete the Root or choose the Reviewer.
+- When review is required, integrated evidence hands off per bounded target to
+  an eligible distinct Reviewer. Do not self-review or use `room_collaborate`
+  as the review route. Only an explicit pure-discussion/read-only policy
+  exemption may proceed without review.
+- Integration evidence proves only the accepted integrated revision. Review
+  before integration is invalid, and review evidence cannot replace integration
+  authority.
 - Use `room_state` for current authority and `room_commit` for evidence, wait,
   block, or handoff. Rejected/stale authority cannot be replaced by model state.
 - Keep private summaries, refs, workspace paths, and participant details
-  private. Only the Facilitator/reporter owns the final public Room summary.
-- Only the Facilitator/reporter emits the final public summary.
+  private. Only the current reporter responsibility emits the final public Room
+  summary; reporter is not a permanent capability tier.
 
 ## Gate Outcomes
 
-- `deliver recommendation`: all required evidence is fresh and unblocked; if
-  the Facilitator chose review, advance to the distinct post-integration
-  Reviewer, otherwise advance to Kernel settlement with integration evidence;
+- `deliver recommendation`: all required evidence is fresh and unblocked;
+  advance every required bounded target to an eligible post-integration
+  Reviewer, or advance an explicitly exempt read-only target to Kernel
+  settlement;
 - `continue`: a legal action can produce missing evidence;
 - `handoff`: another capability or owner is needed;
 - `wait`: a user, permission, credential, or external signal is needed;

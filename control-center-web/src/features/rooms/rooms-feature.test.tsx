@@ -110,6 +110,35 @@ describe('Rooms experience', () => {
     });
   });
 
+  it('sends a correction into the active Root instead of blocking the composer', async () => {
+    const room = roomSummary('room-a', '正在执行的 Room');
+    const snapshot = roomSnapshot(room.id, []);
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [room] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': snapshot,
+      'agent.room.kernel.snapshot': roomKernelSnapshot(room.id),
+      'agent.room.message': { ok: true, timelineEvents: [] },
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
+    await user.type(composer, '先保留并行任务，把真实界面反馈放到最前面。');
+    await user.click(screen.getByRole('button', { name: '发送消息' }));
+
+    await waitFor(() => expect(transport.requests.some(
+      (call) => call.request.pathId === 'agent.room.message',
+    )).toBe(true));
+    const request = transport.requests.find(
+      (call) => call.request.pathId === 'agent.room.message',
+    )?.request;
+    expect(request?.body).toMatchObject({
+      message: '先保留并行任务，把真实界面反馈放到最前面。',
+    });
+    expect(request?.body).not.toHaveProperty('workItemId');
+  });
+
   it('loads older Room history without collapsing an expanded report', async () => {
     let intersect: ((entries: IntersectionObserverEntry[]) => void) | undefined;
     class MockIntersectionObserver implements IntersectionObserver {
@@ -235,8 +264,10 @@ describe('Rooms experience', () => {
     expect(await screen.findByText('learnA · 已阻塞')).toBeInTheDocument();
     expect(screen.queryByText(/正在完成任务/)).not.toBeInTheDocument();
     expect(screen.getByText(/已阻塞 · 澄·初 · 核对失败证据/)).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: '协作消息' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: '先继续或停止当前任务' })).toBeDisabled();
+    const composer = screen.getByRole('textbox', { name: '协作消息' });
+    expect(composer).toBeEnabled();
+    fireEvent.change(composer, { target: { value: '补充恢复要求' } });
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled();
     const compactStatus = screen.getByRole('status', { name: '当前协作状态' });
     expect(compactStatus).toHaveTextContent('协作待处理');
     expect(compactStatus.closest('.room-composer__controls')).not.toBeNull();
@@ -287,7 +318,7 @@ describe('Rooms experience', () => {
 
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    expect(await screen.findByText('learnA · 已阻塞')).toBeInTheDocument();
+    expect(await screen.findByText('learnA · 需要处理阻塞')).toBeInTheDocument();
     expect(screen.queryByText('learnA · 执行中')).not.toBeInTheDocument();
     expect(screen.getByText(/已阻塞 · 澄 · 整合伙伴结果/)).toBeInTheDocument();
   });
@@ -434,7 +465,9 @@ describe('Rooms experience', () => {
     expect(document.querySelectorAll('.room-user-message')).toHaveLength(0);
     expect(screen.getByRole('status', { name: '当前协作状态' }))
       .toHaveTextContent('澄：继续处理');
-    expect(screen.getByRole('button', { name: '等待当前任务完成' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '等待当前任务完成' }))
+      .not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
     await waitFor(() => expect(screen.getByRole('textbox', { name: '协作消息' })).toHaveFocus());
   });
 
@@ -4545,7 +4578,9 @@ describe('Rooms experience', () => {
     expect(container.querySelectorAll('.room-status-final-reply')).toHaveLength(0);
     expect(container).not.toHaveTextContent('本轮未完成，伙伴已经给出可复核的最后说明。');
     expect(container).not.toHaveTextContent('较早的公开进度');
-    expect(screen.getByRole('region', { name: '当前协作阶段' })).toHaveTextContent('最终回复');
+    const phase = screen.getByRole('region', { name: '当前协作阶段' });
+    expect(phase).toHaveTextContent('未完成');
+    expect(phase).not.toHaveTextContent('最终回复');
   });
 
   it('labels a completed Room turn without a Post as completed in the status panel', () => {

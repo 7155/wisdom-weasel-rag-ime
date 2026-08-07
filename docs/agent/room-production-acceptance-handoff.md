@@ -1,10 +1,10 @@
 # Room production acceptance handoff
 
-> as_of: 2026-08-07 04:12 CST
-> status: source commit `2c87fd110bc1a1cc36873e646835e6d51dd1a392` has eight verified, uncommitted Room source/test files. The follow-up covers three user-visible defects: a Facilitator premature delivery now becomes a durable peer wait and resumes automatically after that peer delivers; approved later-wave features remain visible as waiting plan cards until their predecessors integrate; and the latest Kernel Root state takes precedence over stale WorkItem state. The focused settlement gate passed `50/50`; the complete Room backend discovery passed `564/564` in `668.937s`; the complete frontend passed `104 files / 1007 tests`; Python compile, TypeScript, and `git diff --check` passed. A prior `5.0G` backup exists at `/Volumes/undo 4t/agent-workbench-backups/20260806-2349`, but a new backup of the committed follow-up is still required before cleanup. The remaining Room gates are a limited commit, clean reinstall, and a fresh full GUI Room acceptance.
+> as_of: 2026-08-07 11:15 CST
+> status: Room source commit `7de9cb1eabac4df691751de5b09280467f09ac7d` is committed, clean-installed, and component-aligned. Its managed-retry repair passed `64/64`; preceding full evidence remains backend `564/564`, frontend `104 files / 1007/1007`, TypeScript, Python compile, and `git diff --check`. The live Room proved the exact managed retry can resume its continuation, then reached a governed integration conflict on `tests/test_duplicates.py`. It has not completed later waves, full WorkDocument evidence, distributed independent review, or one final delivery. The user has now ratified a fuller architecture contract: Kernel-owned stable feature graph and transaction-owned events, equal peer outcome ownership, scoped integration, policy-derived target review, execution-time corrections, one readable WorkDocument, and a frontend that never guesses business state. These are now recorded in the authority document and Skills but are not yet implemented by `7de9cb1e`.
 > canonical worktree: `/Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix`
 > branch: `codex/room-production-acceptance-final`
-> current source commit: `2c87fd110bc1a1cc36873e646835e6d51dd1a392` plus the eight verified uncommitted Room source/test files and the two tracked authority documents listed in section 5
+> current source commit: `7de9cb1eabac4df691751de5b09280467f09ac7d` plus the uncommitted authority/Skill/evaluation corrections listed in section 5; their focused contract suite passes `33/33`, and no new Room runtime implementation is included in that correction
 
 ## 0. Mandatory takeover gate: do not start by running commands
 
@@ -21,8 +21,28 @@ Then wait for the user to confirm or correct that understanding. This is a hando
 
 ### Current problems at the handoff moment
 
-- The latest installed Room source is `021c97807b58f885e6c3b047a38d40446c7804a4`, installed from clean worktree `/tmp/paw-room-live-progress-install.XitWK5`. Its exact component audit is green and the managed Pi runtime is `pi-0.80.7-98cfe6a3a0a4-raghost-727365f27d` from source `98cfe6a3a0a420ac6de4f85153c55fbc8809b845`.
-- A fresh creation modal at that installed commit shows all four companions as `已邀请` and says they have equal capability; the earlier permanent `主持/实现/调研/最终复核` presentation defect is fixed in the installed GUI.
+- The current real Room is `客户目录真实并行最终验收 20260807`, Room
+  `room:cc0492b7-d1f4-4789-b503-b2b1890e82bc`, Root
+  `room-root:7a3711cbc44aa1fe7b20eb53771ec55a`. The retry wake path returned the Root
+  to `running`; the later duplicate-customer delivery is held by integration
+  binding `room-workspace-binding:410043c84d3c870e5d2757f2ea065902`
+  with `state=conflict` on `tests/test_duplicates.py`. The target workspace has
+  existing changes. Resolve through the governed workspace/integration flow;
+  never overwrite it or edit the database to fake completion.
+- The installed source is `7de9cb1e`, built from clean detached worktree
+  `/Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix-clean-7de9cb1e`.
+  Component audit is green. The managed Pi runtime is
+  `pi-0.80.7-98cfe6a3a0a4-raghost-c1414ab249` from source
+  `98cfe6a3a0a420ac6de4f85153c55fbc8809b845`.
+- The current architecture review identified open root-contract work: state and
+  live events are not yet transactionally coupled; the approved plan is not yet
+  materialized as stable feature `RoomTask` identities; Start/WorkDocument/dispatch release
+  is not one durable preparation flow; frontend components can still infer
+  business state; target-scoped required review and execution-time user
+  intervention are not implemented. Existing regression claims below describe
+  `7de9cb1e`, not these new target contracts.
+- Historical checkpoint `021c97807b58f885e6c3b047a38d40446c7804a4` was installed from clean worktree `/tmp/paw-room-live-progress-install.XitWK5`; its earlier component audit and managed Pi runtime evidence remain diagnostic history, not the latest installed state.
+- At that historical checkpoint, a fresh creation modal showed all four companions as `已邀请` and said they had equal capability; the earlier permanent `主持/实现/调研/最终复核` presentation defect was fixed in the installed GUI.
 - The earlier internal-instruction GUI attempt remains invalid acceptance evidence and must never be reused.
 - The valid natural-language run used only this ordinary product request: `我想把这个小客户目录做得更好用：可以批量导入 CSV 客户并先看看每一行有没有问题；能按邮箱后缀筛选；发现重复客户时能先对比、合并，合并错了还能撤销；还能查看每位客户是谁在什么时候改过什么。`
 - That run verified the compact attributed state, natural Chinese vertical plan, four equal peers, and the no-work-before-Start gate. Commit `021c9780` projects live summary/update counts into the collapsed header, suppresses task-check recovery copy from deliverables, and distinguishes active silence from a real wait.
@@ -42,11 +62,27 @@ Then wait for the user to confirm or correct that understanding. This is a hando
 
 - The user enters one natural-language goal; the default companion receives it, while `@伙伴` may change the receiver.
 - If decision-changing details are genuinely missing, infer inspectable facts first and ask at most one clarification round. Two to four independent questions may be grouped with numbered A/B/C choices and answered compactly; a single mutually exclusive choice uses the option box. Selecting an option still requires confirmation; only “其他” opens free text. Confirmed answers stay inside the asking companion's chronological card.
-- Before every implementation starts, show the understood goal, locked shared contracts, one to four vertical feature tasks with owners/dependencies/waves/write boundaries, integration, and acceptance. No companion dispatch, write, or test may begin until the user clicks “开始行动”.
+- Before every implementation starts, show the understood goal, locked shared contracts, one to four vertical feature tasks with owners/dependencies/waves/write boundaries, integration, and acceptance. No project-file read/write, command, test, install, or companion dispatch may begin until the user clicks “开始行动”; pre-Start alignment uses user messages and already-projected Room/product metadata.
 - Start-up uses Claude-style progressive disclosure: only compact routing cards are always present; the exact full Skill loads for the current stage, and linked references/scripts/examples load only when needed. Do not compress a complete Skill to a uniform 6 KiB/120-line cap.
 - Split only by user-visible feature after shared contracts are locked. One feature has one Room Agent owner end-to-end; never split one feature horizontally into frontend/backend/parser/test work. At most four peer Room Agents run, in dependency waves rather than fake roster-filling.
+- The approved PlanRevision is a Kernel-owned versioned outcome graph. Every
+  feature uses one stable `RoomTask` identity with user outcome, peer owner,
+  dependency Task identities, derived
+  wave, write boundary and acceptance. Retry/recovery/reassignment creates a new
+  Dispatch attempt for the same Task; call order and Agent prose cannot redefine
+  it. Do not introduce a parallel FeatureWorkItem lifecycle; legacy WorkItem is
+  migrated toward a compatibility projection.
 - Every active Room companion uses the same model and complete work capability. `collaborationRole` is only current responsibility, never a permanent capability tier; the Facilitator may also own a complete feature. Do not reserve one companion as an idle or lower-capability Reviewer. After integration, use actual authorship/integration provenance to assign bounded review targets so nobody reviews its own work.
-- After Start, one governed Markdown WorkDocument keeps two separate logical sections: immutable/append-only user source plus current confirmed requirements, and accepted plan plus Todo/progress/evidence/failures/risks/handoff/next action. Every stage updates it from new user requirements and its own material progress; recovery and handoff read it before verifying source and runtime.
+- Receiving, coordination, scoped integration, review, and reporting are
+  assignable responsibilities, not ranks. The receiving companion is not a
+  master. Any eligible peer may own a complete feature or an integration scope.
+- The definition stage prepares one governed Markdown WorkDocument without
+  touching the target project; Start freezes its approved plan revision and
+  activates it before attempts release. It keeps two separate logical sections:
+  immutable/append-only user source plus current confirmed requirements, and
+  accepted plan plus Todo/progress/evidence/failures/risks/handoff/next action.
+  Every Skill updates it from new user requirements and its own material
+  progress; recovery and handoff read it before verifying source and runtime.
 - A decomposable multi-feature task must create multiple real companion Tasks in parallel. The graph is only a compact overview; it cannot substitute for actual concurrent work.
 - One companion Task is one continuous card. Retries stay in that card; a separate Task gets a separate card. Do not duplicate avatars or split one reply across miscellaneous boxes.
 - Every companion message, question, confirmed answer, tool, progress item, and result stays inside that companion's large card, with nested cards for detail. Cards use authoritative creation time from oldest to newest; alignment ends its card before implementation cards begin.
@@ -55,11 +91,34 @@ Then wait for the user to confirm or correct that understanding. This is a hando
 - Each card exposes the companion's current public work summary, real Todo, tools, worktree, files/diff, tests, artifacts, recovery, and handoff from the same source at different densities. Todo stays at the bottom while unfinished and disappears when fully settled.
 - When a companion finishes, `已交付`/`已转交` must immediately become a user-facing report of what changed, what was produced, verification, risks, and who receives it. It must not leave stale `正在处理` text or a bare state label.
 - Ordinary code, command, parameter, and transient Provider failures recover inside the Room. The Facilitator retries, switches model, redistributes, or serializes work without asking the user to babysit local failures.
+- The user may send corrections, priority changes, pauses, or status questions
+  while execution is active. Exact corrections append to the WorkDocument;
+  only affected features pause or replan when safe, while unrelated work may
+  continue. A shared-contract or dangerous expansion returns to visible
+  approval instead of being silently accepted.
 - Luna independent approval is rare and reserved for genuinely dangerous operations. Safe bounded workspace reads/writes/tests should not incur a review round merely for ceremony.
-- Integration and a genuinely independent review happen before the Facilitator gives one final answer. Partners keep distinct personalities and role-specific voices; they do not repeat the same Facilitator-style final text.
+- Code, data, artifact, and integration-changing work always has a genuinely
+  independent post-integration review before the current reporter gives one
+  final answer. Review is per bounded target: exclude that revision's authors,
+  repairers, and integrators, not everyone who worked anywhere in the Room.
+  Pure discussion/read-only work may have an explicit policy exemption. If no
+  eligible peer exists, report the independence blocker rather than fake a pass.
+  Partners keep distinct personalities and role-specific voices; they do not
+  repeat the same reporter-style final text.
 - Public UI uses ordinary user language, not `Kernel`, `Root`, `Dispatch`, `Task`, `AC`, `Receipt ID`, protocol JSON, `需求对齐`, `已锁定`, or “回答保留在下一条消息”. Missing optional telemetry stays quiet rather than looking like a failure.
 - Successful physical worktrees are cleaned only after integration while a permanent Room/requirement/owner/base/result ledger remains. Failed, blocked, cancelled, conflicting, or orphaned worktrees remain visibly marked until explicit resolution.
+- Source retirement is progressive, not deferred wholesale: each new authority
+  migrates named consumers, passes its focused and proportional full regressions,
+  then immediately removes the replaced branch/file and obsolete tests. Git and
+  the verified backup provide rollback; duplicate writable lifecycles do not.
+  Files such as `agent_room_legacy_*` that still have a named live consumer are
+  migrated first and are never deleted merely because their name looks old.
 - Runtime/debug/conversation data should prefer the configured external-volume owner and bounded retention. Do not blindly move a live database or App Support directory without an owner-aware migration.
+- Every authoritative state mutation and its public event/wake record is
+  transactionally coupled and isolated per Room. The backend supplies active
+  Root, phase, typed wait reason, runnable frontier, integration/review
+  readiness and final identity; the frontend may format them but never infer a
+  second business truth.
 
 ## 1. Objective and authority
 
@@ -195,24 +254,35 @@ The labels below are intentionally strict:
 
 This table is an acceptance ledger, not a claim that every recorded item is already fixed. Only rows explicitly marked **code + regression passed** may be treated as implemented before the fresh installed GUI journey.
 
-## 5. Exact current follow-up commit scope
+## 5. Exact current documentation and Skill correction scope
 
-The prior waiting/wave/root and acceptance fixes are committed through
-`5dd42bf1a65d163b076df4613b60a20e6a596750`. The next Room follow-up must
-contain exactly these files:
+The runtime/UI fixes described by the old twelve-file scope are already
+committed through `7de9cb1e`. Do not repeat or recreate that commit. The current
+uncommitted correction injects the ratified full vision into these authority,
+progressively loaded workflow, and deterministic evaluation files only:
 
-1. `control-center-web/src/features/rooms/runtime/room-execution-lanes.ts`
-2. `control-center-web/src/features/rooms/timeline/RoomTurn.tsx`
-3. `control-center-web/src/features/rooms/timeline/RoomTurn.chronology.test.tsx`
-4. `control-center-web/src/features/rooms/kernel/RoomTaskFlowGraph.tsx`
-5. `control-center-web/src/features/rooms/kernel/RoomTaskFlowGraph.test.tsx`
-6. `control-center-web/src/features/rooms/kernel/RoomKernelControlPlane.tsx`
-7. `control-center-web/src/features/rooms/kernel/RoomKernelControlPlane.test.tsx`
-8. `control-center-web/src/features/rooms/kernel/room-kernel-control-plane.css`
-9. `integrations/pi/skills/alignment-and-decision/SKILL.md`
-10. `tests/test_agent_room_skills.py`
-11. `docs/agent/room-production-acceptance-handoff.md`
-12. `docs/agent/room-facilitated-workflow-requirements.md`
+1. `docs/agent/room-facilitated-workflow-requirements.md`
+2. `docs/agent/room-production-acceptance-handoff.md`
+3. `integrations/pi/skills/alignment-and-decision/SKILL.md`
+4. `integrations/pi/skills/implementation-planning/SKILL.md`
+5. `integrations/pi/skills/implementation-execution/SKILL.md`
+6. `integrations/pi/skills/implementation-execution/references/execution-continuity-contract.md`
+7. `integrations/pi/skills/quality-gate/SKILL.md`
+8. `integrations/pi/skills/independent-review/SKILL.md`
+9. `integrations/pi/skills/review-feedback-resolution/SKILL.md`
+10. `integrations/pi/skills/structured-handoff/SKILL.md`
+11. `eval/room-v2/task-effect-fixtures.v1.json`
+12. `rag_ime/room_effect_eval.py`
+13. `tests/test_agent_room_skills.py`
+14. `tests/test_room_effect_eval.py`
+15. `docs/agent/room-external-model-review-bundle-20260807.md` (ignored by
+    `/docs/`; use `git add -f` only if this review artifact is intentionally
+    committed)
+
+These files define target behavior and regression guards. They do not implement
+the new Kernel entities, outbox flow, frontend projection, intervention flow, or
+distributed review runtime. Those require separate code changes and fresh
+evidence after this contract correction.
 
 Do not stage, reset, discard, clean, or overwrite these unrelated user/other-agent changes:
 
@@ -229,14 +299,36 @@ tests/test_tui.py
 
 ## 6. Exact next steps
 
-1. Run TypeScript and `git diff --check` for the twelve files in section 5.
-2. Stage only the twelve files in section 5 and commit the verified execution-frame, current-phase projection, alignment, and task-graph fixes.
-3. Create a clean detached worktree at that commit. Do not install from this dirty implementation worktree.
-4. From the clean worktree, run `scripts/install_product_stack.sh --include-pi --pi-worktree '/Volumes/undo 4t/git/learnA/.worktrees/pi-room-runtime-98cfe6a3'` with the configured Xcode beta developer directory.
-5. Run `scripts/check_installed_product_components.py --require-current` and record exact component evidence for the new commit.
-6. Create a new natural-language Room. Verify wave 1 starts its independent peers while every wave 2 card remains visibly waiting and has no running Dispatch; complete and integrate wave 1, then verify wave 2 opens automatically through the Facilitator's next governed action.
-7. The old recovered Room may continue to provide peer recovery/card/WorkDocument evidence, but it cannot prove wave ordering because all children were created under the pre-gate runtime. Continue the new Room through the remaining full-auto GUI journey below. Hidden APIs and browser internals may diagnose failures but do not replace the visible journey.
-8. Only after the fresh Room genuinely completes may temporary physical install worktrees, old test Rooms, and superseded Pi runtimes be cleaned. Keep the permanent Room/requirement/owner/base/result ledger required by the product contract.
+1. Preserve the completed correction validation: `python3 -m unittest
+   tests.test_agent_room_skills tests.test_room_effect_eval` passed `33/33`;
+   JSON parsing and `git diff --check` passed. If these files change again,
+   rerun those checks; do not mix unrelated dirty files.
+2. Preserve the current live Room and resolve the existing
+   `tests/test_duplicates.py` conflict only through the governed
+   workspace/integration authority. Record whether its legacy flow can complete;
+   do not treat it as proof of the new architecture.
+3. Follow the phased plan in the authority document without a big-bang rewrite.
+   The first reversible commits are: one canonical RoomScreenModel/selector;
+   pure wait and settlement policies behind current facades; transactional
+   state/event Outbox with per-Room projection isolation. Then materialize the
+   approved PlanRevision as stable RoomTasks at Start, demote legacy WorkItems,
+   add execution-time correction, scoped integration/review/final gates, and
+   finally split the large UI files after lifecycle decisions have moved out.
+4. Run deterministic state-machine E2E with retry, restart, SSE reconnect, one
+   malformed old Room, dependency release, scoped integration, cross-review,
+   repair/re-review, and exactly one final delivery.
+5. Create a clean detached worktree at the verified commit, install with the
+   full Xcode path
+   `/Volumes/undo 4t/MyGlobalDownloads/DE9ECF0E-21E5-4AF3-90D2-7FD095158973/Xcode-beta.app/Contents/Developer`,
+   audit every installed component, and run a
+   new ordinary-language GUI Room through section 7. The current legacy Room
+   remains migration/recovery evidence only.
+6. After Room acceptance, create a new recoverable backup; audit and integrate
+   valid Room, Knowledge, Memory, and Project Field/岛屿 work into the canonical
+   product worktree; run full product verification.
+7. Only then archive or delete proven obsolete/test/generated code, documents,
+   Rooms, worktrees, old Pi/runtime generations, and installs. Retain the
+   permanent logical Room/workspace ledger and recovery evidence.
 
 ## 7. Fresh GUI acceptance journey
 
@@ -254,17 +346,19 @@ Acceptance requires visible evidence of all of the following:
 - immediately after the answer or Start action, the unchanged composer toolbar shows a compact received/running state to the right of `@`; no separate status box covers the conversation, and scrolling away exposes “有新进展 · 回到最新” there;
 - while work is active, that compact status names the companion and current user-facing work in a short phrase instead of only saying `协作进行中`;
 - after the final necessary question, the companion summarizes the goal and shows the complete execution plan;
-- even when clarification is unnecessary, the visible plan waits for explicit “开始行动”; no write, test, or peer dispatch occurs before it;
-- the plan uses the user's language and point of view, contains no raw English schema/camelCase inventory, and locks shared contracts plus each user-visible feature end-to-end to one of at most four same-capability Room Agents, with dependencies/waves, write boundaries, integration, acceptance, and document continuity;
+- even when clarification is unnecessary, the visible plan waits for explicit “开始行动”; no project-file read/write, command, test, install, or peer dispatch occurs before it;
+- the plan uses the user's language and point of view, contains no raw English schema/camelCase inventory, and locks shared contracts plus each user-visible feature end-to-end to one of at most four same-capability Room Agents, with stable identity, dependency IDs/derived waves, write boundaries, scoped integration, acceptance, and document continuity;
 - after “开始行动”, a multi-feature request becomes multiple real companion Tasks running concurrently, not one feature split by technical layer or one Task merely drawn as parallel;
-- the Facilitator may own a complete feature like any peer; no companion is permanently held idle as a low-capability Reviewer, and later bounded review assignments follow real provenance without self-review;
+- the receiving companion may own a complete feature like any peer; no companion is permanently held idle as a low-capability Reviewer, and later bounded review assignments follow real implementation/repair/integration provenance without self-review;
 - the active WorkItem registers one governed WorkDocument; inspect it to confirm immutable/append-only user source, current requirements, accepted plan, Todo/progress/evidence/failures/risks/handoff/next action, and a material update from real execution progress;
 - each companion has one Task card, active motion, recent action, expandable tool rows, bottom Todo, worktree/diff/artifact evidence, and a public handoff/delivery report;
 - ordinary tool/command/Provider errors recover without asking the user to babysit them;
-- integration and an actually independent review happen before the Facilitator's single final response;
+- execution-time user corrections append verbatim, affect only the necessary features, and visibly resume from a revised plan rather than being rejected by a locked composer;
+- scoped integration and every required target's actually independent review happen before the current reporter's single final response;
 - delivered cards are collapsed by default and show exactly what was delivered; completed Todo is absent;
 - model/provider/token/cache fields show real reported values when available and do not show misleading placeholder failure copy;
 - the dependency graph remains a compact overview and does not overlap or duplicate the detailed cards.
+- Root, feature, wait, integration, review and final state update from one backend projection without refresh; one malformed old Room cannot freeze the active Room.
 
 If the fresh Room fails any item, diagnose and fix the real backend/frontend owner, reinstall, and create another fresh Room. Do not patch a scenario-specific branch or let the frontend simulate orchestration.
 
@@ -279,7 +373,7 @@ Do not start these before Room passes:
 ## 9. Direct resume prompt
 
 ```text
-先完整阅读 /Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix/docs/agent/room-production-acceptance-handoff.md、同目录的 room-facilitated-workflow-requirements.md，以及该 worktree 的 AGENTS.md/README。严格执行 handoff 第 0 节：第一条回复不要调用工具、运行命令、改文件、测试、提交、安装或分派伙伴；先用中文向我复述“当前做到哪里、现在仍有哪些问题、你理解的 Room 愿景、确认后准备做的第一步”，等我确认或纠正。确认后才继续第 6 节：只提交本节列出的十二个 Room 文件，从新提交创建干净 worktree，安装当前构建，并在真实前端用全自动 Room 完成第 7 节的紧凑输入栏状态、成组澄清、用户语言纵向分工、显式开始批准、对等伙伴并行、受管 WorkDocument 持续更新、工具/Todo/交接/无自审复核闭环。不要混入列出的其他脏文件，也不要在 Room 通过前开始 Knowledge 或岛屿任务。
+先完整阅读 /Volumes/undo 4t/git/learnA/.worktrees/paw-room-final-fix/docs/agent/room-production-acceptance-handoff.md、同目录的 room-facilitated-workflow-requirements.md，以及该 worktree 的 AGENTS.md/README。严格执行 handoff 第 0 节：第一条回复不要调用工具、运行命令、改文件、测试、提交、安装或分派伙伴；先用中文向我复述“当前做到哪里、现在仍有哪些问题、你理解的 Room 愿景、确认后准备做的第一步”，等我确认或纠正。确认后从第 6 节继续：先验证文档/Skill 修正，再通过受管 workspace/integration 流程处理当前真实 Room 的 tests/test_duplicates.py 冲突，不覆盖目标脏改动、不改数据库伪造状态。把当前 Room 当作旧流程恢复证据；随后严格按权威需求文档的渐进迁移计划推进：先统一 RoomScreenModel/selector，再提取纯 waiting/settlement policy，再做事务内事件 Outbox 和每 Room 隔离；然后实现 PlanRevision/稳定 RoomTask 依赖图、Start/WorkDocument/用户修正、范围级集成和互不自审复核/唯一最终交付，最后才拆巨型 UI 文件并删除已迁移旧分支。不要再增加与 Task/Dispatch/WorkItem 并列的 FeatureWorkItem 生命周期；现有 WorkItem 逐步降为兼容投影。所有伙伴平等并可实现完整功能，协调、集成、复核、汇报只是可追溯责任。新架构必须通过确定性状态机 E2E、干净安装和普通用户语言 GUI Room；之后先备份，再整合 Room、Knowledge、Memory、Project Field/岛屿并清理经证据确认废弃的文件、代码、Room、worktree、Pi/runtime 和文档。不要混入 handoff 中列出的无关脏文件。
 ```
 
 ## 10. 2026-08-07 08:53 CST latest correction
@@ -295,7 +389,8 @@ acceptance evidence:
   clarification round, and the dependency graph still repeated labels/arrows
   while omitting compact Todo progress.
 
-The current uncommitted follow-up fixes those owners directly:
+Commit `07347fa3` fixed those owners directly and is included in installed
+`7de9cb1e`:
 
 - Room execution lanes carry an explicit execution phase derived from the typed
   `开始行动` chronology boundary. Same-phase retry Dispatches still coalesce;
@@ -309,16 +404,17 @@ The current uncommitted follow-up fixes those owners directly:
   `Todo x/y`; redundant `任务目标`/`当前状态` and arrow decoration are removed,
   with adaptive long-label styling.
 
-Verification for this uncommitted follow-up:
+Verification recorded for that follow-up:
 
 - focused frontend: `5 files / 80 tests` passed;
 - complete frontend: `104 files / 1009 tests` passed;
 - complete Room backend: `564/564` passed in `883.591s`;
 - TypeScript and `git diff --check` passed.
 
-This is code and automated evidence only. Commit, clean install, installed
-component audit, and a fresh GUI journey that visibly asks the material
-questions and creates the second Facilitator card remain required.
+Those changes are committed, clean-installed, and component-audited through
+`7de9cb1e`. The current live Room still has not completed its integration,
+later-wave, distributed-review, and one-final-delivery journey, and the newly
+ratified architecture contract in the authority document remains unimplemented.
 
 The user's canonical consolidation scope is also explicit: all valid product
 work in `Room`, `Knowledge`, `Memory`, and `Project Field/岛屿` must be preserved
@@ -326,3 +422,45 @@ and integrated. Provenance/conflict/generated-file review determines ordering
 and cleanup, not whether any of those four domains may be dropped. Runtime
 data, caches, superseded generated copies, and genuinely unconsumed obsolete
 code remain excluded from source integration.
+
+## 11. 2026-08-07 Pi Runtime SDK v2 PAW 接入进度
+
+本 worktree 已开始接入 Pi 提交
+`aa3d7f5c41f976264414b8962ebe5a52d728a4d6`，当前精确边界如下：
+
+- PAW 已识别 Continuation lease、RunScope、AgentSettledReceiptV2、
+  ContextProvider 和 `session.await_settled` 能力。
+- 普通聊天与 Room 的 Runtime 状态共用 exact Turn settlement；丢失
+  `agent_settled` 事件时按相同 `sessionId + turnId` 恢复，不再用 idle
+  推断新 Runtime 的完成状态。旧 `control_state` 路径仅保留给未升级的
+  Runtime。
+- 已有 Session 在同一 `externalSessionId`、同一 transcript 文件上原位
+  重开；身份或路径漂移会失败关闭。成功后 binding 记录 runtime、
+  settlement、context 和 migration history。
+- 产品 Session ID 与 Pi transcript ID 不再错误地要求相同：外层 Turn
+  receipt 固定产品 Session，内层 Agent receipt 固定原 transcript，二者
+  通过 binding 显式关联。这是旧 Session 可原位迁移且 receipt 不被篡改的边界。
+- Room Kernel 仍持有业务真相。Pi receipt 只进入 Runtime/聊天终态证据，
+  不能越过 Room Commit、generation/capability、集成、复核或最终交付。
+- managed build contract 已更新到 `aa3d7f5c`，并将
+  `session.await_settled` 加入源码、manifest 和 staged acceptance 门禁。
+
+已验证：
+
+- PAW exact-settlement、legacy fallback、Session 原位迁移、packager、
+  managed manifest 与安全审计宽回归：`134/134` 通过；
+- 新增普通聊天 receipted terminal event 测试通过；
+- 对真实 Pi worktree 执行 source contract 预检通过，30 组来源/行为标记
+  与四个 runtime 方法一致。
+- 从精确 Pi/PAW source pin 构建的未安装 payload
+  `pi-0.80.7-aa3d7f5c41f9-raghost-f89f3f1bbe` 通过 staged Room canary：
+  prompt、运行中 follow-up、九类取消面、Context/Skill receipt 与
+  `session.await_settled` 全部返回同一 Turn 的精确证据；旧的
+  `SETTLED_TIMEOUT` 已由双层 Session 身份修复消除。
+- Room 后端宽回归 `239/239`、前端 `105 files / 1019 tests`、TypeScript、
+  Python compile 与 `git diff --check` 通过。
+
+仍未完成，禁止误报：clean PAW commit/detached install、现有 Session
+真实 transcript 恢复、普通聊天 GUI、Room GUI 与最终用户愿景验收尚未完成。旧安装
+`pi-0.80.7-98cfe6a3a0a4-raghost-c1414ab249` 在新 Runtime 原子激活前仍是
+可回退基线。

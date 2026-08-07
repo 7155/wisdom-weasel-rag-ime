@@ -2790,6 +2790,81 @@ class RoomKernelCoreTests(unittest.TestCase):
         )
         self.assertEqual(self.store.root("root:1")["state"], "running")
 
+    def test_pending_user_intervention_fences_terminal_completion(self) -> None:
+        self.seed()
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:before-intervention", key="before-intervention"),
+            now_ms=10,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:before-intervention",
+            "running",
+            now_ms=11,
+        )
+        self.store.apply_commit(
+            commit(
+                "commit:before-intervention",
+                "dispatch:before-intervention",
+                coverage=("ac:1",),
+            ),
+            generation=0,
+            now_ms=12,
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """INSERT INTO room_interventions(
+                       intervention_id,room_id,root_id,generation,
+                       intervention_kind,state,post_id,requirement_anchor_id,
+                       requirement_catalog_revision_id,requires_plan_revision,
+                       affected_task_ids_json,payload_json,
+                       created_at_ms,updated_at_ms
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    "room-intervention:pending",
+                    "room:1",
+                    "root:1",
+                    0,
+                    "correction",
+                    "pending_reconciliation",
+                    "post:intervention",
+                    "requirement-anchor:intervention",
+                    "requirement-catalog:intervention",
+                    1,
+                    "[]",
+                    json.dumps(
+                        {
+                            "interventionId": "room-intervention:pending",
+                            "kind": "correction",
+                            "requiresPlanRevision": True,
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    13,
+                    13,
+                ),
+            )
+
+        rejected = self.store.finalize_root("root:1", now_ms=14)
+
+        self.assertEqual(rejected["status"], "rejected")
+        self.assertEqual(
+            rejected["details"]["reason"],
+            "user_intervention_pending_reconciliation",
+        )
+        self.assertEqual(
+            rejected["details"]["governance"]["pendingInterventions"],
+            [
+                {
+                    "interventionId": "room-intervention:pending",
+                    "interventionKind": "correction",
+                    "requiresPlanRevision": True,
+                }
+            ],
+        )
+        self.assertEqual(self.store.root("root:1")["state"], "running")
+
     def test_missing_root_review_policy_fails_closed_at_terminal_fence(self) -> None:
         self.seed()
         self.store.enqueue_dispatch(dispatch("dispatch:missing-policy", key="missing-policy"), now_ms=10)
@@ -3630,6 +3705,147 @@ class RoomKernelCoreTests(unittest.TestCase):
             [],
         )
         self.assertEqual(replay, terminal)
+        self.assertEqual(self.store.root("root:1")["state"], "completed")
+
+    def test_finalize_requires_each_scoped_review_not_only_latest(self) -> None:
+        self.seed()
+        self.store.create_task(task("task:2"), now_ms=2)
+        with sqlite3.connect(self.db_path) as conn:
+            for task_id in ("task:1", "task:2"):
+                payload = self.store.task(task_id)
+                payload["revision"] = 1
+                payload["state"] = "completed"
+                conn.execute(
+                    "UPDATE room_kernel_tasks SET state='completed',payload_json=?,updated_at_ms=? WHERE task_id=?",
+                    (
+                        json.dumps(
+                            payload,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        3,
+                        task_id,
+                    ),
+                )
+
+        def create_review(
+            target_task_id: str,
+            reviewer_id: str,
+            *,
+            now_ms: int,
+        ) -> tuple[str, str, str]:
+            review_task_id = f"task:review:{target_task_id}"
+            review_dispatch_id = f"dispatch:review:{target_task_id}"
+            evidence_ref = f"test:review:{target_task_id}"
+            snapshot = {
+                **task(review_task_id),
+                "taskKind": "review",
+                "currentOwnerParticipantId": reviewer_id,
+                "reviewState": "required",
+                "reviewOfTaskIds": [target_task_id],
+                "reviewAuthorParticipantIds": ["participant:a"],
+                "reviewEvidenceNotBeforeMs": now_ms,
+                "reviewFindings": [],
+                "workspacePolicy": "read_only",
+                "workspaceRoot": f"/tmp/{review_task_id}",
+                "workspaceBaseRoot": f"/tmp/{review_task_id}",
+                "workspaceSnapshotSha256": hashlib.sha256(
+                    review_task_id.encode("utf-8")
+                ).hexdigest(),
+                "workspaceIntegrationRef": "",
+            }
+            target_revision = self.store.review_target_revision(
+                root_id="root:1",
+                task_ids=[target_task_id],
+                review_snapshot=snapshot,
+            )
+            snapshot["reviewTargetRevision"] = target_revision
+            self.store.create_task(snapshot, now_ms=now_ms)
+            review_dispatch = dispatch(
+                review_dispatch_id,
+                key=f"review:{target_task_id}",
+                task_id=review_task_id,
+                target=reviewer_id,
+            )
+            review_dispatch["intentKind"] = "review"
+            self.store.enqueue_dispatch(review_dispatch, now_ms=now_ms)
+            self.store.set_dispatch_wait_state(
+                review_dispatch_id,
+                "running",
+                now_ms=now_ms,
+            )
+            self.record_runtime_evidence(
+                review_dispatch_id,
+                evidence_ref=evidence_ref,
+                now_ms=now_ms + 1,
+            )
+            return review_task_id, review_dispatch_id, evidence_ref
+
+        def accept_review(
+            review_task_id: str,
+            review_dispatch_id: str,
+            evidence_ref: str,
+            *,
+            now_ms: int,
+        ) -> None:
+            target_revision = str(
+                self.store.task(review_task_id)["reviewTargetRevision"]
+            )
+            review_commit = commit(
+                f"commit:{review_task_id}",
+                review_dispatch_id,
+                coverage=("ac:1",),
+                task_id=review_task_id,
+            )
+            review_commit["evidenceRefs"] = [evidence_ref]
+            for item in review_commit["qualityGateReceipt"]["items"]:
+                item["evidenceRefs"] = [evidence_ref]
+            binding_material = {
+                "reviewTargetRevision": target_revision,
+                "taskId": review_task_id,
+                "dispatchId": review_dispatch_id,
+                "evidenceRefs": [evidence_ref],
+                "notBeforeMs": int(
+                    self.store.task(review_task_id)[
+                        "reviewEvidenceNotBeforeMs"
+                    ]
+                ),
+            }
+            review_commit["reviewEvidenceBinding"] = {
+                "schemaVersion": "wisdom-weasel.review-evidence-binding.v1",
+                "bindingId": (
+                    "review-evidence-binding:"
+                    + hashlib.sha256(
+                        json.dumps(
+                            binding_material,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ).encode("utf-8")
+                    ).hexdigest()
+                ),
+                **binding_material,
+            }
+            self.store.apply_commit(
+                review_commit,
+                generation=0,
+                now_ms=now_ms,
+            )
+
+        first = create_review("task:1", "participant:b", now_ms=5)
+        second = create_review("task:2", "participant:c", now_ms=7)
+        accept_review(*first, now_ms=9)
+        blocked = self.store.finalize_root("root:1", now_ms=10)
+        self.assertEqual(blocked["status"], "rejected")
+        self.assertIn(
+            blocked["details"]["reason"],
+            {"review_dispatch_pending", "review_required"},
+        )
+
+        accept_review(*second, now_ms=11)
+        terminal = self.store.finalize_root("root:1", now_ms=12)
+        self.assertEqual(terminal["receiptKind"], "terminal", terminal)
         self.assertEqual(self.store.root("root:1")["state"], "completed")
 
     def test_pending_review_snapshot_matches_commit_then_real_mutation_stales_it(

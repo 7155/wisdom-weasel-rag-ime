@@ -245,7 +245,7 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         )
         self.assertEqual(
             contract["minimumHandlersCommit"],
-            "0fd0564af34cb40bbcd6b8903c01b36191c4f90d",
+            "aa3d7f5c41f976264414b8962ebe5a52d728a4d6",
         )
         self.assertEqual(contract["sourceRepository"], "https://github.com/7155/pi.git")
         self.assertEqual(
@@ -296,7 +296,12 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         )
         self.assertEqual(
             set(contract["requiredMethods"]),
-            {"session.control_state", "room.dispatch", "room.cancel"},
+            {
+                "session.control_state",
+                "session.await_settled",
+                "room.dispatch",
+                "room.cancel",
+            },
         )
         build = (REPO / "scripts/build_managed_pi_runtime_v2.py").read_text(encoding="utf-8")
         self.assertIn('"git", "merge-base", "--is-ancestor"', build)

@@ -17933,7 +17933,8 @@ export const contractSchemas = {
           "dispatch",
           "commit",
           "post",
-          "binding"
+          "binding",
+          "projection"
         ]
       },
       "entityId": {
@@ -18232,6 +18233,214 @@ export const contractSchemas = {
           "schemaVersion": {
             "type": "string",
             "const": "wisdom-weasel.room-binding.v2"
+          }
+        }
+      }
+    }
+  },
+  "room-plan-revision.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-plan-revision.v1.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "planRevisionId",
+      "rootId",
+      "revision",
+      "state",
+      "requirementCatalogRevisionId",
+      "tasks",
+      "createdAtMs",
+      "activatedAtMs",
+      "workDocumentRef"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "wisdom-weasel.room-plan-revision.v1"
+      },
+      "planRevisionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "revision": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "proposed",
+          "active",
+          "superseded",
+          "cancelled"
+        ]
+      },
+      "requirementCatalogRevisionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "tasks": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 12,
+        "items": {
+          "$ref": "#/$defs/task"
+        }
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "activatedAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 0
+      },
+      "workDocumentRef": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "documentId",
+              "contentSha256",
+              "documentRevision"
+            ],
+            "properties": {
+              "documentId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "contentSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "documentRevision": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        ]
+      }
+    },
+    "$defs": {
+      "task": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "taskId",
+          "kind",
+          "title",
+          "userOutcome",
+          "ownerParticipantId",
+          "participantRef",
+          "dependencyTaskIds",
+          "dependencyTitles",
+          "wave",
+          "writeBoundary",
+          "workspacePolicy",
+          "acceptanceCriterionIds",
+          "scopeTaskIds",
+          "authorParticipantIds"
+        ],
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "feature",
+              "integration",
+              "review"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "userOutcome": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "ownerParticipantId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "participantRef": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dependencyTaskIds": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "dependencyTitles": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "wave": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "writeBoundary": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "workspacePolicy": {
+            "type": "string",
+            "enum": [
+              "read_only",
+              "shared_single_writer",
+              "isolated_writable"
+            ]
+          },
+          "acceptanceCriterionIds": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "scopeTaskIds": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "authorParticipantIds": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         }
       }
@@ -18925,6 +19134,182 @@ export const contractSchemas = {
       }
     }
   },
+  "room-screen-state.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-screen-state.v1.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "roomId",
+      "activeRootId",
+      "activeRootGeneration",
+      "phase",
+      "waitReason",
+      "runnableFrontier",
+      "integrationReadiness",
+      "reviewReadiness",
+      "finalDeliveryPostId",
+      "recommendedNextAction"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "wisdom-weasel.room-screen-state.v1"
+      },
+      "roomId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "activeRootId": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "minLength": 1
+      },
+      "activeRootGeneration": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 0
+      },
+      "phase": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "alignment",
+          "planning",
+          "execution",
+          "waiting",
+          "blocked",
+          "cancelling",
+          "completed",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "waitReason": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "reason",
+              "requiresUserAction"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "participant",
+                  "external",
+                  "managed",
+                  "blocked"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "requiresUserAction": {
+                "type": "boolean"
+              }
+            }
+          }
+        ]
+      },
+      "runnableFrontier": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "taskIds",
+          "dispatchIds"
+        ],
+        "properties": {
+          "taskIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "dispatchIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          }
+        }
+      },
+      "integrationReadiness": {
+        "$ref": "#/$defs/readiness"
+      },
+      "reviewReadiness": {
+        "$ref": "#/$defs/readiness"
+      },
+      "finalDeliveryPostId": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "minLength": 1
+      },
+      "recommendedNextAction": {
+        "type": "string",
+        "enum": [
+          "align_requirement",
+          "confirm_plan",
+          "answer_question",
+          "resolve_blocker",
+          "continue_execution",
+          "integrate_results",
+          "complete_independent_review",
+          "wait_for_progress",
+          "start_new_task"
+        ]
+      }
+    },
+    "$defs": {
+      "readiness": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ready",
+          "reason",
+          "pendingTaskIds"
+        ],
+        "properties": {
+          "ready": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pendingTaskIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          }
+        }
+      }
+    }
+  },
   "room-settle-receipt.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://wisdom-weasel.local/contracts/room-settle-receipt.v1.json",
@@ -19369,6 +19754,7 @@ export const contractSchemas = {
         "type": "string",
         "enum": [
           "work",
+          "integration",
           "invitation",
           "review",
           "report"
@@ -19378,6 +19764,36 @@ export const contractSchemas = {
         "type": "string",
         "minLength": 1,
         "maxLength": 320
+      },
+      "planRevisionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 320
+      },
+      "planTaskKind": {
+        "type": "string",
+        "enum": [
+          "feature",
+          "integration",
+          "review"
+        ]
+      },
+      "dependencyTaskIds": {
+        "type": "array",
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 320
+        }
+      },
+      "writeBoundary": {
+        "type": "string",
+        "maxLength": 1000
+      },
+      "planWave": {
+        "type": "integer",
+        "minimum": 1
       },
       "currentOwnerParticipantId": {
         "type": "string",

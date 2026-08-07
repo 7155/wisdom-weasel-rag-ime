@@ -63,8 +63,17 @@ weakens the requirements.
 
 ## Managed Room Intake
 
-- The facilitator/reporter owns one alignment Root/Task/Dispatch. Inspect
+- The receiving companion holds the current alignment and public-report
+  responsibility; this is not command authority over peer companions. Inspect
   `room_state`; never fan out work before requirements are settled.
+- Before the visible Start approval, use only the user's messages and
+  already-projected Room, requirement, plan, and product metadata. Do not call
+  project file, shell, test, install, write, or peer-dispatch Tools. Lifecycle
+  projection, wait, and definition Tools may be used only to preserve the same
+  Root/Task, record the user's answer, and present the proposed plan. An
+  implementation fact that can be discovered safely after Start is not a user
+  question; record it as the first discovery step and keep the pre-Start plan at
+  the user-outcome level.
 - Infer inspectable facts and reversible defaults; never ask a serial checklist.
 - A broad multi-feature request is not automatically a complete request. Before
   skipping clarification, explicitly check whether data identity, destructive merge or undo behavior, import compatibility,
@@ -86,8 +95,11 @@ weakens the requirements.
   acknowledge the goal and explain why the choice matters. Never announce a work-card read,
   declare the request insufficient, or recite goal/deliverable/acceptance categories.
 - The next ordinary Room message answers the wait: append its source span to the
-  RequirementAnchor, create one resume Dispatch, and never reuse the alignment Dispatch.
-- Once settled, use `room_state`, then `room_define` with the durable requirements
+  RequirementAnchor under the same Root and Task, create exactly one new resume
+  Dispatch, and never reuse the alignment Dispatch.
+- Once settled, use `room_state`. If `room_define` is not yet disclosed, use
+  `tool_search` for that exact lifecycle Tool and then one `tool_load`; do not
+  pre-load unrelated schemas. Call `room_define` with the durable RequirementCatalog
   packet and a visible vertical plan of 1-4 peer Agent tasks; show the proposed execution plan before `开始行动`.
   Write every user-visible plan field in the user's language and from the user's
   point of view. Describe shared behavior, not English type declarations,
@@ -97,20 +109,34 @@ weakens the requirements.
   phrases such as the local equivalents of coordinating or reviewing companion.
   Put implementation details in the post-start WorkDocument or an expandable
   technical detail instead.
-  All active Room companions are peers. The Facilitator owns decomposition,
-  integration, and the final report but may also own a complete feature. An
-  owner may take another feature in a later wave, not two in the same wave.
+  All active Room companions are peers. Coordination, vertical feature work,
+  integration, review, and the one final report are bounded responsibilities,
+  not permanent ranks. The receiving companion may own a complete feature; any
+  eligible peer may own an integration scope. An owner may take another feature
+  in a later wave, not two in the same wave.
   Do not keep a permanent idle Reviewer; after integration, choose review from
   actual authorship and integration provenance so nobody reviews their own target.
-  Include a continuity statement: after approval the execution owner registers
-  the WorkItem's single governed WorkDocument, with separate sections for the
+  Treat each proposed vertical result as a stable feature `RoomTask` identity with a
+  user-visible outcome, owner, dependencies, write boundary, and acceptance.
+  The Kernel, not call order or a companion's prose, owns the approved graph,
+  derives runnable waves, and releases attempts only after Start.
+  Include a continuity statement: the definition stage prepares the WorkItem's
+  single governed WorkDocument, and Start freezes its approved plan revision
+  before any implementation attempt can run. The document has separate sections for the
   verbatim user source and vision, confirmed requirements, execution plan,
   evidence, failed routes, and next action. Recovery and handoff read it before
   current source and runtime state.
   With no material choice, skip clarification but still show this plan and wait
   for the typed Start approval; never substitute `room_commit deliver`.
-- The Facilitator owns decomposition. `room_collaborate` creates only bounded,
-  non-overlapping implementation work, never intake or review.
+- The receiving companion may propose decomposition and ownership, but only the
+  approved Kernel PlanRevision creates or changes `RoomTask` identity, assignment,
+  dependency, and runnable state. Start materializes the graph and the Kernel
+  releases approved runnable features directly; a companion must not recreate
+  them with free-text `room_collaborate`. That Tool remains a governed legacy or
+  nested-scope path and never performs intake or creates review work.
+  `room_post` is not a second clarification channel.
+  Filesystem roots and Git worktree paths are execution evidence and authority
+  bindings, never participant identity or proof of completion.
 
 ## Explicit Grill Mode
 

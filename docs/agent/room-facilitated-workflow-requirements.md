@@ -2,15 +2,37 @@
 
 - Document class: sole tracked authority for current Room product behavior and acceptance status
 - Approved vision window: user decisions made on or after 2026-08-02
-- Contract revision: 2026-08-07
-- Acceptance state: current source also covers durable peer waiting after a premature Facilitator delivery, visible waiting cards for approved later-wave features, and Kernel Root precedence over stale legacy WorkItems. The current full Room backend passes `564/564`, the complete frontend passes `104 files / 1007/1007`, Python compile, TypeScript, and diff checks pass. These are source/regression facts only: the follow-up still needs a clean install and a fresh natural-language GUI Room that reaches integration, independent review, and one final report.
+- Contract revision: 2026-08-07 14:25 CST
+- Acceptance state: commit `7de9cb1eabac4df691751de5b09280467f09ac7d` remains the latest clean-installed baseline. The current uncommitted migration now has one frontend `RoomScreenModel`, pure wait/settlement/scheduling policies, transactional domain-event/outbox writes with expired-lease recovery and per-Room draining, a versioned backend screen-state projection, Start-time PlanRevision materialization, dependency-frontier release, assignable integration Tasks and per-scope review Tasks. Focused Phase 4/5 checks, Python compilation and `git diff --check` pass; the frontend selector/contract group passes `5 files / 167 tests` plus TypeScript. A wider backend regression is still running. This working tree has not yet passed the new full suite, clean installation, real GUI acceptance, backup, canonical consolidation or cleanup. Execution-time user correction/replan, review-finding repair/re-review, final reporting proof and the existing managed `tests/test_duplicates.py` conflict remain open and must not be reported complete.
 - Status rule: source, test, installed, and foreground evidence are reported separately
 
 ### Current follow-up evidence
 
+- The current migration is a working-tree checkpoint, not an installed release.
+  `RoomScreenModel` is the sole frontend selector for active Root, phase, wait,
+  frontier, readiness and final identity; five focused frontend files pass
+  `167/167` with TypeScript.
+- Room application writes now couple state, domain events and projection/wake
+  Outbox entries in one transaction. Recovery reclaims expired leases, keeps
+  projection-before-wake order per Room, and lets a healthy Room drain while a
+  malformed Room retains only its own retry.
+- Start freezes one PlanRevision, creates the WorkDocument before wake,
+  materializes every feature/integration/review Task, and dispatches only the
+  runnable frontier. A completed dependency releases the next wave without a
+  model-authored free-text assignment; a Plan Task cannot call
+  `room_collaborate` to create an extra unapproved child scope.
+- Writable features force independent review even if a model supplied a false
+  exemption. Integration is a first-class, peer-assignable Task. Each planned
+  review binds an exact feature/integration scope, excludes its authors, and
+  terminal governance checks every current scoped review rather than only the
+  most recently updated one. Focused backend coverage includes a two-scope case
+  where one accepted review cannot hide a second incomplete review.
+
 - A premature Facilitator `deliver` while an active peer Dispatch exists is converted into a durable wait bound to that exact peer. The peer's public delivery creates one Facilitator resume Dispatch and returns the Root to running; this is covered by the settlement regression and the complete backend run.
 - Approved execution-plan features without a real Dispatch remain visible as compact plan cards. A later wave is marked `等待前置` until earlier work is completed and integrated; a real Task replaces the plan card when released. The projection regression and complete frontend/backend runs pass.
 - The Rooms projection chooses the newest Kernel Root and its generation before consulting legacy WorkItems. Header, context bar, busy state, and active Dispatches therefore share the same authoritative Root; the stale-WorkItem regression and complete frontend run pass.
+- The clean installed `7de9cb1e` runtime resumed the exact continuation after its peer retry completed. This proves the bounded legacy recovery path only. It does not prove immediate GUI convergence, automatic later-wave release, complete integration, independent review, or one final delivery.
+- The current real Room's duplicate-customer result reached a managed integration conflict on `tests/test_duplicates.py`; the target workspace already contains changes. It must be resolved through the Room workspace/integration authority and must not be overwritten or edited in the database to manufacture completion.
 
 ## Latest user corrections (verbatim)
 
@@ -18,10 +40,35 @@
 
 > 说了测试问题要用用户语言，用户不可能说这些我想把这个小客户目录做得更能用：增加 CSV 批量导入并逐行预览、按邮箱域名筛选、重复客户合并并可撤销、查看客户变更历史。请先对齐真正影响方案的关键需求，已有合理默认值就直接决定，一次最多问 4 个问题；然后展示按完整用户功能纵向拆分的分工、依赖和波次。必须等我确认并点击“开始行动”后再读写文件、运行命令、测试或分派伙伴。开始后请让多位平等伙伴真正并行交付，最后由没有参与对应实现或集成范围的伙伴独立复核。
 
+> 是的，你说的更符合要求，可能是你之前的整理文档没有把我的完整需求注入。
+
 Derived acceptance: the compact composer status names the active companion and
 her current user-facing work with few words. GUI acceptance prompts contain
 only what an ordinary user wants to achieve; they never teach the Room its own
 question, planning, dispatch, testing, or review policy.
+
+The last correction ratifies the following interpretation and supersedes any
+older sentence in this file, README, a Skill, or a handoff that implies a
+master/worker Room:
+
+- The Kernel owns the approved user-outcome graph, stable feature Task identities,
+  dependencies, runnable frontier, waits, integration leases, review targets,
+  and final gate. A companion owns an outcome; an execution attempt is the
+  replaceable object.
+- Receiving, coordination, integration, review, and reporting are bounded
+  responsibilities, not permanent ranks. All four Room companions may perform
+  real implementation. No companion is reserved as an idle or lower-capability
+  Reviewer.
+- Code, data, artifact, and integration-changing Room work requires independent
+  review after integration. Independence is calculated per bounded target from
+  actual implementation, repair, and integration provenance. Pure discussion
+  or read-only work may carry an explicit policy exemption.
+- The single WorkDocument and progressively loaded workflow Skills must be
+  updated from every later user correction and every owner's material progress.
+  This obligation is part of the workflow, not an optional handoff chore.
+- The UI displays one Kernel-owned business truth. It may derive presentation,
+  layout, folding, and motion, but must not guess active Root, phase, wait kind,
+  integration completion, review readiness, or final delivery.
 
 Older handoffs, ignored local notes under `docs/`, screenshots, prototypes, tests,
 and README summaries are evidence or navigation only. They cannot override this
@@ -31,11 +78,12 @@ in the same tracked change.
 ## Product outcome
 
 Room turns one natural conversation into visible, governed multi-companion work.
-The user talks to one companion first. That Facilitator clarifies only material
-missing choices, splits genuinely independent work among peer companions, keeps
-their bounded private subagents beneath the owning work item, integrates the
-result, requests independent review when policy requires it, and returns one
-final report.
+The user talks to one companion first. That receiving companion clarifies only
+material missing choices and proposes the user-visible plan. After Start, the
+Kernel owns the fixed outcome graph and releases dependency-ready features to
+equal peer owners. Coordination, implementation, scoped integration,
+independent review, and final reporting remain separately attributable work;
+no companion becomes the permanent commander of the others.
 
 Room is also a long-running work system, not only a sequence of short chat
 turns. In full-auto mode a bounded goal may keep making real progress across
@@ -155,19 +203,26 @@ remaining choice would change.
   researcher, or final reviewer. Any stored collaboration role is only an
   opening-routing preference; the visible plan and actual provenance determine
   current responsibilities.
-- Owns requirements, decomposition, WorkItem assignment, dependencies,
-  integration, review policy, and the only final report.
-- May implement and integrate, but cannot independently review its own work.
+- Coordinates the current user dialogue, reconciles the proposed plan, and may
+  hold the one current reporting responsibility. The Kernel owns approved
+  requirements, feature identities, assignments, dependencies, execution
+  release, integration leases, review policy, and final settlement.
+- May own complete features or scoped integration like any peer, but cannot
+  independently review the corresponding work.
 - Parallelizes only independent, non-overlapping slices when that materially
   reduces waiting.
 - Remains a peer companion. Coordination responsibility never makes the
   Facilitator a permanent commander or a reason to give other companions only
   read-only summary work.
+- Cannot invent a new feature, consume a plan slot by call order, silently
+  change an owner, open a wave, waive review, or declare the Room complete.
 
 ### Room companion
 
-- Receives a structured WorkItem with objective, expected output, acceptance
-  criteria, dependencies, owner, and workspace policy.
+- Receives a stable feature `RoomTask` with user outcome, expected output,
+  acceptance criteria, dependency identities, owner, write boundary, and
+  workspace policy. Retry, recovery, and reassignment preserve the feature
+  identity and create a new attempt.
 - Publishes meaningful progress, evidence, result, and handoff for its own slice;
   it does not publish a competing product-wide final.
 - May launch bounded private subagents. The companion remains accountable for
@@ -194,6 +249,10 @@ remaining choice would change.
   or turn review into a lower-capability role.
 - Submits structured Findings. Runtime policy derives the verdict; the Reviewer
   cannot fix a finding and approve the same fix.
+- Review eligibility is target-scoped. Work on another non-overlapping feature
+  does not disqualify a peer. If every available peer authored, repaired, or
+  integrated the same target, the Room reports that no independent reviewer is
+  available instead of manufacturing a pass.
 
 ### Runtime authority
 
@@ -238,8 +297,11 @@ are receipted; stale or mismatched loads fail closed.
 
 ## Governed requirement and execution record
 
-After the user approves the visible plan, the active WorkItem binds exactly one
-governed Markdown WorkDocument. It is one physical record with two clearly
+The definition stage prepares exactly one governed Markdown WorkDocument from
+the latest aligned source and proposed plan without touching the target project.
+The visible Start action freezes the approved PlanRevision and activates that
+same document before any project read/write, test, install, or companion
+execution attempt can run. It is one physical record with two clearly
 separated logical sections, not two files that can drift apart:
 
 - the requirement section preserves the original user request and vision
@@ -256,6 +318,12 @@ the current interpretation/plan is reconciled without rewriting history. An
 implementation, integration, verification, review, failure, recovery, or
 handoff updates the execution section when material state changes. It is not a
 per-Tool transcript, token log, or commit diary.
+
+The backend stores the document identity, revision, authority, immutable-source
+hashes, append-only correction chain, and structured section deltas. The
+persisted Markdown is the deterministic, readable recovery and handoff
+materialization. Database facts and the Markdown file must not become two
+independently editable truths.
 
 Only the current authorized owner writes the shared record; concurrent helpers
 return a bounded proposed delta. After compaction, restart, replacement, or
@@ -275,32 +343,46 @@ it on authoritative terminal state and never deletes it on a timer.
    CAS-release the one resume Dispatch. A crash in any window remains
    non-executable or exactly replayable, and a specific question revision
    resumes at most once.
-4. Present the visible execution plan on both intake branches, wait for the
-   typed start action, durably prepare its one-shot identity, publish the user
-   message, and only then CAS-release execution. Any partial transaction remains
-   non-executable and retryable.
-5. Define the accepted work atomically, fence the intake Dispatch, and bind the
-   one governed WorkDocument to the accepted WorkItem before the first approved
-   implementation write.
-6. Create one fresh execute-capable Facilitator Dispatch with a new identity,
-   capability lease, epoch, and implementation Skill. The intake Dispatch never
-   gains execute capability.
-7. Create structured peer WorkItems and directed Dispatches. Independent work
-   may run in parallel; dependencies remain serial.
-8. Workers deliver artifacts, verification, and residual risk. Delivery remains
-   integration-pending.
-9. The Facilitator integrates in the sole authoritative integration workspace.
-10. Apply policy-selected independent review to the integrated revision and
-    close any bounded repair/re-review loop.
-11. When work is quiescent, create exactly one read-only final-report lease.
-12. The Facilitator publishes one final report; only its reporter receipt may
-    lead to completed state.
+4. Materialize one proposed PlanRevision and stable `RoomTask` records with
+   kind `feature`, plus validated
+   dependency edges, derived waves, owner assignments, acceptance links, and
+   one governed WorkDocument. Present that plan and wait for the typed Start.
+5. On Start, freeze the approved PlanRevision and, in one database transaction,
+   publish the chronological Start post, activate the document revision, mark
+   dependency-free features runnable, and append state/event/outbox records.
+   No attempt is claimable until the document has an active materialization
+   receipt. Any partial preparation remains non-executable and retryable.
+6. Create a fresh attempt only for each runnable feature. The intake attempt
+   never gains execute capability; waiting features exist visibly from the
+   first second but have no execution attempt.
+7. Peer owners deliver artifacts, verification, provenance, and residual risk.
+   Delivery remains integration-pending. Completion of blocking features plus
+   valid integration receipts advances the next dependency frontier.
+8. Assign scoped integration work through one active authoritative lease per
+   shared scope. Any eligible peer may hold it; integration is not a permanent
+   Facilitator privilege.
+9. Derive required bounded ReviewTargets from the integrated artifact revision
+   and actual author/repair/integration provenance. Run eligible independent
+   reviews, repairs, reintegration, and re-review until every current target is
+   accepted or honestly blocked.
+10. When all required features, integrations, reviews, documents, and attempts
+    are quiescent, create exactly one read-only final-report lease.
+11. The current reporter publishes one final report; only its exact terminal
+    receipt may lead to completed state.
 
 Waits have an explicit owner, epoch, and resume condition. Resume is idempotent.
 A wait cannot target itself or form a cycle. Historical materialized
 continuations are upcast before recovery; an old record with no safe child
 continuation stays non-runnable and emits one recoverable failure signal instead
 of looping forever.
+
+Every authoritative state transition writes its corresponding Room event and
+wake/outbox record in the same database transaction. Projection reconciliation
+repairs history after failure; it is not the primary real-time event producer.
+Projection failure is isolated per Room. One old or malformed Room cannot stop
+another active Room from publishing events. Snapshots expose `activeRootId`,
+phase, typed wait reason, runnable frontier, and recommended next action so no
+frontend component independently sorts or guesses them.
 
 ## Long-running autonomy and recovery
 
@@ -318,11 +400,16 @@ of looping forever.
   also reflected in the WorkItem's governed WorkDocument. The active owner
   updates it from current user instructions and her own real progress; helpers
   propose deltas instead of racing to write the same file.
-- The Facilitator supervises recovery. Within configured policy she may retry
-  the same step, revise its approach, reassign unfinished work, turn unsafe
-  parallel work into ordered work, rebind a retained workspace, select another
-  allowed model, and then continue integration, review, and final delivery.
-  Every recovery changes durable state and keeps its attempt lineage.
+- The Kernel supervises recovery state and preserves exact attempt lineage. The
+  current feature owner or coordination responsibility may propose retry,
+  approach revision, reassignment, serialization, workspace rebind, or another
+  allowed model, but only governed state changes release the resulting attempt.
+- The composer remains available while work runs. A normal user message becomes
+  a durable intervention classified as correction, priority change, pause, or
+  status question. A local correction pauses only affected features when
+  possible; a shared-contract change pauses its dependency frontier and creates
+  a PlanRevision; a dangerous expansion returns to visible approval.
+  The exact user words append to the WorkDocument before affected work resumes.
 - The user is asked only when progress truly requires a new user-owned decision,
   permission, credential, or external action, or when multiple bounded recovery
   attempts have produced evidence that no safe path remains. The Room then asks
@@ -374,20 +461,23 @@ of looping forever.
 - A small coherent single-writer task may use the governed current workspace.
 - Read-only independent work may share an immutable baseline.
 - Concurrent writers receive distinct isolated workspaces from one pinned Room
-  baseline. Exactly one Integrator owns the authoritative integration workspace.
+  baseline. Exactly one integration lease is active for each affected shared
+  scope in the authoritative integration workspace; any eligible peer may hold
+  that bounded responsibility.
 - One writable workspace binding belongs to one WorkItem responsibility, not to
   a persona forever.
 - The permanent ledger records work lineage, requirement revision, owner and
   Session, repository and pinned baseline, physical binding, lease history,
   delivery snapshot, per-file diff stats, integration revision, terminal reason,
   cleanup state, and authorizing receipts.
-- Worker delivery is hash-bound and remains pending until Facilitator
+- Feature-owner delivery is hash-bound and remains pending until scoped
   integration.
 - After successful integration, record the integrated revision first; then clean
   the exact child worktree and retain the logical ledger forever.
 - Failed, blocked, cancelled, conflicting, orphaned, incomplete, or unintegrated
-  workspaces remain physically present and red until the Facilitator issues a
-  receipted retry/rebind or a reasoned snapshot/hash-bound abandonment.
+  workspaces remain physically present and red until the authorized integration
+  or recovery responsibility issues a receipted retry/rebind or a reasoned
+  snapshot/hash-bound abandonment.
 - Cleanup is idempotent and exact-path scoped. A missing path records an observed
   result; it never broadens deletion scope.
 
@@ -619,6 +709,10 @@ because a client timer pretends work happened.
 
 - Conversation and Tasks project the same authoritative event and workspace
   records. They do not maintain separate completion truth.
+- Snapshot state names the active Root, phase, wait reason, runnable frontier,
+  integration readiness, review readiness, and final-delivery identity. React
+  may derive layout, wording, folding, and animation only; it cannot reconstruct
+  those business facts by sorting Roots, Tasks, WorkItems, or Posts.
 - A WorkItem card defaults to owner, objective, semantic state, latest summary,
   completion, last update, dependency/blocker, and verification.
 - Its primary label is the user-meaningful work objective, never the most recent
@@ -664,7 +758,8 @@ because a client timer pretends work happened.
   接收数据，完成校验与保存，持续报告进度和逐项错误，最后产出可核对结果` is the
   canonical positive example: entry contracts, processing/persistence,
   progress and failure recovery, and cross-boundary acceptance are normally
-  separable, while the Facilitator retains integration and the end-to-end run.
+  separable. Coordination and scoped integration remain explicit peer-owned
+  responsibilities rather than a master role.
   Unless source inspection proves those seams conflict on one owner, at least
   one peer must receive real work. `修复一个已经定位的函数边界条件并补一个聚焦测试` is
   the contrasting single-owner example. These examples train analogous
@@ -672,14 +767,14 @@ because a client timer pretends work happened.
 - A task selected to exercise Room parallelism must produce at least two real,
   independently owned WorkItems with distinct directed execution, overlapping
   active intervals when dependencies permit, separate Todo/checkpoints, and
-  attributed results before Facilitator integration.
-- If the Facilitator legitimately keeps a task single-writer, the UI states the
+  attributed results before scoped integration.
+- If the approved plan legitimately keeps a task single-writer, the UI states the
   concrete dependency or overlap risk and must not label that run parallel or
   use it as the Room multi-companion acceptance case.
-- The acceptance flow must show the Facilitator's own integration work, at least
-  one peer implementation/research contribution, and a later independent review
-  contribution as distinct responsibilities. Reviewer participation alone does
-  not satisfy the two-WorkItem implementation requirement.
+- The acceptance flow must show coordination/reporting, real peer feature work,
+  scoped integration, and later target-scoped independent review as distinct
+  responsibilities. Reviewer participation alone does not satisfy the
+  two-feature-Task implementation requirement.
 
 ### Clarification acceptance prompt discipline
 
@@ -1207,3 +1302,336 @@ Use one coherent installed build and one fresh Room in the foreground
   Todo exists. It does not repeat `任务目标` or `当前状态`, does not use arrows as
   status or direction decoration, and adapts long Chinese labels without
   shifting the fixed graph layout.
+
+## 2026-08-07 ratified architecture and full-vision amendment
+
+This amendment records the user's ratification after reviewing the complete
+external-model diagnosis. It is target behavior, not a claim that commit
+`7de9cb1e` already implements it.
+
+1. **One business truth.** Root/feature/wait/integration/review/final mutations
+   and their events/outbox are transactionally coupled. Each Room projection
+   fails independently. The backend exposes the active Root and phase; the UI
+   does not guess them.
+2. **One approved outcome graph.** Start freezes a PlanRevision and stable
+   `RoomTask` records with kind `feature`, validated dependency IDs, derived waves, peer owners,
+   write boundaries, acceptance links, and visible waiting state. Dispatches
+   are attempts; retry and reassignment never change Task identity. Existing
+   legacy WorkItem becomes a compatibility projection; do not add a parallel
+   FeatureWorkItem, Job, Unit, or Step lifecycle.
+3. **Equal peers, scoped responsibility.** The receiving companion coordinates
+   the conversation but does not command other companions. All four may
+   implement. Integration and reporting are assignable scopes with provenance,
+   not permanent ranks.
+4. **Independent review by target.** Writable or integration-changing Room work
+   requires review. Eligibility excludes only authors, repairers, and
+   integrators of the reviewed target revision. Different targets may be
+   cross-reviewed concurrently; unavailable independence is an honest blocker.
+5. **Durable user correction.** The user may speak during execution. Exact
+   corrections append to the WorkDocument, affected features pause or replan,
+   and unaffected work continues when safe.
+6. **Readable durable context.** The backend validates immutable source hashes,
+   append-only corrections, revisioned structured deltas, and authority. One
+   persisted Markdown materialization remains sufficient for a fresh Agent to
+   recover requirements, plan, Todo, evidence, failures, risks, handoff, and
+   next action after compaction or restart.
+7. **Conversation-first UI.** Start opens a new execution frame; every question,
+   answer, progress update, Tool, Todo, delivery, repair, and review is attributed
+   inside its logical companion/task frame. The fixed-size composer gives
+   immediate received/running feedback and briefly names who is doing what.
+   Internal attempts remain expandable detail; users do not see protocol terms,
+   duplicate state cards, unexplained arrows, or a false completed label.
+8. **Acceptance and cleanup.** Deterministic state-machine E2E covers retry,
+   restart, SSE reconnect, stale Room isolation, dependency release,
+   integration, cross-review, repair, and one final. A new ordinary-language
+   installed GUI Room must then prove the same journey. Only after that evidence
+   and a recoverable backup may valid Room/Knowledge/Memory/Project Field work
+   be consolidated and proven obsolete code, generated copies, test Rooms,
+   worktrees, runtimes, and stale documents be removed.
+
+## Ratified implementation and cleanup plan
+
+This plan combines the two external source reviews with the user's confirmed
+vision. It is a strangler migration, not a second Room framework or a directory
+renaming exercise.
+
+### Target semantic model
+
+Reuse and tighten the existing concepts:
+
+```text
+Room
+└── Root                         one complete user goal
+    ├── PlanRevision             one user-approved outcome graph revision
+    ├── RoomTask                 the only stable work identity
+    │   └── Dispatch             one execution attempt
+    ├── WaitCondition            one exact typed wait
+    ├── ReviewTarget             one bounded artifact/revision scope
+    ├── WorkDocumentRef          one readable durable context record
+    └── FinalDelivery            one terminal user-facing delivery
+```
+
+`RoomTask.kind` is `feature`, `integration`, or `review`. Existing WorkItem
+becomes a legacy compatibility projection over canonical Tasks and may not own a
+second lifecycle. Do not introduce parallel FeatureWorkItem, Job, Unit, or Step
+entities. New retries retain `taskId` and create a new `dispatchId`/attempt.
+
+### Dependency direction and decision ownership
+
+Migrate toward four explicit layers without moving everything at once:
+
+```text
+API/facade
+  -> application use case and unit of work
+  -> pure domain model, invariants, and policies
+
+infrastructure implements application ports
+projection reads committed facts/events
+legacy reads canonical projection only
+```
+
+- Domain policy performs no SQL, filesystem, Runtime, SSE, or React work.
+- Application handlers load state, call one pure decision, append state/events,
+  enqueue outbox work, and commit once.
+- Infrastructure owns SQLite, runtime coordination, workspace integration and
+  WorkDocument persistence; it does not decide Room completion.
+- Projection reads committed state/events and never changes lifecycle.
+- `agent_service.py` becomes dependency assembly and route registration, not a
+  hidden Room state machine.
+- Old facades call the new use cases only while a named consumer is still being
+  migrated. As soon as that consumer moves and focused plus full regressions
+  pass, delete the replaced decision branch, compatibility write, test fixture,
+  or file in the same migration slice or its immediately following cleanup
+  change. Do not accumulate every obsolete path until the final cleanup phase.
+
+### Progressive retirement gate for every phase
+
+Every phase below is an expand-migrate-contract slice with an explicit removal
+receipt:
+
+1. name the old owner, every real consumer, and the new authoritative owner;
+2. add a red-capable contract test at the consumer boundary;
+3. migrate only those consumers and prove parity or the intentionally changed
+   product behavior;
+4. remove the replaced branch/file and its obsolete tests immediately after the
+   narrow and proportional full regressions pass;
+5. use Git history and the verified backup for rollback instead of keeping a
+   second writable runtime path;
+6. record any still-live compatibility consumer in the WorkDocument/handoff so
+   an old-looking filename is never deleted merely by name.
+
+The final post-backup cleanup still owns Room/database/worktree/Pi/runtime/install
+artifacts, but source-level replacements retire progressively during Phases 1-7.
+
+### Phase 0 — preserve evidence and close the current legacy conflict
+
+- Freeze `7de9cb1e` as the installed baseline and retain its source, test,
+  component, database, Room, and workspace evidence.
+- Resolve the live `tests/test_duplicates.py` conflict only through the existing
+  governed integration authority. Do not overwrite target dirt, edit database
+  state, or mix the architectural migration into that retained result.
+- Record the stale-GUI, wait/retry, wave, WorkDocument, integration, and review
+  gaps as red regression scenarios. The current Room may prove legacy recovery,
+  never the new architecture.
+
+### Phase 1 — one frontend screen model
+
+- Add one pure `RoomScreenModel` adapter and canonical selectors for active
+  Root, backend-provided phase/wait, strict final delivery, frames, task cards,
+  header and composer.
+- Make Rooms page, status panel, control plane, conversation and task surfaces
+  consume only this model. Components stop sorting Roots, guessing terminal
+  state, finding arbitrary final Posts, or mapping healthy waits to blockers.
+- Legacy fallback exists in this selector only and is explicitly tested. This
+  phase removes multiple frontend truths but does not claim to repair missing
+  backend events.
+
+Acceptance: equal timestamps/generations select one Root everywhere; failed or
+cancelled Roots cannot show final delivery; review UI cannot open before
+integration; a healthy peer wait is neutral and identical across surfaces.
+
+### Phase 2 — extract pure domain policies
+
+Extract in this order behind current facades:
+
+```text
+waiting -> settlement -> scheduling -> completion -> review
+```
+
+Each command plus identical state produces identical past-tense domain events.
+The managed-retry wait rule has one decision owner in `waiting`; historical
+reconciliation invokes that policy instead of duplicating it. No policy opens a
+database, calls Runtime, writes a file, sends SSE, or knows React copy.
+
+Acceptance: table/property tests cover legal and illegal transitions,
+idempotency, cycles, stale attempts, retry ownership, dependency frontier,
+review eligibility and final-delivery gates without creating SQLite.
+
+### Phase 3 — application unit of work and transactional outbox
+
+- Move SQL into repositories and use cases into small application handlers.
+- For each command, update Root/Task/Dispatch, append domain events and enqueue
+  wake/projection outbox work in one SQLite transaction.
+- Make `sync_room()` reconciliation-only. Isolate projection/recovery failures
+  per Room; add cursor/version replay and idempotent SSE consumption.
+- Backend snapshots supply active Root, authoritative phase, typed wait reason,
+  runnable frontier, integration/review readiness and final-delivery identity.
+
+Acceptance: when malformed Room A fails reconciliation, running Room B still
+commits an event and updates the GUI without refresh; rollback leaves neither
+half-state nor half-event; reconnect/replay produces no duplicate card or wake.
+
+### Phase 4 — materialize the approved Task graph at Start
+
+- PlanRevision owns stable RoomTask IDs, kinds, user outcomes, peer owners,
+  dependency Task IDs, write boundaries and acceptance links. Validate missing
+  targets, self-dependencies and cycles; derive waves rather than trusting model
+  labels.
+- Definition prepares the single WorkDocument through a port using structured
+  deltas. Start freezes the approved revision, activates the document, creates
+  every Task and dependency state, and releases Dispatch attempts only for the
+  runnable frontier.
+- `room_collaborate` binds an approved ready `taskId`; it cannot supply a new
+  free-text objective or consume a plan position by call order.
+- Accept execution-time user interventions. Append exact corrections, create a
+  PlanRevision when required, pause the affected dependency frontier, and leave
+  unrelated Tasks running when safe.
+
+Acceptance: all Tasks are visible immediately after Start; later Tasks have no
+attempt until dependencies and scoped integration pass; retry preserves task
+identity; crash windows cannot run work without an active WorkDocument receipt.
+
+### Phase 5 — scoped integration, review and final delivery
+
+- Represent integration as `RoomTask(kind=integration)` with one active lease
+  per affected shared scope, assignable to any eligible peer.
+- Derive ReviewTargets from the exact integrated artifact revision and its
+  implementation/repair/integration provenance. Represent actual review work as
+  `RoomTask(kind=review)`; allow non-overlapping cross-review in parallel.
+- Writable/change-producing Rooms require all current targets accepted. Pure
+  discussion/read-only work needs an explicit policy exemption. Missing
+  independence is a blocker, never an implicit pass.
+- A finding returns to the original feature owner or another non-reviewer,
+  records the new artifact/integration revision, and requires new independent
+  review. Only one exact reporter/terminal receipt can create FinalDelivery.
+
+Acceptance: four peers may all implement different scopes and cross-review
+eligible scopes; no one reviews its own authored/repaired/integrated target;
+late work invalidates stale review; duplicate terminal events cannot create two
+final replies.
+
+### Phase 6 — split UI by user-facing frames after the model is stable
+
+- Split the page controller, RoomTurn and task graph only after Phase 1 has
+  removed component-local lifecycle decisions.
+- Use alignment, plan, execution and final-delivery frames; keep retry/recovery
+  in expandable attempt details under the same logical Task frame.
+- Keep task graph model, layout and rendering independent. Layout receives only
+  nodes/edges and knows nothing about Root selection, Posts, receipts or legacy
+  WorkItems.
+- Preserve the user's fixed-size composer feedback, attributed few-word active
+  status, bottom Todo, streaming semantic Tool details, chronological frames,
+  no unexplained arrows, and one final report.
+
+Acceptance: component tests consume RoomScreenModel fixtures, selector tests do
+not render React, and no component reads raw `rootsById`, `tasksById` or
+`dispatchesById` to decide business state.
+
+### Phase 7 — architecture tests and final source-retirement sweep
+
+- Separate pure domain, application/fake-port, SQLite/infrastructure,
+  projection/reconnect, selector/component and full E2E tests.
+- Add import-boundary checks: domain cannot import SQLite/path/runtime/workspace/
+  service/projection; projection cannot call application handlers or workers;
+  legacy cannot be imported by domain.
+- Add frontend checks: components depend on RoomScreenModel, selectors do not
+  depend on React, and data modules do not depend on UI components.
+- Treat production-file size as a warning signal, not a mechanical split or a
+  Skill limit. A file over 1,000 lines requires an ownership explanation; pure
+  policies, use cases, components, hooks, CSS and tests use smaller advisory
+  thresholds. Progressively loaded Skills may remain complete beyond the old
+  6 KiB/120-line cap.
+- Audit every remaining old branch/helper/adapter against the per-phase removal
+  receipts. Anything whose consumers already moved is a regression and must be
+  deleted here; anything still live needs a named consumer, owner and retirement
+  step. Never keep two writable lifecycles for compatibility.
+
+### Phase 8 — end-to-end acceptance, backup, consolidation and cleanup
+
+Run deterministic E2E for parallel frontier work, retry, restart, SSE reconnect,
+malformed-old-Room isolation, WorkDocument revision, intervention/replan,
+integration, cross-review, repair/re-review, cancel races and exactly one final.
+Then install from a clean commit and run a new ordinary-language real GUI Room
+without teaching it the workflow.
+
+Only after both layers pass:
+
+1. create and verify a recoverable backup;
+2. audit and integrate valid Room, Knowledge, Memory and Project Field/岛屿 work
+   into the canonical product worktree;
+3. run full product verification;
+4. classify remaining artifacts as keep, merge, archive or delete;
+5. remove only proven obsolete/test/generated code, documents, Rooms,
+   worktrees, Pi/runtime generations and old installs;
+6. retain one canonical product worktree, the current Pi/runtime, permanent
+   logical provenance, final scorecards and handoff evidence.
+
+### First commit sequence
+
+The first implementation commits should be independently reversible:
+
+```text
+refactor(room-ui): centralize canonical room screen model
+refactor(room): extract wait and settlement policies
+refactor(room): persist state changes with transactional outbox
+refactor(room): materialize approved RoomTasks at Start
+refactor(room): demote legacy WorkItems to compatibility projection
+refactor(room): enforce scoped integration and independent review
+refactor(room-ui): split user-facing frames after selectors stabilize
+```
+
+Do not start with a wholesale directory move. Create each target module only
+when one real decision owner and its tests move there; leave a narrow facade,
+migrate callers, prove parity, then delete the replaced branch.
+
+## 21. Pi Runtime SDK v2 与 PAW Session 接入契约（2026-08-07）
+
+Pi 只证明一次 Agent Run 如何延续、取消和真正结束；PAW 继续拥有
+PlanRevision、RoomTask、Dispatch、Room Commit、集成、独立复核和最终交付。
+`pi.agent-settled.v2` 绝不能直接把 RoomTask 或 Root 标成完成。
+
+PAW 的 protocol v2 接入必须满足：
+
+- `room.dispatch` 返回的 `sessionId + turnId` 继续由 Kernel 与
+  `dispatchId + generation + capabilityEpoch` 一起持久化；不新增第二套
+  Room 业务生命周期。
+- 新 Runtime 同时协商 `agentSettledReceipt=2` 与
+  `sessionAwaitSettled=true` 时，普通聊天和 Room 都只依据当前 Turn 的
+  V2 receipt 结束运行状态。终态事件丢失时调用
+  `session.await_settled` 恢复；不得降级为 idle、进程或延迟推断。
+- `suspended` 表示 Continuation 已安全安排，当前卡片仍在运行；
+  `completed/failed/aborted` 才是 Pi Run 的终态。随后 Room 仍走现有
+  Commit、任务身份、工作区、集成、复核和唯一交付门禁。
+- 旧 Runtime 只在没有上述能力协商时使用明确标注的 legacy
+  `session.control_state` 恢复分支；新 Runtime 的错误或畸形 receipt
+  不得偷偷落回猜测路径。
+- 升级已存在 Session 时，必须用原 `externalSessionId` 和原
+  `transcriptRef` 调用 `session.open`。Host 返回另一 Session 或另一
+  transcript 时失败关闭；只有成功重开后才更新 binding generation 与
+  migration metadata，不复制 transcript、不清空历史、不创建第二个
+  Room Root。
+- 产品 Session ID 与 Pi transcript Session ID 是显式的两层身份：外层
+  `rag-ime.pi-turn-settlement.v1.sessionId` 绑定产品 Session，
+  `runtimeSessionId` 与内层 `pi.agent-settled.v2.sessionId` 绑定原 transcript。
+  二者均须与持久化 binding 一致，不能通过改写 receipt 假装相同。
+- binding metadata 记录当前 managed runtime、settlement protocol、
+  context assembly protocol 和有界 migration history。普通聊天、Room、
+  compaction 与恢复共用同一个 ContextProvider 管线，但 Memory、Knowledge、
+  WorkDocument 和角色簿仍保留各自产品权限、来源和指标。
+
+当前源码证据：Pi `codex/pi-runtime-sdk-v2` 的提交
+`aa3d7f5c41f976264414b8962ebe5a52d728a4d6`；PAW source contract SHA-256
+`672dc222241189cd85dc10cf0f08eafa5c5e0691a175cc9f02a2a479956df068`。
+这些只是源码/契约证据；必须在 clean PAW commit 上完成 managed payload
+smoke、安装、旧 Session 原位恢复、普通聊天和真实 Room GUI 验收后，才能
+声称产品迁移完成。

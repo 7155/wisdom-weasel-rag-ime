@@ -29,8 +29,17 @@
     "taskId": {"type": "string", "minLength": 1},
     "rootId": {"type": "string", "minLength": 1},
     "parentTaskId": {"type": ["string", "null"]},
-    "taskKind": {"type": "string", "enum": ["work", "invitation", "review", "report"]},
+    "taskKind": {"type": "string", "enum": ["work", "integration", "invitation", "review", "report"]},
     "workItemId": {"type": "string", "minLength": 1, "maxLength": 320},
+    "planRevisionId": {"type": "string", "minLength": 1, "maxLength": 320},
+    "planTaskKind": {"type": "string", "enum": ["feature", "integration", "review"]},
+    "dependencyTaskIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 320}
+    },
+    "writeBoundary": {"type": "string", "maxLength": 1000},
+    "planWave": {"type": "integer", "minimum": 1},
     "currentOwnerParticipantId": {"type": "string", "minLength": 1},
     "ownershipRevision": {"type": "integer", "minimum": 0},
     "ownershipReceiptId": {"type": ["string", "null"]},

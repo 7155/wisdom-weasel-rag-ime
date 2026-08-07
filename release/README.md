@@ -47,7 +47,7 @@ git clone https://github.com/7155/personal-agent-workbench.git
 git clone https://github.com/7155/pi.git
 
 cd pi
-git checkout 0fd0564af34cb40bbcd6b8903c01b36191c4f90d
+git checkout aa3d7f5c41f976264414b8962ebe5a52d728a4d6
 npm ci
 
 cd ../personal-agent-workbench

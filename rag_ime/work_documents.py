@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -380,6 +381,200 @@ class WorkDocumentService:
                 )
             return WorkDocumentPayload(**dict(document))
 
+    def append_room_delta_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        delta_id: str,
+        delta_kind: str,
+        source_ref: str,
+        content: str,
+        created_at_ms: int,
+    ) -> dict[str, object]:
+        """Record an idempotent structured delta in the caller's transaction.
+
+        The database row is the durable recovery fact. Markdown materialization
+        happens after commit (and again on every context read), so a process
+        crash cannot lose an accepted correction or create a second document.
+        """
+
+        normalized_root_id = _required(root_id, "rootId", 320)
+        normalized_delta_id = _required(delta_id, "deltaId", 320)
+        normalized_kind = _required(delta_kind, "deltaKind", 80)
+        if normalized_kind not in {
+            "user_correction",
+            "progress",
+            "evidence",
+            "failure_recovery",
+            "handoff",
+            "next_action",
+            "plan_revision",
+        }:
+            raise WorkDocumentError("unsupported Room WorkDocument delta kind")
+        normalized_source_ref = _required(source_ref, "sourceRef", 320)
+        content_bytes = str(content).encode("utf-8")
+        if not content_bytes:
+            raise WorkDocumentError("Room WorkDocument delta content is required")
+        digest = hashlib.sha256(content_bytes).hexdigest()
+        created = _integer(created_at_ms, "createdAtMs")
+        document = conn.execute(
+            """
+            SELECT d.document_id,d.state
+            FROM work_documents AS d
+            JOIN agent_room_work_items AS w ON w.id=d.authority_id
+            WHERE d.authority_kind='room_work_item'
+              AND w.root_turn_id=? AND w.root_work_id=w.id
+            """,
+            (normalized_root_id,),
+        ).fetchone()
+        if document is None:
+            raise WorkDocumentError(
+                "started Room Root has no governed WorkDocument"
+            )
+        if str(document["state"]) != "active":
+            raise WorkDocumentError(
+                "Room WorkDocument delta requires an active document"
+            )
+        existing = conn.execute(
+            "SELECT * FROM room_work_document_deltas WHERE delta_id=?",
+            (normalized_delta_id,),
+        ).fetchone()
+        if existing is not None:
+            if (
+                str(existing["root_id"]) != normalized_root_id
+                or str(existing["document_id"]) != str(document["document_id"])
+                or str(existing["delta_kind"]) != normalized_kind
+                or str(existing["source_ref"]) != normalized_source_ref
+                or str(existing["content_sha256"]) != digest
+            ):
+                raise WorkDocumentError(
+                    "Room WorkDocument delta identity was rebound"
+                )
+            return _room_delta_payload(existing)
+        sequence = int(
+            conn.execute(
+                "SELECT COALESCE(MAX(sequence),0)+1 "
+                "FROM room_work_document_deltas WHERE root_id=?",
+                (normalized_root_id,),
+            ).fetchone()[0]
+        )
+        conn.execute(
+            """
+            INSERT INTO room_work_document_deltas(
+                delta_id,document_id,root_id,sequence,delta_kind,source_ref,
+                content_bytes,content_sha256,created_at_ms,materialized_at_ms
+            ) VALUES (?,?,?,?,?,?,?,?,?,NULL)
+            """,
+            (
+                normalized_delta_id,
+                str(document["document_id"]),
+                normalized_root_id,
+                sequence,
+                normalized_kind,
+                normalized_source_ref,
+                content_bytes,
+                digest,
+                created,
+            ),
+        )
+        row = conn.execute(
+            "SELECT * FROM room_work_document_deltas WHERE delta_id=?",
+            (normalized_delta_id,),
+        ).fetchone()
+        if row is None:  # pragma: no cover - protected by the transaction
+            raise RuntimeError("Room WorkDocument delta did not persist")
+        return _room_delta_payload(row)
+
+    def materialize_room_root(self, root_id: str) -> dict[str, object] | None:
+        """Apply every durable delta to the one canonical Markdown document."""
+
+        normalized_root_id = _required(root_id, "rootId", 320)
+        with self._lock:
+            with sqlite_connection(
+                self.db_path,
+                row_factory=sqlite3.Row,
+                foreign_keys=True,
+            ) as conn:
+                row = conn.execute(
+                    """
+                    SELECT d.*
+                    FROM work_documents AS d
+                    JOIN agent_room_work_items AS w ON w.id=d.authority_id
+                    WHERE d.authority_kind='room_work_item'
+                      AND w.root_turn_id=? AND w.root_work_id=w.id
+                    """,
+                    (normalized_root_id,),
+                ).fetchone()
+                if row is None:
+                    return None
+                payload = _payload(row)
+                deltas = conn.execute(
+                    """
+                    SELECT * FROM room_work_document_deltas
+                    WHERE root_id=? ORDER BY sequence,delta_id
+                    """,
+                    (normalized_root_id,),
+                ).fetchall()
+                authority = self._authority(
+                    conn,
+                    "room_work_item",
+                    str(payload["authorityId"]),
+                )
+            if payload["state"] != "active" or not deltas:
+                return payload
+            canonical = _resolve(
+                Path(payload["workspaceRoot"]), str(payload["path"])
+            )
+            if canonical.is_symlink() or not canonical.is_file():
+                raise WorkDocumentError(
+                    "canonical Room WorkDocument is unavailable"
+                )
+            current = canonical.read_text(encoding="utf-8")
+            changed = False
+            for delta in deltas:
+                marker = f"<!-- room-work-document-delta:{delta['delta_id']} -->"
+                if marker in current:
+                    continue
+                current = _append_room_document_delta(
+                    current,
+                    marker=marker,
+                    delta_kind=str(delta["delta_kind"]),
+                    source_ref=str(delta["source_ref"]),
+                    content=bytes(delta["content_bytes"]).decode("utf-8"),
+                )
+                changed = True
+            if changed:
+                _atomic_bytes(canonical, current.encode("utf-8"))
+            refreshed = self.register(
+                {
+                    "authorityKind": "room_work_item",
+                    "authorityId": payload["authorityId"],
+                    "authorityRevision": int(authority["revision"]),
+                    "workspaceRoot": payload["workspaceRoot"],
+                    "sourcePath": payload["path"],
+                    "title": payload["title"],
+                }
+            ).get("document")
+            if not isinstance(refreshed, Mapping):
+                raise WorkDocumentError(
+                    "Room WorkDocument materialization returned no document"
+                )
+            now = _now_ms()
+            with sqlite_connection(
+                self.db_path,
+                foreign_keys=True,
+            ) as conn:
+                conn.execute(
+                    """
+                    UPDATE room_work_document_deltas
+                    SET materialized_at_ms=COALESCE(materialized_at_ms,?)
+                    WHERE root_id=?
+                    """,
+                    (now, normalized_root_id),
+                )
+            return dict(refreshed)
+
     def room_root_context(
         self, root_id: str
     ) -> WorkDocumentContextItem | None:
@@ -392,6 +587,7 @@ class WorkDocumentService:
         """
 
         normalized_root_id = _required(root_id, "rootId", 320)
+        self.materialize_room_root(normalized_root_id)
         with sqlite_connection(
             self.db_path,
             row_factory=sqlite3.Row,
@@ -1179,6 +1375,62 @@ def _validated(payload: Any, contract: str) -> Any:
 
 def _payload(row: sqlite3.Row) -> WorkDocumentPayload:
     return {"documentId": str(row["document_id"]), "authorityKind": str(row["authority_kind"]), "authorityId": str(row["authority_id"]), "authorityRevision": int(row["authority_revision"]), "authorityKey": str(row["authority_key"]), "documentRevision": int(row["document_revision"]), "contentSha256": str(row["content_sha256"]), "workspaceRoot": str(row["workspace_root"]), "path": str(row["relative_path"]), "activePath": str(row["active_relative_path"]), "archivePath": str(row["archive_relative_path"]), "state": str(row["state"]), "title": str(row["title"]), "terminalReceiptId": str(row["terminal_receipt_id"]), "error": str(row["error"]), "createdAtMs": int(row["created_at_ms"]), "updatedAtMs": int(row["updated_at_ms"])}
+
+
+def _room_delta_payload(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "deltaId": str(row["delta_id"]),
+        "documentId": str(row["document_id"]),
+        "rootId": str(row["root_id"]),
+        "sequence": int(row["sequence"]),
+        "deltaKind": str(row["delta_kind"]),
+        "sourceRef": str(row["source_ref"]),
+        "contentSha256": str(row["content_sha256"]),
+        "createdAtMs": int(row["created_at_ms"]),
+        "materializedAtMs": (
+            int(row["materialized_at_ms"])
+            if row["materialized_at_ms"] is not None
+            else None
+        ),
+    }
+
+
+def _append_room_document_delta(
+    document: str,
+    *,
+    marker: str,
+    delta_kind: str,
+    source_ref: str,
+    content: str,
+) -> str:
+    section_by_kind = {
+        "user_correction": "后续用户修正",
+        "progress": "当前进度",
+        "evidence": "证据",
+        "failure_recovery": "失败与恢复",
+        "handoff": "交接",
+        "next_action": "下一步",
+        "plan_revision": "已批准执行计划",
+    }
+    section = section_by_kind[delta_kind]
+    heading = f"## {section}"
+    longest_backtick_run = max(
+        (len(match.group(0)) for match in re.finditer(r"`+", content)),
+        default=0,
+    )
+    fence = "`" * max(3, longest_backtick_run + 1)
+    block = (
+        f"{marker}\n"
+        f"### {source_ref}\n\n"
+        f"{fence}text\n{content}\n{fence}\n"
+    )
+    normalized = document if document.endswith("\n") else document + "\n"
+    if heading not in normalized:
+        return f"{normalized}\n{heading}\n\n{block}"
+    # Append-only materialization keeps exact user bytes and a deterministic
+    # source marker. Section summaries can later be regenerated from these
+    # governed deltas without rewriting the immutable correction chain.
+    return f"{normalized}\n{block}"
 
 
 def _projection(row: sqlite3.Row) -> dict[str, object]:

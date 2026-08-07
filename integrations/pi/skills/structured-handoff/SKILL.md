@@ -35,10 +35,10 @@ context, leaving an explicit redaction marker when material.
 3. Map complete and remaining work to exact acceptance aliases in private
    fields. Evidence must be fresh and eligible under the active
    lifecycle schema; prose claims alone are not evidence.
-4. Choose an eligible receiver from the governed Room roster. The Facilitator
-   owns assignment and reassignment; do not use round-robin or silently recruit
-   a new Agent. If the current model cannot finish, name the required
-   capability and explain why.
+4. Propose an eligible receiver from the governed Room roster. The Kernel owns
+   the approved PlanRevision, stable `RoomTask`, assignment revision, and accepted transfer; do not
+   use round-robin, free-text ownership, or silently recruit a new Agent. If the
+   current owner cannot finish, name the required capability and explain why.
 5. Write a distinct public report: completed behavior, transfer reason, useful
    observed attempts, open risk, and high-level next action. Hide aliases,
    internal refs, participant IDs, protocol language, and takeover commands.
@@ -52,26 +52,29 @@ context, leaving an explicit redaction marker when material.
 
 ## Managed Room Boundary
 
-- The Facilitator owns decomposition, assignment, reassignment, dependency
-  handling, and integration for the existing WorkItem. The Kernel owns the
-  accepted Dispatch and validates the transfer; only an accepted
+- The Kernel owns stable `RoomTask` identity, assignment revisions, dependency
+  readiness, scoped integration leases, and the accepted Dispatch; only an accepted
   `room_commit`, not free text or a path, creates a Dispatch.
 - The receiver uses its own Session, Dispatch, and bound workspace harness.
   Participant identity is distinct from a filesystem root. For concurrent
   writable children, require separately receipted isolated workspaces from the
-  same Root baseline and one Facilitator-owned integration workspace. Do not
+  same Root baseline and one authoritative integration workspace. An
+  integration scope may be assigned to any eligible peer and records that peer
+  in provenance. Do not
   claim automatic Git worktree cloning without a receipt.
-- `room_collaborate` remains a non-overlapping implementation child while the
-  Facilitator keeps responsibility; it is not intake fanout, assignment by
-  mention, or implementation-to-review transfer.
-- Review is optional and begins only after integration when the Facilitator
-  chooses it by risk. The Kernel then hands the WorkItem to a distinct
-  Reviewer; self-review is forbidden. If review is not chosen, do not
-  manufacture a review stage.
+- PlanRevision handoff preserves the stable Task and lets the Kernel release the
+  dependency-ready owner attempt; it never recreates the feature with free-text
+  `room_collaborate`. That Tool is only a governed legacy or nested-scope path,
+  not intake fanout, assignment by mention, or implementation-to-review transfer.
+- Review begins only after integration. The Kernel requires it for code, data,
+  artifact, or integration-changing targets and may exempt only explicit pure
+  discussion/read-only work. It hands each bounded target to an eligible
+  distinct Reviewer; self-review and self-repair approval are forbidden.
 - Preserve Root, Task, WorkItem, source anchors, and identity after rejection.
   Re-read `room_state`; never make a replacement route or task store.
-- Keep private refs and takeover details private. Only the Facilitator/reporter
-  owns the Root's final public summary.
+- Keep private refs and takeover details private. Only the current reporter
+  responsibility emits the Root's final public summary; reporter is not a
+  permanent capability tier.
 - Transfer only accepted evidence receipts; a filesystem path or participant
   prose cannot establish completion or ownership.
 - A review receiver must be a distinct participant, never the author or

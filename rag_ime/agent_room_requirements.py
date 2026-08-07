@@ -515,6 +515,24 @@ class RequirementGovernanceStore:
             "payloadHash": str(row["payload_hash"]),
         }
 
+    def latest_catalog_revision(
+        self, root_id: str
+    ) -> dict[str, object] | None:
+        """Return the latest authoritative requirement revision for one Root."""
+
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT catalog_revision_id
+                FROM room_v2_requirement_catalog_revisions
+                WHERE root_id=? ORDER BY revision DESC LIMIT 1
+                """,
+                (_required(root_id, "root_id"),),
+            ).fetchone()
+        if row is None:
+            return None
+        return self.catalog_revision(str(row["catalog_revision_id"]))
+
     def latest_gate_observation(self, root_id: str) -> dict[str, object] | None:
         with self._connect() as conn:
             row = conn.execute(

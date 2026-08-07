@@ -46,6 +46,8 @@ from .agent_room_public_timeline import (
     public_room_report_content,
 )
 from .agent_rooms import AgentRoomStore
+from .room_domain.waiting import select_active_peer_wait
+from .room_domain.review import ReviewTarget, evaluate_review
 
 _RE_REVIEW_BLOCKING_EXCEPTION_CATEGORIES = (
     REVIEW_FINDING_RE_REVIEW_EXCEPTION_CATEGORIES
@@ -69,20 +71,7 @@ def _active_peer_wait_target(
     *,
     facilitator_id: str,
 ) -> Mapping[str, object] | None:
-    for child in children:
-        participant_id = str(child.get("targetParticipantId") or "")
-        if (
-            not participant_id
-            or participant_id == facilitator_id
-            or child.get("resultPublic") is True
-            or str(child.get("intentKind") or "") not in {"execute", "revise"}
-            or str(child.get("state") or "")
-            in {"committed", "failed", "cancelled", "stale"}
-        ):
-            continue
-        if str(child.get("dispatchId") or ""):
-            return child
-    return None
+    return select_active_peer_wait(children, facilitator_id=facilitator_id)
 
 
 class RequirementContextSource(Protocol):
@@ -536,6 +525,22 @@ class RoomSettleLifecycleService:
             # pre-report Facilitator gate would make the report Task itself
             # appear as a post-review artifact change.
             return
+        if decision == "deliver" and task.get("planTaskKind") == "integration":
+            pending_scope = [
+                dependency_id
+                for dependency_id in task.get("dependencyTaskIds") or []
+                if (
+                    (dependency := self.kernel.task(str(dependency_id))).get(
+                        "workspacePolicy"
+                    )
+                    == "isolated_writable"
+                    and dependency.get("workspaceIntegrationState") != "applied"
+                )
+            ]
+            if pending_scope:
+                raise RoomCommitProposalError(
+                    "仍有已交付功能没有完成受管集成；先逐项集成并验证共享结果"
+                )
         if (
             decision == "wait"
             and waiting_for == "external"
@@ -779,38 +784,56 @@ class RoomSettleLifecycleService:
                 )
                 if str(value).strip()
             }
-            if not authors or reviewer_id in authors:
-                raise RoomCommitProposalError(
-                    "最新复核没有独立作者边界，不能作为最终交付依据"
-                )
-            required_review_task_ids = {
-                str(task.get("taskId") or ""),
-                *(
-                    str(child_task.get("taskId") or "")
-                    for child, child_task in records
-                    if str(child.get("intentKind") or "")
-                    in {"execute", "revise"}
-                ),
-            }
-            required_review_task_ids.discard("")
             reviewed_task_ids = {
                 str(value)
                 for value in review_task.get("reviewOfTaskIds", ())
                 if str(value or "").strip()
             }
-            missing_review_task_ids = sorted(
-                required_review_task_ids - reviewed_task_ids
+            required_review_task_ids = (
+                set(reviewed_task_ids)
+                if str(review_task.get("planRevisionId") or "").strip()
+                else {
+                    str(task.get("taskId") or ""),
+                    *(
+                        str(child_task.get("taskId") or "")
+                        for child, child_task in records
+                        if str(child.get("intentKind") or "")
+                        in {"execute", "revise"}
+                    ),
+                }
             )
-            if missing_review_task_ids:
+            required_review_task_ids.discard("")
+            if not required_review_task_ids:
+                raise RoomCommitProposalError(
+                    "最新独立复核没有绑定明确的待审功能范围"
+                )
+            expected_revision = str(
+                review_task.get("reviewTargetRevision") or ""
+            )
+            preliminary_review = evaluate_review(
+                target=ReviewTarget(
+                    revision=expected_revision,
+                    task_ids=tuple(sorted(required_review_task_ids)),
+                    author_participant_ids=tuple(sorted(authors)),
+                    repair_participant_ids=(),
+                    integration_participant_ids=(),
+                ),
+                reviewer_participant_id=reviewer_id,
+                reviewed_task_ids=tuple(sorted(reviewed_task_ids)),
+                observed_revision=expected_revision,
+                unresolved_blocking_findings=0,
+            )
+            if preliminary_review.reason == "reviewer_not_independent":
+                raise RoomCommitProposalError(
+                    "最新复核没有独立作者边界，不能作为最终交付依据"
+                )
+            if preliminary_review.reason == "review_scope_incomplete":
                 raise RoomCommitProposalError(
                     "最新独立复核没有覆盖当轮全部实现与修正结果；"
                     "请基于完整集成结果重新复核"
                 )
             self.application.assert_read_only_workspace_unchanged(
                 review_task
-            )
-            expected_revision = str(
-                review_task.get("reviewTargetRevision") or ""
             )
             current_revision = self.kernel.review_target_revision(
                 root_id=str(root["rootId"]),
@@ -821,13 +844,6 @@ class RoomSettleLifecycleService:
                 ],
                 review_snapshot=review_task,
             )
-            if (
-                not expected_revision
-                or current_revision != expected_revision
-            ):
-                raise RoomCommitProposalError(
-                    "最新独立复核已过期；交付内容变更后必须重新复核"
-                )
             unresolved_findings = [
                 finding
                 for finding in review_task.get("reviewFindings", ())
@@ -844,10 +860,42 @@ class RoomSettleLifecycleService:
                     )
                 )
             ]
-            if unresolved_findings:
-                raise RoomCommitProposalError(
-                    "最新独立复核仍有未明确处置的 Review Finding"
+            review_decision = evaluate_review(
+                target=ReviewTarget(
+                    revision=expected_revision,
+                    task_ids=tuple(sorted(required_review_task_ids)),
+                    author_participant_ids=tuple(sorted(authors)),
+                    # Repair and integration provenance become separate
+                    # target fields in Phase 5; current v3 tasks fold both
+                    # into reviewAuthorParticipantIds and remain fail-closed.
+                    repair_participant_ids=(),
+                    integration_participant_ids=(),
+                ),
+                reviewer_participant_id=reviewer_id,
+                reviewed_task_ids=tuple(sorted(reviewed_task_ids)),
+                observed_revision=current_revision,
+                unresolved_blocking_findings=len(unresolved_findings),
+            )
+            if not review_decision.eligible:
+                message = {
+                    "reviewer_not_independent": (
+                        "最新复核没有独立作者边界，不能作为最终交付依据"
+                    ),
+                    "review_scope_incomplete": (
+                        "最新独立复核没有覆盖当轮全部实现与修正结果；"
+                        "请基于完整集成结果重新复核"
+                    ),
+                    "review_target_stale": (
+                        "最新独立复核已过期；交付内容变更后必须重新复核"
+                    ),
+                    "review_findings_unresolved": (
+                        "最新独立复核仍有未明确处置的 Review Finding"
+                    ),
+                }.get(
+                    str(review_decision.reason or ""),
+                    "最新独立复核不满足交付条件",
                 )
+                raise RoomCommitProposalError(message)
 
     def _assert_review_evidence_ready(
         self,
@@ -867,72 +915,74 @@ class RoomSettleLifecycleService:
             != str(root.get("facilitatorParticipantId") or "")
         ):
             return
-        latest_attempt = self.kernel.latest_review_attempt(
+        latest_attempts = self.kernel.latest_review_attempts(
             str(root["rootId"])
         )
-        if latest_attempt is None:
+        if not latest_attempts:
             return
-        latest_review = latest_attempt.get("dispatch")
-        review_task = latest_attempt.get("payload")
-        review_commit = latest_attempt.get("commit")
-        if not isinstance(latest_review, Mapping):
-            latest_review = {}
-        if not isinstance(review_task, Mapping):
-            review_task = {}
-        review_task = {
-            **dict(review_task),
-            "state": str(latest_attempt.get("taskState") or ""),
-        }
-        if not isinstance(review_commit, Mapping):
-            review_commit = None
-        gate = (
-            review_commit.get("qualityGateReceipt")
-            if isinstance(review_commit, Mapping)
-            else None
-        )
-        review_evidence = {
-            str(ref)
-            for item in (
-                gate.get("items", ())
-                if isinstance(gate, Mapping)
-                else ()
+        for latest_attempt in latest_attempts:
+            latest_review = latest_attempt.get("dispatch")
+            review_task = latest_attempt.get("payload")
+            review_commit = latest_attempt.get("commit")
+            if not isinstance(latest_review, Mapping):
+                latest_review = {}
+            if not isinstance(review_task, Mapping):
+                review_task = {}
+            review_task = {
+                **dict(review_task),
+                "state": str(latest_attempt.get("taskState") or ""),
+            }
+            if not isinstance(review_commit, Mapping):
+                review_commit = None
+            gate = (
+                review_commit.get("qualityGateReceipt")
+                if isinstance(review_commit, Mapping)
+                else None
             )
-            if isinstance(item, Mapping) and item.get("status") == "pass"
-            for ref in item.get("evidenceRefs", ())
-            if str(ref).strip()
-        }
-        binding = (
-            review_commit.get("reviewEvidenceBinding")
-            if isinstance(review_commit, Mapping)
-            else None
-        )
-        bound_evidence = {
-            str(ref)
-            for ref in (
-                binding.get("evidenceRefs", ())
-                if isinstance(binding, Mapping)
-                else ()
+            review_evidence = {
+                str(ref)
+                for item in (
+                    gate.get("items", ())
+                    if isinstance(gate, Mapping)
+                    else ()
+                )
+                if isinstance(item, Mapping) and item.get("status") == "pass"
+                for ref in item.get("evidenceRefs", ())
+                if str(ref).strip()
+            }
+            binding = (
+                review_commit.get("reviewEvidenceBinding")
+                if isinstance(review_commit, Mapping)
+                else None
             )
-            if str(ref).strip()
-        }
-        expected_binding = (
-            isinstance(binding, Mapping)
-            and binding.get("reviewTargetRevision")
-            == review_task.get("reviewTargetRevision")
-            and binding.get("taskId") == review_task.get("taskId")
-            and binding.get("dispatchId") == latest_review.get("dispatchId")
-            and int(binding.get("notBeforeMs") or -1)
-            == int(review_task.get("reviewEvidenceNotBeforeMs") or 0)
-            and bound_evidence == review_evidence
-        )
-        if not expected_binding:
-            raise RoomCommitProposalError(
-                "最新独立复核的 evidence 未绑定到当前 reviewTargetRevision"
+            bound_evidence = {
+                str(ref)
+                for ref in (
+                    binding.get("evidenceRefs", ())
+                    if isinstance(binding, Mapping)
+                    else ()
+                )
+                if str(ref).strip()
+            }
+            expected_binding = (
+                isinstance(binding, Mapping)
+                and binding.get("reviewTargetRevision")
+                == review_task.get("reviewTargetRevision")
+                and binding.get("taskId") == review_task.get("taskId")
+                and binding.get("dispatchId")
+                == latest_review.get("dispatchId")
+                and int(binding.get("notBeforeMs") or -1)
+                == int(review_task.get("reviewEvidenceNotBeforeMs") or 0)
+                and bound_evidence == review_evidence
             )
-        if not bound_evidence.intersection(evidence_refs):
-            raise RoomCommitProposalError(
-                "最终回复必须直接引用最新独立复核的成功 evidenceRef"
-            )
+            if not expected_binding:
+                raise RoomCommitProposalError(
+                    "独立复核的 evidence 未绑定到当前待审结果"
+                )
+            if not bound_evidence.intersection(evidence_refs):
+                raise RoomCommitProposalError(
+                    "最终回复必须直接引用每项独立复核的成功 evidenceRef"
+                )
 
     def _canonical_review_findings(
         self,
@@ -1429,6 +1479,48 @@ class RoomSettleLifecycleService:
             )
         return responses
 
+    def _assert_review_revision_target(
+        self,
+        *,
+        root: Mapping[str, object],
+        task: Mapping[str, object],
+        dispatch: Mapping[str, object],
+        target_participant_ref: object,
+    ) -> str:
+        """Allow repair by any active peer except the current Reviewer."""
+
+        room = self.rooms.get(str(root["roomId"]))
+        reviewer_id = str(dispatch.get("targetParticipantId") or "")
+        caller = next(
+            (
+                participant
+                for participant in room.get("participants", ())
+                if isinstance(participant, Mapping)
+                and str(participant.get("id") or "") == reviewer_id
+                and participant.get("status") == "active"
+            ),
+            None,
+        )
+        if caller is None or reviewer_id != str(
+            task.get("currentOwnerParticipantId") or ""
+        ):
+            raise RoomCommitProposalError(
+                "only the active Reviewer may return a revision handoff"
+            )
+        participant_refs = participant_ref_map(room["participants"])
+        try:
+            target_id = resolve_participant_ref(
+                target_participant_ref,
+                participant_refs,
+            )
+        except ParticipantReferenceError as exc:
+            raise RoomCommitProposalError(str(exc)) from exc
+        if target_id == reviewer_id:
+            raise RoomCommitProposalError(
+                "Reviewer 不能把修正任务交给自己；请选择原功能负责人或其他伙伴"
+            )
+        return target_id
+
     def _canonical_commit(
         self,
         *,
@@ -1460,40 +1552,16 @@ class RoomSettleLifecycleService:
             if handoff_intent != "revise":
                 raise RoomCommitProposalError(
                     "Reviewer handoff must use intent=revise and return findings "
-                    "to the Root Facilitator"
+                    "to an active non-reviewing companion"
                 )
-            room = self.rooms.get(str(root["roomId"]))
-            caller = next(
-                (
-                    participant
-                    for participant in room.get("participants", ())
-                    if isinstance(participant, Mapping)
-                    and str(participant.get("id") or "")
-                    == str(dispatch.get("targetParticipantId") or "")
-                    and participant.get("status") == "active"
+            self._assert_review_revision_target(
+                root=root,
+                task=task,
+                dispatch=dispatch,
+                target_participant_ref=arguments.get(
+                    "targetParticipantRef"
                 ),
-                None,
             )
-            if caller is None or str(dispatch.get("targetParticipantId") or "") != str(
-                task.get("currentOwnerParticipantId") or ""
-            ):
-                raise RoomCommitProposalError(
-                    "only the active Reviewer may return a revision handoff"
-                )
-            participant_refs = participant_ref_map(room["participants"])
-            try:
-                handoff_target_id = resolve_participant_ref(
-                    arguments.get("targetParticipantRef"),
-                    participant_refs,
-                )
-            except ParticipantReferenceError as exc:
-                raise RoomCommitProposalError(str(exc)) from exc
-            if handoff_target_id != str(
-                root.get("facilitatorParticipantId") or ""
-            ):
-                raise RoomCommitProposalError(
-                    "Reviewer revisions must return to the Root Facilitator"
-                )
         elif decision == "handoff" and handoff_intent == "revise":
             raise RoomCommitProposalError(
                 "intent=revise is reserved for an active Reviewer Task"
@@ -1935,7 +2003,7 @@ class RoomSettleLifecycleService:
                                 "dispatchId"
                             ],
                             "resumeCondition": (
-                                "Facilitator 已按复核证据完成修正并公开新的验证结果"
+                                "修正伙伴已按复核证据完成修改并公开新的验证结果"
                             ),
                         }
                     )

@@ -68,8 +68,14 @@ one continuous suite:
 9. Continue while a materially different legal action can advance acceptance.
    Preserve failed routes so compaction does not repeat them.
 10. After planned code and slice checks pass, return `ready_for_quality`.
-    Review is optional; Facilitator decides whether risk warrants it unless
-    `room_state.executionPolicy` requires it.
+    Code, data, artifact, and integration-changing Room work requires a bounded
+    independent review target after integration. Pure discussion or read-only
+    work may proceed without review only when `room_state.executionPolicy`
+    records that exemption. A model must not silently disable review.
+11. When repairing an independent-review finding, the original feature owner or
+    another eligible non-reviewer performs the change and records new evidence.
+    The Reviewer does not repair and approve the same target; the changed
+    revision returns through quality and receives a fresh independent review.
 
 Read [the continuity contract](references/execution-continuity-contract.md)
 before the first update and after compaction or handoff. A terminal authority
@@ -79,21 +85,36 @@ no automatic deletion timer.
 ## Managed Room Boundary
 
 - Do not start writes or tests before user approval of the visible execution plan.
-- After governed handoff, reuse the bound Root, WorkItem, participant, and workspace.
-- A Worker owns one slice; Facilitator owns decomposition, integration, and summary.
+- After governed handoff, reuse the bound Root, stable feature `RoomTask`,
+  participant, and workspace. A retry or replacement creates another attempt,
+  never another Task identity.
+- A peer companion owns one accepted user-visible feature end-to-end.
+  Coordination, scoped integration, review, and final reporting are separate
+  responsibilities; none creates a permanent master/worker rank.
 - Receipted workspaces grant filesystem authority. Concurrent writes need
   separate Root worktrees; never claim one without its receipt.
 - Never clean a workspace with `git stash/reset/clean/checkout/restore`;
   preserve existing work and repair its Room/worktree owner.
-- One Room Agent owns a user-visible feature end-to-end; helpers may do bounded read-only checks.
+- One Room Agent owns a user-visible feature end-to-end; helpers may do bounded
+  private work, but their parent verifies and integrates it. Other Room peers
+  should receive separate complete features, not summary work that a private
+  helper could perform.
 - Recoverable batch processing through the project's existing public entry is one feature and stays single-owner unless other independent features exist.
 - Treat that example as a located boundary fix, then apply the analogy to any project type: preserve failures, retry decisions, and evidence inside the owning feature.
-- Use `room_collaborate` after definition for non-overlapping implementation,
-  never intake or review. Return evidence with `room_commit`.
+- Do not call `room_collaborate` to recreate or reorder an approved plan. Start
+  materializes every stable Task and the Kernel automatically releases each
+  dependency-ready owner attempt. `room_collaborate` remains only for a
+  separately authorized legacy/nested scope outside PlanRevision; it is never
+  intake or review. Return evidence with `room_commit`.
 - Keep one concrete Session Todo. After material progress, call
   `todo.checkpoint` with file, diff, artifact, or test references; avoid count-only churn.
-- The Facilitator integrates, then follows review policy. Re-read `room_state`
-  after rejection/handoff; stale authority blocks work rather than replacing it.
+- Any eligible peer may receive a scoped integration responsibility under the
+  Kernel's single active lease for that scope. Required review targets are
+  selected from real authorship, repair, and integration provenance. Re-read
+  `room_state` after rejection/handoff; stale authority blocks work rather than
+  replacing it. Integration and review are performed by a distinct participant
+  where the target policy requires it, through the bound workspace harness and
+  accepted evidence receipts; prose or a filesystem path cannot substitute.
 
 ## No-Progress And Cancellation
 
@@ -127,7 +148,7 @@ verification, risk, and the next user-relevant action.
 ## Boundaries
 
 Do not run for intake, planning, review, or ordinary chat; create another state
-store; invent IDs; manually move archives; record secrets, personal facts, raw
+store or replacement state; invent IDs; manually move archives; record secrets, personal facts, raw
 logs, or guesses; continue after cancellation; or claim final delivery. If
 guidance forbids documentation writes, return the proposed document delta
 to the caller instead of inventing storage.

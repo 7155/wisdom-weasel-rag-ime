@@ -3,6 +3,7 @@ import type { RoomEventEnvelopeV2 } from './generated/room-event-envelope.v2';
 import type { RoomKernelReceiptV1 } from './generated/room-kernel-receipt.v1';
 import type { RoomPostV2 } from './generated/room-post.v2';
 import type { RoomRootExecutionV3 } from './generated/room-root-execution.v3';
+import type { RoomScreenStateV1 } from './generated/room-screen-state.v1';
 import type { RoomTaskV3 } from './generated/room-task.v3';
 import type { AgentTodoProjection } from './agent-reducer';
 import { parseAgentTodo } from './agent-reducer';
@@ -86,6 +87,7 @@ export type RoomKernelProjection = {
   terminalReceiptByRootId: Record<string, RoomKernelReceiptV1>;
   cancelReceiptByRootId: Record<string, RoomKernelReceiptV1>;
   cancellationSurfaces: CancellationSurfaceProjection[];
+  screenState?: RoomScreenStateV1;
   diagnostics: RoomKernelDiagnostic[];
 };
 
@@ -101,6 +103,7 @@ export type RoomKernelSnapshot = {
   sessions: PrivateSessionProjection[];
   receipts: RoomKernelReceiptV1[];
   cancellationSurfaces: CancellationSurfaceProjection[];
+  screenState?: RoomScreenStateV1;
 };
 
 export type RoomKernelReduction = {
@@ -126,6 +129,7 @@ export function createRoomKernelProjection(roomId: string): RoomKernelProjection
     terminalReceiptByRootId: {},
     cancelReceiptByRootId: {},
     cancellationSurfaces: [],
+    screenState: undefined,
     diagnostics: [],
   };
 }
@@ -172,6 +176,7 @@ export function applyRoomKernelSnapshot(
   for (const session of snapshot.sessions) applySession(next, session, 'snapshot', true);
   for (const receipt of snapshot.receipts) applyReceipt(next, receipt, 'snapshot', true);
   next.cancellationSurfaces = snapshot.cancellationSurfaces.map((item) => ({ ...item, detail: { ...item.detail } }));
+  if (snapshot.screenState) applyScreenState(next, snapshot.screenState);
   return next;
 }
 
@@ -206,9 +211,20 @@ function applyCanonicalEvent(state: RoomKernelProjection, event: RoomEventEnvelo
     case 'binding:session_projection':
       applySession(state, event.payload.session, eventId);
       return;
+    case 'projection:screen_state_changed':
+      applyScreenState(state, event.payload.screenState);
+      return;
     default:
       throw new TypeError(`Unsupported Room kernel event: ${event.entityKind}:${event.eventKind}`);
   }
+}
+
+function applyScreenState(state: RoomKernelProjection, value: unknown): void {
+  const screenState = parseContract('room-screen-state.v1', value);
+  if (screenState.roomId !== state.roomId) {
+    throw new TypeError('Room screen state belongs to another Room');
+  }
+  state.screenState = screenState;
 }
 
 function applyRoot(state: RoomKernelProjection, value: unknown, updatedAtMs: number, eventId: string): void {
@@ -448,6 +464,22 @@ function cloneProjection(state: RoomKernelProjection): RoomKernelProjection {
     terminalReceiptByRootId: { ...state.terminalReceiptByRootId },
     cancelReceiptByRootId: { ...state.cancelReceiptByRootId },
     cancellationSurfaces: state.cancellationSurfaces.map((item) => ({ ...item, detail: { ...item.detail } })),
+    screenState: state.screenState ? {
+      ...state.screenState,
+      waitReason: state.screenState.waitReason ? { ...state.screenState.waitReason } : null,
+      runnableFrontier: {
+        taskIds: [...state.screenState.runnableFrontier.taskIds],
+        dispatchIds: [...state.screenState.runnableFrontier.dispatchIds],
+      },
+      integrationReadiness: {
+        ...state.screenState.integrationReadiness,
+        pendingTaskIds: [...state.screenState.integrationReadiness.pendingTaskIds],
+      },
+      reviewReadiness: {
+        ...state.screenState.reviewReadiness,
+        pendingTaskIds: [...state.screenState.reviewReadiness.pendingTaskIds],
+      },
+    } : undefined,
     diagnostics: [...state.diagnostics],
   };
 }

@@ -403,6 +403,7 @@ describe('RoomKernelControlPlane', () => {
       ...settled.rootsById['root-a']!,
       state: 'completed',
       isFinal: true,
+      reporterParticipantId: '研究员',
       terminalReceiptId: 'terminal-a',
     };
     settled.terminalReceiptByRootId['root-a'] = receipt({
@@ -467,12 +468,13 @@ describe('RoomKernelControlPlane', () => {
     ['failed', false],
     ['cancelled', false],
     ['cancelled_with_unknowns', false],
-  ] as const)('keeps one latest authoritative reply when the task ends as %s', (state, isFinal) => {
+  ] as const)('only marks a strict final delivery when the task ends as %s', (state, isFinal) => {
     const terminal = projection();
     terminal.rootsById['root-a'] = {
       ...terminal.rootsById['root-a']!,
       state,
       isFinal,
+      reporterParticipantId: isFinal ? '研究员' : null,
       terminalReceiptId: isFinal ? 'terminal-a' : null,
     };
     terminal.postOrder.push('post-earlier', 'post-latest');
@@ -505,7 +507,8 @@ describe('RoomKernelControlPlane', () => {
     const publicDelivery = screen.getAllByRole('region', { name: '公开结果与回复' })[0]!;
     expect(publicDelivery).toHaveTextContent('本轮最后一份权威公开回复');
     expect(publicDelivery).not.toHaveTextContent('较早的公开进度');
-    expect(publicDelivery.querySelectorAll('[data-terminal="true"]')).toHaveLength(1);
+    expect(publicDelivery.querySelectorAll('[data-terminal="true"]')).toHaveLength(isFinal ? 1 : 0);
+    if (!isFinal) expect(publicDelivery).not.toHaveTextContent('最终回复');
   });
 
 

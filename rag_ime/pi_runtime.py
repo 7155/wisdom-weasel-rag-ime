@@ -271,6 +271,7 @@ class PiRuntimeConfig:
     model_configured: bool = True
     model_configuration_error: str = ""
     pi_version: str = "0.80.2"
+    runtime_version: str = ""
     installation_error: str = ""
     protocol_version: str = "1"
     max_sessions: int = 8
@@ -315,6 +316,7 @@ class PiRuntimeConfig:
         node_executable = ""
         tools: tuple[str, ...] = ()
         pi_version = expected_pi_version
+        runtime_version = ""
         installation_error = ""
         protocol_version = os.environ.get("RAG_IME_PI_PROTOCOL_VERSION", "").strip()
         if executable_value:
@@ -342,6 +344,7 @@ class PiRuntimeConfig:
                 node_executable = installation.node_executable
                 tools = installation.tools
                 pi_version = installation.pi_version
+                runtime_version = installation.runtime_version
                 protocol_version = protocol_version or installation.protocol_version
         provider, model, model_base_url, provider_environment, model_providers, model_error = (
             _pi_model_configuration_from_environment(
@@ -390,6 +393,7 @@ class PiRuntimeConfig:
                 or "http://127.0.0.1:8766/api/agent/tool/execute"
             ),
             pi_version=pi_version,
+            runtime_version=runtime_version,
             installation_error=installation_error,
             protocol_version=protocol_version or "1",
             max_sessions=_env_int("RAG_IME_PI_MAX_SESSIONS", 8, minimum=1, maximum=32),

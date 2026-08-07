@@ -43,6 +43,7 @@ import { RoomMemberBoundaryDialog } from './RoomMemberBoundaryDialog';
 import { RoomPaneResizer } from './RoomPaneResizer';
 import { RoomComposer, roomMentionedParticipants } from './composer/RoomComposer';
 import { RoomKernelLivePanel, useRoomTaskSubagents } from './kernel/RoomKernelLivePanel';
+import { buildRoomScreenModel } from './model/room-screen-model';
 import {
   buildRetryRootCommand,
   createControlRoomKernelCommandTransport,
@@ -401,6 +402,10 @@ export function RoomsFeature() {
   const kernelProjection = useRoomLiveStore((state) => (
     state.kernelProjections[selectedId] ?? null
   ));
+  const roomScreenModel = useMemo(
+    () => buildRoomScreenModel(kernelProjection),
+    [kernelProjection],
+  );
   const visibleTurnOrder = useRoomLiveStore(useShallow((state) => {
     const projection = state.projections[selectedId];
     return projection ? selectPublicRoomTurnOrder(projection) : emptyRoomTurnIds;
@@ -741,35 +746,22 @@ export function RoomsFeature() {
     transport,
   });
   const activeWork = room?.workItems?.find((work) => ['blocked', 'review', 'active', 'queued'].includes(work.state));
-  const currentKernelRoot = Object.values(kernelRootsById).sort((left, right) => (
-    Math.max(right.updatedAtMs ?? 0, right.createdAtMs ?? 0)
-      - Math.max(left.updatedAtMs ?? 0, left.createdAtMs ?? 0)
-    || right.generation - left.generation
-    || right.rootId.localeCompare(left.rootId)
-  ))[0];
-  const openKernelRoots = Object.values(kernelRootsById).filter(
+  const currentKernelRoot = roomScreenModel.activeRoot;
+  const openKernelRoots = roomScreenModel.roots.filter(
     (root) => !ROOM_ROOT_TERMINAL_STATES[root.state],
   );
   const managedTaskBusyState = room?.roomKind === 'roleplay'
     ? undefined
     : currentKernelRoot
-      ? ROOM_ROOT_TERMINAL_STATES[currentKernelRoot.state]
-        ? undefined
-        : currentKernelRoot.state === 'blocked'
-          ? 'blocked'
-          : 'running'
+      ? roomScreenModel.header.busyState
       : activeWork?.state === 'blocked'
         ? 'blocked'
         : activeWork
           ? 'running'
           : undefined;
-  const activeDispatches = Object.values(kernelDispatchesById)
+  const activeDispatches = roomScreenModel.dispatchAttempts
     .filter((dispatch) => (
       ['pending', 'leased', 'running', 'retry_wait', 'timer_wait'].includes(dispatch.state)
-      && (!currentKernelRoot || (
-        dispatch.rootId === currentKernelRoot.rootId
-        && dispatch.generation === currentKernelRoot.generation
-      ))
     ));
   const activeDispatchParticipantIds = [...new Set(activeDispatches
     .map((dispatch) => dispatch.targetParticipantId)
@@ -906,15 +898,6 @@ export function RoomsFeature() {
       && options.answerKind === 'option'
       ? authoritativeQuestion.options.find((option) => option.value === message)?.label ?? message
       : message;
-    if (managedTaskBusyState && !pendingQuestionAnswer) {
-      setRoomError(
-        room.id,
-        managedTaskBusyState === 'blocked'
-          ? '当前任务已暂停；请先继续或停止这项任务。'
-          : '当前任务仍在执行；完成或停止后才能发送下一项任务。',
-      );
-      return false;
-    }
     if (!message.trim() || roomSendLocksRef.current.has(room.id)) return false;
     const addressedParticipants = pendingQuestionAnswer
       ? []
@@ -1543,7 +1526,7 @@ export function RoomsFeature() {
       <RoomPaneResizer side="rail" />
       <button className="rooms-rail-backdrop" aria-hidden="true" disabled={!roomRailModal} tabIndex={-1} onClick={() => closeRoomRail()} type="button" />
       <section ref={roomWorkspaceRef} className="room-workspace" aria-hidden={roomRailModal || roomStatusModal || undefined} inert={roomRailModal || roomStatusModal ? true : undefined}>
-        <header><IconButton ref={roomRailTriggerRef} className="rooms-rail-trigger" label={roomRailOpen ? '收起协作空间列表' : '打开协作空间列表'} icon={roomRailOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} aria-controls="rooms-list-drawer" aria-expanded={roomRailOpen} onClick={() => { if (!roomRailOpen && roomStatusModal) setStatusOpen(false); setRoomRailOpen((current) => !current); }} tooltip /><span><strong>{room?.title ?? '协作空间'}</strong><small>{!room ? '选一个协作空间，或开始新的对话' : room.status === 'archived' ? '已收起' : `${room.roomKind === 'roleplay' ? '一起聊聊' : roomPathName(room)} · ${currentKernelRoot ? roomRootStateLabel(currentKernelRoot.state) : activeWork ? roomWorkStateLabel(activeWork.state) : '先把目标聊清楚'}`}</small></span><SegmentedControl aria-label="协作空间视图" items={roomWorkspaceViewOptions(room?.roomKind)} onValueChange={(value) => setWorkspaceView(value as typeof workspaceView)} value={workspaceView} /><div className="room-header-actions"><span className="room-header-actions__desktop">{room ? <IconButton label="设置这个协作空间" icon={<Settings2 size={16} />} onClick={beginRoomSettings} tooltip /> : null}{room ? <Menu><MenuTrigger asChild><IconButton label="更多协作空间操作" icon={<MoreHorizontal size={17} />} tooltip /></MenuTrigger><MenuContent align="end"><MenuItem onSelect={requestRoomArchiveChange}>{room.status === 'archived' ? <ArchiveRestore size={15} /> : <Archive size={15} />}{room.status === 'archived' ? '恢复协作空间' : '收起协作空间'}</MenuItem></MenuContent></Menu> : null}</span>{room ? <span className="room-header-actions__mobile"><Menu><MenuTrigger asChild><IconButton label="更多协作空间操作" icon={<MoreHorizontal size={17} />} tooltip /></MenuTrigger><MenuContent align="end"><MenuItem onSelect={beginRoomSettings}><Settings2 size={15} />设置协作空间</MenuItem><MenuItem onSelect={requestRoomArchiveChange}>{room.status === 'archived' ? <ArchiveRestore size={15} /> : <Archive size={15} />}{room.status === 'archived' ? '恢复协作空间' : '收起协作空间'}</MenuItem></MenuContent></Menu></span> : null}<IconButton ref={roomStatusToggleRef} label={statusOpen ? '关闭协作进展' : '看看协作进展'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} onClick={() => { if (!statusOpen && roomRailModal) setRoomRailOpen(false); setStatusOpen((current) => !current); }} tooltip /></div></header>
+          <header><IconButton ref={roomRailTriggerRef} className="rooms-rail-trigger" label={roomRailOpen ? '收起协作空间列表' : '打开协作空间列表'} icon={roomRailOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} aria-controls="rooms-list-drawer" aria-expanded={roomRailOpen} onClick={() => { if (!roomRailOpen && roomStatusModal) setStatusOpen(false); setRoomRailOpen((current) => !current); }} tooltip /><span><strong>{room?.title ?? '协作空间'}</strong><small>{!room ? '选一个协作空间，或开始新的对话' : room.status === 'archived' ? '已收起' : `${room.roomKind === 'roleplay' ? '一起聊聊' : roomPathName(room)} · ${currentKernelRoot ? roomScreenModel.header.label : activeWork ? roomWorkStateLabel(activeWork.state) : '先把目标聊清楚'}`}</small></span><SegmentedControl aria-label="协作空间视图" items={roomWorkspaceViewOptions(room?.roomKind)} onValueChange={(value) => setWorkspaceView(value as typeof workspaceView)} value={workspaceView} /><div className="room-header-actions"><span className="room-header-actions__desktop">{room ? <IconButton label="设置这个协作空间" icon={<Settings2 size={16} />} onClick={beginRoomSettings} tooltip /> : null}{room ? <Menu><MenuTrigger asChild><IconButton label="更多协作空间操作" icon={<MoreHorizontal size={17} />} tooltip /></MenuTrigger><MenuContent align="end"><MenuItem onSelect={requestRoomArchiveChange}>{room.status === 'archived' ? <ArchiveRestore size={15} /> : <Archive size={15} />}{room.status === 'archived' ? '恢复协作空间' : '收起协作空间'}</MenuItem></MenuContent></Menu> : null}</span>{room ? <span className="room-header-actions__mobile"><Menu><MenuTrigger asChild><IconButton label="更多协作空间操作" icon={<MoreHorizontal size={17} />} tooltip /></MenuTrigger><MenuContent align="end"><MenuItem onSelect={beginRoomSettings}><Settings2 size={15} />设置协作空间</MenuItem><MenuItem onSelect={requestRoomArchiveChange}>{room.status === 'archived' ? <ArchiveRestore size={15} /> : <Archive size={15} />}{room.status === 'archived' ? '恢复协作空间' : '收起协作空间'}</MenuItem></MenuContent></Menu></span> : null}<IconButton ref={roomStatusToggleRef} label={statusOpen ? '关闭协作进展' : '看看协作进展'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} onClick={() => { if (!statusOpen && roomRailModal) setRoomRailOpen(false); setStatusOpen((current) => !current); }} tooltip /></div></header>
         {room ? <div className="room-context-bar">
           <div className="room-topic-tabs" aria-label="协作话题">
             <MessagesSquare size={14} />
@@ -1629,7 +1612,10 @@ export function RoomsFeature() {
           attachments={attachments}
           sending={sendingRoomIds.has(room.id)}
           taskBusyState={managedTaskBusyState}
-          activityStatus={showLiveStatus ? {
+          activityStatus={sendingRoomIds.has(room.id) ? {
+            label: '正在同步补充',
+            detail: '已收到你的消息，正在写入当前任务并同步给伙伴',
+          } : showLiveStatus ? {
             label: liveStatusLabel,
             detail: liveStatusTitle,
             awayFromLatest: !timelineAtBottom && Boolean(visibleTurnOrder.length),
@@ -1640,7 +1626,7 @@ export function RoomsFeature() {
             }),
           } : managedTaskBusyState === 'blocked' ? {
             label: '协作待处理',
-            detail: '当前任务已暂停，请在上方继续或停止任务',
+            detail: '当前任务已暂停；可以补充修正、调整优先级或询问状态',
           } : undefined}
           onDraftChange={(value) => {
             persistRoomDraft(room.id, value);
@@ -1689,6 +1675,7 @@ export function RoomsFeature() {
         ref={roomStatusRef}
         room={room}
         roomId={room?.id ?? ''}
+        screenModel={roomScreenModel}
         open={statusOpen}
         modal={roomStatusModal}
         onClose={() => setStatusOpen(false)}

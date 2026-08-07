@@ -40,6 +40,7 @@ import sys
 import time
 
 sessions = {}
+settlements = {}
 sequence = 0
 log_path = pathlib.Path(os.environ["RAG_IME_PI_AGENT_DIR"]) / "host-requests.jsonl"
 model = {"provider": "gpt", "id": "gpt-5.6-luna", "name": "GPT-5.6 Luna",
@@ -53,8 +54,44 @@ def write(value):
 def result(request, value):
     write({"protocolVersion": "2", "id": request["id"], "ok": True, "result": value})
 
+def settled_receipt(session_id, turn_id, disposition="completed"):
+    return {
+        "schemaVersion": "pi.agent-settled.v2",
+        "receiptId": "settled:" + turn_id,
+        "sessionId": sessions.get(session_id, {}).get("piSessionId", session_id),
+        "runId": "run:" + turn_id,
+        "scopeId": "scope:" + turn_id,
+        "generation": 1,
+        "disposition": disposition,
+        "stopReason": ({"completed": "natural", "failed": "error",
+                        "aborted": "cancelled", "suspended": "continuation_scheduled"})[disposition],
+        "transcript": {"messageCount": len(sessions.get(session_id, {}).get("messages", [])),
+                       "entryCount": len(sessions.get(session_id, {}).get("entries", [])),
+                       "leafId": sessions.get(session_id, {}).get("leafId", ""),
+                       "contentHash": "transcript:" + turn_id},
+        "continuations": {"pendingIds": [], "leasedIds": [], "terminalIds": [],
+                          "counts": {"pending": 0, "leased": 0, "completed": 0, "cancelled": 0}},
+        "operations": {"pending": 0, "pendingByKind": {}, "registeredByKind": {}},
+        "settledAtMs": 123,
+        "aborted": disposition == "aborted",
+        "pendingOperations": 0,
+        "operationCounts": {},
+    }
+
 def event(session_id, turn_id, client_message_id, payload):
     global sequence
+    if payload.get("type") in {"agent_settled", "agent_settle_failed"} and os.environ.get("TEST_RUNTIME_SDK_V2") == "1":
+        disposition = "failed" if payload.get("type") == "agent_settle_failed" else "completed"
+        receipt = settled_receipt(session_id, turn_id, disposition)
+        payload = {**payload, "receipt": receipt}
+        settlements[turn_id] = {
+            "schemaVersion": "rag-ime.pi-turn-settlement.v1",
+            "sessionId": session_id,
+            "runtimeSessionId": sessions.get(session_id, {}).get("piSessionId", session_id),
+            "turnId": turn_id,
+            "clientMessageId": client_message_id,
+            "receipt": receipt,
+        }
     sequence += 1
     write({
         "protocolVersion": "2", "event": "agent.event", "sequence": sequence,
@@ -70,6 +107,22 @@ for line in sys.stdin:
     params = request.get("params") or {}
     session_id = params.get("sessionId", "")
     if method == "hello":
+        runtime_primitives = {
+            "continuationEnvelope": "1", "cancelScope": "1",
+            "sessionContinuationQueue": True,
+            "sessionCancelOperationRegistry": True,
+            "sessionCancelOperations": {
+                "provider": True, "tool": True, "retrySleep": True,
+                "manualCompaction": True, "autoCompaction": True,
+                "branchSummary": True, "bashProcess": True,
+                "continuationTimer": True},
+            "roomTypes": os.environ.get("TEST_ROOM_TYPES") == "1"}
+        if os.environ.get("TEST_RUNTIME_SDK_V2") == "1":
+            runtime_primitives.update({
+                "continuationEnvelope": "2", "continuationLease": "1",
+                "runScope": "1", "agentSettledReceipt": "2",
+                "contextProvider": "1", "sessionAwaitSettled": True,
+            })
         result(request, {"protocol": "rag-ime.pi-runtime-host", "protocolVersion": "2", "hostVersion": "test",
                          "piVersion": "0.80.7", "capabilities": {"multiSession": True, "maxSessions": 4,
                          "settledEvents": True, "dynamicTools": True, "managedPlugins": True,
@@ -77,16 +130,7 @@ for line in sys.stdin:
                          "transientContext": True,
                          "statelessCompletion": True,
                          "conversationFork": True,
-                         "runtimePrimitives": {
-                             "continuationEnvelope": "1", "cancelScope": "1",
-                             "sessionContinuationQueue": True,
-                             "sessionCancelOperationRegistry": True,
-                             "sessionCancelOperations": {
-                                 "provider": True, "tool": True, "retrySleep": True,
-                                 "manualCompaction": True, "autoCompaction": True,
-                                 "branchSummary": True, "bashProcess": True,
-                                 "continuationTimer": True},
-                             "roomTypes": os.environ.get("TEST_ROOM_TYPES") == "1"}}})
+                         "runtimePrimitives": runtime_primitives}})
     elif method == "completion.once":
         sequence += 1
         write({
@@ -116,7 +160,7 @@ for line in sys.stdin:
         } if room_skill.get("selection") == "required" else None)
         session = sessions.setdefault(session_id, {
             "sessionId": session_id, "piSessionId": "pi-" + session_id,
-            "sessionFile": str(pathlib.Path(os.environ["RAG_IME_PI_SESSION_DIR"]) / (session_id + ".jsonl")),
+            "sessionFile": params.get("sessionFile") or str(pathlib.Path(os.environ["RAG_IME_PI_SESSION_DIR"]) / (session_id + ".jsonl")),
             "leafId": "", "messages": [], "thinkingLevel": params.get("thinkingLevel", "medium"),
             "model": model,
             "roomCapability": params.get("roomCapability"),
@@ -145,6 +189,14 @@ for line in sys.stdin:
             "activeRoom": session.get("activeRoom"),
             "sequence": sequence,
         })
+    elif method == "session.await_settled":
+        turn_id = params["turnId"]
+        if turn_id not in settlements:
+            time.sleep(min(float(params.get("timeoutMs", 0)) / 1000, 0.05))
+            write({"protocolVersion": "2", "id": request["id"], "ok": False,
+                   "error": {"code": "SETTLEMENT_TIMEOUT", "message": "turn did not settle"}})
+        else:
+            result(request, settlements[turn_id])
     elif method == "session.snapshot":
         if os.environ.get("TEST_SESSION_SNAPSHOT_HANG") == "1":
             time.sleep(2)
@@ -260,6 +312,17 @@ for line in sys.stdin:
             continue
         event(session_id, turn_id, client_message_id, {"type": "message_end", "message": assistant})
         event(session_id, turn_id, client_message_id, {"type": "agent_end", "messages": [assistant]})
+        if params["message"] == "end-with-exact-settlement-only":
+            receipt = settled_receipt(session_id, turn_id)
+            settlements[turn_id] = {
+                "schemaVersion": "rag-ime.pi-turn-settlement.v1",
+                "sessionId": session_id,
+                "runtimeSessionId": sessions[session_id]["piSessionId"],
+                "turnId": turn_id,
+                "clientMessageId": client_message_id,
+                "receipt": receipt,
+            }
+            continue
         if params["message"] == "end-without-settled":
             continue
         time.sleep(0.15)
@@ -476,6 +539,158 @@ class PiRuntimeV2Tests(unittest.TestCase):
             "stored": True,
             "status": "checkpointed",
         }
+
+    def _use_runtime_sdk_v2(self, *, runtime_version: str = "runtime-sdk-v2") -> None:
+        self.runtime.stop()
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                runtime_version=runtime_version,
+                provider_environment={"TEST_RUNTIME_SDK_V2": "1"},
+            ),
+            sessions=self.store,
+            events=self.events,
+            tool_manifest_provider=lambda _session: [{
+                "name": "memory",
+                "description": "memory operations",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"op": {"type": "string"}},
+                },
+            }],
+            compaction_observer=self._observe_compaction,
+        )
+
+    def test_runtime_sdk_v2_recovers_lost_event_with_exact_turn_receipt(self) -> None:
+        self._use_runtime_sdk_v2()
+        session_id = str(self.first["id"])
+
+        accepted = self.runtime.prompt(
+            session_id,
+            "end-with-exact-settlement-only",
+            client_message_id="client:exact-settlement",
+        )
+        _wait_until(
+            lambda: any(
+                event.event_type == "turn_completed"
+                and event.turn_id == accepted["turnId"]
+                for event in self.events.replay(session_id)[0]
+            ),
+            timeout=3.0,
+        )
+
+        events, _ = self.events.replay(session_id)
+        completed = next(
+            event
+            for event in reversed(events)
+            if event.event_type == "turn_completed"
+            and event.turn_id == accepted["turnId"]
+        )
+        self.assertEqual(
+            completed.payload["terminalEvent"],
+            "session.await_settled",
+        )
+        self.assertEqual(
+            completed.payload["runtimeSettlement"]["schemaVersion"],
+            "pi.agent-settled.v2",
+        )
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        self.assertIn("session.await_settled", [item["method"] for item in requests])
+        self.assertNotIn(
+            "session.control_state",
+            [item["method"] for item in requests],
+        )
+
+    def test_runtime_sdk_v2_chat_completes_from_receipted_terminal_event(self) -> None:
+        self._use_runtime_sdk_v2()
+        session_id = str(self.first["id"])
+
+        accepted = self.runtime.prompt(
+            session_id,
+            "normal receipted chat",
+            client_message_id="client:receipted-chat",
+        )
+        _wait_until(
+            lambda: any(
+                event.event_type == "turn_completed"
+                and event.turn_id == accepted["turnId"]
+                for event in self.events.replay(session_id)[0]
+            )
+        )
+
+        completed = next(
+            event
+            for event in reversed(self.events.replay(session_id)[0])
+            if event.event_type == "turn_completed"
+            and event.turn_id == accepted["turnId"]
+        )
+        self.assertEqual(completed.payload["terminalEvent"], "agent_settled")
+        self.assertEqual(
+            completed.payload["runtimeSettlement"]["runId"],
+            "run:" + str(accepted["turnId"]),
+        )
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
+
+    def test_runtime_sdk_v2_migrates_session_in_place_and_records_contract(self) -> None:
+        session_id = str(self.first["id"])
+        opened = self.runtime.ensure(session_id)
+        old_binding = self.store.runtime_binding(session_id)
+        assert old_binding is not None
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id=str(old_binding["externalSessionId"]),
+            transcript_ref=str(old_binding["transcriptRef"]),
+            branch_anchor=str(old_binding["branchAnchor"]),
+            metadata={
+                **dict(old_binding["metadata"]),
+                "runtimeVersion": "runtime-before-sdk-v2",
+            },
+            message_count=int(opened["session"].get("messageCount") or 0),
+        )
+        expected_binding = self.store.runtime_binding(session_id)
+        assert expected_binding is not None
+
+        self._use_runtime_sdk_v2(runtime_version="runtime-after-sdk-v2")
+        self.runtime.ensure(session_id)
+
+        migrated = self.store.runtime_binding(session_id)
+        assert migrated is not None
+        self.assertEqual(
+            migrated["externalSessionId"],
+            expected_binding["externalSessionId"],
+        )
+        self.assertEqual(
+            migrated["transcriptRef"],
+            expected_binding["transcriptRef"],
+        )
+        self.assertEqual(
+            migrated["metadata"]["settlementProtocol"],
+            "pi.agent-settled.v2",
+        )
+        self.assertEqual(
+            migrated["metadata"]["agentSettlementSessionId"],
+            expected_binding["externalSessionId"],
+        )
+        self.assertEqual(
+            migrated["metadata"]["contextAssemblyProtocol"],
+            "pi.context-provider.v1",
+        )
+        self.assertEqual(
+            migrated["metadata"]["migrationHistory"][-1],
+            {
+                "schemaVersion": "rag-ime.agent-session-runtime-migration.v1",
+                "fromRuntimeVersion": "runtime-before-sdk-v2",
+                "toRuntimeVersion": "runtime-after-sdk-v2",
+                "identityStrategy": "preserve_session_and_transcript",
+            },
+        )
 
     def test_usage_evidence_distinguishes_cache_report_from_missing_fields(
         self,

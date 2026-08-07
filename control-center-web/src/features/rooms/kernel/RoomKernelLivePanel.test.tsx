@@ -161,6 +161,38 @@ describe('RoomKernelLivePanel production adapter', () => {
     }, 'room-a')).toThrow(/taskUpdatedAtMsById/);
   });
 
+  it('parses the versioned authoritative Room screen state', () => {
+    const raw = {
+      ...taskKernelSnapshot('room-a', 'running'),
+      screenState: {
+        schemaVersion: 'wisdom-weasel.room-screen-state.v1',
+        roomId: 'room-a',
+        activeRootId: 'room-a:root',
+        activeRootGeneration: 0,
+        phase: 'waiting',
+        waitReason: {
+          kind: 'external',
+          reason: '正在等待外部条件满足，满足后会自动继续',
+          requiresUserAction: false,
+        },
+        runnableFrontier: { taskIds: [], dispatchIds: [] },
+        integrationReadiness: { ready: true, reason: null, pendingTaskIds: [] },
+        reviewReadiness: { ready: false, reason: '独立复核尚未满足最终交付条件', pendingTaskIds: [] },
+        finalDeliveryPostId: null,
+        recommendedNextAction: 'complete_independent_review',
+      },
+    };
+
+    expect(parseSnapshot(raw, 'room-a').screenState).toMatchObject({
+      phase: 'waiting',
+      waitReason: { kind: 'external', requiresUserAction: false },
+    });
+    expect(() => parseSnapshot({
+      ...raw,
+      screenState: { ...raw.screenState, roomId: 'room-b' },
+    }, 'room-a')).toThrow(/screen state belongs to another Room/);
+  });
+
   it('keeps unknown cancellation non-final after reconnect and shows pending targets', async () => {
     let unknown = false;
     const snapshot = vi.fn(() => kernelSnapshot(unknown ? 8 : 1, unknown));

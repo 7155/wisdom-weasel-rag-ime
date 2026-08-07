@@ -9,8 +9,13 @@ export interface RoomTaskV3 {
   taskId: string;
   rootId: string;
   parentTaskId: string | null;
-  taskKind: 'work' | 'invitation' | 'review' | 'report';
+  taskKind: 'work' | 'integration' | 'invitation' | 'review' | 'report';
   workItemId?: string;
+  planRevisionId?: string;
+  planTaskKind?: 'feature' | 'integration' | 'review';
+  dependencyTaskIds?: string[];
+  writeBoundary?: string;
+  planWave?: number;
   currentOwnerParticipantId: string;
   ownershipRevision: number;
   ownershipReceiptId: string | null;

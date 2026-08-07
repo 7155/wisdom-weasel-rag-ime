@@ -6,7 +6,7 @@
   "required": ["schemaVersion", "entityKind", "entityId", "eventKind", "sequence", "occurredAtMs", "payload"],
   "properties": {
     "schemaVersion": {"type": "string", "const": "wisdom-weasel.room-event-envelope.v2"},
-    "entityKind": {"type": "string", "enum": ["root", "task", "dispatch", "commit", "post", "binding"]},
+    "entityKind": {"type": "string", "enum": ["root", "task", "dispatch", "commit", "post", "binding", "projection"]},
     "entityId": {"type": "string", "minLength": 1},
     "eventKind": {"type": "string", "minLength": 1},
     "sequence": {"type": "integer", "minimum": 1},

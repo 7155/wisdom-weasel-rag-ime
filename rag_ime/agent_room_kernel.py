@@ -21,6 +21,7 @@ from .agent_room_kernel_contracts import (
     KERNEL_RECEIPT_SCHEMA_VERSION,
     ROOM_COMMIT_SCHEMA_VERSION,
     ROOM_TASK_SCHEMA_VERSION,
+    ROOM_SCREEN_STATE_SCHEMA_VERSION,
     upcast_room_commit,
     upcast_room_root_execution,
     validate_kernel_contract,
@@ -31,6 +32,22 @@ from .agent_room_quality_gate import (
     validate_quality_gate_receipt,
 )
 from .db import apply_database_migrations
+from .room_domain.completion import CompletionFacts, evaluate_completion
+from .room_domain.model import DomainPolicyError
+from .room_domain.scheduling import (
+    dependency_ids as domain_dependency_ids,
+    payload_depends_on as domain_payload_depends_on,
+    runnable_frontier,
+    validate_task_graph,
+)
+from .room_domain.waiting import (
+    ManagedRetryWaitFacts,
+    match_managed_retry_wait,
+)
+from .room_domain.settlement import SettlementFacts, settle_dispatch
+from .room_domain.events import past_tense_event
+from .room_application.repositories import RoomDomainEventRepository
+from .room_application.plans import RoomPlanRepository
 
 
 KernelMode = Literal["off", "shadow", "cohort", "test", "kernel_only"]
@@ -307,12 +324,12 @@ class RoomKernelStore:
                 str(payload["currentOwnerParticipantId"]),
                 int(payload["ownershipRevision"]),
                 payload.get("ownershipReceiptId"),
-                # ``task_kind`` predates the typed ReportDispatch semantic and
+                # ``task_kind`` predates typed integration/report semantics and
                 # is an unused compatibility projection with a legacy CHECK.
                 # ``payload_json.taskKind`` is the contract authority.
                 (
                     "work"
-                    if str(payload["taskKind"]) == "report"
+                    if str(payload["taskKind"]) in {"report", "integration"}
                     else str(payload["taskKind"])
                 ),
                 payload.get("invitationId"),
@@ -2531,6 +2548,303 @@ class RoomKernelStore:
                 ).fetchall()
             ]
 
+    def screen_state(
+        self,
+        room_id: str,
+        *,
+        conn: sqlite3.Connection | None = None,
+    ) -> dict[str, object]:
+        """Project one authoritative Room screen state from one Kernel read.
+
+        This is the only backend owner for active-Root selection, lifecycle
+        phase, typed waiting, runnable work, governance readiness, and final
+        delivery identity.  Callers may pass their projection transaction so
+        the snapshot and its SSE event cannot mix facts from different commits.
+        """
+
+        def read(active: sqlite3.Connection) -> dict[str, object]:
+            normalized_room_id = _required(room_id, "room_id")
+            root = active.execute(
+                """SELECT * FROM room_kernel_roots
+                   WHERE room_id=?
+                   ORDER BY updated_at_ms DESC,generation DESC,
+                            created_at_ms DESC,root_id DESC
+                   LIMIT 1""",
+                (normalized_room_id,),
+            ).fetchone()
+            if root is None:
+                state = {
+                    "schemaVersion": ROOM_SCREEN_STATE_SCHEMA_VERSION,
+                    "roomId": normalized_room_id,
+                    "activeRootId": None,
+                    "activeRootGeneration": None,
+                    "phase": "idle",
+                    "waitReason": None,
+                    "runnableFrontier": {
+                        "taskIds": [],
+                        "dispatchIds": [],
+                    },
+                    "integrationReadiness": {
+                        "ready": True,
+                        "reason": None,
+                        "pendingTaskIds": [],
+                    },
+                    "reviewReadiness": {
+                        "ready": True,
+                        "reason": None,
+                        "pendingTaskIds": [],
+                    },
+                    "finalDeliveryPostId": None,
+                    "recommendedNextAction": "align_requirement",
+                }
+                validate_kernel_contract("roomScreenState", state)
+                return state
+
+            root_id = str(root["root_id"])
+            generation = int(root["generation"])
+            root_state = str(root["state"])
+            intake = self._intake_phase_state_locked(
+                active,
+                root_id=root_id,
+            )
+            phase = _room_screen_phase(
+                root_state=root_state,
+                intake_phase=str((intake or {}).get("phase") or ""),
+            )
+            wait_reason = self._screen_wait_reason_locked(
+                active,
+                root_id=root_id,
+                generation=generation,
+                root_state=root_state,
+                intake_phase=str((intake or {}).get("phase") or ""),
+            )
+            frontier_rows = active.execute(
+                """SELECT dispatch_id,task_id
+                   FROM room_kernel_dispatches
+                   WHERE root_id=? AND generation=?
+                     AND state IN ('pending','retry_wait','timer_wait')
+                   ORDER BY created_at_ms,dispatch_id""",
+                (root_id, generation),
+            ).fetchall()
+            dispatch_ids = [str(row["dispatch_id"]) for row in frontier_rows]
+            task_ids = list(
+                dict.fromkeys(str(row["task_id"]) for row in frontier_rows)
+            )
+
+            governance = self._terminal_governance_fences(
+                active,
+                root_id=root_id,
+            )
+            if governance["pendingInterventions"]:
+                phase = "waiting"
+                wait_reason = {
+                    "kind": "managed",
+                    "reason": "正在把你的最新修正纳入当前任务",
+                    "requiresUserAction": False,
+                }
+            pending_integrations = list(governance["pendingIntegrations"])
+            integration_task_ids = sorted(
+                {
+                    str(item.get("taskId") or "")
+                    for item in pending_integrations
+                    if str(item.get("taskId") or "").strip()
+                }
+            )
+            integration_ready = not pending_integrations
+            integration = {
+                "ready": integration_ready,
+                "reason": (
+                    None
+                    if integration_ready
+                    else f"还有 {len(pending_integrations)} 项成果等待安全集成"
+                ),
+                "pendingTaskIds": integration_task_ids,
+            }
+
+            review_blocks = [
+                *list(governance["reviewFences"]),
+                *list(governance["unresolvedBlockingFindings"]),
+                *list(governance["reviewEvidenceMismatches"]),
+            ]
+            review_task_ids = sorted(
+                {
+                    str(
+                        item.get("taskId")
+                        or item.get("reviewedTaskId")
+                        or ""
+                    )
+                    for item in review_blocks
+                    if str(
+                        item.get("taskId")
+                        or item.get("reviewedTaskId")
+                        or ""
+                    ).strip()
+                }
+            )
+            review_ready = not review_blocks
+            review = {
+                "ready": review_ready,
+                "reason": (
+                    None
+                    if review_ready
+                    else "独立复核尚未满足最终交付条件"
+                ),
+                "pendingTaskIds": review_task_ids,
+            }
+            final_post_id = self._screen_final_delivery_post_id_locked(
+                active,
+                root=root,
+            )
+            next_action = _room_screen_next_action(
+                phase=phase,
+                wait_reason=wait_reason,
+                has_frontier=bool(dispatch_ids),
+                integration_ready=integration_ready,
+                review_ready=review_ready,
+            )
+            state = {
+                "schemaVersion": ROOM_SCREEN_STATE_SCHEMA_VERSION,
+                "roomId": normalized_room_id,
+                "activeRootId": root_id,
+                "activeRootGeneration": generation,
+                "phase": phase,
+                "waitReason": wait_reason,
+                "runnableFrontier": {
+                    "taskIds": task_ids,
+                    "dispatchIds": dispatch_ids,
+                },
+                "integrationReadiness": integration,
+                "reviewReadiness": review,
+                "finalDeliveryPostId": final_post_id,
+                "recommendedNextAction": next_action,
+            }
+            validate_kernel_contract("roomScreenState", state)
+            return state
+
+        if conn is not None:
+            return read(conn)
+        with self._connect() as active:
+            return read(active)
+
+    @staticmethod
+    def _screen_wait_reason_locked(
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        generation: int,
+        root_state: str,
+        intake_phase: str,
+    ) -> dict[str, object] | None:
+        if root_state == "blocked":
+            return {
+                "kind": "blocked",
+                "reason": "任务遇到需要处理的阻塞",
+                "requiresUserAction": True,
+            }
+        if root_state != "waiting":
+            return None
+        rows = conn.execute(
+            """SELECT continuation.*
+               FROM room_kernel_continuations AS continuation
+               JOIN room_kernel_dispatches AS dispatch
+                 ON dispatch.dispatch_id=continuation.parent_dispatch_id
+               WHERE continuation.root_id=?
+                 AND dispatch.generation=?
+                 AND continuation.state IN ('applied','retry_required')
+                 AND continuation.decision='wait'
+               ORDER BY continuation.created_at_ms DESC,
+                        continuation.continuation_id DESC""",
+            (root_id, generation),
+        ).fetchall()
+        for row in rows:
+            payload = _room_continuation_payload(conn, row)
+            waiting_for = str(payload.get("waitingFor") or "").strip()
+            if waiting_for not in {"user", "participant", "external"}:
+                continue
+            reason = str(
+                payload.get("question")
+                or payload.get("resumeCondition")
+                or ""
+            ).strip()
+            if not reason:
+                reason = {
+                    "user": "正在等你补充一个决定",
+                    "participant": "正在等待伙伴完成当前工作",
+                    "external": "正在等待外部条件满足，满足后会自动继续",
+                }[waiting_for]
+            return {
+                "kind": waiting_for,
+                "reason": reason,
+                "requiresUserAction": waiting_for == "user",
+            }
+        if intake_phase == "awaiting_start":
+            return {
+                "kind": "user",
+                "reason": "分工已经准备好，等你确认并点击“开始行动”",
+                "requiresUserAction": True,
+            }
+        return {
+            "kind": "managed",
+            "reason": "任务正在安全等待，满足继续条件后会自动推进",
+            "requiresUserAction": False,
+        }
+
+    def _screen_final_delivery_post_id_locked(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        root: sqlite3.Row,
+    ) -> str | None:
+        if str(root["state"]) != "completed":
+            return None
+        try:
+            report = self._report_dispatch_locked(
+                conn,
+                root_id=str(root["root_id"]),
+            )
+        except (KeyError, RoomKernelFenceError, TypeError, ValueError):
+            return None
+        terminal = (
+            report.get("reporterTerminalReceipt")
+            if isinstance(report, Mapping)
+            else None
+        )
+        details = terminal.get("details") if isinstance(terminal, Mapping) else None
+        post_id = (
+            str(details.get("finalPostId") or "").strip()
+            if isinstance(details, Mapping)
+            else ""
+        )
+        if not post_id:
+            return None
+        row = conn.execute(
+            "SELECT payload_json FROM room_kernel_posts WHERE post_id=? AND room_id=?",
+            (post_id, str(root["room_id"])),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            post = json.loads(str(row["payload_json"]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        if not isinstance(post, Mapping):
+            return None
+        reporter_id = str(root["reporter_participant_id"] or "").strip()
+        post_generation = post.get("generation")
+        if any(
+            (
+                post.get("rootId") != str(root["root_id"]),
+                not isinstance(post_generation, int),
+                post_generation != int(root["generation"]),
+                post.get("kind") != "result",
+                post.get("authorActorRef") != reporter_id,
+                not isinstance(post.get("publicationSource"), Mapping),
+                post.get("publicationSource", {}).get("kind") != "room_commit",
+            )
+        ):
+            return None
+        return post_id
+
     def mark_runtime_cancel_unknown(
         self,
         *,
@@ -3186,6 +3500,22 @@ class RoomKernelStore:
                 raise RoomKernelFenceError("RoomCommit capability was revoked before execution")
             if str(dispatch["state"]) != "running":
                 return self._receipt(conn, root_id=str(root["root_id"]), command_id=None, receipt_kind="rejected", status="rejected", generation=int(root["generation"]), details={"reason": "dispatch_not_running", "dispatchId": payload["dispatchId"], "dispatchState": str(dispatch["state"])}, now_ms=now_ms)
+            try:
+                settlement = settle_dispatch(
+                    SettlementFacts(
+                        room_id=str(root["room_id"]),
+                        root_id=str(root["root_id"]),
+                        task_id=str(dispatch["task_id"]),
+                        dispatch_id=str(dispatch["dispatch_id"]),
+                        generation=int(generation),
+                        dispatch_state=str(dispatch["state"]),
+                        task_state=str(task_payload.get("state") or ""),
+                        decision=decision,
+                        idempotency_key=str(payload["commitId"]),
+                    )
+                )
+            except DomainPolicyError as exc:
+                raise RoomKernelFenceError(str(exc)) from exc
             if child_payload is not None:
                 if (
                     child_payload.get("rootId") != root["root_id"]
@@ -3589,6 +3919,11 @@ class RoomKernelStore:
                         _json(execution_payload), int(now_ms),
                     ),
                 )
+            RoomDomainEventRepository.append(
+                conn,
+                settlement.event,
+                created_at_ms=int(now_ms),
+            )
             if (
                 decision == "wait"
                 and isinstance(continuation, Mapping)
@@ -7099,6 +7434,302 @@ class RoomKernelStore:
             "reviewEvidenceMismatches": evidence_mismatches,
         }
 
+    def _review_attempt_governance_locked(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        attempt: Mapping[str, object],
+        task_rows: Sequence[sqlite3.Row],
+        dispatches_by_task: Mapping[str, Sequence[sqlite3.Row]],
+    ) -> dict[str, list[dict[str, object]]]:
+        """Validate one scoped Review Task against its exact current target."""
+
+        task_id = str(attempt.get("taskId") or "")
+        task_state = str(attempt.get("taskState") or "")
+        payload = attempt.get("payload")
+        if not isinstance(payload, Mapping):
+            payload = {}
+        dispatch = attempt.get("dispatch")
+        if not isinstance(dispatch, Mapping):
+            dispatch = {}
+        commit = attempt.get("commit")
+        if not isinstance(commit, Mapping):
+            commit = {}
+        dispatch_id = str(dispatch.get("dispatchId") or "")
+        dispatch_state = str(dispatch.get("state") or "")
+        review_state = str(payload.get("reviewState") or "not_required")
+        review_fences: list[dict[str, object]] = []
+        unresolved_findings: list[dict[str, object]] = []
+        evidence_mismatches: list[dict[str, object]] = []
+
+        if not dispatch_id:
+            review_fences.append(
+                {
+                    "reason": (
+                        "review_cancelled"
+                        if task_state == "cancelled"
+                        else "review_dispatch_missing"
+                    ),
+                    "taskId": task_id,
+                    **(
+                        {"replacementRequired": True}
+                        if task_state == "cancelled"
+                        else {}
+                    ),
+                }
+            )
+            return {
+                "reviewFences": review_fences,
+                "unresolvedFindings": unresolved_findings,
+                "reviewEvidenceMismatches": evidence_mismatches,
+            }
+        if dispatch_state in {
+            "pending",
+            "leased",
+            "running",
+            "retry_wait",
+            "timer_wait",
+        }:
+            review_fences.append(
+                {
+                    "reason": "review_dispatch_pending",
+                    "taskId": task_id,
+                    "dispatchId": dispatch_id,
+                    "dispatchState": dispatch_state,
+                }
+            )
+        elif task_state == "cancelled" or dispatch_state in {
+            "cancelled",
+            "unknown",
+            "dead_letter",
+        }:
+            review_fences.append(
+                {
+                    "reason": "review_cancelled",
+                    "taskId": task_id,
+                    "dispatchId": dispatch_id,
+                    "replacementRequired": True,
+                }
+            )
+        elif (
+            task_state != "completed"
+            or review_state not in {"accepted", "accepted_with_notes"}
+        ):
+            review_fences.append(
+                {
+                    "reason": (
+                        f"review_{review_state}"
+                        if review_state != "not_required"
+                        else "review_not_accepted"
+                    ),
+                    "taskId": task_id,
+                    "taskState": task_state,
+                    "reviewState": review_state,
+                }
+            )
+
+        reviewed_task_ids = {
+            str(value).strip()
+            for value in payload.get("reviewOfTaskIds", ())
+            if str(value or "").strip()
+        }
+        authors = {
+            str(value).strip()
+            for value in payload.get("reviewAuthorParticipantIds", ())
+            if str(value or "").strip()
+        }
+        implementers: set[str] = set()
+        for candidate_task in task_rows:
+            candidate_task_id = str(candidate_task["task_id"])
+            if candidate_task_id not in reviewed_task_ids:
+                continue
+            try:
+                candidate_payload = json.loads(
+                    str(candidate_task["payload_json"])
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                candidate_payload = {}
+            if isinstance(candidate_payload, Mapping):
+                owner_id = str(
+                    candidate_payload.get("currentOwnerParticipantId") or ""
+                ).strip()
+                if owner_id:
+                    implementers.add(owner_id)
+            for candidate_dispatch in dispatches_by_task.get(
+                candidate_task_id,
+                (),
+            ):
+                if str(candidate_dispatch["intent_kind"]) not in {
+                    "execute",
+                    "revise",
+                    "retry",
+                }:
+                    continue
+                participant_id = str(
+                    candidate_dispatch["target_participant_id"] or ""
+                ).strip()
+                if participant_id:
+                    implementers.add(participant_id)
+        reviewer_id = str(dispatch.get("targetParticipantId") or "").strip()
+        if (
+            not reviewer_id
+            or not authors
+            or not reviewed_task_ids
+            or reviewer_id in authors
+            or reviewer_id in implementers
+        ):
+            review_fences.append(
+                {
+                    "reason": "reviewer_not_independent",
+                    "taskId": task_id,
+                    "reviewerParticipantId": reviewer_id or None,
+                    "reviewAuthorParticipantIds": sorted(authors),
+                    "implementationParticipantIds": sorted(implementers),
+                }
+            )
+
+        findings = payload.get("reviewFindings")
+        if isinstance(findings, list):
+            for finding in findings:
+                if not isinstance(finding, Mapping):
+                    continue
+                if (
+                    finding.get("gateEffect") == "blocking"
+                    and finding.get("state")
+                    in {"open", "contested", "escalated"}
+                ):
+                    unresolved_findings.append(
+                        {
+                            "taskId": task_id,
+                            "findingId": str(finding.get("findingId") or ""),
+                            "state": str(finding.get("state") or ""),
+                            "category": str(finding.get("category") or ""),
+                        }
+                    )
+                elif (
+                    finding.get("gateEffect") == "advisory"
+                    and finding.get("state") == "open"
+                ):
+                    review_fences.append(
+                        {
+                            "reason": "review_advisory_undisposed",
+                            "taskId": task_id,
+                            "findingId": str(finding.get("findingId") or ""),
+                        }
+                    )
+        elif task_state == "completed" and review_state in {
+            "accepted",
+            "accepted_with_notes",
+        }:
+            review_fences.append(
+                {
+                    "reason": "review_findings_missing",
+                    "taskId": task_id,
+                }
+            )
+
+        if (
+            task_state == "completed"
+            and review_state in {"accepted", "accepted_with_notes"}
+            and dispatch_state == "committed"
+        ):
+            expected_revision = str(payload.get("reviewTargetRevision") or "")
+            current_revision = ""
+            if reviewed_task_ids:
+                try:
+                    current_revision = self._review_target_revision_locked(
+                        conn,
+                        root_id=root_id,
+                        task_ids=sorted(reviewed_task_ids),
+                        review_snapshot=payload,
+                    )
+                except (RoomKernelFenceError, KeyError, TypeError, ValueError):
+                    current_revision = ""
+            if not expected_revision or current_revision != expected_revision:
+                evidence_mismatches.append(
+                    {
+                        "reason": "review_revision_mismatch",
+                        "taskId": task_id,
+                        "expectedRevision": expected_revision or None,
+                        "currentRevision": current_revision or None,
+                    }
+                )
+            binding = commit.get("reviewEvidenceBinding")
+            gate = commit.get("qualityGateReceipt")
+            mismatch_reason = ""
+            if not isinstance(binding, Mapping):
+                mismatch_reason = "review_evidence_binding_missing"
+            elif not isinstance(gate, Mapping):
+                mismatch_reason = "review_quality_gate_missing"
+            else:
+                bound_evidence = {
+                    str(value).strip()
+                    for value in binding.get("evidenceRefs", ())
+                    if str(value or "").strip()
+                }
+                gate_evidence = {
+                    str(value).strip()
+                    for item in gate.get("items", ())
+                    if isinstance(item, Mapping) and item.get("status") == "pass"
+                    for value in item.get("evidenceRefs", ())
+                    if str(value or "").strip()
+                }
+                not_before_ms = int(
+                    payload.get("reviewEvidenceNotBeforeMs") or 0
+                )
+                binding_material = {
+                    "reviewTargetRevision": expected_revision,
+                    "taskId": task_id,
+                    "dispatchId": dispatch_id,
+                    "evidenceRefs": sorted(bound_evidence),
+                    "notBeforeMs": not_before_ms,
+                }
+                expected_binding_id = (
+                    "review-evidence-binding:"
+                    + hashlib.sha256(
+                        json.dumps(
+                            binding_material,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ).encode("utf-8")
+                    ).hexdigest()
+                )
+                try:
+                    binding_not_before_ms = int(
+                        binding.get("notBeforeMs") or -1
+                    )
+                except (TypeError, ValueError):
+                    binding_not_before_ms = -1
+                if (
+                    binding.get("schemaVersion")
+                    != "wisdom-weasel.review-evidence-binding.v1"
+                    or binding.get("reviewTargetRevision")
+                    != expected_revision
+                    or binding.get("taskId") != task_id
+                    or binding.get("dispatchId") != dispatch_id
+                    or binding_not_before_ms != not_before_ms
+                    or not bound_evidence
+                    or bound_evidence != gate_evidence
+                    or binding.get("bindingId") != expected_binding_id
+                ):
+                    mismatch_reason = "review_evidence_binding_mismatch"
+            if mismatch_reason:
+                evidence_mismatches.append(
+                    {
+                        "reason": mismatch_reason,
+                        "taskId": task_id,
+                        "dispatchId": dispatch_id,
+                    }
+                )
+
+        return {
+            "reviewFences": review_fences,
+            "unresolvedFindings": unresolved_findings,
+            "reviewEvidenceMismatches": evidence_mismatches,
+        }
+
     def _terminal_governance_fences(
         self,
         conn: sqlite3.Connection,
@@ -7112,6 +7743,21 @@ class RoomKernelStore:
         are useful for model context, but they are not authoritative enough to
         decide whether a Root may become terminal.
         """
+        pending_interventions = [
+            {
+                "interventionId": str(row["intervention_id"]),
+                "interventionKind": str(row["intervention_kind"]),
+                "requiresPlanRevision": bool(row["requires_plan_revision"]),
+            }
+            for row in conn.execute(
+                """SELECT intervention_id,intervention_kind,
+                          requires_plan_revision
+                   FROM room_interventions
+                   WHERE root_id=? AND state='pending_reconciliation'
+                   ORDER BY created_at_ms,intervention_id""",
+                (root_id,),
+            ).fetchall()
+        ]
         try:
             decoded_root = json.loads(
                 str(self._root_row(conn, root_id)["payload_json"])
@@ -7292,6 +7938,26 @@ class RoomKernelStore:
             )
         unresolved_blocking_findings: list[dict[str, object]] = []
         review_evidence_mismatches: list[dict[str, object]] = []
+        for attempt in self._latest_review_attempts_locked(
+            conn,
+            root_id=root_id,
+        ):
+            scoped = self._review_attempt_governance_locked(
+                conn,
+                root_id=root_id,
+                attempt=attempt,
+                task_rows=task_rows,
+                dispatches_by_task=dispatches_by_task,
+            )
+            for item in scoped["reviewFences"]:
+                if item not in review_fences:
+                    review_fences.append(item)
+            for item in scoped["unresolvedFindings"]:
+                if item not in unresolved_blocking_findings:
+                    unresolved_blocking_findings.append(item)
+            for item in scoped["reviewEvidenceMismatches"]:
+                if item not in review_evidence_mismatches:
+                    review_evidence_mismatches.append(item)
         authoritative_attempt = self._latest_review_attempt_locked(
             conn,
             root_id=root_id,
@@ -7668,6 +8334,7 @@ class RoomKernelStore:
                 review_evidence_mismatches.append(item)
 
         return {
+            "pendingInterventions": pending_interventions[:64],
             "pendingIntegrations": pending_integrations[:64],
             "reviewFences": review_fences[:64],
             "unresolvedBlockingFindings": unresolved_blocking_findings[:64],
@@ -7816,7 +8483,8 @@ class RoomKernelStore:
                 task_payload = {}
             if (
                 not isinstance(task_payload, Mapping)
-                or task_payload.get("taskKind") != "work"
+                or task_payload.get("taskKind")
+                not in {"work", "integration"}
             ):
                 continue
             rows = conn.execute(
@@ -8361,7 +9029,9 @@ class RoomKernelStore:
             reasons.append("root_not_reportable")
         if active or unknown or open_outbox or active_leases or open_tasks:
             reasons.append("root_not_quiescent")
-        if governance["reviewFences"]:
+        if governance["pendingInterventions"]:
+            reasons.append("user_intervention_pending_reconciliation")
+        elif governance["reviewFences"]:
             reasons.append(str(governance["reviewFences"][0].get("reason")))
         elif governance["unresolvedBlockingFindings"]:
             reasons.append("review_blocking_findings")
@@ -8751,45 +9421,11 @@ class RoomKernelStore:
                 conn,
                 root_id=root_id,
             )
+            pending_interventions = governance["pendingInterventions"]
             review_fences = governance["reviewFences"]
             unresolved_findings = governance["unresolvedBlockingFindings"]
             evidence_mismatches = governance["reviewEvidenceMismatches"]
             pending_integrations = governance["pendingIntegrations"]
-            if (
-                review_fences
-                or unresolved_findings
-                or evidence_mismatches
-                or pending_integrations
-            ):
-                if review_fences:
-                    reason = str(review_fences[0].get("reason"))
-                elif unresolved_findings:
-                    reason = "review_blocking_findings"
-                elif evidence_mismatches:
-                    reason = str(evidence_mismatches[0].get("reason"))
-                else:
-                    reason = "workspace_integration_pending"
-                return self._receipt(
-                    conn,
-                    root_id=root_id,
-                    command_id=None,
-                    receipt_kind="rejected",
-                    status="rejected",
-                    generation=int(root["generation"]),
-                    details={
-                        "reason": reason,
-                        "activeDispatches": active,
-                        "unknownDispatches": unknown,
-                        "openOutbox": open_outbox,
-                        "activeLeases": active_leases,
-                        "openTasks": open_tasks,
-                        "missingAcceptanceCriteria": missing,
-                        "governance": governance,
-                    },
-                    now_ms=now_ms,
-                )
-            if active or unknown or open_outbox or active_leases or open_tasks or missing:
-                return self._receipt(conn, root_id=root_id, command_id=None, receipt_kind="rejected", status="rejected", generation=int(root["generation"]), details={"reason": "root_not_quiescent", "activeDispatches": active, "unknownDispatches": unknown, "openOutbox": open_outbox, "activeLeases": active_leases, "openTasks": open_tasks, "missingAcceptanceCriteria": missing}, now_ms=now_ms)
             # A Root without acceptance criteria cannot be delivered by vacuous
             # truth, and a covered criterion is only real when a durable Commit
             # carries a passing quality gate item with at least one evidence
@@ -8797,23 +9433,67 @@ class RoomKernelStore:
             # authority, so terminal transition re-derives them here.
             proven = self._acceptance_evidence(conn, root_id, expected)
             unproven = sorted(expected - set(proven))
-            if not expected or unproven:
-                return self._receipt(
-                    conn, root_id=root_id, command_id=None, receipt_kind="rejected",
-                    status="rejected", generation=int(root["generation"]),
-                    details={
-                        "reason": "acceptance_evidence_missing",
-                        "acceptanceCriteria": sorted(expected),
-                        "unprovenAcceptanceCriteria": unproven,
-                    },
-                    now_ms=now_ms,
+            if pending_interventions:
+                governance_reason = "user_intervention_pending_reconciliation"
+            elif review_fences:
+                governance_reason = str(review_fences[0].get("reason"))
+            elif unresolved_findings:
+                governance_reason = "review_blocking_findings"
+            elif evidence_mismatches:
+                governance_reason = str(
+                    evidence_mismatches[0].get("reason")
                 )
-            # Reporting is the last gate. Preserve the more actionable
-            # governance, quiescence, and evidence failures above instead of
-            # hiding them behind a missing Reporter terminal receipt.
-            if kernel_owns_room_execution(self.mode) and (
-                report is None or report.get("readyForTerminal") is not True
-            ):
+            elif pending_integrations:
+                governance_reason = "workspace_integration_pending"
+            else:
+                governance_reason = None
+            completion = evaluate_completion(
+                CompletionFacts(
+                    governance_reason=governance_reason,
+                    active_dispatches=active,
+                    unknown_dispatches=unknown,
+                    open_outbox=open_outbox,
+                    active_leases=active_leases,
+                    # Covered criteria are bookkeeping, but an incomplete
+                    # bookkeeping fence still means the Root is not quiescent.
+                    open_tasks=open_tasks + (1 if missing else 0),
+                    acceptance_criteria=tuple(sorted(expected)),
+                    proven_acceptance_criteria=tuple(sorted(proven)),
+                    reporter_terminal_ready=(
+                        not kernel_owns_room_execution(self.mode)
+                        or (
+                            isinstance(report, Mapping)
+                            and report.get("readyForTerminal") is True
+                        )
+                    ),
+                )
+            )
+            if not completion.ready:
+                details: dict[str, object] = {
+                    "reason": str(completion.reason or "completion_blocked"),
+                    "activeDispatches": active,
+                    "unknownDispatches": unknown,
+                    "openOutbox": open_outbox,
+                    "activeLeases": active_leases,
+                    "openTasks": open_tasks,
+                    "missingAcceptanceCriteria": missing,
+                }
+                if completion.reason == "acceptance_evidence_missing":
+                    details.update(
+                        {
+                            "acceptanceCriteria": sorted(expected),
+                            "unprovenAcceptanceCriteria": unproven,
+                        }
+                    )
+                if completion.reason == "reporter_terminal_missing":
+                    details["reportDispatchId"] = (
+                        report["dispatch"]["dispatchId"]
+                        if isinstance(report, Mapping)
+                        and isinstance(report.get("dispatch"), Mapping)
+                        else None
+                    )
+                if governance_reason:
+                    details["governance"] = governance
                 return self._receipt(
                     conn,
                     root_id=root_id,
@@ -8821,14 +9501,7 @@ class RoomKernelStore:
                     receipt_kind="rejected",
                     status="rejected",
                     generation=int(root["generation"]),
-                    details={
-                        "reason": "reporter_terminal_missing",
-                        "reportDispatchId": (
-                            report["dispatch"]["dispatchId"]
-                            if isinstance(report, Mapping)
-                            else None
-                        ),
-                    },
+                    details=details,
                     now_ms=now_ms,
                 )
             if self.enforce_test_delivery_gate:
@@ -8889,6 +9562,24 @@ class RoomKernelStore:
                 now_ms=now_ms,
             )
             conn.execute("UPDATE room_kernel_roots SET state = 'completed', terminal_receipt_id = ?, updated_at_ms = ? WHERE root_id = ?", (receipt["receiptId"], int(now_ms), root_id))
+            RoomDomainEventRepository.append(
+                conn,
+                past_tense_event(
+                    kind="root_completed",
+                    room_id=str(root["room_id"]),
+                    root_id=root_id,
+                    entity_id=root_id,
+                    generation=int(root["generation"]),
+                    idempotency_key=str(receipt["receiptId"]),
+                    payload={
+                        "terminalReceiptId": str(receipt["receiptId"]),
+                        "finalReportReceiptId": receipt["details"].get(
+                            "finalReportReceiptId"
+                        ),
+                    },
+                ),
+                created_at_ms=int(now_ms),
+            )
             return receipt
 
     def _receipt(self, conn: sqlite3.Connection, *, root_id: str | None, command_id: str | None, receipt_kind: str, status: str, generation: int, details: Mapping[str, object], now_ms: int) -> dict[str, object]:
@@ -13211,6 +13902,7 @@ class RoomKernelStore:
                     final_details.get("prepareReceiptId") or ""
                 )
                 prepared_topic_id = ""
+                replay_planned_dispatch: Mapping[str, object] = dispatch
                 if final_prepare_receipt_id:
                     _prepared_receipt, prepared_details = (
                         self._typed_start_preparation_locked(
@@ -13233,6 +13925,30 @@ class RoomKernelStore:
                         raise RoomKernelFenceError(
                             "typed start final receipt authorization was rebound"
                         )
+                    definition = self.definition_fence(
+                        root_id=root_id,
+                        conn=conn,
+                    )
+                    definition_planned = (
+                        definition.get("plannedExecuteDispatch")
+                        if isinstance(definition, Mapping)
+                        else None
+                    )
+                    if (
+                        isinstance(definition_planned, Mapping)
+                        and str(definition_planned.get("dispatchId") or "")
+                        == str(
+                            prepared_details.get(
+                                "plannedExecutionDispatchId"
+                            )
+                            or ""
+                        )
+                    ):
+                        # The public Start Post is authorized against the
+                        # original definition Task.  A PlanRevision may release
+                        # different feature Dispatches, so replay must not use
+                        # an execution Dispatch as the authorization template.
+                        replay_planned_dispatch = definition_planned
                 elif legacy_projection["retained_event_id"] is None:
                     raise RoomKernelFenceError(
                         "legacy typed start authorization was retained only as "
@@ -13241,7 +13957,7 @@ class RoomKernelStore:
                     )
                 return {
                     "receipt": prior_final,
-                    "plannedDispatch": dispatch,
+                    "plannedDispatch": dict(replay_planned_dispatch),
                     "created": False,
                     "finalized": True,
                     "prepareReceiptId": (
@@ -13372,6 +14088,10 @@ class RoomKernelStore:
         user_post: Mapping[str, object],
         now_ms: int,
         _conn: sqlite3.Connection | None = None,
+        work_document_ref: Mapping[str, object] | None = None,
+        plan_revision: Mapping[str, object] | None = None,
+        planned_tasks: Sequence[Mapping[str, object]] = (),
+        frontier_dispatches: Sequence[Mapping[str, object]] = (),
     ) -> dict[str, object]:
         """CAS-release work only after its public typed authorization exists."""
 
@@ -13399,15 +14119,50 @@ class RoomKernelStore:
                     isinstance(details, Mapping)
                     and details.get("purpose") == "typed_start_action"
                 ):
-                    dispatch_id = _required(
-                        details.get("executionDispatchId"),
-                        "execution dispatch id",
-                    )
+                    raw_dispatch_ids = details.get("executionDispatchIds")
+                    dispatch_ids = [
+                        str(value)
+                        for value in (
+                            raw_dispatch_ids
+                            if isinstance(raw_dispatch_ids, list)
+                            else [details.get("executionDispatchId")]
+                        )
+                        if str(value or "").strip()
+                    ]
+                    if not dispatch_ids:
+                        raise RoomKernelFenceError(
+                            "typed start receipt has no execution Dispatch"
+                        )
+                    raw_task_ids = details.get("plannedTaskIds")
+                    task_ids = [
+                        str(value)
+                        for value in (
+                            raw_task_ids
+                            if isinstance(raw_task_ids, list)
+                            else [self.dispatch(dispatch_ids[0], conn=conn)["taskId"]]
+                        )
+                        if str(value or "").strip()
+                    ]
+                    dispatches = [
+                        self.dispatch(dispatch_id, conn=conn)
+                        for dispatch_id in dispatch_ids
+                    ]
+                    stored_plan = RoomPlanRepository.latest(conn, root_id)
                     return {
                         "receipt": receipt,
-                        "dispatch": self.dispatch(dispatch_id, conn=conn),
+                        "dispatch": dispatches[0],
+                        "dispatches": dispatches,
+                        "tasks": [
+                            self.task(task_id, conn=conn)
+                            for task_id in task_ids
+                        ],
                         "intake": self.intake_state(root_id, conn=conn),
                         "created": False,
+                        **(
+                            {"planRevision": stored_plan}
+                            if isinstance(stored_plan, Mapping)
+                            else {}
+                        ),
                     }
             prepared, prepared_details = (
                 self._typed_start_preparation_locked(
@@ -13518,6 +14273,102 @@ class RoomKernelStore:
                 raise RoomKernelFenceError(
                     "typed start release no longer matches its definition"
                 )
+            definition_receipt = definition.get("receipt")
+            definition_details = (
+                definition_receipt.get("details")
+                if isinstance(definition_receipt, Mapping)
+                and isinstance(definition_receipt.get("details"), Mapping)
+                else {}
+            )
+            definition_plan_id = str(
+                definition_details.get("planRevisionId") or ""
+            )
+            plan_enabled = bool(definition_plan_id)
+            if plan_enabled != (plan_revision is not None):
+                raise RoomKernelFenceError(
+                    "typed start PlanRevision no longer matches its definition"
+                )
+            planned_task_values = [dict(value) for value in planned_tasks]
+            frontier_values = [dict(value) for value in frontier_dispatches]
+            stored_plan: dict[str, object] | None = None
+            if plan_enabled:
+                if work_document_ref is None or plan_revision is None:
+                    raise RoomKernelFenceError(
+                        "approved plan Start requires its WorkDocument"
+                    )
+                stored_plan = RoomPlanRepository.latest(conn, root_id)
+                if (
+                    not isinstance(stored_plan, Mapping)
+                    or str(stored_plan.get("planRevisionId") or "")
+                    != definition_plan_id
+                    or _json(stored_plan) != _json(dict(plan_revision))
+                    or str(stored_plan.get("state") or "") != "proposed"
+                ):
+                    raise RoomKernelFenceError(
+                        "typed start PlanRevision lost its proposed authority"
+                    )
+                plan_specs = [
+                    dict(value)
+                    for value in stored_plan.get("tasks", [])
+                    if isinstance(value, Mapping)
+                ]
+                plan_task_ids = [str(value["taskId"]) for value in plan_specs]
+                materialized_task_ids = [
+                    str(value.get("taskId") or "")
+                    for value in planned_task_values
+                ]
+                if (
+                    len(plan_task_ids) != len(set(plan_task_ids))
+                    or materialized_task_ids != plan_task_ids
+                ):
+                    raise RoomKernelFenceError(
+                        "typed start must materialize every approved Task exactly once"
+                    )
+                graph = {
+                    str(value["taskId"]): [
+                        str(dependency)
+                        for dependency in value.get("dependencyTaskIds") or []
+                    ]
+                    for value in plan_specs
+                }
+                expected_frontier = set(
+                    runnable_frontier(graph, completed=set())
+                )
+                actual_frontier = [
+                    str(value.get("taskId") or "")
+                    for value in frontier_values
+                ]
+                if (
+                    not actual_frontier
+                    or len(actual_frontier) != len(set(actual_frontier))
+                    or set(actual_frontier) != expected_frontier
+                ):
+                    raise RoomKernelFenceError(
+                        "typed start may release only the approved runnable frontier"
+                    )
+                task_by_id = {
+                    str(value.get("taskId") or ""): value
+                    for value in planned_task_values
+                }
+                for spec in plan_specs:
+                    materialized = task_by_id[str(spec["taskId"])]
+                    if (
+                        str(materialized.get("planRevisionId") or "")
+                        != definition_plan_id
+                        or str(materialized.get("planTaskKind") or "")
+                        != str(spec.get("kind") or "")
+                        or list(materialized.get("dependencyTaskIds") or [])
+                        != list(spec.get("dependencyTaskIds") or [])
+                        or str(materialized.get("currentOwnerParticipantId") or "")
+                        != str(spec.get("ownerParticipantId") or "")
+                    ):
+                        raise RoomKernelFenceError(
+                            "materialized Task diverges from its approved PlanRevision"
+                        )
+            elif planned_task_values or frontier_values or work_document_ref:
+                raise RoomKernelFenceError(
+                    "legacy typed start cannot smuggle a PlanRevision payload"
+                )
             task_row = conn.execute(
                 """SELECT state,payload_json FROM room_kernel_tasks
                    WHERE task_id=?""",
@@ -13528,7 +14379,16 @@ class RoomKernelStore:
                     "typed start release requires its Task to be waiting"
                 )
             task_payload = json.loads(str(task_row["payload_json"]))
-            task_payload["state"] = "active"
+            primary_task_state = "completed" if plan_enabled else "active"
+            task_payload["state"] = primary_task_state
+            if plan_enabled:
+                task_payload.update(
+                    {
+                        "resultKind": "dispatch",
+                        "resultSummary": "用户已确认任务图，首个可运行波次已经释放。",
+                        "resultAtMs": int(now_ms),
+                    }
+                )
             validate_kernel_contract("roomTask", task_payload)
             root_update = conn.execute(
                 """UPDATE room_kernel_roots
@@ -13542,14 +14402,31 @@ class RoomKernelStore:
                 )
             task_update = conn.execute(
                 """UPDATE room_kernel_tasks
-                   SET state='active',payload_json=?,updated_at_ms=?
+                   SET state=?,payload_json=?,updated_at_ms=?
                    WHERE task_id=? AND state='waiting'""",
-                (_json(task_payload), int(now_ms), task_id),
+                (
+                    primary_task_state,
+                    _json(task_payload),
+                    int(now_ms),
+                    task_id,
+                ),
             )
             if task_update.rowcount != 1:
                 raise RoomKernelFenceError(
                     "typed start Task compare-and-set failed"
                 )
+            created_tasks: list[dict[str, object]] = []
+            for task_value in planned_task_values:
+                created_task, was_created = self._insert_task(
+                    conn,
+                    task_value,
+                    now_ms=now_ms,
+                )
+                if not was_created:
+                    raise RoomKernelFenceError(
+                        "approved Plan Task already exists without a final Start receipt"
+                    )
+                created_tasks.append(created_task)
             self._record_intake_phase_locked(
                 conn,
                 root_id=root_id,
@@ -13565,32 +14442,62 @@ class RoomKernelStore:
                 },
                 now_ms=now_ms,
             )
-            dispatch, dispatch_created = self._enqueue_dispatch(
-                conn,
-                planned,
-                shadow_only=self.mode not in {
-                    "cohort",
-                    "test",
-                    "kernel_only",
-                },
-                now_ms=now_ms,
-            )
-            if not dispatch_created:
-                raise RoomKernelFenceError(
-                    "typed start ExecuteDispatch already exists without a final receipt"
+            dispatch_inputs = frontier_values if plan_enabled else [dict(planned)]
+            created_dispatches: list[dict[str, object]] = []
+            for dispatch_value in dispatch_inputs:
+                created_dispatch, dispatch_created = self._enqueue_dispatch(
+                    conn,
+                    dispatch_value,
+                    shadow_only=self.mode not in {
+                        "cohort",
+                        "test",
+                        "kernel_only",
+                    },
+                    now_ms=now_ms,
+                )
+                if not dispatch_created:
+                    raise RoomKernelFenceError(
+                        "typed start ExecuteDispatch already exists without a final receipt"
+                    )
+                created_dispatches.append(created_dispatch)
+            dispatch = created_dispatches[0]
+            activated_plan: dict[str, object] | None = None
+            if plan_enabled:
+                activated_plan = RoomPlanRepository.activate(
+                    conn,
+                    plan_revision_id=definition_plan_id,
+                    work_document_ref=work_document_ref or {},
+                    activated_at_ms=int(now_ms),
                 )
             self._record_intake_phase_locked(
                 conn,
                 root_id=root_id,
                 phase="executing",
                 clarification_occurred=bool(intake.get("clarificationOccurred")),
-                source="execute_dispatch_enqueued",
+                source=(
+                    "approved_plan_frontier_enqueued"
+                    if plan_enabled
+                    else "execute_dispatch_enqueued"
+                ),
                 generation=generation,
                 details={
                     "clientActionId": client_action_id,
                     "userPostId": user_post_id,
                     "chronologyAfterPostId": chronology_after_post_id,
                     "executionDispatchId": str(dispatch["dispatchId"]),
+                    "executionDispatchIds": [
+                        str(value["dispatchId"])
+                        for value in created_dispatches
+                    ],
+                    "plannedTaskIds": [
+                        str(value["taskId"])
+                        for value in created_tasks
+                    ],
+                    **(
+                        {"planRevisionId": definition_plan_id}
+                        if plan_enabled
+                        else {}
+                    ),
                     "authorizationEventId": event_id,
                 },
                 now_ms=now_ms,
@@ -13612,14 +14519,303 @@ class RoomKernelStore:
                     "userPostId": user_post_id,
                     "chronologyAfterPostId": chronology_after_post_id,
                     "executionDispatchId": str(dispatch["dispatchId"]),
+                    "executionDispatchIds": [
+                        str(value["dispatchId"])
+                        for value in created_dispatches
+                    ],
+                    "plannedTaskIds": [
+                        str(value["taskId"])
+                        for value in created_tasks
+                    ],
+                    **(
+                        {
+                            "planRevisionId": definition_plan_id,
+                            "workDocumentId": str(
+                                (work_document_ref or {}).get("documentId") or ""
+                            ),
+                        }
+                        if plan_enabled
+                        else {}
+                    ),
                 },
                 now_ms=now_ms,
+            )
+            RoomDomainEventRepository.append(
+                conn,
+                past_tense_event(
+                    kind="plan_started" if plan_enabled else "execution_started",
+                    room_id=room_id,
+                    root_id=root_id,
+                    entity_id=definition_plan_id or root_id,
+                    generation=generation,
+                    idempotency_key=str(receipt["receiptId"]),
+                    payload={
+                        "receiptId": str(receipt["receiptId"]),
+                        "executionDispatchIds": [
+                            str(value["dispatchId"])
+                            for value in created_dispatches
+                        ],
+                        "plannedTaskIds": [
+                            str(value["taskId"])
+                            for value in created_tasks
+                        ],
+                    },
+                ),
+                created_at_ms=int(now_ms),
+            )
+            returned_tasks = (
+                [
+                    self.task(str(value["taskId"]), conn=conn)
+                    for value in created_tasks
+                ]
+                if plan_enabled
+                else [self.task(task_id, conn=conn)]
             )
             return {
                 "receipt": receipt,
                 "dispatch": dispatch,
+                "dispatches": created_dispatches,
+                "tasks": returned_tasks,
                 "intake": self.intake_state(root_id, conn=conn),
                 "created": True,
+                **(
+                    {"planRevision": activated_plan}
+                    if activated_plan is not None
+                    else {}
+                ),
+            }
+
+    def plan_runnable_frontier(
+        self,
+        root_id: str,
+    ) -> dict[str, object]:
+        """Return only the next dependency-proven Tasks of the active plan."""
+
+        with self._connect() as conn:
+            return self._plan_runnable_frontier_locked(conn, root_id)
+
+    def _plan_runnable_frontier_locked(
+        self,
+        conn: sqlite3.Connection,
+        root_id: str,
+    ) -> dict[str, object]:
+        plan = RoomPlanRepository.latest(conn, _required(root_id, "root_id"))
+        if not isinstance(plan, Mapping) or plan.get("state") != "active":
+            return {"planRevision": None, "tasks": [], "nextCapabilityEpoch": 0}
+        specs = [
+            dict(value)
+            for value in plan.get("tasks", [])
+            if isinstance(value, Mapping)
+        ]
+        graph = {
+            str(value["taskId"]): [
+                str(dependency)
+                for dependency in value.get("dependencyTaskIds") or []
+            ]
+            for value in specs
+        }
+        tasks: dict[str, dict[str, object]] = {}
+        committed: set[str] = set()
+        fully_applied_ids: set[str] = set()
+        for task_id in graph:
+            task = self.task(task_id, conn=conn)
+            tasks[task_id] = task
+            task_fully_applied = (
+                str(task.get("state") or "") == "completed"
+                and (
+                    task.get("workspacePolicy") != "isolated_writable"
+                    or task.get("workspaceIntegrationState") == "applied"
+                )
+            )
+            if str(task.get("state") or "") == "completed":
+                committed.add(task_id)
+            if task_fully_applied:
+                fully_applied_ids.add(task_id)
+        validate_task_graph(graph)
+        spec_by_id = {str(value["taskId"]): value for value in specs}
+        ready_ids = [
+            task_id
+            for task_id in sorted(graph)
+            if str(tasks[task_id].get("state") or "") == "pending"
+            and all(
+                dependency_id
+                in (
+                    committed
+                    if spec_by_id[task_id].get("kind") == "integration"
+                    else fully_applied_ids
+                )
+                for dependency_id in graph[task_id]
+            )
+        ]
+        ready: list[dict[str, object]] = []
+        for task_id in ready_ids:
+            if str(tasks[task_id].get("state") or "") != "pending":
+                continue
+            dependency_dispatch_ids: list[str] = []
+            for dependency_task_id in graph[task_id]:
+                row = conn.execute(
+                    """SELECT dispatch_id FROM room_kernel_dispatches
+                       WHERE root_id=? AND task_id=? AND state='committed'
+                       ORDER BY updated_at_ms DESC,dispatch_id DESC LIMIT 1""",
+                    (root_id, dependency_task_id),
+                ).fetchone()
+                if row is None:
+                    raise RoomKernelFenceError(
+                        "completed Plan Task has no committed Dispatch authority"
+                    )
+                dependency_dispatch_ids.append(str(row["dispatch_id"]))
+            ready.append(
+                {
+                    "spec": spec_by_id[task_id],
+                    "task": tasks[task_id],
+                    "dependencyDispatchIds": dependency_dispatch_ids,
+                }
+            )
+        capability_epochs = []
+        for row in conn.execute(
+            "SELECT payload_json FROM room_kernel_dispatches WHERE root_id=?",
+            (root_id,),
+        ).fetchall():
+            try:
+                payload = json.loads(str(row["payload_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, Mapping):
+                capability_epochs.append(int(payload.get("capabilityEpoch") or 0))
+        return {
+            "planRevision": dict(plan),
+            "tasks": ready,
+            "nextCapabilityEpoch": max(capability_epochs, default=0) + 1,
+        }
+
+    def release_plan_frontier(
+        self,
+        root_id: str,
+        *,
+        tasks: Sequence[Mapping[str, object]],
+        dispatches: Sequence[Mapping[str, object]],
+        now_ms: int,
+    ) -> dict[str, object]:
+        """Atomically bind workspaces and release exactly one ready wave."""
+
+        task_values = [dict(value) for value in tasks]
+        dispatch_values = [dict(value) for value in dispatches]
+        with self._connect(immediate=True) as conn:
+            frontier = self._plan_runnable_frontier_locked(conn, root_id)
+            plan = frontier.get("planRevision")
+            expected = [
+                str(value["task"]["taskId"])
+                for value in frontier.get("tasks", [])
+                if isinstance(value, Mapping)
+                and isinstance(value.get("task"), Mapping)
+            ]
+            actual_tasks = [str(value.get("taskId") or "") for value in task_values]
+            actual_dispatches = [
+                str(value.get("taskId") or "") for value in dispatch_values
+            ]
+            if (
+                not isinstance(plan, Mapping)
+                or not expected
+                or actual_tasks != expected
+                or actual_dispatches != expected
+            ):
+                raise RoomKernelFenceError(
+                    "Plan frontier changed before its atomic release"
+                )
+            ready_by_id = {
+                str(value["task"]["taskId"]): value
+                for value in frontier["tasks"]
+            }
+            for task_value in task_values:
+                task_id = str(task_value["taskId"])
+                prior = ready_by_id[task_id]["task"]
+                for field in (
+                    "rootId",
+                    "planRevisionId",
+                    "planTaskKind",
+                    "dependencyTaskIds",
+                    "currentOwnerParticipantId",
+                ):
+                    if task_value.get(field) != prior.get(field):
+                        raise RoomKernelFenceError(
+                            "released Plan Task changed its approved identity"
+                        )
+                task_value["state"] = "active"
+                validate_kernel_contract("roomTask", task_value)
+                updated = conn.execute(
+                    """UPDATE room_kernel_tasks
+                       SET state='active',payload_json=?,updated_at_ms=?
+                       WHERE task_id=? AND state='pending'""",
+                    (_json(task_value), int(now_ms), task_id),
+                )
+                if updated.rowcount != 1:
+                    raise RoomKernelFenceError(
+                        "Plan Task activation lost its compare-and-set"
+                    )
+            created_dispatches: list[dict[str, object]] = []
+            for dispatch_value in dispatch_values:
+                task_id = str(dispatch_value.get("taskId") or "")
+                ready = ready_by_id[task_id]
+                if (
+                    str(dispatch_value.get("triggerId") or "")
+                    != str(plan["planRevisionId"])
+                    or list(dispatch_value.get("dependsOnDispatchIds") or [])
+                    != list(ready["dependencyDispatchIds"])
+                ):
+                    raise RoomKernelFenceError(
+                        "Plan Dispatch changed its dependency authority"
+                    )
+                created_dispatch, created = self._enqueue_dispatch(
+                    conn,
+                    dispatch_value,
+                    shadow_only=self.mode not in {
+                        "cohort",
+                        "test",
+                        "kernel_only",
+                    },
+                    now_ms=now_ms,
+                )
+                if not created:
+                    raise RoomKernelFenceError(
+                        "Plan frontier Dispatch already exists without its receipt"
+                    )
+                created_dispatches.append(created_dispatch)
+            root = self._root_row(conn, root_id)
+            receipt = self._receipt(
+                conn,
+                root_id=root_id,
+                command_id=None,
+                receipt_kind="accepted",
+                status="applied",
+                generation=int(root["generation"]),
+                details={
+                    "purpose": "plan_frontier_released",
+                    "planRevisionId": str(plan["planRevisionId"]),
+                    "taskIds": actual_tasks,
+                    "dispatchIds": [
+                        str(value["dispatchId"])
+                        for value in created_dispatches
+                    ],
+                },
+                now_ms=now_ms,
+            )
+            RoomDomainEventRepository.append(
+                conn,
+                past_tense_event(
+                    kind="plan_frontier_released",
+                    room_id=str(root["room_id"]),
+                    root_id=root_id,
+                    entity_id=str(plan["planRevisionId"]),
+                    generation=int(root["generation"]),
+                    idempotency_key=str(receipt["receiptId"]),
+                    payload=dict(receipt["details"]),
+                ),
+                created_at_ms=int(now_ms),
+            )
+            return {
+                "receipt": receipt,
+                "tasks": [self.task(task_id, conn=conn) for task_id in actual_tasks],
+                "dispatches": created_dispatches,
             }
 
 
@@ -14697,20 +15893,60 @@ class RoomKernelStore:
             conn.close()
 
 
+def _room_screen_phase(*, root_state: str, intake_phase: str) -> str:
+    terminal = {
+        "completed": "completed",
+        "failed": "failed",
+        "cancelled": "cancelled",
+        "cancelled_with_unknowns": "cancelled",
+        "cancelling": "cancelling",
+        "blocked": "blocked",
+    }
+    if root_state in terminal:
+        return terminal[root_state]
+    if intake_phase in {"aligning", "clarifying"}:
+        return "alignment"
+    if intake_phase in {"awaiting_start", "execution_ready"}:
+        return "planning"
+    if root_state == "waiting":
+        return "waiting"
+    if root_state == "pending":
+        return "planning"
+    return "execution"
+
+
+def _room_screen_next_action(
+    *,
+    phase: str,
+    wait_reason: Mapping[str, object] | None,
+    has_frontier: bool,
+    integration_ready: bool,
+    review_ready: bool,
+) -> str:
+    if phase == "alignment":
+        return "align_requirement"
+    if phase == "planning":
+        return "confirm_plan"
+    if phase in {"completed", "failed", "cancelled"}:
+        return "start_new_task"
+    if phase == "blocked":
+        return "resolve_blocker"
+    if wait_reason is not None and wait_reason.get("kind") == "user":
+        return "answer_question"
+    if has_frontier:
+        return "continue_execution"
+    if not integration_ready:
+        return "integrate_results"
+    if not review_ready:
+        return "complete_independent_review"
+    return "wait_for_progress"
+
+
 def _dispatch_dependency_ids(payload: Mapping[str, object]) -> list[str]:
-    raw = payload.get("dependsOnDispatchIds")
-    if raw is None:
-        return []
-    if not isinstance(raw, list):
-        raise RoomKernelFenceError(
-            "Dispatch dependsOnDispatchIds must be an array"
-        )
-    values = [str(value).strip() for value in raw]
-    if any(not value for value in values) or len(values) != len(set(values)):
-        raise RoomKernelFenceError(
-            "Dispatch dependsOnDispatchIds contains an invalid identity"
-        )
-    return values
+    try:
+        return domain_dependency_ids(payload)
+    except DomainPolicyError as exc:
+        raise RoomKernelFenceError(f"Dispatch {exc}") from exc
 
 
 def _payload_depends_on(
@@ -14720,23 +15956,15 @@ def _payload_depends_on(
     dispatches_by_id: Mapping[str, Mapping[str, object]],
     visited: set[str] | None = None,
 ) -> bool:
-    seen = set(visited or ())
-    dispatch_id = str(payload.get("dispatchId") or "")
-    if dispatch_id in seen:
-        return False
-    seen.add(dispatch_id)
-    for dependency_id in _dispatch_dependency_ids(payload):
-        if dependency_id == target_dispatch_id:
-            return True
-        dependency = dispatches_by_id.get(dependency_id)
-        if dependency is not None and _payload_depends_on(
-            dependency,
+    try:
+        return domain_payload_depends_on(
+            payload,
             target_dispatch_id,
             dispatches_by_id=dispatches_by_id,
-            visited=seen,
-        ):
-            return True
-    return False
+            visited=visited,
+        )
+    except DomainPolicyError as exc:
+        raise RoomKernelFenceError(f"Dispatch {exc}") from exc
 
 
 def _dispatch_payload(row: sqlite3.Row) -> dict[str, object]:
@@ -15024,14 +16252,8 @@ def _managed_external_retry_wait_dependency(
     row: sqlite3.Row,
     payload: Mapping[str, object],
 ) -> dict[str, str] | None:
-    """Recover one current-v4 external wait bound to its exact managed retry."""
+    """Load persisted facts; the pure waiting policy owns the match."""
 
-    if (
-        str(row["decision"] or "") != "wait"
-        or payload.get("waitingFor") != "external"
-        or row["child_dispatch_id"] is not None
-    ):
-        return None
     commit_row = conn.execute(
         "SELECT payload_json FROM room_kernel_commits WHERE commit_id=?",
         (row["commit_id"],),
@@ -15047,16 +16269,6 @@ def _managed_external_retry_wait_dependency(
         if isinstance(raw_commit, Mapping)
         else None
     )
-    if (
-        not isinstance(raw_commit, Mapping)
-        or raw_commit.get("schemaVersion") != ROOM_COMMIT_SCHEMA_VERSION
-        or str(raw_commit.get("dispatchId") or "")
-        != str(row["parent_dispatch_id"])
-        or not isinstance(raw_continuation, Mapping)
-        or raw_continuation.get("decision") != "wait"
-        or raw_continuation.get("waitingFor") != "external"
-    ):
-        return None
     parent = conn.execute(
         """SELECT * FROM room_kernel_dispatches
            WHERE dispatch_id=? AND root_id=?""",
@@ -15077,58 +16289,94 @@ def _managed_external_retry_wait_dependency(
         task_payload = json.loads(str(task["payload_json"]))
     except (TypeError, ValueError, json.JSONDecodeError):
         return None
-    if (
-        not isinstance(task_payload, Mapping)
-        or task_payload.get("parentTaskId") is not None
-        or str(parent["target_participant_id"])
-        != str(root["facilitator_participant_id"])
-        or str(parent["intent_kind"]) not in {"execute", "resume"}
-        or int(parent["generation"]) != int(root["generation"])
-    ):
+    if not isinstance(task_payload, Mapping):
         return None
     candidates = conn.execute(
-        """SELECT dispatch.*
+        """SELECT dispatch.*, task.state AS task_state
            FROM room_kernel_dispatches dispatch
            JOIN room_kernel_tasks task ON task.task_id=dispatch.task_id
            WHERE dispatch.root_id=?
              AND dispatch.parent_dispatch_id=?
              AND dispatch.intent_kind='retry'
-             AND dispatch.target_participant_id!=?
-             AND dispatch.task_id!=?
-             AND dispatch.generation=?
-             AND dispatch.created_at_ms<=?
-             AND dispatch.updated_at_ms>?
-             AND (
-               dispatch.state IN ('failed','cancelled','unknown')
-               OR (
-                 dispatch.state='committed'
-                 AND task.state IN ('completed','blocked','failed','cancelled')
-               )
-             )
            ORDER BY dispatch.created_at_ms,dispatch.dispatch_id""",
         (
             row["root_id"],
             row["parent_dispatch_id"],
-            parent["target_participant_id"],
-            row["task_id"],
-            int(root["generation"]),
-            int(row["created_at_ms"]),
-            int(row["created_at_ms"]),
         ),
     ).fetchall()
-    same_wave = [
-        candidate
-        for candidate in candidates
-        if int(_dispatch_payload(candidate).get("capabilityEpoch") or 0)
-        == int(parent_payload.get("capabilityEpoch") or 0)
-    ]
-    if len(same_wave) != 1:
-        return None
-    candidate = same_wave[0]
-    return {
-        "dispatchId": str(candidate["dispatch_id"]),
-        "participantId": str(candidate["target_participant_id"]),
-    }
+    candidate_facts: list[dict[str, object]] = []
+    for candidate in candidates:
+        try:
+            candidate_payload = _dispatch_payload(candidate)
+        except (RoomKernelFenceError, TypeError, ValueError):
+            continue
+        candidate_facts.append(
+            {
+                "dispatchId": str(candidate["dispatch_id"]),
+                "participantId": str(candidate["target_participant_id"]),
+                "taskId": str(candidate["task_id"]),
+                "generation": int(candidate["generation"]),
+                "capabilityEpoch": int(
+                    candidate_payload.get("capabilityEpoch") or 0
+                ),
+                "createdAtMs": int(candidate["created_at_ms"]),
+                "updatedAtMs": int(candidate["updated_at_ms"]),
+                "state": str(candidate["state"]),
+                "taskState": str(candidate["task_state"]),
+            }
+        )
+    return match_managed_retry_wait(
+        ManagedRetryWaitFacts(
+            continuation_decision=str(row["decision"] or ""),
+            waiting_for=str(payload.get("waitingFor") or ""),
+            child_dispatch_id=(
+                str(row["child_dispatch_id"])
+                if row["child_dispatch_id"] is not None
+                else None
+            ),
+            commit_schema_version=(
+                str(raw_commit.get("schemaVersion") or "")
+                if isinstance(raw_commit, Mapping)
+                else ""
+            ),
+            commit_dispatch_id=(
+                str(raw_commit.get("dispatchId") or "")
+                if isinstance(raw_commit, Mapping)
+                else ""
+            ),
+            commit_continuation_decision=(
+                str(raw_continuation.get("decision") or "")
+                if isinstance(raw_continuation, Mapping)
+                else ""
+            ),
+            commit_waiting_for=(
+                str(raw_continuation.get("waitingFor") or "")
+                if isinstance(raw_continuation, Mapping)
+                else ""
+            ),
+            parent_dispatch_id=str(row["parent_dispatch_id"] or ""),
+            parent_intent_kind=str(parent["intent_kind"] or ""),
+            parent_participant_id=str(
+                parent["target_participant_id"] or ""
+            ),
+            facilitator_participant_id=str(
+                root["facilitator_participant_id"] or ""
+            ),
+            parent_task_id=str(row["task_id"] or ""),
+            task_parent_id=(
+                str(task_payload.get("parentTaskId"))
+                if task_payload.get("parentTaskId") is not None
+                else None
+            ),
+            root_generation=int(root["generation"]),
+            parent_generation=int(parent["generation"]),
+            parent_capability_epoch=int(
+                parent_payload.get("capabilityEpoch") or 0
+            ),
+            continuation_created_at_ms=int(row["created_at_ms"]),
+            candidates=tuple(candidate_facts),
+        )
+    )
 
 
 def _historical_participant_wait_requires_recovery(

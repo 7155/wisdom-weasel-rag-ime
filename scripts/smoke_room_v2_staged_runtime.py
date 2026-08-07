@@ -309,12 +309,19 @@ def main() -> int:
                 or room_skill_load.get("loadReason") != "stage_required"
             ):
                 raise RuntimeError("staged Runtime Host loaded a different Skill body or revision")
+            room_context = (
+                "<room-task root-id=\"root:staged-e2e\" dispatch-id=\"dispatch:a\">\n"
+                "Inspect package.json using the governed WorkDocument and preserve evidence.\n"
+                "</room-task>"
+            )
             first = request("dispatch-a", "room.dispatch", {
                 "sessionId": "session:staged-e2e", "rootId": "root:staged-e2e",
                 "dispatchId": "dispatch:a", "generation": 1, "capabilityEpoch": 1,
                 "dispatchAttempt": 0,
                 "idempotencyKey": "root:staged-e2e/a", "leaseToken": "lease:a",
                 "message": "Inspect package.json and keep the bounded run active.",
+                "roomContext": room_context,
+                "roomRecoveryContext": room_context,
             })
             turn_id = str(first.get("turnId") or "").strip()
             if not turn_id:
@@ -419,6 +426,26 @@ def main() -> int:
                 for proof in surfaces.values()
             ):
                 raise RuntimeError("staged Runtime Host did not return terminal typed surface proofs")
+            settled = request("settled", "session.await_settled", {
+                "sessionId": "session:staged-e2e",
+                "turnId": turn_id,
+                "allowSuspended": False,
+                "timeoutMs": 10_000,
+            })
+            agent_settlement = settled.get("receipt")
+            runtime_session_id = str(snapshot.get("piSessionId") or "").strip()
+            if (
+                settled.get("schemaVersion") != "rag-ime.pi-turn-settlement.v1"
+                or settled.get("sessionId") != "session:staged-e2e"
+                or not runtime_session_id
+                or settled.get("runtimeSessionId") != runtime_session_id
+                or settled.get("turnId") != turn_id
+                or not isinstance(agent_settlement, dict)
+                or agent_settlement.get("schemaVersion") != "pi.agent-settled.v2"
+                or agent_settlement.get("sessionId") != runtime_session_id
+                or agent_settlement.get("disposition") not in {"completed", "failed", "aborted"}
+            ):
+                raise RuntimeError("staged Runtime Host did not return exact turn settlement")
             print(json.dumps({
                 "schemaVersion": "rag-ime.room-v2-staged-runtime-e2e.v1",
                 "status": "passed_not_installed",
@@ -430,6 +457,7 @@ def main() -> int:
                 "verifiedMethods": [
                     "session.open",
                     "room.dispatch",
+                    "session.await_settled",
                     "session.debug.context",
                     "room.cancel",
                 ],
@@ -444,6 +472,7 @@ def main() -> int:
                 "secondDelivery": second.get("delivery"),
                 "cancelledSurfaceCount": len(surfaces),
                 "pendingTargets": cancelled.get("pendingTargets"),
+                "agentSettlement": agent_settlement,
                 "cancellationSurfaces": surfaces,
             }, ensure_ascii=False, indent=2, sort_keys=True))
         finally:

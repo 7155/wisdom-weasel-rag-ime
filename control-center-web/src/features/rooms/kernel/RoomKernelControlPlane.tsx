@@ -19,7 +19,6 @@ import { Button } from '@/components/primitives';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { RoomKernelProjection, RootProjection } from '@/contracts/room-kernel-reducer';
 import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
-import type { RoomPostV2 } from '@/contracts/generated/room-post.v2';
 import type { RoomTaskV3 } from '@/contracts/generated/room-task.v3';
 import type {
   RoomActivityProjection,
@@ -30,6 +29,11 @@ import { RoomRequirementsControlPlane } from '../requirements/RoomRequirementsCo
 import type { RoomRequirementsReadProjection } from '../requirements/room-requirements-read-model';
 import { ROOM_PUBLIC_PROGRESS_KIND_LABELS as PUBLIC_PROGRESS_KIND_LABELS, roomCollaborationRoleLabel, roomParticipantPublicProgressSummary } from '../room-copy';
 import type { RoomCollaborationRole, RoomWorkItem } from '../room-types';
+import {
+  buildRoomScreenModel,
+  type RoomScreenModel,
+  type RoomScreenRootFrame,
+} from '../model/room-screen-model';
 import {
   roomRootExecutionPlan,
   type RoomExecutionPlanFeature,
@@ -85,12 +89,14 @@ export function RoomKernelControlPlane({
   participantRoles = {},
   participantProgress = [],
   projection,
+  screenModel: providedScreenModel,
   requirementsByRootId = {},
   subagentsByTaskId = {},
   workItems = [],
 }: {
   activities?: RoomActivityProjection[];
   projection: RoomKernelProjection;
+  screenModel?: RoomScreenModel;
   budgetsByRootId: Record<string, RootBudgetSummary>;
   contextReceiptsByRootId: Record<string, RuntimeReceiptSummary>;
   capabilityReceiptsByRootId: Record<string, RuntimeReceiptSummary>;
@@ -105,11 +111,9 @@ export function RoomKernelControlPlane({
   requirementsByRootId?: Record<string, RoomRequirementsReadProjection>;
   workItems?: RoomWorkItem[];
 }) {
-  const roots = Object.values(projection.rootsById).sort((left, right) => {
-    const recency = roomRootRecency(right) - roomRootRecency(left);
-    return recency || left.rootId.localeCompare(right.rootId);
-  });
-  const tasks = Object.values(projection.tasksById).filter(roomTaskIsVisibleWork);
+  const screenModel = providedScreenModel ?? buildRoomScreenModel(projection);
+  const roots = screenModel.roots;
+  const tasks = screenModel.rootFrames.flatMap((frame) => frame.tasks);
   const completedTasks = tasks.filter((task) => task.state === 'completed').length;
   const activeTasks = tasks.filter((task) => ['active', 'review'].includes(task.state)).length;
   const waitingTasks = tasks.filter((task) => ['pending', 'waiting'].includes(task.state)).length;
@@ -191,19 +195,19 @@ export function RoomKernelControlPlane({
       </span>
     </section>
     <div className="room-kernel-control__roots">
-      {roots.map((root) => <RootControlSection
-        key={`${root.rootId}:${root.generation}:${root.state}`}
-        root={root}
+      {screenModel.rootFrames.map((screenFrame) => <RootControlSection
+        key={`${screenFrame.root.rootId}:${screenFrame.root.generation}:${screenFrame.root.state}`}
+        rootFrame={screenFrame}
         projection={projection}
-        budget={budgetsByRootId[root.rootId]}
-        contextReceipt={contextReceiptsByRootId[root.rootId]}
-        capabilityReceipt={capabilityReceiptsByRootId[root.rootId]}
+        budget={budgetsByRootId[screenFrame.root.rootId]}
+        contextReceipt={contextReceiptsByRootId[screenFrame.root.rootId]}
+        capabilityReceipt={capabilityReceiptsByRootId[screenFrame.root.rootId]}
         commandTransport={commandTransport}
         commandDisabledReason={commandDisabledReason}
         participantLabels={participantLabels}
         participantPersonas={participantPersonas}
         participantRoles={participantRoles}
-        requirements={requirementsByRootId[root.rootId]}
+        requirements={requirementsByRootId[screenFrame.root.rootId]}
         participantProgress={participantProgress}
         subagentsByTaskId={subagentsByTaskId}
         activities={activities}
@@ -226,13 +230,13 @@ function RootControlSection({
   participantPersonas,
   participantRoles,
   participantProgress,
-  root,
+  rootFrame,
   requirements,
   subagentsByTaskId,
   workItems,
 }: {
   activities: RoomActivityProjection[];
-  root: RootProjection;
+  rootFrame: RoomScreenRootFrame;
   projection: RoomKernelProjection;
   budget?: RootBudgetSummary;
   contextReceipt?: RuntimeReceiptSummary;
@@ -247,34 +251,18 @@ function RootControlSection({
   subagentsByTaskId: Record<string, RoomTaskSubagentRun[]>;
   workItems: RoomWorkItem[];
 }) {
-  const posts = projection.postOrder
-    .map((postId) => projection.postsById[postId])
-    .filter((post): post is RoomPostV2 => post?.rootId === root.rootId)
-    .sort((left, right) => right!.createdAtMs - left!.createdAtMs);
+  const { dispatchAttempts: dispatches, finalDelivery, posts, root, tasks } = rootFrame;
   const terminal = roomRootIsTerminal(root);
-  const terminalReporterPosts = posts.filter((post) => (
-    post?.kind === 'result'
-    && post.publicationSource.kind === 'room_commit'
-    && (
-      !root.reporterParticipantId
-      || post.authorActorRef === root.reporterParticipantId
-    )
-  ));
-  const visiblePosts = terminal
-    ? (
-        terminalReporterPosts.length || root.reporterParticipantId
-          ? terminalReporterPosts
-          : posts
-      ).slice(0, 1)
-    : posts;
+  const visiblePosts = finalDelivery
+    ? [finalDelivery]
+    : root.state === 'completed'
+      ? []
+      : terminal
+        ? posts.slice(0, 1)
+        : posts;
   const sessions = Object.values(projection.sessionsById)
     .filter((session) => session.rootId === root.rootId)
     .sort((left, right) => left.sessionId.localeCompare(right.sessionId));
-  const tasks = Object.values(projection.tasksById)
-    .filter((task) => task.rootId === root.rootId && roomTaskIsVisibleWork(task))
-    .sort((left, right) => left.taskId.localeCompare(right.taskId));
-  const dispatches = Object.values(projection.dispatchesById)
-    .filter((dispatch) => dispatch.rootId === root.rootId);
   const taskTodoSummaries = Object.fromEntries(tasks.flatMap((task) => {
     if (!['pending', 'active', 'review', 'waiting', 'blocked'].includes(task.state)) {
       return [];
@@ -460,18 +448,18 @@ function RootControlSection({
     <div className="room-kernel-root__planes">
       <section className="room-kernel-posts" aria-label="公开结果与回复">
         <header>
-          <strong>{terminal ? '最终回复' : '公开结果与回复'}</strong>
-          <small>{terminal ? '第 3 步 · 最后结果' : '最新公开进度保持可见'}</small>
+          <strong>{finalDelivery ? '最终回复' : '公开结果与回复'}</strong>
+          <small>{finalDelivery ? '第 3 步 · 最后结果' : '最新公开进度保持可见'}</small>
         </header>
         {visiblePosts.length ? visiblePosts.map((post, index) => (
           <article
             data-latest={index === 0 || undefined}
-            data-terminal={terminal && index === 0 || undefined}
+            data-terminal={Boolean(finalDelivery) && index === 0 || undefined}
             key={post!.postId}
           >
             <span>
               <b>{postKindLabel(post!.kind)}</b>
-              <small>{terminal && root.reporterParticipantId
+              <small>{finalDelivery && root.reporterParticipantId
                 ? `汇报人 · ${participantLabel(root.reporterParticipantId, participantLabels)}`
                 : publicActorLabel(post!.authorActorRef, participantLabels)}</small>
               <time dateTime={new Date(post!.createdAtMs).toISOString()}>
@@ -480,7 +468,7 @@ function RootControlSection({
             </span>
             <p>{roomPublicActivityText(post!.content) || '公开结果已记录'}</p>
           </article>
-        )) : <p className="room-kernel-control__empty">{terminal && root.reporterParticipantId
+        )) : <p className="room-kernel-control__empty">{root.state === 'completed' && root.reporterParticipantId
           ? '等待汇报人发布一份最终总结。'
           : '还没有公开结果。'}</p>}
       </section>
@@ -1061,10 +1049,6 @@ function requirementObservationStateLabel(value: 'prepared' | 'active' | 'termin
 
 function runtimeReceiptStatusLabel(value: RuntimeReceiptSummary['status']): string {
   return ({ pending: '待封存', sealed: '已封存', rejected: '已拒绝', missing: '缺失' } as const)[value];
-}
-
-function roomRootRecency(root: RootProjection): number {
-  return Math.max(root.updatedAtMs ?? 0, root.createdAtMs ?? 0);
 }
 
 function roomRootIsTerminal(root: RootProjection): boolean {

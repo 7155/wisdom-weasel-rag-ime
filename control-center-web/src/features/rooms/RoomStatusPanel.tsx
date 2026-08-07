@@ -16,6 +16,10 @@ import type {
 import type { RoomKernelProjection, RootProjection } from '@/contracts/room-kernel-reducer';
 import type { RoomTaskV3 } from '@/contracts/generated/room-task.v3';
 import type { RoomSummary } from './room-types';
+import {
+  buildRoomScreenModel,
+  type RoomScreenModel,
+} from './model/room-screen-model';
 import { roomActivityNeedsSessionAction } from './runtime/room-execution-lanes';
 import { roomProjection, useRoomLiveStore, type RoomKernelSyncProjection } from './state/live-store';
 import '../agent/agent.css';
@@ -24,6 +28,7 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
   room?: RoomSummary;
   roomId?: string;
   projection?: RoomProjectionState;
+  screenModel?: RoomScreenModel;
   open: boolean;
   modal?: boolean;
   onClose: () => void;
@@ -32,6 +37,7 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
   room,
   roomId = '',
   projection: providedProjection,
+  screenModel: providedScreenModel,
   open,
   modal = false,
   onClose,
@@ -50,30 +56,13 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
     (state) => open ? state.kernelSyncByRoomId[effectiveRoomId] : undefined,
   );
   const projection = providedProjection ?? roomProjection(effectiveRoomId);
-  const currentRoot = kernelProjection
-    ? Object.values(kernelProjection.rootsById).sort((left, right) => (
-      Math.max(right.updatedAtMs ?? 0, right.createdAtMs ?? 0)
-        - Math.max(left.updatedAtMs ?? 0, left.createdAtMs ?? 0)
-      || left.rootId.localeCompare(right.rootId)
-    ))[0]
-    : undefined;
-  const currentRootTasks = currentRoot && kernelProjection
-    ? Object.values(kernelProjection.tasksById).filter((task) => (
-      task.rootId === currentRoot.rootId && task.taskKind !== 'report'
-    ))
-    : [];
-  const currentRootDispatches = currentRoot && kernelProjection
-    ? Object.values(kernelProjection.dispatchesById).filter((dispatch) => (
-      dispatch.rootId === currentRoot.rootId
-      && kernelProjection.tasksById[dispatch.taskId]?.taskKind !== 'report'
-    ))
-    : [];
-  const latestFinalPost = currentRoot && roomRootIsTerminal(currentRoot) && kernelProjection
-    ? kernelProjection.postOrder
-      .map((postId) => kernelProjection.postsById[postId])
-      .filter((post) => post?.rootId === currentRoot.rootId)
-      .sort((left, right) => right!.createdAtMs - left!.createdAtMs)[0]
-    : undefined;
+  const screenModel = providedScreenModel ?? buildRoomScreenModel(kernelProjection);
+  const currentRoot = screenModel.activeRoot;
+  const currentRootTasks = screenModel.tasks;
+  const currentRootDispatches = screenModel.dispatchAttempts.filter((dispatch) => (
+    kernelProjection?.tasksById[dispatch.taskId]?.taskKind !== 'report'
+  ));
+  const latestFinalPost = screenModel.finalDelivery;
   const individualTasks = currentRootTasks.filter((task) => task.taskKind !== 'review');
   const reviewTasks = currentRootTasks.filter((task) => task.taskKind === 'review');
   const sharedCheckVisible = reviewTasks.length > 0 || (
@@ -97,7 +86,7 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
       tabIndex={-1}
     >
       <header>
-        <span><strong>协作进展</strong><small>{currentRoot ? ROOM_STATUS_ROOT_STATE_LABELS[currentRoot.state] : turn ? roomProjectedStatusLabel(projectedStatus) : '等你开始新一轮'}</small></span>
+        <span><strong>协作进展</strong><small>{currentRoot ? screenModel.header.label : turn ? roomProjectedStatusLabel(projectedStatus) : '等你开始新一轮'}</small></span>
         <IconButton icon={<PanelRightClose size={17} />} label="收起进展面板" onClick={onClose} tooltip />
       </header>
       <div className="agent-status-panel__body">
@@ -189,10 +178,6 @@ function RoomProgressFreshness({
       ) : null}
     </section>
   );
-}
-
-function roomRootIsTerminal(root: RootProjection): boolean {
-  return ['completed', 'failed', 'cancelled', 'cancelled_with_unknowns'].includes(root.state);
 }
 
 const ROOM_STATUS_ROOT_STATE_LABELS: Record<RootProjection['state'], string> = {

@@ -13,6 +13,8 @@ ROOM_QUALITY_GATE_RECEIPT_SCHEMA_VERSION = (
     "wisdom-weasel.room-quality-gate-receipt.v1"
 )
 EVENT_ENVELOPE_SCHEMA_VERSION = "wisdom-weasel.room-event-envelope.v2"
+ROOM_SCREEN_STATE_SCHEMA_VERSION = "wisdom-weasel.room-screen-state.v1"
+ROOM_PLAN_REVISION_SCHEMA_VERSION = "wisdom-weasel.room-plan-revision.v1"
 ROOM_BINDING_SCHEMA_VERSION = "wisdom-weasel.room-binding.v2"
 PARTICIPANT_BINDING_SCHEMA_VERSION = "wisdom-weasel.room-participant-binding.v2"
 KERNEL_COMMAND_SCHEMA_VERSION = "wisdom-weasel.room-kernel-command.v1"
@@ -37,6 +39,8 @@ CONTRACT_FILES = {
     "roomCommit": "room-commit.v4.json",
     "roomQualityGateReceipt": "room-quality-gate-receipt.v1.json",
     "eventEnvelope": "room-event-envelope.v2.json",
+    "roomScreenState": "room-screen-state.v1.json",
+    "roomPlanRevision": "room-plan-revision.v1.json",
     "roomBinding": "room-binding.v2.json",
     "participantBinding": "room-participant-binding.v2.json",
     "kernelCommand": "room-kernel-command.v1.json",
