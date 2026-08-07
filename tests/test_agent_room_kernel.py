@@ -532,6 +532,42 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.assertEqual(transferred_back["ownershipRevision"], 2)
         self.assertEqual(transferred_back["state"], "active")
 
+    def test_accepted_commit_invokes_work_document_delta_inside_commit_transaction(
+        self,
+    ) -> None:
+        self.seed(criteria=())
+        self.store.commit_work_document_delta = (
+            lambda conn, payload: conn.execute(
+                """CREATE TABLE commit_delta_probe AS
+                   SELECT ? AS commit_id, ? AS decision""",
+                (payload["commitId"], payload["decision"]),
+            )
+        )
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:document-delta", key="document-delta"),
+            now_ms=3,
+        )
+        self.accept_runtime_attempt(
+            "dispatch:document-delta",
+            turn_id="turn:document-delta",
+            now_ms=4,
+        )
+
+        receipt = self.store.apply_commit(
+            commit("commit:document-delta", "dispatch:document-delta"),
+            generation=0,
+            now_ms=5,
+        )
+
+        self.assertEqual(receipt["status"], "applied")
+        with sqlite3.connect(self.db_path) as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT commit_id,decision FROM commit_delta_probe"
+                ).fetchone(),
+                ("commit:document-delta", "complete"),
+            )
+
     def test_plan_revision_restarts_only_affected_dependency_closure(self) -> None:
         self.store.create_root(
             root("root:1"),

@@ -60,6 +60,7 @@ _DELIVERY_GENERATED_PARTS = frozenset(
 _REPOSITORY_LOCKS_GUARD = threading.Lock()
 _REPOSITORY_LOCKS: dict[str, threading.RLock] = {}
 _SYSTEM_GIT = "/usr/bin/git"
+_MANAGED_WORK_DOCUMENT_PATHSPEC = ":(exclude)docs/agent/work/**"
 
 
 class RoomWorkspaceCoordinator:
@@ -3413,7 +3414,15 @@ class RoomWorkspaceCoordinator:
                     "-z",
                     "HEAD",
                 )
-                index = self._git_bytes(root, "ls-files", "--stage", "-z")
+                index = self._git_bytes(
+                    root,
+                    "ls-files",
+                    "--stage",
+                    "-z",
+                    "--",
+                    ".",
+                    _MANAGED_WORK_DOCUMENT_PATHSPEC,
+                )
                 staged = self._git_bytes(
                     root,
                     "diff",
@@ -3422,6 +3431,8 @@ class RoomWorkspaceCoordinator:
                     "--full-index",
                     "HEAD",
                     "--",
+                    ".",
+                    _MANAGED_WORK_DOCUMENT_PATHSPEC,
                 )
                 worktree = self._git_bytes(
                     root,
@@ -3429,6 +3440,8 @@ class RoomWorkspaceCoordinator:
                     "--binary",
                     "--full-index",
                     "--",
+                    ".",
+                    _MANAGED_WORK_DOCUMENT_PATHSPEC,
                 )
                 combined = self._git_bytes(
                     root,
@@ -3437,6 +3450,8 @@ class RoomWorkspaceCoordinator:
                     "--full-index",
                     "HEAD",
                     "--",
+                    ".",
+                    _MANAGED_WORK_DOCUMENT_PATHSPEC,
                 )
                 status = self._git_bytes(
                     root,
@@ -3444,6 +3459,9 @@ class RoomWorkspaceCoordinator:
                     "--porcelain=v1",
                     "-z",
                     "--untracked-files=all",
+                    "--",
+                    ".",
+                    _MANAGED_WORK_DOCUMENT_PATHSPEC,
                 )
             except (RoomWorkspaceError, UnicodeError) as exc:
                 raise RoomWorkspaceError(

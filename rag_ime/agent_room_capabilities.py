@@ -505,7 +505,8 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
     ),
     "input": (
         "最终 objective、expectedOutput、1-8 条 requirements、1-16 条 "
-        "acceptanceCriteria、是否必须独立复核，以及 1-4 项纵向 executionPlan；"
+        "acceptanceCriteria（逐条用 requirementRef 覆盖 room_state 中所有当前有效"
+        "用户要求与系统硬约束）、是否必须独立复核，以及 1-4 项纵向 executionPlan；"
         "确有独立工作时可附一位建议实施伙伴的 participantRef"
     ),
     "output": (
@@ -573,6 +574,16 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                                 },
                                 "kind": {
                                     "enum": ["requirement", "user_journey"],
+                                },
+                                "requirementRef": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 320,
+                                    "description": (
+                                        "从 room_state 当前 RequirementCatalog 复制的 itemId。"
+                                        "每一条有效用户要求或系统硬约束都必须至少被一个"
+                                        "验收条件精确引用，不能只覆盖模型自己概括的要求。"
+                                    ),
                                 },
                                 "expectedReceiptTypes": {
                                     "type": "array",
@@ -685,7 +696,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     "acceptancePlan": {
                         "type": "array",
                         "minItems": 1,
-                        "maxItems": 12,
+                        "maxItems": 16,
                         "items": {"type": "string", "minLength": 1, "maxLength": 1000},
                     },
                     "continuityPlan": {

@@ -22,7 +22,7 @@ from rag_ime.agent_wake_application import AgentWakeApplicationService
 class AgentRoomRouteOwnerTests(unittest.TestCase):
     def test_every_audited_room_binding_route_has_exactly_one_kernel_owner(self) -> None:
         validate_room_route_owner_census(AgentService)
-        self.assertEqual(len(ROOM_ROUTE_OWNER_CENSUS), 19)
+        self.assertEqual(len(ROOM_ROUTE_OWNER_CENSUS), 20)
         self.assertTrue(
             all(
                 room_route_owner(route.route_id, has_room_binding=True) == "kernel"

@@ -15,7 +15,9 @@ from rag_ime.agent_room_kernel_contracts import (
     ROOM_BINDING_SCHEMA_VERSION,
     ROOM_COMMIT_SCHEMA_VERSION,
     ROOM_QUALITY_GATE_RECEIPT_SCHEMA_VERSION,
+    ROOM_PLAN_REVISION_SCHEMA_VERSION,
     ROOM_POST_SCHEMA_VERSION,
+    ROOM_SCREEN_STATE_SCHEMA_VERSION,
     ROOM_SETTLE_RECEIPT_SCHEMA_VERSION,
     ROOM_SETTLE_RESULT_SCHEMA_VERSION,
     ROOT_EXECUTION_SCHEMA_VERSION,
@@ -87,6 +89,16 @@ class AgentRoomKernelContractsTest(unittest.TestCase):
                 "room-event-envelope.v2.json",
                 "https://wisdom-weasel.local/contracts/room-event-envelope.v2.json",
                 EVENT_ENVELOPE_SCHEMA_VERSION,
+            ),
+            "roomScreenState": (
+                "room-screen-state.v1.json",
+                "https://wisdom-weasel.local/contracts/room-screen-state.v1.json",
+                ROOM_SCREEN_STATE_SCHEMA_VERSION,
+            ),
+            "roomPlanRevision": (
+                "room-plan-revision.v1.json",
+                "https://wisdom-weasel.local/contracts/room-plan-revision.v1.json",
+                ROOM_PLAN_REVISION_SCHEMA_VERSION,
             ),
             "roomBinding": (
                 "room-binding.v2.json",

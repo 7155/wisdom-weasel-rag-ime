@@ -329,6 +329,25 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.service.close()
         self.tmp.cleanup()
 
+    def _active_room_requirements(self, dispatch_id: str) -> list[dict[str, object]]:
+        context = self.service.room_requirements.dispatch_context(dispatch_id)
+        self.assertIsInstance(context, Mapping)
+        assert isinstance(context, Mapping)
+        catalog_ref = context.get("catalog")
+        self.assertIsInstance(catalog_ref, Mapping)
+        assert isinstance(catalog_ref, Mapping)
+        catalog = self.service.room_requirements.catalog_revision(
+            str(catalog_ref["catalogRevisionId"])
+        )
+        return [
+            dict(item)
+            for item in catalog.get("items", [])
+            if isinstance(item, Mapping)
+            and item.get("state") == "active"
+            and item.get("kind")
+            in {"explicit_user_requirement", "system_hard_constraint"}
+        ]
+
     def test_passive_service_does_not_start_room_runtime_worker(self) -> None:
         passive = AgentService(
             db_path=self.root / "passive.sqlite",
@@ -1457,7 +1476,7 @@ class RoomKernelServiceTests(unittest.TestCase):
             _effective_dispatch_role_id(
                 dispatch={
                     "intentKind": "execute",
-                    "targetParticipantId": "future-default-coordinator",
+                    "targetParticipantId": "firstlight",
                 },
                 task={
                     "taskKind": "work",
@@ -7286,6 +7305,120 @@ class RoomKernelServiceTests(unittest.TestCase):
                 0,
             )
 
+    def test_started_correction_queues_one_revision_for_the_active_task(self) -> None:
+        accepted = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": "把客户目录做成终端界面，并保留退出后的数据。",
+                "clientMessageId": "client:active-revision-intake",
+            },
+        )
+        alignment = accepted["alignmentDispatches"][0]
+        self.assertTrue(self.service.room_kernel_worker.run_once())
+        room = self.service.rooms.get(self.room_id)
+        active = [
+            item
+            for item in room["participants"]
+            if item.get("status") == "active"
+        ]
+        ref_by_id = {
+            participant_id: participant_ref
+            for participant_ref, participant_id in participant_ref_map(active).items()
+        }
+        facilitator_id = str(accepted["root"]["facilitatorParticipantId"])
+        feature_owner = next(
+            item for item in active if str(item["id"]) != facilitator_id
+        )
+        defined = self.service.room_application.define_room(
+            self.room_id,
+            dispatch_id=str(alignment["dispatchId"]),
+            invocation_receipt_id="invoke:active-revision-define",
+            arguments={
+                "objective": "在终端客户目录主界面交付可保存数据的客户管理闭环",
+                "expectedOutput": "用户退出终端后重新打开，仍能浏览此前保存的客户资料",
+                "entrySurface": "终端客户目录主界面的客户列表和编辑命令入口",
+                "primaryInteraction": "用户在终端输入浏览、新增、编辑和保存客户的命令",
+                "observableCompletion": "重新打开终端客户目录后，列表显示此前保存的客户资料",
+                "requirements": ["终端管理客户并保留数据"],
+                "acceptanceCriteria": [
+                    {
+                        "statement": "退出重开后客户数据仍然存在",
+                        "fullNameZh": "客户数据可靠保存",
+                        "expectedReceiptTypes": ["evidence"],
+                    }
+                ],
+                "implementationParticipantRef": ref_by_id[
+                    str(feature_owner["id"])
+                ],
+                "executionPlan": {
+                    "sharedContracts": ["所有操作共用同一份客户数据"],
+                    "featureTasks": [
+                        {
+                            "title": "终端客户管理闭环",
+                            "participantRef": ref_by_id[
+                                str(feature_owner["id"])
+                            ],
+                            "userOutcome": "用户能在终端管理并保存客户",
+                            "dependencies": [],
+                            "writeBoundary": "只实现终端客户管理功能",
+                            "workspacePolicy": "isolated_writable",
+                            "acceptance": ["AC-1"],
+                        }
+                    ],
+                    "integrationPlan": "合入终端功能并核对保存结果",
+                    "integrationParticipantRef": ref_by_id[facilitator_id],
+                    "acceptancePlan": ["终端管理和数据保存都可核对"],
+                },
+                "independentReviewRequired": False,
+            },
+        )
+        self.assertTrue(defined["requiresStartAction"])
+        started = self.service.start_room_execution(
+            self.room_id,
+            {
+                "action": "start_execution",
+                "rootId": str(accepted["rootId"]),
+                "clientActionId": "action:active-revision-start",
+            },
+        )
+        parent_dispatch_id = str(started["dispatch"]["dispatchId"])
+        with sqlite3.connect(self.service.db_path) as conn:
+            conn.execute(
+                "UPDATE room_kernel_dispatches SET state='running' WHERE dispatch_id=?",
+                (parent_dispatch_id,),
+            )
+            conn.commit()
+        parent_dispatch = self.service.room_kernel.dispatch(parent_dispatch_id)
+        self.assertEqual(parent_dispatch["state"], "running")
+
+        corrected = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": "补充：删除客户前必须先确认，并允许撤销。",
+                "clientMessageId": "client:active-revision-correction",
+            },
+        )
+
+        self.assertEqual(len(corrected["dispatches"]), 1)
+        revision = corrected["reconciliationDispatch"]
+        self.assertEqual(revision["intentKind"], "revise")
+        self.assertEqual(revision["parentDispatchId"], parent_dispatch_id)
+        self.assertEqual(revision["taskId"], parent_dispatch["taskId"])
+        self.assertEqual(
+            revision["targetParticipantId"],
+            parent_dispatch["targetParticipantId"],
+        )
+        self.assertEqual(
+            self.service.room_kernel.dispatch(str(revision["dispatchId"]))[
+                "state"
+            ],
+            "pending",
+        )
+        self.assertIsNone(
+            self.service.room_kernel_worker.run_once(),
+            "revision must wait for its active parent Dispatch to settle",
+        )
+
     def test_room_private_session_projection_reuses_todo_owner_and_sse_hash(
         self,
     ) -> None:
@@ -8391,6 +8524,190 @@ class RoomKernelServiceTests(unittest.TestCase):
             )
         self.assertEqual(close_count, 0)
 
+    def test_room_define_cannot_ignore_a_user_correction_recorded_during_alignment(
+        self,
+    ) -> None:
+        accepted = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": "请为客户目录增加批量导入和邮箱筛选。",
+                "clientMessageId": "client:define-correction-intake",
+            },
+        )
+        alignment = accepted["alignmentDispatches"][0]
+        corrected = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": (
+                    "测试任务改为终端界面：浏览和搜索客户，新增或编辑资料，"
+                    "删除前确认并能撤销，退出重开后数据仍在。"
+                ),
+                "clientMessageId": "client:define-correction-tui",
+            },
+        )
+        self.assertEqual(corrected["rootId"], accepted["rootId"])
+        self.service.room_kernel_worker.run_once()
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "每一条当前有效的用户要求",
+        ):
+            self.service.room_application.define_room(
+                self.room_id,
+                dispatch_id=alignment["dispatchId"],
+                invocation_receipt_id="invoke:define-ignored-correction",
+                arguments={
+                    "objective": "在终端客户目录增加批量导入和邮箱筛选",
+                    "expectedOutput": "用户能批量导入并按邮箱筛选客户",
+                    "entrySurface": "终端客户目录主界面",
+                    "primaryInteraction": "用户导入客户并输入邮箱筛选条件",
+                    "observableCompletion": "终端显示导入结果和筛选后的客户",
+                    "requirements": ["增加批量导入", "增加邮箱筛选"],
+                    "acceptanceCriteria": [
+                        {
+                            "statement": "批量导入后显示逐条结果",
+                            "fullNameZh": "批量导入结果可见",
+                            "expectedReceiptTypes": ["evidence"],
+                        },
+                        {
+                            "statement": "输入邮箱后只显示匹配客户",
+                            "fullNameZh": "邮箱筛选结果正确",
+                            "expectedReceiptTypes": ["evidence"],
+                        },
+                    ],
+                    "independentReviewRequired": False,
+                },
+            )
+
+        self.assertIsNone(
+            self.service.room_kernel.definition_fence(
+                root_id=str(accepted["rootId"]),
+                dispatch_id=alignment["dispatchId"],
+            )
+        )
+
+    def test_room_define_binds_all_current_requirements_to_explicit_vertical_features(
+        self,
+    ) -> None:
+        accepted = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": "先把客户目录改成终端界面，能浏览搜索客户并能新增编辑资料。",
+                "clientMessageId": "client:define-multi-requirement",
+            },
+        )
+        alignment = accepted["alignmentDispatches"][0]
+        corrected = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": "删除客户前必须确认，而且退出后重新打开仍然保留数据。",
+                "clientMessageId": "client:define-multi-requirement-correction",
+            },
+        )
+        self.service.room_kernel_worker.run_once()
+        current_items = [
+            item
+            for item in corrected["requirementCatalog"]["items"]
+            if item.get("kind") == "explicit_user_requirement"
+            and item.get("state") == "active"
+        ]
+        self.assertGreaterEqual(len(current_items), 2)
+        room = self.service.rooms.get(self.room_id)
+        active = [
+            item
+            for item in room["participants"]
+            if item.get("status") == "active"
+        ]
+        ref_by_id = {
+            participant_id: participant_ref
+            for participant_ref, participant_id in participant_ref_map(active).items()
+        }
+        facilitator_id = str(accepted["root"]["facilitatorParticipantId"])
+        feature_owners = [
+            item for item in active if str(item["id"]) != facilitator_id
+        ][:2]
+        self.assertEqual(len(feature_owners), 2)
+        criteria = [
+            {
+                "statement": "用户可以在终端浏览并搜索客户",
+                "fullNameZh": "终端浏览搜索客户",
+                "requirementRef": str(current_items[0]["itemId"]),
+                "expectedReceiptTypes": ["evidence"],
+            },
+            {
+                "statement": "用户可以新增和编辑客户资料，并在删除前确认",
+                "fullNameZh": "客户资料维护可确认",
+                "requirementRef": str(current_items[1]["itemId"]),
+                "expectedReceiptTypes": ["evidence"],
+            },
+        ]
+        defined = self.service.room_application.define_room(
+            self.room_id,
+            dispatch_id=alignment["dispatchId"],
+            invocation_receipt_id="invoke:define-multi-requirement",
+            arguments={
+                "objective": "交付终端客户目录的浏览、维护和可靠保存闭环",
+                "expectedOutput": "用户可以浏览搜索、维护客户并在重开后看到数据",
+                "entrySurface": "终端客户目录",
+                "primaryInteraction": "用户在终端输入命令管理客户",
+                "observableCompletion": "终端显示可核对的客户结果",
+                "requirements": [item["statement"] for item in current_items[:2]],
+                "acceptanceCriteria": criteria,
+                "implementationParticipantRef": ref_by_id[str(feature_owners[0]["id"])],
+                "executionPlan": {
+                    "sharedContracts": ["所有功能共用同一份客户数据和持久化约定"],
+                    "featureTasks": [
+                        {
+                            "title": "终端浏览和搜索客户",
+                            "participantRef": ref_by_id[str(feature_owners[0]["id"])],
+                            "userOutcome": "用户能浏览并搜索客户",
+                            "dependencies": [],
+                            "writeBoundary": "只实现浏览和搜索功能",
+                            "workspacePolicy": "isolated_writable",
+                            "acceptance": ["AC-1"],
+                        },
+                        {
+                            "title": "客户资料维护和可靠保存",
+                            "participantRef": ref_by_id[str(feature_owners[1]["id"])],
+                            "userOutcome": "用户能新增编辑并在重开后保留客户资料",
+                            "dependencies": [],
+                            "writeBoundary": "只实现客户资料维护和持久化",
+                            "workspacePolicy": "isolated_writable",
+                            "acceptance": ["AC-2"],
+                        },
+                    ],
+                    "integrationPlan": "合入两个完整功能并核对终端结果",
+                    "integrationParticipantRef": ref_by_id[facilitator_id],
+                    "acceptancePlan": ["两个功能都能从终端完成并核对结果"],
+                },
+                "independentReviewRequired": False,
+            },
+        )
+        final_criteria = defined["requirementCatalog"]["acceptanceCriteria"]
+        plan_revision = self.service.room_application._latest_plan_revision(
+            str(accepted["rootId"])
+        )
+        self.assertIsNotNone(plan_revision)
+        assert plan_revision is not None
+        self.assertEqual(
+            [item["itemId"] for item in final_criteria],
+            [str(item["itemId"]) for item in current_items[:2]],
+        )
+        self.assertTrue(
+            set(defined["executionPlan"]["acceptancePlan"]).issuperset(
+                item["statement"] for item in criteria
+            )
+        )
+        feature_tasks = [
+            item for item in plan_revision["tasks"]
+            if item.get("kind") == "feature"
+        ]
+        self.assertEqual(
+            [item["acceptanceCriterionIds"] for item in feature_tasks],
+            [[final_criteria[0]["criterionId"]],
+             [final_criteria[1]["criterionId"]]],
+        )
+
     def test_room_define_rejects_placeholder_delivery_before_mutating_root(
         self,
     ) -> None:
@@ -9035,12 +9352,14 @@ class RoomKernelServiceTests(unittest.TestCase):
                             "participantRef": str(first_peer["id"]),
                             "userOutcome": "第一位伙伴完成实现核对并提交证据",
                             "dependencies": [],
+                            "acceptance": ["AC-1"],
                         },
                         {
                             "title": "边界研究闭环",
                             "participantRef": str(second_peer["id"]),
                             "userOutcome": "第二位伙伴完成边界研究并提交证据",
                             "dependencies": [],
+                            "acceptance": ["AC-2"],
                         },
                     ],
                     "integrationPlan": "自动汇总两条只读工作线的结果",
@@ -9750,6 +10069,7 @@ class RoomKernelServiceTests(unittest.TestCase):
             {"room_state", "room_post", "room_commit", "room_define"},
         )
         target = self.service.rooms.get(self.room_id)["participants"][2]
+        current_requirements = self._active_room_requirements(resumed_dispatch_id)
         defined = self.service.room_application.define_room(
             self.room_id,
             dispatch_id=resumed_dispatch_id,
@@ -9760,13 +10080,17 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "entrySurface": "协作任务页中的已回答目标入口",
                 "primaryInteraction": "伙伴读取用户答案后修改实现并运行验证",
                 "observableCompletion": "任务页显示实现结果以及验证通过状态",
-                "requirements": ["保留原请求和澄清回答"],
+                "requirements": [
+                    str(item["statement"]) for item in current_requirements
+                ],
                 "acceptanceCriteria": [
                     {
-                        "statement": "实现结果通过验证",
-                        "fullNameZh": "实现结果通过验证",
+                        "statement": f"第{index + 1}项用户要求已满足，结果和验证记录可核对",
+                        "fullNameZh": f"第{index + 1}项用户要求验证",
+                        "requirementRef": str(item["itemId"]),
                         "expectedReceiptTypes": ["evidence"],
                     }
+                    for index, item in enumerate(current_requirements)
                 ],
                 "implementationParticipantRef": "P3",
                 "independentReviewRequired": False,
@@ -10072,19 +10396,24 @@ class RoomKernelServiceTests(unittest.TestCase):
             )
         )
         target = self.service.rooms.get(self.room_id)["participants"][2]
+        current_requirements = self._active_room_requirements(resume_id)
         define_arguments = {
             "objective": "完成实现并附验证记录",
             "expectedOutput": "实现结果和验证记录",
             "entrySurface": "协作任务页中的已确认实现入口",
             "primaryInteraction": "伙伴按用户回答修改实现并运行验证步骤",
             "observableCompletion": "任务页显示实现结果以及验证记录通过",
-            "requirements": ["实现目标行为", "保留验证记录"],
+            "requirements": [
+                str(item["statement"]) for item in current_requirements
+            ],
             "acceptanceCriteria": [
                 {
-                    "statement": "实现和验证记录均可核验",
-                    "fullNameZh": "实现与验证记录",
+                    "statement": f"第{index + 1}项用户要求已满足，结果和验证记录可核对",
+                    "fullNameZh": f"第{index + 1}项用户要求验证",
+                    "requirementRef": str(item["itemId"]),
                     "expectedReceiptTypes": ["evidence"],
                 }
+                for index, item in enumerate(current_requirements)
             ],
             "implementationParticipantRef": str(target["id"]),
             "independentReviewRequired": False,

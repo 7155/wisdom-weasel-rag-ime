@@ -120,7 +120,12 @@ def match_managed_retry_wait(
         )
         if (
             not terminal
-            or int(candidate.get("generation") or -1) != facts.root_generation
+            or int(
+                candidate["generation"]
+                if candidate.get("generation") is not None
+                else -1
+            )
+            != facts.root_generation
             or int(candidate.get("capabilityEpoch") or -1)
             != facts.parent_capability_epoch
             or str(candidate.get("participantId") or "")

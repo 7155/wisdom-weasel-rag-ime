@@ -128,6 +128,21 @@ class RoomWorkspaceIdentityTests(unittest.TestCase):
         untracked = self.coordinator.snapshot_digest([self.root])
         self.assertNotEqual(dirty_post_evidence, untracked)
 
+    def test_snapshot_ignores_managed_work_document_materialization(self) -> None:
+        managed = self.root / "docs/agent/work/active/room_work_item"
+        managed.mkdir(parents=True)
+        document = managed / "room.md"
+        document.write_text("进度一\n", encoding="utf-8")
+        before = self.coordinator.snapshot_digest([self.root])
+        document.write_text("进度二\n", encoding="utf-8")
+        after = self.coordinator.snapshot_digest([self.root])
+        self.assertEqual(before, after)
+
+        user_notes = self.root / "docs/user-notes.md"
+        user_notes.parent.mkdir(parents=True, exist_ok=True)
+        user_notes.write_text("用户文档改动\n", encoding="utf-8")
+        self.assertNotEqual(after, self.coordinator.snapshot_digest([self.root]))
+
     def test_repository_file_lock_serializes_independent_descriptors(
         self,
     ) -> None:

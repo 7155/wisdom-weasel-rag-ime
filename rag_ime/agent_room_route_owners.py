@@ -44,6 +44,7 @@ ROOM_ROUTE_OWNER_CENSUS = (
     RoomRouteOwner("tool.room_post", "execute_room_capability_tool", "reject", "kernel", "canonical_only"),
     RoomRouteOwner("tool.room_commit", "execute_room_capability_tool", "reject", "kernel", "canonical_only"),
     RoomRouteOwner("tool.room_define", "execute_room_capability_tool", "reject", "kernel", "canonical_only"),
+    RoomRouteOwner("tool.room_reconcile", "execute_room_capability_tool", "reject", "kernel", "canonical_only"),
 )
 
 

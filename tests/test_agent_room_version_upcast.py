@@ -155,7 +155,7 @@ class HistoricalRoomRootReplayTests(unittest.TestCase):
 
             self.assertEqual(snapshot, fixture["snapshot"])
             self.assertEqual(replay, fixture["replayEvents"])
-            self.assertEqual(emitted, [fixture["replayEvents"][1]])
+            self.assertEqual(emitted, fixture["replayEvents"][1:])
             self.assertTrue(
                 snapshot["roots"][0]["independentReviewRequired"],
                 "missing historical review policy must upcast fail-closed",

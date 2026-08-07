@@ -101,11 +101,6 @@ class RoomApplicationOutbox:
             "blocked": blocked,
         }
         for room_id in room_ids:
-            # Strict projection-before-wake ordering means a dead-letter head
-            # intentionally blocks every later effect for this Room. Surface the
-            # exact blocker instead of reporting an empty successful drain.
-            if room_id in blocked:
-                continue
             try:
                 result["applied"][room_id] = self.drain_room(
                     room_id,
@@ -183,7 +178,8 @@ class RoomApplicationOutbox:
                    FROM room_application_outbox AS outbox
                    JOIN room_domain_events AS event
                      ON event.event_id=outbox.event_id
-                   WHERE outbox.room_id=? AND outbox.state!='applied'
+                   WHERE outbox.room_id=?
+                     AND outbox.state NOT IN ('applied','dead_letter')
                    ORDER BY event.room_sequence,
                             CASE outbox.effect_kind
                               WHEN 'project_room' THEN 0 ELSE 1 END,
@@ -264,6 +260,10 @@ class RoomApplicationOutbox:
     ) -> None:
         state = "dead_letter" if int(attempt) >= 5 else "retry_wait"
         with self._connect(immediate=True) as conn:
+            event_row = conn.execute(
+                "SELECT event_id,effect_kind FROM room_application_outbox WHERE outbox_id=?",
+                (outbox_id,),
+            ).fetchone()
             cursor = conn.execute(
                 """UPDATE room_application_outbox
                    SET state=?,available_at_ms=?,lease_id='',lease_until_ms=0,
@@ -284,6 +284,26 @@ class RoomApplicationOutbox:
             if cursor.rowcount != 1:
                 raise StaleRoomOutboxLease(
                     f"outbox lease was replaced before failure recording: {outbox_id}"
+                )
+            if (
+                state == "dead_letter"
+                and event_row is not None
+                and str(event_row["effect_kind"]) == "project_room"
+            ):
+                # A failed projection must never leave its paired wake eligible.
+                # Later domain events can still publish a fresh full projection.
+                conn.execute(
+                    """UPDATE room_application_outbox
+                       SET state='dead_letter',available_at_ms=?,lease_id='',
+                           lease_until_ms=0,last_error=?,updated_at_ms=?
+                       WHERE event_id=? AND effect_kind='wake_room'
+                         AND state!='applied'""",
+                    (
+                        int(now_ms),
+                        f"projection blocked: {error}"[:500],
+                        int(now_ms),
+                        str(event_row["event_id"]),
+                    ),
                 )
 
     @staticmethod

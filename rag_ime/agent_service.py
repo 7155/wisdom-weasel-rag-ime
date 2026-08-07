@@ -274,6 +274,7 @@ class AgentService:
             db_path,
             mode=room_kernel_mode,
             enforce_test_delivery_gate=room_delivery_gate_enforcement,
+            commit_work_document_delta=self._append_room_commit_work_document_delta,
         )
         self.room_kernel.initialize()
         self.room_kernel_projection = RoomKernelProjection(db_path)
@@ -4547,6 +4548,50 @@ class AgentService:
             delta_kind=str(payload.get("deltaKind") or ""),
             source_ref=str(payload.get("sourceRef") or ""),
             content=str(payload.get("content") or ""),
+            created_at_ms=int(payload.get("createdAtMs") or 0),
+        )
+
+    def _append_room_commit_work_document_delta(
+        self,
+        conn: sqlite3.Connection,
+        payload: Mapping[str, object],
+    ) -> Mapping[str, object] | None:
+        root_id = str(payload.get("rootId") or "")
+        document = conn.execute(
+            """SELECT d.document_id,d.state
+               FROM work_documents AS d
+               JOIN agent_room_work_items AS w ON w.id=d.authority_id
+               WHERE d.authority_kind='room_work_item'
+                 AND w.root_turn_id=? AND w.root_work_id=w.id""",
+            (root_id,),
+        ).fetchone()
+        if document is None:
+            return None
+        summary = " ".join(str(payload.get("summary") or "").split())
+        evidence_refs = [
+            str(value).strip()
+            for value in payload.get("evidenceRefs") or []
+            if str(value).strip()
+        ]
+        content_lines = [
+            f"任务提交：{summary or '伙伴已提交本轮结果。'}",
+        ]
+        if evidence_refs:
+            content_lines.append("验收证据：" + "、".join(evidence_refs[:16]))
+        return self.work_documents.append_room_delta_in_transaction(
+            conn,
+            root_id=root_id,
+            delta_id=(
+                "room-work-document-delta:commit:"
+                + str(payload.get("commitId") or "")
+            ),
+            delta_kind=(
+                "evidence"
+                if str(payload.get("decision") or "") in {"complete", "post"}
+                else "progress"
+            ),
+            source_ref=str(payload.get("commitId") or ""),
+            content="\n".join(content_lines),
             created_at_ms=int(payload.get("createdAtMs") or 0),
         )
 

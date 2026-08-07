@@ -1310,6 +1310,9 @@ class RoomApplicationService:
                     str(value.get("statement") or "").split()
                 )
                 criterion_kind = str(value.get("kind") or "requirement")
+                requirement_ref = " ".join(
+                    str(value.get("requirementRef") or "").split()
+                )
                 full_name = str(
                     value.get("fullNameZh") or ""
                 ).strip() or ""
@@ -1317,6 +1320,7 @@ class RoomApplicationService:
             else:
                 statement = " ".join(str(value or "").split())
                 criterion_kind = "requirement"
+                requirement_ref = ""
                 full_name = ""
                 receipt_types = None
             if not statement:
@@ -1354,7 +1358,63 @@ class RoomApplicationService:
                     "expectedReceiptTypes": list(
                         dict.fromkeys(normalized_receipt_types)
                     ),
+                    "requirementRef": requirement_ref,
                 }
+            )
+
+        context = self.requirements.dispatch_context(dispatch_id)
+        if not isinstance(context, Mapping) or not isinstance(
+            context.get("catalog"),
+            Mapping,
+        ):
+            raise RoomKernelFenceError(
+                "room_define requires the alignment RequirementCatalog"
+            )
+        current_catalog_id = str(
+            context["catalog"].get("catalogRevisionId") or ""
+        )
+        current_catalog = self.requirements.catalog_revision(current_catalog_id)
+        current_revision = int(current_catalog["revision"])
+        existing_items = [
+            dict(item)
+            for item in current_catalog.get("items", [])
+            if isinstance(item, Mapping)
+        ]
+        authoritative_requirement_ids = [
+            str(item.get("itemId") or "")
+            for item in existing_items
+            if item.get("state") == "active"
+            and item.get("kind")
+            in {"explicit_user_requirement", "system_hard_constraint"}
+            and str(item.get("itemId") or "").strip()
+        ]
+        provided_requirement_refs = {
+            str(item.get("requirementRef") or "")
+            for item in criteria_input
+            if str(item.get("requirementRef") or "").strip()
+        }
+        unknown_requirement_refs = sorted(
+            provided_requirement_refs - set(authoritative_requirement_ids)
+        )
+        if unknown_requirement_refs:
+            raise ValueError(
+                "room_define acceptanceCriteria requirementRef is not an active "
+                "user or system requirement: "
+                + ", ".join(unknown_requirement_refs)
+            )
+        if len(authoritative_requirement_ids) == 1 and not provided_requirement_refs:
+            criteria_input[0]["requirementRef"] = authoritative_requirement_ids[0]
+            provided_requirement_refs.add(authoritative_requirement_ids[0])
+        missing_requirement_refs = [
+            item_id
+            for item_id in authoritative_requirement_ids
+            if item_id not in provided_requirement_refs
+        ]
+        if missing_requirement_refs:
+            raise ValueError(
+                "room_define 的 acceptanceCriteria 必须通过 requirementRef 覆盖"
+                "每一条当前有效的用户要求；仍未覆盖："
+                + ", ".join(missing_requirement_refs)
             )
 
         execution_plan = _normalize_room_execution_plan(
@@ -1430,24 +1490,6 @@ class RoomApplicationService:
                 "Root already has a different room_define fence"
             )
 
-        context = self.requirements.dispatch_context(dispatch_id)
-        if not isinstance(context, Mapping) or not isinstance(
-            context.get("catalog"),
-            Mapping,
-        ):
-            raise RoomKernelFenceError(
-                "room_define requires the alignment RequirementCatalog"
-            )
-        current_catalog_id = str(
-            context["catalog"].get("catalogRevisionId") or ""
-        )
-        current_catalog = self.requirements.catalog_revision(current_catalog_id)
-        current_revision = int(current_catalog["revision"])
-        existing_items = [
-            dict(item)
-            for item in current_catalog.get("items", [])
-            if isinstance(item, Mapping)
-        ]
         derived_item_ids: list[str] = []
         for ordinal, statement in enumerate(requirements):
             item_id = (
@@ -1474,12 +1516,16 @@ class RoomApplicationService:
                 f"criterion:{_stable_digest(str(root['rootId']), invocation_receipt_id, str(ordinal), str(item['statement']))}"
             )
             criterion_ids.append(criterion_id)
+            requirement_ref = str(item.get("requirementRef") or "").strip()
             final_criteria.append(
                 {
                     "criterionId": criterion_id,
-                    "itemId": derived_item_ids[
-                        min(ordinal, len(derived_item_ids) - 1)
-                    ],
+                    "itemId": (
+                        requirement_ref
+                        or derived_item_ids[
+                            min(ordinal, len(derived_item_ids) - 1)
+                        ]
+                    ),
                     "acceptanceCriterionFullNameZh": item[
                         "acceptanceCriterionFullNameZh"
                     ],
@@ -3478,6 +3524,56 @@ class RoomApplicationService:
         finally:
             transaction.close()
 
+        reconciliation_dispatch: dict[str, object] | None = None
+        reconciliation_participant: Mapping[str, object] | None = None
+        if requires_plan_revision:
+            active_targets = self.kernel.active_runtime_targets(root_id)
+            if len(active_targets) == 1:
+                parent_dispatch = self.kernel.dispatch(
+                    str(active_targets[0]["dispatchId"])
+                )
+                if str(parent_dispatch.get("intentKind") or "") != "close":
+                    reconciliation_participant = self.rooms.participant(
+                        str(parent_dispatch["targetParticipantId"])
+                    )
+                    reconciliation_dispatch = {
+                        "schemaVersion": DISPATCH_ENVELOPE_SCHEMA_VERSION,
+                        "dispatchId": (
+                            "room-dispatch:intervention:"
+                            + _stable_digest(intervention_id, root_id)
+                        ),
+                        "rootId": root_id,
+                        "taskId": str(parent_dispatch["taskId"]),
+                        "parentDispatchId": str(parent_dispatch["dispatchId"]),
+                        "generation": int(parent_dispatch["generation"]),
+                        "hopCount": int(parent_dispatch["hopCount"]) + 1,
+                        "depth": int(parent_dispatch["depth"]),
+                        "budgetCost": 1,
+                        "targetSessionId": str(parent_dispatch["targetSessionId"]),
+                        "targetParticipantId": str(parent_dispatch["targetParticipantId"]),
+                        "triggerId": intervention_id,
+                        "intentKind": "revise",
+                        "idempotencyKey": (
+                            f"room-intervention-revise:{intervention_id}"
+                        ),
+                        "attempt": 0,
+                        "capabilityEpoch": int(parent_dispatch["capabilityEpoch"]) + 1,
+                        "runtimeProfileRevision": str(
+                            parent_dispatch["runtimeProfileRevision"]
+                        ),
+                        "dependsOnDispatchIds": [
+                            str(parent_dispatch["dispatchId"])
+                        ],
+                        "attachmentIds": list(
+                            parent_dispatch.get("attachmentIds") or []
+                        ),
+                        "state": "pending",
+                    }
+                    self.kernel.enqueue_dispatch(
+                        reconciliation_dispatch,
+                        now_ms=timestamp,
+                    )
+
         timeline_events = self.public_timeline.publish_ingress(
             room=room,
             post=post,
@@ -3524,6 +3620,17 @@ class RoomApplicationService:
             "intervention": intervention,
             "timelineEvents": timeline_events,
         }
+        if reconciliation_dispatch is not None:
+            assert reconciliation_participant is not None
+            response["dispatches"] = [
+                _queued_dispatch_result(
+                    reconciliation_participant,
+                    reconciliation_dispatch,
+                    was_created=True,
+                    phase="intervention_reconciliation",
+                )
+            ]
+            response["reconciliationDispatch"] = reconciliation_dispatch
         if document_delta is not None:
             response["workDocumentDelta"] = dict(document_delta)
         return response
@@ -3883,6 +3990,9 @@ def _alignment_task(
             "主持伙伴只是额外承担分工、集成和最终汇报，也可以和其他伙伴一样端到端负责功能。不要在"
             "计划阶段把某位伙伴永久留作低能力的只读者或只复核者；独立复核在集成后依据真实实现、"
             "集成和交付记录选择没有参与待审成果的伙伴。角色名称只表示本轮责任，不代表模型能力高低。开始行动前的"
+            "方案不能遗漏运行中新增的用户修正。room_state 返回的当前 RequirementCatalog 中，每一条"
+            "仍有效的用户要求和系统硬约束，都必须由至少一个 acceptanceCriteria 对象通过 requirementRef"
+            "精确引用；每个 AC 必须分配给至少一个纵向 featureTask，不能只覆盖你自己概括出的旧要求。"
             "所有文案必须沿用用户正在使用的语言和用户视角：说清用户能做什么、会看到什么；不得把"
             "英文类型名、camelCase 字段表或协议术语直接展示在主方案中，这些细节留到开始后的工作"
             "文档或可展开技术详情。若真实页面、命令或代码入口尚未读取，只能明确写成用户提出的入口"
@@ -4074,7 +4184,19 @@ def _normalize_room_execution_plan(
             else acceptance_plan
         )
         if " ".join(str(item or "").split())
-    ][:12]
+    ][:16]
+    normalized_acceptance = list(
+        dict.fromkeys(
+            [
+                *normalized_acceptance,
+                *[
+                    " ".join(str(item or "").split())[:1_000]
+                    for item in acceptance_plan
+                    if " ".join(str(item or "").split())
+                ],
+            ]
+        )
+    )[:16]
     if not normalized_acceptance:
         raise ValueError("room_define executionPlan acceptancePlan is required")
     chinese_plan = any("\u3400" <= char <= "\u9fff" for char in objective)
@@ -4211,8 +4333,12 @@ def _bind_room_plan_revision(
         if not resolved_acceptance:
             if len(features) == 1:
                 resolved_acceptance = list(acceptance_criterion_ids)
-            elif index < len(acceptance_criterion_ids):
-                resolved_acceptance = [acceptance_criterion_ids[index]]
+            elif len(acceptance_criterion_ids) == 1:
+                resolved_acceptance = list(acceptance_criterion_ids)
+            else:
+                raise ValueError(
+                    "room_define executionPlan 的多项纵向功能必须显式列出各自验收条件"
+                )
         dependencies = [
             str(value) for value in feature.get("dependencies") or []
         ]
@@ -4247,6 +4373,31 @@ def _bind_room_plan_revision(
                 "dependencyTaskIds": dependency_task_ids,
                 "acceptanceCriterionIds": resolved_acceptance,
             }
+        )
+    feature_criterion_ids = {
+        str(criterion_id)
+        for task in plan_tasks
+        for criterion_id in task.get("acceptanceCriterionIds", [])
+        if str(criterion_id).strip()
+    }
+    missing_feature_criteria = [
+        criterion_id
+        for criterion_id in acceptance_criterion_ids
+        if criterion_id not in feature_criterion_ids
+    ]
+    if missing_feature_criteria:
+        alias_by_criterion_id = {
+            criterion_id: alias
+            for alias, criterion_id in acceptance_aliases.items()
+        }
+        missing_aliases = [
+            alias_by_criterion_id.get(criterion_id, criterion_id)
+            for criterion_id in missing_feature_criteria
+        ]
+        raise ValueError(
+            "room_define executionPlan 的纵向功能必须覆盖全部验收条件；"
+            "仍未分配："
+            + ", ".join(missing_aliases)
         )
     writable_features = [
         task

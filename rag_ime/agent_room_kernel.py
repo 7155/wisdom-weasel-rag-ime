@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
@@ -150,12 +150,23 @@ class RoomKernelStore:
     but they cannot become a second execution authority.
     """
 
-    def __init__(self, db_path: str | Path, *, mode: KernelMode = "shadow", enforce_test_delivery_gate: bool = False) -> None:
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        mode: KernelMode = "shadow",
+        enforce_test_delivery_gate: bool = False,
+        commit_work_document_delta: Callable[
+            [sqlite3.Connection, Mapping[str, object]], object
+        ]
+        | None = None,
+    ) -> None:
         if mode not in {"off", "shadow", "cohort", "test", "kernel_only"}:
             raise ValueError("Room Kernel mode must be off, shadow, cohort, test, or kernel_only")
         self.db_path = Path(db_path)
         self.mode = mode
         self.enforce_test_delivery_gate = bool(enforce_test_delivery_gate)
+        self.commit_work_document_delta = commit_work_document_delta
         if self.enforce_test_delivery_gate and self.mode != "cohort":
             raise ValueError("DeliveryGate enforcement is only valid for the explicit cohort mode")
 
@@ -3875,6 +3886,27 @@ class RoomKernelStore:
                 },
                 now_ms=now_ms,
             )
+            if self.commit_work_document_delta is not None:
+                self.commit_work_document_delta(
+                    conn,
+                    {
+                        "rootId": str(root["root_id"]),
+                        "taskId": str(dispatch["task_id"]),
+                        "commitId": str(payload["commitId"]),
+                        "decision": decision,
+                        "summary": str(
+                            payload.get("publicSummary")
+                            or payload.get("summary")
+                            or ""
+                        ),
+                        "evidenceRefs": [
+                            str(value)
+                            for value in payload.get("evidenceRefs") or []
+                            if str(value).strip()
+                        ],
+                        "createdAtMs": int(now_ms),
+                    },
+                )
             if is_report_dispatch and decision == "complete":
                 self._receipt(
                     conn,

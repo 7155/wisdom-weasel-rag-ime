@@ -156,6 +156,54 @@ class RoomApplicationUnitOfWorkTests(unittest.TestCase):
             },
         )
 
+    def test_dead_letter_projection_does_not_starve_later_room_events(self) -> None:
+        with self.uow.transaction() as conn:
+            self._insert_root(conn, room_id="room:a", root_id="root:a")
+            RoomDomainEventRepository.append(
+                conn,
+                self._event(room_id="room:a", root_id="root:a", suffix="first"),
+                created_at_ms=10,
+            )
+            RoomDomainEventRepository.append(
+                conn,
+                self._event(room_id="room:a", root_id="root:a", suffix="later"),
+                created_at_ms=11,
+            )
+
+        outbox = RoomApplicationOutbox(self.db_path)
+
+        def broken_projection(_room_id: str) -> None:
+            raise ValueError("projection permanently broken")
+
+        for now_ms in (10, 1_010, 3_010, 7_010, 15_010):
+            with self.assertRaisesRegex(ValueError, "projection permanently broken"):
+                outbox.drain_room(
+                    "room:a",
+                    project_room=broken_projection,
+                    wake_room=lambda _room_id: None,
+                    now_ms=now_ms,
+                )
+
+        projected: list[str] = []
+        woken: list[str] = []
+        result = outbox.drain_ready_rooms(
+            project_room=projected.append,
+            wake_room=woken.append,
+            now_ms=31_010,
+        )
+
+        self.assertEqual(projected, ["room:a"])
+        self.assertEqual(woken, ["room:a"])
+        self.assertEqual(
+            [item["effectKind"] for item in result["applied"]["room:a"]],
+            ["project_room", "wake_room"],
+        )
+        self.assertEqual(result["blocked"]["room:a"]["state"], "dead_letter")
+        self.assertEqual(
+            [item["state"] for item in outbox.pending("room:a")],
+            ["dead_letter", "dead_letter"],
+        )
+
     def test_expired_lease_is_reclaimed_after_process_restart(self) -> None:
         with self.uow.transaction() as conn:
             self._insert_root(conn, room_id="room:a", root_id="root:a")
@@ -262,15 +310,16 @@ class RoomApplicationUnitOfWorkTests(unittest.TestCase):
         )
 
     @staticmethod
-    def _event(*, room_id: str, root_id: str):
+    def _event(*, room_id: str, root_id: str, suffix: str = ""):
+        identity = f"{root_id}:{suffix}" if suffix else root_id
         return past_tense_event(
             kind="dispatch_completed",
             room_id=room_id,
             root_id=root_id,
-            entity_id=f"dispatch:{root_id}",
+            entity_id=f"dispatch:{identity}",
             generation=1,
-            idempotency_key=f"commit:{root_id}",
-            payload={"taskId": f"task:{root_id}"},
+            idempotency_key=f"commit:{identity}",
+            payload={"taskId": f"task:{identity}"},
         )
 
 

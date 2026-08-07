@@ -664,10 +664,14 @@ def _effective_dispatch_role_id(
         return "coordinator"
     if intent_kind == "review" or str(task.get("taskKind") or "") == "review":
         return "reviewer"
-    if intent_kind == "close" or (facilitator_id and target_id == facilitator_id):
+    if intent_kind == "close":
         return "coordinator"
+    if str(task.get("workspacePolicy") or "") == "isolated_writable":
+        return "implementer"
     if str(task.get("workspacePolicy") or "") == "read_only":
         return "researcher"
+    if facilitator_id and target_id == facilitator_id:
+        return "coordinator"
     return "implementer"
 
 

@@ -1,25 +1,24 @@
 {
   "snapshot": {
     "roomId": "room:legacy-version-replay",
-    "lastSequence": 2,
-    "snapshotHash": "sha256:a68a5b5a5c11565c2a5ee877ddef5fb18853535d2e6cff3c201f62b9b8c0f17f",
+    "lastSequence": 3,
     "roots": [
       {
-        "schemaVersion": "wisdom-weasel.room-root-execution.v3",
-        "rootId": "root:legacy-version-replay",
-        "roomId": "room:legacy-version-replay",
+        "activeProfileRef": null,
+        "budgetPolicyRef": "room-budget:legacy-v1",
+        "createdAtMs": 100,
+        "createdByActorRef": "user:legacy",
         "generation": 0,
+        "requirementAnchorRef": "requirement-anchor:legacy@sha256:test",
+        "roomId": "room:legacy-version-replay",
+        "rootId": "root:legacy-version-replay",
+        "schemaVersion": "wisdom-weasel.room-root-execution.v3",
         "state": "running",
+        "terminalReceiptId": null,
         "facilitatorParticipantId": "participant:legacy-facilitator",
         "reporterParticipantId": null,
         "reporterSelectionReceiptId": null,
-        "requirementAnchorRef": "requirement-anchor:legacy@sha256:test",
-        "createdByActorRef": "user:legacy",
-        "terminalReceiptId": null,
-        "activeProfileRef": null,
-        "budgetPolicyRef": "room-budget:legacy-v1",
-        "independentReviewRequired": true,
-        "createdAtMs": 100
+        "independentReviewRequired": true
       }
     ],
     "tasks": [],
@@ -27,7 +26,32 @@
     "dispatches": [],
     "posts": [],
     "sessions": [],
-    "receipts": []
+    "receipts": [],
+    "screenState": {
+      "schemaVersion": "wisdom-weasel.room-screen-state.v1",
+      "roomId": "room:legacy-version-replay",
+      "activeRootId": "root:legacy-version-replay",
+      "activeRootGeneration": 0,
+      "phase": "execution",
+      "waitReason": null,
+      "runnableFrontier": {
+        "taskIds": [],
+        "dispatchIds": []
+      },
+      "integrationReadiness": {
+        "ready": true,
+        "reason": null,
+        "pendingTaskIds": []
+      },
+      "reviewReadiness": {
+        "ready": false,
+        "reason": "独立复核尚未满足最终交付条件",
+        "pendingTaskIds": []
+      },
+      "finalDeliveryPostId": null,
+      "recommendedNextAction": "complete_independent_review"
+    },
+    "snapshotHash": "sha256:211c08cd918269853605bd83c92784de5da9789c72f5af4b1cd17e22a97d739d"
   },
   "replayEvents": [
     {
@@ -39,21 +63,21 @@
       "occurredAtMs": 110,
       "payload": {
         "root": {
-          "schemaVersion": "wisdom-weasel.room-root-execution.v3",
-          "rootId": "root:legacy-version-replay",
-          "roomId": "room:legacy-version-replay",
+          "activeProfileRef": null,
+          "budgetPolicyRef": "room-budget:legacy-v1",
+          "createdAtMs": 100,
+          "createdByActorRef": "user:legacy",
           "generation": 0,
+          "requirementAnchorRef": "requirement-anchor:legacy@sha256:test",
+          "roomId": "room:legacy-version-replay",
+          "rootId": "root:legacy-version-replay",
+          "schemaVersion": "wisdom-weasel.room-root-execution.v3",
           "state": "running",
+          "terminalReceiptId": null,
           "facilitatorParticipantId": "participant:legacy-facilitator",
           "reporterParticipantId": null,
           "reporterSelectionReceiptId": null,
-          "requirementAnchorRef": "requirement-anchor:legacy@sha256:test",
-          "createdByActorRef": "user:legacy",
-          "terminalReceiptId": null,
-          "activeProfileRef": null,
-          "budgetPolicyRef": "room-budget:legacy-v1",
-          "independentReviewRequired": true,
-          "createdAtMs": 100
+          "independentReviewRequired": true
         }
       }
     },
@@ -66,21 +90,55 @@
       "occurredAtMs": 200,
       "payload": {
         "root": {
-          "schemaVersion": "wisdom-weasel.room-root-execution.v3",
-          "rootId": "root:legacy-version-replay",
-          "roomId": "room:legacy-version-replay",
-          "generation": 0,
-          "state": "running",
+          "activeProfileRef": null,
+          "budgetPolicyRef": "room-budget:legacy-v1",
+          "createdAtMs": 100,
+          "createdByActorRef": "user:legacy",
           "facilitatorParticipantId": "participant:legacy-facilitator",
+          "generation": 0,
+          "independentReviewRequired": true,
           "reporterParticipantId": null,
           "reporterSelectionReceiptId": null,
           "requirementAnchorRef": "requirement-anchor:legacy@sha256:test",
-          "createdByActorRef": "user:legacy",
-          "terminalReceiptId": null,
-          "activeProfileRef": null,
-          "budgetPolicyRef": "room-budget:legacy-v1",
-          "independentReviewRequired": true,
-          "createdAtMs": 100
+          "roomId": "room:legacy-version-replay",
+          "rootId": "root:legacy-version-replay",
+          "schemaVersion": "wisdom-weasel.room-root-execution.v3",
+          "state": "running",
+          "terminalReceiptId": null
+        }
+      }
+    },
+    {
+      "schemaVersion": "wisdom-weasel.room-event-envelope.v2",
+      "entityKind": "projection",
+      "entityId": "room:legacy-version-replay",
+      "eventKind": "screen_state_changed",
+      "sequence": 3,
+      "occurredAtMs": 200,
+      "payload": {
+        "screenState": {
+          "schemaVersion": "wisdom-weasel.room-screen-state.v1",
+          "roomId": "room:legacy-version-replay",
+          "activeRootId": "root:legacy-version-replay",
+          "activeRootGeneration": 0,
+          "phase": "execution",
+          "waitReason": null,
+          "runnableFrontier": {
+            "taskIds": [],
+            "dispatchIds": []
+          },
+          "integrationReadiness": {
+            "ready": true,
+            "reason": null,
+            "pendingTaskIds": []
+          },
+          "reviewReadiness": {
+            "ready": false,
+            "reason": "独立复核尚未满足最终交付条件",
+            "pendingTaskIds": []
+          },
+          "finalDeliveryPostId": null,
+          "recommendedNextAction": "complete_independent_review"
         }
       }
     }
