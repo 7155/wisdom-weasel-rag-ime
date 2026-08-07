@@ -1657,9 +1657,20 @@ class AgentEventProjectionTests(unittest.TestCase):
                             "status": "ready",
                             "currentResponsibility": {
                                 "state": "running",
+                                "taskKind": "work",
+                                "planTaskKind": "integration",
+                                "writeBoundary": "只整合已交付成果",
+                                "nextAction": "integrate_completed_peer_work",
                                 "objective": "完成终端原生 TUI 的可运行闭环",
                                 "expectedOutput": "可启动、可操作、可验证的终端界面",
                                 "workspacePolicy": "shared_readonly",
+                            },
+                            "executionPolicy": {
+                                "routingPolicy": "natural",
+                                "planRevisionId": "plan:1",
+                                "planRevision": 2,
+                                "independentReviewRequired": True,
+                                "nextAction": "integrate_completed_peer_work",
                             },
                             "acceptanceAliases": [
                                 {
@@ -1686,9 +1697,12 @@ class AgentEventProjectionTests(unittest.TestCase):
                             ],
                             "pendingIntegrations": [
                                 {
-                                    "childTaskId": "private-task",
+                                    "childTaskId": "task:feature-1",
                                     "objective": "合并终端界面实现",
                                     "ownerParticipantRef": "P-2",
+                                    "state": "completed",
+                                    "workspaceLifecycleState": "delivered",
+                                    "workspaceIntegrationState": "pending",
                                 },
                             ],
                             "canSettle": True,
@@ -1718,7 +1732,18 @@ class AgentEventProjectionTests(unittest.TestCase):
                     "objective": "完成终端原生 TUI 的可运行闭环",
                     "expectedOutput": "可启动、可操作、可验证的终端界面",
                     "state": "running",
+                    "taskKind": "work",
+                    "planTaskKind": "integration",
+                    "writeBoundary": "只整合已交付成果",
+                    "nextAction": "integrate_completed_peer_work",
                     "workspacePolicy": "shared_readonly",
+                },
+                "executionPolicy": {
+                    "routingPolicy": "natural",
+                    "planRevisionId": "plan:1",
+                    "planRevision": 2,
+                    "independentReviewRequired": True,
+                    "nextAction": "integrate_completed_peer_work",
                 },
                 "acceptanceAliases": [
                     {
@@ -1737,7 +1762,14 @@ class AgentEventProjectionTests(unittest.TestCase):
                     {"kind": "progress", "content": "启动入口已经确认"},
                 ],
                 "pendingIntegrations": [
-                    {"objective": "合并终端界面实现"},
+                    {
+                        "childTaskId": "task:feature-1",
+                        "objective": "合并终端界面实现",
+                        "ownerParticipantRef": "P-2",
+                        "state": "completed",
+                        "workspaceLifecycleState": "delivered",
+                        "workspaceIntegrationState": "pending",
+                    },
                 ],
                 "canSettle": True,
                 "pendingCancellationTargets": 1,
@@ -1748,9 +1780,8 @@ class AgentEventProjectionTests(unittest.TestCase):
         self.assertNotIn("privateModelContext", repr(finished_data))
         self.assertNotIn("privateDiagnostics", repr(finished_data))
         self.assertNotIn("private-receipt", repr(finished_data))
-        self.assertNotIn("private-task", repr(finished_data))
+        self.assertIn("task:feature-1", repr(finished_data))
         self.assertNotIn("P-1", repr(finished_data))
-        self.assertNotIn("ownerParticipantRef", repr(finished_data))
         self.assertNotIn("participantRef", repr(finished_data))
 
         failed = AgentEventEnvelope(

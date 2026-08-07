@@ -1213,6 +1213,7 @@ _ROOM_RESULT_KEYS_BY_TOOL = {
         "unchanged",
         "stateRevision",
         "currentResponsibility",
+        "executionPolicy",
         "acceptanceAliases",
         "participants",
         "recentPublicChanges",
@@ -1379,6 +1380,10 @@ def _room_current_responsibility(
             ("objective", 1_000),
             ("expectedOutput", 1_000),
             ("state", 160),
+            ("taskKind", 120),
+            ("planTaskKind", 120),
+            ("writeBoundary", 1_000),
+            ("nextAction", 160),
             ("workspacePolicy", 120),
         ):
             text = _redacted_room_text(value.get(key), maximum=maximum)
@@ -1444,6 +1449,29 @@ def _room_recent_change_projection(value: object) -> list[dict[str, str]]:
     return result
 
 
+def _room_execution_policy_projection(value: object) -> dict[str, object] | None:
+    if not isinstance(value, Mapping):
+        return None
+    projected: dict[str, object] = {}
+    for key, maximum in (
+        ("routingPolicy", 120),
+        ("planRevisionId", 240),
+        ("nextAction", 160),
+    ):
+        text = _redacted_room_text(value.get(key), maximum=maximum)
+        if text:
+            projected[key] = text
+    if isinstance(value.get("planRevision"), int) and not isinstance(
+        value.get("planRevision"), bool
+    ):
+        projected["planRevision"] = max(0, int(value["planRevision"]))
+    if isinstance(value.get("independentReviewRequired"), bool):
+        projected["independentReviewRequired"] = value[
+            "independentReviewRequired"
+        ]
+    return projected or None
+
+
 def _room_pending_integration_projection(value: object) -> list[dict[str, str]]:
     if not isinstance(value, list):
         return []
@@ -1451,9 +1479,20 @@ def _room_pending_integration_projection(value: object) -> list[dict[str, str]]:
     for item in value[:16]:
         if not isinstance(item, Mapping):
             continue
-        objective = _redacted_room_text(item.get("objective"), maximum=1_000)
-        if objective:
-            result.append({"objective": objective})
+        projected: dict[str, str] = {}
+        for key, maximum in (
+            ("childTaskId", 240),
+            ("objective", 1_000),
+            ("ownerParticipantRef", 240),
+            ("state", 120),
+            ("workspaceLifecycleState", 120),
+            ("workspaceIntegrationState", 120),
+        ):
+            text = _redacted_room_text(item.get(key), maximum=maximum)
+            if text:
+                projected[key] = text
+        if projected.get("childTaskId") and projected.get("objective"):
+            result.append(projected)
     return result
 
 
@@ -1485,6 +1524,11 @@ def _room_tool_result_projection(
             current = _room_current_responsibility(value)
             if current is not None:
                 projected[key] = current
+            continue
+        if key == "executionPolicy":
+            policy = _room_execution_policy_projection(value)
+            if policy is not None:
+                projected[key] = policy
             continue
         if key == "acceptanceAliases":
             acceptance = _room_acceptance_projection(value)

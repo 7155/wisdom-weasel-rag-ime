@@ -437,7 +437,9 @@ class RoomSettleLifecycleService:
         else:
             lead = (
                 "本次结束请求没有通过检查："
-                f"{_bounded(reason, 300)}。如果工作仍未完成，先继续动手；"
+                f"{_bounded(reason, 300)}。先重新调用 room_state，旧的 "
+                "evidenceRef、等待对象和下一动作不得复用；如果工作仍未完成，"
+                "按最新 currentResponsibility.nextAction 继续；"
                 "如果已经完成，只修正提交字段和证据，不要重做已验证的内容；"
                 "如果自己无法继续且没有新的合法动作，改为 handoff、wait 或 "
                 "blocked。"

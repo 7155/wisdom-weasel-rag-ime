@@ -837,6 +837,13 @@ class RoomKernelApplicationService:
                     candidate.get("currentOwnerParticipantId"),
                     participant_refs,
                 ),
+                "state": str(candidate.get("state") or ""),
+                "workspaceLifecycleState": str(
+                    candidate.get("workspaceLifecycleState") or ""
+                ),
+                "workspaceIntegrationState": str(
+                    candidate.get("workspaceIntegrationState") or ""
+                ),
             }
             for candidate in snapshot["tasks"]
             if isinstance(candidate, Mapping)
@@ -898,6 +905,12 @@ class RoomKernelApplicationService:
             if isinstance(item, Mapping)
         ]
         review_required = bool(root.get("independentReviewRequired"))
+        next_action = self._responsibility_next_action(
+            task=task,
+            snapshot=snapshot,
+            pending_interventions=pending_interventions,
+            pending_integrations=pending_integrations,
+        )
         execution_policy = {
             "routingPolicy": routing_policy,
             "eligiblePeerParticipantRefs": eligible_peer_refs,
@@ -914,14 +927,7 @@ class RoomKernelApplicationService:
                 else 0
             ),
             "approvedTasks": approved_tasks,
-            "nextAction": (
-                "reconcile_user_intervention"
-                if pending_interventions
-                else
-                "integrate_completed_peer_work"
-                if pending_integrations
-                else "continue_owned_work"
-            ),
+            "nextAction": next_action,
         }
         model_state = {
             "schemaVersion": "wisdom-weasel.room-state-tool.v1",
@@ -930,6 +936,10 @@ class RoomKernelApplicationService:
                 "objective": str(task.get("objective") or ""),
                 "expectedOutput": str(task.get("expectedOutput") or ""),
                 "state": str(dispatch.get("state") or ""),
+                "taskKind": str(task.get("taskKind") or ""),
+                "planTaskKind": str(task.get("planTaskKind") or ""),
+                "writeBoundary": str(task.get("writeBoundary") or ""),
+                "nextAction": next_action,
                 "workspacePolicy": task.get("workspacePolicy"),
             },
             "acceptanceAliases": acceptance,
@@ -975,6 +985,46 @@ class RoomKernelApplicationService:
         ).hexdigest()
         model_state["stateRevision"] = f"sha256:{revision}"
         return model_state
+
+    @staticmethod
+    def _responsibility_next_action(
+        *,
+        task: Mapping[str, object],
+        snapshot: Mapping[str, object],
+        pending_interventions: Sequence[Mapping[str, object]],
+        pending_integrations: Sequence[Mapping[str, object]],
+    ) -> str:
+        if pending_interventions:
+            return "reconcile_user_intervention"
+        if str(task.get("planTaskKind") or "") != "integration":
+            return "continue_owned_work"
+        if pending_integrations:
+            return "integrate_completed_peer_work"
+
+        dependency_ids = {
+            str(value)
+            for value in task.get("dependencyTaskIds") or []
+            if str(value or "").strip()
+        }
+        dependencies = {
+            str(candidate.get("taskId") or ""): candidate
+            for candidate in snapshot.get("tasks") or []
+            if isinstance(candidate, Mapping)
+            and str(candidate.get("taskId") or "") in dependency_ids
+        }
+        scope_ready = len(dependencies) == len(dependency_ids) and all(
+            str(candidate.get("state") or "") == "completed"
+            and (
+                candidate.get("workspacePolicy") != "isolated_writable"
+                or candidate.get("workspaceIntegrationState") == "applied"
+            )
+            for candidate in dependencies.values()
+        )
+        return (
+            "verify_integrated_scope"
+            if scope_ready
+            else "yield_to_dependency_frontier"
+        )
 
     def assert_read_only_workspace_unchanged(
         self,
@@ -2422,6 +2472,13 @@ class RoomKernelApplicationService:
             raise ToolAuthorizationError(
                 "canonical Room Tools must execute through Room Kernel"
             )
+        self._assert_integration_product_tool_boundary(
+            session_id=session_id,
+            live=_live,
+            tool_name=canonical,
+            args=args,
+            invocation_receipt_id=str(invocation["receiptId"]),
+        )
         existing_execution = self.capabilities.execution_receipt(
             str(invocation["receiptId"])
         )
@@ -2522,11 +2579,86 @@ class RoomKernelApplicationService:
             raise RoomKernelFenceError(
                 "Room approval no longer matches its Dispatch capability"
             )
+        arguments = command.get("arguments")
+        self._assert_integration_product_tool_boundary(
+            session_id=session_id,
+            live=_live,
+            tool_name=str(tool_name or ""),
+            args=arguments if isinstance(arguments, Mapping) else {},
+        )
         if self.capabilities.execution_receipt(invocation_receipt_id) is not None:
             raise RoomKernelFenceError(
                 "Room approval invocation already has a terminal execution receipt"
             )
         return dict(invocation)
+
+    def _assert_integration_product_tool_boundary(
+        self,
+        *,
+        session_id: str,
+        live: Mapping[str, object],
+        tool_name: str,
+        args: Mapping[str, object],
+        invocation_receipt_id: str = "",
+    ) -> None:
+        task = self.kernel.task(str(live.get("taskId") or ""))
+        if str(task.get("planTaskKind") or "") != "integration":
+            return
+        room_id = str(live.get("roomId") or "")
+        state = self.tool_state(
+            room_id,
+            root_id=str(live.get("rootId") or ""),
+            dispatch_id=str(live.get("dispatchId") or ""),
+        )
+        responsibility = state.get("currentResponsibility")
+        next_action = str(
+            responsibility.get("nextAction")
+            if isinstance(responsibility, Mapping)
+            else ""
+        )
+        if next_action not in {
+            "integrate_completed_peer_work",
+            "yield_to_dependency_frontier",
+        }:
+            return
+        operation = str(args.get("op") or "")
+        blocked = tool_name in {
+            "workspace_edit",
+            "workspace_write",
+            "workspace_patch",
+            "workspace_shell",
+            "workspace_job",
+        } or (
+            tool_name == "workspace_lsp"
+            and operation in {"rename", "code_action_apply"}
+        )
+        if not blocked:
+            return
+        reason = {
+            "reason": "integration_action_boundary",
+            "nextAction": next_action,
+            "requiredTool": "room_integrate",
+            "retryable": True,
+        }
+        if invocation_receipt_id:
+            self.capabilities.record_runtime_execution(
+                session_id=session_id,
+                invocation_receipt_id=invocation_receipt_id,
+                status="rejected",
+                result_hash=hashlib.sha256(
+                    json.dumps(
+                        reason,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest(),
+                created_at_ms=int(time.time() * 1000),
+            )
+        raise ToolAuthorizationError(
+            "当前集成责任必须先按 room_state 调用 room_integrate；"
+            "在已交付成果完成集成或依赖波次推进前，不能修改共享工作区"
+        )
 
     def _assert_room_collaboration_authority(
         self,

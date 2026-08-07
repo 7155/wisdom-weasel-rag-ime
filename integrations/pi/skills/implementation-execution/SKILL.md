@@ -115,6 +115,16 @@ no automatic deletion timer.
   replacing it. Integration and review are performed by a distinct participant
   where the target policy requires it, through the bound workspace harness and
   accepted evidence receipts; prose or a filesystem path cannot substitute.
+- An integration responsibility starts by reading `room_state`. When
+  `currentResponsibility.nextAction` is `integrate_completed_peer_work`, call
+  `room_integrate` once for each exact `pendingIntegrations.childTaskId`; do not
+  implement a later feature or edit the shared workspace first. When it is
+  `yield_to_dependency_frontier`, close the current Turn with
+  `room_commit(deliver)` so the Kernel can bind the exact dependency wait and
+  resume this stable integration Task after the next delivery. Only
+  `verify_integrated_scope` opens integrated-workspace verification and repair.
+  After any rejection, call `room_state` again and do not reuse an old
+  evidenceRef or pending-integration list.
 
 ## No-Progress And Cancellation
 

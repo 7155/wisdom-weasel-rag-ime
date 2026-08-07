@@ -529,6 +529,14 @@ class RoomKernelServiceTests(unittest.TestCase):
     def test_completed_wave_releases_integration_before_later_features(
         self,
     ) -> None:
+        gateway = ControlToolGateway(
+            sessions=self.service.sessions,
+            management=SimpleNamespace(),
+            core=SimpleNamespace(),
+            project="wisdom-weasel-rag-ime",
+            collaboration=self.service,
+        )
+        self.service.bind_tool_manifest_provider(gateway.runtime_manifests)
         room = self.service.rooms.get(self.room_id)
         participants = list(room["participants"])
         accepted = self.service.post_room_message(
@@ -791,6 +799,63 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         integration_session = str(integration_dispatch["targetSessionId"])
 
+        integration_state_load = self.service.room_capability_tool_load(
+            {
+                "sessionId": integration_session,
+                "receiptId": "load:progressive-integration:bounded-state",
+                "toolName": "room_state",
+                "createdAtMs": int(time.time() * 1000),
+            }
+        )["result"]
+        integration_state = self.service.execute_room_capability_tool(
+            integration_session,
+            "room_state",
+            {},
+            tool_call_id="call:progressive-integration:bounded-state",
+            load_receipt_id=str(integration_state_load["receiptId"]),
+        )["result"]
+        self.assertEqual(
+            integration_state["currentResponsibility"]["planTaskKind"],
+            "integration",
+        )
+        self.assertEqual(
+            integration_state["currentResponsibility"]["nextAction"],
+            "integrate_completed_peer_work",
+        )
+        self.assertEqual(
+            {
+                item["childTaskId"]
+                for item in integration_state["pendingIntegrations"]
+            },
+            {str(item["taskId"]) for item in first_wave},
+        )
+
+        patch_load = self.service.room_capability_tool_load(
+            {
+                "sessionId": integration_session,
+                "receiptId": "load:progressive-integration:forbidden-patch",
+                "toolName": "workspace_patch",
+                "createdAtMs": int(time.time() * 1000),
+            }
+        )["result"]
+        with self.assertRaisesRegex(
+            ToolAuthorizationError,
+            "room_integrate",
+        ):
+            self.service.authorize_room_product_tool(
+                integration_session,
+                "workspace_patch",
+                {
+                    "op": "apply",
+                    "path": str(self.root / "must-not-implement-next-wave.txt"),
+                    "oldText": "before",
+                    "newText": "after",
+                    "expectedOccurrences": 1,
+                },
+                tool_call_id="call:progressive-integration:forbidden-patch",
+                load_receipt_id=str(patch_load["receiptId"]),
+            )
+
         def integrate_feature(
             task: Mapping[str, object],
             *,
@@ -829,11 +894,27 @@ class RoomKernelServiceTests(unittest.TestCase):
             later_dispatch["targetParticipantId"],
             integration_dispatch["targetParticipantId"],
         )
-        integration_evidence = state_evidence(
+        dependency_state_load = self.service.room_capability_tool_load(
+            {
+                "sessionId": integration_session,
+                "receiptId": "load:progressive-integration:dependency-state",
+                "toolName": "room_state",
+                "createdAtMs": int(time.time() * 1000),
+            }
+        )["result"]
+        dependency_state = self.service.execute_room_capability_tool(
             integration_session,
-            str(integration_dispatch["dispatchId"]),
-            "integration-wait",
+            "room_state",
+            {},
+            tool_call_id="call:progressive-integration:dependency-state",
+            load_receipt_id=str(dependency_state_load["receiptId"]),
+        )["result"]
+        self.assertEqual(
+            dependency_state["currentResponsibility"]["nextAction"],
+            "yield_to_dependency_frontier",
         )
+        self.assertEqual(dependency_state["pendingIntegrations"], [])
+        integration_evidence = str(dependency_state["evidenceRef"])
         wait_load = self.service.room_capability_tool_load(
             {
                 "sessionId": integration_session,
@@ -923,16 +1004,54 @@ class RoomKernelServiceTests(unittest.TestCase):
         assert resumed_dispatch is not None
         self.assertEqual(resumed_dispatch["intentKind"], "resume")
         resumed_session = str(resumed_dispatch["targetSessionId"])
+        resumed_state_load = self.service.room_capability_tool_load(
+            {
+                "sessionId": resumed_session,
+                "receiptId": "load:progressive-integration:resumed-state",
+                "toolName": "room_state",
+                "createdAtMs": int(time.time() * 1000),
+            }
+        )["result"]
+        resumed_state = self.service.execute_room_capability_tool(
+            resumed_session,
+            "room_state",
+            {},
+            tool_call_id="call:progressive-integration:resumed-state",
+            load_receipt_id=str(resumed_state_load["receiptId"]),
+        )["result"]
+        self.assertEqual(
+            resumed_state["currentResponsibility"]["nextAction"],
+            "integrate_completed_peer_work",
+        )
+        self.assertEqual(
+            [item["childTaskId"] for item in resumed_state["pendingIntegrations"]],
+            [str(later_feature["taskId"])],
+        )
         integrate_feature(
             later_feature,
             session_id=resumed_session,
             suffix="later-feature",
         )
-        final_evidence = state_evidence(
+        final_state_load = self.service.room_capability_tool_load(
+            {
+                "sessionId": resumed_session,
+                "receiptId": "load:progressive-integration:final-state",
+                "toolName": "room_state",
+                "createdAtMs": int(time.time() * 1000),
+            }
+        )["result"]
+        final_state = self.service.execute_room_capability_tool(
             resumed_session,
-            str(resumed_dispatch["dispatchId"]),
-            "integration-final",
+            "room_state",
+            {},
+            tool_call_id="call:progressive-integration:final-state",
+            load_receipt_id=str(final_state_load["receiptId"]),
+        )["result"]
+        self.assertEqual(
+            final_state["currentResponsibility"]["nextAction"],
+            "verify_integrated_scope",
         )
+        final_evidence = str(final_state["evidenceRef"])
         final_load = self.service.room_capability_tool_load(
             {
                 "sessionId": resumed_session,
