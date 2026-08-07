@@ -715,20 +715,26 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
 },
         "room_reconcile": {
             "description": (
-                "执行中收到用户补充后，当前功能负责人明确确认该修正只影响自己的"
-                "稳定任务，并把处理决定写回同一份工作文档。跨功能、公共契约或新增"
-                "危险范围不能走这个入口。"
+                "执行中收到用户补充后，把修正绑定到当前稳定任务；若它影响多个已批准"
+                "任务，可列出直接受影响任务，由 Kernel 推导并重排依赖闭包。新增任务、"
+                "公共契约扩张或危险范围仍必须回到用户可见审批。"
             ),
             "when": (
-                "room_state 显示待处理用户修正，且修正只影响当前完整功能",
+                "room_state 显示待处理用户修正，且修正属于已批准任务图范围",
             ),
             "notFor": (
-                "改变其他功能、公共契约、依赖图、权限或危险操作范围",
+                "新增功能、扩大公共契约、权限或危险操作范围",
                 "只询问进度或尚未理解用户修正",
             ),
-            "input": "待处理修正的 interventionId、当前 taskId 和处理摘要",
-            "output": "修正是否已绑定到当前稳定任务并解除对应终态门禁",
-            "does": "只解决一个当前任务范围内的修正，不创建新任务或暗改其他功能。",
+            "input": (
+                "待处理修正的 interventionId、当前 taskId、处理摘要，以及可选的"
+                "直接受影响稳定任务 ID"
+            ),
+            "output": "修正绑定结果、受影响依赖闭包、新计划版本和重新释放的任务",
+            "does": (
+                "在已批准任务图内原子更新计划版本，只重启受影响任务与依赖闭包；"
+                "不创建新任务。"
+            ),
             "risk": "R1",
             "operation": "room.reconcile",
             "inputSchema": {
@@ -753,6 +759,21 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                         "type": "string",
                         "minLength": 1,
                         "maxLength": 2000,
+                    },
+                    "affectedTaskIds": {
+                        "description": (
+                            "只列直接受影响的已批准稳定任务；省略时仅吸收进当前任务。"
+                            "Kernel 会自动加入所有下游依赖任务。"
+                        ),
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 12,
+                        "uniqueItems": True,
+                        "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 320,
+                        },
                     },
                 },
                 "additionalProperties": False,

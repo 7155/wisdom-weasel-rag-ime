@@ -68,8 +68,12 @@ def settled_receipt(session_id, turn_id, disposition="completed"):
         "transcript": {"messageCount": len(sessions.get(session_id, {}).get("messages", [])),
                        "entryCount": len(sessions.get(session_id, {}).get("entries", [])),
                        "leafId": sessions.get(session_id, {}).get("leafId", ""),
+                       "lastEntryId": sessions.get(session_id, {}).get("leafId", ""),
+                       "lineageHash": "transcript:" + turn_id,
                        "contentHash": "transcript:" + turn_id},
-        "continuations": {"pendingIds": [], "leasedIds": [], "terminalIds": [],
+        "continuations": {"generation": 1, "pendingIds": [], "readyIds": [],
+                          "scheduledIds": [], "leasedIds": [], "terminalIds": [],
+                          "terminalIdsOmitted": 0, "idsHash": "continuations:" + turn_id,
                           "counts": {"pending": 0, "leased": 0, "completed": 0, "cancelled": 0}},
         "operations": {"pending": 0, "pendingByKind": {}, "registeredByKind": {}},
         "settledAtMs": 123,
@@ -122,6 +126,7 @@ for line in sys.stdin:
                 "continuationEnvelope": "2", "continuationLease": "1",
                 "runScope": "1", "agentSettledReceipt": "2",
                 "contextProvider": "1", "sessionAwaitSettled": True,
+                "sessionSettlementGet": True,
             })
         result(request, {"protocol": "rag-ime.pi-runtime-host", "protocolVersion": "2", "hostVersion": "test",
                          "piVersion": "0.80.7", "capabilities": {"multiSession": True, "maxSessions": 4,
@@ -197,6 +202,16 @@ for line in sys.stdin:
                    "error": {"code": "SETTLEMENT_TIMEOUT", "message": "turn did not settle"}})
         else:
             result(request, settlements[turn_id])
+    elif method == "session.settlement.get":
+        settlement = settlements.get(params["turnId"])
+        if settlement is not None and params.get("clientMessageId") not in {
+            None, "", settlement.get("clientMessageId")
+        }:
+            write({"protocolVersion": "2", "id": request["id"], "ok": False,
+                   "error": {"code": "SETTLED_RECEIPT_MISMATCH",
+                             "message": "client message lineage changed"}})
+        else:
+            result(request, {"settlement": settlement})
     elif method == "session.snapshot":
         if os.environ.get("TEST_SESSION_SNAPSHOT_HANG") == "1":
             time.sleep(2)
@@ -588,7 +603,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         )
         self.assertEqual(
             completed.payload["terminalEvent"],
-            "session.await_settled",
+            "session.settlement.get",
         )
         self.assertEqual(
             completed.payload["runtimeSettlement"]["schemaVersion"],
@@ -600,7 +615,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
             .read_text(encoding="utf-8")
             .splitlines()
         ]
-        self.assertIn("session.await_settled", [item["method"] for item in requests])
+        self.assertIn("session.settlement.get", [item["method"] for item in requests])
         self.assertNotIn(
             "session.control_state",
             [item["method"] for item in requests],

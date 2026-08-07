@@ -33,7 +33,6 @@ def settle_dispatch(facts: SettlementFacts) -> SettlementDecision:
         "complete": ("committed", "completed", "dispatch_completed"),
         "dispatch": ("committed", "waiting", "dispatch_handed_off"),
         "wait": ("committed", "waiting", "dispatch_waited"),
-        "handoff": ("committed", "completed", "dispatch_handed_off"),
         "deliver": ("committed", "completed", "dispatch_delivered"),
         "block": ("committed", "blocked", "dispatch_blocked"),
     }

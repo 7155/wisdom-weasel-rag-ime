@@ -1,5 +1,6 @@
 import type { RoomDispatchEnvelopeV2 } from '@/contracts/generated/room-dispatch-envelope.v2';
 import type { RoomPostV2 } from '@/contracts/generated/room-post.v2';
+import type { RoomScreenStateV1 } from '@/contracts/generated/room-screen-state.v1';
 import type { RoomTaskV3 } from '@/contracts/generated/room-task.v3';
 import type {
   RoomKernelProjection,
@@ -54,17 +55,46 @@ export function buildRoomScreenModel(
   if (!projection) return emptyRoomScreenModel();
 
   const roots = Object.values(projection.rootsById).sort(compareRoots);
-  const activeRoot = selectActiveRoot(projection, roots);
+  const screenState = authoritativeScreenState(projection);
+  const screenStateStale = Boolean(projection.screenState && !screenState);
+  const activeRoot = selectActiveRoot(projection, roots, screenState);
   const rootFrames = roots.map((root) => buildRootFrame(
     projection,
     root,
     root.rootId === activeRoot?.rootId,
+    screenState,
   ));
   const activeFrame = rootFrames.find((frame) => frame.root.rootId === activeRoot?.rootId);
+
+  if (screenStateStale) {
+    return {
+      roots,
+      rootFrames,
+      phase: 'waiting',
+      wait: {
+        kind: 'managed',
+        reason: '正在同步最新任务状态',
+        requiresUserAction: false,
+      },
+      tasks: [],
+      dispatchAttempts: [],
+      header: {
+        state: 'idle',
+        label: '正在同步最新进度',
+        busyState: 'running',
+        needsAttention: false,
+      },
+      composer: {
+        taskBusyState: 'running',
+        acceptsIntervention: false,
+        disabledReason: '正在同步最新任务状态，完成后即可继续发送。',
+      },
+    };
+  }
   const tasks = activeFrame?.tasks ?? [];
   const dispatchAttempts = activeFrame?.dispatchAttempts ?? [];
-  const wait = selectWait(projection, activeRoot);
-  const phase = selectPhase(projection, activeRoot);
+  const wait = selectWait(screenState, activeRoot);
+  const phase = selectPhase(screenState, activeRoot);
   const finalDelivery = activeFrame?.finalDelivery;
   const header = selectHeader(activeRoot);
 
@@ -105,25 +135,38 @@ function emptyRoomScreenModel(): RoomScreenModel {
   };
 }
 
+function authoritativeScreenState(
+  projection: RoomKernelProjection,
+): RoomScreenStateV1 | undefined {
+  const state = projection.screenState;
+  if (!state) return undefined;
+  if (state.activeRootId === null) {
+    return state.activeRootGeneration === null ? state : undefined;
+  }
+  const root = projection.rootsById[state.activeRootId];
+  if (!root || state.activeRootGeneration !== root.generation) return undefined;
+  return state;
+}
+
 function selectActiveRoot(
   projection: RoomKernelProjection,
   roots: RootProjection[],
+  screenState: RoomScreenStateV1 | undefined,
 ): RootProjection | undefined {
-  if (projection.screenState) {
-    return typeof projection.screenState.activeRootId === 'string'
-      ? projection.rootsById[projection.screenState.activeRootId]
+  if (screenState) {
+    return typeof screenState.activeRootId === 'string'
+      ? projection.rootsById[screenState.activeRootId]
       : undefined;
   }
+  if (projection.screenState) return undefined;
   return roots[0];
 }
 
 function selectPhase(
-  projection: RoomKernelProjection,
+  screenState: RoomScreenStateV1 | undefined,
   root: RootProjection | undefined,
 ): string {
-  if (projection.screenState) {
-    return projection.screenState.phase;
-  }
+  if (screenState) return screenState.phase;
   if (!root) return 'idle';
   return {
     pending: 'planning',
@@ -139,10 +182,10 @@ function selectPhase(
 }
 
 function selectWait(
-  projection: RoomKernelProjection,
+  screenState: RoomScreenStateV1 | undefined,
   root: RootProjection | undefined,
 ): RoomScreenWait | undefined {
-  const waitReason = projection.screenState?.waitReason;
+  const waitReason = screenState?.waitReason;
   if (waitReason) {
     return {
       kind: waitReason.kind,
@@ -171,6 +214,7 @@ function buildRootFrame(
   projection: RoomKernelProjection,
   root: RootProjection,
   active: boolean,
+  screenState: RoomScreenStateV1 | undefined,
 ): RoomScreenRootFrame {
   const tasks = Object.values(projection.tasksById)
     .filter((task) => task.rootId === root.rootId && task.taskKind !== 'report')
@@ -194,7 +238,7 @@ function buildRootFrame(
     tasks,
     dispatchAttempts,
     posts,
-    finalDelivery: selectFinalDelivery(projection, root, posts, active),
+    finalDelivery: selectFinalDelivery(projection, root, posts, active, screenState),
   };
 }
 
@@ -203,12 +247,13 @@ function selectFinalDelivery(
   root: RootProjection,
   posts: RoomPostV2[],
   active: boolean,
+  screenState: RoomScreenStateV1 | undefined,
 ): RoomPostV2 | undefined {
   if (root.state !== 'completed' || !root.reporterParticipantId) return undefined;
 
-  if (active && projection.screenState) {
-    const post = typeof projection.screenState.finalDeliveryPostId === 'string'
-      ? projection.postsById[projection.screenState.finalDeliveryPostId]
+  if (active && screenState) {
+    const post = typeof screenState.finalDeliveryPostId === 'string'
+      ? projection.postsById[screenState.finalDeliveryPostId]
       : undefined;
     return post && isFinalDeliveryPost(post, root) ? post : undefined;
   }

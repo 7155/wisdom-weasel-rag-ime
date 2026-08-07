@@ -6,7 +6,9 @@ from rag_ime.room_domain.completion import CompletionFacts, evaluate_completion
 from rag_ime.room_domain.review import ReviewTarget, evaluate_review
 from rag_ime.room_domain.scheduling import (
     DomainPolicyError,
+    dependent_closure,
     dependency_ids,
+    derived_task_waves,
     runnable_frontier,
     validate_task_graph,
 )
@@ -114,6 +116,8 @@ class RoomSchedulingPolicyTests(unittest.TestCase):
         self.assertEqual(runnable_frontier(graph, completed=set()), ["a", "b"])
         self.assertEqual(runnable_frontier(graph, completed={"a", "b"}), ["c"])
         self.assertEqual(runnable_frontier(graph, completed={"a", "b", "c"}), ["d"])
+        self.assertEqual(derived_task_waves(graph), {"a": 1, "b": 1, "c": 2, "d": 3})
+        self.assertEqual(dependent_closure(graph, affected={"a"}), ["a", "c", "d"])
 
 
 class RoomSettlementPolicyTests(unittest.TestCase):
@@ -142,6 +146,15 @@ class RoomSettlementPolicyTests(unittest.TestCase):
                 dispatch_id="dispatch:a", generation=1,
                 dispatch_state="failed", task_state="failed",
                 decision="complete", idempotency_key="settle:a",
+            ))
+
+    def test_legacy_handoff_cannot_complete_a_stable_task(self) -> None:
+        with self.assertRaisesRegex(DomainPolicyError, "decision is invalid"):
+            settle_dispatch(SettlementFacts(
+                room_id="room:a", root_id="root:a", task_id="task:a",
+                dispatch_id="dispatch:a", generation=1,
+                dispatch_state="running", task_state="active",
+                decision="handoff", idempotency_key="settle:handoff",
             ))
 
 

@@ -1,19 +1,27 @@
 from __future__ import annotations
 
 import json
+import secrets
 import sqlite3
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from pathlib import Path
 
 from ..db import apply_database_migrations
 
 
-class RoomApplicationOutbox:
-    """At-least-once dispatcher with failure isolation at the Room boundary."""
+class StaleRoomOutboxLease(RuntimeError):
+    """A late dispatcher attempted to settle a lease that was replaced."""
 
-    def __init__(self, db_path: str | Path) -> None:
+
+class RoomApplicationOutbox:
+    """At-least-once dispatcher with lease fencing and per-Room isolation."""
+
+    def __init__(self, db_path: str | Path, *, lease_ms: int = 120_000) -> None:
         self.db_path = Path(db_path)
+        self.lease_ms = int(lease_ms)
+        if self.lease_ms < 1_000 or self.lease_ms > 3_600_000:
+            raise ValueError("lease_ms must be between 1000 and 3600000")
 
     def initialize(self) -> int:
         with self._connect(immediate=True) as conn:
@@ -28,10 +36,9 @@ class RoomApplicationOutbox:
         now_ms: int | None = None,
         limit: int = 100,
     ) -> list[dict[str, object]]:
-        timestamp = int(now_ms if now_ms is not None else time.time() * 1000)
         applied: list[dict[str, object]] = []
         for _ in range(max(0, min(int(limit), 1000))):
-            leased = self._lease(room_id, now_ms=timestamp)
+            leased = self._lease(room_id, now_ms=self._now(now_ms))
             if leased is None:
                 break
             callback = (
@@ -42,13 +49,25 @@ class RoomApplicationOutbox:
             try:
                 callback(room_id)
             except Exception as exc:
-                self._fail(
-                    str(leased["outboxId"]),
-                    error=f"{type(exc).__name__}: {exc}"[:500],
-                    now_ms=timestamp,
-                )
+                try:
+                    self._fail(
+                        str(leased["outboxId"]),
+                        lease_id=str(leased["leaseId"]),
+                        attempt=int(leased["attempt"]),
+                        error=f"{type(exc).__name__}: {exc}"[:500],
+                        now_ms=self._now(now_ms),
+                    )
+                except StaleRoomOutboxLease:
+                    # Preserve the callback failure while leaving the replacement
+                    # worker's newer lease untouched.
+                    pass
                 raise
-            self._apply(str(leased["outboxId"]), now_ms=timestamp)
+            self._apply(
+                str(leased["outboxId"]),
+                lease_id=str(leased["leaseId"]),
+                attempt=int(leased["attempt"]),
+                now_ms=self._now(now_ms),
+            )
             applied.append(leased)
         return applied
 
@@ -91,7 +110,7 @@ class RoomApplicationOutbox:
     def pending(self, room_id: str) -> list[dict[str, object]]:
         with self._connect() as conn:
             rows = conn.execute(
-                """SELECT payload_json,state,attempt,last_error
+                """SELECT payload_json,state,attempt,lease_id,lease_until_ms,last_error
                    FROM room_application_outbox
                    WHERE room_id=? AND state!='applied'
                    ORDER BY created_at_ms,outbox_id""",
@@ -102,6 +121,8 @@ class RoomApplicationOutbox:
                 **json.loads(str(row["payload_json"])),
                 "state": str(row["state"]),
                 "attempt": int(row["attempt"]),
+                "leaseId": str(row["lease_id"]),
+                "leaseUntilMs": int(row["lease_until_ms"]),
                 "lastError": str(row["last_error"]),
             }
             for row in rows
@@ -135,46 +156,91 @@ class RoomApplicationOutbox:
             if state == "leased" and int(row["lease_until_ms"]) > int(now_ms):
                 return None
             attempt = int(row["attempt"]) + 1
-            conn.execute(
+            lease_id = secrets.token_hex(16)
+            cursor = conn.execute(
                 """UPDATE room_application_outbox
-                   SET state='leased',attempt=?,lease_until_ms=?,updated_at_ms=?
-                   WHERE outbox_id=?""",
-                (attempt, int(now_ms) + 30_000, int(now_ms), row["outbox_id"]),
+                   SET state='leased',attempt=?,lease_id=?,lease_until_ms=?,updated_at_ms=?
+                   WHERE outbox_id=? AND (
+                     (state IN ('pending','retry_wait') AND available_at_ms<=?)
+                     OR (state='leased' AND lease_until_ms<=?)
+                   )""",
+                (
+                    attempt,
+                    lease_id,
+                    int(now_ms) + self.lease_ms,
+                    int(now_ms),
+                    row["outbox_id"],
+                    int(now_ms),
+                    int(now_ms),
+                ),
             )
+            if cursor.rowcount != 1:
+                return None
             return {
                 **json.loads(str(row["payload_json"])),
                 "attempt": attempt,
+                "leaseId": lease_id,
+                "leaseUntilMs": int(now_ms) + self.lease_ms,
             }
 
-    def _apply(self, outbox_id: str, *, now_ms: int) -> None:
+    def _apply(
+        self,
+        outbox_id: str,
+        *,
+        lease_id: str,
+        attempt: int,
+        now_ms: int,
+    ) -> None:
         with self._connect(immediate=True) as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """UPDATE room_application_outbox
-                   SET state='applied',lease_until_ms=0,last_error='',updated_at_ms=?
-                   WHERE outbox_id=? AND state='leased'""",
-                (int(now_ms), outbox_id),
+                   SET state='applied',lease_id='',lease_until_ms=0,
+                       last_error='',updated_at_ms=?
+                   WHERE outbox_id=? AND state='leased'
+                     AND lease_id=? AND attempt=?""",
+                (int(now_ms), outbox_id, lease_id, int(attempt)),
             )
+            if cursor.rowcount != 1:
+                raise StaleRoomOutboxLease(
+                    f"outbox lease was replaced before apply: {outbox_id}"
+                )
 
-    def _fail(self, outbox_id: str, *, error: str, now_ms: int) -> None:
+    def _fail(
+        self,
+        outbox_id: str,
+        *,
+        lease_id: str,
+        attempt: int,
+        error: str,
+        now_ms: int,
+    ) -> None:
+        state = "dead_letter" if int(attempt) >= 5 else "retry_wait"
         with self._connect(immediate=True) as conn:
-            row = conn.execute(
-                "SELECT attempt FROM room_application_outbox WHERE outbox_id=?",
-                (outbox_id,),
-            ).fetchone()
-            attempt = int(row["attempt"]) if row is not None else 1
-            state = "dead_letter" if attempt >= 5 else "retry_wait"
-            conn.execute(
+            cursor = conn.execute(
                 """UPDATE room_application_outbox
-                   SET state=?,available_at_ms=?,lease_until_ms=0,
-                       last_error=?,updated_at_ms=? WHERE outbox_id=?""",
+                   SET state=?,available_at_ms=?,lease_id='',lease_until_ms=0,
+                       last_error=?,updated_at_ms=?
+                   WHERE outbox_id=? AND state='leased'
+                     AND lease_id=? AND attempt=?""",
                 (
                     state,
-                    int(now_ms) + min(30_000, 1_000 * (2 ** max(0, attempt - 1))),
+                    int(now_ms)
+                    + min(30_000, 1_000 * (2 ** max(0, int(attempt) - 1))),
                     error,
                     int(now_ms),
                     outbox_id,
+                    lease_id,
+                    int(attempt),
                 ),
             )
+            if cursor.rowcount != 1:
+                raise StaleRoomOutboxLease(
+                    f"outbox lease was replaced before failure recording: {outbox_id}"
+                )
+
+    @staticmethod
+    def _now(override: int | None) -> int:
+        return int(override if override is not None else time.time() * 1000)
 
     def _connect(self, *, immediate: bool = False):
         return _Connection(self.db_path, immediate=immediate)

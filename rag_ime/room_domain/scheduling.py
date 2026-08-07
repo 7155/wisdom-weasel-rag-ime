@@ -70,6 +70,48 @@ def runnable_frontier(
     ]
 
 
+def dependent_closure(
+    graph: Mapping[str, Sequence[str]],
+    *,
+    affected: set[str],
+) -> list[str]:
+    """Return affected Tasks plus every Task that transitively depends on them."""
+
+    validate_task_graph(graph)
+    unknown = set(affected) - set(graph)
+    if unknown:
+        raise DomainPolicyError("affected Task is outside the approved graph")
+    closure = set(affected)
+    changed = True
+    while changed:
+        changed = False
+        for task_id, dependencies in graph.items():
+            if task_id not in closure and closure.intersection(dependencies):
+                closure.add(task_id)
+                changed = True
+    return sorted(closure)
+
+
+def derived_task_waves(
+    graph: Mapping[str, Sequence[str]],
+) -> dict[str, int]:
+    """Project stable waves from the dependency authority; never trust prose."""
+
+    validate_task_graph(graph)
+    completed: set[str] = set()
+    waves: dict[str, int] = {}
+    wave = 1
+    while len(completed) < len(graph):
+        ready = runnable_frontier(graph, completed=completed)
+        if not ready:
+            raise DomainPolicyError("task dependency graph cannot advance")
+        for task_id in ready:
+            waves[task_id] = wave
+        completed.update(ready)
+        wave += 1
+    return waves
+
+
 def payload_depends_on(
     payload: Mapping[str, object],
     target_dispatch_id: str,

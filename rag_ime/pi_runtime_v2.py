@@ -186,6 +186,7 @@ def _runtime_primitive_capabilities(value: object) -> dict[str, object]:
             else ""
         ),
         "sessionAwaitSettled": bool(source.get("sessionAwaitSettled")),
+        "sessionSettlementGet": bool(source.get("sessionSettlementGet")),
         "sessionContinuationQueue": bool(source.get("sessionContinuationQueue")),
         "sessionCancelOperationRegistry": bool(
             source.get("sessionCancelOperationRegistry")
@@ -213,6 +214,7 @@ _AGENT_RUN_STOP_REASONS = {
     "error",
     "cancelled",
     "continuation_scheduled",
+    "continuation_unsettled",
     "settlement_rejected",
     "operations_pending",
 }
@@ -249,11 +251,23 @@ def _agent_settled_receipt_v2(
     if (
         not _is_non_negative_integer(transcript.get("messageCount"))
         or not _is_non_negative_integer(transcript.get("entryCount"))
+        or not str(transcript.get("lineageHash") or "").strip()
         or not str(transcript.get("contentHash") or "").strip()
         or any(
             not isinstance(continuations.get(field), list)
-            for field in ("pendingIds", "leasedIds", "terminalIds")
+            for field in (
+                "pendingIds",
+                "readyIds",
+                "scheduledIds",
+                "leasedIds",
+                "terminalIds",
+            )
         )
+        or not _is_non_negative_integer(continuations.get("generation"))
+        or not _is_non_negative_integer(
+            continuations.get("terminalIdsOmitted")
+        )
+        or not str(continuations.get("idsHash") or "").strip()
         or not isinstance(continuations.get("counts"), Mapping)
         or not _is_non_negative_integer(operations.get("pending"))
         or not isinstance(operations.get("pendingByKind"), Mapping)
@@ -265,7 +279,13 @@ def _agent_settled_receipt_v2(
         raise PiRuntimeError("Pi Runtime Host returned incomplete Agent settlement evidence")
     continuation_ids = [
         item
-        for field in ("pendingIds", "leasedIds", "terminalIds")
+        for field in (
+            "pendingIds",
+            "readyIds",
+            "scheduledIds",
+            "leasedIds",
+            "terminalIds",
+        )
         for item in continuations.get(field) or []
     ]
     count_maps = (
@@ -3773,6 +3793,9 @@ class PiRuntimeHostManager:
             state.settle_timer = None
             expected_client_message_id = state.client_message_id
             client = self._client
+            primitives = _runtime_primitive_capabilities(
+                self._host_capabilities.get("runtimePrimitives")
+            )
         if client is None or not client.running:
             return
         binding = self.sessions.runtime_binding(session_id) or {}
@@ -3786,12 +3809,30 @@ class PiRuntimeHostManager:
             return
         timeout_ms = 10_000
         try:
-            settlement = _turn_settlement_receipt_v1(
-                client.send(
+            settlement_result: object = None
+            settlement_method = "session.await_settled"
+            if primitives.get("sessionSettlementGet") is True:
+                recovered = as_mapping(
+                    client.send(
+                        "session.settlement.get",
+                        {
+                            "sessionId": session_id,
+                            "turnId": turn_id,
+                            "clientMessageId": expected_client_message_id,
+                        },
+                        timeout=self.config.command_timeout_seconds,
+                    )
+                )
+                settlement_result = recovered.get("settlement")
+                if isinstance(settlement_result, Mapping):
+                    settlement_method = "session.settlement.get"
+            if not isinstance(settlement_result, Mapping):
+                settlement_result = client.send(
                     "session.await_settled",
                     {
                         "sessionId": session_id,
                         "turnId": turn_id,
+                        "clientMessageId": expected_client_message_id,
                         "allowSuspended": False,
                         "timeoutMs": timeout_ms,
                     },
@@ -3799,7 +3840,9 @@ class PiRuntimeHostManager:
                         self.config.command_timeout_seconds,
                         timeout_ms / 1000 + 2.0,
                     ),
-                ),
+                )
+            settlement = _turn_settlement_receipt_v1(
+                settlement_result,
                 session_id=session_id,
                 runtime_session_id=runtime_session_id,
                 turn_id=turn_id,
@@ -3839,7 +3882,7 @@ class PiRuntimeHostManager:
             turn_id,
             as_mapping(settlement.get("receipt")),
             runtime_session_id=runtime_session_id,
-            terminal_event="session.await_settled",
+            terminal_event=settlement_method,
         )
 
     def _apply_runtime_settlement(

@@ -67,13 +67,13 @@
     },
     {
       "id": "managed_pi_v2_source_contract",
-      "evidence": "The public build contract now requires Pi commit aa3d7f5c41f976264414b8962ebe5a52d728a4d6 and source-contract sha256 672dc222241189cd85dc10cf0f08eafa5c5e0691a175cc9f02a2a479956df068. In addition to the existing Goal, memory-refresh, coding-tool and Room fences, this source pin adds leased Continuation, hierarchical RunScope, AgentSettledReceiptV2, ContextProviderPipeline, exact session.await_settled, a cancellation fence that waits until the exact settlement receipt reaches Host listeners, and explicit product-Session/runtime-transcript identity binding. Source review is not managed-runtime installation or GUI acceptance evidence."
+      "evidence": "The public build contract now requires Pi commit 3e2bac77319571ac0047a83529aae241db4b88a3 and source-contract sha256 5be25dab5cf4d802d89ccc941802820ae13ea5f4834363d7cf8ace32dbbf1620. In addition to the existing Goal, memory-refresh, coding-tool and Room fences, this source pin adds exact Continuation lease acknowledgement after Session persistence, sealed hierarchical RunScope settlement, observation-only agent_settled hooks, bounded event-first settlement recovery through session.settlement.get, safer ContextProvider assembly, and explicit product-Session/runtime-transcript identity binding. Source review is not managed-runtime installation or GUI acceptance evidence."
     }
   ],
   "blockers": [
     {
-      "id": "managed_pi_aa3d7f5c_runtime_acceptance_pending",
-      "detail": "The source and packager contract now require Pi aa3d7f5c41f976264414b8962ebe5a52d728a4d6, but a clean managed payload build, staged exact-settlement canary, installation, Session migration verification and real Room/chat GUI acceptance have not yet been recorded."
+      "id": "managed_pi_3e2bac77_runtime_acceptance_pending",
+      "detail": "The source and packager contract now require Pi 3e2bac77319571ac0047a83529aae241db4b88a3, but a clean managed payload build, staged exact-settlement canary, installation, Session migration verification and real Room/chat GUI acceptance have not yet been recorded."
     },
     {
       "id": "strict_foreground_soak_not_green",

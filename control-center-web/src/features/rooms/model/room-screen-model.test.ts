@@ -118,6 +118,28 @@ describe('buildRoomScreenModel', () => {
     expect(model.tasks.map((item) => item.taskId)).toEqual(['task-a']);
     expect(model.dispatchAttempts.map((item) => item.dispatchId)).toEqual(['dispatch-current']);
   });
+
+  it('fails closed when screen state and its active Root generation disagree', () => {
+    const projection = createRoomKernelProjection('room-a');
+    projection.rootsById['root-a'] = root({ generation: 4 });
+    projection.tasksById['task-a'] = task();
+    projection.screenState = screenState({
+      activeRootId: 'root-a',
+      activeRootGeneration: 3,
+      phase: 'completed',
+      finalDeliveryPostId: 'post-final',
+    });
+    projection.postsById['post-final'] = finalPost();
+
+    const model = buildRoomScreenModel(projection);
+
+    expect(model.activeRoot).toBeUndefined();
+    expect(model.phase).toBe('waiting');
+    expect(model.tasks).toEqual([]);
+    expect(model.finalDelivery).toBeUndefined();
+    expect(model.header.label).toBe('正在同步最新进度');
+    expect(model.composer.acceptsIntervention).toBe(false);
+  });
 });
 
 function screenState(

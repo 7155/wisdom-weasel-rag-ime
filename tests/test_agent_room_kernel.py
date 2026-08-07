@@ -29,6 +29,7 @@ from rag_ime.agent_room_kernel_contracts import (
 )
 from rag_ime.agent_room_workspace_ledger import RoomWorkspaceLedgerStore
 from rag_ime.db import latest_migration_version
+from rag_ime.room_application.plans import RoomPlanRepository
 
 
 class RoomKernelCoreTests(unittest.TestCase):
@@ -530,6 +531,154 @@ class RoomKernelCoreTests(unittest.TestCase):
         )
         self.assertEqual(transferred_back["ownershipRevision"], 2)
         self.assertEqual(transferred_back["state"], "active")
+
+    def test_plan_revision_restarts_only_affected_dependency_closure(self) -> None:
+        self.store.create_root(
+            root("root:1"),
+            budget=20,
+            max_hops=3,
+            max_depth=2,
+            acceptance_criteria=("ac:1",),
+            now_ms=1,
+        )
+
+        def planned_task(
+            task_id: str,
+            *,
+            owner: str,
+            dependencies: list[str],
+            wave: int,
+        ) -> dict[str, object]:
+            return {
+                **task(task_id),
+                "planRevisionId": "plan:1",
+                "planTaskKind": "feature",
+                "dependencyTaskIds": dependencies,
+                "writeBoundary": "bounded test scope",
+                "planWave": wave,
+                "workspacePolicy": "read_only",
+                "workspaceIntegrationState": "not_required",
+                "workspaceIntegrationRef": None,
+                "currentOwnerParticipantId": owner,
+            }
+
+        self.store.create_task(
+            planned_task("task:a", owner="participant:a", dependencies=[], wave=1),
+            now_ms=2,
+        )
+        self.store.create_task(
+            planned_task("task:b", owner="participant:b", dependencies=[], wave=1),
+            now_ms=2,
+        )
+        self.store.create_task(
+            planned_task("task:c", owner="participant:c", dependencies=["task:a"], wave=2),
+            now_ms=2,
+        )
+
+        def plan_task_spec(
+            task_id: str,
+            *,
+            owner: str,
+            dependencies: list[str],
+            wave: int,
+        ) -> dict[str, object]:
+            return {
+                "taskId": task_id,
+                "kind": "feature",
+                "title": task_id,
+                "userOutcome": f"完成 {task_id}",
+                "ownerParticipantId": owner,
+                "participantRef": owner,
+                "dependencyTaskIds": dependencies,
+                "dependencyTitles": list(dependencies),
+                "wave": wave,
+                "writeBoundary": "bounded test scope",
+                "workspacePolicy": "read_only",
+                "acceptanceCriterionIds": ["ac:1"],
+                "scopeTaskIds": [],
+                "authorParticipantIds": [],
+            }
+
+        specs = [
+            plan_task_spec("task:a", owner="participant:a", dependencies=[], wave=1),
+            plan_task_spec("task:b", owner="participant:b", dependencies=[], wave=1),
+            plan_task_spec("task:c", owner="participant:c", dependencies=["task:a"], wave=2),
+        ]
+        proposed = {
+            "schemaVersion": "wisdom-weasel.room-plan-revision.v1",
+            "planRevisionId": "plan:1",
+            "rootId": "root:1",
+            "revision": 1,
+            "state": "proposed",
+            "requirementCatalogRevisionId": "requirements:1",
+            "tasks": specs,
+            "createdAtMs": 2,
+            "activatedAtMs": None,
+            "workDocumentRef": None,
+        }
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            RoomPlanRepository.propose(conn, proposed)
+            active = RoomPlanRepository.activate(
+                conn,
+                plan_revision_id="plan:1",
+                work_document_ref={
+                    "documentId": "document:1",
+                    "contentSha256": "a" * 64,
+                    "documentRevision": 1,
+                },
+                activated_at_ms=3,
+            )
+            conn.commit()
+        for dispatch_id, task_id, owner in (
+            ("dispatch:a", "task:a", "participant:a"),
+            ("dispatch:b", "task:b", "participant:b"),
+            ("dispatch:c", "task:c", "participant:c"),
+        ):
+            self.store.enqueue_dispatch(
+                dispatch(
+                    dispatch_id,
+                    key=dispatch_id,
+                    target=owner,
+                    task_id=task_id,
+                ),
+                now_ms=4,
+            )
+        replacement = {
+            **active,
+            "planRevisionId": "plan:2",
+            "revision": 2,
+            "requirementCatalogRevisionId": "requirements:2",
+            "createdAtMs": 5,
+            "activatedAtMs": 5,
+        }
+
+        result = self.store.reconcile_active_plan(
+            "root:1",
+            expected_plan_revision_id="plan:1",
+            replacement_plan=replacement,
+            affected_task_ids=["task:a"],
+            source_dispatch_id="dispatch:a",
+            intervention_id="intervention:1",
+            now_ms=5,
+        )
+
+        self.assertEqual(result["affectedTaskIds"], ["task:a", "task:c"])
+        self.assertEqual(result["cancelledDispatchIds"], ["dispatch:c"])
+        self.assertEqual(self.store.dispatch("dispatch:a")["state"], "pending")
+        self.assertEqual(self.store.dispatch("dispatch:b")["state"], "pending")
+        self.assertEqual(self.store.dispatch("dispatch:c")["state"], "cancelled")
+        self.assertEqual(self.store.task("task:a")["state"], "active")
+        self.assertEqual(self.store.task("task:b")["state"], "active")
+        self.assertEqual(self.store.task("task:c")["state"], "pending")
+        self.assertEqual(self.store.task("task:b")["planRevisionId"], "plan:2")
+        with sqlite3.connect(self.db_path) as conn:
+            states = dict(
+                conn.execute(
+                    "SELECT plan_revision_id,state FROM room_plan_revisions"
+                ).fetchall()
+            )
+        self.assertEqual(states, {"plan:1": "superseded", "plan:2": "active"})
 
     def test_reviewer_revision_dispatch_marks_review_changes_requested(
         self,

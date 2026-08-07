@@ -44,6 +44,7 @@ _MAX_RUNTIME_FILES = 100_000
 _MAX_RETIRED_GENERATIONS = 64
 REQUIRED_ROOM_RUNTIME_METHODS = (
     "session.await_settled",
+    "session.settlement.get",
     "room.dispatch",
     "room.cancel",
 )
@@ -51,6 +52,7 @@ REQUIRED_ACCEPTANCE_METHODS = (
     "session.open",
     "room.dispatch",
     "session.await_settled",
+    "session.settlement.get",
     "session.debug.context",
     "room.cancel",
 )

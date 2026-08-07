@@ -105,12 +105,14 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                     extra = (
                         'export type RuntimeMethod = | "session.control_state" '
                         '| "session.await_settled" | "room.dispatch" '
+                        '| "session.settlement.get" '
                         '| "room.cancel";\n'
                     )
                 elif key == "runtimeHost":
                     extra = (
                         'switch (method) { case "session.control_state": break; '
                         'case "session.await_settled": break; '
+                        'case "session.settlement.get": break; '
                         'case "room.dispatch": break; '
                         'case "room.cancel": break; }\n'
                     )
@@ -151,6 +153,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                         "requiredMethods": [
                             "session.control_state",
                             "session.await_settled",
+                            "session.settlement.get",
                             "room.dispatch",
                             "room.cancel",
                         ],
@@ -168,6 +171,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 (
                     'export const methods = ["session.control_state", '
                     '"session.await_settled", '
+                    '"session.settlement.get", '
                     '"room.dispatch", "room.cancel"] as const;\n'
                 ),
                 encoding="utf-8",
@@ -220,7 +224,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 self.assertTrue(set(required).issubset(declared_markers[key]))
 
         blockers = {item["id"] for item in product_status["blockers"]}
-        self.assertIn("managed_pi_aa3d7f5c_runtime_acceptance_pending", blockers)
+        self.assertIn("managed_pi_3e2bac77_runtime_acceptance_pending", blockers)
         source_contract = next(
             item
             for item in product_status["resolvedBlockers"]
@@ -298,6 +302,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         for method in (
             "session.control_state",
             "session.await_settled",
+            "session.settlement.get",
             "room.dispatch",
             "room.cancel",
         ):
@@ -325,6 +330,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             "session.open",
             "room.dispatch",
             "session.await_settled",
+            "session.settlement.get",
             "session.debug.context",
             "room.cancel",
         ):

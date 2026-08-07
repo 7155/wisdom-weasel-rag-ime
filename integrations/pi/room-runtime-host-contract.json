@@ -3,10 +3,11 @@
   "sourceRepository": "https://github.com/7155/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "aa3d7f5c41f976264414b8962ebe5a52d728a4d6",
+  "minimumHandlersCommit": "3e2bac77319571ac0047a83529aae241db4b88a3",
   "requiredMethods": [
     "session.control_state",
     "session.await_settled",
+    "session.settlement.get",
     "room.dispatch",
     "room.cancel"
   ],
@@ -46,11 +47,14 @@
     "protocol": [
       "export const PROTOCOL_VERSION = \"2\" as const;",
       "| \"session.await_settled\"",
+      "| \"session.settlement.get\"",
       "export function parseRoomCancelParams("
     ],
     "runtimeHost": [
       "case \"session.control_state\"",
       "case \"session.await_settled\"",
+      "case \"session.settlement.get\"",
+      "sessionSettlementGet: true",
       "case \"room.dispatch\"",
       "case \"room.cancel\"",
       "const lineage = parseRoomCancelParams(params);",

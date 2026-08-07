@@ -35,7 +35,9 @@ from .db import apply_database_migrations
 from .room_domain.completion import CompletionFacts, evaluate_completion
 from .room_domain.model import DomainPolicyError
 from .room_domain.scheduling import (
+    dependent_closure,
     dependency_ids as domain_dependency_ids,
+    derived_task_waves,
     payload_depends_on as domain_payload_depends_on,
     runnable_frontier,
     validate_task_graph,
@@ -14593,6 +14595,220 @@ class RoomKernelStore:
 
         with self._connect() as conn:
             return self._plan_runnable_frontier_locked(conn, root_id)
+
+    def reconcile_active_plan(
+        self,
+        root_id: str,
+        *,
+        expected_plan_revision_id: str,
+        replacement_plan: Mapping[str, object],
+        affected_task_ids: Sequence[str],
+        source_dispatch_id: str,
+        intervention_id: str,
+        now_ms: int,
+        _conn: sqlite3.Connection | None = None,
+    ) -> dict[str, object]:
+        """Supersede one plan and restart only its affected dependency closure."""
+
+        with self._write_connection(_conn) as conn:
+            root = self._root_row(conn, _required(root_id, "root_id"))
+            current = RoomPlanRepository.latest(conn, root_id)
+            if (
+                not isinstance(current, Mapping)
+                or current.get("state") != "active"
+                or str(current.get("planRevisionId") or "")
+                != str(expected_plan_revision_id)
+            ):
+                raise RoomKernelFenceError(
+                    "active PlanRevision changed before reconciliation"
+                )
+            specs = [
+                dict(value)
+                for value in replacement_plan.get("tasks", [])
+                if isinstance(value, Mapping)
+            ]
+            graph = {
+                str(value.get("taskId") or ""): [
+                    str(item)
+                    for item in value.get("dependencyTaskIds") or []
+                ]
+                for value in specs
+            }
+            waves = derived_task_waves(graph)
+            if any(
+                int(value.get("wave") or 0) != waves[str(value["taskId"])]
+                for value in specs
+            ):
+                raise RoomKernelFenceError(
+                    "replacement Plan wave is not derived from its dependency graph"
+                )
+            affected = dependent_closure(
+                graph,
+                affected={str(value) for value in affected_task_ids},
+            )
+            if not affected:
+                raise RoomKernelFenceError(
+                    "Plan reconciliation requires at least one affected Task"
+                )
+            source_dispatch = self.dispatch(source_dispatch_id, conn=conn)
+            source_task_id = str(source_dispatch.get("taskId") or "")
+            if (
+                str(source_dispatch.get("rootId") or "") != root_id
+                or str(source_dispatch.get("state") or "") not in _ACTIVE_DISPATCH_STATES
+            ):
+                raise RoomKernelFenceError(
+                    "Plan reconciliation source Dispatch is no longer active"
+                )
+            reset_ids = [
+                task_id for task_id in affected if task_id != source_task_id
+            ]
+            active_dispatch_rows = (
+                conn.execute(
+                    f"""SELECT dispatch_id FROM room_kernel_dispatches
+                       WHERE root_id=? AND task_id IN ({','.join('?' for _ in reset_ids)})
+                         AND state IN ({','.join('?' for _ in _ACTIVE_DISPATCH_STATES)})
+                       ORDER BY dispatch_id""",
+                    (root_id, *reset_ids, *_ACTIVE_DISPATCH_STATES),
+                ).fetchall()
+                if reset_ids
+                else []
+            )
+            cancelled_dispatch_ids = [
+                str(row["dispatch_id"]) for row in active_dispatch_rows
+            ]
+            runtime_targets = (
+                conn.execute(
+                    f"""SELECT dispatch_id,session_id
+                       FROM room_kernel_runtime_effects
+                       WHERE root_id=?
+                         AND dispatch_id IN ({','.join('?' for _ in cancelled_dispatch_ids)})
+                         AND state IN ('intent','accepted','unknown')""",
+                    (root_id, *cancelled_dispatch_ids),
+                ).fetchall()
+                if cancelled_dispatch_ids
+                else []
+            )
+            if cancelled_dispatch_ids:
+                self._cancel_dispatch_ids(
+                    conn,
+                    cancelled_dispatch_ids,
+                    now_ms=now_ms,
+                )
+            runtime_ids = {str(row["dispatch_id"]) for row in runtime_targets}
+            for target in runtime_targets:
+                self._enqueue_cancel(
+                    conn,
+                    root_id=root_id,
+                    dispatch_id=str(target["dispatch_id"]),
+                    session_id=str(target["session_id"]),
+                    generation=int(root["generation"]),
+                    terminalize_root=False,
+                    now_ms=now_ms,
+                )
+            for dispatch_id in set(cancelled_dispatch_ids) - runtime_ids:
+                conn.execute(
+                    """UPDATE room_kernel_abort_scopes
+                       SET state='cancelled',updated_at_ms=?
+                       WHERE dispatch_id=?
+                         AND state IN ('registered','cancelling','unknown')""",
+                    (int(now_ms), dispatch_id),
+                )
+                self._settle_dispatch_limits(
+                    conn,
+                    dispatch_id,
+                    usage=None,
+                    consumed=False,
+                    now_ms=now_ms,
+                )
+            replacement_id = str(replacement_plan["planRevisionId"])
+            spec_by_id = {str(value["taskId"]): value for value in specs}
+            for task_id in graph:
+                task = self.task(task_id, conn=conn)
+                next_state = str(task.get("state") or "")
+                if task_id in reset_ids:
+                    if next_state in {"failed", "cancelled"}:
+                        raise RoomKernelFenceError(
+                            "terminal failed Task requires explicit recovery before replanning"
+                        )
+                    next_state = "pending"
+                updated_task = {
+                    **task,
+                    "planRevisionId": replacement_id,
+                    "planWave": int(spec_by_id[task_id]["wave"]),
+                    "revision": int(task.get("revision") or 0) + 1,
+                    "state": next_state,
+                    "contextEvidenceRefs": list(
+                        dict.fromkeys(
+                            [
+                                *(task.get("contextEvidenceRefs") or []),
+                                replacement_id,
+                                intervention_id,
+                            ]
+                        )
+                    )[:32],
+                }
+                if task_id in reset_ids:
+                    if updated_task.get("workspacePolicy") == "isolated_writable":
+                        updated_task["workspaceIntegrationState"] = "pending"
+                        updated_task["workspaceIntegrationRef"] = None
+                    if updated_task.get("taskKind") == "review":
+                        updated_task["reviewState"] = "required"
+                validate_kernel_contract("roomTask", updated_task)
+                conn.execute(
+                    """UPDATE room_kernel_tasks
+                       SET state=?,payload_json=?,updated_at_ms=?
+                       WHERE task_id=?""",
+                    (
+                        next_state,
+                        _json(updated_task),
+                        int(now_ms),
+                        task_id,
+                    ),
+                )
+            active_plan = RoomPlanRepository.replace_active(
+                conn,
+                expected_plan_revision_id=expected_plan_revision_id,
+                payload=replacement_plan,
+            )
+            receipt = self._receipt(
+                conn,
+                root_id=root_id,
+                command_id=None,
+                receipt_kind="accepted",
+                status="applied",
+                generation=int(root["generation"]),
+                details={
+                    "purpose": "plan_revision_reconciled",
+                    "interventionId": intervention_id,
+                    "previousPlanRevisionId": expected_plan_revision_id,
+                    "planRevisionId": replacement_id,
+                    "affectedTaskIds": affected,
+                    "cancelledDispatchIds": cancelled_dispatch_ids,
+                    "pendingCancelDispatchIds": sorted(runtime_ids),
+                    "sourceDispatchId": source_dispatch_id,
+                },
+                now_ms=now_ms,
+            )
+            RoomDomainEventRepository.append(
+                conn,
+                past_tense_event(
+                    kind="plan_revision_reconciled",
+                    room_id=str(root["room_id"]),
+                    root_id=root_id,
+                    entity_id=replacement_id,
+                    generation=int(root["generation"]),
+                    idempotency_key=str(receipt["receiptId"]),
+                    payload=dict(receipt["details"]),
+                ),
+                created_at_ms=int(now_ms),
+            )
+            return {
+                "planRevision": active_plan,
+                "affectedTaskIds": affected,
+                "cancelledDispatchIds": cancelled_dispatch_ids,
+                "pendingCancelDispatchIds": sorted(runtime_ids),
+                "receipt": receipt,
+            }
 
     def _plan_runnable_frontier_locked(
         self,

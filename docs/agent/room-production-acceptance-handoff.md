@@ -423,17 +423,17 @@ and cleanup, not whether any of those four domains may be dropped. Runtime
 data, caches, superseded generated copies, and genuinely unconsumed obsolete
 code remain excluded from source integration.
 
-## 11. 2026-08-07 Pi Runtime SDK v2 PAW 接入进度
+## 11. 2026-08-07 Pi Runtime SDK v2 与 Room 架构迁移当前进度
 
-本 worktree 已开始接入 Pi 提交
-`aa3d7f5c41f976264414b8962ebe5a52d728a4d6`，当前精确边界如下：
+本 worktree 已接入并固定到已推送 Pi 提交
+`3e2bac77319571ac0047a83529aae241db4b88a3`，当前精确边界如下：
 
 - PAW 已识别 Continuation lease、RunScope、AgentSettledReceiptV2、
-  ContextProvider 和 `session.await_settled` 能力。
+  ContextProvider、`session.settlement.get` 和 `session.await_settled` 能力。
 - 普通聊天与 Room 的 Runtime 状态共用 exact Turn settlement；丢失
-  `agent_settled` 事件时按相同 `sessionId + turnId` 恢复，不再用 idle
-  推断新 Runtime 的完成状态。旧 `control_state` 路径仅保留给未升级的
-  Runtime。
+  `agent_settled` 事件时先按相同 `sessionId + turnId` 非阻塞查询，再有界
+  等待，不再用 idle 推断新 Runtime 的完成状态。旧 `control_state` 路径
+  仅保留给没有协商 V2 settlement 的 Runtime。
 - 已有 Session 在同一 `externalSessionId`、同一 transcript 文件上原位
   重开；身份或路径漂移会失败关闭。成功后 binding 记录 runtime、
   settlement、context 和 migration history。
@@ -442,25 +442,29 @@ code remain excluded from source integration.
   通过 binding 显式关联。这是旧 Session 可原位迁移且 receipt 不被篡改的边界。
 - Room Kernel 仍持有业务真相。Pi receipt 只进入 Runtime/聊天终态证据，
   不能越过 Room Commit、generation/capability、集成、复核或最终交付。
-- managed build contract 已更新到 `aa3d7f5c`，并将
-  `session.await_settled` 加入源码、manifest 和 staged acceptance 门禁。
+- managed build contract 已更新到 `3e2bac77`，并将
+  `session.settlement.get`、`session.await_settled` 加入源码、manifest 和
+  staged acceptance 门禁。
+- Room 当前迁移已经完成单一前端 selector、纯策略、事务型 Outbox 与
+  lease token fencing、Start 物化稳定 Task 图、同 Root 用户修正、受影响
+  依赖闭包 PlanRevision、范围级集成/复核门禁，以及删除旧 `handoff`
+  文本映射终态。仍存的 legacy/WorkItem 代码只可作为有真实消费者的兼容
+  投影，后续按消费方迁移逐段删除，不能成为第二套业务真相。
 
 已验证：
 
-- PAW exact-settlement、legacy fallback、Session 原位迁移、packager、
-  managed manifest 与安全审计宽回归：`134/134` 通过；
-- 新增普通聊天 receipted terminal event 测试通过；
-- 对真实 Pi worktree 执行 source contract 预检通过，30 组来源/行为标记
-  与四个 runtime 方法一致。
-- 从精确 Pi/PAW source pin 构建的未安装 payload
-  `pi-0.80.7-aa3d7f5c41f9-raghost-f89f3f1bbe` 通过 staged Room canary：
-  prompt、运行中 follow-up、九类取消面、Context/Skill receipt 与
-  `session.await_settled` 全部返回同一 Turn 的精确证据；旧的
-  `SETTLED_TIMEOUT` 已由双层 Session 身份修复消除。
-- Room 后端宽回归 `239/239`、前端 `105 files / 1019 tests`、TypeScript、
-  Python compile 与 `git diff --check` 通过。
+- Pi 源码 `npm run check`、Agent Core `34/34`、Coding Agent 相邻回归
+  `64/64`、Runtime Host `14/14` 通过，并已推送到 `7155/pi`。
+- Room 核心六组宽回归 `244/244` 通过；Pi exact settlement、Session 原位
+  迁移、packager、managed manifest 与安全审计组合回归 `126/126` 通过。
+- 前端单 worker 全量 `105 files / 1020 tests`、Room screen focused
+  regression `8/8`、TypeScript、Python compile 与 `git diff --check` 通过。
+  此前并发负载下唯一失败的复制提示计时断言在原用例与单 worker 全量中
+  均通过，因此不修改无关 UI 代码。
 
-仍未完成，禁止误报：clean PAW commit/detached install、现有 Session
-真实 transcript 恢复、普通聊天 GUI、Room GUI 与最终用户愿景验收尚未完成。旧安装
-`pi-0.80.7-98cfe6a3a0a4-raghost-c1414ab249` 在新 Runtime 原子激活前仍是
-可回退基线。
+仍未完成，禁止误报：PAW 限定提交、从该提交构建并原子安装新的 managed
+Runtime、现有 Session 真实 transcript 原位恢复、普通聊天 GUI、全新 Room
+GUI 与最终用户愿景验收尚未完成。只有这些通过后才能创建本轮恢复备份，
+再整合 Room、Knowledge、Memory、Project Field/岛屿并清理已证实废弃的
+Room、worktree、Pi/runtime、代码和文档；RAG/Memory 正式整理与消融仍是
+独立未完成工作。

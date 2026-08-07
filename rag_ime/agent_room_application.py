@@ -46,7 +46,12 @@ from .room_application.outbox import RoomApplicationOutbox
 from .room_application.plans import RoomPlanRepository
 from .room_application.repositories import RoomDomainEventRepository
 from .room_domain.events import past_tense_event
-from .room_domain.scheduling import runnable_frontier, validate_task_graph
+from .room_domain.scheduling import (
+    dependent_closure,
+    derived_task_waves,
+    runnable_frontier,
+    validate_task_graph,
+)
 
 
 DEFAULT_ROOT_BUDGET = 32
@@ -649,6 +654,23 @@ class RoomApplicationService:
             raise RoomKernelFenceError(
                 "room_reconcile may only bind the current stable Task"
             )
+        raw_affected = arguments.get("affectedTaskIds")
+        if raw_affected is None:
+            requested_affected = [task_id]
+        elif not isinstance(raw_affected, list):
+            raise ValueError("room_reconcile affectedTaskIds must be an array")
+        else:
+            requested_affected = list(
+                dict.fromkeys(
+                    str(value).strip()
+                    for value in raw_affected
+                    if str(value).strip()
+                )
+            )
+        if not requested_affected or len(requested_affected) > 12:
+            raise ValueError(
+                "room_reconcile requires one to twelve affected stable Tasks"
+            )
         root = self.kernel.root(root_id)
         dispatch = self.kernel.dispatch(dispatch_id)
         if (
@@ -669,6 +691,7 @@ class RoomApplicationService:
                 invocation_receipt_id,
             )
         )
+        plan_reconciliation: dict[str, object] | None = None
         transaction = sqlite3.connect(self.kernel.db_path, timeout=10)
         transaction.row_factory = sqlite3.Row
         try:
@@ -732,19 +755,89 @@ class RoomApplicationService:
                 raise RoomKernelFenceError(
                     "room_reconcile current Task is not in the active plan"
                 )
+            task_ids = {
+                str(item.get("taskId") or "") for item in task_specs
+            }
+            if not set(requested_affected).issubset(task_ids):
+                raise RoomKernelFenceError(
+                    "task scope expansion requires a new user-visible approval"
+                )
+            cross_task = set(requested_affected) != {task_id}
+            if cross_task:
+                graph = {
+                    str(item["taskId"]): [
+                        str(value)
+                        for value in item.get("dependencyTaskIds") or []
+                    ]
+                    for item in task_specs
+                }
+                waves = derived_task_waves(graph)
+                replacement_id = (
+                    "room-plan:revision:"
+                    + _stable_digest(
+                        root_id,
+                        intervention_id,
+                        invocation_receipt_id,
+                    )
+                )
+                replacement_plan = {
+                    **dict(plan),
+                    "planRevisionId": replacement_id,
+                    "revision": int(plan["revision"]) + 1,
+                    "state": "active",
+                    "requirementCatalogRevisionId": str(
+                        row["requirement_catalog_revision_id"] or ""
+                    ),
+                    "tasks": [
+                        {
+                            **item,
+                            "wave": waves[str(item["taskId"])],
+                        }
+                        for item in task_specs
+                    ],
+                    "createdAtMs": timestamp,
+                    "activatedAtMs": timestamp,
+                }
+                plan_reconciliation = self.kernel.reconcile_active_plan(
+                    root_id,
+                    expected_plan_revision_id=str(plan["planRevisionId"]),
+                    replacement_plan=replacement_plan,
+                    affected_task_ids=requested_affected,
+                    source_dispatch_id=dispatch_id,
+                    intervention_id=intervention_id,
+                    now_ms=timestamp,
+                    _conn=transaction,
+                )
+                resolved_task_ids = list(
+                    plan_reconciliation["affectedTaskIds"]
+                )
+                resolution_scope = "plan_revision"
+            else:
+                resolved_task_ids = [task_id]
+                resolution_scope = "current_task"
             resolution = {
-                "scope": "current_task",
+                "scope": resolution_scope,
                 "taskId": task_id,
+                "affectedTaskIds": resolved_task_ids,
                 "dispatchId": dispatch_id,
                 "invocationReceiptId": invocation_receipt_id,
                 "summary": summary,
                 "resolvedAtMs": timestamp,
+                **(
+                    {
+                        "planRevisionId": plan_reconciliation[
+                            "planRevision"
+                        ]["planRevisionId"]
+                    }
+                    if plan_reconciliation is not None
+                    else {}
+                ),
             }
             resolved = {
                 **existing_payload,
                 "state": "resolved",
                 "requiresPlanRevision": False,
-                "affectedTaskIds": [task_id],
+                "affectedTaskIds": resolved_task_ids,
                 "resolution": resolution,
             }
             document_delta = self.append_work_document_delta(
@@ -755,8 +848,15 @@ class RoomApplicationService:
                     "deltaKind": "plan_revision",
                     "sourceRef": intervention_id,
                     "content": (
-                        f"当前功能已吸收用户修正：{summary}\n"
-                        "任务图和其他功能边界保持不变。"
+                        (
+                            f"当前功能已吸收用户修正：{summary}\n"
+                            "任务图和其他功能边界保持不变。"
+                        )
+                        if plan_reconciliation is None
+                        else (
+                            f"执行计划已按用户修正更新：{summary}\n"
+                            f"受影响任务与依赖闭包：{', '.join(resolved_task_ids)}。"
+                        )
                     ),
                     "createdAtMs": timestamp,
                 },
@@ -767,7 +867,7 @@ class RoomApplicationService:
                        affected_task_ids_json=?,payload_json=?,updated_at_ms=?
                    WHERE intervention_id=? AND state='pending_reconciliation'""",
                 (
-                    json.dumps([task_id], separators=(",", ":")),
+                    json.dumps(resolved_task_ids, separators=(",", ":")),
                     json.dumps(
                         resolved,
                         ensure_ascii=False,
@@ -797,6 +897,16 @@ class RoomApplicationService:
                         "taskId": task_id,
                         "dispatchId": dispatch_id,
                         "requiresPlanRevision": False,
+                        "affectedTaskIds": resolved_task_ids,
+                        **(
+                            {
+                                "planRevisionId": plan_reconciliation[
+                                    "planRevision"
+                                ]["planRevisionId"]
+                            }
+                            if plan_reconciliation is not None
+                            else {}
+                        ),
                     },
                 ),
                 created_at_ms=timestamp,
@@ -817,12 +927,30 @@ class RoomApplicationService:
             wake_room=lambda _target_room_id: self.wake_worker(),
             now_ms=timestamp,
         )
+        released_frontier = (
+            self.release_ready_plan_tasks(
+                room_id,
+                root_id,
+                now_ms=timestamp,
+            )
+            if plan_reconciliation is not None
+            and not plan_reconciliation.get("pendingCancelDispatchIds")
+            else {"released": False, "tasks": [], "dispatches": []}
+        )
         return {
             "schemaVersion": "wisdom-weasel.room-intervention-resolution.v1",
             "accepted": True,
             "idempotentReplay": False,
             "intervention": resolved,
             "workDocumentDelta": dict(document_delta),
+            **(
+                {
+                    "planReconciliation": plan_reconciliation,
+                    "releasedFrontier": released_frontier,
+                }
+                if plan_reconciliation is not None
+                else {}
+            ),
         }
 
     def _prepare_plan_start(
@@ -4233,27 +4361,9 @@ def _bind_room_plan_revision(
         str(task["taskId"]): list(task["dependencyTaskIds"])
         for task in plan_tasks
     }
-    validate_task_graph(
-        graph
-    )
-    completed_for_wave: set[str] = set()
-    wave = 1
-    while len(completed_for_wave) < len(graph):
-        ready = runnable_frontier(graph, completed=completed_for_wave)
-        if not ready:
-            raise RoomKernelFenceError(
-                "approved plan dependency graph cannot advance"
-            )
-        for task_id in ready:
-            next(
-                task for task in plan_tasks if task["taskId"] == task_id
-            )["wave"] = wave
-        completed_for_wave.update(ready)
-        wave += 1
-    wave_by_task_id = {
-        str(task["taskId"]): int(task["wave"])
-        for task in plan_tasks
-    }
+    wave_by_task_id = derived_task_waves(graph)
+    for task in plan_tasks:
+        task["wave"] = wave_by_task_id[str(task["taskId"])]
     enriched_features = [
         {
             **feature,

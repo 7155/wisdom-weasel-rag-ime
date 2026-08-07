@@ -734,7 +734,12 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         self.assertEqual(discovered.protocol_version, "2")
         self.assertEqual(
             discovered.runtime_methods,
-            ("session.await_settled", "room.dispatch", "room.cancel"),
+            (
+                "session.await_settled",
+                "session.settlement.get",
+                "room.dispatch",
+                "room.cancel",
+            ),
         )
         self.assertEqual(config.protocol_version, "2")
         self.assertEqual(config.runtime_version, "runtime-v2")
@@ -876,6 +881,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
                 "session.open",
                 "room.dispatch",
                 "session.await_settled",
+                "session.settlement.get",
                 "session.debug.context",
                 "room.cancel",
             ],
@@ -980,6 +986,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             protocol_version=protocol_version,
             runtime_methods=(
                 "session.await_settled",
+                "session.settlement.get",
                 "room.dispatch",
                 "room.cancel",
             ) if protocol_v2 else (),

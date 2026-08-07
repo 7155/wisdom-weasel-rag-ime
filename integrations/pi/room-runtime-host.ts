@@ -3,6 +3,7 @@ export const ROOM_RUNTIME_PROTOCOL_VERSION = "2" as const;
 export const ROOM_RUNTIME_METHODS = [
   "session.control_state",
   "session.await_settled",
+  "session.settlement.get",
   "room.dispatch",
   "room.cancel",
 ] as const;
@@ -27,8 +28,15 @@ export type SessionControlStateReceipt = {
 export type SessionAwaitSettledParams = {
   sessionId: string;
   turnId: string;
+  clientMessageId?: string;
   allowSuspended?: boolean;
   timeoutMs?: number;
+};
+
+export type SessionSettlementGetParams = {
+  sessionId: string;
+  turnId: string;
+  clientMessageId?: string;
 };
 
 export type AgentSettledReceiptV2 = {
@@ -44,6 +52,7 @@ export type AgentSettledReceiptV2 = {
     | "error"
     | "cancelled"
     | "continuation_scheduled"
+    | "continuation_unsettled"
     | "settlement_rejected"
     | "operations_pending";
   finalMessage?: Record<string, unknown>;
@@ -51,12 +60,20 @@ export type AgentSettledReceiptV2 = {
     messageCount: number;
     entryCount: number;
     leafId?: string;
+    lastEntryId?: string;
+    lineageHash: string;
     contentHash: string;
   };
   continuations: {
+    generation: number;
     pendingIds: string[];
+    readyIds: string[];
+    scheduledIds: string[];
     leasedIds: string[];
     terminalIds: string[];
+    terminalIdsOmitted: number;
+    nextScheduledAt?: number;
+    idsHash: string;
     counts: Record<string, number>;
   };
   operations: {
@@ -76,6 +93,10 @@ export type SessionAwaitSettledReceipt = {
   turnId: string;
   clientMessageId?: string;
   receipt: AgentSettledReceiptV2;
+};
+
+export type SessionSettlementGetReceipt = {
+  settlement?: SessionAwaitSettledReceipt;
 };
 
 export type RoomDispatchParams = {
@@ -159,11 +180,13 @@ export type RoomCancelReceipt = {
 export type RoomRuntimeRequest =
   | { method: "session.control_state"; params: SessionControlStateParams }
   | { method: "session.await_settled"; params: SessionAwaitSettledParams }
+  | { method: "session.settlement.get"; params: SessionSettlementGetParams }
   | { method: "room.dispatch"; params: RoomDispatchParams }
   | { method: "room.cancel"; params: RoomCancelParams };
 
 export type RoomRuntimeReceipt =
   | SessionControlStateReceipt
   | SessionAwaitSettledReceipt
+  | SessionSettlementGetReceipt
   | RoomDispatchReceipt
   | RoomCancelReceipt;

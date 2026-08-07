@@ -118,6 +118,77 @@ class RoomPlanRepository:
         return activated
 
     @staticmethod
+    def replace_active(
+        conn: sqlite3.Connection,
+        *,
+        expected_plan_revision_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Atomically supersede one active plan with its next approved revision."""
+
+        plan = dict(payload)
+        validate_kernel_contract("roomPlanRevision", plan)
+        RoomPlanRepository._validate_graph(plan)
+        if plan.get("state") != "active":
+            raise DomainPolicyError("replacement plan must already be active")
+        current_row = conn.execute(
+            """SELECT * FROM room_plan_revisions
+               WHERE root_id=? AND state='active'""",
+            (plan["rootId"],),
+        ).fetchone()
+        if current_row is None:
+            raise DomainPolicyError("replacement plan has no active predecessor")
+        if str(current_row["plan_revision_id"]) != str(
+            expected_plan_revision_id
+        ):
+            raise DomainPolicyError("active plan revision changed before replacement")
+        current = json.loads(str(current_row["payload_json"]))
+        if int(plan["revision"]) != int(current["revision"]) + 1:
+            raise DomainPolicyError("replacement plan revision is not consecutive")
+        current_ids = {
+            str(item.get("taskId") or "")
+            for item in current.get("tasks", [])
+            if isinstance(item, Mapping)
+        }
+        replacement_ids = {
+            str(item.get("taskId") or "")
+            for item in plan.get("tasks", [])
+            if isinstance(item, Mapping)
+        }
+        if replacement_ids != current_ids:
+            raise DomainPolicyError(
+                "task scope expansion requires a new user-visible approval"
+            )
+        superseded = {**current, "state": "superseded"}
+        validate_kernel_contract("roomPlanRevision", superseded)
+        updated = conn.execute(
+            """UPDATE room_plan_revisions SET state='superseded',payload_json=?
+               WHERE plan_revision_id=? AND state='active'""",
+            (_json(superseded), expected_plan_revision_id),
+        )
+        if updated.rowcount != 1:
+            raise DomainPolicyError("active plan supersession lost its compare-and-set")
+        conn.execute(
+            """INSERT INTO room_plan_revisions(
+               plan_revision_id,root_id,revision,state,
+               requirement_catalog_revision_id,work_document_ref_json,
+               payload_json,created_at_ms,activated_at_ms)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (
+                plan["planRevisionId"],
+                plan["rootId"],
+                plan["revision"],
+                plan["state"],
+                plan["requirementCatalogRevisionId"],
+                _json(plan["workDocumentRef"]),
+                _json(plan),
+                plan["createdAtMs"],
+                plan["activatedAtMs"],
+            ),
+        )
+        return plan
+
+    @staticmethod
     def _validate_graph(plan: Mapping[str, object]) -> None:
         tasks = plan.get("tasks")
         if not isinstance(tasks, list):

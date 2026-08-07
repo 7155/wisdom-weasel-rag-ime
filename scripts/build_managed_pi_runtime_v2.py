@@ -39,7 +39,7 @@ PROJECT_ROUTING_SKILLS = frozenset(
 ROUTING_CARD_FIELDS = ("name", "when", "notFor", "does", "input", "output")
 MAX_ROUTING_CARD_CHARS = 420
 SKILL_SOURCE_KINDS = ("bundled", "configured", "pi-installed")
-REQUIRED_PI_RUNTIME_BASE_COMMIT = "aa3d7f5c41f976264414b8962ebe5a52d728a4d6"
+REQUIRED_PI_RUNTIME_BASE_COMMIT = "3e2bac77319571ac0047a83529aae241db4b88a3"
 REQUIRED_GOAL_RUNTIME_SOURCE_MARKERS = {
     "providerContextJournal": (
         '"session_memory_refresh"',
@@ -250,6 +250,7 @@ def _verified_room_runtime_contract(pi_root: Path) -> tuple[dict[str, object], s
     if methods != [
         "session.control_state",
         "session.await_settled",
+        "session.settlement.get",
         "room.dispatch",
         "room.cancel",
     ]:

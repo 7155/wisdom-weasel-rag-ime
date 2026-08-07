@@ -2,25 +2,33 @@
 
 - Document class: sole tracked authority for current Room product behavior and acceptance status
 - Approved vision window: user decisions made on or after 2026-08-02
-- Contract revision: 2026-08-07 14:25 CST
-- Acceptance state: commit `7de9cb1eabac4df691751de5b09280467f09ac7d` remains the latest clean-installed baseline. The current uncommitted migration now has one frontend `RoomScreenModel`, pure wait/settlement/scheduling policies, transactional domain-event/outbox writes with expired-lease recovery and per-Room draining, a versioned backend screen-state projection, Start-time PlanRevision materialization, dependency-frontier release, assignable integration Tasks and per-scope review Tasks. Focused Phase 4/5 checks, Python compilation and `git diff --check` pass; the frontend selector/contract group passes `5 files / 167 tests` plus TypeScript. A wider backend regression is still running. This working tree has not yet passed the new full suite, clean installation, real GUI acceptance, backup, canonical consolidation or cleanup. Execution-time user correction/replan, review-finding repair/re-review, final reporting proof and the existing managed `tests/test_duplicates.py` conflict remain open and must not be reported complete.
+- Contract revision: 2026-08-07 23:10 CST
+- Acceptance state: the current worktree now implements one frontend `RoomScreenModel`; pure wait/settlement/scheduling policies; transactional domain-event/Outbox writes with lease-token fencing, expired-lease recovery, projection-before-wake ordering and per-Room isolation; Start-time PlanRevision/WorkDocument/RoomTask materialization; dependency-frontier release; scoped integration and review Tasks; same-Root execution-time corrections; and an affected-dependency-closure PlanRevision replacement that leaves unrelated work running. Pi Runtime SDK v2 source is pinned to pushed commit `3e2bac77319571ac0047a83529aae241db4b88a3`, and PAW uses exact `session.settlement.get`/`session.await_settled` recovery with in-place Session/transcript binding checks. Current automated evidence is Room core `244/244`, Pi/Session/install contract `126/126`, frontend `105 files / 1020 tests`, focused Room UI `8/8`, TypeScript, Python compilation and `git diff --check`. This working tree has not yet been committed, clean-installed, or accepted through a fresh real GUI Room and existing-Session foreground journey. Backup, canonical consolidation and cleanup are also pending. The managed `tests/test_duplicates.py` conflict remains isolated legacy evidence and must not be mixed into this migration.
 - Status rule: source, test, installed, and foreground evidence are reported separately
 
 ### Current follow-up evidence
 
 - The current migration is a working-tree checkpoint, not an installed release.
   `RoomScreenModel` is the sole frontend selector for active Root, phase, wait,
-  frontier, readiness and final identity; five focused frontend files pass
-  `167/167` with TypeScript.
+  frontier, readiness and final identity. The single-worker complete frontend
+  run passes `105 files / 1020 tests`; focused selector coverage and TypeScript
+  also pass.
 - Room application writes now couple state, domain events and projection/wake
-  Outbox entries in one transaction. Recovery reclaims expired leases, keeps
-  projection-before-wake order per Room, and lets a healthy Room drain while a
-  malformed Room retains only its own retry.
+  Outbox entries in one transaction. Every lease is fenced by an opaque token,
+  so a stale worker cannot acknowledge or retry a newer lease. Recovery
+  reclaims expired leases, keeps projection-before-wake order per Room, and
+  lets a healthy Room drain while a malformed Room retains only its own retry.
 - Start freezes one PlanRevision, creates the WorkDocument before wake,
   materializes every feature/integration/review Task, and dispatches only the
   runnable frontier. A completed dependency releases the next wave without a
   model-authored free-text assignment; a Plan Task cannot call
   `room_collaborate` to create an extra unapproved child scope.
+- A user correction during execution stays on the same Root and appends to the
+  same WorkDocument. Task-local corrections may be absorbed by that owner;
+  cross-task corrections create a replacement PlanRevision, reset only the
+  affected dependency closure, cancel its stale active attempts, and leave
+  independent Tasks running. New Tasks or public-contract expansion fail
+  closed and return to visible user approval.
 - Writable features force independent review even if a model supplied a false
   exemption. Integration is a first-class, peer-assignable Task. Each planned
   review binds an exact feature/integration scope, excludes its authors, and
@@ -1306,8 +1314,8 @@ Use one coherent installed build and one fresh Room in the foreground
 ## 2026-08-07 ratified architecture and full-vision amendment
 
 This amendment records the user's ratification after reviewing the complete
-external-model diagnosis. It is target behavior, not a claim that commit
-`7de9cb1e` already implements it.
+external-model diagnosis. It is target behavior; the current implementation
+and evidence boundary are reported only in the document header above.
 
 1. **One business truth.** Root/feature/wait/integration/review/final mutations
    and their events/outbox are transactionally coupled. Each Room projection
@@ -1629,9 +1637,13 @@ PAW 的 protocol v2 接入必须满足：
   compaction 与恢复共用同一个 ContextProvider 管线，但 Memory、Knowledge、
   WorkDocument 和角色簿仍保留各自产品权限、来源和指标。
 
-当前源码证据：Pi `codex/pi-runtime-sdk-v2` 的提交
-`aa3d7f5c41f976264414b8962ebe5a52d728a4d6`；PAW source contract SHA-256
-`672dc222241189cd85dc10cf0f08eafa5c5e0691a175cc9f02a2a479956df068`。
+当前源码证据：Pi `codex/pi-runtime-sdk-v2` 的已推送提交
+`3e2bac77319571ac0047a83529aae241db4b88a3`；PAW source contract SHA-256
+`5be25dab5cf4d802d89ccc941802820ae13ea5f4834363d7cf8ace32dbbf1620`。
+该版本除 `session.await_settled` 外还协商非阻塞
+`session.settlement.get`，PAW 在事件丢失恢复时先精确查询，再进行有界等待；
+两条路径都绑定产品 Session、Runtime Session、Turn 和 clientMessageId，
+不得用 idle 或进程状态猜测终态。
 这些只是源码/契约证据；必须在 clean PAW commit 上完成 managed payload
 smoke、安装、旧 Session 原位恢复、普通聊天和真实 Room GUI 验收后，才能
 声称产品迁移完成。

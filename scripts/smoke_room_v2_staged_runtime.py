@@ -432,6 +432,14 @@ def main() -> int:
                 "allowSuspended": False,
                 "timeoutMs": 10_000,
             })
+            recovered = request("settled-get", "session.settlement.get", {
+                "sessionId": "session:staged-e2e",
+                "turnId": turn_id,
+            }).get("settlement")
+            if not isinstance(recovered, dict) or recovered != settled:
+                raise RuntimeError(
+                    "staged Runtime Host did not recover the exact terminal receipt"
+                )
             agent_settlement = settled.get("receipt")
             runtime_session_id = str(snapshot.get("piSessionId") or "").strip()
             if (
@@ -458,6 +466,7 @@ def main() -> int:
                     "session.open",
                     "room.dispatch",
                     "session.await_settled",
+                    "session.settlement.get",
                     "session.debug.context",
                     "room.cancel",
                 ],
