@@ -349,18 +349,35 @@ class RoomKernelServiceTests(unittest.TestCase):
         ]
 
     def test_passive_service_does_not_start_room_runtime_worker(self) -> None:
-        passive = AgentService(
-            db_path=self.root / "passive.sqlite",
-            runtime_factory=KernelRuntimeFactory(self.root / "passive"),
-            room_kernel_mode="cohort",
-            room_kernel_worker_enabled=False,
-            room_kernel_poll_seconds=0.01,
-        )
+        with (
+            patch.object(
+                AgentService,
+                "_sync_all_room_kernel_projections",
+            ) as sync_projections,
+            patch.object(
+                AgentService,
+                "_recover_interrupted_room_runtime_dispatches",
+            ) as recover_dispatches,
+            patch.object(
+                AgentService,
+                "_reconcile_room_work_from_kernel",
+            ) as reconcile_room_work,
+        ):
+            passive = AgentService(
+                db_path=self.root / "passive.sqlite",
+                runtime_factory=KernelRuntimeFactory(self.root / "passive"),
+                room_kernel_mode="cohort",
+                room_kernel_worker_enabled=False,
+                room_kernel_poll_seconds=0.01,
+            )
         try:
             self.assertFalse(passive.room_kernel_worker_loop.running)
             self.assertFalse(
                 passive.room_kernel_commands.runtime_effects_enabled
             )
+            sync_projections.assert_not_called()
+            recover_dispatches.assert_not_called()
+            reconcile_room_work.assert_not_called()
         finally:
             passive.close()
 

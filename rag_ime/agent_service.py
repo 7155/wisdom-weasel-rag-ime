@@ -684,10 +684,10 @@ class AgentService:
                 self.room_turns.user_priority_sessions
             ),
         )
-        self._sync_all_room_kernel_projections()
-        self._recover_interrupted_room_runtime_dispatches()
-        self._reconcile_room_work_from_kernel()
         if self._room_kernel_worker_enabled:
+            self._sync_all_room_kernel_projections()
+            self._recover_interrupted_room_runtime_dispatches()
+            self._reconcile_room_work_from_kernel()
             self.room_kernel_worker_loop.start()
 
     def bind_approval_executor(
