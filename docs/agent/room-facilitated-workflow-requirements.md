@@ -3,12 +3,13 @@
 - Document class: sole tracked authority for current Room product behavior and acceptance status
 - Approved vision window: user decisions made on or after 2026-08-02
 - Contract revision: 2026-08-07 23:10 CST
-- Acceptance state: the current worktree now implements one frontend `RoomScreenModel`; pure wait/settlement/scheduling policies; transactional domain-event/Outbox writes with lease-token fencing, expired-lease recovery, projection-before-wake ordering and per-Room isolation; Start-time PlanRevision/WorkDocument/RoomTask materialization; dependency-frontier release; scoped integration and review Tasks; same-Root execution-time corrections; and an affected-dependency-closure PlanRevision replacement that leaves unrelated work running. Pi Runtime SDK v2 source is pinned to pushed commit `3e2bac77319571ac0047a83529aae241db4b88a3`, and PAW uses exact `session.settlement.get`/`session.await_settled` recovery with in-place Session/transcript binding checks. Current automated evidence is Room core `244/244`, Pi/Session/install contract `126/126`, frontend `105 files / 1020 tests`, focused Room UI `8/8`, TypeScript, Python compilation and `git diff --check`. This working tree has not yet been committed, clean-installed, or accepted through a fresh real GUI Room and existing-Session foreground journey. Backup, canonical consolidation and cleanup are also pending. The managed `tests/test_duplicates.py` conflict remains isolated legacy evidence and must not be mixed into this migration.
+- Acceptance state: the current worktree now implements one frontend `RoomScreenModel`; pure wait/settlement/scheduling policies; transactional domain-event/Outbox writes with lease-token fencing, expired-lease recovery, projection-before-wake ordering and per-Room isolation; Start-time PlanRevision/WorkDocument/RoomTask materialization; dependency-frontier release; scoped integration and review Tasks; same-Root execution-time corrections; and an affected-dependency-closure PlanRevision replacement that leaves unrelated work running. Pi Runtime SDK v2 source is pinned to pushed commit `3e2bac77319571ac0047a83529aae241db4b88a3`, and PAW uses exact `session.settlement.get`/`session.await_settled` recovery with fenced Session/transcript binding checks. PAW parent commit `9467dab096e8699e2f8597d1c6d9af681cf7c312` was pushed and clean-installed with that Pi build; staged/source/install audits passed. A fresh GUI Room proved immediate user-message and compact attributed progress rendering, then exposed a real first-run fault before Provider acknowledgement: Pi had allocated but not yet materialized the transcript, a Room-mode reopen produced a new provisional Pi ID at the same path, and PAW incorrectly treated it as history migration. The follow-up now allows exactly that pre-materialization rebind while keeping every materialized transcript fail-closed; Pi Runtime v2 `89/89` and adjacent Session/build/install/kill-gate `124/124` pass. This follow-up still needs a clean commit, reinstall and a complete TUI Room/ordinary-Session foreground journey. Backup, canonical consolidation and cleanup are also pending. The managed `tests/test_duplicates.py` conflict remains isolated legacy evidence and must not be mixed into this migration.
 - Status rule: source, test, installed, and foreground evidence are reported separately
 
 ### Current follow-up evidence
 
-- The current migration is a working-tree checkpoint, not an installed release.
+- The architecture baseline was clean-installed from PAW `9467dab0` with Pi
+  `3e2bac77`; the current first-transcript correction is a working-tree checkpoint.
   `RoomScreenModel` is the sole frontend selector for active Root, phase, wait,
   frontier, readiness and final identity. The single-worker complete frontend
   run passes `105 files / 1020 tests`; focused selector coverage and TypeScript
@@ -1623,11 +1624,16 @@ PAW 的 protocol v2 接入必须满足：
 - 旧 Runtime 只在没有上述能力协商时使用明确标注的 legacy
   `session.control_state` 恢复分支；新 Runtime 的错误或畸形 receipt
   不得偷偷落回猜测路径。
-- 升级已存在 Session 时，必须用原 `externalSessionId` 和原
-  `transcriptRef` 调用 `session.open`。Host 返回另一 Session 或另一
+- 升级已有持久 transcript 的 Session 时，必须用原 `externalSessionId`
+  和原 `transcriptRef` 调用 `session.open`。Host 返回另一 Session 或另一
   transcript 时失败关闭；只有成功重开后才更新 binding generation 与
   migration metadata，不复制 transcript、不清空历史、不创建第二个
   Room Root。
+- 新建 Session 可能已经分配 `transcriptRef`，但尚未写入 Pi session header。
+  如果此时从普通 Agent 切到 Room，Pi 可在**同一受管路径仍不存在**的前提下
+  生成一个新的 provisional transcript ID。PAW 只允许这一次同路径重绑并
+  更新 binding；路径漂移、空 ID、已有文件或首次写入后的 ID 漂移仍失败
+  关闭。不能用产品 message count 代替 Pi 文件物化事实。
 - 产品 Session ID 与 Pi transcript Session ID 是显式的两层身份：外层
   `rag-ime.pi-turn-settlement.v1.sessionId` 绑定产品 Session，
   `runtimeSessionId` 与内层 `pi.agent-settled.v2.sessionId` 绑定原 transcript。
@@ -1644,6 +1650,7 @@ PAW 的 protocol v2 接入必须满足：
 `session.settlement.get`，PAW 在事件丢失恢复时先精确查询，再进行有界等待；
 两条路径都绑定产品 Session、Runtime Session、Turn 和 clientMessageId，
 不得用 idle 或进程状态猜测终态。
-这些只是源码/契约证据；必须在 clean PAW commit 上完成 managed payload
-smoke、安装、旧 Session 原位恢复、普通聊天和真实 Room GUI 验收后，才能
-声称产品迁移完成。
+基线 clean install、managed payload smoke 和安装审计已经通过；首次真实
+Room 捕获并修复了上述未物化 transcript 边界。仍必须从包含该修复的 clean
+PAW commit 重装，并完成已有 Session 原位恢复、普通聊天和真实 TUI Room
+GUI 验收后，才能声称产品迁移完成。

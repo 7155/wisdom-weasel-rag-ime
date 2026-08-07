@@ -332,10 +332,10 @@ tests/test_tui.py
 
 ## 7. Fresh GUI acceptance journey
 
-Use only a natural user request. Never put Room policies, Agent allocation, question limits, testing instructions, or review rules into the test message. A valid multi-feature example is:
+Use only a natural user request. Never put Room policies, Agent allocation, question limits, testing instructions, or review rules into the test message. The current acceptance task remains the isolated TUI fixture; use:
 
 ```text
-我想让客户列表更好用，能一次导入很多客户，也能更容易找到并处理重复的人，还想知道谁改过客户资料。
+请把这个现在只能列出客户的程序做成真正好用的终端界面：我想在终端里浏览和搜索客户，新增或编辑资料，删除时先确认并能撤销，而且退出再打开后数据仍然保留。
 ```
 
 Acceptance requires visible evidence of all of the following:
@@ -368,7 +368,8 @@ Do not start these before Room passes:
 
 - Knowledge RAG integration handoff: `docs/agent/knowledge-agent-integration-handoff.md` (exact eight-file merge; held-out metrics MRR `0.250 -> 0.922`, Recall@10 `0.244 -> 0.989`, nDCG@10 `0.237 -> 0.927`);
 - Project Field/island prototype handoff and session `019fcf5b-70ea-7ee0-a726-5a4bc9c40f29`;
-- unrelated TUI and Markdown link checker files currently in the dirty worktree.
+- unrelated PAW-root `rag_ime/tui.py` and Markdown link checker files currently
+  in the dirty worktree; these are not the isolated TUI acceptance fixture.
 
 ## 9. Direct resume prompt
 
@@ -434,9 +435,11 @@ code remain excluded from source integration.
   `agent_settled` 事件时先按相同 `sessionId + turnId` 非阻塞查询，再有界
   等待，不再用 idle 推断新 Runtime 的完成状态。旧 `control_state` 路径
   仅保留给没有协商 V2 settlement 的 Runtime。
-- 已有 Session 在同一 `externalSessionId`、同一 transcript 文件上原位
-  重开；身份或路径漂移会失败关闭。成功后 binding 记录 runtime、
-  settlement、context 和 migration history。
+- 已有持久 transcript 的 Session 在同一 `externalSessionId`、同一文件上
+  原位重开；身份或路径漂移会失败关闭。新 Session 若只有受管 transcript
+  路径、文件尚未物化，则允许 Pi 在 Room 首次写入前于**同一路径**更新一次
+  provisional ID；路径变化、空 ID、文件已存在或首次写入后的漂移仍失败
+  关闭。成功后 binding 记录 runtime、settlement、context 和 migration history。
 - 产品 Session ID 与 Pi transcript ID 不再错误地要求相同：外层 Turn
   receipt 固定产品 Session，内层 Agent receipt 固定原 transcript，二者
   通过 binding 显式关联。这是旧 Session 可原位迁移且 receipt 不被篡改的边界。
@@ -462,9 +465,15 @@ code remain excluded from source integration.
   此前并发负载下唯一失败的复制提示计时断言在原用例与单 worker 全量中
   均通过，因此不修改无关 UI 代码。
 
-仍未完成，禁止误报：PAW 限定提交、从该提交构建并原子安装新的 managed
-Runtime、现有 Session 真实 transcript 原位恢复、普通聊天 GUI、全新 Room
-GUI 与最终用户愿景验收尚未完成。只有这些通过后才能创建本轮恢复备份，
+已推送 PAW 基线 `9467dab0` 并与 Pi `3e2bac77` clean install；安装审计全部
+对齐。首个 fresh Room 已证明消息即时出现和短状态实时显示，但在 Provider
+确认前暴露了未物化 transcript 被误判为身份迁移的真实错误。本 follow-up
+已修复该边界，Pi Runtime v2 `89/89` 与相邻 Session/build/install/kill-gate
+`124/124` 通过。
+
+仍未完成，禁止误报：提交并推送本 follow-up、从新提交重新原子安装、现有
+Session 真实 transcript 原位恢复、普通聊天 GUI、同一 Room 中改为 TUI 的
+完整用户旅程与最终愿景验收尚未完成。只有这些通过后才能创建本轮恢复备份，
 再整合 Room、Knowledge、Memory、Project Field/岛屿并清理已证实废弃的
 Room、worktree、Pi/runtime、代码和文档；RAG/Memory 正式整理与消融仍是
 独立未完成工作。

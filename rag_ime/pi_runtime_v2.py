@@ -388,6 +388,7 @@ def _validate_resumed_session_identity(
     snapshot: Mapping[str, object],
     *,
     session_root: Path,
+    allow_unmaterialized_transcript_rebind: bool = False,
 ) -> None:
     """Fail closed if a Runtime upgrade silently forks an existing Session."""
 
@@ -397,10 +398,6 @@ def _validate_resumed_session_identity(
     received_external_id = str(snapshot.get("piSessionId") or "").strip()
     expected_transcript = str(binding.get("transcriptRef") or "").strip()
     received_transcript = str(snapshot.get("sessionFile") or "").strip()
-    if expected_external_id and received_external_id != expected_external_id:
-        raise PiRuntimeError(
-            "Pi Runtime migration changed the existing Session identity"
-        )
     if expected_transcript:
         if not received_transcript:
             raise PiRuntimeError(
@@ -415,6 +412,22 @@ def _validate_resumed_session_identity(
         ):
             raise PiRuntimeError(
                 "Pi Runtime migration attempted to replace the existing transcript"
+            )
+    if expected_external_id and received_external_id != expected_external_id:
+        # Pi allocates the durable transcript path before its session header is
+        # written. If PAW changes an unopened Session from Agent to Room mode,
+        # reopening that exact missing path creates a fresh provisional Pi ID.
+        # Preserve the product Session and transcript path, but allow that one
+        # pre-materialization ID rotation. Once the transcript exists, identity
+        # remains fail-closed so a Runtime migration cannot fork history.
+        if not (
+            allow_unmaterialized_transcript_rebind
+            and expected_transcript
+            and received_transcript
+            and received_external_id
+        ):
+            raise PiRuntimeError(
+                "Pi Runtime migration changed the existing Session identity"
             )
 
 
@@ -1131,6 +1144,15 @@ class PiRuntimeHostManager:
             cwd = roots[0] if roots else str(self.config.agent_dir)
             provider, model_id = self.config.resolved_model_reference(session)
             session_file = str((binding or {}).get("transcriptRef") or session.get("sessionFile") or "").strip()
+            bound_transcript = str(
+                (binding or {}).get("transcriptRef") or ""
+            ).strip()
+            allow_unmaterialized_transcript_rebind = bool(
+                binding
+                and bound_transcript
+                and session_file == bound_transcript
+                and not Path(bound_transcript).expanduser().exists()
+            )
             managed_system_prompt = (
                 str(session.get("managedSystemPrompt") or "")
                 if desired_room
@@ -1211,6 +1233,9 @@ class PiRuntimeHostManager:
                 binding,
                 snapshot,
                 session_root=self.config.session_dir,
+                allow_unmaterialized_transcript_rebind=(
+                    allow_unmaterialized_transcript_rebind
+                ),
             )
             model = as_mapping(snapshot.get("model"))
             if model.get("provider") and model.get("id"):

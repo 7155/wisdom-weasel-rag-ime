@@ -25,6 +25,7 @@ from rag_ime.pi_runtime_public import (
 from rag_ime.pi_runtime_v2 import (
     PiRuntimeHostClient,
     PiRuntimeHostManager,
+    _validate_resumed_session_identity,
     _pi_durable_branch_messages,
     _pi_tool_history_events,
 )
@@ -41,6 +42,7 @@ import time
 
 sessions = {}
 settlements = {}
+session_open_counts = {}
 sequence = 0
 log_path = pathlib.Path(os.environ["RAG_IME_PI_AGENT_DIR"]) / "host-requests.jsonl"
 model = {"provider": "gpt", "id": "gpt-5.6-luna", "name": "GPT-5.6 Luna",
@@ -155,6 +157,7 @@ for line in sys.stdin:
     elif method == "completion.cancel":
         result(request, {"requestId": params["requestId"], "cancelled": True})
     elif method == "session.open":
+        session_open_counts[session_id] = session_open_counts.get(session_id, 0) + 1
         room_skill = params.get("roomSkillPolicy") or {}
         room_skill_load = ({
             "schemaVersion": "rag-ime.skill-load.v1",
@@ -163,8 +166,17 @@ for line in sys.stdin:
             "contentRevision": room_skill["skillHash"],
             "loadReason": "stage_required",
         } if room_skill.get("selection") == "required" else None)
+        rotate_unmaterialized = (
+            os.environ.get("TEST_ROTATE_UNMATERIALIZED_SESSION") == "1"
+            and session_open_counts[session_id] > 1
+            and params.get("sessionFile")
+            and not pathlib.Path(params["sessionFile"]).exists()
+        )
         session = sessions.setdefault(session_id, {
-            "sessionId": session_id, "piSessionId": "pi-" + session_id,
+            "sessionId": session_id,
+            "piSessionId": (
+                "pi-reopened-" if rotate_unmaterialized else "pi-"
+            ) + session_id,
             "sessionFile": params.get("sessionFile") or str(pathlib.Path(os.environ["RAG_IME_PI_SESSION_DIR"]) / (session_id + ".jsonl")),
             "leafId": "", "messages": [], "thinkingLevel": params.get("thinkingLevel", "medium"),
             "model": model,
@@ -456,6 +468,16 @@ for line in sys.stdin:
         if params.get("roomProviderContext") is not None:
             sessions[session_id]["roomProviderContext"] = params["roomProviderContext"]
         room_provider = sessions[session_id].get("roomProviderContext") or {}
+        if os.environ.get("TEST_ROTATE_UNMATERIALIZED_SESSION") == "1":
+            transcript = pathlib.Path(sessions[session_id]["sessionFile"])
+            transcript.parent.mkdir(parents=True, exist_ok=True)
+            transcript.write_text(
+                json.dumps({
+                    "type": "session",
+                    "id": sessions[session_id]["piSessionId"],
+                }) + "\n",
+                encoding="utf-8",
+            )
         result(request, {
             "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
             "receiptKind": "dispatch_accepted", "status": "accepted",
@@ -706,6 +728,38 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 "identityStrategy": "preserve_session_and_transcript",
             },
         )
+
+    def test_unmaterialized_transcript_can_rotate_provisional_pi_identity(
+        self,
+    ) -> None:
+        transcript = self.root / "sessions" / "provisional.jsonl"
+        binding = {
+            "externalSessionId": "pi-before-materialization",
+            "transcriptRef": str(transcript),
+        }
+        snapshot = {
+            "piSessionId": "pi-after-reopen",
+            "sessionFile": str(transcript),
+        }
+
+        _validate_resumed_session_identity(
+            binding,
+            snapshot,
+            session_root=self.root / "sessions",
+            allow_unmaterialized_transcript_rebind=True,
+        )
+
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        transcript.write_text("durable transcript\n", encoding="utf-8")
+        with self.assertRaisesRegex(
+            PiRuntimeError,
+            "changed the existing Session identity",
+        ):
+            _validate_resumed_session_identity(
+                binding,
+                snapshot,
+                session_root=self.root / "sessions",
+            )
 
     def test_usage_evidence_distinguishes_cache_report_from_missing_fields(
         self,
@@ -2527,6 +2581,91 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 for request in requests
             )
         )
+
+    def test_unopened_agent_session_rebinds_to_room_before_first_pi_write(
+        self,
+    ) -> None:
+        self.runtime.stop()
+        state = {"room": False}
+
+        def context_provider(_session):
+            if not state["room"]:
+                return {}
+            return {
+                "roomCapability": {
+                    "manifestId": "manifest:unopened-agent-to-room",
+                    "manifestHash": "a" * 64,
+                    "capabilityEpoch": 4,
+                    "promptCompileReceiptId": "prompt:unopened-agent-to-room",
+                    "promptPlanHash": "b" * 64,
+                    "compiledRuntimeProfileRef": {
+                        "profileId": "profile:unopened-agent-to-room",
+                        "revision": "1",
+                        "contentHash": "sha256:abcdef",
+                    },
+                    "rootId": "root:unopened-agent-to-room",
+                    "dispatchId": "dispatch:unopened-agent-to-room",
+                    "generation": 0,
+                    "contextEpoch": 1,
+                    "contextEpochReason": "session_open",
+                    "runtimeBindingHash": "c" * 64,
+                },
+                "managedSystemPrompt": "stable-room-prefix",
+                "providerContext": "governed-room-task",
+                "roomRecoveryContext": "governed-room-task",
+            }
+
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                provider_environment={
+                    "TEST_ROOM_TYPES": "1",
+                    "TEST_ROTATE_UNMATERIALIZED_SESSION": "1",
+                },
+            ),
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=context_provider,
+            tool_manifest_provider=lambda _session: [],
+        )
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        initial_binding = self.store.runtime_binding(session_id)
+        assert initial_binding is not None
+        transcript = Path(str(initial_binding["transcriptRef"]))
+        self.assertFalse(transcript.exists())
+
+        state["room"] = True
+        receipt = self.runtime.dispatch_room(
+            {
+                "targetSessionId": session_id,
+                "rootId": "root:unopened-agent-to-room",
+                "dispatchId": "dispatch:unopened-agent-to-room",
+                "generation": 0,
+                "capabilityEpoch": 4,
+                "attempt": 0,
+                "idempotencyKey": "unopened-agent-to-room:1",
+            },
+            message="第一次持久写入由 Room 发起",
+            lease_token="lease:unopened-agent-to-room",
+        )
+
+        rebound = self.store.runtime_binding(session_id)
+        assert rebound is not None
+        self.assertEqual(receipt["status"], "accepted")
+        self.assertEqual(rebound["transcriptRef"], str(transcript))
+        self.assertNotEqual(
+            rebound["externalSessionId"],
+            initial_binding["externalSessionId"],
+        )
+        self.assertTrue(
+            str(rebound["externalSessionId"]).startswith("pi-reopened-")
+        )
+        self.assertTrue(transcript.is_file())
+        header = json.loads(
+            transcript.read_text(encoding="utf-8").splitlines()[0]
+        )
+        self.assertEqual(header["id"], rebound["externalSessionId"])
 
     def test_one_session_moves_agent_room_agent_without_changing_transcript(self) -> None:
         self.runtime.stop()
