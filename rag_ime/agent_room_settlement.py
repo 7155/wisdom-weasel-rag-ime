@@ -526,20 +526,42 @@ class RoomSettleLifecycleService:
             # appear as a post-review artifact change.
             return
         if decision == "deliver" and task.get("planTaskKind") == "integration":
-            pending_scope = [
-                dependency_id
-                for dependency_id in task.get("dependencyTaskIds") or []
+            pending_scope: list[tuple[str, Mapping[str, object]]] = []
+            for dependency_id in task.get("dependencyTaskIds") or []:
+                dependency = self.kernel.task(str(dependency_id))
                 if (
-                    (dependency := self.kernel.task(str(dependency_id))).get(
-                        "workspacePolicy"
-                    )
-                    == "isolated_writable"
+                    dependency.get("workspacePolicy") == "isolated_writable"
                     and dependency.get("workspaceIntegrationState") != "applied"
-                )
-            ]
+                ):
+                    pending_scope.append((str(dependency_id), dependency))
             if pending_scope:
+                for dependency_id, dependency in pending_scope:
+                    if dependency.get("state") != "active":
+                        continue
+                    participant_id = str(
+                        dependency.get("currentOwnerParticipantId") or ""
+                    )
+                    if not participant_id:
+                        continue
+                    try:
+                        waiting_dispatch = self.kernel.wait_target_dispatch(
+                            root_id=str(root.get("rootId") or ""),
+                            participant_id=participant_id,
+                            generation=int(root.get("generation") or 0),
+                            exclude_dispatch_id=str(
+                                dispatch.get("dispatchId") or ""
+                            ),
+                        )
+                    except RoomKernelFenceError:
+                        continue
+                    if str(waiting_dispatch.get("taskId") or "") == dependency_id:
+                        raise _RoomCommitParticipantWait(
+                            participant_id=participant_id,
+                            dispatch_id=str(waiting_dispatch["dispatchId"]),
+                        )
                 raise RoomCommitProposalError(
-                    "仍有已交付功能没有完成受管集成；先逐项集成并验证共享结果"
+                    "仍有范围内功能尚未交付或完成受管集成；"
+                    "先处理 room_state 当前列出的可集成结果"
                 )
         if (
             decision == "wait"
@@ -1548,6 +1570,7 @@ class RoomSettleLifecycleService:
             str(dispatch["dispatchId"])
         )
         handoff_intent = str(arguments.get("intent") or "").strip()
+        managed_wait_dispatch_id = ""
         if decision == "handoff" and task.get("taskKind") == "review":
             if handoff_intent != "revise":
                 raise RoomCommitProposalError(
@@ -1609,6 +1632,7 @@ class RoomSettleLifecycleService:
                 dispatch=dispatch,
             )
         except _RoomCommitParticipantWait as waiting:
+            managed_wait_dispatch_id = waiting.dispatch_id
             room = self.rooms.get(str(root["roomId"]))
             participant_refs = participant_ref_map(room["participants"])
             target_ref = ref_for_participant(
@@ -1620,19 +1644,19 @@ class RoomSettleLifecycleService:
                     "等待中的伙伴无法映射到当前 Room，不能安全继续"
                 ) from waiting
             decision = "wait"
-            summary = "等待并行伙伴完成当前工作后继续整合"
+            summary = "等待依赖功能完成后继续集成"
             arguments = {
                 **dict(arguments),
                 "decision": decision,
                 "summary": summary,
                 "publicSummary": (
-                    "还有伙伴正在完成这项工作，结果回来后会继续整合。"
+                    "依赖功能正在继续处理，结果回来后会恢复集成。"
                 ),
                 "evidence": [],
-                "residualRisks": ["伙伴任务尚未公开交付"],
+                "residualRisks": ["依赖功能尚未公开交付"],
                 "waitingFor": "participant",
                 "waitingForParticipantRef": target_ref,
-                "resumeCondition": "该伙伴已公开当前任务的交付结果",
+                "resumeCondition": "依赖功能已公开交付",
             }
         task_criteria = [
             str(item)
@@ -2046,12 +2070,45 @@ class RoomSettleLifecycleService:
                     if (
                         waiting_participant_id
                         == dispatch["targetParticipantId"]
+                        and not managed_wait_dispatch_id
                     ):
                         raise RoomCommitProposalError(
                             "wait target must differ from the current participant"
                         )
-                    waiting_dispatch = (
-                        self.kernel.wait_target_dispatch(
+                    if managed_wait_dispatch_id:
+                        waiting_dispatch = self.kernel.dispatch(
+                            managed_wait_dispatch_id
+                        )
+                        if (
+                            str(waiting_dispatch.get("rootId") or "")
+                            != str(root.get("rootId") or "")
+                            or int(
+                                waiting_dispatch["generation"]
+                                if waiting_dispatch.get("generation") is not None
+                                else -1
+                            )
+                            != int(root.get("generation") or 0)
+                            or str(
+                                waiting_dispatch.get("targetParticipantId")
+                                or ""
+                            )
+                            != waiting_participant_id
+                            or str(waiting_dispatch.get("dispatchId") or "")
+                            == str(dispatch.get("dispatchId") or "")
+                            or str(waiting_dispatch.get("state") or "")
+                            not in {
+                                "pending",
+                                "leased",
+                                "running",
+                                "retry_wait",
+                                "timer_wait",
+                            }
+                        ):
+                            raise RoomCommitProposalError(
+                                "managed participant wait target changed before commit"
+                            )
+                    else:
+                        waiting_dispatch = self.kernel.wait_target_dispatch(
                             root_id=str(root["rootId"]),
                             participant_id=waiting_participant_id,
                             generation=int(root["generation"]),
@@ -2059,7 +2116,6 @@ class RoomSettleLifecycleService:
                                 dispatch["dispatchId"]
                             ),
                         )
-                    )
                 except (
                     ParticipantReferenceError,
                     RoomKernelFenceError,

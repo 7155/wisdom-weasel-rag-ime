@@ -14881,26 +14881,50 @@ class RoomKernelStore:
                 fully_applied_ids.add(task_id)
         validate_task_graph(graph)
         spec_by_id = {str(value["taskId"]): value for value in specs}
+
+        def dependencies_ready(task_id: str) -> bool:
+            spec = spec_by_id[task_id]
+            dependencies = graph[task_id]
+            if spec.get("kind") != "integration":
+                return all(
+                    dependency_id in fully_applied_ids
+                    for dependency_id in dependencies
+                )
+            # One integration Task owns the full writable scope across waves.
+            # Release its first attempt as soon as that scope has an actual
+            # delivered worktree; it stays open until every scoped feature is
+            # integrated, while each accepted integration can release the next
+            # dependency-ready feature.
+            return any(
+                dependency_id in committed
+                and tasks[dependency_id].get("workspacePolicy")
+                == "isolated_writable"
+                and tasks[dependency_id].get("workspaceIntegrationState")
+                != "applied"
+                for dependency_id in dependencies
+            )
+
         ready_ids = [
             task_id
             for task_id in sorted(graph)
             if str(tasks[task_id].get("state") or "") == "pending"
-            and all(
-                dependency_id
-                in (
-                    committed
-                    if spec_by_id[task_id].get("kind") == "integration"
-                    else fully_applied_ids
-                )
-                for dependency_id in graph[task_id]
-            )
+            and dependencies_ready(task_id)
         ]
         ready: list[dict[str, object]] = []
         for task_id in ready_ids:
             if str(tasks[task_id].get("state") or "") != "pending":
                 continue
             dependency_dispatch_ids: list[str] = []
-            for dependency_task_id in graph[task_id]:
+            dependency_task_ids = (
+                [
+                    dependency_task_id
+                    for dependency_task_id in graph[task_id]
+                    if dependency_task_id in committed
+                ]
+                if spec_by_id[task_id].get("kind") == "integration"
+                else graph[task_id]
+            )
+            for dependency_task_id in dependency_task_ids:
                 row = conn.execute(
                     """SELECT dispatch_id FROM room_kernel_dispatches
                        WHERE root_id=? AND task_id=? AND state='committed'

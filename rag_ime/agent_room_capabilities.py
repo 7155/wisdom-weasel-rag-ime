@@ -401,9 +401,10 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
         },
         "room_integrate": {
             "description": (
-                "Facilitator 处理 isolated_writable 子任务：默认安全合入，也可对"
+                "当前受管集成负责人处理 isolated_writable 功能：默认安全合入，也可对"
                 "已保留工作区做有回执的 retry 或 abandon。合入先执行无副作用检查；"
-                "有冲突时不写入。"
+                "有冲突时不写入。一个跨波次集成任务只处理 room_state 当前列出的"
+                "已交付成果；后续功能尚未交付时保持等待，不提前宣告集成完成。"
             ),
             "when": ("独立 worktree 子任务已完成，准备做集成后验证",),
             "notFor": (

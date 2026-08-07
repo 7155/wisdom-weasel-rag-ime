@@ -526,6 +526,461 @@ class RoomKernelServiceTests(unittest.TestCase):
             review["authorParticipantIds"],
         )
 
+    def test_completed_wave_releases_integration_before_later_features(
+        self,
+    ) -> None:
+        room = self.service.rooms.get(self.room_id)
+        participants = list(room["participants"])
+        accepted = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": "先并行完成两个功能，集成后再开始依赖它们的功能。",
+                "clientMessageId": "client:progressive-integration",
+            },
+        )
+        root_id = str(accepted["rootId"])
+        alignment_id = str(accepted["alignmentDispatches"][0]["dispatchId"])
+        self.assertTrue(self.service.room_kernel_worker.run_once())
+        alignment = self.service.room_kernel.dispatch(alignment_id)
+        facilitator_id = str(alignment["targetParticipantId"])
+        facilitator_session = str(alignment["targetSessionId"])
+        feature_owners = [
+            item
+            for item in participants
+            if str(item["id"]) != facilitator_id
+        ]
+        self.assertGreaterEqual(len(feature_owners), 2)
+
+        define_load = self.service.room_capability_tool_load(
+            {
+                "sessionId": facilitator_session,
+                "receiptId": "load:progressive-integration:define",
+                "toolName": "room_define",
+                "createdAtMs": 20,
+            }
+        )["result"]
+        self.service.execute_room_capability_tool(
+            facilitator_session,
+            "room_define",
+            {
+                "objective": "让客户目录支持批量导入、筛选和重复客户合并",
+                "expectedOutput": "三个客户目录操作均可使用且结果保存在共享版本",
+                "entrySurface": "客户目录主列表页",
+                "primaryInteraction": "用户点击上传 CSV、选择邮箱域名并确认合并重复客户",
+                "observableCompletion": "刷新客户目录后仍能看到导入、筛选和合并结果",
+                "requirements": ["重复客户合并只能在导入和筛选完成并集成后开始"],
+                "acceptanceCriteria": [
+                    {
+                        "statement": "三个客户目录操作按依赖顺序完成并保存在共享版本",
+                        "fullNameZh": "客户目录操作顺序与保存结果验收",
+                        "expectedReceiptTypes": ["evidence"],
+                    }
+                ],
+                "implementationParticipantRef": str(feature_owners[0]["id"]),
+                "executionPlan": {
+                    "sharedContracts": ["三项功能使用同一份共享结果约定"],
+                    "featureTasks": [
+                        {
+                            "title": "批量导入客户",
+                            "participantRef": str(feature_owners[0]["id"]),
+                            "userOutcome": "用户上传 CSV 后可以预览并导入客户",
+                            "dependencies": [],
+                            "writeBoundary": "只实现批量导入与逐行预览",
+                            "workspacePolicy": "isolated_writable",
+                            "acceptance": ["AC-1"],
+                        },
+                        {
+                            "title": "按邮箱域名筛选",
+                            "participantRef": str(feature_owners[1]["id"]),
+                            "userOutcome": "用户可以按邮箱域名筛选客户",
+                            "dependencies": [],
+                            "writeBoundary": "只实现邮箱域名筛选",
+                            "workspacePolicy": "isolated_writable",
+                            "acceptance": ["AC-1"],
+                        },
+                        {
+                            "title": "合并重复客户",
+                            "participantRef": facilitator_id,
+                            "userOutcome": "用户预览差异后可以合并重复客户并撤销",
+                            "dependencies": ["批量导入客户", "按邮箱域名筛选"],
+                            "writeBoundary": "只实现重复客户合并、差异预览和撤销",
+                            "workspacePolicy": "isolated_writable",
+                            "acceptance": ["AC-1"],
+                        },
+                    ],
+                    "integrationPlan": "逐波合入已交付功能并核对共享结果",
+                    "integrationParticipantRef": facilitator_id,
+                    "acceptancePlan": ["每一波集成后才释放依赖功能"],
+                },
+                "independentReviewRequired": True,
+            },
+            tool_call_id="call:progressive-integration:define",
+            load_receipt_id=str(define_load["receiptId"]),
+        )
+        settled_alignment = self.service.room_settle_lifecycle.settle(
+            {
+                "sessionId": facilitator_session,
+                "dispatchId": alignment_id,
+                "rootId": root_id,
+                "generation": alignment["generation"],
+                "capabilityEpoch": alignment["capabilityEpoch"],
+                "settleScopeId": "scope:progressive-integration:alignment",
+                "settleAttempt": 1,
+                "runtimeTurnId": f"turn:{alignment_id}:1",
+                "dispatchAttempt": alignment["attempt"],
+                "resourceUsage": {},
+            }
+        )
+        self.assertEqual(settled_alignment["state"], "committed")
+        started = self.service.start_room_execution(
+            self.room_id,
+            {
+                "action": "start_execution",
+                "rootId": root_id,
+                "clientActionId": "action:progressive-integration:start",
+            },
+        )
+        planned_tasks = list(started["tasks"])
+        integration_task = next(
+            item
+            for item in planned_tasks
+            if item.get("taskKind") == "integration"
+        )
+        first_wave = [
+            item
+            for item in planned_tasks
+            if item.get("planTaskKind") == "feature"
+            and int(item.get("planWave") or 0) == 1
+        ]
+        later_feature = next(
+            item
+            for item in planned_tasks
+            if item.get("planTaskKind") == "feature"
+            and int(item.get("planWave") or 0) > 1
+        )
+        self.assertEqual(len(first_wave), 2)
+
+        def active_dispatch(task_id: str) -> dict[str, object]:
+            return next(
+                item
+                for item in self.service.room_kernel_snapshot(self.room_id)[
+                    "dispatches"
+                ]
+                if item.get("taskId") == task_id
+                and item.get("state") in {"pending", "leased", "running"}
+            )
+
+        def run_dispatch(dispatch_id: str) -> dict[str, object]:
+            for _ in range(6):
+                dispatch = self.service.room_kernel.dispatch(dispatch_id)
+                if dispatch["state"] == "running":
+                    return dispatch
+                self.assertTrue(self.service.room_kernel_worker.run_once())
+            self.fail(f"Dispatch did not start: {dispatch_id}")
+
+        def state_evidence(
+            session_id: str,
+            dispatch_id: str,
+            suffix: str,
+        ) -> str:
+            state_load = self.service.room_capability_tool_load(
+                {
+                    "sessionId": session_id,
+                    "receiptId": f"load:progressive-integration:{suffix}:state",
+                    "toolName": "room_state",
+                    "createdAtMs": int(time.time() * 1000),
+                }
+            )["result"]
+            state = self.service.execute_room_capability_tool(
+                session_id,
+                "room_state",
+                {},
+                tool_call_id=f"call:progressive-integration:{suffix}:state",
+                load_receipt_id=str(state_load["receiptId"]),
+            )["result"]
+            return str(state["evidenceRef"])
+
+        def deliver_feature(task: Mapping[str, object], index: int) -> None:
+            dispatch = active_dispatch(str(task["taskId"]))
+            dispatch_id = str(dispatch["dispatchId"])
+            live_dispatch = run_dispatch(dispatch_id)
+            workspace = Path(
+                str(
+                    self.service.room_kernel.task(str(task["taskId"]))[
+                        "workspaceRoot"
+                    ]
+                )
+            )
+            (workspace / f"wave-one-{index}.txt").write_text(
+                f"wave one result {index}\n",
+                encoding="utf-8",
+            )
+            session_id = str(live_dispatch["targetSessionId"])
+            evidence_ref = state_evidence(
+                session_id,
+                dispatch_id,
+                f"feature-{index}",
+            )
+            commit_load = self.service.room_capability_tool_load(
+                {
+                    "sessionId": session_id,
+                    "receiptId": f"load:progressive-integration:{index}:commit",
+                    "toolName": "room_commit",
+                    "createdAtMs": int(time.time() * 1000),
+                }
+            )["result"]
+            self.service.execute_room_capability_tool(
+                session_id,
+                "room_commit",
+                {
+                    "decision": "deliver",
+                    "summary": f"第 {index} 项并行功能已完成",
+                    "publicSummary": f"第 {index} 项并行功能已完成并可核对。",
+                    "evidence": [
+                        {
+                            "acceptance": "AC-1",
+                            "refs": [evidence_ref],
+                        }
+                    ],
+                    "residualRisks": [],
+                },
+                tool_call_id=f"call:progressive-integration:{index}:commit",
+                load_receipt_id=str(commit_load["receiptId"]),
+            )
+            settled = self.service.room_settle_lifecycle.settle(
+                {
+                    "sessionId": session_id,
+                    "dispatchId": dispatch_id,
+                    "rootId": root_id,
+                    "generation": live_dispatch["generation"],
+                    "capabilityEpoch": live_dispatch["capabilityEpoch"],
+                    "settleScopeId": f"scope:progressive-integration:{index}",
+                    "settleAttempt": 1,
+                    "runtimeTurnId": f"turn:{dispatch_id}:1",
+                    "dispatchAttempt": live_dispatch["attempt"],
+                    "resourceUsage": {},
+                }
+            )
+            self.assertEqual(settled["state"], "committed")
+
+        for index, task in enumerate(first_wave, start=1):
+            deliver_feature(task, index)
+
+        live_integration = self.service.room_kernel.task(
+            str(integration_task["taskId"])
+        )
+        self.assertEqual(live_integration["state"], "active")
+        integration_dispatches = [
+            item
+            for item in self.service.room_kernel_snapshot(self.room_id)[
+                "dispatches"
+            ]
+            if item.get("taskId") == integration_task["taskId"]
+            and item.get("state") in {"pending", "leased", "running"}
+        ]
+        self.assertEqual(len(integration_dispatches), 1)
+        self.assertEqual(
+            self.service.room_kernel.task(str(later_feature["taskId"]))[
+                "state"
+            ],
+            "pending",
+        )
+
+        integration_dispatch = run_dispatch(
+            str(integration_dispatches[0]["dispatchId"])
+        )
+        integration_session = str(integration_dispatch["targetSessionId"])
+
+        def integrate_feature(
+            task: Mapping[str, object],
+            *,
+            session_id: str,
+            suffix: str,
+        ) -> None:
+            integrate_load = self.service.room_capability_tool_load(
+                {
+                    "sessionId": session_id,
+                    "receiptId": f"load:progressive-integration:{suffix}:integrate",
+                    "toolName": "room_integrate",
+                    "createdAtMs": int(time.time() * 1000),
+                }
+            )["result"]
+            result = self.service.execute_room_capability_tool(
+                session_id,
+                "room_integrate",
+                {
+                    "childTaskId": str(task["taskId"]),
+                    "action": "integrate",
+                },
+                tool_call_id=f"call:progressive-integration:{suffix}:integrate",
+                load_receipt_id=str(integrate_load["receiptId"]),
+            )["result"]
+            self.assertTrue(result["integrated"], result)
+
+        for index, task in enumerate(first_wave, start=1):
+            integrate_feature(
+                task,
+                session_id=integration_session,
+                suffix=f"wave-one-{index}",
+            )
+
+        later_dispatch = active_dispatch(str(later_feature["taskId"]))
+        self.assertEqual(
+            later_dispatch["targetParticipantId"],
+            integration_dispatch["targetParticipantId"],
+        )
+        integration_evidence = state_evidence(
+            integration_session,
+            str(integration_dispatch["dispatchId"]),
+            "integration-wait",
+        )
+        wait_load = self.service.room_capability_tool_load(
+            {
+                "sessionId": integration_session,
+                "receiptId": "load:progressive-integration:wait",
+                "toolName": "room_commit",
+                "createdAtMs": int(time.time() * 1000),
+            }
+        )["result"]
+        self.service.execute_room_capability_tool(
+            integration_session,
+            "room_commit",
+            {
+                "decision": "deliver",
+                "summary": "第一波已经集成",
+                "publicSummary": "前两项功能已经集成，接下来处理重复客户合并。",
+                "evidence": [
+                    {
+                        "acceptance": "AC-1",
+                        "refs": [integration_evidence],
+                    }
+                ],
+                "residualRisks": ["依赖功能尚未完成"],
+            },
+            tool_call_id="call:progressive-integration:wait",
+            load_receipt_id=str(wait_load["receiptId"]),
+        )
+        waited = self.service.room_settle_lifecycle.settle(
+            {
+                "sessionId": integration_session,
+                "dispatchId": integration_dispatch["dispatchId"],
+                "rootId": root_id,
+                "generation": integration_dispatch["generation"],
+                "capabilityEpoch": integration_dispatch["capabilityEpoch"],
+                "settleScopeId": "scope:progressive-integration:wait",
+                "settleAttempt": 1,
+                "runtimeTurnId": (
+                    f"turn:{integration_dispatch['dispatchId']}:1"
+                ),
+                "dispatchAttempt": integration_dispatch["attempt"],
+                "resourceUsage": {},
+            }
+        )
+        self.assertEqual(waited["state"], "committed", waited)
+        self.assertEqual(
+            self.service.room_kernel.task(str(integration_task["taskId"]))[
+                "state"
+            ],
+            "waiting",
+        )
+        with sqlite3.connect(self.service.db_path) as conn:
+            row = conn.execute(
+                """SELECT payload_json FROM room_kernel_continuations
+                   WHERE parent_dispatch_id=? AND state='applied'""",
+                (integration_dispatch["dispatchId"],),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        assert row is not None
+        participant_wait = json.loads(str(row[0]))
+        self.assertEqual(participant_wait["waitingFor"], "participant")
+        self.assertEqual(
+            participant_wait["waitingForParticipantId"],
+            later_dispatch["targetParticipantId"],
+        )
+        self.assertEqual(
+            participant_wait["waitingForDispatchId"],
+            later_dispatch["dispatchId"],
+        )
+
+        deliver_feature(later_feature, 3)
+        resumed_dispatch: dict[str, object] | None = None
+        for _ in range(6):
+            candidates = [
+                item
+                for item in self.service.room_kernel_snapshot(self.room_id)[
+                    "dispatches"
+                ]
+                if item.get("taskId") == integration_task["taskId"]
+                and item.get("state") in {"pending", "leased", "running"}
+            ]
+            if candidates:
+                resumed_dispatch = run_dispatch(
+                    str(candidates[-1]["dispatchId"])
+                )
+                break
+            self.assertTrue(self.service.room_kernel_worker.run_once())
+        self.assertIsNotNone(resumed_dispatch)
+        assert resumed_dispatch is not None
+        self.assertEqual(resumed_dispatch["intentKind"], "resume")
+        resumed_session = str(resumed_dispatch["targetSessionId"])
+        integrate_feature(
+            later_feature,
+            session_id=resumed_session,
+            suffix="later-feature",
+        )
+        final_evidence = state_evidence(
+            resumed_session,
+            str(resumed_dispatch["dispatchId"]),
+            "integration-final",
+        )
+        final_load = self.service.room_capability_tool_load(
+            {
+                "sessionId": resumed_session,
+                "receiptId": "load:progressive-integration:final",
+                "toolName": "room_commit",
+                "createdAtMs": int(time.time() * 1000),
+            }
+        )["result"]
+        self.service.execute_room_capability_tool(
+            resumed_session,
+            "room_commit",
+            {
+                "decision": "deliver",
+                "summary": "三项功能已经逐波集成",
+                "publicSummary": "三项客户目录功能已经逐波集成并完成共享结果核对。",
+                "evidence": [
+                    {
+                        "acceptance": "AC-1",
+                        "refs": [final_evidence],
+                    }
+                ],
+                "residualRisks": [],
+            },
+            tool_call_id="call:progressive-integration:final",
+            load_receipt_id=str(final_load["receiptId"]),
+        )
+        final_settle = self.service.room_settle_lifecycle.settle(
+            {
+                "sessionId": resumed_session,
+                "dispatchId": resumed_dispatch["dispatchId"],
+                "rootId": root_id,
+                "generation": resumed_dispatch["generation"],
+                "capabilityEpoch": resumed_dispatch["capabilityEpoch"],
+                "settleScopeId": "scope:progressive-integration:final",
+                "settleAttempt": 1,
+                "runtimeTurnId": f"turn:{resumed_dispatch['dispatchId']}:1",
+                "dispatchAttempt": resumed_dispatch["attempt"],
+                "resourceUsage": {},
+            }
+        )
+        self.assertEqual(final_settle["state"], "committed")
+        self.assertEqual(
+            self.service.room_kernel.task(str(integration_task["taskId"]))[
+                "state"
+            ],
+            "completed",
+        )
+
     def test_writable_plan_runs_feature_integration_review_and_one_report(
         self,
     ) -> None:

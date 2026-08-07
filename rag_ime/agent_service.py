@@ -4345,13 +4345,19 @@ class AgentService:
                 "workspace writer quiescence does not match the canonical Dispatch"
             )
         generation = int(dispatch.get("generation", -1))
-        # Capability revocation is the admission fence.  Any invocation that was
-        # authorized before this point but cannot subsequently seal its execution
-        # receipt remains pending/unknown and blocks cleanup below.
-        self.room_kernel_runtime.revoke_session(
-            session_id,
-            int(time.time() * 1000),
+        # Revoke only when the source Dispatch still owns this Session. The
+        # same companion may already be running a later integration Dispatch;
+        # revoking that newer binding would cancel the Tool that is proving the
+        # old writer quiescent.
+        active_binding = self.room_capabilities.runtime_binding(session_id)
+        active_manifest_id = str(
+            (active_binding or {}).get("manifestId") or ""
         )
+        if active_manifest_id == f"capability-manifest:{dispatch_id}":
+            self.room_kernel_runtime.revoke_session(
+                session_id,
+                int(time.time() * 1000),
+            )
         children = self._room_root_child_quiescence(
             root_id,
             generation,
@@ -4362,6 +4368,7 @@ class AgentService:
                 """
                 SELECT manifest.manifest_id, manifest.manifest_hash,
                        manifest.generation, binding.session_id,
+                       binding.state AS binding_state,
                        invocation.receipt_id AS invocation_receipt_id,
                        invocation.canonical_tool_name,
                        invocation.command_hash,
@@ -4390,7 +4397,11 @@ class AgentService:
             if row["execution_receipt_id"] is not None
             and str(row["execution_session_id"] or "") != session_id
         ]
-        registry_known = bool(rows) and not invalid_execution_sessions
+        registry_known = (
+            bool(rows)
+            and not invalid_execution_sessions
+            and all(str(row["binding_state"]) != "active" for row in rows)
+        )
         pending = [
             str(row["invocation_receipt_id"])
             for row in rows
@@ -4402,6 +4413,7 @@ class AgentService:
                 "manifestId": str(row["manifest_id"]),
                 "manifestHash": str(row["manifest_hash"]),
                 "generation": int(row["generation"]),
+                "bindingState": str(row["binding_state"]),
                 "invocationReceiptId": str(row["invocation_receipt_id"] or ""),
                 "toolName": str(row["canonical_tool_name"] or ""),
                 "commandHash": str(row["command_hash"] or ""),

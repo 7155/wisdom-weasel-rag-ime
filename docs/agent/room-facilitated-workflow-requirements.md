@@ -2,17 +2,28 @@
 
 - Document class: sole tracked authority for current Room product behavior and acceptance status
 - Approved vision window: user decisions made on or after 2026-08-02
-- Contract revision: 2026-08-07 23:10 CST
-- Acceptance state: the current worktree now implements one frontend `RoomScreenModel`; pure wait/settlement/scheduling policies; transactional domain-event/Outbox writes with lease-token fencing, expired-lease recovery, projection-before-wake ordering and per-Room isolation; Start-time PlanRevision/WorkDocument/RoomTask materialization; dependency-frontier release; scoped integration and review Tasks; same-Root execution-time corrections; and an affected-dependency-closure PlanRevision replacement that leaves unrelated work running. Pi Runtime SDK v2 follow-up source is pushed at `30a802eed089f923633a99fab1428847dda20cc9`, while the installed Pi baseline remains `3e2bac77319571ac0047a83529aae241db4b88a3`; PAW uses exact `session.settlement.get`/`session.await_settled` recovery with fenced Session/transcript binding checks. PAW baseline `ca942020aba5aee7c03a6c046e2fe1a0682b4742` was pushed and clean-installed with the older Pi baseline; staged/source/install audits passed. A fresh GUI Room proved immediate user-message and compact attributed progress rendering, then exposed a real first-run fault before Provider acknowledgement: Pi had allocated but not yet materialized the transcript, a Room-mode reopen produced a new provisional Pi ID at the same path, and PAW incorrectly treated it as history migration. The follow-up now allows exactly that pre-materialization rebind while keeping every materialized transcript fail-closed; Pi Runtime v2 `90/90` and adjacent Session/build/install/kill-gate `136/136` pass. The PAW follow-up still needs a clean commit, reinstall and a complete TUI Room/ordinary-Session foreground journey. Backup, canonical consolidation and cleanup are also pending. The managed `tests/test_duplicates.py` conflict remains isolated legacy evidence and must not be mixed into this migration.
+- Contract revision: 2026-08-08 05:56 CST
+- Acceptance state: the current Room source now has one frontend `RoomScreenModel`; transactional state/event/Outbox writes and recoverable ordered delivery; Start-time PlanRevision, WorkDocument and stable RoomTask materialization; dependency-frontier release; progressive cross-wave integration under one stable integration Task; scoped independent review; same-Root user corrections; and exact Pi turn settlement/session migration. Pi Runtime SDK v2 is pushed at `153b301fb6c19054e65d138cd3d5db0ed41246b1`. The latest installed GUI run proved two Wave 1 feature owners executing in isolated worktrees, then exposed an integration deadlock: the one integration Task waited for all later features while those features waited for earlier integration. The source fix now releases integration when the first delivered worktree is available, integrates only currently delivered results, releases the next dependency frontier after accepted integration, and resumes the same integration Task until its full scope is complete. Focused Capability/settlement/workspace/Kernel modules pass `19/19`, `52/52`, `45/45`, and `119/119`; complete Room backend passes `602/602`; frontend passes `105 files / 1022 tests`; TypeScript, production build, compile, import boundaries, route ownership and diff checks pass. This source still requires a clean commit, installation and completion of the existing GUI Room through later waves, WorkDocument updates, independent review and exactly one final delivery. Backup, canonical consolidation and cleanup remain pending. The managed `tests/test_duplicates.py` conflict remains isolated legacy evidence and must not be mixed into this migration.
 - Status rule: source, test, installed, and foreground evidence are reported separately
 
 ### Current follow-up evidence
 
-- The current installed baseline is PAW `ca942020` with Pi `3e2bac77`; the Pi
-  follow-up is pushed at `30a802ee` and the PAW follow-up remains a working-tree checkpoint.
+- One integration Task may own a writable scope that spans multiple dependency
+  waves. It becomes runnable when the first scoped worktree is durably
+  delivered, consumes only results that `room_state` currently exposes, and
+  keeps the same Task identity while later waves run. Each accepted partial
+  integration may release newly dependency-ready feature Tasks. If the
+  integration owner also owns such a later feature, the current integration
+  Turn is released into an exact participant/Dispatch wait; that feature's
+  delivery resumes the original integration Task instead of creating another
+  coordinator identity.
+- The current installed baseline is PAW `a9ffbbd5` with managed Pi
+  `pi-0.80.7-153b301fb6c1-raghost-7abef9c7ce`; the progressive-integration PAW
+  fix remains a working-tree checkpoint until this revision is committed and
+  clean-installed.
   `RoomScreenModel` is the sole frontend selector for active Root, phase, wait,
   frontier, readiness and final identity. The single-worker complete frontend
-  run passes `105 files / 1020 tests`; focused selector coverage and TypeScript
+  run passes `105 files / 1022 tests`; focused selector coverage and TypeScript
   also pass.
 - Room application writes now couple state, domain events and projection/wake
   Outbox entries in one transaction. Every lease is fenced by an opaque token,
@@ -365,11 +376,15 @@ it on authoritative terminal state and never deletes it on a timer.
    never gains execute capability; waiting features exist visibly from the
    first second but have no execution attempt.
 7. Peer owners deliver artifacts, verification, provenance, and residual risk.
-   Delivery remains integration-pending. Completion of blocking features plus
-   valid integration receipts advances the next dependency frontier.
+   Delivery remains integration-pending. The first delivered worktree in an
+   integration scope makes that stable integration Task runnable; it does not
+   wait for feature Tasks that themselves depend on earlier integration.
 8. Assign scoped integration work through one active authoritative lease per
    shared scope. Any eligible peer may hold it; integration is not a permanent
-   Facilitator privilege.
+   Facilitator privilege. A cross-wave integration Task consumes only currently
+   delivered results, records accepted integration before releasing the next
+   dependency frontier, and then waits/resumes under the same Task identity
+   until every scoped feature is integrated.
 9. Derive required bounded ReviewTargets from the integrated artifact revision
    and actual author/repair/integration provenance. Run eligible independent
    reviews, repairs, reintegration, and re-review until every current target is
@@ -473,6 +488,10 @@ frontend component independently sorts or guesses them.
   baseline. Exactly one integration lease is active for each affected shared
   scope in the authoritative integration workspace; any eligible peer may hold
   that bounded responsibility.
+- An integration scope may span several dependency waves. Its lease processes
+  the delivered subset in dependency order and stays logically open; later
+  results resume the same stable integration Task rather than requiring a
+  second coordinator or waiting for the entire scope up front.
 - One writable workspace binding belongs to one WorkItem responsibility, not to
   a persona forever.
 - The permanent ledger records work lineage, requirement revision, owner and
@@ -1514,6 +1533,12 @@ identity; crash windows cannot run work without an active WorkDocument receipt.
 
 - Represent integration as `RoomTask(kind=integration)` with one active lease
   per affected shared scope, assignable to any eligible peer.
+- For a scope spanning multiple waves, release the stable integration Task on
+  the first delivered worktree, integrate only the current delivered subset,
+  release newly ready features after the integration receipt, and resume that
+  same Task for later results. A premature terminal claim becomes an exact
+  dependency wait; it must never recreate the circular wait in which later
+  features require integration while integration requires those later features.
 - Derive ReviewTargets from the exact integrated artifact revision and its
   implementation/repair/integration provenance. Represent actual review work as
   `RoomTask(kind=review)`; allow non-overlapping cross-review in parallel.
@@ -1525,9 +1550,10 @@ identity; crash windows cannot run work without an active WorkDocument receipt.
   review. Only one exact reporter/terminal receipt can create FinalDelivery.
 
 Acceptance: four peers may all implement different scopes and cross-review
-eligible scopes; no one reviews its own authored/repaired/integrated target;
-late work invalidates stale review; duplicate terminal events cannot create two
-final replies.
+eligible scopes; a multi-wave scope progresses as deliver -> partial integration
+-> next wave -> resumed integration under one stable Task; no one reviews its
+own authored/repaired/integrated target; late work invalidates stale review;
+duplicate terminal events cannot create two final replies.
 
 ### Phase 6 — split UI by user-facing frames after the model is stable
 
