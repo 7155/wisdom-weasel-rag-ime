@@ -178,13 +178,20 @@ class RoomKernelApplicationService:
     def drain_ready_application_effects(
         self,
         *,
+        project_room: Callable[[str], object] | None = None,
         now_ms: int | None = None,
     ) -> dict[str, object]:
         """Recover ready effects without allowing one Room to stop another."""
 
         return self.application_outbox.drain_ready_rooms(
-            project_room=lambda target_room_id: self._project_room_effect(
-                target_room_id, now_ms=now_ms
+            project_room=(
+                project_room
+                or (
+                    lambda target_room_id: self._project_room_effect(
+                        target_room_id,
+                        now_ms=now_ms,
+                    )
+                )
             ),
             wake_room=lambda _target_room_id: self.wake_worker(),
             now_ms=now_ms,
@@ -643,19 +650,23 @@ class RoomKernelApplicationService:
         root_id: str = "",
         reason: str = "Room Task ended before workspace integration",
         now_ms: int | None = None,
+        snapshot: Mapping[str, object] | None = None,
+        sync_projection: bool = True,
     ) -> list[dict[str, object]]:
         """Retain interrupted isolated Tasks after any cancellation surface."""
 
         timestamp = int(time.time() * 1000) if now_ms is None else int(now_ms)
-        self.projection.sync_room(room_id, now_ms=timestamp)
-        snapshot = self.projection.snapshot(room_id)
+        room_snapshot = snapshot
+        if room_snapshot is None:
+            self.projection.sync_room(room_id, now_ms=timestamp)
+            room_snapshot = self.projection.snapshot(room_id)
         projected: list[dict[str, object]] = []
         state_map = {
             "blocked": "blocked",
             "failed": "failed",
             "cancelled": "cancelled",
         }
-        for task in snapshot.get("tasks") or []:
+        for task in room_snapshot.get("tasks") or []:
             if not isinstance(task, Mapping):
                 continue
             task_state = str(task.get("state") or "")
@@ -674,7 +685,7 @@ class RoomKernelApplicationService:
             )
             if value is not None:
                 projected.append(value)
-        if projected:
+        if projected and sync_projection:
             self.projection.sync_room(room_id, now_ms=timestamp)
         return projected
 

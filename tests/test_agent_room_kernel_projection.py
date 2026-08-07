@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from rag_ime.agent_room_kernel import RoomKernelStore
 from rag_ime.agent_room_kernel_projection import RoomKernelProjection
@@ -71,6 +72,33 @@ class RoomKernelProjectionTests(unittest.TestCase):
         chunk = next(gap).decode("utf-8")
         self.assertIn("event: snapshot_required", chunk)
         self.assertIn('"reason":"event_replay_gap"', chunk)
+
+    def test_sync_room_snapshot_materializes_the_room_once(self) -> None:
+        self.store.create_root(
+            root("root:2"), budget=10, max_hops=3, max_depth=2,
+            acceptance_criteria=("ac:2",), now_ms=3,
+        )
+        self.store.create_task(
+            task("task:2", root_id="root:2", criteria=("ac:2",)),
+            now_ms=4,
+        )
+
+        with patch.object(
+            self.projection,
+            "_records",
+            wraps=self.projection._records,
+        ) as records:
+            emitted, snapshot = self.projection.sync_room_snapshot(
+                "room:1",
+                now_ms=10,
+            )
+
+        self.assertEqual(records.call_count, 1)
+        self.assertEqual(
+            {item["rootId"] for item in snapshot["roots"]},
+            {"root:1", "root:2"},
+        )
+        self.assertEqual(snapshot["lastSequence"], emitted[-1]["sequence"])
 
     def test_only_explicit_post_is_projected_and_private_session_contains_no_text(self) -> None:
         self.store.enqueue_dispatch(dispatch("dispatch:1", key="projection:1"), now_ms=3)

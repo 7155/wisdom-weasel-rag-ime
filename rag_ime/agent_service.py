@@ -4761,7 +4761,22 @@ class AgentService:
             self.room_kernel_worker_loop.start()
 
     def _sync_all_room_kernel_projections(self) -> dict[str, object]:
-        recovery = self.room_kernel_application.drain_ready_application_effects()
+        room_snapshots: dict[str, Mapping[str, object]] = {}
+
+        def project_startup_room(room_id: str) -> object:
+            if room_id in room_snapshots:
+                return []
+            for root_id in self.room_kernel.root_ids(room_id):
+                self.room_kernel_application.materialize_work_document(root_id)
+            emitted, snapshot = (
+                self.room_kernel_projection.sync_room_snapshot(room_id)
+            )
+            room_snapshots[room_id] = snapshot
+            return emitted
+
+        recovery = self.room_kernel_application.drain_ready_application_effects(
+            project_room=project_startup_room,
+        )
         recovered = dict(recovery.get("applied") or {})
         failures = dict(recovery.get("failed") or {})
         blocked = {
@@ -4785,23 +4800,43 @@ class AgentService:
             if room_id in failures:
                 continue
             try:
-                self.room_kernel_application.reconcile_workspace_retention(
-                    room_id=room_id,
-                    reason=(
-                        "Room runtime terminal state retained isolated workspace evidence"
-                    ),
+                room_snapshot = room_snapshots.get(room_id)
+                if room_snapshot is None:
+                    _, room_snapshot = (
+                        self.room_kernel_projection.sync_room_snapshot(room_id)
+                    )
+                    room_snapshots[room_id] = room_snapshot
+                retained = (
+                    self.room_kernel_application.reconcile_workspace_retention(
+                        room_id=room_id,
+                        reason=(
+                            "Room runtime terminal state retained isolated workspace evidence"
+                        ),
+                        snapshot=room_snapshot,
+                        sync_projection=False,
+                    )
                 )
-                # This remains an idempotent repair read. New lifecycle writes
-                # reach it through the transactional application Outbox first.
-                self.room_kernel_projection.sync_room(room_id)
+                if retained:
+                    _, room_snapshot = (
+                        self.room_kernel_projection.sync_room_snapshot(room_id)
+                    )
+                    room_snapshots[room_id] = room_snapshot
                 for root_id in self.room_kernel.root_ids(room_id):
-                    self.room_kernel_application.release_ready_plan_tasks(
+                    released = self.room_kernel_application.release_ready_plan_tasks(
                         room_id,
                         root_id,
                     )
+                    if released.get("released") is True:
+                        _, room_snapshot = (
+                            self.room_kernel_projection.sync_room_snapshot(room_id)
+                        )
+                        room_snapshots[room_id] = room_snapshot
                     root = self.room_kernel.root(root_id)
                     self.room_public_timeline.sync_terminal_root(root)
-                    self._project_room_work_from_kernel_root(root)
+                    self._project_room_work_from_kernel_root(
+                        root,
+                        snapshot=room_snapshot,
+                    )
                 synchronized.append(room_id)
             except Exception as exc:
                 failures[room_id] = f"{type(exc).__name__}: {exc}"[:500]
@@ -4890,13 +4925,19 @@ class AgentService:
     def _project_room_work_from_kernel_root(
         self,
         root: Mapping[str, object],
+        *,
+        snapshot: Mapping[str, object] | None = None,
     ) -> int:
         room_id = str(root.get("roomId") or "")
         root_id = str(root.get("rootId") or "")
-        snapshot = self.room_kernel_projection.snapshot(room_id)
+        room_snapshot = (
+            snapshot
+            if snapshot is not None
+            else self.room_kernel_projection.snapshot(room_id)
+        )
         final_posts = [
             item
-            for item in snapshot.get("posts") or []
+            for item in room_snapshot.get("posts") or []
             if isinstance(item, Mapping)
             and item.get("rootId") == root_id
             and item.get("kind") == "result"
@@ -4904,7 +4945,7 @@ class AgentService:
         ]
         task_results = [
             item
-            for item in snapshot.get("tasks") or []
+            for item in room_snapshot.get("tasks") or []
             if isinstance(item, Mapping)
             and item.get("rootId") == root_id
             and str(item.get("resultSummary") or "").strip()

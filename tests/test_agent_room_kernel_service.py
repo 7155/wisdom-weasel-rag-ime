@@ -4651,6 +4651,111 @@ class RoomKernelServiceTests(unittest.TestCase):
             0,
         )
 
+    def test_projection_recovery_reuses_one_authoritative_room_snapshot(self) -> None:
+        with (
+            patch.object(
+                self.service.room_kernel_projection,
+                "sync_room_snapshot",
+                wraps=self.service.room_kernel_projection.sync_room_snapshot,
+            ) as sync_room_snapshot,
+            patch.object(
+                self.service,
+                "_project_room_work_from_kernel_root",
+                wraps=self.service._project_room_work_from_kernel_root,
+            ) as project_room_work,
+            patch.object(
+                self.service.room_kernel_projection,
+                "_records",
+                wraps=self.service.room_kernel_projection._records,
+            ) as projection_records,
+        ):
+            recovery = self.service._sync_all_room_kernel_projections()
+
+        self.assertIn(self.room_id, recovery["synchronizedRoomIds"])
+        sync_room_snapshot.assert_called_once_with(self.room_id)
+        projected_snapshots = [
+            call.kwargs["snapshot"]
+            for call in project_room_work.call_args_list
+            if call.args and call.args[0].get("roomId") == self.room_id
+        ]
+        self.assertTrue(projected_snapshots)
+        self.assertTrue(
+            all(
+                snapshot is projected_snapshots[0]
+                for snapshot in projected_snapshots
+            )
+        )
+        self.assertEqual(projection_records.call_count, 1)
+
+    def test_projection_recovery_refreshes_snapshot_after_releasing_plan_wave(
+        self,
+    ) -> None:
+        released_task_id = "task:projection-released-wave"
+
+        def release_plan_wave(room_id: str, root_id: str):
+            self.assertEqual(room_id, self.room_id)
+            self.assertEqual(root_id, "root:service")
+            self.service.room_kernel.create_task(
+                {
+                    "schemaVersion": ROOM_TASK_SCHEMA_VERSION,
+                    "taskId": released_task_id,
+                    "rootId": root_id,
+                    "parentTaskId": "task:service",
+                    "taskKind": "work",
+                    "currentOwnerParticipantId": str(self.participant["id"]),
+                    "ownershipRevision": 0,
+                    "ownershipReceiptId": None,
+                    "invitationId": None,
+                    "reviewState": "not_required",
+                    "reviewOfTaskIds": [],
+                    "reviewAuthorParticipantIds": [],
+                    "contextEvidenceRefs": [],
+                    "objective": "Expose the newly released dependency wave.",
+                    "expectedOutput": "The startup snapshot includes this Task.",
+                    "requirementItemIds": ["requirement:service"],
+                    "acceptanceCriterionIds": [],
+                    "revision": 0,
+                    "state": "active",
+                },
+                now_ms=20,
+            )
+            return {
+                "released": True,
+                "tasks": [self.service.room_kernel.task(released_task_id)],
+                "dispatches": [],
+            }
+
+        with (
+            patch.object(
+                self.service.room_kernel_application,
+                "release_ready_plan_tasks",
+                side_effect=release_plan_wave,
+            ),
+            patch.object(
+                self.service.room_kernel_projection,
+                "sync_room_snapshot",
+                wraps=self.service.room_kernel_projection.sync_room_snapshot,
+            ) as sync_room_snapshot,
+            patch.object(
+                self.service,
+                "_project_room_work_from_kernel_root",
+                wraps=self.service._project_room_work_from_kernel_root,
+            ) as project_room_work,
+        ):
+            recovery = self.service._sync_all_room_kernel_projections()
+
+        self.assertIn(self.room_id, recovery["synchronizedRoomIds"])
+        projected_snapshot = next(
+            call.kwargs["snapshot"]
+            for call in project_room_work.call_args_list
+            if call.args and call.args[0].get("rootId") == "root:service"
+        )
+        self.assertIn(
+            released_task_id,
+            {str(task["taskId"]) for task in projected_snapshot["tasks"]},
+        )
+        self.assertEqual(sync_room_snapshot.call_count, 2)
+
     def test_projection_recovery_isolates_one_room_and_drains_another(self) -> None:
         room_b = self.service.create_room(
             {
@@ -4730,17 +4835,23 @@ class RoomKernelServiceTests(unittest.TestCase):
                     created_at_ms=10,
                 )
 
-        original_sync = self.service.room_kernel_projection.sync_room
+        original_sync = (
+            self.service.room_kernel_projection.sync_room_snapshot
+        )
 
-        def sync_room(room_id: str, *, now_ms: int | None = None):
+        def sync_room_snapshot(
+            room_id: str,
+            *,
+            now_ms: int | None = None,
+        ):
             if room_id == self.room_id:
                 raise ValueError("malformed legacy projection")
             return original_sync(room_id, now_ms=now_ms)
 
         with patch.object(
             self.service.room_kernel_projection,
-            "sync_room",
-            side_effect=sync_room,
+            "sync_room_snapshot",
+            side_effect=sync_room_snapshot,
         ):
             recovery = self.service._sync_all_room_kernel_projections()
 

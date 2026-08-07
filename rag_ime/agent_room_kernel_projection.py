@@ -33,103 +33,133 @@ class RoomKernelProjection:
         timestamp = int(now_ms if now_ms is not None else time.time() * 1000)
         with self._connect(immediate=True) as conn:
             records = self._records(conn, room_id)
-            emitted: list[dict[str, object]] = []
-            sequence = int(
-                conn.execute(
-                    "SELECT COALESCE(MAX(sequence), 0) FROM room_kernel_events WHERE room_id = ?",
-                    (room_id,),
-                ).fetchone()[0]
-            )
-            for projection_kind, projection_id, entity_kind, entity_id, event_kind, payload in records:
-                content_hash = _hash(payload)
-                prior = conn.execute(
-                    """SELECT content_hash FROM room_kernel_projection_hashes
-                       WHERE room_id = ? AND projection_kind = ? AND projection_id = ?""",
-                    (room_id, projection_kind, projection_id),
-                ).fetchone()
-                if prior is not None and str(prior["content_hash"]) == content_hash:
-                    continue
-                sequence += 1
-                event = {
-                    "schemaVersion": "wisdom-weasel.room-event-envelope.v2",
-                    "entityKind": entity_kind,
-                    "entityId": entity_id,
-                    "eventKind": event_kind,
-                    "sequence": sequence,
-                    "occurredAtMs": timestamp,
-                    "payload": payload,
-                }
-                validate_kernel_contract("eventEnvelope", event)
-                conn.execute(
-                    """INSERT INTO room_kernel_events(
-                       room_id, sequence, entity_kind, entity_id, event_kind,
-                       payload_json, occurred_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        room_id,
-                        sequence,
-                        entity_kind,
-                        entity_id,
-                        event_kind,
-                        _json(event),
-                        timestamp,
-                    ),
-                )
-                conn.execute(
-                    """INSERT INTO room_kernel_projection_hashes(
-                       room_id, projection_kind, projection_id, content_hash)
-                       VALUES (?, ?, ?, ?)
-                       ON CONFLICT(room_id, projection_kind, projection_id)
-                       DO UPDATE SET content_hash = excluded.content_hash""",
-                    (room_id, projection_kind, projection_id, content_hash),
-                )
-                emitted.append(event)
-            return emitted
+            return self._sync_records(conn, room_id, records, timestamp)
+
+    def sync_room_snapshot(
+        self,
+        room_id: str,
+        *,
+        now_ms: int | None = None,
+    ) -> tuple[list[dict[str, object]], dict[str, object]]:
+        room_id = _required(room_id, "room_id")
+        timestamp = int(now_ms if now_ms is not None else time.time() * 1000)
+        with self._connect(immediate=True) as conn:
+            records = self._records(conn, room_id)
+            emitted = self._sync_records(conn, room_id, records, timestamp)
+            return emitted, self._snapshot(conn, room_id, records)
 
     def snapshot(self, room_id: str) -> dict[str, object]:
         room_id = _required(room_id, "room_id")
         with self._connect() as conn:
             records = self._records(conn, room_id)
-            roots: list[dict[str, object]] = []
-            tasks: list[dict[str, object]] = []
-            dispatches: list[dict[str, object]] = []
-            posts: list[dict[str, object]] = []
-            sessions: list[dict[str, object]] = []
-            receipts: list[dict[str, object]] = []
-            screen_state: dict[str, object] | None = None
-            for kind, _projection_id, _entity_kind, _entity_id, _event_kind, payload in records:
-                value = next(iter(payload.values()))
-                if kind == "root":
-                    roots.append(value)
-                elif kind == "task":
-                    tasks.append(value)
-                elif kind == "dispatch":
-                    dispatches.append(value)
-                elif kind == "post":
-                    posts.append(value)
-                elif kind == "session":
-                    sessions.append(value)
-                elif kind == "receipt":
-                    receipts.append(value)
-                elif kind == "screen":
-                    screen_state = value
-            task_updated_at_ms_by_id = {
-                str(row["task_id"]): int(row["updated_at_ms"])
-                for row in conn.execute(
-                    """SELECT task.task_id,task.updated_at_ms
-                       FROM room_kernel_tasks AS task
-                       JOIN room_kernel_roots AS root
-                         ON root.root_id=task.root_id
-                       WHERE root.room_id=?
-                       ORDER BY task.task_id""",
-                    (room_id,),
-                ).fetchall()
+            return self._snapshot(conn, room_id, records)
+
+    def _sync_records(
+        self,
+        conn: sqlite3.Connection,
+        room_id: str,
+        records: list[tuple[str, str, str, str, str, dict[str, object]]],
+        timestamp: int,
+    ) -> list[dict[str, object]]:
+        emitted: list[dict[str, object]] = []
+        sequence = int(
+            conn.execute(
+                "SELECT COALESCE(MAX(sequence), 0) FROM room_kernel_events WHERE room_id = ?",
+                (room_id,),
+            ).fetchone()[0]
+        )
+        for projection_kind, projection_id, entity_kind, entity_id, event_kind, payload in records:
+            content_hash = _hash(payload)
+            prior = conn.execute(
+                """SELECT content_hash FROM room_kernel_projection_hashes
+                   WHERE room_id = ? AND projection_kind = ? AND projection_id = ?""",
+                (room_id, projection_kind, projection_id),
+            ).fetchone()
+            if prior is not None and str(prior["content_hash"]) == content_hash:
+                continue
+            sequence += 1
+            event = {
+                "schemaVersion": "wisdom-weasel.room-event-envelope.v2",
+                "entityKind": entity_kind,
+                "entityId": entity_id,
+                "eventKind": event_kind,
+                "sequence": sequence,
+                "occurredAtMs": timestamp,
+                "payload": payload,
             }
-            last_sequence = int(
-                conn.execute(
-                    "SELECT COALESCE(MAX(sequence), 0) FROM room_kernel_events WHERE room_id = ?",
-                    (room_id,),
-                ).fetchone()[0]
+            validate_kernel_contract("eventEnvelope", event)
+            conn.execute(
+                """INSERT INTO room_kernel_events(
+                   room_id, sequence, entity_kind, entity_id, event_kind,
+                   payload_json, occurred_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    room_id,
+                    sequence,
+                    entity_kind,
+                    entity_id,
+                    event_kind,
+                    _json(event),
+                    timestamp,
+                ),
             )
+            conn.execute(
+                """INSERT INTO room_kernel_projection_hashes(
+                   room_id, projection_kind, projection_id, content_hash)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(room_id, projection_kind, projection_id)
+                   DO UPDATE SET content_hash = excluded.content_hash""",
+                (room_id, projection_kind, projection_id, content_hash),
+            )
+            emitted.append(event)
+        return emitted
+
+    def _snapshot(
+        self,
+        conn: sqlite3.Connection,
+        room_id: str,
+        records: list[tuple[str, str, str, str, str, dict[str, object]]],
+    ) -> dict[str, object]:
+        roots: list[dict[str, object]] = []
+        tasks: list[dict[str, object]] = []
+        dispatches: list[dict[str, object]] = []
+        posts: list[dict[str, object]] = []
+        sessions: list[dict[str, object]] = []
+        receipts: list[dict[str, object]] = []
+        screen_state: dict[str, object] | None = None
+        for kind, _projection_id, _entity_kind, _entity_id, _event_kind, payload in records:
+            value = next(iter(payload.values()))
+            if kind == "root":
+                roots.append(value)
+            elif kind == "task":
+                tasks.append(value)
+            elif kind == "dispatch":
+                dispatches.append(value)
+            elif kind == "post":
+                posts.append(value)
+            elif kind == "session":
+                sessions.append(value)
+            elif kind == "receipt":
+                receipts.append(value)
+            elif kind == "screen":
+                screen_state = value
+        task_updated_at_ms_by_id = {
+            str(row["task_id"]): int(row["updated_at_ms"])
+            for row in conn.execute(
+                """SELECT task.task_id,task.updated_at_ms
+                   FROM room_kernel_tasks AS task
+                   JOIN room_kernel_roots AS root
+                     ON root.root_id=task.root_id
+                   WHERE root.room_id=?
+                   ORDER BY task.task_id""",
+                (room_id,),
+            ).fetchall()
+        }
+        last_sequence = int(
+            conn.execute(
+                "SELECT COALESCE(MAX(sequence), 0) FROM room_kernel_events WHERE room_id = ?",
+                (room_id,),
+            ).fetchone()[0]
+        )
         material = {
             "roomId": room_id,
             "lastSequence": last_sequence,
@@ -141,7 +171,7 @@ class RoomKernelProjection:
             "sessions": sessions,
             "receipts": receipts,
             "screenState": screen_state
-            or self.kernel.screen_state(room_id),
+            or self.kernel.screen_state(room_id, conn=conn),
         }
         return {**material, "snapshotHash": f"sha256:{_hash(material)}"}
 
