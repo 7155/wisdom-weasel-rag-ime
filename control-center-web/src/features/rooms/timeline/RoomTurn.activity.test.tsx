@@ -1392,6 +1392,39 @@ describe('RoomTurn public activity detail', () => {
     );
   });
 
+  it('does not describe a waiting task as still processing when its last update ages', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(70_000);
+    const projection = roomProjection();
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      messageIds: ['wait-user'],
+    };
+    projection.messagesById['wait-user'] = {
+      id: 'wait-user',
+      roomId: 'room-a',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      role: 'assistant',
+      status: 'completed',
+      text: '请确认新的四人分工后再开始',
+      projectionKind: 'post',
+      postKind: 'wait',
+      rootId: 'root-a',
+      dispatchId: 'dispatch-a',
+      createdAtMs: 3_200,
+      completedAtMs: 3_200,
+    };
+    const view = render(roomTurn(projection));
+    const lane = view.container.querySelector<HTMLElement>('.room-agent-lane')!;
+
+    expect(lane).toHaveAttribute('data-state', 'waiting');
+    expect(lane).not.toHaveTextContent(
+      '仍在处理，暂时没有新的公开进展；如有短暂中断会自动恢复',
+    );
+  });
+
   it('stops motion immediately when only the Room timeline stream disconnects', () => {
     vi.useFakeTimers();
     vi.setSystemTime(10_000);
