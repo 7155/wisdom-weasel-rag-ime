@@ -278,6 +278,11 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("restore_web_source_dist", gateway_installer)
         self.assertIn("trap restore_web_source_dist EXIT", gateway_installer)
         self.assertIn('ditto "$WEB_SOURCE_DIR" "$WEB_INSTALL_DIR"', gateway_installer)
+        self.assertIn(
+            "RAG_IME_AGENT_GATEWAY_HEALTH_TIMEOUT_SECONDS",
+            gateway_installer,
+        )
+        self.assertIn("SECONDS + HEALTH_TIMEOUT_SECONDS", gateway_installer)
 
         desktop_installer = (
             ROOT / "scripts" / "install_desktop_bridge_launch_agent.sh"

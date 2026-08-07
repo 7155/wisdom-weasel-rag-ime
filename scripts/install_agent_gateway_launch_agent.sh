@@ -24,8 +24,14 @@ ALLOWED_LOGINS="${RAG_IME_REMOTE_ALLOWED_LOGINS:-}"
 DEBUG_CONTEXT_DIR="${RAG_IME_PI_DEBUG_CONTEXT_DIR:-}"
 DEBUG_CONTEXT_MAX_BYTES="${RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES:-5368709120}"
 DEBUG_CONTEXT_MAX_CALLS="${RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS:-128}"
+HEALTH_TIMEOUT_SECONDS="${RAG_IME_AGENT_GATEWAY_HEALTH_TIMEOUT_SECONDS:-45}"
 WEB_SOURCE_BACKUP=""
 WEB_SOURCE_PRESENT=0
+
+if [[ ! "$HEALTH_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "RAG_IME_AGENT_GATEWAY_HEALTH_TIMEOUT_SECONDS must be a positive integer" >&2
+  exit 2
+fi
 
 restore_web_source_dist() {
   [[ -n "$WEB_SOURCE_BACKUP" ]] || return 0
@@ -289,7 +295,7 @@ launchctl enable "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
 sleep 0.2
 bootstrap_launch_agent
 
-deadline=$((SECONDS + 45))
+deadline=$((SECONDS + HEALTH_TIMEOUT_SECONDS))
 while (( SECONDS < deadline )); do
   if "$PYTHON_EXECUTABLE" - "$HOST" "$PORT" >/dev/null 2>&1 <<'PY'
 import json
@@ -309,5 +315,5 @@ PY
   sleep 0.5
 done
 
-echo "Agent Gateway health did not become ready; inspect $LOG_DIR/agent-gateway.err.log" >&2
+echo "Agent Gateway health did not become ready after ${HEALTH_TIMEOUT_SECONDS}s; inspect $LOG_DIR/agent-gateway.err.log" >&2
 exit 1
