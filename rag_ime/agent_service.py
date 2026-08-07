@@ -4670,6 +4670,7 @@ class AgentService:
             public_timeline=self.room_public_timeline,
             session_mode_gate=self.session_mode_gate,
             wake_worker=self.room_kernel_worker_loop.wake,
+            revoke_capability_session=self.room_kernel_runtime.revoke_session,
             restore_participant_sessions=self._restore_legacy_room_participant_sessions,
             resolve_attachments=self._resolve_room_attachments,
             ensure_work_document=self._ensure_room_work_document,

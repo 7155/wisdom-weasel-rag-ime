@@ -2370,6 +2370,61 @@ class RoomKernelServiceTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(stale_state[0], "revoked")
 
+    def test_new_room_message_retires_cancelled_root_capability(self) -> None:
+        accepted = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": "先处理旧任务",
+                "clientMessageId": "client:cancelled-root-old",
+                "participantIds": [str(self.participant["id"])],
+            },
+        )
+        old_root_id = str(accepted["rootId"])
+        old_dispatch_id = str(
+            accepted["alignmentDispatches"][0]["dispatchId"]
+        )
+        self.assertTrue(self.service.room_kernel_worker.run_once())
+        stale_binding = self.service.room_capabilities.runtime_binding(
+            self.session_id
+        )
+        self.assertIsNotNone(stale_binding)
+        self.assertEqual(
+            stale_binding["manifestId"],
+            f"capability-manifest:{old_dispatch_id}",
+        )
+
+        # Model an interrupted historical cancellation: the Root reached its
+        # terminal state, but an older process never revoked the Session-scoped
+        # capability binding. A fresh message in the same Room must repair this
+        # orphan before assigning the peer again.
+        with sqlite3.connect(self.service.db_path) as conn:
+            conn.execute(
+                "UPDATE room_kernel_roots SET state='cancelled' WHERE root_id=?",
+                (old_root_id,),
+            )
+        self.assertIsNone(
+            self.service.room_kernel.session_binding(self.session_id)
+        )
+
+        retried = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": "改做新的终端界面任务",
+                "clientMessageId": "client:cancelled-root-new",
+                "participantIds": [str(self.participant["id"])],
+            },
+        )
+
+        self.assertTrue(retried["accepted"])
+        self.assertNotEqual(retried["rootId"], old_root_id)
+        with sqlite3.connect(self.service.db_path) as conn:
+            stale_state = conn.execute(
+                """SELECT state FROM room_v2_capability_runtime_bindings
+                   WHERE session_id=? AND manifest_id=?""",
+                (self.session_id, str(stale_binding["manifestId"])),
+            ).fetchone()
+        self.assertEqual(stale_state[0], "revoked")
+
     def test_pending_room_dispatch_rejects_direct_agent_prompt_cleanly(self) -> None:
         work_item = self._create_work_item(
             "room-owns-session",

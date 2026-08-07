@@ -278,6 +278,7 @@ class RoomApplicationService:
         public_timeline: RoomPublicTimelineProjector,
         session_mode_gate: AgentSessionModeGate,
         wake_worker: Callable[[], None],
+        revoke_capability_session: Callable[[str, int], None],
         restore_participant_sessions: Callable[[Mapping[str, object]], None],
         resolve_attachments: Callable[
             [str, Sequence[str], Sequence[str]], list[dict[str, object]]
@@ -308,6 +309,7 @@ class RoomApplicationService:
         self.public_timeline = public_timeline
         self.session_mode_gate = session_mode_gate
         self.wake_worker = wake_worker
+        self.revoke_capability_session = revoke_capability_session
         self.restore_participant_sessions = restore_participant_sessions
         self.resolve_attachments = resolve_attachments
         self.ensure_work_document = ensure_work_document
@@ -3661,6 +3663,20 @@ class RoomApplicationService:
 
     def _next_capability_epoch(self, session_id: str) -> int:
         latest = self.capabilities.runtime_binding(session_id, active_only=False)
+        if (
+            latest is not None
+            and latest.get("state") in {"active", "prepared"}
+            and self.kernel.session_binding(session_id) is None
+        ):
+            # A terminal Root can survive an older process that stopped after
+            # updating Kernel state but before revoking its Session capability.
+            # Repair only that provably orphaned binding. A live/pending Kernel
+            # owner still blocks reassignment, so this cannot widen concurrency.
+            self.revoke_capability_session(session_id, self.clock_ms())
+            latest = self.capabilities.runtime_binding(
+                session_id,
+                active_only=False,
+            )
         if latest is None:
             return 1
         if latest.get("state") in {"active", "prepared"}:
