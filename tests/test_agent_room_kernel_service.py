@@ -358,10 +358,6 @@ class RoomKernelServiceTests(unittest.TestCase):
                 AgentService,
                 "_recover_interrupted_room_runtime_dispatches",
             ) as recover_dispatches,
-            patch.object(
-                AgentService,
-                "_reconcile_room_work_from_kernel",
-            ) as reconcile_room_work,
         ):
             passive = AgentService(
                 db_path=self.root / "passive.sqlite",
@@ -377,9 +373,57 @@ class RoomKernelServiceTests(unittest.TestCase):
             )
             sync_projections.assert_not_called()
             recover_dispatches.assert_not_called()
-            reconcile_room_work.assert_not_called()
         finally:
             passive.close()
+
+    def test_owner_recovers_rooms_before_starting_runtime_schedulers(self) -> None:
+        startup_order: list[str] = []
+
+        def wake_scheduler(**_kwargs):
+            startup_order.append("wake_scheduler")
+            return SimpleNamespace(
+                enabled=True,
+                wake=lambda: None,
+                observe_event=lambda _event: None,
+                close=lambda: None,
+            )
+
+        with (
+            patch(
+                "rag_ime.agent_service.AgentWakeScheduler",
+                side_effect=wake_scheduler,
+            ),
+            patch.object(
+                AgentService,
+                "_recover_interrupted_room_runtime_dispatches",
+                side_effect=lambda: startup_order.append("recover"),
+            ),
+            patch.object(
+                AgentService,
+                "_sync_all_room_kernel_projections",
+                side_effect=lambda: startup_order.append("sync"),
+            ),
+            patch(
+                "rag_ime.agent_service.RoomKernelWorkerLoop.start",
+                autospec=True,
+                side_effect=lambda _loop: startup_order.append("room_worker"),
+            ),
+        ):
+            owner = AgentService(
+                db_path=self.root / "owner-startup.sqlite",
+                runtime_factory=KernelRuntimeFactory(self.root / "owner-startup"),
+                wake_scheduler_enabled=True,
+                room_kernel_mode="cohort",
+                room_kernel_worker_enabled=True,
+                room_kernel_poll_seconds=0.01,
+            )
+        try:
+            self.assertEqual(
+                startup_order,
+                ["recover", "sync", "room_worker", "wake_scheduler"],
+            )
+        finally:
+            owner.close()
 
     def test_writable_plan_assigns_integration_and_cross_review_as_peer_tasks(
         self,

@@ -633,17 +633,6 @@ class AgentService:
             ),
             context_source_token=self._context_source_token,
         )
-        self.wake_scheduler = AgentWakeScheduler(
-            store=self.wake_schedules,
-            dispatch=self.wake_application.dispatch,
-            enabled=wake_scheduler_enabled,
-            poll_seconds=wake_scheduler_poll_seconds,
-            max_parallel=2,
-        )
-        self.wake_application.bind_scheduler(self.wake_scheduler)
-        self._remove_wake_observer = self.events.add_observer(
-            self.wake_scheduler.observe_event
-        )
         self.room_legacy_dispatch = RoomLegacyDispatchService(
             self,
             build_participant_prompt=_room_participant_prompt,
@@ -685,10 +674,20 @@ class AgentService:
             ),
         )
         if self._room_kernel_worker_enabled:
-            self._sync_all_room_kernel_projections()
             self._recover_interrupted_room_runtime_dispatches()
-            self._reconcile_room_work_from_kernel()
+            self._sync_all_room_kernel_projections()
             self.room_kernel_worker_loop.start()
+        self.wake_scheduler = AgentWakeScheduler(
+            store=self.wake_schedules,
+            dispatch=self.wake_application.dispatch,
+            enabled=wake_scheduler_enabled,
+            poll_seconds=wake_scheduler_poll_seconds,
+            max_parallel=2,
+        )
+        self.wake_application.bind_scheduler(self.wake_scheduler)
+        self._remove_wake_observer = self.events.add_observer(
+            self.wake_scheduler.observe_event
+        )
 
     def bind_approval_executor(
         self,
@@ -4819,19 +4818,6 @@ class AgentService:
             "failedRooms": failures,
             "blockedRooms": blocked,
         }
-
-    def _reconcile_room_work_from_kernel(self) -> int:
-        projected = 0
-        for room_id in self.room_kernel.room_ids():
-            try:
-                self.rooms.get(room_id)
-            except AgentRoomNotFound:
-                continue
-            for root_id in self.room_kernel.root_ids(room_id):
-                projected += self._project_room_work_from_kernel_root(
-                    self.room_kernel.root(root_id)
-                )
-        return projected
 
     def _recover_interrupted_room_runtime_dispatches(
         self,
