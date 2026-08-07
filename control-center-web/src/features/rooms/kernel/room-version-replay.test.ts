@@ -31,7 +31,13 @@ describe('historical Room version replay', () => {
       projection = reduced.state;
     }
 
-    expect(projection.lastSequence).toBe(2);
+    expect(projection.lastSequence).toBe(fixture.snapshot.lastSequence);
+    expect(projection.screenState).toEqual(
+      expect.objectContaining({
+        phase: 'execution',
+        recommendedNextAction: 'complete_independent_review',
+      }),
+    );
     expect(projection.rootsById['root:legacy-version-replay']).toEqual(
       expect.objectContaining({
         schemaVersion: 'wisdom-weasel.room-root-execution.v3',
