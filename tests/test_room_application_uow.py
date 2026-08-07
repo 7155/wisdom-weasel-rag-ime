@@ -96,6 +96,66 @@ class RoomApplicationUnitOfWorkTests(unittest.TestCase):
         self.assertEqual(len(pending_a), 2)
         self.assertEqual(pending_a[0]["state"], "retry_wait")
 
+    def test_dead_letter_head_is_reported_as_a_room_blocker(self) -> None:
+        with self.uow.transaction() as conn:
+            for suffix in ("a", "b"):
+                self._insert_root(
+                    conn,
+                    room_id=f"room:{suffix}",
+                    root_id=f"root:{suffix}",
+                )
+                RoomDomainEventRepository.append(
+                    conn,
+                    self._event(
+                        room_id=f"room:{suffix}",
+                        root_id=f"root:{suffix}",
+                    ),
+                    created_at_ms=10,
+                )
+
+        outbox = RoomApplicationOutbox(self.db_path)
+        expected_head = outbox.pending("room:a")[0]
+
+        def broken_projection(_room_id: str) -> None:
+            raise ValueError("projection permanently broken")
+
+        for attempt, now_ms in enumerate((10, 1_010, 3_010, 7_010, 15_010), start=1):
+            with self.assertRaisesRegex(ValueError, "projection permanently broken"):
+                outbox.drain_room(
+                    "room:a",
+                    project_room=broken_projection,
+                    wake_room=lambda _room_id: None,
+                    now_ms=now_ms,
+                )
+            self.assertEqual(outbox.pending("room:a")[0]["attempt"], attempt)
+
+        projected: list[str] = []
+        woken: list[str] = []
+        result = outbox.drain_ready_rooms(
+            project_room=projected.append,
+            wake_room=woken.append,
+            now_ms=31_010,
+        )
+
+        self.assertEqual(projected, ["room:b"])
+        self.assertEqual(woken, ["room:b"])
+        self.assertEqual(result["applied"]["room:b"][0]["effectKind"], "project_room")
+        blocker = result["blocked"]["room:a"]
+        self.assertEqual(blocker["outboxId"], expected_head["outboxId"])
+        self.assertEqual(blocker["eventId"], expected_head["eventId"])
+        self.assertEqual(
+            blocker,
+            {
+                "outboxId": expected_head["outboxId"],
+                "eventId": expected_head["eventId"],
+                "rootId": "root:a",
+                "effectKind": "project_room",
+                "state": "dead_letter",
+                "attempt": 5,
+                "lastError": "ValueError: projection permanently broken",
+            },
+        )
+
     def test_expired_lease_is_reclaimed_after_process_restart(self) -> None:
         with self.uow.transaction() as conn:
             self._insert_root(conn, room_id="room:a", root_id="root:a")

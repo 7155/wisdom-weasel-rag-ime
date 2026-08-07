@@ -316,25 +316,31 @@ class RoomKernelRuntimeCoordinator:
             current_entry_id=str(context_entry["entryId"]),
         )
         if omission:
-            self.context_ledger.append_entry(
+            omission_dedupe_key = f"dispatch:{dispatch_id}:context-omission"
+            frozen_omission = self.context_ledger.entry_by_dedupe_key(
                 root_id=str(dispatch["rootId"]),
-                room_id=room_id,
-                generation=generation,
-                entry_kind="recovery_packet",
-                source_ref=dispatch_id,
-                dedupe_key=f"dispatch:{dispatch_id}:context-omission",
-                content=json.dumps(
-                    {
-                        "schemaVersion": "wisdom-weasel.room-context-omission.v1",
-                        "policy": "anchors-current-deduped-recent-public-v2",
-                        **omission,
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ),
-                created_at_ms=prepared_at_ms,
+                dedupe_key=omission_dedupe_key,
             )
+            if frozen_omission is None:
+                self.context_ledger.append_entry(
+                    root_id=str(dispatch["rootId"]),
+                    room_id=room_id,
+                    generation=generation,
+                    entry_kind="recovery_packet",
+                    source_ref=dispatch_id,
+                    dedupe_key=omission_dedupe_key,
+                    content=json.dumps(
+                        {
+                            "schemaVersion": "wisdom-weasel.room-context-omission.v1",
+                            "policy": "anchors-current-deduped-recent-public-v2",
+                            **omission,
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    created_at_ms=prepared_at_ms,
+                )
         for entry in selected:
             self.projection_journals.append_entry(
                 journal_id,
@@ -358,18 +364,23 @@ class RoomKernelRuntimeCoordinator:
             journal_id=journal_id,
             guard_pin=guard_pin,
         )
-        prompt = self.prompt_plans.compile(
-            receipt_id=f"prompt-compile:{dispatch_id}",
-            room_binding=room_binding,
-            participant_binding=participant_binding,
-            journal_id=journal_id,
-            session_epoch=max(1, generation + 1),
-            context_epoch=context_epoch,
-            skill_policy_revision=skill_policy_revision,
-            context_policy_revision="room-context-policy-v1",
-            layers=layers,
-            created_at_ms=prepared_at_ms,
-        )
+        prompt_receipt_id = f"prompt-compile:{dispatch_id}"
+        frozen_prompt_receipt = self.prompt_plans.receipt(prompt_receipt_id)
+        if frozen_prompt_receipt is None:
+            prompt = self.prompt_plans.compile(
+                receipt_id=prompt_receipt_id,
+                room_binding=room_binding,
+                participant_binding=participant_binding,
+                journal_id=journal_id,
+                session_epoch=max(1, generation + 1),
+                context_epoch=context_epoch,
+                skill_policy_revision=skill_policy_revision,
+                context_policy_revision="room-context-policy-v1",
+                layers=layers,
+                created_at_ms=prepared_at_ms,
+            )
+        else:
+            prompt = {"receipt": frozen_prompt_receipt}
         if prompt is None:
             raise RoomKernelFenceError(
                 "managed Dispatch PromptCompile produced no receipt"

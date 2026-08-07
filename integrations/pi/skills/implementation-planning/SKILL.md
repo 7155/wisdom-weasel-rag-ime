@@ -32,10 +32,15 @@ notFor:
    acceptance, permissions, and decision. If a new user-owned choice appears,
    stop with `needs_alignment_decision` and return it to
    `alignment-and-decision`; do not ask or compare options here.
-2. Inspect implementation plus the confirmed Domain Language Delta, glossary,
-   and ADRs. Locate owners, dependency direction, test seams, migrations,
-   permissions, and extension points. Planning goes deeper than alignment only
-   to locate executable seams.
+2. Outside a managed Room's pre-Start phase, inspect implementation plus the
+   confirmed Domain Language Delta, glossary, and ADRs. Locate owners,
+   dependency direction, test seams, migrations, permissions, and extension
+   points. Planning goes deeper than alignment only to locate executable seams.
+   In a managed Room before the typed Start, use only the user's messages and
+   already-projected requirement, plan, product, and Runtime metadata. Do not
+   call project file, shell, test, install, write, or peer-dispatch Tools.
+   Keep unverified implementation seams as the first post-Start discovery step
+   instead of presenting them as facts or turning them into user questions.
 3. Map every acceptance check to implementation and fresh verification. Prefer
    the highest stable behavior seam already present.
 4. If one Session can finish coherently, return one candidate. Otherwise use
@@ -87,6 +92,12 @@ and execution release. It must not silently recruit companions or create
 Dispatches. Candidates remain non-overlapping; review is post-integration and
 is represented by bounded targets, never a planning child or permanent role.
 Stale, foreign, or missing authority returns a governed wait or blocker.
+- Before the visible typed Start, planning is metadata-only. It may refine the
+  user-outcome graph and its acceptance, dependencies, owners, write
+  boundaries, and continuity statement, but it may not read or mutate the
+  target project, run commands or tests, install anything, or dispatch peers.
+  Repository seam discovery begins only after the Start receipt releases the
+  first approved Task attempt.
 - Consume `room_state` for the current aliases, then use
   `room_commit(handoff)` only after the active alignment Dispatch has fenced
   the next target. Start materializes approved `RoomTask` identities and the

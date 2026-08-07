@@ -25,6 +25,10 @@ from rag_ime.pi_runtime_public import (
 from rag_ime.pi_runtime_v2 import (
     PiRuntimeHostClient,
     PiRuntimeHostManager,
+    _HostedSessionState,
+    _agent_settled_receipt_v2,
+    _suspended_settlement_probe_delay,
+    _turn_settlement_receipt_v1,
     _validate_resumed_session_identity,
     _pi_durable_branch_messages,
     _pi_tool_history_events,
@@ -76,7 +80,8 @@ def settled_receipt(session_id, turn_id, disposition="completed"):
         "continuations": {"generation": 1, "pendingIds": [], "readyIds": [],
                           "scheduledIds": [], "leasedIds": [], "terminalIds": [],
                           "terminalIdsOmitted": 0, "idsHash": "continuations:" + turn_id,
-                          "counts": {"pending": 0, "leased": 0, "completed": 0, "cancelled": 0}},
+                          "counts": {"pending": 0, "leased": 0, "completed": 0,
+                                     "cancelled": 0, "expired": 0, "failed": 0}},
         "operations": {"pending": 0, "pendingByKind": {}, "registeredByKind": {}},
         "settledAtMs": 123,
         "aborted": disposition == "aborted",
@@ -518,6 +523,72 @@ for line in sys.stdin:
 '''
 
 
+def _settled_receipt_fixture(
+    *,
+    session_id: str = "runtime-session:1",
+    disposition: str = "completed",
+    settled_at_ms: int = 1_000,
+    next_scheduled_at: int | None = None,
+) -> dict[str, object]:
+    stop_reason = {
+        "completed": "natural",
+        "failed": "error",
+        "aborted": "cancelled",
+        "suspended": "continuation_scheduled",
+    }[disposition]
+    suspended = disposition == "suspended"
+    continuations: dict[str, object] = {
+        "generation": 1,
+        "pendingIds": ["continuation:scheduled"] if suspended else [],
+        "readyIds": [],
+        "scheduledIds": ["continuation:scheduled"] if suspended else [],
+        "leasedIds": [],
+        "terminalIds": [],
+        "terminalIdsOmitted": 0,
+        "idsHash": "continuations:fixture",
+        "counts": {
+            "pending": 1 if suspended else 0,
+            "leased": 0,
+            "completed": 0,
+            "cancelled": 0,
+            "expired": 0,
+            "failed": 0,
+        },
+    }
+    if suspended:
+        continuations["nextScheduledAt"] = (
+            next_scheduled_at
+            if next_scheduled_at is not None
+            else settled_at_ms + 5_000
+        )
+    return {
+        "schemaVersion": "pi.agent-settled.v2",
+        "receiptId": "receipt:fixture",
+        "sessionId": session_id,
+        "runId": "run:fixture",
+        "scopeId": "scope:fixture",
+        "generation": 1,
+        "disposition": disposition,
+        "stopReason": stop_reason,
+        "transcript": {
+            "messageCount": 1,
+            "entryCount": 1,
+            "lineageHash": "lineage:fixture",
+            "contentHash": "lineage:fixture",
+        },
+        "continuations": continuations,
+        "operations": {
+            "pending": 0,
+            "pendingByKind": {},
+            "registeredByKind": {},
+        },
+        "settledAtMs": settled_at_ms,
+        "aborted": disposition == "aborted",
+        "pendingOperations": 0,
+        "operationCounts": {},
+    }
+
+
 class PiRuntimeV2Tests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-pi-v2-")
@@ -596,6 +667,130 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 },
             }],
             compaction_observer=self._observe_compaction,
+        )
+
+    def test_v2_settlement_rejects_impossible_completed_evidence(self) -> None:
+        receipt = _settled_receipt_fixture()
+        receipt["operations"] = {
+            "pending": 1,
+            "pendingByKind": {"tool": 1},
+            "registeredByKind": {"tool": 1},
+        }
+        receipt["pendingOperations"] = 1
+        receipt["operationCounts"] = {"tool": 1}
+
+        with self.assertRaisesRegex(PiRuntimeError, "impossible Agent settlement"):
+            _agent_settled_receipt_v2(
+                receipt,
+                session_id="runtime-session:1",
+            )
+
+    def test_v2_settlement_requires_exact_client_message_lineage(self) -> None:
+        settlement = {
+            "schemaVersion": "rag-ime.pi-turn-settlement.v1",
+            "sessionId": "product-session:1",
+            "runtimeSessionId": "runtime-session:1",
+            "turnId": "turn:1",
+            "receipt": _settled_receipt_fixture(),
+        }
+
+        with self.assertRaisesRegex(PiRuntimeError, "another turn"):
+            _turn_settlement_receipt_v1(
+                settlement,
+                session_id="product-session:1",
+                runtime_session_id="runtime-session:1",
+                turn_id="turn:1",
+                client_message_id="client:1",
+            )
+
+    def test_suspended_settlement_uses_due_time_instead_of_tight_polling(self) -> None:
+        now_ms = int(time.time() * 1000)
+        receipt = _settled_receipt_fixture(
+            disposition="suspended",
+            settled_at_ms=now_ms,
+            next_scheduled_at=now_ms + 10_000,
+        )
+
+        delay = _suspended_settlement_probe_delay(
+            receipt,
+            now_ms=now_ms,
+        )
+
+        self.assertGreaterEqual(delay, 10.0)
+        self.assertLessEqual(delay, 10.25)
+
+    def test_exact_settlement_transport_failure_reschedules_with_bound(self) -> None:
+        self._use_runtime_sdk_v2()
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        with self.runtime._lock:
+            state = self.runtime._states.setdefault(
+                session_id,
+                _HostedSessionState(),
+            )
+            state.turn_id = "turn:retry-settlement"
+            state.client_message_id = "client:retry-settlement"
+        client = self.runtime._client
+        assert client is not None
+
+        with (
+            patch.object(
+                client,
+                "send",
+                side_effect=PiRuntimeError("temporary settlement transport failure"),
+            ),
+            patch.object(
+                self.runtime,
+                "_schedule_settle_probe_locked",
+            ) as schedule,
+        ):
+            self.runtime._settle_exact_probe(
+                session_id,
+                "turn:retry-settlement",
+            )
+
+        with self.runtime._lock:
+            current = self.runtime._states[session_id]
+            self.assertEqual(current.turn_id, "turn:retry-settlement")
+            self.assertEqual(current.settle_probe_failures, 1)
+        schedule.assert_called_once()
+
+    def test_foreign_host_event_cannot_replace_active_turn_lineage(self) -> None:
+        session_id = str(self.first["id"])
+        with self.runtime._lock:
+            state = self.runtime._states.setdefault(
+                session_id,
+                _HostedSessionState(),
+            )
+            state.turn_id = "turn:active"
+            state.client_message_id = "client:active"
+
+        self.runtime._handle_host_event(
+            {
+                "protocolVersion": "2",
+                "event": "agent.event",
+                "sessionId": session_id,
+                "turnId": "turn:foreign",
+                "clientMessageId": "client:foreign",
+                "payload": {
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "text_delta",
+                        "contentIndex": 0,
+                        "delta": "must be ignored",
+                    },
+                    "message": {"role": "assistant", "id": "foreign"},
+                },
+            }
+        )
+
+        with self.runtime._lock:
+            current = self.runtime._states[session_id]
+            self.assertEqual(current.turn_id, "turn:active")
+            self.assertEqual(current.client_message_id, "client:active")
+        events, _ = self.events.replay(session_id)
+        self.assertFalse(
+            any(event.turn_id == "turn:foreign" for event in events)
         )
 
     def test_runtime_sdk_v2_recovers_lost_event_with_exact_turn_receipt(self) -> None:

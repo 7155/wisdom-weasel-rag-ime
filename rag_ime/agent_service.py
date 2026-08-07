@@ -4720,6 +4720,18 @@ class AgentService:
         recovery = self.room_kernel_application.drain_ready_application_effects()
         recovered = dict(recovery.get("applied") or {})
         failures = dict(recovery.get("failed") or {})
+        blocked = {
+            str(room_id): dict(value)
+            for room_id, value in dict(recovery.get("blocked") or {}).items()
+            if isinstance(value, Mapping)
+        }
+        for room_id, blocker in blocked.items():
+            failures.setdefault(
+                room_id,
+                "Room application Outbox is blocked by dead-letter effect "
+                f"{str(blocker.get('outboxId') or '')}: "
+                f"{str(blocker.get('lastError') or 'unknown failure')}",
+            )
         synchronized: list[str] = []
         for room_id in self.room_kernel.room_ids():
             try:
@@ -4760,6 +4772,7 @@ class AgentService:
             "recoveredEffects": recovered,
             "synchronizedRoomIds": synchronized,
             "failedRooms": failures,
+            "blockedRooms": blocked,
         }
 
     def _reconcile_room_work_from_kernel(self) -> int:

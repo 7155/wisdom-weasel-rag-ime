@@ -218,6 +218,21 @@ _AGENT_RUN_STOP_REASONS = {
     "settlement_rejected",
     "operations_pending",
 }
+_CONTINUATION_STATES = {
+    "pending",
+    "leased",
+    "completed",
+    "cancelled",
+    "expired",
+    "failed",
+}
+_FAILED_AGENT_STOP_REASONS = {
+    "error",
+    "continuation_unsettled",
+    "settlement_rejected",
+    "operations_pending",
+}
+_MAX_EXACT_SETTLEMENT_PROBE_FAILURES = 5
 
 
 def _is_non_negative_integer(value: object) -> bool:
@@ -243,6 +258,7 @@ def _agent_settled_receipt_v2(
         or not isinstance(receipt.get("transcript"), Mapping)
         or not isinstance(receipt.get("continuations"), Mapping)
         or not isinstance(receipt.get("operations"), Mapping)
+        or not isinstance(receipt.get("operationCounts"), Mapping)
     ):
         raise PiRuntimeError("Pi Runtime Host returned an invalid Agent settlement receipt")
     transcript = as_mapping(receipt["transcript"])
@@ -269,6 +285,12 @@ def _agent_settled_receipt_v2(
         )
         or not str(continuations.get("idsHash") or "").strip()
         or not isinstance(continuations.get("counts"), Mapping)
+        or (
+            continuations.get("nextScheduledAt") is not None
+            and not _is_non_negative_integer(
+                continuations.get("nextScheduledAt")
+            )
+        )
         or not _is_non_negative_integer(operations.get("pending"))
         or not isinstance(operations.get("pendingByKind"), Mapping)
         or not isinstance(operations.get("registeredByKind"), Mapping)
@@ -294,6 +316,20 @@ def _agent_settled_receipt_v2(
         as_mapping(operations.get("registeredByKind")),
         as_mapping(receipt.get("operationCounts")),
     )
+    continuation_counts = count_maps[0]
+    pending_by_kind = count_maps[1]
+    registered_by_kind = count_maps[2]
+    operation_counts = count_maps[3]
+    disposition = str(receipt["disposition"])
+    stop_reason = str(receipt["stopReason"])
+    pending_operations = int(operations["pending"])
+    pending_continuations = int(continuation_counts.get("pending", -1))
+    leased_continuations = int(continuation_counts.get("leased", -1))
+    ready_ids = list(continuations.get("readyIds") or [])
+    scheduled_ids = list(continuations.get("scheduledIds") or [])
+    leased_ids = list(continuations.get("leasedIds") or [])
+    next_scheduled_at = continuations.get("nextScheduledAt")
+    settled_at_ms = int(receipt["settledAtMs"])
     if (
         any(not isinstance(item, str) or not item for item in continuation_ids)
         or any(
@@ -305,8 +341,56 @@ def _agent_settled_receipt_v2(
         )
         or receipt.get("pendingOperations") != operations.get("pending")
         or receipt.get("aborted") != (receipt.get("disposition") == "aborted")
+        or set(continuation_counts) != _CONTINUATION_STATES
+        or receipt.get("generation") != continuations.get("generation")
+        or pending_operations != sum(pending_by_kind.values())
+        or operation_counts != registered_by_kind
+        or any(
+            int(registered_by_kind.get(kind, 0)) < int(pending)
+            for kind, pending in pending_by_kind.items()
+        )
     ):
         raise PiRuntimeError("Pi Runtime Host returned inconsistent Agent settlement evidence")
+
+    if disposition == "completed":
+        valid = (
+            stop_reason == "natural"
+            and pending_operations == 0
+            and pending_continuations == 0
+            and leased_continuations == 0
+            and not ready_ids
+            and not scheduled_ids
+            and not leased_ids
+            and next_scheduled_at is None
+        )
+    elif disposition == "suspended":
+        valid = (
+            stop_reason == "continuation_scheduled"
+            and pending_operations == 0
+            and pending_continuations > 0
+            and leased_continuations == 0
+            and bool(scheduled_ids)
+            and not ready_ids
+            and not leased_ids
+            and _is_non_negative_integer(next_scheduled_at)
+            and int(next_scheduled_at) > settled_at_ms
+        )
+    elif disposition == "aborted":
+        valid = stop_reason == "cancelled"
+    else:
+        valid = stop_reason in _FAILED_AGENT_STOP_REASONS
+        if stop_reason == "operations_pending":
+            valid = valid and pending_operations > 0
+        elif stop_reason == "continuation_unsettled":
+            valid = valid and (
+                leased_continuations > 0
+                or bool(ready_ids)
+                or bool(leased_ids)
+            )
+    if not valid:
+        raise PiRuntimeError(
+            "Pi Runtime Host returned an impossible Agent settlement disposition"
+        )
     return receipt
 
 
@@ -316,6 +400,7 @@ def _turn_settlement_receipt_v1(
     session_id: str,
     runtime_session_id: str,
     turn_id: str,
+    client_message_id: str = "",
 ) -> dict[str, object]:
     settlement = dict(as_mapping(value))
     if (
@@ -323,6 +408,11 @@ def _turn_settlement_receipt_v1(
         or settlement.get("sessionId") != session_id
         or settlement.get("runtimeSessionId") != runtime_session_id
         or settlement.get("turnId") != turn_id
+        or (
+            client_message_id
+            and str(settlement.get("clientMessageId") or "").strip()
+            != client_message_id
+        )
     ):
         raise PiRuntimeError("Pi Runtime Host returned settlement for another turn")
     settlement["receipt"] = _agent_settled_receipt_v2(
@@ -330,6 +420,20 @@ def _turn_settlement_receipt_v1(
         session_id=runtime_session_id,
     )
     return settlement
+
+
+def _suspended_settlement_probe_delay(
+    receipt: Mapping[str, object],
+    *,
+    now_ms: int | None = None,
+) -> float:
+    """Poll near the due continuation without turning suspension into a busy loop."""
+
+    continuations = as_mapping(receipt.get("continuations"))
+    next_scheduled_at = int(continuations.get("nextScheduledAt") or 0)
+    current_ms = int(now_ms if now_ms is not None else time.time() * 1000)
+    remaining_seconds = max(0.0, (next_scheduled_at - current_ms) / 1000)
+    return max(1.0, min(30.0, remaining_seconds + 0.25))
 
 
 def _session_runtime_binding_metadata(
@@ -757,6 +861,7 @@ class _HostedSessionState:
     pending_ui_requests: dict[str, dict[str, object]] = field(default_factory=dict)
     abort_timer: threading.Timer | None = field(default=None, repr=False)
     settle_timer: threading.Timer | None = field(default=None, repr=False)
+    settle_probe_failures: int = 0
     settle_extension_failed: bool = False
     settlement_run_id: str = ""
     abort_requested_turn_id: str = ""
@@ -1381,6 +1486,7 @@ class PiRuntimeHostManager:
             state.last_agent_messages = []
             state.final_error = ""
             state.had_tool_activity = False
+            state.settle_probe_failures = 0
             state.settle_extension_failed = False
             state.settlement_run_id = ""
             state.abort_requested_turn_id = ""
@@ -3115,9 +3221,18 @@ class PiRuntimeHostManager:
             state = self._states.setdefault(session_id, _HostedSessionState())
             if turn_id and turn_id in state.retired_turn_ids:
                 return
+            # Events may legitimately beat the command ACK, so an empty state
+            # may bind once. Once a turn/client lineage is active, a late or
+            # foreign event must not overwrite it and later settle the wrong run.
+            if turn_id and state.turn_id and state.turn_id != turn_id:
+                return
             if turn_id:
                 state.turn_id = turn_id
-            if client_message_id:
+            # steer/follow-up queue events legitimately share the active Turn
+            # while carrying their own client message IDs. They may be
+            # projected, but only an empty state may bind the Turn's canonical
+            # client lineage.
+            if client_message_id and not state.client_message_id:
                 state.client_message_id = client_message_id
         if event_type == "message_update":
             update = as_mapping(raw.get("assistantMessageEvent"))
@@ -3531,6 +3646,7 @@ class PiRuntimeHostManager:
                     state.last_agent_messages = []
                     state.final_error = ""
                     state.had_tool_activity = False
+                    state.settle_probe_failures = 0
                     state.settle_extension_failed = False
                     state.settlement_run_id = ""
                     state.abort_requested_turn_id = ""
@@ -3840,6 +3956,13 @@ class PiRuntimeHostManager:
                 self._host_capabilities.get("runtimePrimitives")
             )
         if client is None or not client.running:
+            self._turn_failed(
+                session_id,
+                turn_id,
+                PiRuntimeError(
+                    "Pi Runtime Host became unavailable during exact settlement recovery"
+                ),
+            )
             return
         binding = self.sessions.runtime_binding(session_id) or {}
         runtime_session_id = str(binding.get("externalSessionId") or "").strip()
@@ -3884,15 +4007,37 @@ class PiRuntimeHostManager:
                         timeout_ms / 1000 + 2.0,
                     ),
                 )
-            settlement = _turn_settlement_receipt_v1(
-                settlement_result,
-                session_id=session_id,
-                runtime_session_id=runtime_session_id,
-                turn_id=turn_id,
-            )
         except Exception as exc:
-            # Exact settlement is an evidence boundary. A timeout or malformed
-            # receipt must never fall back to an idle/process heuristic.
+            # Transport and bounded-wait failures are retryable, but exact
+            # settlement never falls back to idle/process heuristics.
+            retry: tuple[int, float] | None = None
+            with self._lock:
+                state = self._states.get(session_id)
+                if state is not None and state.turn_id == turn_id:
+                    state.settle_probe_failures += 1
+                    failure_count = state.settle_probe_failures
+                    if failure_count <= _MAX_EXACT_SETTLEMENT_PROBE_FAILURES:
+                        delay_seconds = min(
+                            8.0,
+                            0.5 * (2 ** max(0, failure_count - 1)),
+                        )
+                        self._schedule_settle_probe_locked(
+                            state,
+                            session_id,
+                            turn_id,
+                            delay_seconds=delay_seconds,
+                        )
+                        retry = (failure_count, delay_seconds)
+            if retry is None:
+                self._turn_failed(
+                    session_id,
+                    turn_id,
+                    PiRuntimeError(
+                        "Pi exact settlement recovery exhausted its bounded retries: "
+                        + redact_runtime_text(str(exc))
+                    ),
+                )
+                return
             self.events.publish(
                 session_id,
                 "status_changed",
@@ -3900,24 +4045,27 @@ class PiRuntimeHostManager:
                     "status": "working",
                     "phase": "settlement_wait",
                     "warning": redact_runtime_text(str(exc)),
+                    "retryAttempt": retry[0],
+                    "retryInMs": int(retry[1] * 1000),
                 },
                 turn_id=turn_id,
             )
             return
-        received_client_message_id = str(
-            settlement.get("clientMessageId") or ""
-        ).strip()
-        if (
-            expected_client_message_id
-            and received_client_message_id
-            and received_client_message_id != expected_client_message_id
-        ):
+        try:
+            settlement = _turn_settlement_receipt_v1(
+                settlement_result,
+                session_id=session_id,
+                runtime_session_id=runtime_session_id,
+                turn_id=turn_id,
+                client_message_id=expected_client_message_id,
+            )
+        except PiRuntimeError as exc:
+            # A malformed or lineage-mismatched V2 receipt is authoritative bad
+            # evidence. Fail closed instead of retrying into a guessed terminal.
             self._turn_failed(
                 session_id,
                 turn_id,
-                PiRuntimeError(
-                    "Pi Runtime settlement changed the client message lineage"
-                ),
+                exc,
             )
             return
         self._apply_runtime_settlement(
@@ -3959,6 +4107,7 @@ class PiRuntimeHostManager:
                     "Pi Runtime settlement changed run identity within one turn"
                 )
             state.settlement_run_id = run_id
+            state.settle_probe_failures = 0
             if disposition == "suspended":
                 if state.settle_timer is not None:
                     state.settle_timer.cancel()
@@ -3967,7 +4116,7 @@ class PiRuntimeHostManager:
                     state,
                     session_id,
                     turn_id,
-                    delay_seconds=0.1,
+                    delay_seconds=_suspended_settlement_probe_delay(receipt),
                 )
                 self.events.publish(
                     session_id,
@@ -4006,8 +4155,8 @@ class PiRuntimeHostManager:
             state.last_agent_messages = []
             state.final_error = ""
             state.had_tool_activity = False
+            state.settle_probe_failures = 0
             state.settle_extension_failed = False
-            state.settlement_run_id = ""
             state.settlement_run_id = ""
             state.abort_requested_turn_id = ""
             state.pending_approvals.clear()
@@ -4156,6 +4305,7 @@ class PiRuntimeHostManager:
             state.last_agent_messages = []
             state.final_error = ""
             state.had_tool_activity = False
+            state.settle_probe_failures = 0
             state.settlement_run_id = ""
             state.settle_extension_failed = False
             state.abort_requested_turn_id = ""
@@ -4230,6 +4380,7 @@ class PiRuntimeHostManager:
             state.last_agent_messages = []
             state.final_error = ""
             state.had_tool_activity = False
+            state.settle_probe_failures = 0
             state.abort_requested_turn_id = ""
             state.pending_approvals.clear()
             state.pending_reviews.clear()

@@ -4682,6 +4682,43 @@ class RoomKernelServiceTests(unittest.TestCase):
             2,
         )
 
+    def test_projection_recovery_does_not_bypass_a_dead_letter_head(self) -> None:
+        blocker = {
+            "outboxId": "outbox:blocked",
+            "eventId": "event:blocked",
+            "rootId": "root:service",
+            "effectKind": "project_room",
+            "state": "dead_letter",
+            "attempt": 5,
+            "lastError": "ValueError: malformed projection",
+        }
+        with (
+            patch.object(
+                self.service.room_kernel_application,
+                "drain_ready_application_effects",
+                return_value={
+                    "applied": {},
+                    "failed": {},
+                    "blocked": {self.room_id: blocker},
+                },
+            ),
+            patch.object(
+                self.service.room_kernel_projection,
+                "sync_room",
+            ) as sync_room,
+        ):
+            recovery = self.service._sync_all_room_kernel_projections()
+
+        self.assertEqual(recovery["blockedRooms"][self.room_id], blocker)
+        self.assertIn(self.room_id, recovery["failedRooms"])
+        self.assertNotIn(self.room_id, recovery["synchronizedRoomIds"])
+        self.assertFalse(
+            any(
+                call.args and call.args[0] == self.room_id
+                for call in sync_room.call_args_list
+            )
+        )
+
     def test_capability_manifest_exposes_only_one_canonical_kernel_path(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
         self.service.room_kernel_worker.run_once()
@@ -7129,6 +7166,75 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertNotIn(
             "artifact:arrived-after-first-preparation",
             str(after["content"]),
+        )
+
+    def test_managed_dispatch_recovery_keeps_frozen_context_after_new_room_post(
+        self,
+    ) -> None:
+        for index in range(55):
+            self.service.room_context_ledger.publish_post(
+                {
+                    "schemaVersion": "wisdom-weasel.room-post.v2",
+                    "postId": f"post:recovery-history:{index}",
+                    "roomId": self.room_id,
+                    "rootId": "root:service",
+                    "generation": 0,
+                    "authorActorRef": "user:test",
+                    "kind": "message",
+                    "visibility": "room",
+                    "content": f"恢复前公开进展 {index}",
+                    "idempotencyKey": f"post:recovery-history:{index}",
+                    "publicationSource": {
+                        "kind": "user",
+                        "ref": "user:test",
+                    },
+                    "createdAtMs": 100 + index,
+                }
+            )
+        dispatch = self._dispatch()
+        self.service.room_kernel.enqueue_dispatch(dispatch, now_ms=200)
+        first = self.service._prepare_managed_room_dispatch(dispatch, 200)
+        omission_key = "dispatch:dispatch:service:context-omission"
+        omission_before = self.service.room_context_ledger.entry_by_dedupe_key(
+            root_id="root:service",
+            dedupe_key=omission_key,
+        )
+        self.assertIsNotNone(omission_before)
+
+        self.service.room_context_ledger.publish_post(
+            {
+                "schemaVersion": "wisdom-weasel.room-post.v2",
+                "postId": "post:runtime-correction",
+                "roomId": self.room_id,
+                "rootId": "root:service",
+                "generation": 0,
+                "authorActorRef": "user:test",
+                "kind": "message",
+                "visibility": "room",
+                "content": "运行中补充：删除前要确认，并且允许撤销。",
+                "idempotencyKey": "post:runtime-correction",
+                "publicationSource": {
+                    "kind": "user",
+                    "ref": "user:test",
+                },
+                "createdAtMs": 300,
+            }
+        )
+
+        replayed = self.service._prepare_managed_room_dispatch(dispatch, 301)
+        omission_after = self.service.room_context_ledger.entry_by_dedupe_key(
+            root_id="root:service",
+            dedupe_key=omission_key,
+        )
+
+        self.assertEqual(replayed, first)
+        self.assertEqual(omission_after, omission_before)
+        provider_payload = self.service.room_prompt_plans.provider_payload(
+            "prompt-compile:dispatch:service"
+        )
+        self.assertIn(
+            "运行中补充：删除前要确认，并且允许撤销。",
+            provider_payload["providerContext"],
         )
 
     def test_alignment_correction_stays_on_root_before_work_document_exists(

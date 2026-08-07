@@ -94,8 +94,18 @@ class RoomApplicationOutbox:
                     (timestamp, timestamp),
                 ).fetchall()
             ]
-        result: dict[str, object] = {"applied": {}, "failed": {}}
+            blocked = self._dead_letter_heads(conn)
+        result: dict[str, object] = {
+            "applied": {},
+            "failed": {},
+            "blocked": blocked,
+        }
         for room_id in room_ids:
+            # Strict projection-before-wake ordering means a dead-letter head
+            # intentionally blocks every later effect for this Room. Surface the
+            # exact blocker instead of reporting an empty successful drain.
+            if room_id in blocked:
+                continue
             try:
                 result["applied"][room_id] = self.drain_room(
                     room_id,
@@ -106,6 +116,44 @@ class RoomApplicationOutbox:
             except Exception as exc:
                 result["failed"][room_id] = f"{type(exc).__name__}: {exc}"[:500]
         return result
+
+    @staticmethod
+    def _dead_letter_heads(
+        conn: sqlite3.Connection,
+    ) -> dict[str, dict[str, object]]:
+        rows = conn.execute(
+            """WITH ordered AS (
+                 SELECT
+                   outbox.*,
+                   event.room_sequence,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY outbox.room_id
+                     ORDER BY event.room_sequence,
+                              CASE outbox.effect_kind
+                                WHEN 'project_room' THEN 0 ELSE 1 END,
+                              outbox.outbox_id
+                   ) AS room_position
+                 FROM room_application_outbox AS outbox
+                 JOIN room_domain_events AS event
+                   ON event.event_id=outbox.event_id
+                 WHERE outbox.state!='applied'
+               )
+               SELECT * FROM ordered
+               WHERE room_position=1 AND state='dead_letter'
+               ORDER BY room_id"""
+        ).fetchall()
+        return {
+            str(row["room_id"]): {
+                "outboxId": str(row["outbox_id"]),
+                "eventId": str(row["event_id"]),
+                "rootId": str(row["root_id"]),
+                "effectKind": str(row["effect_kind"]),
+                "state": "dead_letter",
+                "attempt": int(row["attempt"]),
+                "lastError": str(row["last_error"]),
+            }
+            for row in rows
+        }
 
     def pending(self, room_id: str) -> list[dict[str, object]]:
         with self._connect() as conn:

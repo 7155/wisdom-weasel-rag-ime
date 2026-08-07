@@ -201,14 +201,9 @@ class RoomPromptPlanStore:
     def provider_payload(self, receipt_id: str) -> dict[str, object]:
         """Rebuild the live cache-stable prefix and append-only Room tail."""
 
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM room_v2_prompt_compile_receipts WHERE receipt_id = ?",
-                (_required(receipt_id, "receipt_id"),),
-            ).fetchone()
-        if row is None:
+        receipt = self.receipt(receipt_id)
+        if receipt is None:
             raise KeyError(receipt_id)
-        receipt = _receipt_payload(row)
         plan = dict(receipt["plan"])
         projection = self.projections.projection(
             str(plan["journalId"]), expected_generation=int(plan["generation"])
@@ -255,6 +250,16 @@ class RoomPromptPlanStore:
                 if str(item["contextEntryId"]) in previously_sealed
             ],
         }
+
+    def receipt(self, receipt_id: str) -> dict[str, object] | None:
+        """Return an immutable PromptCompile receipt when it is already frozen."""
+
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM room_v2_prompt_compile_receipts WHERE receipt_id = ?",
+                (_required(receipt_id, "receipt_id"),),
+            ).fetchone()
+        return _receipt_payload(row) if row is not None else None
 
     def record_compare_diff(
         self,

@@ -270,6 +270,13 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertIn("one user-visible feature end-to-end", planning)
         self.assertIn("Never split one feature by technical layer", planning)
         self.assertIn("lock shared contracts before parallel work", planning)
+        self.assertIn("before the typed Start", planning)
+        self.assertRegex(
+            planning,
+            r"Do not\s+call project file, shell, test, install, write, or "
+            r"peer-dispatch Tools",
+        )
+        self.assertIn("first post-Start discovery step", planning)
         self.assertIn("Do not start writes or tests before user approval", execution)
 
     def test_canonical_requirements_match_the_latest_room_intake_contract(self) -> None:
