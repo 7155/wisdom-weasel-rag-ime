@@ -159,6 +159,7 @@ def main() -> int:
         try:
             hello = request("hello", "hello", {})
             prompt_hash = hashlib.sha256(b"room-v2-staged-prompt").hexdigest()
+            room_context = "<room-context id=\"root:staged-e2e\">Keep the bounded Room run active.</room-context>"
             native_manifests = [
                 _native_target_manifest(
                     "workspace_list",
@@ -278,6 +279,8 @@ def main() -> int:
                     "skillId": skill_name,
                     "skillHash": skill_hash,
                 },
+                "roomContext": room_context,
+                "roomRecoveryContext": room_context,
                 "toolManifest": [*native_manifests, deferred_tool],
                 "roomCapability": {
                     "manifestId": "manifest:staged-e2e",
@@ -314,6 +317,8 @@ def main() -> int:
                 "dispatchId": "dispatch:a", "generation": 1, "capabilityEpoch": 1,
                 "dispatchAttempt": 0,
                 "idempotencyKey": "root:staged-e2e/a", "leaseToken": "lease:a",
+                "roomContext": room_context,
+                "roomRecoveryContext": room_context,
                 "message": "Inspect package.json and keep the bounded run active.",
             })
             debug_context: dict[str, object] | None = None
@@ -394,7 +399,13 @@ def main() -> int:
                     "staged Runtime Host did not preserve prompt/follow-up delivery"
                 )
             cancelled = request("cancel", "room.cancel", {
-                "sessionId": "session:staged-e2e", "rootId": "root:staged-e2e", "generation": 2,
+                "cancelId": "cancel:staged-e2e",
+                "sessionId": "session:staged-e2e",
+                "rootId": "root:staged-e2e",
+                "dispatchId": "dispatch:a",
+                "generation": 2,
+                "turnId": str(first.get("turnId") or ""),
+                "capabilityEpoch": 1,
             })
             surfaces = cancelled.get("cancellationSurfaces")
             expected = {"provider", "tool", "exec", "retry", "compaction", "branch_summary", "timer", "continuation", "session"}

@@ -287,10 +287,12 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertEqual(script.count('"capabilityEpoch": 1,'), 3)
-        self.assertEqual(script.count('"dispatchId": "dispatch:a"'), 2)
+        self.assertEqual(script.count('"capabilityEpoch": 1,'), 4)
+        self.assertEqual(script.count('"dispatchId": "dispatch:a"'), 3)
         self.assertEqual(script.count('"dispatchAttempt": 0,'), 2)
         self.assertIn('"idempotencyKey": "root:staged-e2e/continuation-b"', script)
+        self.assertIn('"roomContext": room_context', script)
+        self.assertIn('"roomRecoveryContext": room_context', script)
         self.assertIn('"manifestSha256": manifest_sha256', script)
         self.assertIn('"stage": "implementation"', script)
         self.assertIn('"workspace_read",', script)
