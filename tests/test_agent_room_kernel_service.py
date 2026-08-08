@@ -52,6 +52,7 @@ class KernelRuntime:
     def __init__(self, root: Path) -> None:
         self.session_root = root / "sessions"
         self.default_model_profile = "pi/test"
+        self.events = None
         self.dispatched: list[str] = []
         self.dispatch_attempts: list[int] = []
         self.cancelled: list[tuple[str, str, int]] = []
@@ -71,6 +72,48 @@ class KernelRuntime:
             "status": "ready",
             "capabilities": {"runtimePrimitives": {"roomTypes": True}},
         }
+
+    def prompt(self, session_id: str, _message: str) -> dict[str, object]:
+        """Model the shared runtime used by delegated Session work."""
+        if self.events is None:
+            raise AssertionError("test runtime events were not bound")
+        turn_id = f"turn:nested:{session_id}"
+        self.events.publish(
+            session_id,
+            "message_completed",
+            {
+                "message": {
+                    "schemaVersion": "rag-ime.agent-message.v1",
+                    "id": f"message:{turn_id}",
+                    "sessionId": session_id,
+                    "turnId": turn_id,
+                    "role": "assistant",
+                    "status": "completed",
+                    "blocks": [
+                        {
+                            "id": f"text:{turn_id}",
+                            "type": "text",
+                            "status": "completed",
+                            "presentationKind": "markdown",
+                            "data": {"text": "已完成有界的私有核验。"},
+                        }
+                    ],
+                    "attachments": [],
+                    "citations": [],
+                    "createdAtMs": 10,
+                    "completedAtMs": 11,
+                },
+                "usage": {"totalTokens": 32},
+            },
+            turn_id=turn_id,
+        )
+        self.events.publish(
+            session_id,
+            "turn_completed",
+            {"status": "completed"},
+            turn_id=turn_id,
+        )
+        return {"accepted": True, "turnId": turn_id}
 
     def dispatch_room(
         self,
@@ -173,12 +216,8 @@ class KernelRuntimeFactory:
         self.runtime = KernelRuntime(root)
 
     def create(self, *args, **kwargs):
-        if kwargs.get("purpose") == "delegated" and args:
-            context = args[0]
-            return _CompletingDelegatedRuntime(
-                sessions=context.sessions,
-                events=context.events,
-            )
+        if args and kwargs.get("purpose") == "interactive":
+            self.runtime.events = args[0].events
         return self.runtime
 
     def apply_policy(self, _policy):
