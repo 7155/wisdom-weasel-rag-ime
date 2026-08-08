@@ -829,6 +829,19 @@ class RoomKernelServiceTests(unittest.TestCase):
             },
             {str(item["taskId"]) for item in first_wave},
         )
+        with self.assertRaisesRegex(
+            RoomCommitProposalError,
+            "room_integrate",
+        ):
+            self.service.room_settle_lifecycle._assert_managed_collaboration_ready(
+                decision="wait",
+                waiting_for="external",
+                root=self.service.room_kernel.root(root_id),
+                task=self.service.room_kernel.task(
+                    str(integration_task["taskId"])
+                ),
+                dispatch=integration_dispatch,
+            )
 
         patch_load = self.service.room_capability_tool_load(
             {

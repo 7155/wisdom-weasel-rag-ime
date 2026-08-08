@@ -4035,28 +4035,33 @@ class RoomKernelStore:
                 # Compatibility with waits resumed before resumeDispatchId was
                 # persisted in the continuation payload.
                 continue
-            managed_retry_dependency = (
+            managed_external_dependency = (
                 _managed_external_retry_wait_dependency(
+                    conn,
+                    continuation,
+                    payload,
+                )
+                or _managed_integration_external_wait_dependency(
                     conn,
                     continuation,
                     payload,
                 )
             )
             if payload.get("waitingFor") != "participant":
-                if managed_retry_dependency is None:
+                if managed_external_dependency is None:
                     continue
                 payload = {
                     **payload,
                     "waitingFor": "participant",
-                    "waitingForParticipantId": managed_retry_dependency[
+                    "waitingForParticipantId": managed_external_dependency[
                         "participantId"
                     ],
-                    "waitingForDispatchId": managed_retry_dependency[
+                    "waitingForDispatchId": managed_external_dependency[
                         "dispatchId"
                     ],
                 }
             runtime_authorized = (
-                managed_retry_dependency is not None
+                managed_external_dependency is not None
                 or _participant_wait_runtime_authorized(
                     conn,
                     continuation,
@@ -4406,7 +4411,7 @@ class RoomKernelStore:
             conn.execute("SAVEPOINT room_participant_wait_resume")
             try:
                 recovery_receipt: dict[str, object] | None = None
-                if managed_retry_dependency is not None:
+                if managed_external_dependency is not None:
                     recovery_receipt = self._receipt(
                         conn,
                         root_id=root_id,
@@ -16649,6 +16654,118 @@ def _managed_external_retry_wait_dependency(
             candidates=tuple(candidate_facts),
         )
     )
+
+
+def _managed_integration_external_wait_dependency(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    payload: Mapping[str, object],
+) -> dict[str, str] | None:
+    """Recover an old integration wait from its exact delivered dependency.
+
+    Current settlement rejects this shape before it can be persisted.  Older
+    installed versions could nevertheless let an Integration Task wait for an
+    unspecified external signal while already-completed peer work was waiting
+    in its dependency graph.  The durable Task and committed Dispatch provide
+    the exact signal needed to resume that same Integration Task once.
+    """
+
+    if (
+        str(row["decision"] or "") != "wait"
+        or payload.get("waitingFor") != "external"
+        or row["child_dispatch_id"] is not None
+    ):
+        return None
+    commit_row = conn.execute(
+        "SELECT payload_json FROM room_kernel_commits WHERE commit_id=?",
+        (row["commit_id"],),
+    ).fetchone()
+    parent = conn.execute(
+        "SELECT * FROM room_kernel_dispatches WHERE dispatch_id=? AND root_id=?",
+        (row["parent_dispatch_id"], row["root_id"]),
+    ).fetchone()
+    root = conn.execute(
+        "SELECT generation FROM room_kernel_roots WHERE root_id=?",
+        (row["root_id"],),
+    ).fetchone()
+    task = conn.execute(
+        "SELECT state,payload_json FROM room_kernel_tasks "
+        "WHERE task_id=? AND root_id=?",
+        (row["task_id"], row["root_id"]),
+    ).fetchone()
+    if commit_row is None or parent is None or root is None or task is None:
+        return None
+    try:
+        raw_commit = json.loads(str(commit_row["payload_json"]))
+        parent_payload = _dispatch_payload(parent)
+        task_payload = json.loads(str(task["payload_json"]))
+    except (RoomKernelFenceError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    raw_continuation = (
+        raw_commit.get("continuation")
+        if isinstance(raw_commit, Mapping)
+        else None
+    )
+    if (
+        not isinstance(raw_commit, Mapping)
+        or raw_commit.get("schemaVersion") != ROOM_COMMIT_SCHEMA_VERSION
+        or raw_commit.get("dispatchId") != row["parent_dispatch_id"]
+        or not isinstance(raw_continuation, Mapping)
+        or raw_continuation.get("decision") != "wait"
+        or raw_continuation.get("waitingFor") != "external"
+        or not isinstance(task_payload, Mapping)
+        or task_payload.get("planTaskKind") != "integration"
+        or str(task["state"]) != "waiting"
+        or int(parent["generation"]) != int(root["generation"])
+        or int(parent_payload.get("capabilityEpoch") or 0) < 0
+    ):
+        return None
+    dependency_ids = sorted(
+        {
+            str(value)
+            for value in task_payload.get("dependencyTaskIds") or []
+            if str(value or "").strip()
+        }
+    )
+    for dependency_id in dependency_ids:
+        dependency = conn.execute(
+            "SELECT state,payload_json FROM room_kernel_tasks "
+            "WHERE task_id=? AND root_id=?",
+            (dependency_id, row["root_id"]),
+        ).fetchone()
+        if dependency is None or str(dependency["state"]) != "completed":
+            continue
+        try:
+            dependency_payload = json.loads(
+                str(dependency["payload_json"])
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if (
+            not isinstance(dependency_payload, Mapping)
+            or dependency_payload.get("workspacePolicy")
+            != "isolated_writable"
+            or dependency_payload.get("workspaceIntegrationState")
+            != "pending"
+        ):
+            continue
+        dependency_dispatch = conn.execute(
+            """SELECT * FROM room_kernel_dispatches
+               WHERE root_id=? AND task_id=? AND generation=?
+                 AND state='committed'
+               ORDER BY updated_at_ms DESC,created_at_ms DESC,dispatch_id DESC
+               LIMIT 1""",
+            (row["root_id"], dependency_id, int(root["generation"])),
+        ).fetchone()
+        if dependency_dispatch is None:
+            continue
+        return {
+            "dispatchId": str(dependency_dispatch["dispatch_id"]),
+            "participantId": str(
+                dependency_dispatch["target_participant_id"]
+            ),
+        }
+    return None
 
 
 def _historical_participant_wait_requires_recovery(

@@ -527,6 +527,24 @@ class RoomSettleLifecycleService:
             # pre-report Facilitator gate would make the report Task itself
             # appear as a post-review artifact change.
             return
+        if task.get("planTaskKind") == "integration":
+            ready_integration_ids: list[str] = []
+            for dependency_id in task.get("dependencyTaskIds") or []:
+                dependency = self.kernel.task(str(dependency_id))
+                if (
+                    dependency.get("state") == "completed"
+                    and dependency.get("workspacePolicy")
+                    == "isolated_writable"
+                    and dependency.get("workspaceIntegrationState")
+                    == "pending"
+                ):
+                    ready_integration_ids.append(str(dependency_id))
+            if ready_integration_ids:
+                raise RoomCommitProposalError(
+                    "已有伙伴成果等待受管集成；重新调用 room_state，"
+                    "并对 pendingIntegrations 中的精确 childTaskId 逐项调用 "
+                    "room_integrate 后再收工"
+                )
         if decision == "deliver" and task.get("planTaskKind") == "integration":
             pending_scope: list[tuple[str, Mapping[str, object]]] = []
             for dependency_id in task.get("dependencyTaskIds") or []:

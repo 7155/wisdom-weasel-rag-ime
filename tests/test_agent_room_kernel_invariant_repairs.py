@@ -626,6 +626,127 @@ class RoomKernelInvariantRepairTests(unittest.TestCase):
         self.assertEqual(continuation["state"], "resumed")
         self.assertEqual(continuation["childDispatchId"], resumed[0])
 
+    def test_completed_feature_recovers_invalid_integration_external_wait(
+        self,
+    ) -> None:
+        self._seed_root(facilitator_id="participant:a")
+        feature_task = {
+            **child_task(
+                "task:feature",
+                parent="task:1",
+                target="participant:b",
+            ),
+            "planTaskKind": "feature",
+            "workspacePolicy": "isolated_writable",
+            "workspaceLifecycleState": "delivered",
+            "workspaceIntegrationState": "pending",
+        }
+        integration_task = {
+            **child_task(
+                "task:integration",
+                parent="task:1",
+                target="participant:a",
+            ),
+            "taskKind": "integration",
+            "planTaskKind": "integration",
+            "dependencyTaskIds": ["task:feature"],
+            "workspacePolicy": "shared_single_writer",
+            "workspaceIntegrationState": "not_required",
+        }
+        self.store.create_task(feature_task, now_ms=2)
+        self.store.create_task(integration_task, now_ms=2)
+        feature_dispatch = dispatch(
+            "dispatch:feature",
+            key="feature",
+            target="participant:b",
+            task_id="task:feature",
+        )
+        integration_dispatch = dispatch(
+            "dispatch:integration",
+            key="integration",
+            target="participant:a",
+            task_id="task:integration",
+        )
+        self.store.enqueue_dispatches(
+            (feature_dispatch, integration_dispatch),
+            now_ms=3,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:feature",
+            "running",
+            now_ms=4,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:integration",
+            "running",
+            now_ms=4,
+        )
+        self.store.apply_commit(
+            {
+                **commit(
+                    "commit:feature",
+                    "dispatch:feature",
+                    coverage=(),
+                    task_id="task:feature",
+                ),
+                "continuation": {"decision": "complete"},
+            },
+            generation=0,
+            now_ms=5,
+            post_proposal=None,
+        )
+        wait_post = {
+            **post_proposal(
+                "commit:integration-wait",
+                "dispatch:integration",
+                task_id="task:integration",
+                author="participant:a",
+            ),
+            "kind": "wait",
+        }
+        waiting = {
+            **commit(
+                "commit:integration-wait",
+                "dispatch:integration",
+                coverage=(),
+                task_id="task:integration",
+            ),
+            "action": "post",
+            "postProposal": wait_post,
+            "continuation": {
+                "decision": "wait",
+                "waitingFor": "external",
+                "resumeCondition": "未来功能被错误地当作恢复条件",
+            },
+        }
+        waiting["qualityGateReceipt"] = {
+            **waiting["qualityGateReceipt"],
+            "verdict": "not_ready",
+        }
+        self.store.apply_commit(
+            waiting,
+            generation=0,
+            now_ms=6,
+            post_proposal=wait_post,
+        )
+        RoomContextLedgerStore(self.db_path).publish_post(wait_post)
+
+        ready = self.store.pending_dispatch(now_ms=7)
+
+        self.assertIsNotNone(ready)
+        assert ready is not None
+        self.assertEqual(ready["taskId"], "task:integration")
+        self.assertEqual(ready["intentKind"], "resume")
+        self.assertEqual(ready["targetParticipantId"], "participant:a")
+        continuation = self.store.continuation(
+            "commit:integration-wait"
+        )
+        self.assertEqual(continuation["state"], "resumed")
+        self.assertEqual(
+            self.store.task("task:integration")["state"],
+            "active",
+        )
+
     def test_bad_wait_row_does_not_hide_later_ready_wait(self) -> None:
         self._seed_participant_wait()
         self.store.create_task(
