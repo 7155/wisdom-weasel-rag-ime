@@ -729,7 +729,11 @@
 .room-composer__attachments button { display: grid; width: 24px; height: 24px; flex: 0 0 24px; place-items: center; border: 0; border-radius: 50%; background: transparent; color: var(--color-text-tertiary); cursor: pointer; }
 .room-composer__attachments button:hover { background: var(--color-surface-hover); color: var(--color-text-primary); }
 .room-composer__activity { display: inline-flex; min-width: 0; max-width: min(44vw, 260px); align-items: center; gap: 5px; margin-left: 4px; color: var(--color-text-tertiary); font-size: 12px; line-height: 1; white-space: nowrap; }
-.room-composer__activity > svg { flex: 0 0 auto; color: var(--color-accent); animation: room-composer-activity-spin 1.25s linear infinite; }
+.room-composer__activity > svg { flex: 0 0 auto; color: var(--color-text-tertiary); }
+.room-composer__activity[data-kind='sending'] > svg,
+.room-composer__activity[data-kind='working'] > svg,
+.room-composer__activity[data-kind='recovering'] > svg { color: var(--color-accent); animation: room-composer-activity-spin 1.25s linear infinite; }
+.room-composer__activity[data-kind='blocked'] > svg { color: var(--color-danger); }
 .room-composer__activity > span, .room-composer__activity > button { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .room-composer__activity > button { border: 0; padding: 3px 5px; background: transparent; color: var(--color-accent); font: inherit; cursor: pointer; }
 .room-composer__activity > button:hover { text-decoration: underline; }

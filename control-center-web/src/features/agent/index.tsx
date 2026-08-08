@@ -96,6 +96,10 @@ function AgentWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedSessionId = searchParams.get('session')?.trim() ?? '';
   const requestedDraft = searchParams.get('draft')?.trim().slice(0, 4_000) ?? '';
+  const returnRoomId = searchParams.get('returnRoom')?.trim().slice(0, 500) ?? '';
+  const returnRoomHref = returnRoomId
+    ? `#/rooms?${new URLSearchParams({ room: returnRoomId })}`
+    : '';
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [personas, setPersonas] = useState(() => __CONTROL_PREVIEW__ && transport.kind === 'mock' ? previewPersonas : []);
   const [selectedId, setSelectedId] = useState('');
@@ -1854,6 +1858,7 @@ function AgentWorkspace() {
           <span><strong>{session?.title ?? identity.assistantName}</strong><small>{session ? `${sessionProjectName(session)} · 本地 · ${sessionPermissionLabel(session)}` : '选择一段对话'}</small></span>
           {error ? <p role="alert" title={error}><AlertCircle size={14} /><span>{error}</span></p> : null}
           <div className="agent-conversation__actions">
+            {returnRoomHref ? <a className="agent-room-return" href={returnRoomHref}>返回协作空间</a> : null}
             <IconButton label="查看对话路径与分支" icon={<GitBranch size={17} />} onClick={() => openForkDialog()} disabled={!session} tooltip />
             <IconButton ref={statusToggleRef} className="agent-status-toggle" aria-controls="agent-status-panel" aria-expanded={statusOpen} label={statusOpen ? '收起任务中心' : '展开任务中心'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} disabled={!session} onClick={toggleStatus} tooltip />
           </div>

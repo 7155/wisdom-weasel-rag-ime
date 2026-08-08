@@ -75,7 +75,7 @@ export class AgentSendTimingTracker {
       this.record('agent.send.click_to_pi_accepted', item.startedAt, endedAt);
     }
     const turnId = record(response).turnId;
-    if (typeof turnId === 'string' && turnId) this.bindTurn(item, turnId);
+    if (typeof turnId === 'string' && turnId) this.bindTurn(item, turnId, 'ack');
     this.finishIfComplete(item);
   }
 
@@ -86,7 +86,7 @@ export class AgentSendTimingTracker {
         event.payload.clientMessageId ?? message.clientMessageId,
       );
       const item = this.pending.get(clientMessageId);
-      if (item && item.sessionId === event.sessionId) this.bindTurn(item, event.turnId);
+      if (item && item.sessionId === event.sessionId) this.bindTurn(item, event.turnId, 'event');
       return;
     }
     if (event.eventType !== 'text_delta') return;
@@ -118,8 +118,18 @@ export class AgentSendTimingTracker {
     }
   }
 
-  private bindTurn(item: PendingSendTiming, turnId: string): void {
-    if (item.turnId && item.turnId !== turnId) this.clientByTurn.delete(item.turnId);
+  private bindTurn(
+    item: PendingSendTiming,
+    turnId: string,
+    source: 'ack' | 'event',
+  ): void {
+    if (item.turnId && item.turnId !== turnId) {
+      // The user-message stream event contains the server's durable binding.
+      // A late HTTP acknowledgement is admission evidence only and must not
+      // retarget an already-correlated turn.
+      if (source === 'ack') return;
+      this.clientByTurn.delete(item.turnId);
+    }
     item.turnId = turnId;
     this.clientByTurn.set(turnId, item.clientMessageId);
     const observedDeltaAt = this.firstDeltaByTurn.get(turnId);

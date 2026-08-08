@@ -63,12 +63,6 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
     kernelProjection?.tasksById[dispatch.taskId]?.taskKind !== 'report'
   ));
   const latestFinalPost = screenModel.finalDelivery;
-  const individualTasks = currentRootTasks.filter((task) => task.taskKind !== 'review');
-  const reviewTasks = currentRootTasks.filter((task) => task.taskKind === 'review');
-  const sharedCheckVisible = reviewTasks.length > 0 || (
-    individualTasks.length > 0
-    && individualTasks.every((task) => ['completed', 'failed', 'cancelled'].includes(task.state))
-  ) || Boolean(latestFinalPost);
   const turn = latestRoomTurn(projection);
   const activities = turn?.activityIds.map((id) => projection.activitiesById[id]).filter(Boolean) ?? [];
   const messages = turn?.messageIds.map((id) => projection.messagesById[id]).filter(Boolean) ?? [];
@@ -99,9 +93,8 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
         {currentRoot ? (
           <RoomPhaseContinuity
             dispatches={currentRootDispatches}
-            finalReplyVisible={Boolean(latestFinalPost)}
+            collaborationStage={screenModel.collaborationStage}
             root={currentRoot}
-            sharedCheckVisible={sharedCheckVisible}
             tasks={currentRootTasks}
           />
         ) : (
@@ -193,16 +186,14 @@ const ROOM_STATUS_ROOT_STATE_LABELS: Record<RootProjection['state'], string> = {
 };
 
 function RoomPhaseContinuity({
+  collaborationStage,
   dispatches,
-  finalReplyVisible,
   root,
-  sharedCheckVisible,
   tasks,
 }: {
+  collaborationStage: RoomScreenModel['collaborationStage'];
   dispatches: RoomKernelProjection['dispatchesById'][string][];
-  finalReplyVisible: boolean;
   root: RootProjection;
-  sharedCheckVisible: boolean;
   tasks: RoomTaskV3[];
 }) {
   const individualTasks = tasks.filter((task) => task.taskKind !== 'review');
@@ -214,6 +205,9 @@ function RoomPhaseContinuity({
     ['committed', 'dead_letter', 'failed', 'cancelled'].includes(dispatch.state)
   )).length;
   const activeDispatches = Math.max(0, dispatches.length - settledDispatches);
+  const finalReplyVisible = collaborationStage === 'final_delivery';
+  const sharedCheckVisible = collaborationStage === 'independent_review'
+    || finalReplyVisible;
   return <section
     aria-label="当前协作阶段"
     className="room-status-phase"
@@ -305,6 +299,7 @@ function roomProjectedStatusDetail(status: RoomProjectedStatus, hasTurn: boolean
     completed: '这轮已经完成，最终结果保留在对话中。',
     handed_off: '当前结果已经交给下一位伙伴继续。',
     waiting: '当前工作已安全暂停，满足继续条件后可以恢复。',
+    settled: '本轮回复已经结束，正在同步任务是否继续、等待或需要处理。',
     aborted: '这轮已经停止，已有公开进展仍然保留。',
     idle: '在对话里说出你想完成的事，伙伴会从这里开始。',
   }[status];
@@ -314,7 +309,7 @@ function latestRoomTurn(projection: RoomProjectionState): RoomTurnProjection | u
   return [...projection.turnOrder].reverse().map((id) => projection.turnsById[id]).find(Boolean);
 }
 
-type RoomProjectedStatus =
+export type RoomProjectedStatus =
   | 'queued'
   | 'running'
   | 'waiting_review'
@@ -324,6 +319,7 @@ type RoomProjectedStatus =
   | 'completed'
   | 'handed_off'
   | 'waiting'
+  | 'settled'
   | 'aborted'
   | 'idle';
 
@@ -347,7 +343,7 @@ function roomActivityStatus(
   return activity.status;
 }
 
-function roomProjectedStatus(
+export function roomProjectedStatus(
   turn: RoomTurnProjection | undefined,
   activities: RoomActivityProjection[],
   messages: RoomMessageProjection[],
@@ -379,7 +375,7 @@ function roomProjectedStatus(
   if (outcome === 'handoff') return 'handed_off';
   if (outcome === 'wait') return 'waiting';
   if (outcome === 'blocked') return 'blocked';
-  return 'completed';
+  return 'settled';
 }
 
 function roomProjectedStatusLabel(status: RoomProjectedStatus): string {
@@ -393,6 +389,7 @@ function roomProjectedStatusLabel(status: RoomProjectedStatus): string {
     completed: '已完成',
     handed_off: '已转交',
     waiting: '等待继续',
+    settled: '正在同步任务状态',
     aborted: '已停止',
     idle: '等待后续',
   }[status];

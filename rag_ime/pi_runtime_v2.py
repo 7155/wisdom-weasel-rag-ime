@@ -2525,36 +2525,33 @@ class PiRuntimeHostManager:
         session_context = str(
             session.get("sessionContext") or ""
         ).strip()
-        delta_available = "providerContextDelta" in session
         full_room_context = str(
             session.get("providerContext") or ""
         ).strip()
-        use_delta = (
+        reuse_current_room_context = (
             opened.get("reused") is True
             and opened.get("contextEpochChanged") is not True
-            and delta_available
         )
-        context_value = (
-            session.get("providerContextDelta")
-            if use_delta
-            else full_room_context
-        )
-        room_context = str(context_value or "").strip()
         if session_context and opened.get("reused") is True:
             dispatch_params["sessionContext"] = session_context
-        if not full_room_context and not use_delta:
+        if not full_room_context and not reuse_current_room_context:
             raise PiRuntimeError(
                 "managed Room Dispatch has no provider-only task context"
             )
-        if not room_context and not use_delta:
-            raise PiRuntimeError(
-                "managed Room Dispatch has no provider-only task context"
-            )
-        dispatch_params["roomContext"] = room_context
-        dispatch_params["roomRecoveryContext"] = str(
+        # Pi Runtime SDK v2 composes the exact current ContextProvider
+        # assembly on every turn.  `providerContextDelta` is therefore not an
+        # append instruction: sending it would replace prior valid answers in
+        # the next Room turn.  Always send the full bounded projection; when a
+        # retry has no new projection, omit the fields and let the resident
+        # Session retain its last accepted required Room context.
+        if full_room_context:
+            dispatch_params["roomContext"] = full_room_context
+        room_recovery_context = str(
             session.get("roomRecoveryContext")
             or full_room_context
         ).strip()
+        if room_recovery_context:
+            dispatch_params["roomRecoveryContext"] = room_recovery_context
         if isinstance(session.get("roomProviderContext"), Mapping):
             dispatch_params["roomProviderContext"] = dict(
                 session["roomProviderContext"]

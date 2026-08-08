@@ -1680,6 +1680,12 @@ class AgentEventProjectionTests(unittest.TestCase):
                                     "evidenceRefs": ["private-receipt"],
                                 },
                             ],
+                            "definitionRequirements": [
+                                {
+                                    "requirementRef": "requirement:active-1",
+                                    "statement": "private requirement text",
+                                },
+                            ],
                             "participants": [
                                 {
                                     "participantRef": "P-1",
@@ -1751,6 +1757,9 @@ class AgentEventProjectionTests(unittest.TestCase):
                         "verified": False,
                     },
                 ],
+                "definitionRequirements": [
+                    {"requirementRef": "requirement:active-1"},
+                ],
                 "participants": [
                     {
                         "displayName": "澄·今",
@@ -1780,6 +1789,7 @@ class AgentEventProjectionTests(unittest.TestCase):
         self.assertNotIn("privateModelContext", repr(finished_data))
         self.assertNotIn("privateDiagnostics", repr(finished_data))
         self.assertNotIn("private-receipt", repr(finished_data))
+        self.assertNotIn("private requirement text", repr(finished_data))
         self.assertIn("task:feature-1", repr(finished_data))
         self.assertNotIn("P-1", repr(finished_data))
         self.assertNotIn("participantRef", repr(finished_data))

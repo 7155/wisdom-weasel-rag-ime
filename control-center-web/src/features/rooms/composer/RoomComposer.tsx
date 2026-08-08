@@ -1,4 +1,12 @@
-import { AtSign, LoaderCircle, Paperclip, Send, X } from 'lucide-react';
+import {
+  AtSign,
+  CircleAlert,
+  Clock3,
+  LoaderCircle,
+  Paperclip,
+  Send,
+  X,
+} from 'lucide-react';
 import {
   startTransition,
   useCallback,
@@ -60,6 +68,7 @@ export function RoomComposer({
   sending: boolean;
   taskBusyState?: 'running' | 'blocked';
   activityStatus?: {
+    kind: 'sending' | 'working' | 'waiting' | 'recovering' | 'blocked';
     label: string;
     detail: string;
     awayFromLatest?: boolean;
@@ -204,7 +213,7 @@ export function RoomComposer({
         role="listbox"
         aria-label="选择要点名的伙伴"
       >
-        <header><AtSign size={14} /><span><strong>想请谁加入</strong><small>继续输入名字可以筛选</small></span></header>
+        <header><AtSign size={14} /><span><strong>点名交流</strong><small>继续输入名字可以筛选</small></span></header>
         {mentionCandidates.map((participant, index) => <button
           type="button"
           id={`room-mention-${participant.id}`}
@@ -223,7 +232,7 @@ export function RoomComposer({
             ))}
             size="small"
           />
-          <span><strong>{participant.displayName}</strong><small>{room?.roomKind === 'roleplay' ? '一起聊天' : '可负责完整任务'}</small></span>
+          <span><strong>{participant.displayName}</strong><small>{room?.roomKind === 'roleplay' ? '一起聊天' : '可以回应这条消息'}</small></span>
           <kbd>{index === activeIndex ? 'Enter' : `@${participant.displayName}`}</kbd>
         </button>)}
       </div> : null}
@@ -330,11 +339,16 @@ export function RoomComposer({
             {activityStatus ? <span
               aria-label="当前协作状态"
               className="room-composer__activity"
+              data-kind={activityStatus.kind}
               data-away-from-latest={activityStatus.awayFromLatest || undefined}
               role="status"
               title={activityStatus.detail}
             >
-              <LoaderCircle aria-hidden="true" size={13} />
+              {activityStatus.kind === 'blocked'
+                ? <CircleAlert aria-hidden="true" size={13} />
+                : activityStatus.kind === 'waiting'
+                  ? <Clock3 aria-hidden="true" size={13} />
+                  : <LoaderCircle aria-hidden="true" size={13} />}
               {activityStatus.awayFromLatest && activityStatus.onReturnToLatest
                 ? <button aria-label="回到最新进度" type="button" onClick={activityStatus.onReturnToLatest}>有新进展 · 回到最新</button>
                 : <span>{activityStatus.label}</span>}

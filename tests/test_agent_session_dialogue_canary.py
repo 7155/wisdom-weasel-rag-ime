@@ -356,14 +356,17 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
                 "isError": False,
             },
             *boundary_read_executions(workspace),
-            {
-                "toolName": "tool_load",
-                "args": {"name": CANARY.EXPECTED_TODO_TOOL},
-                "isError": False,
-            },
+            {"toolName": "todo", "args": {"op": "init"}, "isError": False},
+            {"toolName": "todo", "args": {"op": "start"}, "isError": False},
             {"toolName": "bash", "args": {}, "isError": True},
+            {"toolName": "todo", "args": {"op": "done"}, "isError": False},
+            {"toolName": "todo", "args": {"op": "start"}, "isError": False},
             {"toolName": "edit", "args": {}, "isError": False},
+            {"toolName": "todo", "args": {"op": "done"}, "isError": False},
+            {"toolName": "todo", "args": {"op": "start"}, "isError": False},
             {"toolName": "bash", "args": {}, "isError": False},
+            {"toolName": "todo", "args": {"op": "checkpoint"}, "isError": False},
+            {"toolName": "todo", "args": {"op": "done"}, "isError": False},
         ]
         return {
             "toolExecutions": executions,
@@ -440,6 +443,8 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
         ):
             self.assertNotIn(hidden_name, prompt)
         self.assertIn("不得把它们交给 tool_search 或 tool_load", prompt)
+        self.assertIn("直接使用本轮常驻的 todo 工具", prompt)
+        self.assertNotIn("tool_load 精确加载 todo", prompt)
 
 
 if __name__ == "__main__":

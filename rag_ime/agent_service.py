@@ -4872,7 +4872,7 @@ class AgentService:
         observed_at_ms: int | None = None,
         minimum_inactive_ms: int = 0,
     ) -> int:
-        """Resume accepted Kernel turns that have no live local Runtime owner."""
+        """Recover durable Room work before retrying interrupted Runtime turns."""
 
         runtime_status = self.runtime.runtime_status()
         active_session_ids = {
@@ -4880,7 +4880,7 @@ class AgentService:
             for value in runtime_status.get("activeSessionIds") or []
             if str(value).strip()
         }
-        recovered = 0
+        recovered = self.room_application.recover_pending_reconciliations()
         timestamp = (
             int(observed_at_ms)
             if observed_at_ms is not None

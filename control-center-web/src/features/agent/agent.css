@@ -170,6 +170,8 @@
 .agent-conversation__actions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; margin-left: auto; }
 .agent-status-toggle { flex: 0 0 auto; }
 .agent-conversation__header p + .agent-conversation__actions { margin-left: 0; }
+.agent-room-return { padding: 5px 7px; border-radius: var(--radius-1); color: var(--color-text-secondary); font-size: 12px; text-decoration: none; white-space: nowrap; }
+.agent-room-return:hover { background: var(--color-surface-hover); color: var(--color-text); }
 
 @media (min-width: 761px) {
   .agent-conversation__actions { margin-right: var(--workspace-global-actions-clearance); }

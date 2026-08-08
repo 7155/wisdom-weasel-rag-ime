@@ -110,6 +110,36 @@ describe('Rooms experience', () => {
     });
   });
 
+  it('reopens the exact Room named by a review return link', async () => {
+    const previousHash = window.location.hash;
+    window.location.hash = '#/rooms?room=room-b';
+    try {
+      const transport = new MockControlTransport({ routes: {
+        'agent.rooms.list': {
+          ok: true,
+          items: [roomSummary('room-a', 'Room A'), roomSummary('room-b', 'Room B')],
+        },
+        'agent.roles.list': { ok: true, items: [] },
+        'agent.room.snapshot': (request: ControlRequest) => {
+          const roomId = String(request.params?.roomId ?? '');
+          return roomSnapshot(roomId, [
+            roomEvent(roomId, 1, 'user_message', {
+              text: roomId === 'room-b' ? '已回到 Room B 的审阅上下文' : '错误地打开了 Room A',
+            }),
+          ]);
+        },
+      } });
+
+      render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+      expect(await screen.findByText('已回到 Room B 的审阅上下文')).toBeInTheDocument();
+      expect(transport.requests.find((call) => call.request.pathId === 'agent.room.snapshot')?.request.params)
+        .toEqual({ roomId: 'room-b' });
+    } finally {
+      window.location.hash = previousHash;
+    }
+  });
+
   it('sends a correction into the active Root instead of blocking the composer', async () => {
     const room = roomSummary('room-a', '正在执行的 Room');
     const snapshot = roomSnapshot(room.id, []);
@@ -370,6 +400,7 @@ describe('Rooms experience', () => {
         ...snapshot,
         room: { ...snapshot.room, workItems: [activeWork] },
       },
+      'agent.room.kernel.snapshot': roomKernelSnapshot('room-a', 'room-a:turn-1'),
       'agent.room.message': () => pendingSend.promise,
     } });
     const user = userEvent.setup();
@@ -386,7 +417,9 @@ describe('Rooms experience', () => {
     expect(questionCard.getByText('直接发布稳定版本')).toBeInTheDocument();
     expect(questionRegion).not.toHaveTextContent('等待原因：');
     expect(questionRegion).not.toHaveTextContent('恢复条件：');
-    expect(screen.queryByRole('textbox', { name: '协作消息' })).not.toBeInTheDocument();
+    await waitFor(() => expect(
+      screen.queryByRole('textbox', { name: '协作消息' }),
+    ).not.toBeInTheDocument());
     expect(screen.queryByRole('button', { name: '发送问题回答' })).not.toBeInTheDocument();
     expect(questionCard.getByRole('button', { name: '其他' })).toBeInTheDocument();
     expect(questionCard.queryByRole('button', { name: '发送回答' })).not.toBeInTheDocument();
@@ -485,6 +518,7 @@ describe('Rooms experience', () => {
           ],
         }),
       ]),
+      'agent.room.kernel.snapshot': roomKernelSnapshot('room-a', 'room-a:turn-1'),
       'agent.room.message': (request: ControlRequest) => ({
         ok: true,
         timelineEvents: [
@@ -553,6 +587,7 @@ describe('Rooms experience', () => {
           ],
         }),
       ]),
+      'agent.room.kernel.snapshot': roomKernelSnapshot('room-a', 'room-a:turn-1'),
       'agent.room.message': (request: ControlRequest) => {
         sendAttempts += 1;
         if (sendAttempts === 1) {
@@ -643,7 +678,7 @@ describe('Rooms experience', () => {
       name: '需要回答：首版最重要的交付边界是什么？',
     }));
     await waitFor(() => expect(
-      question.getByText('这项问题已不再是当前可回答的问题。'),
+      question.getByText('正在确认这项问题是否仍需要你的回答；确认后会自动更新。'),
     ).toBeInTheDocument());
     expect(question.queryByRole('radio')).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: '协作消息' })).toBeEnabled();
@@ -661,6 +696,7 @@ describe('Rooms experience', () => {
           options: [],
         }),
       ]),
+      'agent.room.kernel.snapshot': roomKernelSnapshot('room-a', 'room-a:turn-1'),
       'agent.room.message': (request: ControlRequest) => {
         const body = request.body as Record<string, unknown>;
         return {
@@ -732,6 +768,7 @@ describe('Rooms experience', () => {
           text: 'stable',
         }, { turnId: 'room-a:turn-1' }),
       ]),
+      'agent.room.kernel.snapshot': roomKernelSnapshot('room-a', 'room-a:turn-1'),
     } });
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
@@ -817,6 +854,7 @@ describe('Rooms experience', () => {
       'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '重载 Room')] },
       'agent.roles.list': { ok: true, items: previewPersonas },
       'agent.room.snapshot': roomSnapshot('room-a', [question]),
+      'agent.room.kernel.snapshot': roomKernelSnapshot('room-a', 'room-a:turn-1'),
     } });
     const user = userEvent.setup();
     const view = render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
@@ -1482,6 +1520,7 @@ describe('Rooms experience', () => {
       'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '实时澄清 Room')] },
       'agent.roles.list': { ok: true, items: previewPersonas },
       'agent.room.snapshot': roomSnapshot('room-a', []),
+      'agent.room.kernel.snapshot': roomKernelSnapshot('room-a', 'room-a:turn-2'),
     } });
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
     await screen.findByText('还没有公开消息');
@@ -2919,7 +2958,7 @@ describe('Rooms experience', () => {
     };
 
     render(<RoomTurn turnId="turn-a" room={room} projection={projection} personas={previewPersonas} />);
-    expect(screen.getByRole('link', { name: /立即审阅/ })).toHaveAttribute('href', '#/agent?session=room-a%3As1');
+    expect(screen.getByRole('link', { name: /立即审阅/ })).toHaveAttribute('href', '#/agent?session=room-a%3As1&returnRoom=room-a');
   });
 
   it('links a pending plan review to the authoritative participant Session', () => {
@@ -2940,7 +2979,7 @@ describe('Rooms experience', () => {
     render(<RoomTurn turnId="turn-a" room={room} projection={projection} personas={previewPersonas} />);
     expect(screen.getByText('等待审阅')).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: /立即审阅/ })).toHaveLength(1);
-    expect(screen.getByRole('link', { name: /立即审阅/ })).toHaveAttribute('href', '#/agent?session=room-a%3As1');
+    expect(screen.getByRole('link', { name: /立即审阅/ })).toHaveAttribute('href', '#/agent?session=room-a%3As1&returnRoom=room-a');
     expect(screen.queryByRole('button', { name: /停止/ })).not.toBeInTheDocument();
   });
 
@@ -4135,7 +4174,7 @@ describe('Rooms experience', () => {
     expect(onOpenProgress).toHaveBeenCalledTimes(1);
   });
 
-  it('does not duplicate repeated Room status updates in the compact sidebar', () => {
+  it('does not claim completion from repeated public status updates without a task snapshot', () => {
     const room = roomSummary('room-a', '状态聚合 Room');
     const projection = createRoomProjection(room.id);
     projection.turnOrder.push('turn-a');
@@ -4166,7 +4205,8 @@ describe('Rooms experience', () => {
     );
 
     expect(container.querySelectorAll('.room-status-activity')).toHaveLength(0);
-    expect(screen.getByRole('region', { name: '当前协作阶段' })).toHaveTextContent('已完成');
+    expect(screen.getByRole('region', { name: '当前协作阶段' }))
+      .toHaveTextContent('正在同步任务状态');
   });
 
   it('keeps the 765x1568 status panel in normal top-to-bottom flow while a review waits', () => {
@@ -4583,7 +4623,7 @@ describe('Rooms experience', () => {
     expect(phase).not.toHaveTextContent('最终回复');
   });
 
-  it('labels a completed Room turn without a Post as completed in the status panel', () => {
+  it('does not label a completed public turn as a completed task without a task snapshot', () => {
     const room = roomSummary('room-a', '终态 Room');
     const projection = createRoomProjection(room.id);
     projection.turnOrder.push('turn-a');
@@ -4603,8 +4643,9 @@ describe('Rooms experience', () => {
       </TooltipProvider>,
     );
 
-    expect(screen.getAllByText('已完成')).not.toHaveLength(0);
-    expect(screen.queryByText('等待后续')).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '当前协作阶段' }))
+      .toHaveTextContent('正在同步任务状态');
+    expect(screen.queryByText('已完成')).not.toBeInTheDocument();
   });
   it('renders managed image blocks from a Room user-message receipt', () => {
     const room = roomSummary('room-media', '图片 Room');
@@ -4744,9 +4785,14 @@ function roomKernelRoot(
   };
 }
 
-function roomKernelSnapshot(roomId: string) {
+function roomKernelSnapshot(
+  roomId: string,
+  rootId = 'root-a',
+  state: RootProjection['state'] = 'running',
+) {
   const root: Record<string, unknown> = {
-    ...roomKernelRoot(roomId, 'running', false, 1),
+    ...roomKernelRoot(roomId, state, false, 1),
+    rootId,
   };
   delete root.isFinal;
   delete root.updatedAtMs;

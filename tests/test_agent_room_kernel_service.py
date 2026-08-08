@@ -376,6 +376,51 @@ class RoomKernelServiceTests(unittest.TestCase):
         finally:
             passive.close()
 
+    def test_room_tool_receipts_scope_reused_pi_call_ids_to_session_and_dispatch(
+        self,
+    ) -> None:
+        """Pi tool-call ids are local to one Session/turn, not global receipts."""
+        first_binding = ({}, {}, {"dispatchId": "dispatch:first"})
+        second_binding = ({}, {}, {"dispatchId": "dispatch:second"})
+        with (
+            patch.object(
+                self.service.room_kernel_application,
+                "_active_capability_binding",
+                side_effect=[first_binding, second_binding],
+            ),
+            patch.object(
+                self.service.room_capabilities,
+                "authorize_runtime_invocation",
+                return_value=({}, True),
+            ) as authorize,
+        ):
+            self.service.room_kernel_application._authorize_capability_invocation(
+                "session:first",
+                "room_state",
+                {},
+                tool_call_id="call:shared",
+                load_receipt_id="load:first",
+            )
+            self.service.room_kernel_application._authorize_capability_invocation(
+                "session:second",
+                "room_state",
+                {},
+                tool_call_id="call:shared",
+                load_receipt_id="load:second",
+            )
+
+        self.assertEqual(
+            [call.kwargs["receipt_id"] for call in authorize.call_args_list],
+            [
+                "invoke:session:first:dispatch:first:call:shared",
+                "invoke:session:second:dispatch:second:call:shared",
+            ],
+        )
+        self.assertEqual(
+            [call.kwargs["invocation_key"] for call in authorize.call_args_list],
+            ["call:shared", "call:shared"],
+        )
+
     def test_room_reads_preserve_isolated_workspace_lease(self) -> None:
         prepared = self.service.room_workspaces.prepare(
             root_id="root:read-poll",
@@ -5798,6 +5843,52 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertNotIn("participantId", serialized)
         self.assertLess(len(serialized.encode("utf-8")), 10_000)
 
+    def test_alignment_room_state_exposes_active_requirement_refs_for_definition(
+        self,
+    ) -> None:
+        accepted = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": "做一个终端客户目录，能搜索客户并保存修改。",
+                "clientMessageId": "client:room-state-definition-requirements",
+            },
+        )
+        alignment = accepted["alignmentDispatches"][0]
+        self.service.room_kernel_worker.run_once()
+        room = self.service.rooms.get(self.room_id)
+        facilitator = next(
+            item
+            for item in room["participants"]
+            if item["id"] == accepted["root"]["facilitatorParticipantId"]
+        )
+        loaded = self.service.room_capability_tool_load(
+            {
+                "sessionId": str(facilitator["sessionId"]),
+                "receiptId": "load:room-state-definition-requirements",
+                "toolName": "room_state",
+                "createdAtMs": 5,
+            }
+        )["result"]
+
+        state = self.service.execute_room_capability_tool(
+            str(facilitator["sessionId"]),
+            "room_state",
+            {},
+            tool_call_id="call:room-state-definition-requirements",
+            load_receipt_id=str(loaded["receiptId"]),
+        )["result"]
+
+        expected = [
+            {
+                "requirementRef": str(item["itemId"]),
+            }
+            for item in self._active_room_requirements(
+                str(alignment["dispatchId"])
+            )
+        ]
+        self.assertGreaterEqual(len(expected), 1)
+        self.assertEqual(state["definitionRequirements"], expected)
+
     def test_room_collaborate_enqueues_child_task_without_settling_parent(self) -> None:
         self._set_parent_acceptance("criterion:service")
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
@@ -6527,6 +6618,80 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         self.assertEqual(recovered_ref, first_ref)
 
+    def test_room_integrate_records_a_returned_conflict(self) -> None:
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.assertTrue(self.service.room_kernel_worker.run_once())
+        loaded = self.service.room_capability_tool_load(
+            {
+                "sessionId": self.session_id,
+                "receiptId": "load:returned-integration-conflict",
+                "toolName": "room_integrate",
+                "createdAtMs": 4,
+            }
+        )["result"]
+        parent_task = self.service.room_kernel.task("task:service")
+        child_task_id = "task:returned-integration-conflict"
+        task = {
+            **parent_task,
+            "taskId": child_task_id,
+            "parentTaskId": "task:service",
+            "state": "completed",
+            "workspacePolicy": "isolated_writable",
+            "workspaceBindingId": "workspace-binding:returned-conflict",
+            "workspaceIntegrationState": "pending",
+            "workspaceIntegrationRef": None,
+            "workspaceLifecycleState": "delivered",
+            "workspaceCleanupState": "not_authorized",
+            "workspaceAttentionRequired": False,
+        }
+        conflict = {
+            "integrated": False,
+            "conflict": True,
+            "workspaceBindingId": task["workspaceBindingId"],
+            "integrationRef": "room-workspace-integration:returned-conflict",
+            "workspaceLifecycleState": "conflict",
+            "cleanupState": "retained",
+            "attentionRequired": True,
+            "reason": "workspace patch conflicts with the integration target",
+        }
+
+        def task_by_id(task_id: str):
+            return task if task_id == child_task_id else parent_task
+
+        with (
+            patch.object(self.service.room_kernel, "task", side_effect=task_by_id),
+            patch.object(
+                self.service.room_kernel,
+                "workspace_integration_authority",
+                create=True,
+                return_value={"status": "ready", "integrationRef": None},
+            ),
+            patch.object(
+                self.service.room_workspaces,
+                "integrate",
+                return_value=conflict,
+            ),
+            patch.object(
+                self.service.room_kernel,
+                "record_workspace_integration_failure",
+                return_value=task,
+            ) as failure,
+            patch.object(self.service.room_kernel, "record_workspace_integration") as success,
+        ):
+            result = self.service.execute_room_capability_tool(
+                self.session_id,
+                "room_integrate",
+                {"childTaskId": child_task_id, "action": "integrate"},
+                tool_call_id="call:returned-integration-conflict",
+                load_receipt_id=str(loaded["receiptId"]),
+            )
+
+        failure.assert_called_once()
+        self.assertEqual(failure.call_args.kwargs["workspace_result"], conflict)
+        success.assert_not_called()
+        self.assertFalse(result["result"]["integrated"])
+        self.assertIsNone(result["result"]["integrationRef"])
+
     def test_room_integrate_prior_replay_revalidates_canonical_authority(
         self,
     ) -> None:
@@ -7092,7 +7257,7 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "createdAtMs": 10,
             }
         )["result"]
-        self.service.execute_room_capability_tool(
+        committed = self.service.execute_room_capability_tool(
             session_id,
             "room_commit",
             {
@@ -7107,6 +7272,7 @@ class RoomKernelServiceTests(unittest.TestCase):
             tool_call_id=f"call:{dispatch_id}:commit",
             load_receipt_id=str(loaded["receiptId"]),
         )
+        assert committed is not None
         dispatch = self.service.room_kernel.dispatch(dispatch_id)
         task = self.service.room_kernel.task(str(dispatch["taskId"]))
         criteria = tuple(
@@ -7173,8 +7339,8 @@ class RoomKernelServiceTests(unittest.TestCase):
                     "createdAtMs": 10,
                 },
                 "commit": commit,
-                "invocationReceiptId": (
-                    f"invoke:call:{dispatch_id}:commit"
+                "invocationReceiptId": str(
+                    committed["invocationReceipt"]["receiptId"]
                 ),
             },
             caller_authorized=True,
@@ -7543,7 +7709,8 @@ class RoomKernelServiceTests(unittest.TestCase):
             gateway.execute(repeated_call)
         self.assertEqual(len(attempted_commands), 1)
         rejected = self.service.room_capabilities.execution_receipt(
-            "invoke:tool:room-failed-shell-replay"
+            f"invoke:{self.session_id}:dispatch:service:"
+            "tool:room-failed-shell-replay"
         )
         self.assertIsNotNone(rejected)
         self.assertEqual(rejected["status"], "rejected")
@@ -8180,11 +8347,22 @@ class RoomKernelServiceTests(unittest.TestCase):
         feature_owner = next(
             item for item in active if str(item["id"]) != facilitator_id
         )
-        defined = self.service.room_application.define_room(
-            self.room_id,
-            dispatch_id=str(alignment["dispatchId"]),
-            invocation_receipt_id="invoke:active-revision-define",
-            arguments={
+        alignment_dispatch = self.service.room_kernel.dispatch(
+            str(alignment["dispatchId"])
+        )
+        facilitator_session_id = str(alignment_dispatch["targetSessionId"])
+        define_load = self.service.room_capability_tool_load(
+            {
+                "sessionId": facilitator_session_id,
+                "receiptId": "load:active-revision:define",
+                "toolName": "room_define",
+                "createdAtMs": 20,
+            }
+        )["result"]
+        defined = self.service.execute_room_capability_tool(
+            facilitator_session_id,
+            "room_define",
+            {
                 "objective": "在终端客户目录主界面交付可保存数据的客户管理闭环",
                 "expectedOutput": "用户退出终端后重新打开，仍能浏览此前保存的客户资料",
                 "entrySurface": "终端客户目录主界面的客户列表和编辑命令入口",
@@ -8222,8 +8400,27 @@ class RoomKernelServiceTests(unittest.TestCase):
                 },
                 "independentReviewRequired": False,
             },
-        )
+            tool_call_id="call:active-revision:define",
+            load_receipt_id=str(define_load["receiptId"]),
+        )["result"]
         self.assertTrue(defined["requiresStartAction"])
+        settled_alignment = self.service.room_settle_lifecycle.settle(
+            {
+                "sessionId": facilitator_session_id,
+                "dispatchId": str(alignment_dispatch["dispatchId"]),
+                "rootId": str(accepted["rootId"]),
+                "generation": alignment_dispatch["generation"],
+                "capabilityEpoch": alignment_dispatch["capabilityEpoch"],
+                "settleScopeId": "scope:active-revision-alignment",
+                "settleAttempt": 1,
+                "runtimeTurnId": (
+                    f"turn:{alignment_dispatch['dispatchId']}:1"
+                ),
+                "dispatchAttempt": alignment_dispatch["attempt"],
+                "resourceUsage": {},
+            }
+        )
+        self.assertEqual(settled_alignment["state"], "committed")
         started = self.service.start_room_execution(
             self.room_id,
             {
@@ -8268,6 +8465,223 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertIsNone(
             self.service.room_kernel_worker.run_once(),
             "revision must wait for its active parent Dispatch to settle",
+        )
+
+    def test_blocked_root_recovery_releases_one_existing_integration_dispatch(
+        self,
+    ) -> None:
+        accepted = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": "把客户目录做成终端界面，并保留退出后的数据。",
+                "clientMessageId": "client:blocked-revision-intake",
+            },
+        )
+        alignment = accepted["alignmentDispatches"][0]
+        self.assertTrue(self.service.room_kernel_worker.run_once())
+        room = self.service.rooms.get(self.room_id)
+        active = [
+            item
+            for item in room["participants"]
+            if item.get("status") == "active"
+        ]
+        facilitator_id = str(accepted["root"]["facilitatorParticipantId"])
+        feature_owner = next(
+            item for item in active if str(item["id"]) != facilitator_id
+        )
+        alignment_dispatch = self.service.room_kernel.dispatch(
+            str(alignment["dispatchId"])
+        )
+        facilitator_session_id = str(alignment_dispatch["targetSessionId"])
+        define_load = self.service.room_capability_tool_load(
+            {
+                "sessionId": facilitator_session_id,
+                "receiptId": "load:blocked-revision:define",
+                "toolName": "room_define",
+                "createdAtMs": 20,
+            }
+        )["result"]
+        defined = self.service.execute_room_capability_tool(
+            facilitator_session_id,
+            "room_define",
+            {
+                "objective": "在终端客户目录主界面交付可保存数据的客户管理闭环",
+                "expectedOutput": "用户退出终端后重新打开，仍能浏览此前保存的客户资料",
+                "entrySurface": "终端客户目录主界面的客户列表和编辑命令入口",
+                "primaryInteraction": "用户在终端输入浏览、新增、编辑和保存客户的命令",
+                "observableCompletion": "重新打开终端客户目录后，列表显示此前保存的客户资料",
+                "requirements": ["终端管理客户并保留数据"],
+                "acceptanceCriteria": [
+                    {
+                        "statement": "退出重开后客户数据仍然存在",
+                        "fullNameZh": "客户数据可靠保存",
+                        "expectedReceiptTypes": ["evidence"],
+                    }
+                ],
+                "implementationParticipantRef": str(feature_owner["id"]),
+                "executionPlan": {
+                    "sharedContracts": ["所有操作共用同一份客户数据"],
+                    "featureTasks": [
+                        {
+                            "title": "终端客户管理闭环",
+                            "participantRef": str(feature_owner["id"]),
+                            "userOutcome": "用户能在终端管理并保存客户",
+                            "dependencies": [],
+                            "writeBoundary": "只实现终端客户管理功能",
+                            "workspacePolicy": "isolated_writable",
+                            "acceptance": ["AC-1"],
+                        }
+                    ],
+                    "integrationPlan": "合入终端功能并核对保存结果",
+                    "integrationParticipantRef": facilitator_id,
+                    "acceptancePlan": ["终端管理和数据保存都可核对"],
+                },
+                "independentReviewRequired": False,
+            },
+            tool_call_id="call:blocked-revision:define",
+            load_receipt_id=str(define_load["receiptId"]),
+        )["result"]
+        self.assertTrue(defined["requiresStartAction"])
+        settled_alignment = self.service.room_settle_lifecycle.settle(
+            {
+                "sessionId": facilitator_session_id,
+                "dispatchId": str(alignment_dispatch["dispatchId"]),
+                "rootId": str(accepted["rootId"]),
+                "generation": alignment_dispatch["generation"],
+                "capabilityEpoch": alignment_dispatch["capabilityEpoch"],
+                "settleScopeId": "scope:blocked-revision:alignment",
+                "settleAttempt": 1,
+                "runtimeTurnId": (
+                    f"turn:{alignment_dispatch['dispatchId']}:1"
+                ),
+                "dispatchAttempt": alignment_dispatch["attempt"],
+                "resourceUsage": {},
+            }
+        )
+        self.assertEqual(settled_alignment["state"], "committed")
+        started = self.service.start_room_execution(
+            self.room_id,
+            {
+                "action": "start_execution",
+                "rootId": str(accepted["rootId"]),
+                "clientActionId": "action:blocked-revision-start",
+            },
+        )
+        feature_dispatch_id = str(started["dispatch"]["dispatchId"])
+        integration_task = next(
+            task
+            for task in started["tasks"]
+            if task.get("taskKind") == "integration"
+        )
+        integration_task_id = str(integration_task["taskId"])
+        integration_owner_id = str(
+            integration_task["currentOwnerParticipantId"]
+        )
+
+        self.assertTrue(self.service.room_kernel_worker.run_once())
+        failed_dispatch = self.service.room_kernel.dispatch(feature_dispatch_id)
+        failure_event = self.service.events.publish(
+            str(failed_dispatch["targetSessionId"]),
+            "turn_failed",
+            {"error": "Provider stopped before the Room result was committed"},
+            turn_id=f"turn:{feature_dispatch_id}:1",
+            created_at_ms=40,
+        )
+        self.assertTrue(self.service.events.flush())
+        self.service.room_kernel.record_runtime_failure(
+            feature_dispatch_id,
+            generation=int(failed_dispatch["generation"]),
+            source_event_id=failure_event.event_id,
+            runtime_turn_id=f"turn:{feature_dispatch_id}:1",
+            dispatch_attempt=int(failed_dispatch["attempt"]),
+            now_ms=40,
+        )
+        self.assertEqual(
+            self.service.room_kernel.root(str(accepted["rootId"]))["state"],
+            "blocked",
+        )
+        self.assertEqual(
+            self.service.room_kernel.active_runtime_targets(str(accepted["rootId"])),
+            [],
+        )
+
+        intervention_id = "room-intervention:blocked-revision-recovery"
+        root_id = str(accepted["rootId"])
+        with sqlite3.connect(self.service.db_path) as connection:
+            connection.execute(
+                """INSERT INTO room_interventions(
+                       intervention_id,room_id,root_id,generation,
+                       intervention_kind,state,post_id,requirement_anchor_id,
+                       requirement_catalog_revision_id,requires_plan_revision,
+                       affected_task_ids_json,payload_json,created_at_ms,updated_at_ms
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    intervention_id,
+                    self.room_id,
+                    root_id,
+                    0,
+                    "correction",
+                    "pending_reconciliation",
+                    "room-post:user:blocked-revision-recovery",
+                    "requirement-anchor:blocked-revision-recovery",
+                    "requirement-catalog:blocked-revision-recovery",
+                    1,
+                    "[]",
+                    json.dumps(
+                        {
+                            "interventionId": intervention_id,
+                            "rootId": root_id,
+                            "state": "pending_reconciliation",
+                        },
+                        separators=(",", ":"),
+                    ),
+                    50,
+                    50,
+                ),
+            )
+            connection.commit()
+
+        self.assertEqual(
+            self.service._recover_interrupted_room_runtime_dispatches(
+                observed_at_ms=51,
+            ),
+            1,
+        )
+        with sqlite3.connect(self.service.db_path) as connection:
+            row = connection.execute(
+                """SELECT dispatch_id FROM room_kernel_dispatches
+                   WHERE root_id=? AND trigger_id=?""",
+                (root_id, intervention_id),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        assert row is not None
+        recovery = self.service.room_kernel.dispatch(str(row[0]))
+        self.assertEqual(recovery["intentKind"], "revise")
+        self.assertEqual(recovery["taskId"], integration_task_id)
+        self.assertIsNone(recovery["parentDispatchId"])
+        self.assertEqual(recovery["dependsOnDispatchIds"], [])
+        self.assertEqual(recovery["capabilityEpoch"], 3)
+        self.assertEqual(
+            recovery["targetParticipantId"],
+            integration_owner_id,
+        )
+        self.assertEqual(
+            recovery["state"],
+            "pending",
+        )
+        self.assertIsNotNone(
+            self.service.room_kernel_worker.run_once(),
+            "the recovered reconciliation Dispatch must be leaseable",
+        )
+        self.assertEqual(
+            self.service.room_kernel.dispatch(str(recovery["dispatchId"]))[
+                "state"
+            ],
+            "running",
+        )
+        self.assertEqual(
+            self.service.room_application.recover_pending_reconciliations(),
+            0,
         )
 
     def test_room_private_session_projection_reuses_todo_owner_and_sse_hash(
@@ -11294,13 +11708,15 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "createdAtMs": 20,
             }
         )["result"]
-        defined = self.service.execute_room_capability_tool(
+        defined_response = self.service.execute_room_capability_tool(
             str(self.service.room_kernel.dispatch(resume_id)["targetSessionId"]),
             "room_define",
             define_arguments,
             tool_call_id="call:typed-start:define",
             load_receipt_id=str(define_loaded["receiptId"]),
-        )["result"]
+        )
+        assert defined_response is not None
+        defined = defined_response["result"]
         self.assertTrue(defined["requiresStartAction"])
         stored_plan = defined["definitionReceipt"]["details"]["executionPlan"]
         self.assertEqual(stored_plan["sharedContracts"], define_arguments["executionPlan"]["sharedContracts"])
@@ -11344,7 +11760,9 @@ class RoomKernelServiceTests(unittest.TestCase):
         replayed_definition = self.service.room_application.define_room(
             self.room_id,
             dispatch_id=resume_id,
-            invocation_receipt_id="invoke:call:typed-start:define",
+            invocation_receipt_id=str(
+                defined_response["invocationReceipt"]["receiptId"]
+            ),
             arguments=define_arguments,
         )
         self.assertTrue(replayed_definition["idempotentReplay"])

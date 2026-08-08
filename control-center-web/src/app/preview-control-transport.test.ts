@@ -218,6 +218,47 @@ describe('preview control transport', () => {
     });
   });
 
+  it('acknowledges a preview Room message with canonical timeline events', async () => {
+    const transport = createPreviewTransport();
+    const created = record(await transport.request({
+      pathId: 'agent.rooms.create',
+      body: {
+        title: '发送验收',
+        participants: [
+          { roleId: 'companion-present-v1', displayName: '澄·今' },
+          { roleId: 'companion-firstlight-v1', displayName: '澄·初' },
+        ],
+      },
+    }));
+    const roomId = String(record(created.room).id);
+
+    const accepted = record(await transport.request({
+      pathId: 'agent.room.message',
+      params: { roomId },
+      body: {
+        message: '请先对齐方案，再等待我点击开始行动。',
+        clientMessageId: 'preview-send-1',
+      },
+    }));
+
+    expect(accepted.timelineEvents).toEqual([
+      expect.objectContaining({
+        roomId,
+        sequence: 1,
+        eventType: 'user_message',
+        payload: expect.objectContaining({
+          clientMessageId: 'preview-send-1',
+          text: '请先对齐方案，再等待我点击开始行动。',
+        }),
+      }),
+    ]);
+    const snapshot = record(await transport.request({
+      pathId: 'agent.room.snapshot',
+      params: { roomId },
+    }));
+    expect(snapshot.events).toEqual(accepted.timelineEvents);
+  });
+
   it('dismisses preview Ask cards only after a durable resolution event', async () => {
     const transport = createPreviewTransport();
     const sessionId = 'session-input';

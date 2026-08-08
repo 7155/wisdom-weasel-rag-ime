@@ -54,6 +54,24 @@ describe('AgentSendTimingTracker', () => {
     );
   });
 
+  it('keeps the turn bound by the earlier user-message event when a late acknowledgement differs', () => {
+    const record = vi.fn();
+    const tracker = new AgentSendTimingTracker(() => 0, record);
+
+    tracker.begin('session-1', 'client-1', 10);
+    tracker.observe(event('message_completed', 'turn-from-event', {
+      clientMessageId: 'client-1',
+    }), 20);
+    tracker.accepted('client-1', { turnId: 'turn-from-late-ack' }, 30);
+    tracker.observe(event('text_delta', 'turn-from-event'), 40);
+
+    expect(record).toHaveBeenCalledWith(
+      'agent.send.click_to_first_delta',
+      10,
+      40,
+    );
+  });
+
   it('retains an early delta until its user-message event identifies the client', () => {
     const record = vi.fn();
     const tracker = new AgentSendTimingTracker(() => 0, record);

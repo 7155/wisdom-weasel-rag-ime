@@ -44,6 +44,7 @@ EXPECTED_TOOLS = {
     "read",
     "edit",
     "bash",
+    "todo",
 }
 EXPECTED_TODO_TOOL = "todo"
 FORBIDDEN_ROOM_MARKERS = (
@@ -820,8 +821,22 @@ def _tool_checks(evidence: dict[str, Any], workspace: Path) -> dict[str, bool]:
     return {
         "skillLoadedExactlyOnce": skill_names.count(EXPECTED_SKILL) == 1,
         "nativeToolsResidentFromFirstCall": EXPECTED_TOOLS <= active_tools,
-        "deferredTodoLoadedExactlyOnce": (
-            tool_load_names == [EXPECTED_TODO_TOOL]
+        "todoUsesResidentCanonicalTool": (
+            EXPECTED_TODO_TOOL in active_tools
+            and EXPECTED_TODO_TOOL not in tool_load_names
+        ),
+        "todoLifecycleObserved": (
+            [str(item["args"].get("op") or "") for item in by_name["todo"]]
+            == [
+                "init",
+                "start",
+                "done",
+                "start",
+                "done",
+                "start",
+                "checkpoint",
+                "done",
+            ]
         ),
         "nativeToolsNeverSearchedOrLoaded": (
             not by_name["tool_search"]
@@ -948,8 +963,8 @@ def agent_session_task_message(workspace: Path) -> str:
         "随后用 read(path='read-boundary.txt', offset=1, limit=1000) 分段读取；"
         "每次严格使用上一次结果提示的 offset 续读，直到不再返回续读提示，"
         "不得重复同一 offset，也不得用 bash 绕过读取上限。"
-        f"任何写入或 bash 前，用 tool_load 精确加载 {EXPECTED_TODO_TOOL}，"
-        "建立覆盖基线测试、精确修改和回归测试的分阶段 Todo，并 start 基线测试任务；"
+        f"任何写入或 bash 前，直接使用本轮常驻的 {EXPECTED_TODO_TOOL} 工具，"
+        "先 init 建立覆盖基线测试、精确修改和回归测试的分阶段 Todo，再 start 基线测试任务；"
         "Todo 只跟踪当前执行进度，不构成权限；显式用户请求与原生动作审批仍是执行依据。"
         f"随后用 bash(command={TEST_COMMAND!r}, timeout=120) 运行基线测试；"
         "等待原生批准，确认修改前测试非零退出且不要把失败说成成功。"
@@ -1180,7 +1195,6 @@ def run(
         and not recovery_approvals
         and TASK_MARKER in compact_summary
         and TASK_MARKER in current_after_text
-        and "当前任务：已完成；不要重复执行。" in current_after_text
         and "继续执行上述原始需求。" not in current_after_text
         and "## 当前 Todo" not in current_after_text
         and all(after["systemPromptChecks"].values())

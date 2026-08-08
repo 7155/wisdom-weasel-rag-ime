@@ -44,6 +44,7 @@ import { RoomPaneResizer } from './RoomPaneResizer';
 import { RoomComposer, roomMentionedParticipants } from './composer/RoomComposer';
 import { RoomKernelLivePanel, useRoomTaskSubagents } from './kernel/RoomKernelLivePanel';
 import { buildRoomScreenModel } from './model/room-screen-model';
+import { roomHydrationState } from './room-hydration';
 import {
   buildRetryRootCommand,
   createControlRoomKernelCommandTransport,
@@ -70,6 +71,7 @@ import type {
   PendingRoomQuestion,
   RoomQuestionAnswerKind,
 } from './room-question';
+import { answerableRoomQuestion } from './room-question';
 import type {
   RoomCollaborationRole,
   RoomExecutionMode,
@@ -113,11 +115,6 @@ const ROOM_ROOT_TERMINAL_STATES: Record<string, true> = {
   cancelled: true,
   cancelled_with_unknowns: true,
 };
-const ROOM_QUESTION_ROOT_STATES: ReadonlySet<RootProjection['state']> = new Set([
-  'pending',
-  'running',
-  'waiting',
-]);
 
 function roomRootStateLabel(state: RootProjection['state']): string {
   return {
@@ -186,16 +183,6 @@ function roomQuestionAnswerAttemptKey(
   ]);
 }
 
-function answerableRoomQuestion(
-  question: PendingRoomQuestion | undefined,
-  rootsById: Readonly<Record<string, RootProjection>>,
-): PendingRoomQuestion | undefined {
-  if (!question) return undefined;
-  const root = rootsById[question.rootId];
-  return !root || ROOM_QUESTION_ROOT_STATES.has(root.state)
-    ? question
-    : undefined;
-}
 const ROOM_WORK_ITEM_STATES: Record<string, true> = {
   queued: true,
   active: true,
@@ -318,6 +305,7 @@ function RoomTimelineScrollFooter() {
 
 export function RoomsFeature() {
   const transport = useControlTransport();
+  const requestedRoomId = roomRequestedIdFromHash();
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
   const [personas, setPersonas] = useState<AgentPersonaV1[]>([]);
   const [selectedId, setSelectedId] = useState('');
@@ -452,6 +440,11 @@ export function RoomsFeature() {
   const roomRailModal = roomRailOverlay && roomRailOpen;
   const roomStatusModal = roomStatusOverlay && statusOpen;
   const selectedRoomRecoveryState = roomRecoveryStates[selectedId];
+  const selectedRoomHydration = roomHydrationState({
+    hasContent: visibleTurnOrder.length > 0,
+    loading: snapshotLoading,
+    recoveryState: selectedRoomRecoveryState,
+  });
   const selectedRoomErrorSource = roomErrorsRef.current.get(selectedId)?.source;
 
   selectedRoomIdRef.current = selectedId;
@@ -640,9 +633,12 @@ export function RoomsFeature() {
         const items = loadedRooms;
         setRooms(items);
         setSelectedId((current) => {
-          const next = items.some((item) => item.id === current)
+          const requested = requestedRoomId && items.some((item) => item.id === requestedRoomId)
+            ? requestedRoomId
+            : '';
+          const next = requested || (items.some((item) => item.id === current)
             ? current
-            : items.find((item) => item.status === 'active')?.id ?? items[0]?.id ?? '';
+            : items.find((item) => item.status === 'active')?.id ?? items[0]?.id ?? '');
           selectedRoomIdRef.current = next;
           return next;
         });
@@ -665,7 +661,7 @@ export function RoomsFeature() {
       ]));
     }).finally(() => { if (active) setCatalogLoading(false); });
     return () => { active = false; };
-  }, [includeArchived, transport]);
+  }, [includeArchived, requestedRoomId, transport]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -815,7 +811,7 @@ export function RoomsFeature() {
   const liveStatusTitle = continuedAfterAnswer
     ? '已收到你的回答，伙伴正在继续处理'
     : startingExecution
-      ? '正在开始行动，主持伙伴正在接手'
+      ? '正在开始行动，伙伴正在接手'
       : liveParticipantNames.length > 1
         ? `${liveParticipantNames.join('、')} 正在并行处理`
         : liveParticipantNames.length === 1
@@ -1597,8 +1593,10 @@ export function RoomsFeature() {
                   }
                 : undefined}
             />}
-          /> : snapshotLoading
+          /> : selectedRoomHydration === 'loading'
             ? <p className="room-empty">正在读取对话…</p>
+            : selectedRoomHydration === 'failed-empty'
+              ? <p className="room-empty" role="status">暂时无法读取这段协作，请重试同步。</p>
             : <EmptyState icon={MessagesSquare} title="还没有公开消息" description="说出你想完成的事；只有遇到会影响实现的歧义，伙伴才会继续提问。" />
             : catalogLoading
               ? <p className="room-empty">正在读取协作空间…</p>
@@ -1613,9 +1611,11 @@ export function RoomsFeature() {
           sending={sendingRoomIds.has(room.id)}
           taskBusyState={managedTaskBusyState}
           activityStatus={sendingRoomIds.has(room.id) ? {
+            kind: 'sending',
             label: '正在同步补充',
             detail: '已收到你的消息，正在写入当前任务并同步给伙伴',
           } : showLiveStatus ? {
+            kind: 'working',
             label: liveStatusLabel,
             detail: liveStatusTitle,
             awayFromLatest: !timelineAtBottom && Boolean(visibleTurnOrder.length),
@@ -1625,6 +1625,7 @@ export function RoomsFeature() {
               behavior: 'smooth',
             }),
           } : managedTaskBusyState === 'blocked' ? {
+            kind: 'blocked',
             label: '协作待处理',
             detail: '当前任务已暂停；可以补充修正、调整优先级或询问状态',
           } : undefined}
@@ -1838,6 +1839,12 @@ function validateRoomImageFiles(files: File[], remaining: number): void {
 }
 
 function roomItems(value: unknown): RoomSummary[] { const source = record(value); return (Array.isArray(source.items) ? source.items : Array.isArray(source.rooms) ? source.rooms : []).filter(isRoom); }
+
+function roomRequestedIdFromHash(): string {
+  if (typeof window === 'undefined') return '';
+  const query = window.location.hash.split('?')[1] ?? '';
+  return new URLSearchParams(query).get('room')?.trim().slice(0, 500) ?? '';
+}
 function isRoom(value: unknown): value is RoomSummary { const item = record(value); return typeof item.id === 'string' && typeof item.title === 'string' && Array.isArray(item.participants); }
 function isRoomWorkItem(value: unknown): value is RoomWorkItem {
   const item = record(value);

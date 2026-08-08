@@ -2021,7 +2021,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(retried["receiptKind"], "dispatch_accepted")
         self.assertEqual(intent_calls, ["intent"])
 
-    def test_room_dispatch_reuses_session_for_delta_and_task_switch_epoch(self) -> None:
+    def test_room_dispatch_reuses_session_with_complete_current_context_and_task_switch_epoch(self) -> None:
         self.runtime.stop()
         context_revision = {"value": 1}
 
@@ -2054,7 +2054,15 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 },
                 "managedSystemPrompt": "stable-room-prefix",
                 "sessionContext": f"generic-agent-rag-{revision}",
-                "providerContext": f"room-bootstrap-{revision}",
+                "providerContext": (
+                    "room-bootstrap-1"
+                    if revision == 1
+                    else (
+                        "room-bootstrap-1\nuser-answer-1"
+                        if revision == 2
+                        else "room-bootstrap-1\nuser-answer-1\nuser-answer-2"
+                    )
+                ),
                 "providerContextDelta": f"room-delta-{revision}",
                 "roomRecoveryContext": f"room-recovery-{revision}",
                 "roomProviderContext": {
@@ -2128,7 +2136,13 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertFalse(any(item["method"] == "session.close" for item in requests))
         delivered = [item for item in requests if item["method"] == "room.dispatch"]
         self.assertEqual(len(delivered), 3)
-        self.assertEqual(delivered[1]["params"]["roomContext"], "room-delta-2")
+        # Pi Runtime SDK v2 reassembles the current Provider context for every
+        # turn.  A delta is not an append instruction, so forwarding it here
+        # would replace the prior user answer in the next turn.
+        self.assertEqual(
+            delivered[1]["params"]["roomContext"],
+            "room-bootstrap-1\nuser-answer-1",
+        )
         self.assertEqual(
             delivered[1]["params"]["roomRecoveryContext"],
             "room-recovery-2",
@@ -2143,7 +2157,10 @@ class PiRuntimeV2Tests(unittest.TestCase):
         )
         self.assertEqual(first["providerContextReceipt"]["journalId"], "journal:1")
         self.assertEqual(second["providerContextReceipt"]["journalId"], "journal:2")
-        self.assertEqual(delivered[2]["params"]["roomContext"], "room-bootstrap-3")
+        self.assertEqual(
+            delivered[2]["params"]["roomContext"],
+            "room-bootstrap-1\nuser-answer-1\nuser-answer-2",
+        )
         self.assertEqual(delivered[2]["params"]["roomCapability"]["contextEpoch"], 2)
         self.assertEqual(third["providerContextReceipt"]["journalId"], "journal:3")
 
@@ -2211,7 +2228,10 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(retried["receiptKind"], "dispatch_accepted")
         self.assertEqual(len(delivered), 2)
         self.assertEqual(delivered[1]["dispatchAttempt"], 1)
-        self.assertEqual(delivered[1]["roomContext"], "")
+        # A retry with no new projection must retain the last accepted Room
+        # context in the resident Pi Session, never replace it with an empty
+        # required context.
+        self.assertNotIn("roomContext", delivered[1])
 
     def test_room_dispatch_reopens_session_when_required_skill_changes(self) -> None:
         self.runtime.stop()

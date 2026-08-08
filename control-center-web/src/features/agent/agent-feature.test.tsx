@@ -91,6 +91,16 @@ afterEach(() => {
 });
 
 describe('Agent experience', () => {
+  it('keeps a clear route back to the originating Room', async () => {
+    renderAgent(
+      featureTransport(),
+      '/agent?session=session-preview&returnRoom=room-a',
+    );
+
+    expect(await screen.findByRole('link', { name: '返回协作空间' }))
+      .toHaveAttribute('href', '#/rooms?room=room-a');
+  });
+
   it('makes the full session row clickable', async () => {
     const onSelect = vi.fn();
     const user = userEvent.setup();

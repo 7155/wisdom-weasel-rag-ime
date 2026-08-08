@@ -840,6 +840,83 @@ export function createPreviewTransport(): MockControlTransport {
     if (!snapshot) throw new Error('这个协作空间已经不存在，请刷新列表。');
     return snapshot;
   };
+  routes['agent.room.message'] = (request: ControlRequest) => {
+    const roomId = stringValue(record(request.params).roomId);
+    const snapshot = previewRoomSnapshots.get(roomId);
+    if (!snapshot) throw new Error('这个协作空间已经不存在，请刷新列表。');
+    const body = record(request.body);
+    const message = stringValue(body.message).trim();
+    if (!message) throw new Error('消息不能为空。');
+    const clientMessageId = stringValue(body.clientMessageId)
+      || `preview-room-message-${Date.now()}`;
+    const events = Array.isArray(snapshot.events)
+      ? snapshot.events.filter((event): event is Record<string, unknown> => (
+        typeof event === 'object' && event !== null && !Array.isArray(event)
+      ))
+      : [];
+    const replay = events.find((event) => (
+      stringValue(record(event.payload).clientMessageId) === clientMessageId
+    ));
+    if (replay) {
+      return {
+        schemaVersion: 'rag-ime.agent-room-message.v1',
+        ok: true,
+        accepted: true,
+        idempotentReplay: true,
+        roomId,
+        clientMessageId,
+        timelineEvents: [replay],
+      };
+    }
+    const sequence = Math.max(
+      Number(snapshot.lastSequence) || 0,
+      ...events.map((event) => Number(event.sequence) || 0),
+    ) + 1;
+    const room = record(snapshot.room);
+    const rootId = `${roomId}:root-preview`;
+    const event = {
+      schemaVersion: 'rag-ime.agent-room-event.v1',
+      eventId: `${roomId}:${sequence}`,
+      roomId,
+      sequence,
+      turnId: rootId,
+      eventType: 'user_message',
+      participantId: null,
+      sourceSessionId: '',
+      ...(stringValue(room.activeTopicId) ? { topicId: stringValue(room.activeTopicId) } : {}),
+      createdAtMs: Date.now(),
+      payload: {
+        messageId: `room-post:user:${clientMessageId}`,
+        postId: `room-post:user:${clientMessageId}`,
+        clientMessageId,
+        rootId,
+        text: message,
+        attachmentReceipts: [],
+      },
+      resumeToken: `${roomId}:${sequence}`,
+    };
+    const updated = {
+      ...snapshot,
+      room: {
+        ...room,
+        lastEventSequence: sequence,
+        updatedAtMs: event.createdAtMs,
+      },
+      events: [...events, event],
+      lastSequence: sequence,
+      resumeToken: event.resumeToken,
+    };
+    previewRoomSnapshots.set(roomId, updated);
+    return {
+      schemaVersion: 'rag-ime.agent-room-message.v1',
+      ok: true,
+      accepted: true,
+      roomId,
+      rootId,
+      clientMessageId,
+      timelineEvents: [event],
+    };
+  };
   routes['agent.room.topic.create'] = (request: ControlRequest) => {
     const roomId = stringValue(record(request.params).roomId);
     const snapshot = previewRoomSnapshots.get(roomId);

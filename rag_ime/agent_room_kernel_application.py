@@ -823,6 +823,33 @@ class RoomKernelApplicationService:
                 self.kernel.accepted_evidence_by_criterion(root_id)
             ),
         )
+        definition_requirements: list[dict[str, str]] = []
+        if self.kernel.dispatch_is_active_alignment(dispatch_id):
+            catalog = (
+                requirement_context.get("catalog")
+                if isinstance(requirement_context, Mapping)
+                else None
+            )
+            for item in (
+                catalog.get("items", [])
+                if isinstance(catalog, Mapping)
+                else []
+            ):
+                if (
+                    not isinstance(item, Mapping)
+                    or item.get("state") != "active"
+                    or item.get("kind")
+                    not in {
+                        "explicit_user_requirement",
+                        "system_hard_constraint",
+                    }
+                ):
+                    continue
+                requirement_ref = str(item.get("itemId") or "").strip()
+                if requirement_ref:
+                    definition_requirements.append(
+                        {"requirementRef": requirement_ref}
+                    )
         with sqlite3.connect(self.kernel.db_path) as intervention_conn:
             intervention_conn.row_factory = sqlite3.Row
             pending_interventions = RoomInterventionRepository.pending(
@@ -944,6 +971,7 @@ class RoomKernelApplicationService:
                 "workspacePolicy": task.get("workspacePolicy"),
             },
             "acceptanceAliases": acceptance,
+            "definitionRequirements": definition_requirements,
             "canSettle": (
                 root.get("state") == "running"
                 and dispatch.get("state") == "running"
@@ -2429,12 +2457,20 @@ class RoomKernelApplicationService:
                             now_ms=now_ms,
                         )
                     raise RoomKernelFenceError(str(exc)) from exc
-                self.kernel.record_workspace_integration(
-                    task_id,
-                    integration_ref=integration_ref,
-                    workspace_result=integrated,
-                    now_ms=now_ms,
-                )
+                if integrated.get("integrated") is True:
+                    self.kernel.record_workspace_integration(
+                        task_id,
+                        integration_ref=integration_ref,
+                        workspace_result=integrated,
+                        now_ms=now_ms,
+                    )
+                else:
+                    self.kernel.record_workspace_integration_failure(
+                        task_id,
+                        integration_ref=integration_ref,
+                        workspace_result=integrated,
+                        now_ms=now_ms,
+                    )
                 result = {
                     **integrated,
                     "action": "integrate",
@@ -2724,9 +2760,12 @@ class RoomKernelApplicationService:
             args=args,
             receipt_provider=self.media_receipt_provider,
         )
+        invocation_receipt_id = (
+            f"invoke:{session_id}:{str(live['dispatchId'])}:{tool_call_id}"
+        )
         invocation, created = self.capabilities.authorize_runtime_invocation(
             session_id=session_id,
-            receipt_id=f"invoke:{tool_call_id}",
+            receipt_id=invocation_receipt_id,
             invocation_key=tool_call_id,
             load_receipt_id=load_receipt_id,
             tool_name=tool_name,

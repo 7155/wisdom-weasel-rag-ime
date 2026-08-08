@@ -81,8 +81,8 @@ export function RoomQuestionDialog({
 
   return <section
     aria-label={`需要回答：${question.prompt}`}
-    aria-live={interactive ? 'polite' : undefined}
-    aria-atomic={interactive || undefined}
+    aria-live={question.status === 'pending' ? 'polite' : undefined}
+    aria-atomic={question.status === 'pending' || undefined}
     aria-busy={submitting || undefined}
     className="room-question-card"
     data-state={stale ? 'stale' : question.status}
@@ -93,7 +93,7 @@ export function RoomQuestionDialog({
         <small>{question.status === 'pending' && !stale
           ? hasOptions ? '选择后确认' : '等待你的回答'
           : stale
-            ? '问题已失效'
+            ? '暂时还不能回答'
             : question.status === 'answered'
               ? '已收到回答'
               : '问题记录'}</small>
@@ -101,7 +101,7 @@ export function RoomQuestionDialog({
       </span>
     </header>
     {question.status === 'superseded' ? <p className="room-question-card__superseded">这项问题已由后续问题替代。</p> : null}
-    {stale ? <p className="room-question-card__stale">这项问题已不再是当前可回答的问题。</p> : null}
+    {stale ? <p className="room-question-card__stale">正在确认这项问题是否仍需要你的回答；确认后会自动更新。</p> : null}
     {interactive ? <form className="room-question-card__form" onSubmit={submit}>
       {hasOptions && !customAnswer ? <RadioGroup.Root
         aria-label="可选回答"

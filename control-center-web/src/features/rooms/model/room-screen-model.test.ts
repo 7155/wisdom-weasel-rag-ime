@@ -57,6 +57,47 @@ describe('buildRoomScreenModel', () => {
     expect(model.composer.taskBusyState).toBe('running');
   });
 
+  it('preserves backend workflow authority without re-deriving review from failed Tasks', () => {
+    const projection = createRoomKernelProjection('room-a');
+    projection.rootsById['root-a'] = root({ state: 'blocked' });
+    projection.tasksById['task-failed'] = task({ state: 'failed' });
+    projection.screenState = screenState({
+      phase: 'blocked',
+      runnableFrontier: { taskIds: ['task-recover'], dispatchIds: [] },
+      integrationReadiness: {
+        ready: false,
+        reason: '当前交付尚未成功整合',
+        pendingTaskIds: ['task-failed'],
+      },
+      reviewReadiness: {
+        ready: false,
+        reason: '未完成的功能不能进入独立复核',
+        pendingTaskIds: ['task-failed'],
+      },
+      recommendedNextAction: 'resolve_blocker',
+    });
+
+    const model = buildRoomScreenModel(projection);
+
+    expect(model.phase).toBe('blocked');
+    expect(model.recommendedNextAction).toBe('resolve_blocker');
+    expect(model.runnableFrontier).toEqual({ taskIds: ['task-recover'], dispatchIds: [] });
+    expect(model.integrationReadiness.ready).toBe(false);
+    expect(model.reviewReadiness.reason).toBe('未完成的功能不能进入独立复核');
+    expect(model.collaborationStage).toBe('parallel_work');
+  });
+
+  it('shows independent review only from a canonical review action or a live review Task', () => {
+    const projection = createRoomKernelProjection('room-a');
+    projection.rootsById['root-a'] = root({ state: 'waiting' });
+    projection.screenState = screenState({
+      phase: 'waiting',
+      recommendedNextAction: 'complete_independent_review',
+    });
+
+    expect(buildRoomScreenModel(projection).collaborationStage).toBe('independent_review');
+  });
+
   it.each(['failed', 'cancelled', 'cancelled_with_unknowns'] as const)(
     'does not expose a final delivery for a %s Root',
     (state) => {

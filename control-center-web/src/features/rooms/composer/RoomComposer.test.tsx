@@ -166,6 +166,7 @@ describe('RoomComposer macOS input methods', () => {
           {...common}
           taskBusyState="running"
           activityStatus={{
+            kind: 'working',
             label: '多人并行中',
             detail: '澄·远、澄·瞬正在并行处理两个功能',
           }}
@@ -179,5 +180,50 @@ describe('RoomComposer macOS input methods', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
     expect(onSend).toHaveBeenCalledWith('补充发布边界');
     view.unmount();
+  });
+
+  it('uses a static warning for a blocked collaboration and keeps @ as conversation', () => {
+    render(
+      <TooltipProvider>
+        <RoomComposer
+          room={{
+            id: 'room-1',
+            status: 'active',
+            roomKind: 'collaboration',
+            participants: [{
+              id: 'participant-1',
+              sessionId: 'session-1',
+              roleId: 'companion-present-v1',
+              roleVersion: '1',
+              displayName: '澄·远',
+              status: 'active',
+            }],
+          }}
+          personas={[]}
+          draft=""
+          attachments={[]}
+          sending={false}
+          taskBusyState="blocked"
+          activityStatus={{
+            kind: 'blocked',
+            label: '协作待处理',
+            detail: '当前任务已暂停，等待补充信息。',
+          }}
+          onDraftChange={vi.fn()}
+          onAttachmentsChange={vi.fn()}
+          onPasteImages={vi.fn()}
+          onPasteFromClipboard={vi.fn()}
+          onPickAttachments={vi.fn()}
+          onSend={vi.fn()}
+        />
+      </TooltipProvider>,
+    );
+
+    const status = screen.getByRole('status', { name: '当前协作状态' });
+    expect(status).toHaveAttribute('data-kind', 'blocked');
+    fireEvent.click(screen.getByRole('button', { name: '点名一位伙伴' }));
+    expect(screen.getByRole('listbox', { name: '选择要点名的伙伴' })).toHaveTextContent('点名交流');
+    expect(screen.getByRole('listbox')).toHaveTextContent('可以回应这条消息');
+    expect(screen.getByRole('listbox')).not.toHaveTextContent('可负责完整任务');
   });
 });

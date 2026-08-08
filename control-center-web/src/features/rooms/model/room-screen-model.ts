@@ -8,6 +8,10 @@ import type {
 } from '@/contracts/room-kernel-reducer';
 
 export type RoomScreenBusyState = 'running' | 'blocked';
+export type RoomScreenCollaborationStage =
+  | 'parallel_work'
+  | 'independent_review'
+  | 'final_delivery';
 
 export interface RoomScreenWait {
   kind: string;
@@ -32,8 +36,13 @@ export interface RoomScreenModel {
   activeRoot?: RootProjection;
   roots: RootProjection[];
   rootFrames: RoomScreenRootFrame[];
-  phase: string;
+  phase: RoomScreenStateV1['phase'];
   wait?: RoomScreenWait;
+  runnableFrontier: RoomScreenStateV1['runnableFrontier'];
+  integrationReadiness: RoomScreenStateV1['integrationReadiness'];
+  reviewReadiness: RoomScreenStateV1['reviewReadiness'];
+  recommendedNextAction: RoomScreenStateV1['recommendedNextAction'];
+  collaborationStage: RoomScreenCollaborationStage;
   tasks: RoomTaskV3[];
   dispatchAttempts: RoomDispatchEnvelopeV2[];
   finalDelivery?: RoomPostV2;
@@ -76,6 +85,11 @@ export function buildRoomScreenModel(
         reason: '正在同步最新任务状态',
         requiresUserAction: false,
       },
+      runnableFrontier: emptyFrontier(),
+      integrationReadiness: unavailableReadiness(),
+      reviewReadiness: unavailableReadiness(),
+      recommendedNextAction: 'wait_for_progress',
+      collaborationStage: 'parallel_work',
       tasks: [],
       dispatchAttempts: [],
       header: {
@@ -97,6 +111,7 @@ export function buildRoomScreenModel(
   const phase = selectPhase(screenState, activeRoot);
   const finalDelivery = activeFrame?.finalDelivery;
   const header = selectHeader(activeRoot);
+  const authority = selectAuthority(screenState);
 
   return {
     activeRoot,
@@ -108,6 +123,12 @@ export function buildRoomScreenModel(
     dispatchAttempts,
     finalDelivery,
     header,
+    ...authority,
+    collaborationStage: selectCollaborationStage(
+      authority.recommendedNextAction,
+      tasks,
+      finalDelivery,
+    ),
     composer: {
       taskBusyState: header.busyState,
       acceptsIntervention: Boolean(activeRoot && !isTerminalRoot(activeRoot)),
@@ -121,6 +142,11 @@ function emptyRoomScreenModel(): RoomScreenModel {
     roots: [],
     rootFrames: [],
     phase: 'idle',
+    runnableFrontier: emptyFrontier(),
+    integrationReadiness: unavailableReadiness(),
+    reviewReadiness: unavailableReadiness(),
+    recommendedNextAction: 'start_new_task',
+    collaborationStage: 'parallel_work',
     tasks: [],
     dispatchAttempts: [],
     header: {
@@ -132,6 +158,69 @@ function emptyRoomScreenModel(): RoomScreenModel {
       acceptsIntervention: false,
       disabledReason: '',
     },
+  };
+}
+
+function selectAuthority(
+  screenState: RoomScreenStateV1 | undefined,
+): Pick<RoomScreenModel,
+  | 'runnableFrontier'
+  | 'integrationReadiness'
+  | 'reviewReadiness'
+  | 'recommendedNextAction'
+> {
+  if (!screenState) {
+    return {
+      runnableFrontier: emptyFrontier(),
+      integrationReadiness: unavailableReadiness(),
+      reviewReadiness: unavailableReadiness(),
+      recommendedNextAction: 'wait_for_progress',
+    };
+  }
+  return {
+    runnableFrontier: {
+      taskIds: [...screenState.runnableFrontier.taskIds],
+      dispatchIds: [...screenState.runnableFrontier.dispatchIds],
+    },
+    integrationReadiness: cloneReadiness(screenState.integrationReadiness),
+    reviewReadiness: cloneReadiness(screenState.reviewReadiness),
+    recommendedNextAction: screenState.recommendedNextAction,
+  };
+}
+
+function selectCollaborationStage(
+  nextAction: RoomScreenStateV1['recommendedNextAction'],
+  tasks: RoomTaskV3[],
+  finalDelivery: RoomPostV2 | undefined,
+): RoomScreenCollaborationStage {
+  if (finalDelivery) return 'final_delivery';
+  if (
+    nextAction === 'complete_independent_review'
+    || tasks.some((task) => (
+      task.taskKind === 'review'
+      && !['completed', 'failed', 'cancelled'].includes(task.state)
+    ))
+  ) {
+    return 'independent_review';
+  }
+  return 'parallel_work';
+}
+
+function emptyFrontier(): RoomScreenStateV1['runnableFrontier'] {
+  return { taskIds: [], dispatchIds: [] };
+}
+
+function unavailableReadiness(): RoomScreenStateV1['integrationReadiness'] {
+  return { ready: false, reason: null, pendingTaskIds: [] };
+}
+
+function cloneReadiness(
+  readiness: RoomScreenStateV1['integrationReadiness'],
+): RoomScreenStateV1['integrationReadiness'] {
+  return {
+    ready: readiness.ready,
+    reason: readiness.reason,
+    pendingTaskIds: [...readiness.pendingTaskIds],
   };
 }
 
@@ -165,10 +254,13 @@ function selectActiveRoot(
 function selectPhase(
   screenState: RoomScreenStateV1 | undefined,
   root: RootProjection | undefined,
-): string {
+): RoomScreenStateV1['phase'] {
   if (screenState) return screenState.phase;
   if (!root) return 'idle';
-  return {
+  const phaseByRootState: Record<
+    RootProjection['state'],
+    RoomScreenStateV1['phase']
+  > = {
     pending: 'planning',
     running: 'execution',
     waiting: 'waiting',
@@ -178,7 +270,8 @@ function selectPhase(
     failed: 'failed',
     cancelled: 'cancelled',
     cancelled_with_unknowns: 'cancelled',
-  }[root.state];
+  };
+  return phaseByRootState[root.state];
 }
 
 function selectWait(

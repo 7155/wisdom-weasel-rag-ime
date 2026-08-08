@@ -26,7 +26,7 @@ from room_context_epoch_canary import (
     request_json,
 )
 
-SCHEMA_VERSION = "wisdom-weasel.room-three-member-canary.v2"
+SCHEMA_VERSION = "wisdom-weasel.room-three-member-canary.v3"
 OPENING_MESSAGE = "写 TUI"
 NATURAL_REQUIREMENT_ANSWERS = (
     "先做一个最小可运行的终端界面：有清晰的标题、输入区和结果区；不用安装新依赖，启动后能直接使用。",
@@ -238,30 +238,92 @@ def definition_checks(projection: Mapping[str, Any], work_items: Sequence[Mappin
     }
 
 
+def typed_start_body(*, root_id: str, stamp: int) -> dict[str, str]:
+    if not str(root_id).strip():
+        raise RuntimeError("typed start requires a Room Root identity")
+    return {
+        "action": "start_execution",
+        "rootId": root_id,
+        "clientActionId": f"room-full-auto-start:{stamp}",
+    }
+
+
+def pre_start_execution_checks(
+    snapshot: Mapping[str, Any],
+    tool_rows: Sequence[Mapping[str, Any]],
+    *,
+    root_id: str,
+) -> dict[str, bool]:
+    roots, _tasks, dispatches = _root_snapshot(snapshot, root_id)
+    root_posts = [
+        item
+        for item in snapshot.get("posts") or []
+        if isinstance(item, Mapping) and str(item.get("rootId") or "") == root_id
+    ]
+    return {
+        "singleDefinedRootRemainsOpen": len(roots) == 1 and str(roots[0].get("state") or "") not in {"completed", "failed", "cancelled", "cancelled_with_unknowns"},
+        "noReleasedExecutionBeforeTypedStart": all(str(item.get("intentKind") or "") not in {"execute", "review"} for item in dispatches),
+        "noWorkspaceEffectsBeforeTypedStart": not any(str(item.get("toolName") or "").startswith("workspace_") for item in tool_rows),
+        "noTypedStartPostBeforeTypedStart": not any(str(item.get("content") or "") == "开始行动" and str((item.get("publicationSource") or {}).get("kind") or "") == "user" for item in root_posts),
+    }
+
+
+def typed_start_checks(
+    response: Mapping[str, Any],
+    *,
+    root_id: str,
+    client_action_id: str,
+) -> dict[str, bool]:
+    dispatches = [
+        item for item in response.get("dispatches") or [] if isinstance(item, Mapping)
+    ]
+    post = response.get("post") if isinstance(response.get("post"), Mapping) else {}
+    return {
+        "startAccepted": response.get("accepted") is True and response.get("ok") is True,
+        "startTargetsDefinedRoot": str(response.get("rootId") or "") == root_id,
+        "startPublishesUserAuthorization": str(post.get("content") or "") == "开始行动" and str((post.get("publicationSource") or {}).get("ref") or "") == client_action_id,
+        "startReleasesApprovedFrontier": bool(dispatches) and all(str(item.get("phase") or "") == "execution" for item in dispatches),
+    }
+
+
 def dispatch_lifecycle_checks(tasks: Sequence[Mapping[str, Any]], dispatches: Sequence[Mapping[str, Any]], *, participant_ids: Mapping[str, str], session_ids: Mapping[str, str]) -> dict[str, bool]:
     participant_for = {value: member for member, value in participant_ids.items() if value}
     initial = [item for item in dispatches if str(item.get("intentKind") or "") == "align" and not str(item.get("parentDispatchId") or "") and str(item.get("targetParticipantId") or "") == participant_ids.get(FACILITATOR_MEMBER)]
     implementation = [item for item in dispatches if str(item.get("intentKind") or "") == "execute" and str(item.get("targetParticipantId") or "") == participant_ids.get(IMPLEMENTATION_MEMBER)]
+    integrations = [item for item in dispatches if str(item.get("intentKind") or "") == "execute" and str(item.get("targetParticipantId") or "") == participant_ids.get(FACILITATOR_MEMBER)]
     reviews = [item for item in dispatches if str(item.get("intentKind") or "") == "review" and str(item.get("targetParticipantId") or "") == participant_ids.get(REVIEWER_MEMBER)]
-    impl, review = (implementation[-1] if implementation else {}), (reviews[-1] if reviews else {})
+    reports = [item for item in dispatches if str(item.get("intentKind") or "") == "close" and str(item.get("targetParticipantId") or "") == participant_ids.get(FACILITATOR_MEMBER)]
+    impl = implementation[-1] if implementation else {}
+    integration = integrations[-1] if integrations else {}
+    review = reviews[-1] if reviews else {}
+    report = reports[-1] if reports else {}
     task_by_id = {str(item.get("taskId") or ""): item for item in tasks}
-    impl_task_id, review_task = str(impl.get("taskId") or ""), task_by_id.get(str(review.get("taskId") or ""), {})
-    parent_alignment = str(impl.get("parentDispatchId") or "")
-    parent = next((item for item in dispatches if str(item.get("dispatchId") or "") == parent_alignment), {})
-    review_parent = next((item for item in dispatches if str(item.get("dispatchId") or "") == str(review.get("parentDispatchId") or "")), {})
+    root_task_id = str(initial[0].get("taskId") or "") if len(initial) == 1 else ""
+    impl_task_id = str(impl.get("taskId") or "")
+    integration_task_id = str(integration.get("taskId") or "")
+    impl_task = task_by_id.get(impl_task_id, {})
+    integration_task = task_by_id.get(integration_task_id, {})
+    review_task = task_by_id.get(str(review.get("taskId") or ""), {})
+    report_task = task_by_id.get(str(report.get("taskId") or ""), {})
+    reviewed_task_ids = {str(value) for value in review_task.get("reviewOfTaskIds") or []}
+    feature_wave = _integer(impl_task.get("planWave"))
+    integration_wave = _integer(integration_task.get("planWave"))
+    review_wave = _integer(review_task.get("planWave"))
     return {
         "exactlyOneInitialAlignmentDispatch": len(initial) == 1,
         "alignmentDoesNotFanOut": all(str(item.get("intentKind") or "") != "align" or str(item.get("targetParticipantId") or "") == participant_ids.get(FACILITATOR_MEMBER) for item in dispatches),
-        "implementationDispatchDistinctAndBound": len(implementation) == 1 and str(impl.get("targetSessionId") or "") == session_ids.get(IMPLEMENTATION_MEMBER) and str(impl.get("parentDispatchId") or "") == str(parent.get("dispatchId") or "") and str(impl.get("rootId") or "") == str(parent.get("rootId") or ""),
-        "exactlyOneBoundedImplementationChild": len(implementation) == 1 and bool(impl_task_id) and str(impl.get("taskId") or "") != str(parent.get("taskId") or "") and str(task_by_id.get(impl_task_id, {}).get("parentTaskId") or "") == str(parent.get("taskId") or "") and _integer(impl.get("hopCount")) == _integer(parent.get("hopCount")) + 1 and _integer(impl.get("depth")) == _integer(parent.get("depth")) + 1,
-        "reviewIsDistinctOwnershipHandoff": len(reviews) == 1 and str(review.get("targetParticipantId") or "") == participant_ids.get(REVIEWER_MEMBER) and str(review.get("targetSessionId") or "") == session_ids.get(REVIEWER_MEMBER) and bool(review_task) and str(review.get("taskId") or "") != str(parent.get("taskId") or "") and str(review_task.get("taskKind") or "") == "review" and str(review_task.get("parentTaskId") or "") == str(parent.get("taskId") or "") and str(review_parent.get("targetParticipantId") or "") == participant_ids.get(FACILITATOR_MEMBER) and str(review_parent.get("intentKind") or "") == "resume" and _integer(review.get("hopCount")) == _integer(review_parent.get("hopCount")) + 1 and _integer(review.get("depth")) == _integer(review_parent.get("depth")),
-        "reviewTaskRecordsReviewedImplementation": bool(review_task) and impl_task_id in {str(value) for value in review_task.get("reviewOfTaskIds") or []},
+        "exactlyOnePlannedImplementationFeature": len(implementation) == 1 and bool(impl_task_id) and str(impl.get("targetSessionId") or "") == session_ids.get(IMPLEMENTATION_MEMBER) and str(impl.get("rootId") or "") == str(initial[0].get("rootId") or "") and str(impl_task.get("planTaskKind") or "") == "feature" and str(impl_task.get("parentTaskId") or "") == root_task_id,
+        "exactlyOnePlannedIntegration": len(integrations) == 1 and bool(integration_task_id) and str(integration.get("targetSessionId") or "") == session_ids.get(FACILITATOR_MEMBER) and str(integration_task.get("planTaskKind") or "") == "integration" and str(integration_task.get("parentTaskId") or "") == root_task_id,
+        "reviewIsDistinctPlannedOwnership": len(reviews) == 1 and str(review.get("targetSessionId") or "") == session_ids.get(REVIEWER_MEMBER) and bool(review_task) and str(review_task.get("planTaskKind") or "") == "review" and str(review_task.get("taskKind") or "") == "review" and str(review_task.get("parentTaskId") or "") == root_task_id,
+        "plannedWavesAdvanceInOrder": feature_wave >= 0 and feature_wave < integration_wave < review_wave,
+        "reviewTaskRecordsReviewedScope": bool(review_task) and {impl_task_id, integration_task_id}.issubset(reviewed_task_ids),
         "reviewerOwnershipChanged": bool(review_task) and str(review_task.get("currentOwnerParticipantId") or "") == participant_ids.get(REVIEWER_MEMBER) and participant_ids.get(REVIEWER_MEMBER) not in {str(value) for value in review_task.get("reviewAuthorParticipantIds") or []},
+        "exactlyOneReporterDispatch": len(reports) == 1 and str(report.get("targetSessionId") or "") == session_ids.get(FACILITATOR_MEMBER) and str(report_task.get("taskKind") or "") == "report",
         "allDispatchesHaveDistinctSessionBinding": bool(dispatches) and all(str(item.get("targetParticipantId") or "") in participant_for and str(item.get("targetSessionId") or "") == session_ids.get(participant_for.get(str(item.get("targetParticipantId") or ""), "")) for item in dispatches),
     }
 
 
-def _reviewed_context_evidence_refs(
+def _reviewed_task_ids(
     tasks: Sequence[Mapping[str, Any]],
     dispatches: Sequence[Mapping[str, Any]],
     *,
@@ -278,7 +340,7 @@ def _reviewed_context_evidence_refs(
         str(value)
         for task in tasks
         if str(task.get("taskId") or "") in review_task_ids
-        for value in task.get("contextEvidenceRefs") or []
+        for value in task.get("reviewOfTaskIds") or []
         if str(value)
     ))
 
@@ -301,7 +363,7 @@ def review_delivery_checks(
     *,
     reviewer_id: str,
     facilitator_id: str,
-    reviewed_evidence_refs: Sequence[str],
+    reviewed_task_ids: Sequence[str],
     dispatches: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, bool]:
     dispatches = dispatches or {}
@@ -311,16 +373,22 @@ def review_delivery_checks(
         if str(item.get("intentKind") or "") == "review"
         and str(item.get("targetParticipantId") or "") == reviewer_id
     }
-    facilitator_dispatch_ids = {
+    report_dispatch_ids = {
         dispatch_id
         for dispatch_id, item in dispatches.items()
         if str(item.get("targetParticipantId") or "") == facilitator_id
-        and str(item.get("intentKind") or "") != "align"
+        and str(item.get("intentKind") or "") == "close"
     }
     implementation_dispatch_ids = {
         dispatch_id
         for dispatch_id, item in dispatches.items()
         if str(item.get("targetParticipantId") or "") not in {reviewer_id, facilitator_id}
+        and str(item.get("intentKind") or "") == "execute"
+    }
+    integration_dispatch_ids = {
+        dispatch_id
+        for dispatch_id, item in dispatches.items()
+        if str(item.get("targetParticipantId") or "") == facilitator_id
         and str(item.get("intentKind") or "") == "execute"
     }
     reviewer_commits = [
@@ -337,8 +405,7 @@ def review_delivery_checks(
         for item in commit_payloads
         if _commit_decision(item) == "deliver"
         and (
-            str(item.get("dispatchId") or "") in facilitator_dispatch_ids
-            or str(item.get("authorActorRef") or item.get("participantId") or "") == facilitator_id
+            str(item.get("dispatchId") or "") in report_dispatch_ids
         )
     ]
     reviewer_refs = {
@@ -347,15 +414,17 @@ def review_delivery_checks(
         for value in item.get("evidenceRefs") or []
         if str(value)
     }
-    implementation_refs = {
-        str(value)
-        for item in commit_payloads
-        if str(item.get("dispatchId") or "") in implementation_dispatch_ids
-        for value in item.get("evidenceRefs") or []
-        if str(value)
+    reviewed_ids = {str(value) for value in reviewed_task_ids if str(value)}
+    implementation_task_ids = {
+        str(item.get("taskId") or "")
+        for dispatch_id, item in dispatches.items()
+        if dispatch_id in implementation_dispatch_ids
     }
-    reviewed_refs = {str(value) for value in reviewed_evidence_refs if str(value)}
-    reviewer_refs.update(reviewed_refs)
+    integration_task_ids = {
+        str(item.get("taskId") or "")
+        for dispatch_id, item in dispatches.items()
+        if dispatch_id in integration_dispatch_ids
+    }
     final_refs = {
         str(value)
         for item in final_deliveries
@@ -363,12 +432,8 @@ def review_delivery_checks(
         if str(value)
     }
     review_quality = reviewer_commits[0].get("qualityGateReceipt") if len(reviewer_commits) == 1 else {}
+    review_binding = reviewer_commits[0].get("reviewEvidenceBinding") if len(reviewer_commits) == 1 else {}
     final_quality = final_deliveries[0].get("qualityGateReceipt") if len(final_deliveries) == 1 else {}
-    reporter_resume = any(
-        str(item.get("targetParticipantId") or "") == facilitator_id
-        and str(item.get("intentKind") or "") == "resume"
-        for item in dispatches.values()
-    )
     return {
         "exactlyOneReviewerRecommendation": len(reviewer_commits) == 1,
         "reviewerRecommendationIsDeliver": len(reviewer_commits) == 1 and _commit_decision(reviewer_commits[0]) == "deliver",
@@ -381,15 +446,19 @@ def review_delivery_checks(
             )
             and reviewer_id != facilitator_id
         ),
-        "reviewReferencesImplementationEvidence": (
-            bool(reviewer_refs)
-            and bool(implementation_refs)
-            and bool(reviewer_refs.intersection(implementation_refs))
+        "reviewBindsImplementedAndIntegratedScope": (
+            bool(implementation_task_ids)
+            and bool(integration_task_ids)
+            and implementation_task_ids.issubset(reviewed_ids)
+            and integration_task_ids.issubset(reviewed_ids)
+            and isinstance(review_binding, Mapping)
+            and bool(str(review_binding.get("reviewTargetRevision") or ""))
+            and bool(str(review_binding.get("taskId") or ""))
         ),
         "reviewReadyHandoffToReporter": (
             isinstance(review_quality, Mapping)
             and str(review_quality.get("verdict") or "") == "ready_to_deliver"
-            and reporter_resume
+            and len(report_dispatch_ids) == 1
         ),
         "exactlyOneReporterDelivery": len(final_deliveries) == 1,
         "reporterDeliveryUsesReviewerEvidence": (
@@ -404,7 +473,7 @@ def review_delivery_checks(
         ),
         "noNonReporterFinalDelivery": all(
             str(item.get("authorActorRef") or item.get("participantId") or facilitator_id) == facilitator_id
-            or str(item.get("dispatchId") or "") in facilitator_dispatch_ids
+            and str(item.get("dispatchId") or "") in report_dispatch_ids
             for item in final_deliveries
         ),
     }
@@ -798,20 +867,21 @@ def _tool_receipt_checks(
     dispatches: Mapping[str, Mapping[str, Any]],
     facilitator_id: str = "",
 ) -> dict[str, bool]:
+    definition_rows = [item for item in tool_rows if str(item.get("toolName") or "") == "room_define"]
     collaboration_rows = [item for item in tool_rows if str(item.get("toolName") or "") == "room_collaborate"]
-    collaboration_dispatch = dispatches.get(str(collaboration_rows[0].get("dispatchId") or ""), {}) if len(collaboration_rows) == 1 else {}
-    target_matches = (
-        bool(str(collaboration_dispatch.get("targetParticipantId") or ""))
+    definition_dispatch = dispatches.get(str(definition_rows[0].get("dispatchId") or ""), {}) if len(definition_rows) == 1 else {}
+    definition_owner_matches = (
+        bool(str(definition_dispatch.get("targetParticipantId") or ""))
         if not facilitator_id
-        else str(collaboration_dispatch.get("targetParticipantId") or "") == facilitator_id
+        else str(definition_dispatch.get("targetParticipantId") or "") == facilitator_id
     )
     return {
         "toolReceiptsObservable": bool(tool_rows),
         "toolReceiptsBindDispatches": bool(tool_rows) and all(str(item.get("dispatchId") or "") in dispatches for item in tool_rows),
         "toolExecutionsAccepted": bool(tool_rows) and all(str(item.get("status") or "") == "applied" and len(str(item.get("resultHash") or "")) == 64 for item in tool_rows),
-        "exactlyOneRoomDefineInvocation": sum(str(item.get("toolName") or "") == "room_define" for item in tool_rows) == 1,
-        "exactlyOneRoomCollaborateInvocation": len(collaboration_rows) == 1,
-        "roomCollaborateOnlyFacilitator": len(collaboration_rows) == 1 and str(collaboration_dispatch.get("intentKind") or "") in {"align", "resume"} and target_matches,
+        "exactlyOneRoomDefineInvocation": len(definition_rows) == 1,
+        "roomDefineOnlyFacilitator": len(definition_rows) == 1 and str(definition_dispatch.get("intentKind") or "") in {"align", "resume"} and definition_owner_matches,
+        "noAdHocRoomCollaborateInvocation": not collaboration_rows,
         "roomCommitReceiptsObserved": any(str(item.get("toolName") or "") == "room_commit" for item in tool_rows),
     }
 
@@ -921,6 +991,29 @@ def run(args: argparse.Namespace, *, requester: JsonRequester = request_json) ->
     )
     definition_result_checks = definition_checks(definition_projection, definition_work_items, definition_receipts, root_id=root_id, facilitator_id=participant_ids[FACILITATOR_MEMBER], implementation_id=participant_ids[IMPLEMENTATION_MEMBER])
     if not all(definition_result_checks.values()): raise RuntimeError(f"Room definition contract failed: {definition_result_checks}")
+    pre_start_snapshot = requester(args.base_url, "GET", f"/api/agent/rooms/{encoded(room_id)}/kernel/snapshot", timeout=30)
+    pre_start_checks = pre_start_execution_checks(
+        pre_start_snapshot,
+        _tool_rows(args.db_path, root_id),
+        root_id=root_id,
+    )
+    if not all(pre_start_checks.values()):
+        raise RuntimeError(f"Room ran execution before the typed start action: {pre_start_checks}")
+    start_payload = typed_start_body(root_id=root_id, stamp=stamp)
+    start_response = requester(
+        args.base_url,
+        "POST",
+        f"/api/agent/rooms/{encoded(room_id)}/start-execution",
+        start_payload,
+        timeout=30,
+    )
+    start_result_checks = typed_start_checks(
+        start_response,
+        root_id=root_id,
+        client_action_id=start_payload["clientActionId"],
+    )
+    if not all(start_result_checks.values()):
+        raise RuntimeError(f"Room typed start contract failed: {start_result_checks}")
     try:
         terminal_snapshot = _wait_for_root_terminal(args.base_url, room_id, root_id, requester=requester, timeout=workflow_timeout_seconds(args))
     except BaseException:
@@ -946,7 +1039,7 @@ def run(args: argparse.Namespace, *, requester: JsonRequester = request_json) ->
         and str(item.get("targetParticipantId") or "") == participant_ids[REVIEWER_MEMBER]
     }
     commit_payloads = _commit_payloads(args.db_path, root_id)
-    reviewed_refs = _reviewed_context_evidence_refs(
+    reviewed_ids = _reviewed_task_ids(
         terminal_tasks,
         terminal_dispatches,
         reviewer_id=participant_ids[REVIEWER_MEMBER],
@@ -955,7 +1048,7 @@ def run(args: argparse.Namespace, *, requester: JsonRequester = request_json) ->
         commit_payloads,
         reviewer_id=participant_ids[REVIEWER_MEMBER],
         facilitator_id=participant_ids[FACILITATOR_MEMBER],
-        reviewed_evidence_refs=reviewed_refs,
+        reviewed_task_ids=reviewed_ids,
         dispatches=dispatch_by_id,
     )
     finalized = requester(args.base_url, "POST", f"/api/agent/rooms/{encoded(room_id)}/kernel/finalize", {"rootId": root_id}, timeout=30)
@@ -975,8 +1068,8 @@ def run(args: argparse.Namespace, *, requester: JsonRequester = request_json) ->
     public_checks = reporter_terminal_summary_checks(public_posts, reporter_id=reporter_id, root_id=root_id, terminal_receipt=terminal_receipt)
     terminal_checks = terminal_receipt_checks(terminal_roots[0] if terminal_roots else {}, terminal_receipt, runtime_quiescence)
     usage_checks, usage_evidence = _provider_usage_checks(args.base_url, requester=requester, session_ids=session_ids)
-    checks = {**{f"initial.{key}": value for key, value in initial_checks.items()}, **{f"clarification.{index}.{key}": value for index, answer in enumerate(answers, start=1) for key, value in answer["checks"].items()}, **{f"definition.{key}": value for key, value in definition_result_checks.items()}, **{f"lifecycle.{key}": value for key, value in lifecycle_checks.items()}, **{f"tool.{key}": value for key, value in tool_checks.items()}, **{f"workspace.{key}": value for key, value in workspace_checks.items()}, **{f"receipt.{key}": value for key, value in receipt_checks.items()}, **{f"delivery.{key}": value for key, value in delivery_checks.items()}, **{f"public.{key}": value for key, value in public_checks.items()}, **{f"terminal.{key}": value for key, value in terminal_checks.items()}, **{f"configuration.{key}": value for key, value in configuration_checks.items()}, **{f"usage.{key}": value for key, value in usage_checks.items()}, "naturalMessagesContainNoExecutionVocabulary": not leaks}
-    return {"schemaVersion": SCHEMA_VERSION, "roomId": room_id, "rootId": root_id, "taskId": task_id, "openingMessage": OPENING_MESSAGE, "clarificationAnswers": answers, "definition": {"projection": definition_projection, "workItems": definition_work_items, "receipts": definition_receipts}, "members": {member: {"participantId": participant_ids[member], "sessionId": session_ids[member], "configuration": configuration_responses[member], "modelCatalog": catalogs[member]} for member in MEMBERS}, "dispatches": terminal_dispatches, "tasks": terminal_tasks, "toolReceipts": tool_rows, "usageReceipts": usage_evidence, "workspaceReceipts": [row for row in tool_rows if str(row.get("toolName") or "").startswith("workspace_")], "publicPosts": public_posts, "terminal": {"root": terminal_roots[0] if terminal_roots else None, "receipt": terminal_receipt}, "runtimeQuiescence": runtime_quiescence, "checks": checks}
+    checks = {**{f"initial.{key}": value for key, value in initial_checks.items()}, **{f"clarification.{index}.{key}": value for index, answer in enumerate(answers, start=1) for key, value in answer["checks"].items()}, **{f"definition.{key}": value for key, value in definition_result_checks.items()}, **{f"preStart.{key}": value for key, value in pre_start_checks.items()}, **{f"start.{key}": value for key, value in start_result_checks.items()}, **{f"lifecycle.{key}": value for key, value in lifecycle_checks.items()}, **{f"tool.{key}": value for key, value in tool_checks.items()}, **{f"workspace.{key}": value for key, value in workspace_checks.items()}, **{f"receipt.{key}": value for key, value in receipt_checks.items()}, **{f"delivery.{key}": value for key, value in delivery_checks.items()}, **{f"public.{key}": value for key, value in public_checks.items()}, **{f"terminal.{key}": value for key, value in terminal_checks.items()}, **{f"configuration.{key}": value for key, value in configuration_checks.items()}, **{f"usage.{key}": value for key, value in usage_checks.items()}, "naturalMessagesContainNoExecutionVocabulary": not leaks}
+    return {"schemaVersion": SCHEMA_VERSION, "roomId": room_id, "rootId": root_id, "taskId": task_id, "openingMessage": OPENING_MESSAGE, "clarificationAnswers": answers, "definition": {"projection": definition_projection, "workItems": definition_work_items, "receipts": definition_receipts}, "start": {"payload": start_payload, "response": start_response, "checks": start_result_checks}, "members": {member: {"participantId": participant_ids[member], "sessionId": session_ids[member], "configuration": configuration_responses[member], "modelCatalog": catalogs[member]} for member in MEMBERS}, "dispatches": terminal_dispatches, "tasks": terminal_tasks, "toolReceipts": tool_rows, "usageReceipts": usage_evidence, "workspaceReceipts": [row for row in tool_rows if str(row.get("toolName") or "").startswith("workspace_")], "publicPosts": public_posts, "terminal": {"root": terminal_roots[0] if terminal_roots else None, "receipt": terminal_receipt}, "runtimeQuiescence": runtime_quiescence, "checks": checks}
 
 
 if __name__ == "__main__":

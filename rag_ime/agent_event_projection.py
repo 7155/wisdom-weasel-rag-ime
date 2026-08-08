@@ -1215,6 +1215,7 @@ _ROOM_RESULT_KEYS_BY_TOOL = {
         "currentResponsibility",
         "executionPolicy",
         "acceptanceAliases",
+        "definitionRequirements",
         "participants",
         "recentPublicChanges",
         "pendingIntegrations",
@@ -1413,6 +1414,23 @@ def _room_acceptance_projection(value: object) -> list[dict[str, object]]:
     return result
 
 
+def _room_definition_requirement_projection(
+    value: object,
+) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, object]] = []
+    for item in value[:16]:
+        if not isinstance(item, Mapping):
+            continue
+        requirement_ref = _redacted_room_text(
+            item.get("requirementRef"), maximum=320
+        )
+        if requirement_ref:
+            result.append({"requirementRef": requirement_ref})
+    return result
+
+
 def _room_participant_projection(value: object) -> list[dict[str, str]]:
     if not isinstance(value, list):
         return []
@@ -1535,6 +1553,11 @@ def _room_tool_result_projection(
             acceptance = _room_acceptance_projection(value)
             if acceptance:
                 projected[key] = acceptance
+            continue
+        if key == "definitionRequirements":
+            requirements = _room_definition_requirement_projection(value)
+            if requirements:
+                projected[key] = requirements
             continue
         if key == "participants":
             participants = _room_participant_projection(value)

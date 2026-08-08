@@ -912,7 +912,7 @@ export function RoomTurn({
         onClick={() => onRetryTurn(retryMessage)}
       >{retryingTurn ? '正在重试' : '再试一次'}</Button> : null}
     </section> : null}
-    {pendingAction ? <SessionActionLink action={pendingAction} /> : null}
+    {pendingAction ? <SessionActionLink action={pendingAction} roomId={projection.roomId} /> : null}
   </article>;
 }
 
@@ -1108,10 +1108,16 @@ interface RoomSessionAction {
   sessionId: string;
 }
 
-function SessionActionLink({ action }: { action: RoomSessionAction }) {
+function SessionActionLink({
+  action,
+  roomId,
+}: {
+  action: RoomSessionAction;
+  roomId: string;
+}) {
   return <a
     className="room-review-link room-review-link--turn"
-    href={agentSessionHref(action.sessionId)}
+    href={agentSessionHref(action.sessionId, roomId)}
   >
     <span>
       <strong>这轮协作正在等待审阅</strong>
@@ -1858,6 +1864,7 @@ function RoomLanePost({
     && pendingQuestion
     && message.id === pendingQuestion.postId
     && message.rootId === pendingQuestion.rootId
+    && onAnswerQuestion
   );
   const content = message.question
     ? <div className="room-question-post">
@@ -3192,6 +3199,8 @@ function textValue(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-function agentSessionHref(sessionId: string): string {
-  return `#/agent?${new URLSearchParams({ session: sessionId })}`;
+function agentSessionHref(sessionId: string, roomId: string): string {
+  const params = new URLSearchParams({ session: sessionId });
+  if (roomId) params.set('returnRoom', roomId);
+  return `#/agent?${params}`;
 }

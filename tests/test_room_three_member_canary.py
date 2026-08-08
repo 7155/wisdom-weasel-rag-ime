@@ -243,36 +243,93 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
         self.assertEqual(len(merged_receipts), 1)
         self.assertEqual(merged_receipts[0]["status"], "applied")
 
-    def test_required_bounded_child_and_distinct_review_handoff(self) -> None:
+    def test_typed_start_is_the_only_execution_boundary(self) -> None:
+        defined = base_snapshot()
+        defined["roots"][0]["state"] = "running"
+        pre_start = CANARY.pre_start_execution_checks(
+            defined,
+            [{"toolName": "room_define", "status": "applied"}],
+            root_id=ROOT_ID,
+        )
+        self.assertTrue(all(pre_start.values()), pre_start)
+        defined["dispatches"].append(
+            {
+                "rootId": ROOT_ID,
+                "taskId": TASK_ID,
+                "dispatchId": "dispatch-execute",
+                "intentKind": "execute",
+            }
+        )
+        self.assertFalse(
+            CANARY.pre_start_execution_checks(
+                defined,
+                [],
+                root_id=ROOT_ID,
+            )["noReleasedExecutionBeforeTypedStart"]
+        )
+        payload = CANARY.typed_start_body(root_id=ROOT_ID, stamp=20260808)
+        self.assertEqual(
+            payload,
+            {
+                "action": "start_execution",
+                "rootId": ROOT_ID,
+                "clientActionId": "room-full-auto-start:20260808",
+            },
+        )
+        accepted = {
+            "ok": True,
+            "accepted": True,
+            "rootId": ROOT_ID,
+            "post": {
+                "content": "开始行动",
+                "publicationSource": {
+                    "kind": "user",
+                    "ref": payload["clientActionId"],
+                },
+            },
+            "dispatches": [{"phase": "execution"}],
+        }
+        checks = CANARY.typed_start_checks(
+            accepted,
+            root_id=ROOT_ID,
+            client_action_id=payload["clientActionId"],
+        )
+        self.assertTrue(all(checks.values()), checks)
+
+    def test_planned_feature_integration_review_and_report_lifecycle(self) -> None:
         dispatches = [
             {"dispatchId": "d-align", "rootId": ROOT_ID, "taskId": TASK_ID, "intentKind": "align", "targetParticipantId": PARTICIPANTS["A"], "targetSessionId": SESSIONS["A"], "hopCount": 0, "depth": 0},
-            {"dispatchId": "d-impl", "rootId": ROOT_ID, "taskId": "task-child", "intentKind": "execute", "parentDispatchId": "d-align", "targetParticipantId": PARTICIPANTS["B"], "targetSessionId": SESSIONS["B"], "hopCount": 1, "depth": 1},
-            {"dispatchId": "d-resume", "rootId": ROOT_ID, "taskId": TASK_ID, "intentKind": "resume", "parentDispatchId": "d-align", "targetParticipantId": PARTICIPANTS["A"], "targetSessionId": SESSIONS["A"], "hopCount": 1, "depth": 0},
-            {"dispatchId": "d-review", "rootId": ROOT_ID, "taskId": "task-review", "intentKind": "review", "parentDispatchId": "d-resume", "targetParticipantId": PARTICIPANTS["C"], "targetSessionId": SESSIONS["C"], "hopCount": 2, "depth": 0},
+            {"dispatchId": "d-impl", "rootId": ROOT_ID, "taskId": "task-feature", "intentKind": "execute", "targetParticipantId": PARTICIPANTS["B"], "targetSessionId": SESSIONS["B"]},
+            {"dispatchId": "d-integration", "rootId": ROOT_ID, "taskId": "task-integration", "intentKind": "execute", "targetParticipantId": PARTICIPANTS["A"], "targetSessionId": SESSIONS["A"]},
+            {"dispatchId": "d-review", "rootId": ROOT_ID, "taskId": "task-review", "intentKind": "review", "targetParticipantId": PARTICIPANTS["C"], "targetSessionId": SESSIONS["C"]},
+            {"dispatchId": "d-report", "rootId": ROOT_ID, "taskId": "task-report", "intentKind": "close", "targetParticipantId": PARTICIPANTS["A"], "targetSessionId": SESSIONS["A"]},
         ]
         tasks = [
             {"taskId": TASK_ID, "rootId": ROOT_ID, "currentOwnerParticipantId": PARTICIPANTS["A"]},
-            {"taskId": "task-child", "rootId": ROOT_ID, "parentTaskId": TASK_ID},
-            {"taskId": "task-review", "rootId": ROOT_ID, "parentTaskId": TASK_ID, "taskKind": "review", "reviewOfTaskIds": ["task-child"], "reviewAuthorParticipantIds": [PARTICIPANTS["A"], PARTICIPANTS["B"]], "contextEvidenceRefs": ["evidence-implementation"], "currentOwnerParticipantId": PARTICIPANTS["C"], "reviewState": "accepted"},
+            {"taskId": "task-feature", "rootId": ROOT_ID, "parentTaskId": TASK_ID, "taskKind": "work", "planTaskKind": "feature", "planWave": 1},
+            {"taskId": "task-integration", "rootId": ROOT_ID, "parentTaskId": TASK_ID, "taskKind": "integration", "planTaskKind": "integration", "planWave": 2},
+            {"taskId": "task-review", "rootId": ROOT_ID, "parentTaskId": TASK_ID, "taskKind": "review", "planTaskKind": "review", "planWave": 3, "reviewOfTaskIds": ["task-feature", "task-integration"], "reviewAuthorParticipantIds": [PARTICIPANTS["A"], PARTICIPANTS["B"]], "currentOwnerParticipantId": PARTICIPANTS["C"], "reviewState": "accepted"},
+            {"taskId": "task-report", "rootId": ROOT_ID, "taskKind": "report", "currentOwnerParticipantId": PARTICIPANTS["A"]},
         ]
         checks = CANARY.dispatch_lifecycle_checks(tasks, dispatches, participant_ids=PARTICIPANTS, session_ids=SESSIONS)
         self.assertTrue(all(checks.values()), checks)
-        self.assertTrue(checks["exactlyOneBoundedImplementationChild"])
-        self.assertTrue(checks["reviewIsDistinctOwnershipHandoff"])
+        self.assertTrue(checks["exactlyOnePlannedImplementationFeature"])
+        self.assertTrue(checks["reviewIsDistinctPlannedOwnership"])
         self.assertEqual(
-            CANARY._reviewed_context_evidence_refs(
+            CANARY._reviewed_task_ids(
                 tasks,
                 dispatches,
                 reviewer_id=PARTICIPANTS["C"],
             ),
-            ("evidence-implementation",),
+            ("task-feature", "task-integration"),
         )
 
     def test_reviewer_evidence_gates_reporter_delivery_and_summary(self) -> None:
         dispatches = {
-            "d-impl": {"intentKind": "execute", "targetParticipantId": PARTICIPANTS["B"]},
-            "d-review": {"intentKind": "review", "targetParticipantId": PARTICIPANTS["C"]},
-            "d-resume": {"intentKind": "resume", "targetParticipantId": PARTICIPANTS["A"]},
+            "d-impl": {"taskId": "task-feature", "intentKind": "execute", "targetParticipantId": PARTICIPANTS["B"]},
+            "d-integration": {"taskId": "task-integration", "intentKind": "execute", "targetParticipantId": PARTICIPANTS["A"]},
+            "d-review": {"taskId": "task-review", "intentKind": "review", "targetParticipantId": PARTICIPANTS["C"]},
+            "d-report": {"taskId": "task-report", "intentKind": "close", "targetParticipantId": PARTICIPANTS["A"]},
         }
         commits = [
             {
@@ -282,13 +339,23 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
                 "qualityGateReceipt": {"verdict": "ready_to_deliver"},
             },
             {
+                "dispatchId": "d-integration",
+                "decision": "deliver",
+                "evidenceRefs": ["evidence-integrated"],
+                "qualityGateReceipt": {"verdict": "ready_to_deliver"},
+            },
+            {
                 "dispatchId": "d-review",
                 "decision": "deliver",
                 "evidenceRefs": ["evidence-review"],
                 "qualityGateReceipt": {"verdict": "ready_to_deliver"},
+                "reviewEvidenceBinding": {
+                    "taskId": "task-review",
+                    "reviewTargetRevision": "sha256:reviewed",
+                },
             },
             {
-                "dispatchId": "d-resume",
+                "dispatchId": "d-report",
                 "decision": "deliver",
                 "evidenceRefs": ["evidence-review"],
                 "qualityGateReceipt": {"verdict": "ready_to_deliver"},
@@ -298,7 +365,7 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
             commits,
             reviewer_id=PARTICIPANTS["C"],
             facilitator_id=PARTICIPANTS["A"],
-            reviewed_evidence_refs=["evidence-implementation"],
+            reviewed_task_ids=["task-feature", "task-integration"],
             dispatches=dispatches,
         )
         self.assertTrue(all(checks.values()), checks)
@@ -312,7 +379,7 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
                 commits,
                 reviewer_id=PARTICIPANTS["C"],
                 facilitator_id=PARTICIPANTS["A"],
-                reviewed_evidence_refs=["evidence-implementation"],
+                reviewed_task_ids=["task-feature", "task-integration"],
                 dispatches=bad_dispatches,
             )["exactlyOneReviewerRecommendation"]
         )
@@ -407,8 +474,8 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
         )
 
     def test_tool_receipts_and_natural_language_guard(self) -> None:
-        rows = [{"toolName": name, "dispatchId": f"d-{index}", "status": "applied", "resultHash": "a" * 64} for index, name in enumerate(("room_define", "room_collaborate", "room_commit"))]
-        dispatches = {"d-0": {"intentKind": "define", "targetParticipantId": PARTICIPANTS["A"]}, "d-1": {"intentKind": "resume", "targetParticipantId": PARTICIPANTS["A"]}, "d-2": {"intentKind": "wait", "targetParticipantId": PARTICIPANTS["A"]}}
+        rows = [{"toolName": name, "dispatchId": f"d-{index}", "status": "applied", "resultHash": "a" * 64} for index, name in enumerate(("room_define", "room_commit"))]
+        dispatches = {"d-0": {"intentKind": "resume", "targetParticipantId": PARTICIPANTS["A"]}, "d-1": {"intentKind": "wait", "targetParticipantId": PARTICIPANTS["A"]}}
         checks = CANARY._tool_receipt_checks(rows, dispatches=dispatches, facilitator_id=PARTICIPANTS["A"])
         self.assertTrue(all(checks.values()), checks)
         self.assertEqual([], CANARY.natural_message_leaks([CANARY.OPENING_MESSAGE, *CANARY.NATURAL_REQUIREMENT_ANSWERS]))

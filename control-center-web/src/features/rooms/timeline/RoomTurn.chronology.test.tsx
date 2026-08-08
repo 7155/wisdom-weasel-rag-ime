@@ -637,7 +637,7 @@ describe('RoomTurn canonical conversation chronology', () => {
       onAnswerQuestion: async () => true,
     }));
 
-    expect(screen.getByText('这项问题已不再是当前可回答的问题。')).toBeInTheDocument();
+    expect(screen.getByText('正在确认这项问题是否仍需要你的回答；确认后会自动更新。')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '可运行闭环' })).not.toBeInTheDocument();
     expect(view.container.querySelector('.room-agent-lane')).toHaveAttribute('data-state', 'aborted');
     expect(view.container).toHaveTextContent('我先核对当前范围');

@@ -3527,52 +3527,16 @@ class RoomApplicationService:
         reconciliation_dispatch: dict[str, object] | None = None
         reconciliation_participant: Mapping[str, object] | None = None
         if requires_plan_revision:
-            active_targets = self.kernel.active_runtime_targets(root_id)
-            if len(active_targets) == 1:
-                parent_dispatch = self.kernel.dispatch(
-                    str(active_targets[0]["dispatchId"])
+            reconciliation = self._reconciliation_dispatch_for_intervention(
+                root=root,
+                intervention_id=intervention_id,
+            )
+            if reconciliation is not None:
+                reconciliation_dispatch, reconciliation_participant = reconciliation
+                reconciliation_dispatch, _ = self.kernel.enqueue_dispatch(
+                    reconciliation_dispatch,
+                    now_ms=timestamp,
                 )
-                if str(parent_dispatch.get("intentKind") or "") != "close":
-                    reconciliation_participant = self.rooms.participant(
-                        str(parent_dispatch["targetParticipantId"])
-                    )
-                    reconciliation_dispatch = {
-                        "schemaVersion": DISPATCH_ENVELOPE_SCHEMA_VERSION,
-                        "dispatchId": (
-                            "room-dispatch:intervention:"
-                            + _stable_digest(intervention_id, root_id)
-                        ),
-                        "rootId": root_id,
-                        "taskId": str(parent_dispatch["taskId"]),
-                        "parentDispatchId": str(parent_dispatch["dispatchId"]),
-                        "generation": int(parent_dispatch["generation"]),
-                        "hopCount": int(parent_dispatch["hopCount"]) + 1,
-                        "depth": int(parent_dispatch["depth"]),
-                        "budgetCost": 1,
-                        "targetSessionId": str(parent_dispatch["targetSessionId"]),
-                        "targetParticipantId": str(parent_dispatch["targetParticipantId"]),
-                        "triggerId": intervention_id,
-                        "intentKind": "revise",
-                        "idempotencyKey": (
-                            f"room-intervention-revise:{intervention_id}"
-                        ),
-                        "attempt": 0,
-                        "capabilityEpoch": int(parent_dispatch["capabilityEpoch"]) + 1,
-                        "runtimeProfileRevision": str(
-                            parent_dispatch["runtimeProfileRevision"]
-                        ),
-                        "dependsOnDispatchIds": [
-                            str(parent_dispatch["dispatchId"])
-                        ],
-                        "attachmentIds": list(
-                            parent_dispatch.get("attachmentIds") or []
-                        ),
-                        "state": "pending",
-                    }
-                    self.kernel.enqueue_dispatch(
-                        reconciliation_dispatch,
-                        now_ms=timestamp,
-                    )
 
         timeline_events = self.public_timeline.publish_ingress(
             room=room,
@@ -3634,6 +3598,179 @@ class RoomApplicationService:
         if document_delta is not None:
             response["workDocumentDelta"] = dict(document_delta)
         return response
+
+    def recover_pending_reconciliations(self) -> int:
+        """Restore a durable correction that predates its reconciliation Dispatch.
+
+        The intervention table is authoritative: if a process stopped after
+        committing the user correction but before enqueueing its Dispatch, the
+        worker must be able to repair that exact gap without creating a new
+        Root, Task, or duplicate intervention.
+        """
+
+        with sqlite3.connect(self.kernel.db_path) as connection:
+            connection.row_factory = sqlite3.Row
+            pending = [
+                (str(row["root_id"]), str(row["intervention_id"]))
+                for row in connection.execute(
+                    """SELECT root_id,intervention_id
+                       FROM room_interventions
+                       WHERE state='pending_reconciliation'
+                       ORDER BY created_at_ms,intervention_id"""
+                ).fetchall()
+            ]
+        recovered = 0
+        timestamp = self.clock_ms()
+        for root_id, intervention_id in pending:
+            with sqlite3.connect(self.kernel.db_path) as connection:
+                existing = connection.execute(
+                    """SELECT 1 FROM room_kernel_dispatches
+                       WHERE root_id=? AND idempotency_key=?""",
+                    (
+                        root_id,
+                        f"room-intervention-revise:{intervention_id}",
+                    ),
+                ).fetchone()
+            if existing is not None:
+                continue
+            try:
+                root = self.kernel.root(root_id)
+            except KeyError:
+                continue
+            reconciliation = self._reconciliation_dispatch_for_intervention(
+                root=root,
+                intervention_id=intervention_id,
+            )
+            if reconciliation is None:
+                continue
+            dispatch, _participant = reconciliation
+            _stored, created = self.kernel.enqueue_dispatch(
+                dispatch,
+                now_ms=timestamp,
+            )
+            recovered += int(created)
+        return recovered
+
+    def _reconciliation_dispatch_for_intervention(
+        self,
+        *,
+        root: Mapping[str, object],
+        intervention_id: str,
+    ) -> tuple[dict[str, object], Mapping[str, object]] | None:
+        """Select the one existing responsibility allowed to reconcile a correction."""
+
+        root_id = str(root["rootId"])
+        active_targets = self.kernel.active_runtime_targets(root_id)
+        if len(active_targets) == 1:
+            parent_dispatch = self.kernel.dispatch(
+                str(active_targets[0]["dispatchId"])
+            )
+            if str(parent_dispatch.get("intentKind") or "") == "close":
+                return None
+            participant = self.rooms.participant(
+                str(parent_dispatch["targetParticipantId"])
+            )
+            return {
+                "schemaVersion": DISPATCH_ENVELOPE_SCHEMA_VERSION,
+                "dispatchId": (
+                    "room-dispatch:intervention:"
+                    + _stable_digest(intervention_id, root_id)
+                ),
+                "rootId": root_id,
+                "taskId": str(parent_dispatch["taskId"]),
+                "parentDispatchId": str(parent_dispatch["dispatchId"]),
+                "generation": int(parent_dispatch["generation"]),
+                "hopCount": int(parent_dispatch["hopCount"]) + 1,
+                "depth": int(parent_dispatch["depth"]),
+                "budgetCost": 1,
+                "targetSessionId": str(parent_dispatch["targetSessionId"]),
+                "targetParticipantId": str(parent_dispatch["targetParticipantId"]),
+                "triggerId": intervention_id,
+                "intentKind": "revise",
+                "idempotencyKey": f"room-intervention-revise:{intervention_id}",
+                "attempt": 0,
+                "capabilityEpoch": int(parent_dispatch["capabilityEpoch"]) + 1,
+                "runtimeProfileRevision": str(
+                    parent_dispatch["runtimeProfileRevision"]
+                ),
+                "dependsOnDispatchIds": [str(parent_dispatch["dispatchId"])],
+                "attachmentIds": list(parent_dispatch.get("attachmentIds") or []),
+                "state": "pending",
+            }, participant
+
+        # A blocked Root can have no active target after a failed feature
+        # Dispatch.  Multiple independent active targets also need one
+        # root-level coordinator rather than arbitrarily attaching a user
+        # correction to a single feature.  In both cases, use the approved
+        # integration responsibility and never depend on a failed attempt.
+        active_plan = self._latest_plan_revision(root_id)
+        integration_specs = [
+            item
+            for item in (
+                active_plan.get("tasks", [])
+                if isinstance(active_plan, Mapping)
+                else []
+            )
+            if isinstance(item, Mapping)
+            and str(item.get("kind") or "") == "integration"
+        ]
+        if len(integration_specs) != 1:
+            return None
+        integration_task = self.kernel.task(str(integration_specs[0]["taskId"]))
+        participant_id = str(integration_task["currentOwnerParticipantId"])
+        participant = self.rooms.participant(participant_id)
+        session_id = str(participant["sessionId"])
+        if active_targets:
+            # A coordinator running beside a still-active wave must use the
+            # wave's shared epoch.  Advancing it here would revoke valid peer
+            # Tool receipts before their own turns settle.
+            active_epochs = {
+                int(
+                    self.kernel.dispatch(str(target["dispatchId"])).get(
+                        "capabilityEpoch"
+                    )
+                    or 0
+                )
+                for target in active_targets
+            }
+            if len(active_epochs) != 1:
+                return None
+            capability_epoch = next(iter(active_epochs))
+        else:
+            # With no active target, a prior failure has already advanced the
+            # Root-wide Skill epoch.  Capability state is rooted at the Room,
+            # not at an individual Session, so using this participant's last
+            # revoked epoch can be stale when another peer was the failure.
+            capability_epoch = int(
+                self.kernel.plan_runnable_frontier(root_id)[
+                    "nextCapabilityEpoch"
+                ]
+            )
+        return {
+            "schemaVersion": DISPATCH_ENVELOPE_SCHEMA_VERSION,
+            "dispatchId": (
+                "room-dispatch:intervention:"
+                + _stable_digest(intervention_id, root_id)
+            ),
+            "rootId": root_id,
+            "taskId": str(integration_task["taskId"]),
+            "parentDispatchId": None,
+            "generation": int(root["generation"]),
+            "hopCount": 0,
+            "depth": 0,
+            "budgetCost": 1,
+            "targetSessionId": session_id,
+            "targetParticipantId": participant_id,
+            "triggerId": intervention_id,
+            "intentKind": "revise",
+            "idempotencyKey": f"room-intervention-revise:{intervention_id}",
+            "attempt": 0,
+            "capabilityEpoch": capability_epoch,
+            "runtimeProfileRevision": DEFAULT_RUNTIME_PROFILE_REVISION,
+            "dependsOnDispatchIds": [],
+            "attachmentIds": [],
+            "state": "pending",
+        }, participant
 
     def _work_item_owner(
         self,
