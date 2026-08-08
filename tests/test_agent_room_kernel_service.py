@@ -497,6 +497,85 @@ class RoomKernelServiceTests(unittest.TestCase):
         finally:
             owner.close()
 
+    def test_terminal_root_pending_reconciliation_is_ignored(self) -> None:
+        intervention_id = self._insert_pending_reconciliation(
+            "terminal-root"
+        )
+        with sqlite3.connect(self.service.db_path) as connection:
+            connection.execute(
+                "UPDATE room_kernel_roots SET state='cancelled' WHERE root_id=?",
+                ("root:service",),
+            )
+            connection.commit()
+        dispatch = {
+            **self._dispatch("dispatch:terminal-reconciliation"),
+            "triggerId": intervention_id,
+            "intentKind": "revise",
+            "idempotencyKey": f"room-intervention-revise:{intervention_id}",
+        }
+
+        with patch.object(
+            self.service.room_application,
+            "_reconciliation_dispatch_for_intervention",
+            return_value=(dispatch, self.participant),
+        ):
+            self.assertEqual(
+                self.service.room_application.recover_pending_reconciliations(),
+                0,
+            )
+
+        with sqlite3.connect(self.service.db_path) as connection:
+            created = connection.execute(
+                "SELECT 1 FROM room_kernel_dispatches WHERE dispatch_id=?",
+                ("dispatch:terminal-reconciliation",),
+            ).fetchone()
+        self.assertIsNone(created)
+
+    def test_reconciliation_race_with_root_cancellation_is_ignored(self) -> None:
+        intervention_id = self._insert_pending_reconciliation(
+            "cancelling-race"
+        )
+        dispatch = {
+            **self._dispatch("dispatch:cancelling-reconciliation"),
+            "triggerId": intervention_id,
+            "intentKind": "revise",
+            "idempotencyKey": f"room-intervention-revise:{intervention_id}",
+        }
+        enqueue_dispatch = self.service.room_kernel.enqueue_dispatch
+
+        def cancel_before_enqueue(payload, *, now_ms):
+            with sqlite3.connect(self.service.db_path) as connection:
+                connection.execute(
+                    "UPDATE room_kernel_roots SET state='cancelling' WHERE root_id=?",
+                    ("root:service",),
+                )
+                connection.commit()
+            return enqueue_dispatch(payload, now_ms=now_ms)
+
+        with (
+            patch.object(
+                self.service.room_application,
+                "_reconciliation_dispatch_for_intervention",
+                return_value=(dispatch, self.participant),
+            ),
+            patch.object(
+                self.service.room_kernel,
+                "enqueue_dispatch",
+                side_effect=cancel_before_enqueue,
+            ),
+        ):
+            self.assertEqual(
+                self.service.room_application.recover_pending_reconciliations(),
+                0,
+            )
+
+        with sqlite3.connect(self.service.db_path) as connection:
+            created = connection.execute(
+                "SELECT 1 FROM room_kernel_dispatches WHERE dispatch_id=?",
+                ("dispatch:cancelling-reconciliation",),
+            ).fetchone()
+        self.assertIsNone(created)
+
     def test_writable_plan_assigns_integration_and_cross_review_as_peer_tasks(
         self,
     ) -> None:
@@ -1543,6 +1622,43 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "DELETE FROM room_kernel_receipts WHERE receipt_id=?",
                 [(receipt_id,) for receipt_id in intake_ids],
             )
+
+    def _insert_pending_reconciliation(self, suffix: str) -> str:
+        intervention_id = f"room-intervention:{suffix}"
+        with sqlite3.connect(self.service.db_path) as connection:
+            connection.execute(
+                """INSERT INTO room_interventions(
+                       intervention_id,room_id,root_id,generation,
+                       intervention_kind,state,post_id,requirement_anchor_id,
+                       requirement_catalog_revision_id,requires_plan_revision,
+                       affected_task_ids_json,payload_json,created_at_ms,updated_at_ms
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    intervention_id,
+                    self.room_id,
+                    "root:service",
+                    0,
+                    "correction",
+                    "pending_reconciliation",
+                    f"room-post:user:{suffix}",
+                    f"requirement-anchor:{suffix}",
+                    f"requirement-catalog:{suffix}",
+                    1,
+                    "[]",
+                    json.dumps(
+                        {
+                            "interventionId": intervention_id,
+                            "rootId": "root:service",
+                            "state": "pending_reconciliation",
+                        },
+                        separators=(",", ":"),
+                    ),
+                    2,
+                    2,
+                ),
+            )
+            connection.commit()
+        return intervention_id
 
     def _use_per_action_execution(self) -> None:
         session = self.service.sessions.get(self.session_id)

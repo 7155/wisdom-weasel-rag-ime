@@ -57,6 +57,15 @@ from .room_domain.scheduling import (
 DEFAULT_ROOT_BUDGET = 32
 DEFAULT_MAX_HOPS = 6
 DEFAULT_MAX_DEPTH = 3
+_NON_DISPATCHABLE_ROOT_STATES = frozenset(
+    {
+        "cancelling",
+        "cancelled",
+        "cancelled_with_unknowns",
+        "completed",
+        "failed",
+    }
+)
 
 
 _UNRESOLVED_DEFINITION_PLACEHOLDER = re.compile(
@@ -3637,6 +3646,8 @@ class RoomApplicationService:
                 root = self.kernel.root(root_id)
             except KeyError:
                 continue
+            if str(root.get("state") or "") in _NON_DISPATCHABLE_ROOT_STATES:
+                continue
             reconciliation = self._reconciliation_dispatch_for_intervention(
                 root=root,
                 intervention_id=intervention_id,
@@ -3644,10 +3655,19 @@ class RoomApplicationService:
             if reconciliation is None:
                 continue
             dispatch, _participant = reconciliation
-            _stored, created = self.kernel.enqueue_dispatch(
-                dispatch,
-                now_ms=timestamp,
-            )
+            try:
+                _stored, created = self.kernel.enqueue_dispatch(
+                    dispatch,
+                    now_ms=timestamp,
+                )
+            except RoomKernelFenceError:
+                current_root = self.kernel.root(root_id)
+                if (
+                    str(current_root.get("state") or "")
+                    not in _NON_DISPATCHABLE_ROOT_STATES
+                ):
+                    raise
+                continue
             recovered += int(created)
         return recovered
 
