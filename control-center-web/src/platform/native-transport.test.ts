@@ -18,6 +18,14 @@ describe('NativeControlTransport', () => {
     expect(transport.browserSnapshotImageUrl('snap_native-1')).toBe(
       'http://127.0.0.1:8766/api/browser/snapshots/snap_native-1/image',
     );
+    expect(transport.agentMediaContentUrl(
+      '/api/agent/media/media_native_fixture_01/content?sessionId=session:native-1',
+    )).toBe(
+      'http://127.0.0.1:8766/api/agent/media/media_native_fixture_01/content?sessionId=session%3Anative-1',
+    );
+    expect(() => transport.agentMediaContentUrl(
+      '/api/agent/media/media_native_fixture_01/content?sessionId=session:native-1&next=private',
+    )).toThrow(/managed receipt path/);
     expect(() => transport.browserSnapshotImageUrl('../private')).toThrow(/bounded snapshotId/);
     transport.dispose();
   });

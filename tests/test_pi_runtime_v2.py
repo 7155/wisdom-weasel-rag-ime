@@ -18,6 +18,7 @@ from rag_ime.pi_runtime_public import (
     pi_message_payload,
     public_code_tool_activity,
     public_reasoning_summaries,
+    public_usage_evidence,
 )
 from rag_ime.pi_runtime_v2 import (
     PiRuntimeHostClient,
@@ -209,6 +210,14 @@ for line in sys.stdin:
         transcript.write_text(json.dumps({"type": "session", "id": sessions[session_id]["piSessionId"]}) + "\n")
         result(request, {"accepted": True, "turnId": turn_id})
         event(session_id, turn_id, client_message_id, {"type": "agent_start"})
+        if params["message"].startswith("approval:"):
+            event(session_id, turn_id, client_message_id, {
+                "type": "extension_ui_request",
+                "id": "ui-approval-1",
+                "method": "confirm",
+                "title": "RAG-IME-APPROVAL:" + params["message"],
+            })
+            continue
         if params["message"] == "grouped-questions":
             event(session_id, turn_id, client_message_id, {
                 "type": "extension_ui_request",
@@ -216,17 +225,24 @@ for line in sys.stdin:
                 "method": "editor",
                 "title": "RAG-IME-QUESTIONS:call-grouped-1",
                 "prefill": json.dumps({
-                    "schemaVersion": "rag-ime.grouped-questions.v1",
+                    "schemaVersion": "rag-ime.grouped-questions.v2",
                     "questions": [
                         {
                             "id": "deploy_target",
                             "question": "这次部署到哪里？",
-                            "options": ["预发布环境", "生产环境"],
+                            "options": [
+                                {"label": "预发布环境", "description": "先验证变更。"},
+                                {"label": "生产环境", "description": "直接面向用户发布。"},
+                            ],
+                            "recommended": 0,
                         },
                         {
                             "id": "release_window",
                             "question": "什么时候发布？",
-                            "options": ["现在", "今晚"],
+                            "options": [
+                                {"label": "现在"},
+                                {"label": "今晚"},
+                            ],
                         },
                     ],
                 }, ensure_ascii=False, separators=(",", ":")),
@@ -238,6 +254,19 @@ for line in sys.stdin:
         event(session_id, turn_id, client_message_id, {"type": "agent_end", "messages": [assistant]})
         if params["message"] == "end-without-settled":
             continue
+        time.sleep(0.15)
+        event(session_id, turn_id, client_message_id, {"type": "agent_settled"})
+    elif method == "approval.resolve":
+        result(request, {
+            "resolved": True,
+            "approvalId": params.get("approvalId", ""),
+            "approved": bool(params.get("approved")),
+        })
+        turn_id = sessions[session_id]["activeTurnId"]
+        client_message_id = sessions[session_id].get("activeClientMessageId", "")
+        assistant = sessions[session_id]["messages"][-1]
+        event(session_id, turn_id, client_message_id, {"type": "message_end", "message": assistant})
+        event(session_id, turn_id, client_message_id, {"type": "agent_end", "messages": [assistant]})
         time.sleep(0.15)
         event(session_id, turn_id, client_message_id, {"type": "agent_settled"})
     elif method == "ui.resolve":
@@ -359,8 +388,12 @@ for line in sys.stdin:
         result(request, {
             "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
             "receiptKind": "cancel_applied", "status": "applied",
-            "rootId": params["rootId"], "generation": params["generation"],
-            "sessionId": session_id, "cancelledContinuationIds": [],
+            "cancelId": params["cancelId"],
+            "rootId": params["rootId"], "dispatchId": params["dispatchId"],
+            "generation": params["generation"], "sessionId": session_id,
+            "turnId": params["turnId"],
+            "capabilityEpoch": params["capabilityEpoch"],
+            "cancelledContinuationIds": [],
             "activeRunAborted": False,
             "cancellationSurfaces": {name: {
                 "schemaVersion": "wisdom-weasel.runtime-surface-termination-receipt.v1",
@@ -436,6 +469,99 @@ class PiRuntimeV2Tests(unittest.TestCase):
             "status": "checkpointed",
         }
 
+    def test_usage_evidence_distinguishes_cache_report_from_missing_fields(
+        self,
+    ) -> None:
+        self.assertEqual(
+            public_usage_evidence({"role": "assistant"}),
+            {
+                "usageReported": False,
+                "cacheUsageReported": False,
+            },
+        )
+        self.assertEqual(
+            public_usage_evidence({
+                "usage": {"input": 120, "output": 30},
+            }),
+            {
+                "usageReported": True,
+                "cacheUsageReported": False,
+            },
+        )
+        self.assertEqual(
+            public_usage_evidence({
+                "usage": {
+                    "input": 120,
+                    "output": 30,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                },
+            }),
+            {
+                "usageReported": True,
+                "cacheUsageReported": True,
+            },
+        )
+
+    def test_managed_approval_events_keep_tool_call_and_causal_turn(self) -> None:
+        session_id = str(self.first["id"])
+        turn_id = f"turn-{session_id}"
+        approval = self.store.create_approval(
+            session_id=session_id,
+            tool_name="workspace_shell",
+            operation="run",
+            payload_sha256="a" * 64,
+            preview={"summary": "运行受控命令"},
+            risk_level="R3",
+            causal_metadata={"turnId": turn_id},
+        )
+        approval = self.store.bind_approval_tool_call(
+            str(approval["approvalId"]),
+            tool_call_id="tool:managed-approval",
+        )
+        approval_id = str(approval["approvalId"])
+
+        self.runtime.prompt(
+            session_id,
+            approval_id,
+            client_message_id="client:managed-approval",
+        )
+        _wait_until(
+            lambda: self.runtime.has_pending_approval(
+                session_id,
+                approval_id,
+            )
+        )
+        events, _ = self.events.replay(session_id)
+        required = next(
+            event
+            for event in events
+            if event.event_type == "approval_required"
+        )
+        self.assertEqual(required.payload["toolCallId"], "tool:managed-approval")
+        self.assertEqual(required.turn_id, turn_id)
+
+        self.store.decide_approval(
+            approval_id,
+            approved=True,
+            payload_sha256="a" * 64,
+        )
+        self.runtime.resolve_approval(
+            session_id,
+            approval_id,
+            approved=True,
+            resolution_state="external_pending",
+        )
+        _wait_until(lambda: self.store.get(session_id)["status"] == "idle")
+        events, _ = self.events.replay(session_id)
+        resolved = next(
+            event
+            for event in events
+            if event.event_type == "approval_resolved"
+        )
+        self.assertEqual(resolved.payload["toolCallId"], "tool:managed-approval")
+        self.assertEqual(resolved.turn_id, turn_id)
+
     def test_grouped_questions_project_once_and_validate_one_answer_map(self) -> None:
         session_id = str(self.first["id"])
         self.runtime.prompt(
@@ -456,12 +582,16 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 {
                     "id": "deploy_target",
                     "question": "这次部署到哪里？",
-                    "options": ["预发布环境", "生产环境"],
+                    "options": [
+                        {"label": "预发布环境", "description": "先验证变更。"},
+                        {"label": "生产环境", "description": "直接面向用户发布。"},
+                    ],
+                    "recommended": 0,
                 },
                 {
                     "id": "release_window",
                     "question": "什么时候发布？",
-                    "options": ["现在", "今晚"],
+                    "options": [{"label": "现在"}, {"label": "今晚"}],
                 },
             ],
         )
@@ -476,10 +606,22 @@ class PiRuntimeV2Tests(unittest.TestCase):
                     "value": json.dumps(
                         {
                             "answers": {
-                                "deploy_target": "不存在的环境",
-                                "release_window": "今晚",
+                                "deploy_target": {"selected": ["不存在的环境"]},
+                                "release_window": {"selected": ["今晚"]},
                             }
                         },
+                        ensure_ascii=False,
+                    ),
+                    "resolutionSource": "direct_user",
+                },
+            )
+        with self.assertRaisesRegex(PiRuntimeError, "当前问题或可选项不一致"):
+            self.runtime.resolve_ui_request(
+                session_id,
+                str(request["requestId"]),
+                response={
+                    "value": json.dumps(
+                        {"answers": {"deploy_target": {"selected": ["预发布环境"]}}},
                         ensure_ascii=False,
                     ),
                     "resolutionSource": "direct_user",
@@ -494,8 +636,8 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 "value": json.dumps(
                     {
                         "answers": {
-                            "deploy_target": "预发布环境",
-                            "release_window": "今晚",
+                            "deploy_target": {"selected": ["预发布环境"]},
+                            "release_window": {"selected": ["今晚"]},
                         }
                     },
                     ensure_ascii=False,
@@ -523,6 +665,30 @@ class PiRuntimeV2Tests(unittest.TestCase):
             for event in events
             if event.event_type == "user_input_required"
             and event.payload.get("resolutionState") == "resolved"
+        )
+        with self.assertRaisesRegex(PiRuntimeError, "no longer pending"):
+            self.runtime.resolve_ui_request(
+                session_id,
+                str(request["requestId"]),
+                response={
+                    "value": json.dumps(
+                        {
+                            "answers": {
+                                "deploy_target": {"selected": ["预发布环境"]},
+                                "release_window": {"selected": ["今晚"]},
+                            }
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "resolutionSource": "direct_user",
+                },
+            )
+        completed_message = next(
+            event for event in events if event.event_type == "message_completed"
+        )
+        self.assertEqual(
+            completed_message.payload["message"]["blocks"][0]["data"]["text"],
+            '{"answers":{"deploy_target":{"selected":["预发布环境"]},"release_window":{"selected":["今晚"]}}}',
         )
         completed = next(event for event in events if event.event_type == "turn_completed")
         self.assertEqual(
@@ -759,6 +925,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
             "rootId": "root:cross-process",
             "dispatchId": "dispatch:cross-process",
             "generation": 4,
+            "capabilityEpoch": 0,
             "attempt": 0,
             "idempotencyKey": "cross-process-key",
         }
@@ -774,9 +941,13 @@ class PiRuntimeV2Tests(unittest.TestCase):
             side_effect=AssertionError("Room cancellation must not rebind the active Session"),
         ):
             cancelled = self.runtime.cancel_room(
+                cancel_id="cancel:cross-process",
                 session_id=session_id,
                 root_id="root:cross-process",
+                dispatch_id="dispatch:cross-process",
                 generation=5,
+                turn_id="room-turn-dispatch:cross-process",
+                capability_epoch=0,
             )
 
         self.assertTrue(
@@ -796,6 +967,32 @@ class PiRuntimeV2Tests(unittest.TestCase):
         delivered = next(item for item in requests if item["method"] == "room.dispatch")
         self.assertEqual(delivered["params"]["leaseToken"], "lease-token:cross-process")
         self.assertEqual(delivered["params"]["dispatchAttempt"], 0)
+        delivered_cancel = next(
+            item for item in requests if item["method"] == "room.cancel"
+        )
+        self.assertEqual(
+            {
+                key: delivered_cancel["params"][key]
+                for key in (
+                    "cancelId",
+                    "sessionId",
+                    "rootId",
+                    "dispatchId",
+                    "generation",
+                    "turnId",
+                    "capabilityEpoch",
+                )
+            },
+            {
+                "cancelId": "cancel:cross-process",
+                "sessionId": session_id,
+                "rootId": "root:cross-process",
+                "dispatchId": "dispatch:cross-process",
+                "generation": 5,
+                "turnId": "room-turn-dispatch:cross-process",
+                "capabilityEpoch": 0,
+            },
+        )
 
         crashed_payload = dict(payload)
         crashed_payload.update(
@@ -808,6 +1005,77 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 lease_token="lease-token:crashed-host",
             )
         self.assertEqual(self.runtime.runtime_status()["status"], "faulted")
+
+    def test_room_cancel_rejects_forged_runtime_receipt_lineage(self) -> None:
+        self.runtime.stop()
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                provider_environment={"TEST_ROOM_TYPES": "1"},
+            ),
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=lambda _session: {
+                "sessionContext": "generic-agent-rag",
+                "providerContext": "governed-room-task",
+            },
+            tool_manifest_provider=lambda _session: [],
+        )
+        session_id = str(self.first["id"])
+        dispatch_id = "dispatch:cancel-response-lineage"
+        accepted = self.runtime.dispatch_room(
+            {
+                "targetSessionId": session_id,
+                "rootId": "root:cancel-response-lineage",
+                "dispatchId": dispatch_id,
+                "generation": 2,
+                "capabilityEpoch": 3,
+                "attempt": 0,
+                "idempotencyKey": "cancel-response-lineage",
+            },
+            message="Start a bounded cancellation lineage test.",
+            lease_token="lease:cancel-response-lineage",
+        )
+        forged = {
+            "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
+            "receiptKind": "cancel_applied",
+            "status": "applied",
+            "cancelId": "cancel:response-lineage",
+            "sessionId": session_id,
+            "rootId": "root:cancel-response-lineage",
+            "dispatchId": dispatch_id,
+            "generation": 3,
+            "turnId": "turn:forged",
+            "capabilityEpoch": 3,
+            "cancellationSurfaces": {
+                surface: {
+                    "schemaVersion": "wisdom-weasel.runtime-surface-termination-receipt.v1",
+                    "surface": surface,
+                    "state": "terminated",
+                    "targetIds": [],
+                }
+                for surface in (
+                    "provider", "tool", "exec", "retry", "compaction",
+                    "branch_summary", "timer", "continuation", "session",
+                )
+            },
+            "pendingTargets": [],
+        }
+        client = self.runtime._require_client()
+        with patch.object(client, "send", return_value=forged):
+            with self.assertRaisesRegex(
+                PiRuntimeError,
+                "invalid Room cancellation receipt",
+            ):
+                self.runtime.cancel_room(
+                    cancel_id="cancel:response-lineage",
+                    session_id=session_id,
+                    root_id="root:cancel-response-lineage",
+                    dispatch_id=dispatch_id,
+                    generation=3,
+                    turn_id=str(accepted["turnId"]),
+                    capability_epoch=3,
+                )
 
     def test_room_retry_attempt_uses_a_distinct_persisted_delivery_key(
         self,
@@ -2053,9 +2321,13 @@ class PiRuntimeV2Tests(unittest.TestCase):
         )
 
         cancelled = self.runtime.cancel_room(
+            cancel_id="cancel:agent-room-agent",
             session_id=session_id,
             root_id="root:agent-room-agent",
+            dispatch_id="dispatch:agent-room-agent",
             generation=1,
+            turn_id="room-turn-dispatch:agent-room-agent",
+            capability_epoch=5,
         )
         self.assertEqual(cancelled["receiptKind"], "cancel_applied")
         self.assertEqual(cancelled["pendingTargets"], [])
@@ -2312,6 +2584,60 @@ class PiRuntimeV2Tests(unittest.TestCase):
             "rag_ime/pi_runtime.py:100:def provider_payload():",
         )
         self.assertNotIn("result", event.payload)
+
+    def test_host_projects_codex_thinking_end_as_public_work_summary(self) -> None:
+        session_id = str(self.first["id"])
+        turn_id = "turn-codex-reasoning"
+        self.runtime._handle_host_event(  # noqa: SLF001 - protocol boundary
+            {
+                "protocolVersion": "2",
+                "event": "agent.event",
+                "sessionId": session_id,
+                "turnId": turn_id,
+                "payload": {
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "thinking_end",
+                        "contentIndex": 0,
+                    },
+                    "message": {
+                        "id": "assistant-codex-reasoning",
+                        "role": "assistant",
+                        "api": "openai-codex-responses",
+                        "content": [{
+                            "type": "thinking",
+                            "thinking": (
+                                "**Inspecting /Users/private/project/runtime.py**\n\n"
+                                "**Planning the visible fix**"
+                            ),
+                            "thinkingSignature": "private-provider-signature",
+                        }],
+                    },
+                },
+            }
+        )
+
+        events, gap = self.events.replay(session_id)
+        self.assertFalse(gap)
+        reasoning = [
+            event for event in events
+            if event.event_type == "reasoning_summary"
+            and event.turn_id == turn_id
+        ]
+        self.assertEqual(len(reasoning), 1)
+        self.assertEqual(reasoning[0].payload["summary"], "Planning the visible fix")
+        self.assertEqual(
+            reasoning[0].payload["items"],
+            ["Inspecting [REDACTED_PATH]", "Planning the visible fix"],
+        )
+        self.assertEqual(
+            reasoning[0].payload["source"],
+            "provider_reasoning_summary",
+        )
+        self.assertNotIn(
+            "private-provider-signature",
+            json.dumps(reasoning[0].payload, ensure_ascii=False),
+        )
 
     def test_cold_history_reads_managed_jsonl_without_opening_provider_context(self) -> None:
         session_id = str(self.first["id"])
@@ -2588,7 +2914,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn("top-secret", serialized)
         self.assertNotIn("/Users/private", serialized)
 
-    def test_only_openai_response_summaries_are_public(self) -> None:
+    def test_only_openai_response_family_summaries_are_public(self) -> None:
         openai = {
             "api": "openai-responses",
             "content": [{
@@ -2600,12 +2926,12 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 "thinkingSignature": "opaque-provider-signature",
             }],
         }
+        codex = {**openai, "api": "openai-codex-responses"}
         anthropic = {**openai, "api": "anthropic-messages"}
 
-        self.assertEqual(
-            public_reasoning_summaries(openai),
-            ["Analyzing session history", "Inspecting [REDACTED_PATH]"],
-        )
+        expected = ["Analyzing session history", "Inspecting [REDACTED_PATH]"]
+        self.assertEqual(public_reasoning_summaries(openai), expected)
+        self.assertEqual(public_reasoning_summaries(codex), expected)
         self.assertEqual(public_reasoning_summaries(anthropic), [])
 
     def test_transcript_tool_messages_rebuild_a_redacted_durable_timeline(self) -> None:
@@ -2619,7 +2945,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
             {
                 "id": "assistant-tool-1",
                 "role": "assistant",
-                "api": "openai-responses",
+                "api": "openai-codex-responses",
                 "timestamp": 101,
                 "content": [
                     {
@@ -2730,7 +3056,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 "timestamp": 101,
                 "content": [
                     {"type": "text", "text": "我已经找到主要结构，继续核对最后一项。"},
-                    {"type": "toolCall", "id": "call-next", "name": "agent_plan"},
+                    {"type": "toolCall", "id": "call-next", "name": "todo"},
                 ],
             },
         })
@@ -2740,6 +3066,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 "role": "assistant",
                 "timestamp": 102,
                 "content": [{"type": "text", "text": "变更已经交付。"}],
+                "usage": {"input": 100, "output": 20, "totalTokens": 120},
             },
         })
 
@@ -2752,6 +3079,13 @@ class PiRuntimeV2Tests(unittest.TestCase):
             [("我已经找到主要结构，继续核对最后一项。", True)],
         )
         self.assertEqual(len(completed), 1)
+        completed_event = next(
+            event
+            for event in events
+            if event.event_type == "message_completed"
+        )
+        self.assertIs(completed_event.payload["usageReported"], True)
+        self.assertIs(completed_event.payload["cacheUsageReported"], False)
         self.assertEqual([block["type"] for block in completed[-1]["blocks"]], ["file", "text"])
         self.assertEqual(completed[-1]["blocks"][0]["data"]["mimeType"], "text/x-diff")
 
@@ -2996,6 +3330,44 @@ class PiRuntimeV2Tests(unittest.TestCase):
         opened = [row for row in requests if row["method"] == "session.open"]
         self.assertTrue(opened[-1]["params"]["noContextFiles"])
         self.assertIn("只输出可以直接插入光标", opened[-1]["params"]["systemPrompt"])
+
+    def test_memory_curation_profile_opens_without_tools_context_or_skills(self) -> None:
+        memory_session = self.store.create(
+            title="memory curation",
+            session_kind="subagent_runtime",
+            tool_profile_version="memory-curation-v1",
+            project_context_enabled=True,
+            pi_skills_enabled=True,
+            codex_skills_enabled=True,
+        )
+        self.store.set_runtime_policy(
+            str(memory_session["id"]),
+            mode="assistant",
+            tool_profile_version="memory-curation-v1",
+            allowed_tools=["memory"],
+            project_context_enabled=True,
+            pi_skills_enabled=True,
+            codex_skills_enabled=True,
+            workspace_roots=[str(self.root)],
+        )
+
+        self.runtime.ensure(str(memory_session["id"]))
+
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        opened = [row for row in requests if row["method"] == "session.open"][-1]
+        self.assertEqual(opened["params"]["toolManifest"], [])
+        self.assertTrue(opened["params"]["noContextFiles"])
+        self.assertFalse(opened["params"]["piSkillsEnabled"])
+        self.assertFalse(opened["params"]["codexSkillsEnabled"])
+        self.assertIn(
+            "governed personal-memory curation engine",
+            opened["params"]["systemPrompt"],
+        )
 
     def test_agent_end_is_not_terminal_and_max_comes_from_host_catalog(self) -> None:
         session_id = str(self.first["id"])

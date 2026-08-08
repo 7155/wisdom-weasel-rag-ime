@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -19,12 +20,18 @@ from .agent_execution_policy import (
     APPROVAL_MODEL,
     APPROVAL_DENY,
     approval_strategy,
+    read_only_blocks_effect,
+    read_only_policy_active,
 )
 from .agent_background_jobs import AgentBackgroundJobService
 from .agent_memory_sources import AgentMemorySourceStore
 from .agent_role_book import AgentRoleBookStore
-from .agent_tool_artifacts import AgentToolArtifactProjector
-from .agent_tool_ids import CONTROL_TOOL_IDS, DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
+from .agent_tool_ids import (
+    CONTROL_CENTER_TOOL_PROFILE,
+    CONTROL_TOOL_IDS,
+    DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+    READONLY_TOOL_PROFILE,
+)
 from .agent_sessions import AgentSessionStore
 from .agent_workspace import PreparedWorkspaceCommand, WorkspaceHarness
 from .browser_control import BrowserControlService
@@ -139,12 +146,14 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "displayName": "个人上下文记忆",
         "description": (
             "查询用户 Evidence、Atom、Book 与已批准 Timeline；"
-            "Role Book 请用 agent_role_book。写操作只能经持久提议和原生审批。"
+            "memory_capture 只提交绑定当前用户原话的长期候选，Role Book 请用 agent_role_book。"
         ),
-        "when": ("任务需要查找历史输入、用户事实、偏好或治理记忆变更",),
-        "notFor": ("当前对话已经足够或只是流程噪声、失败回执和临时指令",),
-        "input": "检索问题、范围、证据引用或待审变更",
-        "output": "带证据的记忆结果、草案、审批或回滚状态",
+        "when": ("任务需要查找历史用户事实，或用户表达了跨 Session 有用的稳定偏好、事实、决定、纠正或原则",),
+        "notFor": (
+            "原始会话、助手回答、工具回执、任务进度、文件改动、测试结果、报错、临时指令或当前对话已足够",
+        ),
+        "input": "检索问题、范围、用户证据引用或用户长期记忆候选",
+        "output": "带证据的记忆结果、候选、草案、审批或回滚状态",
         "does": "检索并治理用户长期上下文记忆。",
         "operations": (
             "catalog",
@@ -202,13 +211,32 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "id": "knowledge",
         "domain": "knowledge",
         "displayName": "文档知识库",
-        "description": "渐进检索用户明确加载并授权给 Agent 的文档知识库",
-        "when": ("问题需要查找用户已授权文档中的事实或原文",),
-        "notFor": ("个人历史输入、当前会话内容或未授权文件",),
-        "input": "知识库、查询、定位线索或文档引用",
-        "output": "带来源的搜索、定位、原文或索引状态",
-        "does": "渐进检索已授权文档知识。",
-        "operations": ("list_bases", "search", "find", "open", "status"),
+        "description": "检索并受控管理授权文档",
+        "when": ("检索或管理授权文档",),
+        "notFor": ("Memory、未授权数据或免审批写入",),
+        "input": "op 与参数",
+        "output": "证据、状态或回执",
+        "does": "检索文档；写入须预览审批。",
+        "operations": (
+            "list_bases",
+            "get_base",
+            "list_documents",
+            "search",
+            "find",
+            "open",
+            "status",
+            "create_base",
+            "configure_base",
+            "import_text",
+            "rebuild_preview",
+            "rebuild",
+        ),
+        "operationRisks": {
+            "create_base": "R1",
+            "configure_base": "R1",
+            "import_text": "R1",
+            "rebuild": "R1",
+        },
         "resultPresentation": "citation",
     },
     {
@@ -287,11 +315,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "id": "agents",
         "domain": "agents",
         "displayName": "多 Agent 协作",
-        "description": "管理有界子 Agent 委派及 Plan 关联",
+        "description": "管理有界子 Agent 委派及 Todo 关联",
         "when": ("任务需要并行研究、实现或复核",),
         "notFor": ("单 Agent 可直接完成的任务",),
-        "input": "Agent、任务、Plan item、上下文或运行 ID",
-        "output": "关联 Plan 的状态、产物或取消回执",
+        "input": "Agent、任务、当前 Todo 任务、上下文或运行 ID",
+        "output": "关联 Todo 的状态、产物或取消回执",
         "does": "执行可审计、可取消的有界委派。",
         "operations": (
             "catalog",
@@ -336,19 +364,31 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "tool_result",
     },
     {
-        "id": "agent_plan",
+        "id": "todo",
         "domain": "planning",
-        "displayName": "任务执行清单",
-        "description": "维护跨回合与压缩保留的 Session 执行清单；它不修改用户的每日规划",
-        "when": ("复杂任务需要跨回合维护执行步骤、复核或完成状态",),
-        "notFor": ("修改用户每日计划或简单单步任务",),
-        "input": "清单项、状态、证据、复核或取消动作",
-        "output": "跨回合保留的 Agent 执行清单与状态",
-        "does": (
-            "维护 Session 内可恢复的任务执行清单；每完成一步就更新状态，"
-            "全部验收后先 complete 再最终答复。"
+        "displayName": "Todo",
+        "description": "维护当前 Session 的分阶段执行清单；状态变更立即同步到任务中心，不需要用户批准",
+        "when": (
+            "任务包含至少三个清晰动作、用户给出多项要求，或工作需要跨回合、跨阶段验证",
         ),
-        "operations": ("list", "update", "submit_review", "complete", "cancel"),
+        "notFor": ("简单问答、单步操作、修改用户每日计划或替代长期 Goal",),
+        "input": "init、start、done、drop、block、unblock、append、view 或 rm",
+        "output": "当前 Todo 的阶段、任务状态、计数与本次完成项",
+        "does": (
+            "按 OMP Todo 状态机维护 Session 清单；每次调用原子更新并发布最新投影，"
+            "Agent 可自行创建、推进、完成、阻塞、解除阻塞、放弃或清空。"
+        ),
+        "operations": (
+            "init",
+            "start",
+            "done",
+            "drop",
+            "block",
+            "unblock",
+            "append",
+            "view",
+            "rm",
+        ),
         "resultPresentation": "tool_result",
     },
     {
@@ -393,12 +433,12 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "modelVisible": False,
         "domain": "planning",
         "displayName": "工作文档",
-        "description": "固定读取与管理当前权威 Plan、Goal 或 Room WorkItem 绑定的活动及归档工作文档",
+        "description": "固定读取与管理当前权威 Todo、Goal 或 Room WorkItem 绑定的活动及归档工作文档",
         "when": ("本地控制面需要列出、检查、修复、重开或擦除权威工作文档",),
         "notFor": ("扫描工作区猜测文档身份，或绕过终态回执与擦除审批",),
         "input": "规范 work_documents 操作及其固定参数",
         "output": "经 JSON 契约验证的列表、详情或命令回执",
-        "does": "调用 WorkDocumentService 固定适配器；不创建第二个 Plan、Goal 或 Room 状态所有者。",
+        "does": "调用 WorkDocumentService 固定适配器；不创建第二个 Todo、Goal 或 Room 状态所有者。",
         "operations": (
             "list",
             "history.search",
@@ -460,7 +500,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
             "绕过原生批准直接写入文件",
         ),
         "input": "操作名、授权根或源文件、位置、服务器选择与有界超时",
-        "output": "有界语义结果、服务状态，或哈希绑定的多文件修改预览和回执",
+        "output": "有界语义结果、服务状态，或含引用证据的哈希绑定多文件修改预览和回执",
         "does": "在 WorkspaceHarness 安全边界内读取语言服务结果并受控应用纯文本编辑。",
         "operations": (
             "status",
@@ -604,6 +644,41 @@ if (
         "Agent Tool inventory or order differs between agent_tools and agent_tool_ids"
     )
 
+_KNOWLEDGE_CHUNKING_PARAMETER_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "minProperties": 1,
+    "properties": {
+        "strategy": {
+            "type": "string",
+            "enum": ["general", "markdown", "book", "qa", "laws", "separator", "fixed"],
+        },
+        "size": {"type": "integer", "minimum": 200, "maximum": 8_000},
+        "overlap": {"type": "integer", "minimum": 0, "maximum": 2_000},
+        "separator": {"type": "string", "maxLength": 100},
+        "respectHeadings": {"type": "boolean"},
+        "respectPageBoundaries": {"type": "boolean"},
+    },
+}
+_KNOWLEDGE_RETRIEVAL_PARAMETER_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "minProperties": 1,
+    "properties": {
+        "mode": {"type": "string", "enum": ["hybrid", "lexical", "dense"]},
+        "topK": {"type": "integer", "minimum": 1, "maximum": 100},
+        "threshold": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "lexicalWeight": {"type": "number", "minimum": 0.0, "maximum": 10.0},
+        "denseWeight": {"type": "number", "minimum": 0.0, "maximum": 10.0},
+        "graphEnabled": {"type": "boolean"},
+        "graphWeight": {"type": "number", "minimum": 0.0, "maximum": 10.0},
+        "rrfK": {"type": "integer", "minimum": 1, "maximum": 1_000},
+        "candidateMultiplier": {"type": "integer", "minimum": 1, "maximum": 20},
+        "rerankEnabled": {"type": "boolean"},
+        "rerankCandidateDepth": {"type": "integer", "minimum": 1, "maximum": 100},
+    },
+}
+
 _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
     "planning": {
         "type": "object",
@@ -663,120 +738,218 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
     },
     "knowledge": {
         "type": "object",
+        "additionalProperties": False,
+        # Keep the Provider-facing registry compact: the shared property table
+        # carries validation bounds once, while oneOf retains operation-specific
+        # required fields. The Python adapter still dispatches strictly by op.
+        "properties": {
+            "op": {"type": "string"},
+            "kbId": {"type": "string", "maxLength": 240},
+            "query": {"type": "string", "maxLength": 500},
+            "topK": {"type": "integer", "minimum": 1, "maximum": 12},
+            "searchMode": {
+                "type": "string",
+                "enum": ["hybrid", "lexical", "dense"],
+            },
+            "threshold": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            "rerank": {"type": "boolean"},
+            "rerankCandidateDepth": {"type": "integer", "minimum": 1, "maximum": 100},
+            "fileName": {
+                "type": "string",
+                "maxLength": 240,
+                "pattern": r"^[^/\\\x00]+$",
+            },
+            "fileId": {"type": "string", "maxLength": 240},
+            "chunkId": {"type": "string", "maxLength": 240},
+            "patterns": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 10,
+                "items": {"type": "string", "maxLength": 240},
+            },
+            "useRegex": {"type": "boolean"},
+            "caseSensitive": {"type": "boolean"},
+            "maxWindows": {"type": "integer", "minimum": 1, "maximum": 20},
+            "windowSize": {"type": "integer", "minimum": 1, "maximum": 300},
+            "before": {"type": "integer", "minimum": 0, "maximum": 10},
+            "after": {"type": "integer", "minimum": 0, "maximum": 10},
+            "line": {"type": "integer", "minimum": 1, "maximum": 50_000_000},
+            "offset": {"type": "integer", "minimum": 0, "maximum": 50_000_000},
+            "name": {"type": "string", "maxLength": 300},
+            "description": {"type": "string", "maxLength": 4_000},
+            "agentEnabled": {"type": "boolean"},
+            "parserProvider": {
+                "type": "string",
+                "enum": ["auto", "builtin", "mineru"],
+            },
+            "chunkingConfig": copy.deepcopy(_KNOWLEDGE_CHUNKING_PARAMETER_SCHEMA),
+            "retrievalConfig": copy.deepcopy(_KNOWLEDGE_RETRIEVAL_PARAMETER_SCHEMA),
+            "expectedRevision": {"type": "integer", "minimum": 1},
+            "text": {"type": "string", "maxLength": 262_144},
+        },
         "oneOf": [
             *[
                 {
-                    "type": "object",
-                    "additionalProperties": False,
                     "required": ["op"],
                     "properties": {"op": {"const": operation}},
                 }
                 for operation in ("list_bases", "status")
             ],
+            *[
+                {
+                    "required": ["op", "kbId"],
+                    "properties": {"op": {"const": operation}},
+                }
+                for operation in ("get_base", "list_documents", "rebuild_preview")
+            ],
             {
-                "type": "object",
-                "additionalProperties": False,
                 "required": ["op", "kbId", "query"],
-                "properties": {
-                    "op": {"const": "search"},
-                    "kbId": {"type": "string", "minLength": 1, "maxLength": 240},
-                    "query": {"type": "string", "minLength": 1, "maxLength": 500},
-                    "topK": {"type": "integer", "minimum": 1, "maximum": 12},
-                    "searchMode": {
-                        "type": "string",
-                        "enum": ["hybrid", "lexical", "dense"],
-                    },
-                    "fileName": {"type": "string", "maxLength": 240},
-                },
+                "properties": {"op": {"const": "search"}},
             },
             {
-                "type": "object",
-                "additionalProperties": False,
                 "required": ["op", "kbId", "fileId", "patterns"],
-                "properties": {
-                    "op": {"const": "find"},
-                    "kbId": {"type": "string", "minLength": 1, "maxLength": 240},
-                    "fileId": {"type": "string", "minLength": 1, "maxLength": 240},
-                    "patterns": {
-                        "type": "array",
-                        "minItems": 1,
-                        "maxItems": 10,
-                        "items": {"type": "string", "minLength": 1, "maxLength": 240},
-                    },
-                    "useRegex": {"type": "boolean"},
-                    "caseSensitive": {"type": "boolean"},
-                    "maxWindows": {"type": "integer", "minimum": 1, "maximum": 20},
-                    "windowSize": {"type": "integer", "minimum": 4, "maximum": 120},
-                    "offset": {"type": "integer", "minimum": 0, "maximum": 1_000_000},
-                },
+                "properties": {"op": {"const": "find"}},
             },
             {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["op", "kbId", "fileId"],
-                "properties": {
-                    "op": {"const": "open"},
-                    "kbId": {"type": "string", "minLength": 1, "maxLength": 240},
-                    "fileId": {"type": "string", "minLength": 1, "maxLength": 240},
-                    "line": {"type": "integer", "minimum": 1, "maximum": 50_000_000},
-                    "offset": {"type": "integer", "minimum": 0, "maximum": 50_000_000},
-                    "windowSize": {"type": "integer", "minimum": 1, "maximum": 300},
-                },
+                "required": ["op", "kbId"],
+                "anyOf": [
+                    {"required": ["fileId"]},
+                    {"required": ["chunkId"]},
+                ],
+                "properties": {"op": {"const": "open"}},
+            },
+            {
+                "required": ["op", "name"],
+                "properties": {"op": {"const": "create_base"}},
+            },
+            {
+                "required": ["op", "kbId", "expectedRevision"],
+                "properties": {"op": {"const": "configure_base"}},
+            },
+            {
+                "required": ["op", "kbId", "expectedRevision", "fileName", "text"],
+                "properties": {"op": {"const": "import_text"}},
+            },
+            {
+                "required": ["op", "kbId", "expectedRevision"],
+                "properties": {"op": {"const": "rebuild"}},
             },
         ],
     },
-    "agent_plan": {
+    "todo": {
         "type": "object",
-        "oneOf": [
-            {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["op"],
-                "properties": {
-                    "op": {"const": "list"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string"},
+            "list": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 20,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["phase", "items"],
+                    "properties": {
+                        "phase": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 80,
+                        },
+                        "items": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 100,
+                            "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 240,
+                            },
+                        },
+                    },
                 },
             },
-            {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["op"],
-                "anyOf": [
-                    {"required": ["title"]},
-                    {"required": ["itemId"]},
-                ],
-                "properties": {
-                    "op": {"const": "update"},
-                    "itemId": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 160,
-                        "description": "更新已有计划项时使用 list 返回的 itemId；创建时可省略。",
-                    },
-                    "title": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 240,
-                        "description": "创建新计划项时必填。",
-                    },
-                    "status": {
-                        "type": "string",
-                        "enum": ["pending", "in_progress", "completed"],
-                    },
+            "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
+                "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240,
                 },
+            },
+            "phase": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+            },
+            "task": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240,
+            },
+            "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500,
+            },
+        },
+        "oneOf": [
+            {
+                "required": ["op"],
+                "oneOf": [
+                    {"required": ["list"]},
+                    {"required": ["items"]},
+                ],
+                "properties": {"op": {"const": "init"}},
+            },
+            {
+                "required": ["op", "task"],
+                "properties": {"op": {"const": "start"}},
             },
             *[
                 {
-                    "type": "object",
-                    "additionalProperties": False,
                     "required": ["op"],
-                    "properties": {
-                        "op": {"const": operation},
-                        "note": {"type": "string", "maxLength": 600},
-                    },
+                    "oneOf": [
+                        {"required": ["task"]},
+                        {"required": ["phase"]},
+                    ],
+                    "properties": {"op": {"const": operation}},
                 }
-                for operation in ("submit_review", "complete", "cancel")
+                for operation in ("done", "drop", "block", "unblock")
             ],
+            {
+                "additionalProperties": False,
+                "required": ["op", "phase", "items"],
+                "properties": {
+                    "op": {"const": "append"},
+                    "phase": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 80,
+                    },
+                    "items": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 100,
+                        "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 240,
+                        },
+                    },
+                },
+            },
+            {
+                "required": ["op"],
+                "properties": {"op": {"const": "view"}},
+            },
+            {
+                "required": ["op"],
+                "not": {"required": ["task", "phase"]},
+                "properties": {"op": {"const": "rm"}},
+            },
         ],
     },
     "agent_goal": {
@@ -946,7 +1119,7 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                     "op": {"const": "register"},
                     "authorityKind": {
                         "type": "string",
-                        "enum": ["session_plan", "session_goal", "room_work_item"],
+                        "enum": ["session_goal", "room_work_item"],
                     },
                     "authorityId": {"type": "string", "minLength": 1, "maxLength": 240},
                     "authorityRevision": {"type": "integer", "minimum": 0},
@@ -1079,7 +1252,7 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
         "properties": {
             "authorityKind": {
                 "type": "string",
-                "enum": ["session_plan", "session_goal", "room_work_item"],
+                "enum": ["session_goal", "room_work_item"],
             },
             "authorityId": {"type": "string", "minLength": 1, "maxLength": 240},
             "authorityRevision": {"type": "integer", "minimum": 0},
@@ -1248,7 +1421,7 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "targetRoleId": {"type": "string", "maxLength": 120},
     "targetRoleVersion": {"type": "string", "maxLength": 40},
     "planningTaskId": {"type": "string", "maxLength": 240},
-    "planItemId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "todoTask": {"type": "string", "minLength": 1, "maxLength": 240},
     "wakeAtMs": {"type": "integer", "minimum": 1},
     "timezone": {"type": "string", "maxLength": 80},
     "recurrenceKind": {"type": "string", "enum": ["once", "daily", "weekly"]},
@@ -1261,6 +1434,15 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     },
     "version": {"type": "string", "enum": ["1"]},
     "task": {"type": "string", "minLength": 1, "maxLength": 8_000},
+    "expectedOutput": {"type": "string", "minLength": 1, "maxLength": 2_000},
+    "acceptanceCriteria": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "uniqueItems": True,
+        "items": {"type": "string", "minLength": 1, "maxLength": 1_000},
+    },
+    "outputSchema": {"type": "object"},
     "tasks": {
         "type": "array",
         "minItems": 1,
@@ -1269,7 +1451,7 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
         "items": {
             "type": "object",
             "additionalProperties": False,
-            "required": ["agent", "task"],
+            "required": ["agent", "task", "expectedOutput", "acceptanceCriteria"],
             "properties": {
                 "agent": {
                     "type": "string",
@@ -1277,6 +1459,23 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
                 },
                 "version": {"type": "string", "enum": ["1"]},
                 "task": {"type": "string", "minLength": 1, "maxLength": 8_000},
+                "expectedOutput": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2_000,
+                },
+                "acceptanceCriteria": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "uniqueItems": True,
+                    "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1_000,
+                    },
+                },
+                "outputSchema": {"type": "object"},
             },
         },
     },
@@ -1425,7 +1624,8 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
     "models": ("slot", "provider", "endpoint", "model", "sourceApprovalId"),
     "configuration": ("query", "limit", "action", "sourceApprovalId"),
     "agents": (
-        "agent", "version", "task", "tasks", "planItemId", "contextMode", "wait",
+        "agent", "version", "task", "tasks", "expectedOutput",
+        "acceptanceCriteria", "outputSchema", "todoTask", "contextMode", "wait",
         "runId", "batchId", "artifactId", "limit",
     ),
     "plugins": ("draftId", "manifest", "files", "sourcePath", "validationToken", "enable"),
@@ -1530,7 +1730,10 @@ _RUNTIME_TOOL_REQUIRED_ALTERNATIVES: dict[
 ] = {
     ("models", "profile_preview"): (("provider",), ("endpoint",), ("model",)),
     ("models", "profile_apply"): (("provider",), ("endpoint",), ("model",)),
-    ("agents", "delegate"): (("tasks",), ("agent", "task")),
+    ("agents", "delegate"): (
+        ("tasks",),
+        ("agent", "task", "expectedOutput", "acceptanceCriteria"),
+    ),
     ("agents", "abort"): (("runId",), ("batchId",)),
     ("agent_role_book", "review"): (("revisionId",), ("draftId",)),
     ("memory", "get"): (("targetId",), ("draftId",)),
@@ -1663,6 +1866,7 @@ class ControlToolGateway:
         project: str,
         facade: object | None = None,
         knowledge_client: object | None = None,
+        knowledge_control: object | None = None,
         workspace_harness: WorkspaceHarness | None = None,
         background_jobs: AgentBackgroundJobService | None = None,
         delegation: object | None = None,
@@ -1684,6 +1888,7 @@ class ControlToolGateway:
         self.project = project
         self.facade = facade
         self.knowledge_client = knowledge_client
+        self.knowledge_control = knowledge_control
         self.workspace_harness = workspace_harness or WorkspaceHarness()
         self.background_jobs = background_jobs
         self.delegation = delegation
@@ -1724,6 +1929,12 @@ class ControlToolGateway:
         )
 
     def runtime_manifests(self, session: Mapping[str, object]) -> list[Mapping[str, object]]:
+        # The runtime callback may retain a Prompt-time Session mapping. Reload
+        # the durable policy immediately before disclosure so a Room workspace
+        # lease cannot be widened by a stale workspace-managed grant.
+        session_id = str(session.get("id") or "").strip()
+        if session_id:
+            session = self.sessions.get(session_id)
         manifest_items = self._manifest_items(session)
         capability_catalog = build_capability_catalog(
             tool_manifests=manifest_items,
@@ -1762,6 +1973,11 @@ class ControlToolGateway:
                 "output": spec["output"],
                 "does": spec["does"],
                 "risk": manifest.get("riskLevel") or "R0",
+                **(
+                    {"alwaysAvailable": True}
+                    if manifest.get("alwaysAvailable") is True
+                    else {}
+                ),
             }
             if spec.get("modelVisible") is False:
                 item["modelVisible"] = False
@@ -1815,6 +2031,19 @@ class ControlToolGateway:
             }
             validate_contract(manifest, "control-tool-manifest.v1.json")
             if session is not None:
+                fixed_todo = _fixed_todo_for_session(
+                    session,
+                    tool_id=str(spec["id"]),
+                )
+                authorization_session = (
+                    {
+                        **session,
+                        "toolAllowlistMode": "profile",
+                        "allowedTools": [],
+                    }
+                    if fixed_todo
+                    else session
+                )
                 mode_compatible = str(session.get("mode") or "assistant") in manifest["sessionModes"]
                 manifest["profileOperations"] = {
                     profile: [
@@ -1843,7 +2072,7 @@ class ControlToolGateway:
                     for operation in operations
                     if mode_compatible
                     and _tool_profile_allows(
-                        session,
+                        authorization_session,
                         tool=str(spec["id"]),
                         operation=operation,
                         spec=spec,
@@ -1854,9 +2083,16 @@ class ControlToolGateway:
                 manifest["enabled"] = bool(effective_operations)
                 manifest["effectiveOperations"] = effective_operations
                 manifest["explicitlyAllowed"] = (
-                    str(session.get("toolAllowlistMode") or "profile") != "explicit"
-                    or str(spec["id"]) in {str(value) for value in session.get("allowedTools") or []}
+                    True
+                    if fixed_todo
+                    else (
+                        str(session.get("toolAllowlistMode") or "profile") != "explicit"
+                        or str(spec["id"])
+                        in {str(value) for value in session.get("allowedTools") or []}
+                    )
                 )
+                if fixed_todo and manifest["enabled"] is True:
+                    manifest["alwaysAvailable"] = True
                 if (
                     include_runtime_projection
                     and str(spec["id"]) == "workspace_lsp"
@@ -1881,7 +2117,9 @@ class ControlToolGateway:
         args = _normalize_runtime_tool_args(tool, raw_args)
         if tool in {
             "room_state",
+            "room_define",
             "room_collaborate",
+            "room_integrate",
             "room_post",
             "room_commit",
         }:
@@ -1906,6 +2144,13 @@ class ControlToolGateway:
         operation = str(args.get("op") or "")
         if operation not in spec["operations"]:
             raise ValueError(f"unsupported {tool} operation")
+        if read_only_policy_active(session) and read_only_blocks_effect(
+            tool,
+            operation,
+        ):
+            raise ValueError(
+                "workspace mutation is blocked by the active read-only policy"
+            )
 
         room_authorization = self._authorize_room_product_tool(
             session_id=session_id,
@@ -1999,6 +2244,17 @@ class ControlToolGateway:
         room_authorization: Mapping[str, object] | None,
     ) -> dict[str, object]:
         session_id = str(session["id"])
+        # Re-read immediately before authorization/approval so a waiting Room
+        # Dispatch cannot apply a mutation after its workspace lease becomes
+        # read-only.
+        session = self.sessions.get(session_id)
+        if read_only_policy_active(session) and read_only_blocks_effect(
+            tool,
+            operation,
+        ):
+            raise ValueError(
+                "workspace mutation is blocked by the active read-only policy"
+            )
         if not _tool_profile_allows(session, tool=tool, operation=operation, spec=spec):
             raise ValueError("tool operation is not enabled for this session tool profile")
         if (tool, operation) in {
@@ -2030,7 +2286,7 @@ class ControlToolGateway:
             "configuration": self._configuration,
             "agents": self._agents,
             "browser": self._browser,
-            "agent_plan": self._agent_plan,
+            "todo": self._todo,
             "agent_goal": self._agent_goal,
             "plugins": self._plugins,
             "work_documents": self._work_documents,
@@ -2081,6 +2337,8 @@ class ControlToolGateway:
                 session,
                 tool=tool,
                 operation=operation,
+                preview=args,
+                risk_level=risk_level,
             )
             if strategy == APPROVAL_DENY:
                 # A denied operation must not leave a pending approval behind.
@@ -2102,10 +2360,23 @@ class ControlToolGateway:
                     _room_invocation_receipt_id(room_authorization)
                 ),
                 room_root_id=_room_invocation_root_id(room_authorization),
+                room_lineage=_room_invocation_lineage(room_authorization),
             )
+            approval = (
+                result.get("approval")
+                if isinstance(result.get("approval"), Mapping)
+                else None
+            )
+            if approval is None:
+                raise ValueError("approval preparation returned no approval")
+            result = dict(result)
+            result["approval"] = self.sessions.bind_approval_tool_call(
+                str(approval.get("approvalId") or ""),
+                tool_call_id=str(request["toolCallId"]),
+            )
+            approval = result["approval"]
             if strategy in {APPROVAL_AUTO, APPROVAL_MODEL}:
-                approval = result.get("approval") if isinstance(result.get("approval"), Mapping) else None
-                if approval is None or self._auto_approval_executor is None:
+                if self._auto_approval_executor is None:
                     raise ValueError("unattended approval bridge is unavailable")
                 result = dict(self._auto_approval_executor(approval))
         response = {
@@ -2354,6 +2625,7 @@ class ControlToolGateway:
         operation: str,
         invocation_receipt_id: str,
         root_id: str,
+        room_lineage: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         if not invocation_receipt_id:
             return dict(prepared)
@@ -2388,6 +2660,12 @@ class ControlToolGateway:
         rebound_base_state = {
             **base_state,
             "roomInvocationReceiptId": invocation_receipt_id,
+            **(
+                {"roomLineage": dict(room_lineage)}
+                if isinstance(room_lineage, Mapping)
+                and room_lineage.get("rootId")
+                else {}
+            ),
         }
         rebound_preview = {
             **preview,
@@ -2561,80 +2839,70 @@ class ControlToolGateway:
             return dict(self.delegation.abort(session_id, args))  # type: ignore[attr-defined]
         raise ValueError("unsupported agents operation")
 
-    def _agent_plan(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+    def _todo(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         session_id = _bounded_text(args.get("_sessionId"), maximum=240)
         if not session_id:
-            raise ValueError("agent plan session is missing")
-        if operation == "list":
-            plan = self.sessions.agent_plan(
-                session_id,
-                limit=_bounded_int(args.get("limit"), default=100, minimum=1, maximum=100),
+            raise ValueError("Todo session is missing")
+        mutation: dict[str, object] = {"op": operation}
+        for key in ("list", "items", "phase", "task", "reason"):
+            if key in args:
+                mutation[key] = args[key]
+        result = self.sessions.mutate_agent_todo(
+            session_id,
+            mutation,
+            actor="agent-runtime",
+        )
+        todo = (
+            dict(result["todo"])
+            if isinstance(result.get("todo"), Mapping)
+            else self.sessions.agent_todo(session_id)
+        )
+        if operation != "view":
+            self._publish_workflow(session_id, f"todo:{operation}")
+            if self.work_documents is not None:
+                try:
+                    self.work_documents.observe_authority(  # type: ignore[attr-defined,union-attr]
+                        "session_todo",
+                        session_id,
+                    )
+                except Exception:
+                    # The observer persists its own retry record. The Todo
+                    # mutation is already durable and must not be replayed.
+                    pass
+        counts = todo.get("counts") if isinstance(todo.get("counts"), Mapping) else {}
+        total = _safe_int(counts.get("total"))
+        if total == 0:
+            summary = (
+                "Todo list is empty."
+                if operation == "view"
+                else "Todo list cleared."
             )
-            counts = plan["counts"] if isinstance(plan.get("counts"), Mapping) else {}
-            return {
-                "summary": (
-                    f"当前计划有 {_safe_int(counts.get('pending'))} 项待办、"
-                    f"{_safe_int(counts.get('inProgress'))} 项进行中、"
-                    f"{_safe_int(counts.get('completed'))} 项已完成"
-                ),
-                "presentationKind": "task_plan",
-                "plan": plan,
-                "items": list(plan.get("items") or []),
-            }
-        if operation == "update":
-            result = self.sessions.update_agent_plan_item(
-                session_id,
-                item_id=_bounded_text(args.get("itemId"), maximum=160),
-                title=_bounded_text(args.get("title"), maximum=240),
-                status=_bounded_text(args.get("status"), maximum=40),
+        else:
+            summary = (
+                f"Todo：{_safe_int(counts.get('completed'))}/{total} 已完成，"
+                f"{_safe_int(counts.get('inProgress'))} 进行中，"
+                f"{_safe_int(counts.get('pending'))} 待处理，"
+                f"{_safe_int(counts.get('blocked'))} 已阻塞，"
+                f"{_safe_int(counts.get('abandoned'))} 已放弃"
             )
-            event = result["event"] if isinstance(result.get("event"), Mapping) else {}
-            plan = result["plan"] if isinstance(result.get("plan"), Mapping) else {}
-            self._publish_workflow(session_id, "plan:item_update")
-            return {
-                "summary": f"计划项《{event.get('title', '')}》已更新为 {event.get('status', '')}",
-                "presentationKind": "task_plan",
-                "event": event,
-                "plan": plan,
-                "items": list(plan.get("items") or []),
-            }
-        if operation in {"submit_review", "complete", "cancel"}:
-            action = {
-                "submit_review": "submit_review",
-                "complete": "complete",
-                "cancel": "cancel",
-            }[operation]
-            result = self.sessions.mutate_agent_plan(
-                session_id,
-                {
-                    "action": action,
-                    "note": _bounded_text(args.get("note"), maximum=600),
-                },
-                actor="agent-runtime",
-            )
-            plan = result["plan"] if isinstance(result.get("plan"), Mapping) else {}
-            self._publish_workflow(session_id, f"plan:{action}")
-            summary = f"执行计划已进入 {plan.get('status', '')} 状态"
-            if operation == "submit_review":
-                summary = (
-                    "执行计划已提交审阅；可继续处理用户已明确要求的工作区内操作，"
-                    "具体动作仍服从原有风险与审批策略。"
-                )
-            return {
-                "summary": summary,
-                "presentationKind": "task_plan",
-                "plan": plan,
-                "items": list(plan.get("items") or []),
-                **(
-                    {
-                        "mutationAllowed": True,
-                        "nextAction": "continue_in_scope_execution",
-                    }
-                    if operation == "submit_review"
-                    else {}
-                ),
-            }
-        raise ValueError("unsupported agent_plan operation")
+        completed_tasks = [
+            dict(item)
+            for item in result.get("completedTasks", [])
+            if isinstance(item, Mapping)
+        ]
+        return {
+            "summary": summary,
+            "presentationKind": "todo",
+            "todo": todo,
+            "phases": list(todo.get("phases") or []),
+            "storage": str(result.get("storage") or "session"),
+            "completedTasks": completed_tasks,
+            **(
+                {"event": dict(result["event"])}
+                if isinstance(result.get("event"), Mapping)
+                else {}
+            ),
+        }
 
     def _agent_goal(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         session_id = _bounded_text(args.get("_sessionId"), maximum=240)
@@ -2829,6 +3097,14 @@ class ControlToolGateway:
         tool = str(approval.get("toolId") or "")
         operation = str(approval.get("operation") or "")
         session_id = str(approval.get("sessionId") or "")
+        live_session = self.sessions.get(session_id)
+        if read_only_policy_active(live_session) and read_only_blocks_effect(
+            tool,
+            operation,
+        ):
+            raise ValueError(
+                "workspace mutation is blocked by the active read-only policy"
+            )
         room_invocation_receipt_id = _approval_room_invocation_receipt_id(
             approval
         )
@@ -2861,37 +3137,19 @@ class ControlToolGateway:
         tool = str(approval.get("toolId") or "")
         operation = str(approval.get("operation") or "")
         if (tool, operation) == ("workspace_job", "start"):
-            result = self._apply_background_job_start(approval)
-            self._mark_workspace_execution_started(approval)
-            return result
+            return self._apply_background_job_start(approval)
         if (tool, operation) == ("workspace_job", "cancel"):
             return self._apply_background_job_cancel(approval)
         if (tool, operation) == ("workspace_shell", "run"):
-            result = self._apply_workspace_command(approval)
-            if (
-                result.get("mutationApplied") is True
-                and _safe_int(result.get("exitCode")) == 0
-                and result.get("timedOut") is not True
-                and result.get("outputLimited") is not True
-            ):
-                self._mark_workspace_execution_started(approval)
-            return result
+            return self._apply_workspace_command(approval)
         if (tool, operation) == ("workspace_patch", "apply"):
-            result = self._apply_workspace_patch(approval)
-            self._mark_workspace_execution_started(approval)
-            return result
+            return self._apply_workspace_patch(approval)
         if (tool, operation) == ("workspace_edit", "apply"):
-            result = self._apply_workspace_edit(approval)
-            self._mark_workspace_execution_started(approval)
-            return result
+            return self._apply_workspace_edit(approval)
         if (tool, operation) == ("workspace_write", "apply"):
-            result = self._apply_workspace_write(approval)
-            self._mark_workspace_execution_started(approval)
-            return result
+            return self._apply_workspace_write(approval)
         if tool == "workspace_lsp" and operation in {"rename", "code_action_apply"}:
-            result = self._apply_workspace_lsp(approval)
-            self._mark_workspace_execution_started(approval)
-            return result
+            return self._apply_workspace_lsp(approval)
         if (tool, operation) == ("desktop_semantic", "act"):
             return self._apply_desktop_action(approval)
         if (tool, operation) == ("planning", "undo_task_event"):
@@ -2907,6 +3165,13 @@ class ControlToolGateway:
             "governance_rollback",
         }:
             return self._apply_governed_memory_mutation(approval)
+        if tool == "knowledge" and operation in {
+            "create_base",
+            "configure_base",
+            "import_text",
+            "rebuild",
+        }:
+            return self._apply_knowledge_mutation(approval)
         if tool == "input" and operation in {"apply_settings", "rollback_settings"}:
             return self._apply_input_settings(approval)
         if tool == "input" and operation in {"lexicon_apply", "lexicon_rollback"}:
@@ -2985,15 +3250,6 @@ class ControlToolGateway:
             audit_persisted=True,
         )
 
-    def _mark_workspace_execution_started(self, approval: Mapping[str, object]) -> None:
-        """Advance Plan only after the hash-bound workspace write succeeds."""
-
-        session_id = str(approval.get("sessionId") or "")
-        before = self.sessions.agent_plan(session_id)
-        if before.get("status") != "approved":
-            return
-        self.sessions.record_agent_plan_execution_started(session_id)
-        self._publish_workflow(session_id, "plan:start_execution")
 
     def _prepare_browser_action(
         self,
@@ -3165,6 +3421,7 @@ class ControlToolGateway:
         risk_level: str,
         room_invocation_receipt_id: str = "",
         room_root_id: str = "",
+        room_lineage: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         prepared = self._prepare_approval_operation(
             session_id=session_id,
@@ -3180,6 +3437,7 @@ class ControlToolGateway:
             operation=operation,
             invocation_receipt_id=room_invocation_receipt_id,
             root_id=room_root_id,
+            room_lineage=room_lineage,
         )
 
     def _prepare_approval_operation(
@@ -3267,6 +3525,18 @@ class ControlToolGateway:
             "governance_rollback",
         }:
             return self._prepare_governed_memory_mutation(
+                session_id=session_id,
+                operation=operation,
+                args=args,
+                risk_level=risk_level,
+            )
+        if tool == "knowledge" and operation in {
+            "create_base",
+            "configure_base",
+            "import_text",
+            "rebuild",
+        }:
+            return self._prepare_knowledge_mutation(
                 session_id=session_id,
                 operation=operation,
                 args=args,
@@ -5476,16 +5746,28 @@ class ControlToolGateway:
         )
         if prepared.roots_digest != str(base_state.get("workspaceRootsSha256") or ""):
             raise ValueError("authorized workspace changed after approval preview")
+        causal_metadata = (
+            dict(approval.get("causalMetadata"))
+            if isinstance(approval.get("causalMetadata"), Mapping)
+            else {}
+        )
+        lineage = base_state.get("roomLineage")
+        if isinstance(lineage, Mapping):
+            causal_metadata.update(
+                {
+                    "roomId": lineage.get("roomId"),
+                    "rootId": lineage.get("rootId"),
+                    "generation": lineage.get("generation"),
+                    "taskId": lineage.get("taskId"),
+                    "dispatchId": lineage.get("dispatchId"),
+                }
+            )
         receipt = self._background_job_service().start(
             session_id,
             prepared,
             label=action_payload.get("label"),
             approval_id=str(approval.get("approvalId") or ""),
-            causal_metadata=(
-                approval.get("causalMetadata")
-                if isinstance(approval.get("causalMetadata"), Mapping)
-                else None
-            ),
+            causal_metadata=causal_metadata,
         )
         return {
             **receipt,
@@ -5893,7 +6175,7 @@ class ControlToolGateway:
             authority_kind = str(work_document.get("authorityKind") or "")
             authority_id = str(work_document.get("authorityId") or "")
             if (
-                authority_kind in {"session_plan", "session_goal"}
+                authority_kind == "session_goal"
                 and authority_id != session_id
             ):
                 raise ValueError(
@@ -6935,6 +7217,24 @@ class ControlToolGateway:
         )
 
     def _knowledge(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        if operation in {"get_base", "list_documents", "rebuild_preview"}:
+            control = self._knowledge_management_service()
+            base_id = _knowledge_identifier(args.get("kbId"), "kbId")
+            if operation == "get_base":
+                result = control.get_base(base_id)  # type: ignore[attr-defined]
+                summary = "已读取知识库配置、版本与索引统计"
+            elif operation == "list_documents":
+                result = control.list_documents(base_id)  # type: ignore[attr-defined]
+                summary = "已读取知识库文档清单"
+            else:
+                result = control.reindex_preview(base_id)  # type: ignore[attr-defined]
+                summary = "已生成当前知识库索引重建预览；执行重建仍需批准"
+            if not isinstance(result, Mapping):
+                raise ValueError("knowledge management returned an invalid result")
+            safe_result = _safe_knowledge_payload(result)
+            safe_result.setdefault("summary", summary)
+            safe_result.setdefault("untrustedData", True)
+            return safe_result
         if operation == "status" and self.knowledge_client is None:
             return {
                 "summary": "文档知识库当前不可用",
@@ -6956,16 +7256,31 @@ class ControlToolGateway:
             query = _bounded_text(args.get("query"), maximum=500)
             if not query:
                 raise ValueError("query is required for knowledge.search")
-            search_mode = _bounded_text(args.get("searchMode"), maximum=24) or "hybrid"
-            if search_mode not in {"hybrid", "lexical", "dense"}:
-                raise ValueError("searchMode must be hybrid, lexical, or dense")
-            payload.update(
-                {
-                    "query": query,
-                    "topK": _bounded_int(args.get("topK"), default=6, minimum=1, maximum=12),
-                    "mode": search_mode,
-                }
-            )
+            payload["query"] = query
+            if args.get("topK") is not None:
+                payload["topK"] = _knowledge_strict_int(
+                    args.get("topK"), field="topK", minimum=1, maximum=12
+                )
+            if args.get("searchMode") is not None:
+                search_mode = _bounded_text(args.get("searchMode"), maximum=24)
+                if search_mode not in {"hybrid", "lexical", "dense"}:
+                    raise ValueError("searchMode must be hybrid, lexical, or dense")
+                payload["mode"] = search_mode
+            if args.get("threshold") is not None:
+                payload["threshold"] = _knowledge_strict_float(
+                    args.get("threshold"), field="threshold", minimum=0.0, maximum=1.0
+                )
+            if args.get("rerank") is not None:
+                if not isinstance(args.get("rerank"), bool):
+                    raise ValueError("rerank must be boolean")
+                payload["rerank"] = args["rerank"]
+            if args.get("rerankCandidateDepth") is not None:
+                payload["rerankCandidateDepth"] = _knowledge_strict_int(
+                    args.get("rerankCandidateDepth"),
+                    field="rerankCandidateDepth",
+                    minimum=1,
+                    maximum=100,
+                )
             file_name = _bounded_text(args.get("fileName"), maximum=240)
             if file_name:
                 payload["fileName"] = file_name
@@ -7000,10 +7315,19 @@ class ControlToolGateway:
             )
         elif operation == "open":
             file_id = _bounded_text(args.get("fileId"), maximum=240)
-            if not file_id:
-                raise ValueError("fileId is required for knowledge.open")
-            payload.update(
-                {
+            chunk_id = _bounded_text(args.get("chunkId"), maximum=240)
+            if not file_id and not chunk_id:
+                raise ValueError("fileId or chunkId is required for knowledge.open")
+            if chunk_id:
+                payload.update(
+                    {
+                        "chunkId": chunk_id,
+                        "before": _bounded_int(args.get("before"), default=1, minimum=0, maximum=10),
+                        "after": _bounded_int(args.get("after"), default=1, minimum=0, maximum=10),
+                    }
+                )
+            else:
+                payload.update({
                     "fileId": file_id,
                     "line": _bounded_int(args.get("line"), default=1, minimum=1, maximum=50_000_000),
                     "offset": _bounded_int(
@@ -7012,8 +7336,7 @@ class ControlToolGateway:
                     "windowSize": _bounded_int(
                         args.get("windowSize"), default=180, minimum=1, maximum=300
                     ),
-                }
-            )
+                })
 
         handler = getattr(client, operation, None)
         if not callable(handler):
@@ -7035,6 +7358,291 @@ class ControlToolGateway:
             safe_result["summary"] = summaries[operation]
         safe_result.setdefault("untrustedData", True)
         return safe_result
+
+    def _knowledge_management_service(self) -> object:
+        control = self.knowledge_control
+        if control is None:
+            raise ValueError("document knowledge management is unavailable")
+        return control
+
+    def _prepare_knowledge_mutation(
+        self,
+        *,
+        session_id: str,
+        operation: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        control = self._knowledge_management_service()
+        changes: list[dict[str, object]] = []
+        if operation == "create_base":
+            action_payload = _normalize_knowledge_create_args(args)
+            base_state: dict[str, object] = {
+                "scope": "document_knowledge",
+                "mutation": "create_base",
+            }
+            title = "确认创建文档知识库"
+            summary = f"创建知识库《{action_payload['name']}》"
+            changes = [
+                {
+                    "label": "Agent 可检索",
+                    "before": "不存在",
+                    "after": "开启" if action_payload["agentEnabled"] else "关闭",
+                }
+            ]
+        elif operation == "configure_base":
+            base_id = _knowledge_identifier(args.get("kbId"), "kbId")
+            current = _knowledge_base_record(
+                control.get_base(base_id)  # type: ignore[attr-defined]
+            )
+            expected_revision = _knowledge_expected_revision(args.get("expectedRevision"))
+            _knowledge_require_base_revision(current, expected_revision)
+            patch = _normalize_knowledge_configure_args(args, current=current)
+            action_payload = {
+                "kbId": base_id,
+                "expectedRevision": expected_revision,
+                "patch": patch,
+            }
+            base_state = {
+                "baseRevision": expected_revision,
+                "baseName": str(current.get("name") or base_id),
+            }
+            title = "确认调整知识库参数"
+            summary = f"更新知识库《{base_state['baseName']}》的受控配置"
+            changes = _knowledge_configuration_changes(current, patch)
+        elif operation == "import_text":
+            base_id = _knowledge_identifier(args.get("kbId"), "kbId")
+            current = _knowledge_base_record(
+                control.get_base(base_id)  # type: ignore[attr-defined]
+            )
+            expected_revision = _knowledge_expected_revision(args.get("expectedRevision"))
+            _knowledge_require_base_revision(current, expected_revision)
+            imported = _normalize_knowledge_import_args(args)
+            action_payload = {
+                "kbId": base_id,
+                "expectedRevision": expected_revision,
+                **imported,
+            }
+            base_state = {
+                "baseRevision": expected_revision,
+                "baseName": str(current.get("name") or base_id),
+            }
+            title = "确认向文档知识库导入文本"
+            summary = (
+                f"向《{base_state['baseName']}》导入 {imported['fileName']} "
+                f"（{imported['byteSize']} 字节）"
+            )
+            changes = [
+                {
+                    "label": "导入内容",
+                    "before": "无",
+                    "after": f"{imported['fileName']} · sha256:{str(imported['textSha256'])[:12]}",
+                }
+            ]
+        elif operation == "rebuild":
+            base_id = _knowledge_identifier(args.get("kbId"), "kbId")
+            expected_revision = _knowledge_expected_revision(args.get("expectedRevision"))
+            current = _knowledge_base_record(
+                control.get_base(base_id)  # type: ignore[attr-defined]
+            )
+            _knowledge_require_base_revision(current, expected_revision)
+            native_preview = control.reindex_preview(base_id)  # type: ignore[attr-defined]
+            if not isinstance(native_preview, Mapping):
+                raise ValueError("knowledge rebuild preview is invalid")
+            preview_revision = _knowledge_expected_revision(
+                native_preview.get("configRevision")
+            )
+            if preview_revision != expected_revision:
+                raise ValueError("knowledge rebuild preview is stale")
+            preview_token = _knowledge_required_text(
+                native_preview.get("previewToken"),
+                field="previewToken",
+                maximum=240,
+            )
+            native_payload_sha256 = _knowledge_sha256(
+                native_preview.get("payloadSha256"),
+                field="payloadSha256",
+            )
+            action_payload = {
+                "kbId": base_id,
+                "expectedRevision": expected_revision,
+                "previewToken": preview_token,
+                "payloadSha256": native_payload_sha256,
+            }
+            base_state = {
+                "baseRevision": expected_revision,
+                "baseName": str(current.get("name") or base_id),
+                "documentCount": _safe_int(native_preview.get("documentCount")),
+                "chunkCount": _safe_int(native_preview.get("chunkCount")),
+            }
+            title = "确认重建知识库索引"
+            summary = (
+                f"重建《{base_state['baseName']}》的索引，"
+                f"涉及 {base_state['documentCount']} 个文档"
+            )
+            changes = [
+                {
+                    "label": "索引版本",
+                    "before": expected_revision,
+                    "after": "按当前配置重新构建",
+                }
+            ]
+        else:
+            raise ValueError("unsupported knowledge mutation")
+
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="knowledge",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        preview = {
+            "title": title,
+            "summary": summary,
+            "operationLabel": operation,
+            "changes": changes,
+            "actionPayload": action_payload,
+            "baseState": base_state,
+        }
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="knowledge",
+            operation=operation,
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=300_000,
+        )
+        return {
+            "summary": f"等待确认：{summary}",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_knowledge_mutation(
+        self,
+        approval: Mapping[str, object],
+    ) -> dict[str, object]:
+        operation = str(approval.get("operation") or "")
+        preview = (
+            approval.get("preview")
+            if isinstance(approval.get("preview"), Mapping)
+            else {}
+        )
+        action_payload = (
+            preview.get("actionPayload")
+            if isinstance(preview.get("actionPayload"), Mapping)
+            else {}
+        )
+        base_state = (
+            preview.get("baseState")
+            if isinstance(preview.get("baseState"), Mapping)
+            else {}
+        )
+        expected_digest = _approval_payload_digest(
+            session_id=str(approval.get("sessionId") or ""),
+            tool="knowledge",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("knowledge approval no longer matches its preview")
+
+        control = self._knowledge_management_service()
+        if operation == "create_base":
+            result = control.create_base(dict(action_payload))  # type: ignore[attr-defined]
+        else:
+            base_id = _knowledge_identifier(action_payload.get("kbId"), "kbId")
+            expected_revision = _knowledge_expected_revision(
+                action_payload.get("expectedRevision")
+            )
+            current = _knowledge_base_record(
+                control.get_base(base_id)  # type: ignore[attr-defined]
+            )
+            if _knowledge_base_revision(current) != expected_revision:
+                raise ValueError(
+                    "knowledge base changed after the approval preview was created"
+                )
+            if operation == "configure_base":
+                patch = (
+                    dict(action_payload["patch"])
+                    if isinstance(action_payload.get("patch"), Mapping)
+                    else {}
+                )
+                result = control.update_base(  # type: ignore[attr-defined]
+                    base_id,
+                    {**patch, "expectedRevision": expected_revision},
+                )
+            elif operation == "import_text":
+                text_value = action_payload.get("text")
+                if not isinstance(text_value, str):
+                    raise ValueError("knowledge import text is missing from its preview")
+                raw = text_value.encode("utf-8")
+                if len(raw) != _safe_int(action_payload.get("byteSize")):
+                    raise ValueError("knowledge import byte size no longer matches its preview")
+                if hashlib.sha256(raw).hexdigest() != str(
+                    action_payload.get("textSha256") or ""
+                ):
+                    raise ValueError("knowledge import digest no longer matches its preview")
+                result = control.import_document(  # type: ignore[attr-defined]
+                    base_id,
+                    data=raw,
+                    file_name=_knowledge_required_text(
+                        action_payload.get("fileName"),
+                        field="fileName",
+                        maximum=240,
+                    ),
+                    mime_type=_knowledge_required_text(
+                        action_payload.get("mimeType"),
+                        field="mimeType",
+                        maximum=200,
+                    ),
+                    parser_provider=_knowledge_parser_provider(
+                        action_payload.get("parserProvider")
+                    ),
+                )
+            elif operation == "rebuild":
+                result = control.rebuild(  # type: ignore[attr-defined]
+                    base_id,
+                    {
+                        "expectedRevision": expected_revision,
+                        "previewToken": _knowledge_required_text(
+                            action_payload.get("previewToken"),
+                            field="previewToken",
+                            maximum=240,
+                        ),
+                        "payloadSha256": _knowledge_sha256(
+                            action_payload.get("payloadSha256"),
+                            field="payloadSha256",
+                        ),
+                        "confirmText": "REBUILD",
+                    },
+                )
+            else:
+                raise ValueError("unsupported approved knowledge mutation")
+        if not isinstance(result, Mapping):
+            raise ValueError("knowledge management returned an invalid mutation receipt")
+        preview_summary = _bounded_text(preview.get("summary"), maximum=1_000)
+        return {
+            **_safe_knowledge_payload(result),
+            "summary": (
+                f"已完成：{preview_summary}"
+                if preview_summary
+                else "知识库操作已完成"
+            ),
+            "mutationApplied": True,
+            "operation": operation,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "auditId": str(approval.get("approvalId") or ""),
+            # Document Knowledge is an independent evidence domain.  A worker
+            # response must never opt its mutation receipt into personal
+            # Memory, even if an accidental or untrusted field says otherwise.
+            "memoryDomain": "document_knowledge",
+            "personalMemoryEligible": False,
+        }
 
     def _models(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         if operation == "status":
@@ -7666,6 +8274,385 @@ def _safe_lexicon_review_entry(item: Mapping[str, object]) -> dict[str, object]:
     }
 
 
+_KNOWLEDGE_CHUNKING_DEFAULTS: dict[str, object] = {
+    "strategy": "markdown",
+    "size": 1_200,
+    "overlap": 160,
+    "separator": "\n\n",
+    "respectHeadings": True,
+    "respectPageBoundaries": True,
+}
+_KNOWLEDGE_RETRIEVAL_DEFAULTS: dict[str, object] = {
+    "mode": "hybrid",
+    "topK": 10,
+    "threshold": 0.0,
+    "lexicalWeight": 1.0,
+    "denseWeight": 1.0,
+    "graphEnabled": True,
+    "graphWeight": 0.7,
+    "rrfK": 60,
+    "candidateMultiplier": 4,
+    "rerankEnabled": False,
+    "rerankCandidateDepth": 40,
+}
+
+
+def _normalize_knowledge_create_args(
+    args: Mapping[str, object],
+) -> dict[str, object]:
+    allowed = {
+        "op", "name", "description", "agentEnabled", "parserProvider",
+        "chunkingConfig", "retrievalConfig",
+    }
+    _knowledge_reject_unknown(args, allowed, "create_base")
+    payload: dict[str, object] = {
+        "name": _knowledge_required_text(args.get("name"), field="name", maximum=300),
+        "description": _knowledge_optional_text(
+            args.get("description"), field="description", maximum=4_000
+        ),
+        "agentEnabled": _knowledge_optional_bool(args, "agentEnabled", default=False),
+        "parserProvider": _knowledge_parser_provider(args.get("parserProvider")),
+    }
+    if args.get("chunkingConfig") is not None:
+        payload["chunkingConfig"] = _normalize_knowledge_chunking_config(
+            args.get("chunkingConfig")
+        )
+    if args.get("retrievalConfig") is not None:
+        payload["retrievalConfig"] = _normalize_knowledge_retrieval_config(
+            args.get("retrievalConfig")
+        )
+    return payload
+
+
+def _normalize_knowledge_configure_args(
+    args: Mapping[str, object],
+    *,
+    current: Mapping[str, object],
+) -> dict[str, object]:
+    allowed = {
+        "op", "kbId", "expectedRevision", "name", "description", "agentEnabled",
+        "parserProvider", "chunkingConfig", "retrievalConfig",
+    }
+    _knowledge_reject_unknown(args, allowed, "configure_base")
+    patch: dict[str, object] = {}
+    if "name" in args:
+        patch["name"] = _knowledge_required_text(
+            args.get("name"), field="name", maximum=300
+        )
+    if "description" in args:
+        patch["description"] = _knowledge_optional_text(
+            args.get("description"), field="description", maximum=4_000
+        )
+    if "agentEnabled" in args:
+        patch["agentEnabled"] = _knowledge_optional_bool(
+            args, "agentEnabled", default=False
+        )
+    if "parserProvider" in args:
+        patch["parserProvider"] = _knowledge_parser_provider(args.get("parserProvider"))
+    if "chunkingConfig" in args:
+        defaults = (
+            current.get("chunkingConfig")
+            if isinstance(current.get("chunkingConfig"), Mapping)
+            else _KNOWLEDGE_CHUNKING_DEFAULTS
+        )
+        patch["chunkingConfig"] = _normalize_knowledge_chunking_config(
+            args.get("chunkingConfig"), defaults=defaults
+        )
+    if "retrievalConfig" in args:
+        defaults = (
+            current.get("retrievalConfig")
+            if isinstance(current.get("retrievalConfig"), Mapping)
+            else _KNOWLEDGE_RETRIEVAL_DEFAULTS
+        )
+        patch["retrievalConfig"] = _normalize_knowledge_retrieval_config(
+            args.get("retrievalConfig"), defaults=defaults
+        )
+    if not patch:
+        raise ValueError("knowledge.configure_base requires at least one change")
+    return patch
+
+
+def _normalize_knowledge_import_args(
+    args: Mapping[str, object],
+) -> dict[str, object]:
+    allowed = {"op", "kbId", "expectedRevision", "fileName", "text", "parserProvider"}
+    _knowledge_reject_unknown(args, allowed, "import_text")
+    file_name = _knowledge_required_text(
+        args.get("fileName"), field="fileName", maximum=240
+    )
+    if file_name in {".", ".."} or "/" in file_name or "\\" in file_name:
+        raise ValueError("fileName must not contain a path")
+    text_value = args.get("text")
+    if not isinstance(text_value, str) or not text_value.strip():
+        raise ValueError("text is required for knowledge.import_text")
+    raw = text_value.encode("utf-8")
+    if len(text_value) > 262_144 or len(raw) > 262_144:
+        raise ValueError("knowledge.import_text is limited to 262144 UTF-8 bytes")
+    suffix = Path(file_name).suffix.lower()
+    mime_type = {
+        ".md": "text/markdown",
+        ".markdown": "text/markdown",
+        ".csv": "text/csv",
+        ".json": "application/json",
+    }.get(suffix, "text/plain")
+    return {
+        "fileName": file_name,
+        "text": text_value,
+        "byteSize": len(raw),
+        "textSha256": hashlib.sha256(raw).hexdigest(),
+        "mimeType": mime_type,
+        "parserProvider": _knowledge_parser_provider(args.get("parserProvider")),
+    }
+
+
+def _normalize_knowledge_chunking_config(
+    value: object,
+    *,
+    defaults: Mapping[str, object] = _KNOWLEDGE_CHUNKING_DEFAULTS,
+) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError("chunkingConfig must be an object")
+    allowed = set(_KNOWLEDGE_CHUNKING_DEFAULTS)
+    unknown = sorted(str(key) for key in set(value) - allowed)
+    if unknown:
+        raise ValueError(f"unsupported chunkingConfig field: {unknown[0]}")
+    if not value:
+        raise ValueError("chunkingConfig must contain at least one field")
+    merged = {**_KNOWLEDGE_CHUNKING_DEFAULTS, **dict(defaults), **dict(value)}
+    strategy = str(merged.get("strategy") or "").strip().lower()
+    if strategy not in {"general", "markdown", "book", "qa", "laws", "separator", "fixed"}:
+        raise ValueError("unsupported knowledge chunking strategy")
+    size = _knowledge_strict_int(
+        merged.get("size"), field="chunkingConfig.size", minimum=200, maximum=8_000
+    )
+    overlap = _knowledge_strict_int(
+        merged.get("overlap"), field="chunkingConfig.overlap", minimum=0, maximum=2_000
+    )
+    if overlap >= size:
+        raise ValueError("chunkingConfig.overlap must be smaller than size")
+    separator = merged.get("separator")
+    if not isinstance(separator, str) or len(separator) > 100:
+        raise ValueError("chunkingConfig.separator must be a string of at most 100 characters")
+    if strategy == "separator" and not separator:
+        raise ValueError("separator chunking requires a non-empty separator")
+    result: dict[str, object] = {
+        "strategy": strategy, "size": size, "overlap": overlap, "separator": separator,
+    }
+    for field in ("respectHeadings", "respectPageBoundaries"):
+        if not isinstance(merged.get(field), bool):
+            raise ValueError(f"chunkingConfig.{field} must be boolean")
+        result[field] = merged[field]
+    return result
+
+
+def _normalize_knowledge_retrieval_config(
+    value: object,
+    *,
+    defaults: Mapping[str, object] = _KNOWLEDGE_RETRIEVAL_DEFAULTS,
+) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError("retrievalConfig must be an object")
+    allowed = set(_KNOWLEDGE_RETRIEVAL_DEFAULTS)
+    unknown = sorted(str(key) for key in set(value) - allowed)
+    if unknown:
+        raise ValueError(f"unsupported retrievalConfig field: {unknown[0]}")
+    if not value:
+        raise ValueError("retrievalConfig must contain at least one field")
+    merged = {**_KNOWLEDGE_RETRIEVAL_DEFAULTS, **dict(defaults), **dict(value)}
+    mode = str(merged.get("mode") or "").strip().lower()
+    if mode not in {"hybrid", "lexical", "dense"}:
+        raise ValueError("retrievalConfig.mode must be hybrid, lexical, or dense")
+    lexical_weight = _knowledge_strict_float(
+        merged.get("lexicalWeight"), field="retrievalConfig.lexicalWeight",
+        minimum=0.0, maximum=10.0,
+    )
+    dense_weight = _knowledge_strict_float(
+        merged.get("denseWeight"), field="retrievalConfig.denseWeight",
+        minimum=0.0, maximum=10.0,
+    )
+    if lexical_weight + dense_weight <= 0.0:
+        raise ValueError("retrievalConfig lexical and dense weights cannot both be zero")
+    graph_enabled = merged.get("graphEnabled")
+    if not isinstance(graph_enabled, bool):
+        raise ValueError("retrievalConfig.graphEnabled must be boolean")
+    rerank_enabled = merged.get("rerankEnabled")
+    if not isinstance(rerank_enabled, bool):
+        raise ValueError("retrievalConfig.rerankEnabled must be boolean")
+    top_k = _knowledge_strict_int(
+        merged.get("topK"), field="retrievalConfig.topK", minimum=1, maximum=100
+    )
+    rerank_candidate_depth = _knowledge_strict_int(
+        merged.get("rerankCandidateDepth"),
+        field="retrievalConfig.rerankCandidateDepth",
+        minimum=1,
+        maximum=100,
+    )
+    if rerank_enabled and top_k > 20:
+        raise ValueError("retrievalConfig.topK must not exceed 20 when rerank is enabled")
+    if rerank_enabled and rerank_candidate_depth < top_k:
+        raise ValueError("retrievalConfig.rerankCandidateDepth must be at least topK")
+    return {
+        "mode": mode,
+        "topK": top_k,
+        "threshold": _knowledge_strict_float(
+            merged.get("threshold"), field="retrievalConfig.threshold", minimum=0.0, maximum=1.0
+        ),
+        "lexicalWeight": lexical_weight,
+        "denseWeight": dense_weight,
+        "graphEnabled": graph_enabled,
+        "graphWeight": _knowledge_strict_float(
+            merged.get("graphWeight"), field="retrievalConfig.graphWeight", minimum=0.0, maximum=10.0
+        ),
+        "rrfK": _knowledge_strict_int(
+            merged.get("rrfK"), field="retrievalConfig.rrfK", minimum=1, maximum=1_000
+        ),
+        "candidateMultiplier": _knowledge_strict_int(
+            merged.get("candidateMultiplier"), field="retrievalConfig.candidateMultiplier",
+            minimum=1, maximum=20,
+        ),
+        "rerankEnabled": rerank_enabled,
+        "rerankCandidateDepth": rerank_candidate_depth,
+    }
+
+
+def _knowledge_configuration_changes(
+    current: Mapping[str, object],
+    patch: Mapping[str, object],
+) -> list[dict[str, object]]:
+    labels = {
+        "name": "名称",
+        "description": "描述",
+        "agentEnabled": "Agent 可检索",
+        "parserProvider": "解析器",
+        "chunkingConfig": "Chunk 参数",
+        "retrievalConfig": "检索参数",
+    }
+    return [
+        {
+            "label": labels.get(key, key),
+            "before": current.get("parser") if key == "parserProvider" else current.get(key),
+            "after": value,
+        }
+        for key, value in patch.items()
+    ]
+
+
+def _knowledge_reject_unknown(
+    args: Mapping[str, object],
+    allowed: set[str],
+    operation: str,
+) -> None:
+    unknown = sorted(str(key) for key in set(args) - allowed)
+    if unknown:
+        raise ValueError(f"unsupported knowledge.{operation} field: {unknown[0]}")
+
+
+def _knowledge_base_record(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError("knowledge base snapshot is unavailable")
+    base = value.get("base") if isinstance(value.get("base"), Mapping) else value
+    if not isinstance(base, Mapping):
+        raise ValueError("knowledge base snapshot is unavailable")
+    result = dict(base)
+    if not str(result.get("id") or result.get("kbId") or "").strip():
+        raise ValueError("knowledge base snapshot has no identifier")
+    return result
+
+
+def _knowledge_base_revision(base: Mapping[str, object]) -> int:
+    return _knowledge_expected_revision(
+        base.get("revision")
+        if base.get("revision") is not None
+        else base.get("configRevision")
+    )
+
+
+def _knowledge_require_base_revision(
+    base: Mapping[str, object], expected_revision: int
+) -> None:
+    if _knowledge_base_revision(base) != expected_revision:
+        raise ValueError("knowledge base revision does not match the requested snapshot")
+
+
+def _knowledge_expected_revision(value: object) -> int:
+    return _knowledge_strict_int(
+        value, field="expectedRevision", minimum=1, maximum=2_147_483_647
+    )
+
+
+def _knowledge_identifier(value: object, field: str) -> str:
+    identifier = _knowledge_required_text(value, field=field, maximum=160)
+    if not all(character.isalnum() or character in "._:-" for character in identifier):
+        raise ValueError(f"invalid {field}")
+    return identifier
+
+
+def _knowledge_required_text(value: object, *, field: str, maximum: int) -> str:
+    result = _knowledge_optional_text(value, field=field, maximum=maximum)
+    if not result:
+        raise ValueError(f"{field} is required")
+    return result
+
+
+def _knowledge_optional_text(value: object, *, field: str, maximum: int) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    if "\x00" in value:
+        raise ValueError(f"{field} must not contain NUL")
+    result = " ".join(value.split()).strip()
+    if len(result) > maximum:
+        raise ValueError(f"{field} exceeds {maximum} characters")
+    return result
+
+
+def _knowledge_optional_bool(
+    args: Mapping[str, object], field: str, *, default: bool
+) -> bool:
+    if field not in args:
+        return default
+    value = args.get(field)
+    if not isinstance(value, bool):
+        raise ValueError(f"{field} must be boolean")
+    return value
+
+
+def _knowledge_parser_provider(value: object) -> str:
+    provider = str(value or "auto").strip().lower()
+    if provider not in {"auto", "builtin", "mineru"}:
+        raise ValueError("parserProvider must be auto, builtin, or mineru")
+    return provider
+
+
+def _knowledge_sha256(value: object, *, field: str) -> str:
+    digest = str(value or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError(f"{field} must be a sha256 digest")
+    return digest
+
+
+def _knowledge_strict_int(
+    value: object, *, field: str, minimum: int, maximum: int
+) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field} must be an integer")
+    if value < minimum or value > maximum:
+        raise ValueError(f"{field} must be between {minimum} and {maximum}")
+    return value
+
+
+def _knowledge_strict_float(
+    value: object, *, field: str, minimum: float, maximum: float
+) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} must be numeric")
+    parsed = float(value)
+    if not minimum <= parsed <= maximum:
+        raise ValueError(f"{field} must be between {minimum} and {maximum}")
+    return parsed
+
+
 def _bounded_text(value: object, *, maximum: int) -> str:
     text = " ".join(str(value or "").split())
     text = re.sub(r"\[L:[^\]]+\]", "", text)
@@ -7769,6 +8756,31 @@ def _room_invocation_root_id(
     if not isinstance(command, Mapping):
         return ""
     return _bounded_text(command.get("rootId"), maximum=240)
+
+
+def _room_invocation_lineage(
+    authorization: Mapping[str, object] | None,
+) -> dict[str, object]:
+    if not isinstance(authorization, Mapping):
+        return {}
+    invocation = authorization.get("invocationReceipt")
+    if not isinstance(invocation, Mapping):
+        return {}
+    command = invocation.get("canonicalCommand")
+    if not isinstance(command, Mapping):
+        return {}
+    root_id = _bounded_text(command.get("rootId"), maximum=240)
+    if not root_id:
+        return {}
+    return {
+        "roomId": _bounded_text(command.get("roomId"), maximum=240),
+        "rootId": root_id,
+        "generation": _bounded_int(
+            command.get("generation"), default=0, minimum=0, maximum=2_147_483_647
+        ),
+        "taskId": _bounded_text(command.get("taskId"), maximum=240),
+        "dispatchId": _bounded_text(command.get("dispatchId"), maximum=240),
+    }
 
 
 def _auto_approved_room_execution_receipt(
@@ -7941,6 +8953,20 @@ def _secret_key(key: str) -> bool:
     )
 
 
+def _fixed_todo_for_session(
+    session: Mapping[str, object],
+    *,
+    tool_id: str,
+) -> bool:
+    return (
+        tool_id == "todo"
+        and str(session.get("sessionKind") or "conversation") == "conversation"
+        and str(session.get("toolProfileVersion") or CONTROL_CENTER_TOOL_PROFILE)
+        == CONTROL_CENTER_TOOL_PROFILE
+        and str(session.get("mode") or "assistant") in {"assistant", "coordinator"}
+    )
+
+
 def _tool_profile_allows(
     session: Mapping[str, object],
     *,
@@ -7954,6 +8980,8 @@ def _tool_profile_allows(
     ):
         return False
     profile = str(session.get("toolProfileVersion") or "control-center-v1")
+    if read_only_policy_active(session) and read_only_blocks_effect(tool, operation):
+        return False
     if profile in {"control-center-v1", "subagent-worker-v1"}:
         return True
     if profile != "subagent-readonly-v1":
@@ -7978,19 +9006,34 @@ def _tool_profile_allows(
             }
         ),
         "agent_role_book": frozenset({"get", "history", "review"}),
-        "knowledge": frozenset({"list_bases", "search", "find", "open", "status"}),
+        "knowledge": frozenset(
+            {
+                "list_bases",
+                "get_base",
+                "list_documents",
+                "search",
+                "find",
+                "open",
+                "status",
+                "rebuild_preview",
+            }
+        ),
         "models": frozenset({"status", "profiles", "probe", "cache_stats"}),
         "runtime": frozenset({"health", "components", "diagnose"}),
         "browser": frozenset({"status", "tabs", "snapshot", "screenshot", "trace"}),
         "agents": frozenset(
             {
                 "catalog",
+                "delegate",
                 "status",
                 "artifact",
+                "abort",
             }
         ),
         "agent_schedule": frozenset({"list", "runs"}),
-        "agent_plan": frozenset({"list"}),
+        "todo": frozenset(
+            {"init", "start", "done", "drop", "append", "view", "rm"}
+        ),
         "agent_goal": frozenset({"list"}),
         "work_documents": frozenset({"list", "history.search", "get"}),
         "workspace_list": frozenset({"list"}),
@@ -8057,8 +9100,8 @@ def _runtime_memory_tool_parameter_schema(
                 "minLength": 1,
                 "maxLength": 800,
                 "description": (
-                    "一条脱离当前对话仍可独立理解、未来仍可能有用的陈述；"
-                    "不要复制大段原文。"
+                    "只陈述一条由当前用户原话支持、脱离当前对话仍可独立理解且会改变未来协作的"
+                    "稳定偏好、个人事实、长期决定、纠正或原则；不得记录任务执行与会话状态。"
                 ),
             },
             "sourceId": {
@@ -8073,7 +9116,8 @@ def _runtime_memory_tool_parameter_schema(
                 "type": "string",
                 "enum": ["user", "project"],
                 "description": (
-                    "跨项目适用的用户信息选 user；只属于当前项目的事实与约束选 project。"
+                    "跨项目适用的用户偏好、个人事实或原则选 user；"
+                    "用户明确声明的长期项目约束或决定选 project。"
                 ),
             },
             "basis": {
@@ -8086,11 +9130,11 @@ def _runtime_memory_tool_parameter_schema(
                     "verified_outcome",
                 ],
                 "description": (
-                    "explicit_user_request=用户要求记住；"
+                    "explicit_user_request=用户明确要求记住；"
                     "explicit_user_statement=用户明确陈述；"
-                    "user_correction=用户纠正；"
-                    "repeated_user_signal=当前可见上下文至少两条独立用户证据；"
-                    "verified_outcome=工具或运行结果已验证。"
+                    "user_correction=用户纠正已有记忆；"
+                    "repeated_user_signal=当前可见上下文至少两条独立用户表达；"
+                    "verified_outcome=已应用工具回执或运行结果提供可核验依据。"
                 ),
             },
             "futureUse": {
@@ -8098,7 +9142,8 @@ def _runtime_memory_tool_parameter_schema(
                 "minLength": 1,
                 "maxLength": 300,
                 "description": (
-                    "说明未来 Session 在什么情形下应怎样使用该候选，不要复述 claim。"
+                    "说明未来 Session 在什么情形下应怎样使用该候选；"
+                    "若只影响当前任务或当前会话，就不应调用 capture。"
                 ),
             },
             "supersedes": {
@@ -8141,7 +9186,9 @@ def _runtime_memory_tool_parameter_schema(
                         "pitfall",
                     ],
                     "description": (
-                        "只选 preference、fact、decision、correction 或 pitfall。"
+                        "preference=稳定偏好；fact=用户明确陈述的个人事实；"
+                        "decision=跨 Session 持续的决定或约束；correction=用户纠正；"
+                        "pitfall=用户明确表达的长期原则或边界。"
                     ),
                 },
                 "captureScope": {
@@ -8212,6 +9259,10 @@ def _runtime_tool_parameter_schema(
         return _runtime_memory_tool_parameter_schema(normalized_operations)
     configured = _RUNTIME_TOOL_PARAMETER_SCHEMAS.get(tool_id)
     if configured is not None:
+        # Runtime manifests are public projections.  Never expose the module-level
+        # schema objects themselves: callers and tests may normalize the returned
+        # payload in place, and one mutation must not corrupt later Sessions.
+        configured = copy.deepcopy(configured)
         allowed = {str(operation) for operation in operations}
         branches = configured.get("oneOf")
         if isinstance(branches, list):

@@ -34,6 +34,9 @@ final class VoiceInputCoordinator {
     private var telemetry = VoiceSessionTelemetry.idle
     private var releasedAtMs: Int?
     private var committedVoiceTextRecorded = false
+    private var committedVoiceTextRecordPending = false
+    private var voiceCommitCaptureID = ""
+    private var voiceCommitStartedAtMs = 0
     private var interactionSource: InteractionSource = .hotkey
     private var clipboardFallbackReason: VoiceInsertionError?
     private var finalDeliveryUsedClipboard = false
@@ -44,6 +47,7 @@ final class VoiceInputCoordinator {
         hotkey.onPress = { [weak self] in self?.press(source: .hotkey) }
         hotkey.onRelease = { [weak self] in self?.release() }
         hotkey.onCancel = { [weak self] in self?.cancel(reason: "用户取消") }
+        VoiceCommitRecorder.retryPending()
     }
 
     var isReady: Bool {
@@ -168,6 +172,9 @@ final class VoiceInputCoordinator {
         reconciler = VoiceTranscriptReconciler()
         releasedAtMs = nil
         committedVoiceTextRecorded = false
+        committedVoiceTextRecordPending = false
+        voiceCommitCaptureID = "voice:\(UUID().uuidString.lowercased())"
+        voiceCommitStartedAtMs = nowMs
         clipboardFallbackReason = nil
         finalDeliveryUsedClipboard = false
         telemetry = VoiceSessionTelemetry(
@@ -551,9 +558,33 @@ final class VoiceInputCoordinator {
     }
 
     private func recordCommittedVoiceTextIfNeeded(_ text: String) {
-        guard !committedVoiceTextRecorded, let insertion else { return }
-        committedVoiceTextRecorded = true
-        VoiceCommitRecorder.record(text: text, appBundleIdentifier: insertion.appBundleIdentifier)
+        guard !committedVoiceTextRecorded,
+              !committedVoiceTextRecordPending,
+              !voiceCommitCaptureID.isEmpty,
+              let insertion else { return }
+        committedVoiceTextRecordPending = true
+        let generation = sessionGeneration
+        let captureID = voiceCommitCaptureID
+        VoiceCommitRecorder.record(
+            text: text,
+            appBundleIdentifier: insertion.appBundleIdentifier,
+            captureID: captureID,
+            occurredStartMs: voiceCommitStartedAtMs
+        ) { [weak self] delivery in
+            DispatchQueue.main.async {
+                guard let self,
+                      generation == self.sessionGeneration,
+                      captureID == self.voiceCommitCaptureID else { return }
+                self.committedVoiceTextRecordPending = false
+                switch delivery {
+                case .acknowledged, .queued:
+                    self.committedVoiceTextRecorded = true
+                case .failed:
+                    self.committedVoiceTextRecorded = false
+                    self.overlay.showError("语音已输入，但输入历史暂未保存")
+                }
+            }
+        }
     }
 
     private func scheduleFinalTimeout() {

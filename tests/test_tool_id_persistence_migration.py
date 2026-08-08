@@ -346,7 +346,12 @@ class ProjectToolIdPersistenceMigrationTests(unittest.TestCase):
 
                 immutable_before = {
                     "terminal_approval": conn.execute(
-                        "SELECT * FROM agent_approvals WHERE approval_id = 'terminal-old'"
+                        """SELECT approval_id, session_id, tool_name, operation,
+                                  payload_sha256, preview_json, risk_level, state,
+                                  requested_at_ms, expires_at_ms, decided_at_ms,
+                                  decided_by, receipt_json
+                           FROM agent_approvals
+                           WHERE approval_id = 'terminal-old'"""
                     ).fetchone(),
                     "runtime_event": conn.execute(
                         "SELECT * FROM agent_runtime_events WHERE event_id = 'event-old'"
@@ -371,7 +376,11 @@ class ProjectToolIdPersistenceMigrationTests(unittest.TestCase):
                 upgraded = apply_database_migrations(conn, applied_at_ms=1000)
                 self.assertEqual(
                     upgraded.applied_versions,
-                    (118, 119, 120, 121, 122, 123, 124, 125, 126),
+                    tuple(
+                        migration.version
+                        for migration in load_migrations()
+                        if migration.version >= 118
+                    ),
                 )
 
                 policy = conn.execute(
@@ -481,7 +490,12 @@ class ProjectToolIdPersistenceMigrationTests(unittest.TestCase):
 
                 self.assertEqual(
                     conn.execute(
-                        "SELECT * FROM agent_approvals WHERE approval_id = 'terminal-old'"
+                        """SELECT approval_id, session_id, tool_name, operation,
+                                  payload_sha256, preview_json, risk_level, state,
+                                  requested_at_ms, expires_at_ms, decided_at_ms,
+                                  decided_by, receipt_json
+                           FROM agent_approvals
+                           WHERE approval_id = 'terminal-old'"""
                     ).fetchone(),
                     immutable_before["terminal_approval"],
                 )

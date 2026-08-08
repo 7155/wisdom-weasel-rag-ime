@@ -5,8 +5,10 @@ import type { AgentLifecycleCancellationAuditV1 } from './generated/agent-lifecy
 import type {
   ActGate as AgentActGateProjection,
   Goal as AgentGoalProjection,
+  Todo as AgentTodoContract,
 } from './generated/agent-workflow-state.v1';
 import { parseAgentEvent, tryParseAgentMessage, validateContract } from './validators';
+import { approvalDecisionView } from './approval-decision';
 
 export type AgentTurnStatus =
   | 'queued'
@@ -85,7 +87,7 @@ export interface AgentProjectionState {
   diagnostics: ProjectionDiagnostic[];
   telemetry?: AgentSessionTelemetryV1;
   messageQueue: AgentMessageQueue;
-  plan: AgentPlanProjection;
+  todo: AgentTodoProjection;
   goal: AgentGoalProjection;
   actGate: AgentActGateProjection;
   backgroundJobsById: Record<string, AgentBackgroundJobV1>;
@@ -99,36 +101,7 @@ export interface AgentMessageQueue {
   followUp: string[];
 }
 
-export type AgentPlanItemStatus = 'pending' | 'in_progress' | 'completed';
-
-export interface AgentPlanItemProjection {
-  id: string;
-  title: string;
-  status: AgentPlanItemStatus;
-  position: number;
-  sequence: number;
-  updatedAtMs: number;
-}
-
-export interface AgentPlanProjection {
-  id: string;
-  sessionId: string;
-  revision: number;
-  title: string;
-  status: 'draft' | 'review' | 'approved' | 'executing' | 'completed' | 'cancelled';
-  actor: string;
-  note: string;
-  updatedAtMs: number;
-  editable: boolean;
-  actApproved: boolean;
-  items: AgentPlanItemProjection[];
-  counts: {
-    total: number;
-    pending: number;
-    inProgress: number;
-    completed: number;
-  };
-}
+export type AgentTodoProjection = AgentTodoContract;
 
 export type ProjectionDisposition =
   | 'applied'
@@ -150,7 +123,7 @@ export interface AgentSnapshot {
   status?: string;
   telemetry?: unknown;
   messageQueue?: unknown;
-  plan?: unknown;
+  todo?: unknown;
   goal?: unknown;
   actGate?: unknown;
   backgroundJobs?: unknown;
@@ -187,7 +160,7 @@ export function createAgentProjection(sessionId: string): AgentProjectionState {
     diagnostics: [],
     telemetry: undefined,
     messageQueue: { steering: [], followUp: [] },
-    plan: emptyAgentPlan(),
+    todo: emptyAgentTodo(sessionId),
     goal: emptyAgentGoal(),
     actGate: closedActGate(),
     backgroundJobsById: {},
@@ -296,11 +269,11 @@ export function reduceAgentEvent(
       next.messageQueue = parseMessageQueue(payload);
       break;
     case 'workflow_changed':
-      next.plan = parseAgentPlan(payload.plan) ?? next.plan;
+      next.todo = parseAgentTodo(payload.todo) ?? next.todo;
       next.goal = parseAgentGoal(payload.goal) ?? next.goal;
       next.actGate = parseActGate(
         payload.actGate,
-        next.plan.revision,
+        next.todo.revision,
         next.goal.revision,
       ) ?? next.actGate;
       break;
@@ -310,6 +283,7 @@ export function reduceAgentEvent(
       break;
     }
     case 'reasoning_summary': {
+      if (text(payload.source) !== 'provider_reasoning_summary') break;
       const reasoningState = text(payload.state);
       const reasoningStatus: AgentActivityProjection['status'] = reasoningState === 'running'
         ? 'running'
@@ -326,28 +300,44 @@ export function reduceAgentEvent(
       next.status = payload.isError === true ? 'failed' : 'working';
       break;
     case 'tool_finished': {
-      const expectedNoop = expectedToolNoop(payload);
+      const correlatedPayload = mergeLegacyApprovalIntoTool(next, event, payload);
+      const expectedNoop = expectedToolNoop(correlatedPayload);
+      const approvalDecision = approvalDecisionView(correlatedPayload);
+      const approvalState = text(correlatedPayload.state);
+      const approvalDenied = (
+        approvalDecision.status === 'failed_closed'
+        || approvalDecision.decision === 'deny'
+        || (
+          Boolean(text(correlatedPayload.approvalId))
+          && ['rejected', 'expired', 'stale', 'failed'].includes(approvalState)
+        )
+      );
       const projectedPayload = expectedNoop
         ? {
-            ...payload,
+            ...correlatedPayload,
             isError: false,
             expectedNoop: true,
             ...(expectedNoop.kind === 'act_gate' ? { governanceBlocked: true } : {}),
             summary: expectedNoop.summary,
           }
-        : payload;
+        : correlatedPayload;
       upsertActivity(
         next,
         event,
         projectedPayload,
-        expectedNoop || payload.isError !== true ? 'completed' : 'failed',
+        expectedNoop || (correlatedPayload.isError !== true && !approvalDenied) ? 'completed' : 'failed',
       );
       break;
     }
     case 'approval_required':
-      upsertActivity(next, event, payload, 'waiting');
+      upsertApprovalActivity(next, event, payload, 'waiting');
       next.status = 'waiting';
-      touchTurn(next, event.turnId, 'waiting', event.createdAtMs);
+      touchTurn(
+        next,
+        approvalActivityTurnId(next, payload, event.turnId),
+        'waiting',
+        event.createdAtMs,
+      );
       break;
     case 'user_input_required': {
       const resolved = ['resolved', 'cancelled'].includes(text(payload.resolutionState));
@@ -359,7 +349,7 @@ export function reduceAgentEvent(
       break;
     }
     case 'approval_resolved':
-      upsertActivity(
+      upsertApprovalActivity(
         next,
         event,
         payload,
@@ -651,11 +641,11 @@ export function applyAgentSnapshot(
   next.status = snapshot.status ?? state.status;
   next.telemetry = parseTelemetry(snapshot.telemetry) ?? state.telemetry;
   next.messageQueue = parseMessageQueue(snapshot.messageQueue);
-  next.plan = parseAgentPlan(snapshot.plan) ?? state.plan;
+  next.todo = parseAgentTodo(snapshot.todo) ?? state.todo;
   next.goal = parseAgentGoal(snapshot.goal) ?? state.goal;
   next.actGate = parseActGate(
     snapshot.actGate,
-    next.plan.revision,
+    next.todo.revision,
     next.goal.revision,
   ) ?? state.actGate;
   for (const value of Array.isArray(snapshot.backgroundJobs) ? snapshot.backgroundJobs : []) {
@@ -953,7 +943,7 @@ export function agentSnapshotFromResponse(value: unknown): AgentSnapshot {
     ...(typeof payload.status === 'string' ? { status: payload.status } : {}),
     ...(payload.telemetry === undefined ? {} : { telemetry: payload.telemetry }),
     ...(payload.messageQueue === undefined ? {} : { messageQueue: payload.messageQueue }),
-    ...(payload.plan === undefined ? {} : { plan: payload.plan }),
+    ...(payload.todo === undefined ? {} : { todo: payload.todo }),
     ...(payload.goal === undefined ? {} : { goal: payload.goal }),
     ...(payload.actGate === undefined ? {} : { actGate: payload.actGate }),
     ...(payload.backgroundJobs === undefined ? {} : { backgroundJobs: payload.backgroundJobs }),
@@ -1225,13 +1215,18 @@ function upsertActivity(
       previousTurn.activityIds = previousTurn.activityIds.filter((activityId) => activityId !== id);
     }
   }
-  const activityPayload = mergeActivityPayload(previous, event, payload, status);
+  const activityPayload = (
+    previous
+    && (event.eventType === 'approval_required' || event.eventType === 'approval_resolved')
+  )
+    ? { ...previous.payload, ...payload }
+    : mergeActivityPayload(previous, event, payload, status);
   const activity: AgentActivityProjection = {
     id,
     turnId: event.turnId,
     kind: event.eventType,
     status,
-    summary: activitySummary(payload, event.eventType),
+    summary: activitySummary(activityPayload, event.eventType),
     payload: activityPayload,
     createdAtMs: previous?.createdAtMs ?? event.createdAtMs,
     updatedAtMs: event.createdAtMs,
@@ -1239,10 +1234,104 @@ function upsertActivity(
   };
   if (!previous) state.activityOrder.push(id);
   state.activitiesById[id] = activity;
-  updateAgentPlanFromActivity(state, activityPayload);
+  updateAgentTodoFromActivity(state, activityPayload);
   const turn = ensureTurn(state, event.turnId, event.createdAtMs);
   if (!turn.activityIds.includes(id)) turn.activityIds.push(id);
 }
+
+function upsertApprovalActivity(
+  state: AgentProjectionState,
+  event: UiAgentEvent,
+  payload: Record<string, unknown>,
+  status: AgentActivityProjection['status'],
+): void {
+  const toolCallId = text(payload.toolCallId);
+  if (!toolCallId) {
+    upsertActivity(state, event, payload, status);
+    return;
+  }
+  const owner = state.activitiesById[toolCallId];
+  upsertActivity(
+    state,
+    {
+      ...event,
+      turnId: owner?.turnId || event.turnId,
+      payload: { ...payload, toolCallId },
+    },
+    payload,
+    status,
+  );
+  if (owner?.kind.startsWith('tool_')) {
+    const correlated = state.activitiesById[toolCallId];
+    if (correlated) {
+      state.activitiesById[toolCallId] = {
+        ...correlated,
+        kind: owner.kind,
+      };
+    }
+  }
+}
+
+function approvalActivityTurnId(
+  state: AgentProjectionState,
+  payload: Record<string, unknown>,
+  fallbackTurnId: string,
+): string {
+  const owner = state.activitiesById[text(payload.toolCallId)];
+  return owner?.turnId || fallbackTurnId;
+}
+
+function mergeLegacyApprovalIntoTool(
+  state: AgentProjectionState,
+  event: UiAgentEvent,
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const toolCallId = text(payload.toolCallId);
+  const approvalId = approvalIdFromActivityPayload(payload);
+  if (!toolCallId || !approvalId || toolCallId === approvalId) return payload;
+  const legacyApproval = state.activitiesById[approvalId];
+  if (!legacyApproval || !legacyApproval.kind.includes('approval')) return payload;
+
+  const legacyTurn = writableTurn(state, legacyApproval.turnId);
+  if (legacyTurn) {
+    legacyTurn.activityIds = legacyTurn.activityIds.filter((id) => id !== approvalId);
+  }
+  delete state.activitiesById[approvalId];
+  state.activityOrder = state.activityOrder.filter((id) => id !== approvalId);
+  if (
+    legacyTurn
+    && legacyApproval.turnId !== event.turnId
+    && legacyTurn.activityIds.length === 0
+    && legacyTurn.messageIds.length === 0
+  ) {
+    delete state.turnsById[legacyApproval.turnId];
+    state.turnOrder = state.turnOrder.filter((id) => id !== legacyApproval.turnId);
+  }
+  return { ...legacyApproval.payload, ...payload };
+}
+
+function approvalIdFromActivityPayload(
+  payload: Record<string, unknown>,
+): string {
+  const result = record(payload.result);
+  const publicResult = record(payload.publicResult);
+  const details = record(result.details);
+  const layers = [
+    payload,
+    publicResult,
+    result,
+    details,
+    record(details.result),
+    record(result.result),
+  ];
+  for (const layer of layers) {
+    const approvalId = text(layer.approvalId);
+    if (approvalId) return approvalId;
+  }
+  return '';
+}
+
+
 
 function mergeActivityPayload(
   previous: AgentActivityProjection | undefined,
@@ -1252,9 +1341,7 @@ function mergeActivityPayload(
 ): Record<string, unknown> {
   if (!isToolActivityEvent(event.eventType)) return payload;
 
-  const previousPayload = previous && isToolActivityEvent(previous.kind)
-    ? previous.payload
-    : {};
+  const previousPayload = previous?.payload ?? {};
   const history = agentToolProgressHistory(previousPayload.progressHistory);
   const nextEntry: AgentToolProgressEntry = {
     eventId: event.eventId,
@@ -1351,7 +1438,7 @@ function expectedToolNoop(
   if (messages.some((value) => value.startsWith('Act Gate blocked workspace mutation ('))) {
     return {
       kind: 'act_gate',
-      summary: '工作区变更未执行：请先提交执行计划并等待用户批准。',
+      summary: '工作区变更未执行：当前 Todo、Goal 或权限状态不允许执行。',
     };
   }
   if (messages.some((value) => value.startsWith('Tool schema is already active;'))) {
@@ -1611,10 +1698,13 @@ function cloneState(state: AgentProjectionState): AgentProjectionState {
       steering: [...state.messageQueue.steering],
       followUp: [...state.messageQueue.followUp],
     },
-    plan: {
-      ...state.plan,
-      items: state.plan.items.map((item) => ({ ...item })),
-      counts: { ...state.plan.counts },
+    todo: {
+      ...state.todo,
+      phases: state.todo.phases.map((phase) => ({
+        ...phase,
+        tasks: phase.tasks.map((task) => ({ ...task })),
+      })) as AgentTodoProjection['phases'],
+      counts: { ...state.todo.counts },
     },
     goal: {
       ...state.goal,
@@ -1702,68 +1792,107 @@ function parseMessageQueue(value: unknown): AgentMessageQueue {
   };
 }
 
-function emptyAgentPlan(): AgentPlanProjection {
+function emptyAgentTodo(sessionId: string): AgentTodoProjection {
   return {
-    id: '',
-    sessionId: '',
+    schemaVersion: 'rag-ime.agent-todo.v1',
+    id: `todo:${sessionId}`,
+    sessionId,
     revision: 0,
-    title: '执行计划',
-    status: 'draft',
     actor: '',
-    note: '',
     updatedAtMs: 0,
-    editable: true,
-    actApproved: false,
-    items: [],
+    roomLineage: null,
+    phases: [],
     counts: {
       total: 0,
       pending: 0,
       inProgress: 0,
+      blocked: 0,
       completed: 0,
+      abandoned: 0,
     },
   };
 }
 
-export function parseAgentPlan(value: unknown): AgentPlanProjection | undefined {
+export function parseAgentTodo(value: unknown): AgentTodoProjection | undefined {
   const source = record(value);
-  if (!Array.isArray(source.items)) return undefined;
-  const items = source.items.slice(0, 100).flatMap((rawItem, index): AgentPlanItemProjection[] => {
-    const item = record(rawItem);
-    const title = text(item.title ?? item.label).replace(/\s+/g, ' ').trim().slice(0, 240);
-    const status = text(item.status);
-    if (!title || !['pending', 'in_progress', 'completed'].includes(status)) return [];
-    const id = text(item.id ?? item.itemId).trim().slice(0, 160) || `plan-item:${index + 1}`;
-    return [{
-      id,
-      title,
-      status: status as AgentPlanItemStatus,
-      position: integer(item.position) || index + 1,
-      sequence: integer(item.sequence),
-      updatedAtMs: integer(item.updatedAtMs ?? item.createdAtMs),
-    }];
-  });
-  const completed = items.filter((item) => item.status === 'completed').length;
-  const inProgress = items.filter((item) => item.status === 'in_progress').length;
+  if (
+    source.schemaVersion !== 'rag-ime.agent-todo.v1'
+    || !Array.isArray(source.phases)
+  ) return undefined;
+  const phases = source.phases.slice(0, 16).flatMap((rawPhase) => {
+    const phase = record(rawPhase);
+    const name = text(phase.name).replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (!name || !Array.isArray(phase.tasks)) return [];
+    const tasks = phase.tasks.slice(0, 100).flatMap((rawTask) => {
+      const task = record(rawTask);
+      const content = text(task.content).replace(/\s+/g, ' ').trim().slice(0, 240);
+      const status = text(task.status);
+      const reason = text(task.reason).replace(/\s+/g, ' ').trim().slice(0, 500);
+      if (
+        !content
+        || !['pending', 'in_progress', 'blocked', 'completed', 'abandoned'].includes(status)
+      ) return [];
+      return [{ content, status, ...(reason ? { reason } : {}) }];
+    });
+    return [{ name, tasks }];
+  }) as AgentTodoProjection['phases'];
+  const tasks = phases.flatMap((phase) => phase.tasks);
+  const pending = tasks.filter((task) => task.status === 'pending').length;
+  const inProgress = tasks.filter((task) => task.status === 'in_progress').length;
+  const blocked = tasks.filter((task) => task.status === 'blocked').length;
+  const completed = tasks.filter((task) => task.status === 'completed').length;
+  const abandoned = tasks.filter((task) => task.status === 'abandoned').length;
   return {
-    id: text(source.id),
+    schemaVersion: 'rag-ime.agent-todo.v1',
+    id: text(source.id) || `todo:${text(source.sessionId)}`,
     sessionId: text(source.sessionId),
     revision: integer(source.revision),
-    title: text(source.title).trim().slice(0, 160) || '执行计划',
-    status: ['draft', 'review', 'approved', 'executing', 'completed', 'cancelled'].includes(text(source.status))
-      ? text(source.status) as AgentPlanProjection['status']
-      : 'draft',
     actor: text(source.actor).slice(0, 120),
-    note: text(source.note).slice(0, 600),
     updatedAtMs: integer(source.updatedAtMs),
-    editable: source.editable === undefined ? true : source.editable === true,
-    actApproved: source.actApproved === true,
-    items,
+    roomLineage: parseRoomTodoLineage(source.roomLineage),
+    phases,
     counts: {
-      total: items.length,
-      pending: items.length - completed - inProgress,
+      total: tasks.length,
+      pending,
       inProgress,
+      blocked,
       completed,
+      abandoned,
     },
+  };
+}
+
+function parseRoomTodoLineage(
+  value: unknown,
+): AgentTodoProjection['roomLineage'] {
+  if (value === null || value === undefined) return null;
+  const source = record(value);
+  const textFields = [
+    'roomId',
+    'rootId',
+    'taskId',
+    'workItemId',
+    'dispatchId',
+    'sessionId',
+    'participantId',
+  ] as const;
+  if (
+    source.schemaVersion !== 'wisdom-weasel.room-todo-lineage.v1'
+    || textFields.some((field) => !text(source[field]).trim())
+  ) return null;
+  return {
+    schemaVersion: 'wisdom-weasel.room-todo-lineage.v1',
+    roomId: text(source.roomId).trim(),
+    rootId: text(source.rootId).trim(),
+    taskId: text(source.taskId).trim(),
+    workItemId: text(source.workItemId).trim(),
+    dispatchId: text(source.dispatchId).trim(),
+    sessionId: text(source.sessionId).trim(),
+    participantId: text(source.participantId).trim(),
+    generation: integer(source.generation),
+    taskRevision: integer(source.taskRevision),
+    ownershipRevision: integer(source.ownershipRevision),
+    workItemRevision: integer(source.workItemRevision),
   };
 }
 
@@ -1790,10 +1919,10 @@ function emptyAgentGoal(): AgentGoalProjection {
 
 function closedActGate(): AgentActGateProjection {
   return {
-    allowed: false,
-    reason: 'plan_required',
-    message: '先创建执行计划并提交审阅。',
-    planRevision: 0,
+    allowed: true,
+    reason: 'user_execution_request',
+    message: '用户的执行请求允许在已授权工作区内继续。',
+    todoRevision: 0,
     goalRevision: 0,
   };
 }
@@ -1867,7 +1996,7 @@ function parseAgentGoal(value: unknown): AgentGoalProjection | undefined {
 
 function parseActGate(
   value: unknown,
-  fallbackPlanRevision = 0,
+  fallbackTodoRevision = 0,
   fallbackGoalRevision = 0,
 ): AgentActGateProjection | undefined {
   const source = record(value);
@@ -1875,10 +2004,6 @@ function parseActGate(
   if (![
     'approved',
     'user_execution_request',
-    'plan_required',
-    'plan_not_approved',
-    'plan_completed',
-    'plan_cancelled',
     'goal_paused',
     'goal_completed',
     'goal_budget_exhausted',
@@ -1888,9 +2013,9 @@ function parseActGate(
     allowed: source.allowed === true,
     reason: reason as AgentActGateProjection['reason'],
     message: text(source.message),
-    planRevision: source.planRevision === undefined
-      ? fallbackPlanRevision
-      : integer(source.planRevision),
+    todoRevision: source.todoRevision === undefined
+      ? fallbackTodoRevision
+      : integer(source.todoRevision),
     goalRevision: source.goalRevision === undefined
       ? fallbackGoalRevision
       : integer(source.goalRevision),
@@ -1901,20 +2026,20 @@ function nullableInteger(value: unknown): number | null {
   return value === null ? null : integer(value);
 }
 
-function updateAgentPlanFromActivity(
+function updateAgentTodoFromActivity(
   state: AgentProjectionState,
   payload: Record<string, unknown>,
 ): void {
   const toolId = text(payload.toolId ?? payload.toolName);
-  if (toolId !== 'agent_plan') return;
+  if (toolId !== 'todo') return;
   const carrier = record(payload.result ?? payload.partialResult);
   const details = record(carrier.details);
   const candidates = [
-    record(record(details.result).plan),
-    record(record(carrier.result).plan),
-    record(details.plan),
-    record(carrier.plan),
-    record(payload.plan),
+    record(record(details.result).todo),
+    record(record(carrier.result).todo),
+    record(details.todo),
+    record(carrier.todo),
+    record(payload.todo),
     record(details.result),
     record(carrier.result),
     details,
@@ -1922,9 +2047,9 @@ function updateAgentPlanFromActivity(
     payload,
   ];
   for (const candidate of candidates) {
-    const plan = parseAgentPlan(candidate);
-    if (!plan) continue;
-    state.plan = plan;
+    const todo = parseAgentTodo(candidate);
+    if (!todo) continue;
+    state.todo = todo;
     return;
   }
 }

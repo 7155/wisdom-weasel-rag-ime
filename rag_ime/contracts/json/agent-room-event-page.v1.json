@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-room-event-page.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "ok",
+    "roomId",
+    "items",
+    "firstSequence",
+    "lastSequence",
+    "nextBeforeSequence",
+    "hasMore",
+    "retainedFirstSequence",
+    "retainedLastSequence",
+    "retainedPrefixTruncated"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "rag-ime.agent-room-event-page.v1"
+    },
+    "ok": {"type": "boolean", "const": true},
+    "roomId": {"type": "string", "minLength": 1},
+    "items": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {"$ref": "#/$defs/event"}
+    },
+    "firstSequence": {"type": "integer", "minimum": 0},
+    "lastSequence": {"type": "integer", "minimum": 0},
+    "nextBeforeSequence": {"type": "integer", "minimum": 0},
+    "hasMore": {"type": "boolean"},
+    "retainedFirstSequence": {"type": "integer", "minimum": 0},
+    "retainedLastSequence": {"type": "integer", "minimum": 0},
+    "retainedPrefixTruncated": {"type": "boolean"}
+  },
+  "$defs": {
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "eventId",
+        "roomId",
+        "sequence",
+        "turnId",
+        "eventType",
+        "participantId",
+        "sourceSessionId",
+        "createdAtMs",
+        "payload",
+        "resumeToken"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "rag-ime.agent-room-event.v1"
+        },
+        "eventId": {"type": "string", "minLength": 1},
+        "roomId": {"type": "string", "minLength": 1},
+        "sequence": {"type": "integer", "minimum": 1},
+        "turnId": {"type": "string"},
+        "eventType": {
+          "type": "string",
+          "enum": [
+            "user_message",
+            "route_decision",
+            "participant_status",
+            "participant_delta",
+            "participant_activity",
+            "participant_message",
+            "room_post",
+            "room_config_changed",
+            "topic_changed",
+            "artifact_changed",
+            "turn_completed",
+            "turn_failed",
+            "snapshot_required"
+          ]
+        },
+        "participantId": {"type": ["string", "null"]},
+        "sourceSessionId": {"type": "string"},
+        "topicId": {"type": "string"},
+        "createdAtMs": {"type": "integer", "minimum": 0},
+        "payload": {"type": "object"},
+        "resumeToken": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

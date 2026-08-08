@@ -1,6 +1,8 @@
 import { FileQuestion } from 'lucide-react';
-import type { ComponentType } from 'react';
+import { useState, type ComponentType } from 'react';
+import { useOptionalControlTransport } from '@/app/control-transport';
 import type { AgentFilePreviewV1 } from '@/contracts/generated/agent-file-preview.v1';
+import { managedAgentMediaContentPath } from '@/platform/transport';
 import { CodePreview } from './CodePreview';
 import { DiffPreview } from './DiffPreview';
 import { MarkdownPreview } from './MarkdownPreview';
@@ -24,8 +26,27 @@ registerFilePreviewRenderer('markdown', ({ preview }) => <MarkdownPreview conten
 registerFilePreviewRenderer('code', ({ preview }) => <CodePreview content={preview.content ?? ''} fileName={preview.descriptor.fileName} language={preview.descriptor.language || 'text'} />);
 registerFilePreviewRenderer('diff', ({ preview }) => <DiffPreview content={preview.content ?? ''} />);
 registerFilePreviewRenderer('html', ({ preview }) => <StaticHtmlPreview content={preview.content ?? ''} title={preview.descriptor.fileName} />);
-registerFilePreviewRenderer('image', ({ preview }) => <div className="agent-file-image-preview"><img alt={preview.descriptor.fileName} src={preview.descriptor.contentUrl} /></div>);
+registerFilePreviewRenderer('image', ManagedImagePreview);
 registerFilePreviewRenderer('unsupported', UnsupportedPreview);
+
+function ManagedImagePreview({ preview }: { preview: AgentFilePreviewV1 }) {
+  const transport = useOptionalControlTransport();
+  const [failedSource, setFailedSource] = useState('');
+  const receiptPath = managedAgentMediaContentPath(preview.descriptor.contentUrl);
+  const source = receiptPath
+    ? transport?.agentMediaContentUrl?.(receiptPath) ?? receiptPath
+    : '';
+  if (!source || failedSource === source) return <UnsupportedPreview preview={preview} />;
+  return (
+    <div className="agent-file-image-preview">
+      <img
+        alt={preview.descriptor.fileName}
+        onError={() => setFailedSource(source)}
+        src={source}
+      />
+    </div>
+  );
+}
 
 function UnsupportedPreview({ preview }: { preview: AgentFilePreviewV1 }) {
   return (

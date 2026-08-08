@@ -19,7 +19,7 @@ class WaitSquirrelScriptsTests(unittest.TestCase):
                 "--chain-repeats",
                 "7",
                 "--auto-key",
-                "4",
+                "option-4",
                 "--report-path",
                 "/tmp/custom-rag-ime-soak-report.json",
             ],
@@ -30,6 +30,9 @@ class WaitSquirrelScriptsTests(unittest.TestCase):
         )
 
         self.assertIn("chain_repeats=7", result.stdout)
+        self.assertIn("auto_commit_key=6", result.stdout)
+        self.assertIn("auto_key=option-4", result.stdout)
+        self.assertIn("er qi\t6\toption-4\t7\tcontinuous_pinyin", result.stdout)
         self.assertIn("auto_case_count=6", result.stdout)
         self.assertIn("auto_app_switch=1", result.stdout)
         self.assertIn("min_backspaces=1", result.stdout)

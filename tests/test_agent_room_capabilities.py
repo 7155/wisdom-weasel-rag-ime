@@ -260,12 +260,13 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         tool = room_runtime_registry()["room_collaborate"]
         schema = tool["inputSchema"]
         self.assertTrue(
-            any("等待各自结果" in value for value in tool["when"])
+            any("Facilitator" in value for value in tool["when"])
         )
-        self.assertFalse(
-            any("必须等对方结果" in value for value in tool["notFor"])
+        self.assertTrue(
+            any("review handoff" in value for value in tool["notFor"])
         )
         self.assertIn("acceptance", schema["required"])
+        self.assertIn("workspacePolicy", schema["required"])
         self.assertIn(
             "不得填写自己",
             schema["properties"]["targetParticipantRef"]["description"],
@@ -278,15 +279,34 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             schema["properties"]["acceptance"]["minItems"],
             1,
         )
+        self.assertEqual(
+            set(schema["properties"]["workspacePolicy"]["enum"]),
+            {"read_only", "isolated_writable"},
+        )
         base = {
             "targetParticipantRef": "P-2",
-            "objective": "独立复核当前边界",
-            "expectedOutput": "带证据的复核结论",
-            "intent": "review",
+            "objective": "实现明确且互不重叠的子任务",
+            "expectedOutput": "带证据的实现结果",
+            "intent": "execute",
+            "workspacePolicy": "read_only",
         }
         validate_contract({**base, "acceptance": ["AC-1"]}, schema)
         with self.assertRaises(ContractValidationError):
+            validate_contract(
+                {
+                    **base,
+                    "workspacePolicy": "shared_single_writer",
+                    "acceptance": ["AC-1"],
+                },
+                schema,
+            )
+        with self.assertRaises(ContractValidationError):
             validate_contract({**base, "acceptance": []}, schema)
+        with self.assertRaises(ContractValidationError):
+            validate_contract(
+                {**base, "intent": "review", "acceptance": ["AC-1"]},
+                schema,
+            )
 
     def test_room_commit_schema_leaves_quality_verdict_to_kernel(self) -> None:
         tool = room_runtime_registry()["room_commit"]
@@ -346,6 +366,49 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         self.assertIn(
             "马上要调用 room_commit",
             " ".join(room_runtime_registry()["room_post"]["notFor"]),
+        )
+        self.assertIn(
+            "每个 active Dispatch 最多发布一条",
+            room_runtime_registry()["room_post"]["description"],
+        )
+        self.assertIn(
+            "稳定的 Tool 活动面",
+            room_runtime_registry()["room_post"]["description"],
+        )
+
+    def test_room_post_cannot_publish_a_nonterminal_user_question(self) -> None:
+        tool = room_runtime_registry()["room_post"]
+        schema = tool["inputSchema"]
+        self.assertNotIn("question", schema["properties"]["kind"]["enum"])
+        self.assertIn(
+            "必须用 room_commit(wait) 发布并暂停",
+            " ".join(tool["notFor"]),
+        )
+        with self.assertRaises(ContractValidationError):
+            validate_contract(
+                {
+                    "kind": "question",
+                    "content": "请选择一个方案后再继续。",
+                },
+                schema,
+            )
+
+    def test_room_define_does_not_require_a_fake_implementation_peer(
+        self,
+    ) -> None:
+        schema = room_runtime_registry()["room_define"]["inputSchema"]
+        self.assertNotIn(
+            "implementationParticipantRef",
+            schema["required"],
+        )
+        validate_contract(
+            {
+                "objective": "完成小型单写任务",
+                "expectedOutput": "可验证结果",
+                "requirements": ["不虚构并行工作"],
+                "acceptanceCriteria": ["结果通过验证"],
+            },
+            schema,
         )
 
     def test_room_commit_schema_keeps_decision_fields_mutually_exclusive(
@@ -428,6 +491,7 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             "waitingFor": "user",
             "resumeCondition": "用户选择一个方案",
             "question": "采用哪个方案？",
+            "questionKind": "bounded",
         }
         options = [
             {
@@ -442,8 +506,26 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             },
         ]
         validate_contract({**base, "questionOptions": options}, schema)
+        validate_contract(
+            {
+                **base,
+                "questionKind": "unbounded",
+            },
+            schema,
+        )
 
         invalid = (
+            {
+                key: value
+                for key, value in base.items()
+                if key != "questionKind"
+            },
+            {**base, "questionKind": "unbounded", "questionOptions": options},
+            {
+                key: value
+                for key, value in base.items()
+                if key != "questionOptions"
+            },
             {
                 **base,
                 "decision": "deliver",
@@ -512,7 +594,7 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             ValueError,
-            "room_state/room_collaborate/room_post/room_commit",
+            "Room public tool surface only supports",
         ):
             self._invoke(
                 manifest,

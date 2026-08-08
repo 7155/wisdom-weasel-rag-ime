@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -32,7 +33,7 @@ class RoomV2ReadinessTests(unittest.TestCase):
                 baseline = apply_database_migrations(conn, migrations_dir=old_migrations, applied_at_ms=1)
                 upgraded = apply_database_migrations(conn, applied_at_ms=2)
                 self.assertEqual(baseline.current_version, 65)
-                self.assertEqual(upgraded.current_version, 126)
+                self.assertEqual(upgraded.current_version, load_migrations()[-1].version)
                 self.assertEqual(
                     upgraded.applied_versions,
                     tuple(migration.version for migration in load_migrations() if migration.version > 65),
@@ -42,12 +43,29 @@ class RoomV2ReadinessTests(unittest.TestCase):
 
     def test_all_contract_sources_have_stable_hashes(self) -> None:
         schema_paths = sorted((ROOT / "rag_ime" / "contracts" / "json").glob("*.json"))
+        generated_paths = sorted(
+            (ROOT / "control-center-web" / "src" / "contracts" / "generated").glob("*.ts")
+        )
+        generated_index = (
+            ROOT / "control-center-web" / "src" / "contracts" / "generated.ts"
+        ).read_text(encoding="utf-8")
+        schema_names = [path.stem for path in schema_paths]
+        generated_names = [path.stem for path in generated_paths]
+        generated_index_names = sorted(
+            re.findall(
+                r"^import type .* from './generated/([^']+)';$",
+                generated_index,
+                flags=re.MULTILINE,
+            )
+        )
+        self.assertTrue(schema_names)
+        self.assertEqual(generated_names, schema_names)
+        self.assertEqual(generated_index_names, schema_names)
         hashes = {}
         for path in schema_paths:
             value = json.loads(path.read_text(encoding="utf-8"))
             canonical = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             hashes[path.name] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        self.assertEqual(len(hashes), 157)
         self.assertTrue(all(len(value) == 64 for value in hashes.values()))
 
     def test_capability_probe_and_no_binding_smoke(self) -> None:
@@ -70,7 +88,14 @@ class RoomV2ReadinessTests(unittest.TestCase):
             self.assertFalse(path.exists())
             self.assertEqual(
                 tuple(room_runtime_registry()),
-                ("room_state", "room_collaborate", "room_post", "room_commit"),
+                (
+                    "room_state",
+                    "room_collaborate",
+                    "room_integrate",
+                    "room_post",
+                    "room_define",
+                    "room_commit",
+                ),
             )
 
     def test_default_off_cohort_gate_and_rollback_switch(self) -> None:

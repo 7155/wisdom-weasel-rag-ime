@@ -65,6 +65,7 @@ __all__ = [
     "public_fork_candidate_text",
     "public_pi_model",
     "public_usage",
+    "public_usage_evidence",
     "redact_mapping",
     "safe_scalar",
     "supported_thinking_levels",
@@ -81,10 +82,138 @@ REVIEW_TITLE_PREFIX = "RAG-IME-REVIEW:"
 GROUPED_QUESTIONS_TITLE_PREFIX = "RAG-IME-QUESTIONS:"
 
 
-GROUPED_QUESTIONS_SCHEMA_VERSION = "rag-ime.grouped-questions.v1"
+GROUPED_QUESTIONS_SCHEMA_VERSION = "rag-ime.grouped-questions.v2"
 
 
 _GROUPED_QUESTION_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,79}$")
+_GROUPED_CUSTOM_OPTION_LABELS = frozenset({"other", "其他", "其它", "自定义"})
+_GROUPED_QUESTION_KEYS = frozenset(
+    {"id", "question", "header", "options", "multi", "recommended"}
+)
+_GROUPED_OPTION_KEYS = frozenset({"label", "description", "preview"})
+_GROUPED_ANSWER_KEYS = frozenset({"selected", "custom"})
+
+
+def _bounded_grouped_string(
+    value: object,
+    *,
+    field: str,
+    maximum: int,
+    required: bool = False,
+) -> str:
+    if not isinstance(value, str):
+        if required:
+            raise ValueError(f"grouped {field} must be a string")
+        return ""
+    normalized = value.strip()
+    if required and not normalized:
+        raise ValueError(f"grouped {field} must not be empty")
+    if len(normalized) > maximum:
+        raise ValueError(f"grouped {field} is too long")
+    return normalized
+
+
+def _grouped_option_label_is_custom(label: str) -> bool:
+    return label.casefold() in _GROUPED_CUSTOM_OPTION_LABELS
+
+
+def _canonical_grouped_question(
+    value: object,
+    *,
+    seen_ids: set[str],
+) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError("grouped question must be an object")
+    if set(value) - _GROUPED_QUESTION_KEYS:
+        raise ValueError("grouped question contains unsupported fields")
+    question_id = _bounded_grouped_string(
+        value.get("id"),
+        field="question id",
+        maximum=80,
+        required=True,
+    )
+    if _GROUPED_QUESTION_ID_RE.fullmatch(question_id) is None:
+        raise ValueError("grouped question id is invalid")
+    if question_id in seen_ids:
+        raise ValueError("grouped question ids must be unique")
+    question = _bounded_grouped_string(
+        value.get("question"),
+        field="question text",
+        maximum=160,
+        required=True,
+    )
+    raw_header = value.get("header")
+    header = (
+        _bounded_grouped_string(
+            raw_header,
+            field="question header",
+            maximum=80,
+            required=True,
+        )
+        if raw_header is not None
+        else ""
+    )
+    raw_options = value.get("options")
+    if not isinstance(raw_options, list) or not 2 <= len(raw_options) <= 5:
+        raise ValueError("grouped question must contain two to five options")
+    options: list[dict[str, object]] = []
+    seen_labels: set[str] = set()
+    for raw_option in raw_options:
+        if not isinstance(raw_option, Mapping):
+            raise ValueError("grouped question option must be an object")
+        if set(raw_option) - _GROUPED_OPTION_KEYS:
+            raise ValueError("grouped question option contains unsupported fields")
+        label = _bounded_grouped_string(
+            raw_option.get("label"),
+            field="option label",
+            maximum=240,
+            required=True,
+        )
+        if _grouped_option_label_is_custom(label):
+            raise ValueError("grouped question must not add an Other option")
+        if label in seen_labels:
+            raise ValueError("grouped question option labels must be unique")
+        option: dict[str, object] = {"label": label}
+        for field in ("description", "preview"):
+            raw_value = raw_option.get(field)
+            if raw_value is None:
+                continue
+            normalized = _bounded_grouped_string(
+                raw_value,
+                field=f"option {field}",
+                maximum=500,
+                required=True,
+            )
+            option[field] = normalized
+        seen_labels.add(label)
+        options.append(option)
+    raw_multi = value.get("multi")
+    if raw_multi is not None and not isinstance(raw_multi, bool):
+        raise ValueError("grouped question multi must be a boolean")
+    multi = bool(raw_multi) if raw_multi is not None else False
+    raw_recommended = value.get("recommended")
+    recommended: int | None = None
+    if raw_recommended is not None:
+        if (
+            isinstance(raw_recommended, bool)
+            or not isinstance(raw_recommended, int)
+            or not 0 <= raw_recommended < len(options)
+        ):
+            raise ValueError("grouped question recommendation index is invalid")
+        recommended = raw_recommended
+    seen_ids.add(question_id)
+    canonical: dict[str, object] = {
+        "id": question_id,
+        "question": question,
+        "options": options,
+    }
+    if header:
+        canonical["header"] = header
+    if raw_multi is not None:
+        canonical["multi"] = multi
+    if recommended is not None:
+        canonical["recommended"] = recommended
+    return canonical
 
 
 def grouped_questions_from_wire(value: object) -> list[dict[str, object]]:
@@ -96,38 +225,18 @@ def grouped_questions_from_wire(value: object) -> list[dict[str, object]]:
         raise ValueError("grouped question payload is not valid JSON") from exc
     if not isinstance(decoded, Mapping):
         raise ValueError("grouped question payload must be an object")
+    if set(decoded) != {"schemaVersion", "questions"}:
+        raise ValueError("grouped question payload contains unsupported fields")
     if decoded.get("schemaVersion") != GROUPED_QUESTIONS_SCHEMA_VERSION:
         raise ValueError("unsupported grouped question schema")
     raw_questions = decoded.get("questions")
     if not isinstance(raw_questions, list) or not 1 <= len(raw_questions) <= 4:
         raise ValueError("grouped question payload must contain one to four questions")
     seen_ids: set[str] = set()
-    questions: list[dict[str, object]] = []
-    for raw_question in raw_questions:
-        if not isinstance(raw_question, Mapping):
-            raise ValueError("grouped question must be an object")
-        question_id = str(raw_question.get("id") or "").strip()
-        question = str(raw_question.get("question") or "").strip()
-        raw_options = raw_question.get("options")
-        if _GROUPED_QUESTION_ID_RE.fullmatch(question_id) is None:
-            raise ValueError("grouped question id is invalid")
-        if question_id in seen_ids:
-            raise ValueError("grouped question ids must be unique")
-        if not question or len(question) > 160:
-            raise ValueError("grouped question text is missing or too long")
-        if not isinstance(raw_options, list) or not 2 <= len(raw_options) <= 5:
-            raise ValueError("grouped question must contain two to five options")
-        options = [str(option).strip() for option in raw_options]
-        if (
-            any(not option or len(option) > 240 for option in options)
-            or len(set(options)) != len(options)
-        ):
-            raise ValueError("grouped question options must be non-empty and unique")
-        seen_ids.add(question_id)
-        questions.append(
-            {"id": question_id, "question": question, "options": options}
-        )
-    return questions
+    return [
+        _canonical_grouped_question(item, seen_ids=seen_ids)
+        for item in raw_questions
+    ]
 
 
 def canonical_grouped_answers(
@@ -136,8 +245,17 @@ def canonical_grouped_answers(
 ) -> str:
     if not isinstance(value, str) or len(value.encode("utf-8")) > 12_000:
         raise ValueError("grouped answer payload is missing or too large")
-    if not isinstance(questions, list):
+    if not isinstance(questions, list) or not 1 <= len(questions) <= 4:
         raise ValueError("grouped question state is invalid")
+    try:
+        canonical_questions: list[dict[str, object]] = []
+        seen_ids: set[str] = set()
+        for question in questions:
+            canonical_questions.append(
+                _canonical_grouped_question(question, seen_ids=seen_ids)
+            )
+    except ValueError as exc:
+        raise ValueError("grouped question state is invalid") from exc
     try:
         decoded = json.loads(value)
     except (TypeError, ValueError) as exc:
@@ -147,27 +265,53 @@ def canonical_grouped_answers(
     raw_answers = decoded.get("answers")
     if not isinstance(raw_answers, Mapping):
         raise ValueError("grouped answers must be an object")
-    expected_ids = {
-        str(question.get("id") or "")
-        for question in questions
-        if isinstance(question, Mapping)
-    }
-    if set(raw_answers) != expected_ids or len(expected_ids) != len(questions):
+    expected_ids = [str(question["id"]) for question in canonical_questions]
+    if set(raw_answers) != set(expected_ids):
         raise ValueError("grouped answers must cover every offered question")
-    answers: dict[str, str] = {}
-    for question in questions:
-        if not isinstance(question, Mapping):
-            raise ValueError("grouped question state is invalid")
-        question_id = str(question.get("id") or "")
-        options = question.get("options")
-        selected = raw_answers.get(question_id)
+    answers: dict[str, dict[str, object]] = {}
+    for question in canonical_questions:
+        question_id = str(question["id"])
+        raw_answer = raw_answers.get(question_id)
+        if not isinstance(raw_answer, Mapping):
+            raise ValueError("grouped answer must be an object")
+        if set(raw_answer) - _GROUPED_ANSWER_KEYS or "selected" not in raw_answer:
+            raise ValueError("grouped answer shape is invalid")
+        raw_selected = raw_answer.get("selected")
         if (
-            not isinstance(options, list)
-            or not isinstance(selected, str)
-            or selected not in options
+            not isinstance(raw_selected, list)
+            or any(not isinstance(item, str) for item in raw_selected)
         ):
+            raise ValueError("grouped answer selections must be strings")
+        selected = [item.strip() for item in raw_selected]
+        if any(not item for item in selected) or len(set(selected)) != len(selected):
+            raise ValueError("grouped answer selections must be non-empty and unique")
+        option_labels = {
+            str(option["label"])
+            for option in question["options"]
+            if isinstance(option, Mapping)
+        }
+        if any(item not in option_labels for item in selected):
             raise ValueError("grouped answer is not one of the offered options")
-        answers[question_id] = selected
+        multi = question.get("multi") is True
+        if not multi and len(selected) > 1:
+            raise ValueError("single-choice grouped answers allow one selection")
+        raw_custom = raw_answer.get("custom")
+        custom = ""
+        if raw_custom is not None:
+            custom = _bounded_grouped_string(
+                raw_custom,
+                field="custom answer",
+                maximum=1_000,
+                required=True,
+            )
+        if not selected and not custom:
+            raise ValueError("grouped answer must select an option or provide custom text")
+        if selected and custom and not multi:
+            raise ValueError("single-choice grouped answers cannot combine custom text")
+        answer: dict[str, object] = {"selected": selected}
+        if custom:
+            answer["custom"] = custom
+        answers[question_id] = answer
     return json.dumps(
         {"answers": answers},
         ensure_ascii=False,
@@ -329,13 +473,17 @@ def public_reasoning_summaries(
     """Project only Provider-authored reasoning *summaries*.
 
     Pi's generic ``thinking`` carrier also transports private chain-of-thought
-    for some Providers.  Only the OpenAI Responses API defines this carrier as
-    a user-visible reasoning summary, so every other API (and every
-    ``redacted_thinking`` block) stays private.  The projection is bounded,
-    path/secret redacted, and contains no signatures or raw Provider metadata.
+    for some Providers.  Only the OpenAI Responses API and the Codex Responses
+    adapter define this carrier as a user-visible reasoning summary, so every
+    other API (and every ``redacted_thinking`` block) stays private.  The
+    projection is bounded, path/secret redacted, and contains no signatures or
+    raw Provider metadata.
     """
 
-    if str(raw.get("api") or "").strip().lower() != "openai-responses":
+    if str(raw.get("api") or "").strip().lower() not in {
+        "openai-responses",
+        "openai-codex-responses",
+    }:
         return []
     content = raw.get("content")
     if not isinstance(content, list):
@@ -389,6 +537,42 @@ def public_usage(value: object) -> dict[str, int]:
         "cacheRead": cache_read,
         "cacheWrite": cache_write,
         "totalTokens": total,
+    }
+
+
+def public_usage_evidence(value: object) -> dict[str, bool]:
+    """Describe which usage fields the Provider response actually reported."""
+
+    usage_value = as_mapping(value).get("usage")
+    if not isinstance(usage_value, Mapping):
+        return {
+            "usageReported": False,
+            "cacheUsageReported": False,
+        }
+    usage = dict(usage_value)
+
+    def reported(key: str) -> bool:
+        metric = usage.get(key)
+        return (
+            isinstance(metric, (int, float))
+            and not isinstance(metric, bool)
+        )
+
+    return {
+        "usageReported": any(
+            reported(key)
+            for key in (
+                "input",
+                "output",
+                "cacheRead",
+                "cacheWrite",
+                "totalTokens",
+            )
+        ),
+        "cacheUsageReported": any(
+            reported(key)
+            for key in ("cacheRead", "cacheWrite")
+        ),
     }
 
 

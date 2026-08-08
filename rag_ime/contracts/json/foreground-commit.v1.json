@@ -19,16 +19,84 @@
     "contextGroupId": {"type": "string"},
     "contextGroupLevel": {"type": "string"},
     "captureMetadata": {
-      "type": "object",
-      "properties": {
-        "captureSource": {"type": "string"},
-        "fallbackReason": {"type": "string"},
-        "fieldContextChars": {"type": "integer", "minimum": 0},
-        "imeBufferChars": {"type": "integer", "minimum": 0},
-        "selectedTextSha256": {"type": "string"},
-        "selectionRule": {"type": "string"}
-      },
-      "additionalProperties": false
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "captureSource": {"type": "string"},
+            "fallbackReason": {"type": "string"},
+            "fieldContextChars": {"type": "integer", "minimum": 0},
+            "imeBufferChars": {"type": "integer", "minimum": 0},
+            "selectedTextSha256": {"type": "string"},
+            "selectionRule": {"type": "string"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "schemaVersion",
+            "captureId",
+            "transactionId",
+            "sequence",
+            "channel",
+            "boundaryKind",
+            "boundaryConfidence",
+            "nativeCompositionBefore",
+            "rimeHandled",
+            "hostForwarded",
+            "modifiedReturn",
+            "finalCommitted",
+            "controllerEpoch",
+            "focusEpoch",
+            "appBundleId",
+            "fieldIdentitySha256",
+            "privacyRevision",
+            "occurredStartMs",
+            "occurredEndMs",
+            "contentSha256",
+            "captureSource",
+            "fallbackReason",
+            "fieldContextChars",
+            "imeBufferChars",
+            "selectionRule"
+          ],
+          "properties": {
+            "schemaVersion": {"const": "rag-ime.input-capture.v2"},
+            "captureId": {"type": "string", "minLength": 1, "maxLength": 160},
+            "transactionId": {"type": "string", "minLength": 1, "maxLength": 160},
+            "sequence": {"type": "integer", "minimum": 1},
+            "channel": {"type": "string", "enum": ["input_method", "voice"]},
+            "boundaryKind": {
+              "type": "string",
+              "enum": ["host_return", "focus_change", "app_change", "deactivate", "voice_final"]
+            },
+            "boundaryConfidence": {"type": "string", "enum": ["strong", "weak"]},
+            "nativeCompositionBefore": {"type": "boolean"},
+            "rimeHandled": {"type": "boolean"},
+            "hostForwarded": {"type": "boolean"},
+            "modifiedReturn": {"type": "boolean"},
+            "finalCommitted": {"type": "boolean"},
+            "controllerEpoch": {"type": "integer", "minimum": 0},
+            "focusEpoch": {"type": "integer", "minimum": 0},
+            "appBundleId": {"type": "string", "minLength": 1, "maxLength": 300},
+            "fieldIdentitySha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+            "privacyRevision": {"type": "string", "minLength": 1, "maxLength": 120},
+            "occurredStartMs": {"type": "integer", "minimum": 0},
+            "occurredEndMs": {"type": "integer", "minimum": 0},
+            "contentSha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+            "captureSource": {
+              "type": "string",
+              "enum": ["text_input_client", "accessibility", "ime_active_buffer", "voice_insertion"]
+            },
+            "fallbackReason": {"type": "string", "maxLength": 120},
+            "fieldContextChars": {"type": "integer", "minimum": 0, "maximum": 100000},
+            "imeBufferChars": {"type": "integer", "minimum": 0, "maximum": 100000},
+            "selectionRule": {"type": "string", "maxLength": 120}
+          },
+          "additionalProperties": false
+        }
+      ]
     },
     "privacyDisposition": {"type": "string", "enum": ["allowed", "sensitive", "unknown"]},
     "sensitiveField": {"type": "boolean"},

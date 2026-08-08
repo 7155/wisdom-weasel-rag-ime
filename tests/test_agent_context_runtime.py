@@ -129,8 +129,8 @@ class AgentContextRuntimeTests(unittest.TestCase):
                 "required": ["summary"],
                 "properties": {"summary": {"type": "string"}},
             },
-            "planItemId": "plan-item:one",
-            "planItemTitle": "核对子 Agent 证据",
+            "todoTask": "核对子 Agent 证据",
+            "todoPhase": "验证",
             "state": "completed",
             "result": {
                 "summary": "已取得 artifact://one",
@@ -173,6 +173,7 @@ class AgentContextRuntimeTests(unittest.TestCase):
             ["引用真实产物", "列出未决风险"],
         )
         self.assertIn("do not auto-accept", materialized["prompt"])
+        self.assertIn("linked parent Todo task", materialized["prompt"])
 
     def test_until_ack_items_reappear_without_duplicate_storage(self) -> None:
         item = self.runtime.enqueue(
@@ -453,7 +454,7 @@ class AgentContextRuntimeTests(unittest.TestCase):
         self.assertIn("<work-state>", rendered)
         self.assertIn("保留工作状态", rendered)
 
-    def test_compaction_history_cannot_override_current_task_or_plan(self) -> None:
+    def test_compaction_history_cannot_override_current_task_or_todo(self) -> None:
         rendered = render_context_items(
             [
                 {
@@ -475,10 +476,10 @@ class AgentContextRuntimeTests(unittest.TestCase):
                             "objective": "只执行当前修复",
                             "acceptanceCriteria": ["CURRENT-AC"],
                         },
-                        "plan": [
+                        "todo": [
                             {
-                                "status": "completed",
-                                "title": "CURRENT-PLAN",
+                                "status": "in_progress",
+                                "content": "CURRENT-TODO",
                             }
                         ],
                         "items": [],
@@ -497,8 +498,8 @@ class AgentContextRuntimeTests(unittest.TestCase):
         self.assertIn("## 当前任务（本轮权威投影）", rendered)
         self.assertIn("只执行当前修复", rendered)
         self.assertIn("CURRENT-AC", rendered)
-        self.assertIn("## 当前计划（本轮权威投影）", rendered)
-        self.assertIn("- [已完成] CURRENT-PLAN", rendered)
+        self.assertIn("## 当前 Todo（本轮权威投影）", rendered)
+        self.assertIn("- [进行中] CURRENT-TODO", rendered)
         self.assertNotIn("OLD-STATE", rendered)
 
     def test_empty_session_memory_does_not_consume_provider_context(self) -> None:

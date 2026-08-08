@@ -3,7 +3,6 @@ import {
   CircleCheck,
   Clock3,
   FileText,
-  Gauge,
   GitBranch,
   LockKeyhole,
   ListChecks,
@@ -19,17 +18,29 @@ import { useState } from 'react';
 import { Button } from '@/components/primitives';
 import type { RoomKernelProjection, RootProjection } from '@/contracts/room-kernel-reducer';
 import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
+import type { RoomPostV2 } from '@/contracts/generated/room-post.v2';
 import type { RoomTaskV3 } from '@/contracts/generated/room-task.v3';
-import type { RoomParticipantPublicProgressProjection } from '@/contracts/room-reducer';
+import type {
+  RoomActivityProjection,
+  RoomParticipantPublicProgressProjection,
+} from '@/contracts/room-reducer';
 import { RoomRequirementsControlPlane } from '../requirements/RoomRequirementsControlPlane';
 import type { RoomRequirementsReadProjection } from '../requirements/room-requirements-read-model';
-import { ROOM_PUBLIC_PROGRESS_KIND_LABELS as PUBLIC_PROGRESS_KIND_LABELS, roomParticipantPublicProgressSummary } from '../room-copy';
+import { ROOM_PUBLIC_PROGRESS_KIND_LABELS as PUBLIC_PROGRESS_KIND_LABELS, roomCollaborationRoleLabel, roomParticipantPublicProgressSummary } from '../room-copy';
+import type { RoomCollaborationRole, RoomWorkItem } from '../room-types';
+import { roomPublicActivityText } from '../timeline/room-tool-presentation';
 import {
   buildCancelRootCommand,
   buildPanicCommand,
   buildRetryRootCommand,
   type RoomKernelCommandTransport,
 } from './room-kernel-command-transport';
+import {
+  roomTaskIsVisibleWork,
+  RoomTaskFlowGraph,
+  RoomTaskWorkList,
+  type RoomTaskSubagentRun,
+} from './RoomTaskFlowGraph';
 import './room-kernel-control-plane.css';
 
 export type RootBudgetSummary = {
@@ -53,6 +64,7 @@ const roomPublicTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
 });
 
 export function RoomKernelControlPlane({
+  activities = [],
   budgetsByRootId,
   capabilityReceiptsByRootId,
   contextReceiptsByRootId,
@@ -60,10 +72,14 @@ export function RoomKernelControlPlane({
   commandDisabledReason,
   panicEnabled = false,
   participantLabels = {},
+  participantRoles = {},
   participantProgress = [],
   projection,
   requirementsByRootId = {},
+  subagentsByTaskId = {},
+  workItems = [],
 }: {
+  activities?: RoomActivityProjection[];
   projection: RoomKernelProjection;
   budgetsByRootId: Record<string, RootBudgetSummary>;
   contextReceiptsByRootId: Record<string, RuntimeReceiptSummary>;
@@ -72,20 +88,22 @@ export function RoomKernelControlPlane({
   commandDisabledReason?: string;
   panicEnabled?: boolean;
   participantLabels?: Record<string, string>;
+  participantRoles?: Record<string, RoomCollaborationRole>;
   participantProgress?: RoomParticipantPublicProgressProjection[];
+  subagentsByTaskId?: Record<string, RoomTaskSubagentRun[]>;
   requirementsByRootId?: Record<string, RoomRequirementsReadProjection>;
+  workItems?: RoomWorkItem[];
 }) {
   const roots = Object.values(projection.rootsById).sort((left, right) => {
     const recency = roomRootRecency(right) - roomRootRecency(left);
     return recency || left.rootId.localeCompare(right.rootId);
   });
-  const tasks = Object.values(projection.tasksById);
-  const dispatches = Object.values(projection.dispatchesById);
+  const tasks = Object.values(projection.tasksById).filter(roomTaskIsVisibleWork);
   const completedTasks = tasks.filter((task) => task.state === 'completed').length;
-  const activeDispatches = dispatches.filter((dispatch) => (
-    ['pending', 'leased', 'running', 'retry_wait', 'timer_wait', 'unknown'].includes(
-      dispatch.state,
-    )
+  const activeTasks = tasks.filter((task) => ['active', 'review'].includes(task.state)).length;
+  const waitingTasks = tasks.filter((task) => ['pending', 'waiting'].includes(task.state)).length;
+  const attentionTasks = tasks.filter((task) => (
+    ['blocked', 'failed', 'cancelled'].includes(task.state)
   )).length;
   const attentionRoots = roots.filter((root) => (
     ['waiting', 'blocked', 'cancelling', 'cancelled_with_unknowns', 'failed'].includes(
@@ -118,7 +136,7 @@ export function RoomKernelControlPlane({
     <header className="room-kernel-control__header">
       <span>
         <strong>任务进展</strong>
-        <small>{roots.length} 个整体任务 · {tasks.length} 个分工 · {dispatches.length} 个执行批次</small>
+        <small>{roots.length} 个共同目标 · {tasks.length} 项工作</small>
       </span>
       <span className="room-kernel-control__actions">
         {projection.needsSnapshot
@@ -140,21 +158,25 @@ export function RoomKernelControlPlane({
     {panicConfirming ? <div className="room-kernel-control__panic-confirmation" role="alert"><p>这会取消当前协作空间中正在运行的伙伴、工具和后续任务。</p><div><Button disabled={panicPending} onClick={() => setPanicConfirming(false)} size="small" variant="quiet">继续运行</Button><Button disabled={!commandTransport} loading={panicPending} onClick={() => void requestPanic()} size="small" variant="danger">确认停止全部</Button></div></div> : null}
     {panicReceipt ? <p className="room-kernel-control__panic-receipt" role="status">{receiptStatusLabel(panicReceipt)}</p> : null}
     {panicError ? <p className="room-kernel-control__command-error" role="alert">{panicError}</p> : null}
-    <section className="room-kernel-control__overview" aria-label="整体任务、分工与协作执行总进度">
+    <section className="room-kernel-control__overview" aria-label="共同目标与工作总进度">
       <span data-state={attentionRoots ? 'attention' : 'steady'}>
         <GitBranch size={15} />
-        <small>整体任务</small>
+        <small>共同目标</small>
         <strong>{attentionRoots ? `${attentionRoots} 个需要关注` : `${roots.length} 个状态明确`}</strong>
       </span>
       <span data-state={completedTasks === tasks.length && tasks.length ? 'complete' : 'steady'}>
         <ListChecks size={15} />
-        <small>分工</small>
+        <small>任务完成</small>
         <strong>{tasks.length ? `${completedTasks} / ${tasks.length} 已完成` : '等待任务拆分'}</strong>
       </span>
-      <span data-state={activeDispatches ? 'active' : 'steady'}>
+      <span data-state={attentionTasks ? 'attention' : activeTasks ? 'active' : 'steady'}>
         <Wrench size={15} />
-        <small>协作执行</small>
-        <strong>{dispatches.length ? `${activeDispatches} 个活跃 · 共 ${dispatches.length} 个` : '等待分派'}</strong>
+        <small>当前任务</small>
+        <strong>{attentionTasks
+          ? `${attentionTasks} 项需要处理`
+          : activeTasks || waitingTasks
+            ? `${activeTasks} 项正在做 · ${waitingTasks} 项等待`
+            : tasks.length ? '全部已经落定' : '等待任务拆分'}</strong>
       </span>
     </section>
     <div className="room-kernel-control__roots">
@@ -168,8 +190,12 @@ export function RoomKernelControlPlane({
         commandTransport={commandTransport}
         commandDisabledReason={commandDisabledReason}
         participantLabels={participantLabels}
+        participantRoles={participantRoles}
         requirements={requirementsByRootId[root.rootId]}
         participantProgress={participantProgress}
+        subagentsByTaskId={subagentsByTaskId}
+        activities={activities}
+        workItems={workItems}
       />)}
       {!roots.length ? <p className="room-kernel-control__empty">当前没有任务。</p> : null}
     </div>
@@ -177,6 +203,7 @@ export function RoomKernelControlPlane({
 }
 
 function RootControlSection({
+  activities,
   budget,
   capabilityReceipt,
   contextReceipt,
@@ -184,10 +211,14 @@ function RootControlSection({
   commandDisabledReason,
   projection,
   participantLabels,
+  participantRoles,
   participantProgress,
   root,
   requirements,
+  subagentsByTaskId,
+  workItems,
 }: {
+  activities: RoomActivityProjection[];
   root: RootProjection;
   projection: RoomKernelProjection;
   budget?: RootBudgetSummary;
@@ -196,20 +227,37 @@ function RootControlSection({
   commandTransport?: RoomKernelCommandTransport;
   commandDisabledReason?: string;
   participantLabels: Record<string, string>;
+  participantRoles: Record<string, RoomCollaborationRole>;
   participantProgress: RoomParticipantPublicProgressProjection[];
   requirements?: RoomRequirementsReadProjection;
+  subagentsByTaskId: Record<string, RoomTaskSubagentRun[]>;
+  workItems: RoomWorkItem[];
 }) {
   const posts = projection.postOrder
     .map((postId) => projection.postsById[postId])
-    .filter((post) => post?.rootId === root.rootId)
+    .filter((post): post is RoomPostV2 => post?.rootId === root.rootId)
     .sort((left, right) => right!.createdAtMs - left!.createdAtMs);
   const terminal = roomRootIsTerminal(root);
-  const visiblePosts = terminal ? posts.slice(0, 1) : posts;
+  const terminalReporterPosts = posts.filter((post) => (
+    post?.kind === 'result'
+    && post.publicationSource.kind === 'room_commit'
+    && (
+      !root.reporterParticipantId
+      || post.authorActorRef === root.reporterParticipantId
+    )
+  ));
+  const visiblePosts = terminal
+    ? (
+        terminalReporterPosts.length || root.reporterParticipantId
+          ? terminalReporterPosts
+          : posts
+      ).slice(0, 1)
+    : posts;
   const sessions = Object.values(projection.sessionsById)
     .filter((session) => session.rootId === root.rootId)
     .sort((left, right) => left.sessionId.localeCompare(right.sessionId));
   const tasks = Object.values(projection.tasksById)
-    .filter((task) => task.rootId === root.rootId)
+    .filter((task) => task.rootId === root.rootId && roomTaskIsVisibleWork(task))
     .sort((left, right) => left.taskId.localeCompare(right.taskId));
   const dispatches = Object.values(projection.dispatchesById)
     .filter((dispatch) => dispatch.rootId === root.rootId);
@@ -278,7 +326,7 @@ function RootControlSection({
   const taskTitle = rootTaskTitle(root, requirements);
   return <article className="room-kernel-root" data-root-state={root.state}>
     <header className="room-kernel-root__header">
-      <span><small>任务 · 第 {root.generation} 次尝试</small><strong>{taskTitle}</strong><i data-state={root.state}>{rootStateLabel(root, receipt)}</i></span>
+      <span><small title={`第 ${root.generation} 次尝试`}>共同工作</small><strong>{taskTitle}</strong><i data-state={root.state}>{rootStateLabel(root, receipt)}</i></span>
       {!terminal || root.state === 'cancelled_with_unknowns' ? <span className="room-kernel-root__actions">
         {root.state === 'blocked' ? <Button variant="secondary" size="small" leadingIcon={<RotateCcw size={13} />} disabled={!commandTransport || pending || commandAwaitingProjection} title={commandTransport ? '重新分派失败的部分，保留已经完成的工作' : commandDisabledReason || '当前连接没有继续任务的权限'} onClick={() => void requestRetry()}>{pending ? '正在继续' : commandAwaitingProjection ? '已请求继续' : '继续此任务'}</Button> : null}
         <Button variant="quiet" size="small" leadingIcon={<Square size={13} />} disabled={!commandTransport || pending || commandAwaitingProjection} title={commandTransport ? commandAwaitingProjection ? '正在等待任务控制结果' : '停止这个任务及其伙伴、工具和后续任务' : commandDisabledReason || '当前连接没有停止任务的权限'} onClick={() => void requestStop()}>{pending ? '正在处理' : commandAwaitingProjection ? '已发送请求' : root.state === 'cancelled_with_unknowns' ? '再次确认停止' : '停止此任务'}</Button>
@@ -292,66 +340,84 @@ function RootControlSection({
         <ul>{unresolvedSurfaces.map((item) => <li key={`${item.cancelId}:${item.surface}`}><span>{cancellationSurfaceLabel(item.surface)}</span><b>{cancellationSurfaceStateLabel(item.state)}</b><small>{surfaceTargets(item.detail)}</small></li>)}</ul>
       </details>
     </section> : null}
-    <section className="room-kernel-root__progress" aria-label="整体任务、每个人的部分与协作执行进度">
-      <span data-state={root.state}>
-        <GitBranch size={14} />
-        <small>整体</small>
-        <strong>{rootStateLabel(root, receipt)}</strong>
-      </span>
-      <span data-state={completedTasks === tasks.length && tasks.length ? 'completed' : 'active'}>
-        <ListChecks size={14} />
-        <small>分工</small>
-        <strong>{tasks.length ? `${completedTasks} / ${tasks.length} 已完成` : '等待安排'}</strong>
-      </span>
-      <span data-state={activeDispatches ? 'running' : 'completed'}>
-        <Wrench size={14} />
-        <small>协作执行</small>
-        <strong>{dispatches.length ? `${activeDispatches} 正在工作 · ${settledDispatches} 已结束` : '等待伙伴开始'}</strong>
-      </span>
-      <div
-        aria-label={tasks.length ? `分工完成 ${taskProgress}%` : '分工尚未拆分'}
-        aria-valuemax={100}
-        aria-valuemin={0}
-        aria-valuenow={taskProgress}
-        role="progressbar"
-      >
-        <span style={{ width: `${taskProgress}%` }} />
-      </div>
-    </section>
-    <RoomParallelWorkPhase
+    <RoomTaskFlowGraph
+      dispatches={dispatches}
+      finalPostCount={terminal ? visiblePosts.length : 0}
+      goal={taskTitle}
+      participantLabels={participantLabels}
+      participantProgress={participantProgress}
+      posts={posts}
+      root={root}
+      tasks={tasks}
+      subagentsByTaskId={subagentsByTaskId}
+      terminalReceipt={receipt}
+    />
+    <RoomTaskWorkList
+      activities={activities}
       dispatches={dispatches}
       participantLabels={participantLabels}
       participantProgress={participantProgress}
+      posts={posts}
       root={root}
+      subagentsByTaskId={subagentsByTaskId}
+      taskUpdatedAtMsById={projection.taskUpdatedAtMsById}
       tasks={tasks}
+      sessionsById={projection.sessionsById}
+      workItems={workItems}
     />
-    <div className="room-kernel-root__summary">
-      <span><ShieldCheck size={14} /><small>帮大家对齐进度</small><strong>{participantLabel(root.facilitatorParticipantId, participantLabels)}</strong></span>
-      <BudgetMetric icon={<Gauge size={14} />} label="协作轮次" used={budget?.usedDispatches} maximum={budget?.maxDispatches} />
-      <BudgetMetric icon={<FileText size={14} />} label="上下文用量" used={budget?.usedTokens} maximum={budget?.maxTokens} />
-      <BudgetMetric icon={<Clock3 size={14} />} label="运行时间" used={budget?.elapsedMs} maximum={budget?.maxWallTimeMs} formatter={durationLabel} />
-    </div>
-    <section className="room-kernel-root__receipts" aria-label="运行确认">
-      <ReceiptSummary icon={<LockKeyhole size={14} />} label="上下文" receipt={contextReceipt} />
-      <ReceiptSummary icon={<Wrench size={14} />} label="技能与工具" receipt={capabilityReceipt} />
-      <span><CircleCheck size={14} /><small>任务验收</small><strong>{receipt ? qualityGateLabel(receipt) : '等待伙伴和工具结束'}</strong></span>
-      <span><ShieldCheck size={14} /><small>额外交付检查</small><strong>{receipt ? deliveryGateLabel(receipt) : '等待任务结束'}</strong></span>
-      <span data-receipt-state={commandReceipt?.status ?? cancelReceipt?.status}><Square size={14} /><small>任务控制</small><strong>{commandReceipt ? receiptStatusLabel(commandReceipt) : cancelReceipt ? receiptStatusLabel(cancelReceipt) : commandTransport ? '尚未操作' : '当前连接没有停止权限'}</strong></span>
-    </section>
+    <details className="room-kernel-root__work-details">
+      <summary>
+        <ListChecks size={15} />
+        <span>
+          <strong>查看每位伙伴的进度</strong>
+          <small>公开进度、复核状态和文字详情</small>
+        </span>
+      </summary>
+      <RoomParallelWorkPhase
+        dispatches={dispatches}
+        participantLabels={participantLabels}
+        participantRoles={participantRoles}
+        participantProgress={participantProgress}
+        root={root}
+        tasks={tasks}
+      />
+      {sharedCheckVisible ? (
+        <RoomSharedFinalCheck
+          individualTasks={individualTasks}
+          participantLabels={participantLabels}
+          receipt={receipt}
+          reviewTasks={reviewTasks}
+          root={root}
+        />
+      ) : null}
+    </details>
+    <details className="room-kernel-root__runtime-details">
+      <summary title={`第 ${root.generation} 次尝试 · ${budget?.usedDispatches ?? 0} 个执行批次`}>
+        <Clock3 size={15} />
+        <span><strong>运行详情</strong><small>时长、尝试和上下文用量</small></span>
+      </summary>
+      <div className="room-kernel-root__summary">
+        <span><ShieldCheck size={14} /><small>协调伙伴</small><strong>{participantLabel(root.facilitatorParticipantId, participantLabels)}</strong></span>
+        <span><RotateCcw size={14} /><small>尝试与执行</small><strong>第 {root.generation} 次 · {budget?.usedDispatches ?? 0} 批</strong></span>
+        <BudgetMetric icon={<FileText size={14} />} label="上下文用量" used={budget?.usedTokens} maximum={budget?.maxTokens} />
+        <BudgetMetric icon={<Clock3 size={14} />} label="运行时间" used={budget?.elapsedMs} maximum={budget?.maxWallTimeMs} formatter={durationLabel} />
+      </div>
+    </details>
+    <details className="room-kernel-root__audit-details">
+      <summary><LockKeyhole size={15} /><span><strong>查看运行确认与验收记录</strong><small>上下文、工具、交付检查和任务控制</small></span></summary>
+      <section className="room-kernel-root__receipts" aria-label="运行确认">
+        <ReceiptSummary icon={<LockKeyhole size={14} />} label="上下文" receipt={contextReceipt} />
+        <ReceiptSummary icon={<Wrench size={14} />} label="技能与工具" receipt={capabilityReceipt} />
+        <span><CircleCheck size={14} /><small>任务验收</small><strong>{receipt ? qualityGateLabel(receipt) : '等待伙伴和工具结束'}</strong></span>
+        <span><ShieldCheck size={14} /><small>额外交付检查</small><strong>{receipt ? deliveryGateLabel(receipt) : '等待任务结束'}</strong></span>
+        <span data-receipt-state={commandReceipt?.status ?? cancelReceipt?.status}><Square size={14} /><small>任务控制</small><strong>{commandReceipt ? receiptStatusLabel(commandReceipt) : cancelReceipt ? receiptStatusLabel(cancelReceipt) : commandTransport ? '尚未操作' : '当前连接没有停止权限'}</strong></span>
+      </section>
+    </details>
     <TaskOwnershipFlow
       participantLabels={participantLabels}
       receipts={ownershipReceipts}
       tasks={tasks}
     />
-    {sharedCheckVisible ? (
-      <RoomSharedFinalCheck
-        individualTasks={individualTasks}
-        participantLabels={participantLabels}
-        receipt={receipt}
-        reviewTasks={reviewTasks}
-        root={root}
-      />
-    ) : null}
     {commandError ? <p className="room-kernel-control__command-error" role="alert">{commandError}</p> : null}
     <div className="room-kernel-root__planes">
       <section className="room-kernel-posts" aria-label="公开结果与回复">
@@ -367,14 +433,18 @@ function RootControlSection({
           >
             <span>
               <b>{postKindLabel(post!.kind)}</b>
-              <small>{publicActorLabel(post!.authorActorRef, participantLabels)}</small>
+              <small>{terminal && root.reporterParticipantId
+                ? `汇报人 · ${participantLabel(root.reporterParticipantId, participantLabels)}`
+                : publicActorLabel(post!.authorActorRef, participantLabels)}</small>
               <time dateTime={new Date(post!.createdAtMs).toISOString()}>
                 {roomPublicTimeFormatter.format(new Date(post!.createdAtMs))}
               </time>
             </span>
-            <p>{post!.content}</p>
+            <p>{roomPublicActivityText(post!.content) || '公开结果已记录'}</p>
           </article>
-        )) : <p className="room-kernel-control__empty">还没有公开结果。</p>}
+        )) : <p className="room-kernel-control__empty">{terminal && root.reporterParticipantId
+          ? '等待汇报人发布一份最终总结。'
+          : '还没有公开结果。'}</p>}
       </section>
       <section className="room-kernel-sessions" aria-label="伙伴运行状态">
         <header>
@@ -404,7 +474,7 @@ function RootControlSection({
               {publicUpdate ? (
                 <span className="room-kernel-sessions__public-update" data-kind={publicUpdate.kind}>
                   <strong>{PUBLIC_PROGRESS_KIND_LABELS[publicUpdate.kind]}</strong>
-                  <span>{publicUpdate.summary}</span>
+                  <span>{roomPublicActivityText(publicUpdate.summary) || '公开进度已更新'}</span>
                   <time dateTime={new Date(publicUpdate.updatedAtMs).toISOString()}>
                     {roomPublicTimeFormatter.format(new Date(publicUpdate.updatedAtMs))}
                   </time>
@@ -445,15 +515,81 @@ const PARTICIPANT_LANE_STATE_LABELS: Record<ParticipantLaneState, string> = {
   settled: '已落定',
 };
 
+function collaborationStage(
+  root: RootProjection,
+  tasks: RoomTaskV3[],
+): { step: string; title: string; description: string } {
+  if (root.state === 'completed') {
+    return {
+      step: '第 4 步',
+      title: '最终回复已发布',
+      description: '主持者已汇总实现、验证与独立复核结论。',
+    };
+  }
+  const reviewTasks = tasks.filter((task) => task.taskKind === 'review');
+  if (reviewTasks.length) {
+    const revisionNeeded = reviewTasks.some((task) => (
+      ['blocked', 'failed'].includes(task.state)
+      || task.reviewState === 'changes_requested'
+    ));
+    const reviewAccepted = reviewTasks.every((task) => (
+      task.state === 'completed' && task.reviewState === 'accepted'
+    ));
+    return reviewAccepted
+      ? {
+          step: '第 4 步',
+          title: '最终汇总',
+          description: '独立复核已通过，等待主持者发布唯一最终回复。',
+        }
+      : {
+          step: '第 3 步',
+          title: revisionNeeded ? '独立复核与返修' : '独立复核',
+          description: revisionNeeded
+            ? '审查者已提出问题；主持者修正并验证后会重新进入独立复核。'
+            : '审查者正在检查集成后的完整结果，不参与实现或集成。',
+        };
+  }
+  const implementationTasks = tasks.filter((task) => (
+    Boolean(task.parentTaskId) && task.taskKind === 'work'
+  ));
+  if (implementationTasks.length) {
+    const integrating = implementationTasks.every((task) => (
+      ['completed', 'blocked', 'failed', 'cancelled'].includes(task.state)
+    )) || implementationTasks.some((task) => (
+      task.workspacePolicy === 'isolated_writable'
+      && task.workspaceIntegrationState !== 'applied'
+    ));
+    return integrating
+      ? {
+          step: '第 2 步',
+          title: '集成与验证',
+          description: '实现结果已经返回；主持者正在权威工作区合并并验证完整交付物。',
+        }
+      : {
+          step: '第 2 步',
+          title: '并行实现与调研',
+          description: '不同伙伴只处理互不重叠的分工；主持者保留集成与最终回复责任。',
+        };
+  }
+  return {
+    step: '第 1 步',
+    title: '需求对齐与分工',
+    description: '主持者正在确认目标、验收条件和可并行的任务边界。',
+  };
+}
+
+
 function RoomParallelWorkPhase({
   dispatches,
   participantLabels,
+  participantRoles,
   participantProgress,
   root,
   tasks,
 }: {
   dispatches: RoomKernelProjection['dispatchesById'][string][];
   participantLabels: Record<string, string>;
+  participantRoles: Record<string, RoomCollaborationRole>;
   participantProgress: RoomParticipantPublicProgressProjection[];
   root: RootProjection;
   tasks: RoomTaskV3[];
@@ -465,12 +601,13 @@ function RoomParallelWorkPhase({
     root.facilitatorParticipantId,
     root.reporterParticipantId ?? '',
   ].filter(Boolean))];
+  const stage = collaborationStage(root, tasks);
   if (!participantIds.length) return null;
 
   return <section className="room-kernel-parallel-phase" aria-label="伙伴并行进度">
     <header>
-      <span><small>第 1 步</small><strong>各自工作</strong></span>
-      <p>每位伙伴平等展示自己的部分、当前状态和公开进度。</p>
+      <span><small>{stage.step}</small><strong>{stage.title}</strong></span>
+      <p>{stage.description}</p>
       <b>{participantIds.length} 位伙伴</b>
     </header>
     <div className="room-kernel-participant-lanes">
@@ -487,14 +624,17 @@ function RoomParallelWorkPhase({
         ));
         const hasOwnWork = ownedTasks.length > 0 || ownedDispatches.length > 0 || Boolean(publicUpdate);
         const state = participantLaneState(ownedTasks, ownedDispatches, publicUpdate);
-        const additionalRoles = [
-          participantId === root.facilitatorParticipantId ? '同时帮大家对齐进度' : '',
-          participantId === root.reporterParticipantId ? '同时整理共同结果' : '',
-        ].filter(Boolean);
+        const ownsReview = ownedTasks.some((task) => task.taskKind === 'review');
         const roleSummary = [
-          ...additionalRoles,
-          hasOwnWork ? '完成自己的部分' : '等待自己的部分开始',
-        ].join(' · ');
+          participantRoles[participantId]
+            ? roomCollaborationRoleLabel(participantRoles[participantId])
+            : '',
+          participantId === (root.reporterParticipantId ?? root.facilitatorParticipantId) ? '唯一最终回复' : '',
+          ownsReview && participantRoles[participantId] !== 'reviewer'
+            ? '独立复核'
+            : '',
+          hasOwnWork ? '已有本角色分工' : '等待本角色分工',
+        ].filter(Boolean).join(' · ');
         return <article
           className="room-kernel-participant-lane"
           data-participant-id={participantId}
@@ -513,7 +653,7 @@ function RoomParallelWorkPhase({
             <strong>当前分工</strong>
             {ownedTasks.length ? <ul>{ownedTasks.map((task) => (
               <li data-state={task.state} key={task.taskId}>
-                <span>{task.objective}</span>
+                <span>{roomPublicActivityText(task.objective) || '协作任务'}</span>
                 <small>{taskStateLabel(task.state)}</small>
               </li>
             ))}</ul> : <p>目前没有单独分到的部分</p>}
@@ -528,7 +668,9 @@ function RoomParallelWorkPhase({
             <strong>{publicUpdate
               ? PUBLIC_PROGRESS_KIND_LABELS[publicUpdate.kind]
               : '公开进度'}</strong>
-            <p>{publicUpdate ? roomParticipantPublicProgressSummary(publicUpdate) : '等待这位伙伴发布公开状态、思路摘要或工具进度。'}</p>
+            <p>{publicUpdate
+              ? roomPublicActivityText(roomParticipantPublicProgressSummary(publicUpdate)) || '公开进度已更新'
+              : '等待这位伙伴发布公开状态、思路摘要或工具进度。'}</p>
             {publicUpdate ? (
               <time dateTime={new Date(publicUpdate.updatedAtMs).toISOString()}>
                 {roomPublicTimeFormatter.format(new Date(publicUpdate.updatedAtMs))}
@@ -555,10 +697,12 @@ function RoomSharedFinalCheck({
   root: RootProjection;
 }) {
   const completedReviews = reviewTasks.filter((task) => task.state === 'completed').length;
-  const needsAttention = [...individualTasks, ...reviewTasks].some((task) => (
+  const successful = root.isFinal && root.state === 'completed';
+  const terminalWithoutSuccess = root.isFinal && root.state !== 'completed';
+  const needsAttention = terminalWithoutSuccess || [...individualTasks, ...reviewTasks].some((task) => (
     ['failed', 'cancelled', 'blocked'].includes(task.state)
   ));
-  const state = root.isFinal ? 'complete' : needsAttention ? 'attention' : 'checking';
+  const state = successful ? 'complete' : needsAttention ? 'attention' : 'checking';
   return <section
     aria-label="一起检查"
     className="room-kernel-shared-check"
@@ -567,11 +711,13 @@ function RoomSharedFinalCheck({
   >
     <header>
       <span><small>第 2 步</small><strong>一起检查</strong></span>
-      <i>{root.isFinal ? '完成确认已到达' : needsAttention ? '有结果需要核对' : '伙伴正在互相检查'}</i>
+      <i>{successful ? '完成确认已到达' : terminalWithoutSuccess ? '任务结束，但未通过检查' : needsAttention ? '有结果需要核对' : '伙伴正在互相检查'}</i>
     </header>
-    <p>{root.isFinal
+    <p>{successful
       ? '每个人的部分都已完成检查；最终回复显示在下方公开结果中。'
-      : reviewTasks.length
+      : terminalWithoutSuccess
+        ? '任务未成功完成；请检查失败、停止或未解决状态后再决定是否继续。'
+        : reviewTasks.length
         ? `${completedReviews} / ${reviewTasks.length} 位伙伴已经完成检查。`
         : '每个人都完成了自己的部分，正在等待伙伴开始互相检查。'}</p>
     <dl>
@@ -625,7 +771,7 @@ function TaskOwnershipFlow({
   if (!tasks.length) return null;
   return <details className="room-kernel-tasks" aria-label="分工与交接详情">
     <summary>
-      <span><strong>查看分工与交接详情</strong><small>展开后可查看系统记录和内部标识</small></span>
+      <span><strong>查看分工与交接详情</strong><small>只显示公开责任关系，不展示伙伴私有正文</small></span>
       <b>{tasks.length} 项</b>
     </summary>
     <ol>{tasks.map((task) => {
@@ -633,7 +779,7 @@ function TaskOwnershipFlow({
       return <li key={task.taskId} data-task-state={task.state}>
         <article>
           <header>
-            <span><UserRound size={15} /><strong>{task.objective}</strong></span>
+            <span><UserRound size={15} /><strong>{roomPublicActivityText(task.objective) || '协作任务'}</strong></span>
             <i>{taskStateLabel(task.state)}</i>
           </header>
           <dl>
@@ -741,7 +887,7 @@ function deliveryGateLabel(receipt: RoomKernelReceiptV1): string {
   if (typeof observation === 'object' && observation !== null && 'gateStatus' in observation) {
     return observation.gateStatus === 'warn_blocked' ? '发现阻塞或未知项' : '结果还没有检查完';
   }
-  return '等待一起检查结果';
+  return '等待最终独立复核';
 }
 
 function qualityGateLabel(receipt: RoomKernelReceiptV1): string {
@@ -764,7 +910,7 @@ function runtimeReceiptStatusLabel(value: RuntimeReceiptSummary['status']): stri
 }
 
 function roomRootRecency(root: RootProjection): number {
-  return Math.max(root.updatedAtMs, root.createdAtMs);
+  return Math.max(root.updatedAtMs ?? 0, root.createdAtMs ?? 0);
 }
 
 function roomRootIsTerminal(root: RootProjection): boolean {
@@ -838,7 +984,7 @@ function postKindLabel(value: string): string {
 }
 function publicActorLabel(actorRef: string, labels: Record<string, string>): string {
   if (labels[actorRef]) return labels[actorRef];
-  return actorRef && !actorRef.includes(':') ? actorRef : '协作伙伴';
+  return '协作伙伴';
 }
 
 function compactNumber(value: number): string {

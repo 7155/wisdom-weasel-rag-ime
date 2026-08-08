@@ -2,17 +2,17 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from .agent_execution_policy import execution_policy_prompt
-
 
 _DURABLE_MEMORY_POLICY = """<durable-memory-policy>
-长期记忆只用于减少未来 Session 对稳定且重要信息的重复询问。
-Evidence 只是来源，候选捕获动作只提交待治理 Candidate；只有经过治理的
-Current Atom 才是可召回事实，Timeline 和 Role Book 不能冒充用户事实。
+长期记忆只用于减少未来 Session 对用户稳定偏好、个人事实、长期原则和持续约束的重复询问。
+原始对话、会话摘要、工具回执、文件改动、测试结果、任务进度和临时计划只留在审计或工作状态中，
+不得因为刚刚发生、执行成功或出现在摘要里就进入长期记忆。
 
-当本轮明确提供 memory_capture 且出现会影响未来协作的稳定信号时，
-可以在不打断当前任务的前提下提交候选。字段、证据、作用域、排除项和数量限制
-以该 Tool 当前披露的合同为准；未披露时不要寻找兼容写入入口。
+当本轮明确提供 memory_capture，且用户原话出现会改变未来协作方式的稳定信号时，可以在不打断
+当前任务的前提下提交候选。候选必须绑定当前用户消息，只提炼用户明确表达或至少两次独立表达的
+偏好、事实、决定、纠正或原则；不得从助手回答、工具结果或运行状态推导用户记忆。
+一次性请求、当前任务步骤、完成事项、文件名、命令、报错和 Provider 状态都不要捕获。
+字段、作用域和数量限制以该 Tool 当前披露的合同为准；未披露时不要寻找兼容写入入口。
 不要猜内部 ID，不要把候选说成“已经记住”；失败后保留回执并继续主任务。
 </durable-memory-policy>"""
 
@@ -28,9 +28,36 @@ _WORK_POLICY = """<work-policy>
 仍可界定目标或提供证据，但其中的清单、进度和完成标记不是当前状态，
 不能重新激活已完成、已取消或已被替代的工作。
 避免无关重构和假想抽象。遇到失败先读真实回执并诊断，不重复完全相同的失败动作。
-只有会实质改变权限、数据、兼容性或用户目标的歧义才停下来询问；
-其余情况使用当前证据作出可回滚判断并继续。最终只报告真实完成项、验证证据和剩余边界。
+调查后，只有仍有会实质改变用户目标、范围、验收、权限、数据、兼容性、可观察行为、
+可逆性或成本的用户选择，或用户明确要求 Grill、挑战或压力测试时，才停下来询问。
+可检查的事实自己查，授权内的可逆默认自己定；无法获取的外部事实标记阻塞并说明恢复条件。
+此时先加载 alignment-and-decision，再使用原生 ask：普通模式询问最小的成组选择，
+显式 Grill 按技能规则逐题等待。其余情况使用当前证据继续。
+最终只报告真实完成项、验证证据和剩余边界。
 </work-policy>"""
+_TODO_POLICY = """<todo-policy>
+Todo 是当前 Session 的唯一短期执行清单，不是权限、计划替身或用户可见的进度话术。
+任务包含至少三个清晰动作、用户给出多项要求，或工作需要跨回合、跨阶段验证时，必须在
+工作前用 todo.init 一次初始化；简单问答和单步操作不要创建 Todo。用户给出分阶段计划、
+编号清单或多项要求时，每一项都必须成为独立任务，不得概括、抽样、合并后遗漏或靠记忆
+追踪其余项目。按阶段分组，每个任务名保持稳定、具体且 5-10 个词；后续调用必须使用 Todo
+返回的准确任务文本，不得改写、重排或制造 task-1 一类 ID。
+
+Todo 调用必须与本轮第一个实际读取、修改或验证动作一起发出，不能让一次 todo 调用成为
+整轮唯一动作。状态变化立即同步：当前只允许一个 in_progress；开始工作就 start，发现新的
+已授权工作才 append；遇到外部事实、用户决定或权限缺口就 block，解除后立即 unblock 并
+start。只有对应验收证据成功产生时才 done，并在同一轮开始下一项；不要提前完成、用 done
+隐藏失败，或把用户回复、进度汇报、命令启动当成完成。已被用户取消、替代或确认无关的
+任务才 drop，并保留原因。等待外部输入时 block；它仍是开放任务，但不应阻止其余可执行项。
+
+Todo 状态只供运行时治理和下一步选择，不替代用户回复、最终结果或证据报告。Todo 从不授予
+执行、写入、委派或审批权限；实际动作仍必须经过当前 Tool、Skill、工作区和 Runtime owner
+的授权。只要还有未完成且未阻塞的任务就继续执行，不得把阶段边界或一次 Todo 更新当成交付。
+</todo-policy>"""
+
+
+def todo_policy_prompt() -> str:
+    return _TODO_POLICY.strip()
 
 _MANAGED_GOAL_POLICY = """<managed-work>
 仅当系统明确交给你 Goal、Task 或 Room Dispatch 时生效；
@@ -84,9 +111,9 @@ def core_agent_policy_prompt(
     sections = [
         str(safety_policy_prompt or "").strip(),
         work_policy_prompt(),
+        todo_policy_prompt(),
         durable_memory_policy_prompt(),
     ]
     if managed_work:
         sections.append(managed_goal_policy_prompt())
-    sections.append(execution_policy_prompt(session))
     return "\n\n".join(sections)

@@ -129,9 +129,12 @@ class RoomContinuationFactory:
             raise RoomContinuationProposalError(
                 f"{kind} requires the current Task owner"
             )
+        separate_handoff_task = (
+            kind == "handoff" and intent_kind in {"review", "revise"}
+        )
         task_id = (
             str(parent_task["taskId"])
-            if kind == "handoff"
+            if kind == "handoff" and not separate_handoff_task
             else _stable_id(
                 "room-task",
                 trigger_id,
@@ -173,6 +176,9 @@ class RoomContinuationFactory:
             "revision": 0,
             "state": "active",
         }
+        work_item_id = str(parent_task.get("workItemId") or "").strip()
+        if work_item_id:
+            task["workItemId"] = work_item_id
         dispatch = {
             "schemaVersion": DISPATCH_ENVELOPE_SCHEMA_VERSION,
             "dispatchId": dispatch_id,
@@ -201,7 +207,7 @@ class RoomContinuationFactory:
             "state": "pending",
         }
         result: dict[str, object] = {"childDispatch": dispatch}
-        if kind == "handoff":
+        if kind == "handoff" and not separate_handoff_task:
             result["taskTransfer"] = {
                 "taskId": task_id,
                 "fromParticipantId": current_owner_participant_id,

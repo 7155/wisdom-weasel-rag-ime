@@ -35,6 +35,7 @@ AGENT_WORKFLOW_SKILLS = (
     "implementation-execution",
     "test-driven-implementation",
     "systematic-debugging",
+    "improve-codebase-architecture",
     "quality-gate",
     "independent-review",
     "structured-handoff",
@@ -122,9 +123,11 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertIn("**depth**", architecture)
         self.assertIn("**deletion test**", architecture)
         self.assertIn(
-            "recommend one, and ask one question",
+            "reserve Ask for a user-owned choice",
             " ".join(alignment.split()),
         )
+        self.assertIn("one smallest question group", alignment)
+        self.assertIn("Group 1-4 independent questions", alignment)
         self.assertIn("never rewrites or\nweakens the requirements", alignment)
         self.assertIn("Write a glossary, ADR, or decision record only", alignment)
         self.assertIn(
@@ -134,6 +137,9 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertIn("a direct user choice and approved write", alignment)
         self.assertIn("Use the user's language", alignment)
         self.assertIn("Do not dump the packet into the public reply", alignment)
+        self.assertIn("use native `ask`", alignment)
+        self.assertIn("without a\n  confirmation message", alignment)
+        self.assertIn("never substitute `room_commit deliver`", alignment)
         self.assertIn("Original User Request", alignment)
         self.assertIn("Original User Vision", alignment)
         self.assertIn("every AI explanation in a\n  separate", alignment)
@@ -190,16 +196,17 @@ class RoomNativeSkillTests(unittest.TestCase):
         for exact_field in (
             '`decision="wait"`',
             '`waitingFor="user"`',
+            '`questionKind="bounded"`',
             '`question="<one prompt>"`',
             "`questionOptions=[...]`",
         ):
             self.assertIn(exact_field, skill)
-        self.assertIn("2-5 unique\n   options", skill)
+        self.assertIn("containing 2-5\n  unique options", skill)
         self.assertIn("at most one `recommended`", skill)
-        self.assertIn("ordinary text wait remains valid", skill)
-        self.assertIn("omit\n   `questionOptions`", skill)
+        self.assertIn('explicitly use `questionKind="unbounded"`', skill)
+        self.assertIn("omit\n  `questionOptions`", skill)
         self.assertIn("rather than inventing choices", skill)
-        self.assertIn("not a second question Tool", skill)
+        self.assertIn("not a second\n  question Tool", skill)
 
     def test_work_document_archive_is_progressive_adapter_not_room_stage(
         self,
@@ -357,11 +364,11 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertIn("Start an immutable `User Source` block", alignment)
         self.assertIn("Lock the requirements before comparing solutions", alignment)
         self.assertIn(
-            "recommend one, and ask one question",
+            "Never turn an inspectable path, owner, failure boundary, or verification result",
             " ".join(alignment.split()),
         )
         self.assertIn(
-            "at most three genuinely different options",
+            "A material user choice changes goal, scope, acceptance, authority, data",
             " ".join(alignment.split()),
         )
         self.assertIn("Write a glossary, ADR, or decision record only", alignment)
@@ -481,7 +488,8 @@ class RoomNativeSkillTests(unittest.TestCase):
 
         execution = text["implementation-execution"]
         self.assertIn("quality-gate -> independent-review", execution)
-        self.assertIn("only a clear review may reach settlement", execution)
+        self.assertIn("review is optional", execution)
+        self.assertIn("facilitator decides whether risk warrants", execution)
 
         tdd = text["test-driven-implementation"]
         self.assertIn("independent source of truth", tdd)
@@ -500,8 +508,9 @@ class RoomNativeSkillTests(unittest.TestCase):
 
         quality = text["quality-gate"]
         self.assertIn("matrix is evidence-ready", quality)
-        self.assertIn("`independent-review` still owns review clearance", quality)
-        self.assertIn("code changes advance to review", quality)
+        self.assertIn("review is optional", quality)
+        self.assertIn("after integration", quality)
+        self.assertIn("without manufacturing a review stage", quality)
 
         review = text["independent-review"]
         self.assertIn("pin one review fixed point", review)
@@ -692,7 +701,7 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertEqual(implementation["skillId"], "implementation-execution")
         self.assertEqual(implementation["candidateSkillIds"], [])
         self.assertEqual(debugging["selection"], "required")
-        self.assertEqual(debugging["skillId"], "implementation-execution")
+        self.assertEqual(debugging["skillId"], "systematic-debugging")
         self.assertEqual(feedback["selection"], "required")
         self.assertEqual(feedback["skillId"], "implementation-execution")
         self.assertEqual(implementation_inner["selection"], "none")
@@ -751,6 +760,18 @@ class RoomNativeSkillTests(unittest.TestCase):
                     canonical["contentRevision"],
                 )
 
+    def test_matt_diagnosing_bugs_name_resolves_to_room_bounded_debugging(self) -> None:
+        policy = RoomSkillPolicy(POLICY_PATH, SKILLS_ROOT)
+
+        canonical = policy.load_exact("systematic-debugging")
+        loaded = policy.load_exact("diagnosing-bugs")
+
+        self.assertEqual(loaded["name"], "systematic-debugging")
+        self.assertEqual(
+            loaded["contentRevision"],
+            canonical["contentRevision"],
+        )
+
     def test_next_candidates_are_advice_and_have_no_dispatch_side_effect(self) -> None:
         with tempfile.TemporaryDirectory(prefix="room-skills-next-") as tmp:
             store = RoomSkillPolicyStore(
@@ -774,6 +795,9 @@ class RoomNativeSkillTests(unittest.TestCase):
             execution_advice = store.next_candidates("implementation-execution")
             tdd_advice = store.next_candidates("test-driven-implementation")
             debugging_advice = store.next_candidates("systematic-debugging")
+            architecture_advice = store.next_candidates(
+                "improve-codebase-architecture"
+            )
             quality_advice = store.next_candidates("quality-gate")
             review_advice = store.next_candidates("independent-review")
             handoff_advice = store.next_candidates("structured-handoff")
@@ -788,11 +812,16 @@ class RoomNativeSkillTests(unittest.TestCase):
                 [
                     "test-driven-implementation",
                     "systematic-debugging",
+                    "improve-codebase-architecture",
                     "quality-gate",
                 ],
             )
             self.assertEqual(tdd_advice, ["implementation-execution"])
-            self.assertEqual(debugging_advice, ["implementation-execution"])
+            self.assertEqual(
+                debugging_advice,
+                ["implementation-execution", "improve-codebase-architecture"],
+            )
+            self.assertEqual(architecture_advice, ["alignment-and-decision"])
             self.assertEqual(quality_advice, ["independent-review"])
             self.assertEqual(review_advice, ["implementation-execution"])
             self.assertEqual(handoff_advice, [])

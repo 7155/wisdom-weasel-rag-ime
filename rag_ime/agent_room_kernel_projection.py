@@ -8,7 +8,11 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 
-from .agent_room_kernel_contracts import validate_kernel_contract
+from .agent_room_kernel_contracts import (
+    upcast_room_root_execution,
+    validate_kernel_contract,
+)
+from .agent_sessions import agent_todo_projection
 from .db import apply_database_migrations
 
 
@@ -103,6 +107,18 @@ class RoomKernelProjection:
                     sessions.append(value)
                 elif kind == "receipt":
                     receipts.append(value)
+            task_updated_at_ms_by_id = {
+                str(row["task_id"]): int(row["updated_at_ms"])
+                for row in conn.execute(
+                    """SELECT task.task_id,task.updated_at_ms
+                       FROM room_kernel_tasks AS task
+                       JOIN room_kernel_roots AS root
+                         ON root.root_id=task.root_id
+                       WHERE root.room_id=?
+                       ORDER BY task.task_id""",
+                    (room_id,),
+                ).fetchall()
+            }
             last_sequence = int(
                 conn.execute(
                     "SELECT COALESCE(MAX(sequence), 0) FROM room_kernel_events WHERE room_id = ?",
@@ -114,6 +130,7 @@ class RoomKernelProjection:
             "lastSequence": last_sequence,
             "roots": roots,
             "tasks": tasks,
+            "taskUpdatedAtMsById": task_updated_at_ms_by_id,
             "dispatches": dispatches,
             "posts": posts,
             "sessions": sessions,
@@ -128,7 +145,13 @@ class RoomKernelProjection:
                    WHERE room_id = ? AND sequence > ? ORDER BY sequence LIMIT ?""",
                 (_required(room_id, "room_id"), max(0, int(after_sequence)), max(1, min(int(limit), 5000))),
             ).fetchall()
-            return [json.loads(str(row["payload_json"])) for row in rows]
+            return [
+                _upcast_replayed_event(
+                    conn,
+                    json.loads(str(row["payload_json"])),
+                )
+                for row in rows
+            ]
 
     def event_bounds(self, room_id: str) -> tuple[int, int]:
         with self._connect() as conn:
@@ -166,10 +189,15 @@ class RoomKernelProjection:
             if not replay:
                 yield b": heartbeat\n\n"
 
-    def publish_post(self, payload: Mapping[str, object]) -> dict[str, object]:
+    def publish_post(
+        self,
+        payload: Mapping[str, object],
+        *,
+        _conn: sqlite3.Connection | None = None,
+    ) -> dict[str, object]:
         validate_kernel_contract("roomPost", payload)
         encoded = _json(payload)
-        with self._connect(immediate=True) as conn:
+        with self._write_connection(_conn) as conn:
             root = conn.execute(
                 "SELECT room_id, generation FROM room_kernel_roots WHERE root_id = ?",
                 (payload["rootId"],),
@@ -196,6 +224,15 @@ class RoomKernelProjection:
             )
         return dict(payload)
 
+    def publish_post_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Publish one Kernel Post inside a caller-owned transaction."""
+
+        return self.publish_post(payload, _conn=conn)
+
     def _records(self, conn: sqlite3.Connection, room_id: str):
         records: list[tuple[str, str, str, str, str, dict[str, object]]] = []
         roots = conn.execute(
@@ -204,12 +241,23 @@ class RoomKernelProjection:
         ).fetchall()
         root_ids = [str(row["root_id"]) for row in roots]
         for row in roots:
-            root = json.loads(str(row["payload_json"]))
+            decoded_root = json.loads(str(row["payload_json"]))
+            if not isinstance(decoded_root, Mapping):
+                raise ValueError("Room Root payload is corrupt")
+            root = upcast_room_root_execution(
+                decoded_root,
+                facilitator_participant_id=row["facilitator_participant_id"],
+                reporter_participant_id=row["reporter_participant_id"],
+                reporter_selection_receipt_id=(
+                    row["reporter_selection_receipt_id"]
+                ),
+            )
             root.update(
                 generation=int(row["generation"]),
                 state=str(row["state"]),
                 terminalReceiptId=row["terminal_receipt_id"],
             )
+            validate_kernel_contract("rootExecution", root)
             records.append(("root", str(row["root_id"]), "root", str(row["root_id"]), "state_changed", {"root": root}))
         if not root_ids:
             return records
@@ -245,17 +293,93 @@ class RoomKernelProjection:
             receipt = json.loads(str(row["payload_json"]))
             records.append(("receipt", str(row["receipt_id"]), "root", str(row["root_id"]), "kernel_receipt", {"receipt": receipt}))
         latest_sessions: dict[str, sqlite3.Row] = {}
+        session_state_rank = {
+            "running": 0,
+            "leased": 1,
+            "retry_wait": 2,
+            "timer_wait": 3,
+            "pending": 4,
+        }
         for row in dispatches:
-            latest_sessions[str(row["target_session_id"])] = row
-        for session_id, row in sorted(latest_sessions.items()):
-            state = str(row["state"])
+            session_id = str(row["target_session_id"])
+            current = latest_sessions.get(session_id)
+            candidate_key = (
+                session_state_rank.get(str(row["state"]), 5),
+                -int(row["updated_at_ms"]),
+                str(row["dispatch_id"]),
+            )
+            current_key = (
+                session_state_rank.get(str(current["state"]), 5),
+                -int(current["updated_at_ms"]),
+                str(current["dispatch_id"]),
+            ) if current is not None else None
+            if current_key is None or candidate_key < current_key:
+                latest_sessions[session_id] = row
+        participants = conn.execute(
+            """
+            SELECT id,session_id,participant_status,created_at_ms
+            FROM agent_room_participants
+            WHERE room_id=? AND participant_status='active'
+            ORDER BY ordinal,id
+            """,
+            (room_id,),
+        ).fetchall()
+        participants_by_session = {
+            str(row["session_id"]): row
+            for row in participants
+            if str(row["session_id"] or "").strip()
+        }
+        session_ids = sorted(
+            set(latest_sessions) | set(participants_by_session)
+        )
+        for session_id in session_ids:
+            row = latest_sessions.get(session_id)
+            participant = participants_by_session.get(session_id)
+            state = str(row["state"]) if row is not None else "idle"
+            todo = agent_todo_projection(conn, session_id)
+            task_payload: dict[str, object] = {}
+            if row is not None:
+                task_row = conn.execute(
+                    "SELECT payload_json FROM room_kernel_tasks WHERE task_id=?",
+                    (row["task_id"],),
+                ).fetchone()
+                if task_row is not None:
+                    decoded_task = json.loads(str(task_row["payload_json"]))
+                    if isinstance(decoded_task, Mapping):
+                        task_payload = dict(decoded_task)
             session = {
                 "sessionId": session_id,
-                "rootId": str(row["root_id"]),
-                "generation": int(row["generation"]),
-                "state": _session_state(state),
-                "updatedAtMs": int(row["updated_at_ms"]),
+                "rootId": str(row["root_id"]) if row is not None else None,
+                "taskId": str(row["task_id"]) if row is not None else None,
+                "taskKind": (
+                    str(task_payload.get("taskKind") or "") or None
+                    if row is not None
+                    else None
+                ),
+                "workItemId": (
+                    str(task_payload.get("workItemId") or "") or None
+                    if row is not None
+                    else None
+                ),
+                "dispatchId": (
+                    str(row["dispatch_id"]) if row is not None else None
+                ),
+                "generation": int(row["generation"]) if row is not None else 0,
+                "state": _session_state(state) if row is not None else "idle",
+                "updatedAtMs": max(
+                    int(row["updated_at_ms"]) if row is not None else 0,
+                    int(todo.get("updatedAtMs") or 0),
+                    int(participant["created_at_ms"])
+                    if participant is not None
+                    else 0,
+                ),
+                "todo": todo,
             }
+            if participant is not None:
+                session["participantId"] = str(participant["id"])
+            if row is None:
+                records.append(("session", session_id, "binding", session_id, "session_projection", {"session": session}))
+                continue
             capability = conn.execute(
                 """SELECT b.*, m.root_id, m.task_id, m.dispatch_id, m.generation
                    FROM room_v2_capability_runtime_bindings b
@@ -298,6 +422,17 @@ class RoomKernelProjection:
         return records
 
     @contextmanager
+    def _write_connection(
+        self,
+        conn: sqlite3.Connection | None,
+    ) -> Iterator[sqlite3.Connection]:
+        if conn is not None:
+            yield conn
+            return
+        with self._connect(immediate=True) as owned:
+            yield owned
+
+    @contextmanager
     def _connect(self, *, immediate: bool = False):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
@@ -328,6 +463,45 @@ def _session_state(state: str) -> str:
     if state in {"unknown", "dead_letter", "failed"}:
         return "failed"
     return "idle"
+
+
+def _upcast_replayed_event(
+    conn: sqlite3.Connection,
+    event: object,
+) -> dict[str, object]:
+    if not isinstance(event, Mapping):
+        raise ValueError("Room Kernel event payload is corrupt")
+    result = dict(event)
+    payload = result.get("payload")
+    root = payload.get("root") if isinstance(payload, Mapping) else None
+    if result.get("entityKind") == "root" and isinstance(root, Mapping):
+        root_id = str(root.get("rootId") or result.get("entityId") or "")
+        row = conn.execute(
+            """
+            SELECT facilitator_participant_id,reporter_participant_id,
+                   reporter_selection_receipt_id
+            FROM room_kernel_roots
+            WHERE root_id=?
+            """,
+            (root_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Room Kernel replay references a missing Root")
+        result["payload"] = {
+            **dict(payload),
+            "root": upcast_room_root_execution(
+                root,
+                facilitator_participant_id=(
+                    row["facilitator_participant_id"]
+                ),
+                reporter_participant_id=row["reporter_participant_id"],
+                reporter_selection_receipt_id=(
+                    row["reporter_selection_receipt_id"]
+                ),
+            ),
+        }
+    validate_kernel_contract("eventEnvelope", result)
+    return result
 
 
 def _event_sequence(room_id: str, event_id: str) -> int:

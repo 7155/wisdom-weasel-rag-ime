@@ -1,4 +1,13 @@
-import type { Dispatch, MouseEvent as ReactMouseEvent, SetStateAction } from 'react';
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  type Dispatch,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type SetStateAction,
+  type UIEvent as ReactUIEvent,
+} from 'react';
 import { flushSync } from 'react-dom';
 
 /**
@@ -11,7 +20,25 @@ export function toggleDisclosurePreservingAnchor(
   setOpen: Dispatch<SetStateAction<boolean>>,
 ) {
   event.preventDefault();
-  const trigger = event.currentTarget;
+  toggleDisclosureFromTrigger(event.currentTarget, setOpen);
+}
+
+/** Native summary activation differs between WebKit and Chromium. Handling
+ * Enter/Space directly prevents Space from scrolling the page and keeps the
+ * controlled `details` state on one deterministic activation path. */
+export function toggleDisclosureOnKeyPreservingAnchor(
+  event: ReactKeyboardEvent<HTMLElement>,
+  setOpen: Dispatch<SetStateAction<boolean>>,
+) {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  event.preventDefault();
+  toggleDisclosureFromTrigger(event.currentTarget, setOpen);
+}
+
+function toggleDisclosureFromTrigger(
+  trigger: HTMLElement,
+  setOpen: Dispatch<SetStateAction<boolean>>,
+) {
   const scrollport = nearestScrollableAncestor(trigger);
   const anchorTop = trigger.getBoundingClientRect().top;
   const restoreAnchor = () => {
@@ -28,12 +55,43 @@ export function toggleDisclosurePreservingAnchor(
   window.requestAnimationFrame(restoreAnchor);
 }
 
-function nearestScrollableAncestor(element: HTMLElement): HTMLElement | null {
+function nearestScrollableAncestor(element: HTMLElement): HTMLElement {
   for (let current = element.parentElement; current; current = current.parentElement) {
     const overflowY = window.getComputedStyle(current).overflowY;
     if (/(auto|scroll|overlay)/u.test(overflowY) && current.scrollHeight > current.clientHeight) {
       return current;
     }
   }
-  return null;
+  const root = document.scrollingElement;
+  return root instanceof HTMLElement ? root : document.documentElement;
+}
+
+/**
+ * Keeps a bounded live region pinned only while its reader is already at the
+ * end. Assigning `scrollTop` is intentionally motion-free: frequent Provider
+ * deltas cannot queue animations, and reduced-motion users get the same stable
+ * behavior without a second code path.
+ */
+export function useAutoFollowScroll<T extends HTMLElement>(
+  contentKey: string,
+  enabled = true,
+) {
+  const scrollRef = useRef<T>(null);
+  const followingRef = useRef(true);
+  const onScroll = useCallback((event: ReactUIEvent<T>) => {
+    const scrollport = event.currentTarget;
+    followingRef.current = (
+      scrollport.scrollHeight - scrollport.clientHeight - scrollport.scrollTop
+    ) <= 24;
+    scrollport.dataset.following = String(followingRef.current);
+  }, []);
+
+  useLayoutEffect(() => {
+    const scrollport = scrollRef.current;
+    if (!scrollport || !enabled || !followingRef.current) return;
+    scrollport.scrollTop = scrollport.scrollHeight;
+    scrollport.dataset.following = 'true';
+  }, [contentKey, enabled]);
+
+  return { onScroll, scrollRef };
 }

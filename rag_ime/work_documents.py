@@ -21,7 +21,7 @@ WorkDocumentState = Literal[
 
 class WorkDocumentPayload(TypedDict):
     documentId: str
-    authorityKind: Literal["session_plan", "session_goal", "room_work_item"]
+    authorityKind: Literal["session_todo", "session_goal", "room_work_item"]
     authorityId: str
     authorityRevision: int
     authorityKey: str
@@ -99,7 +99,7 @@ class WorkDocumentError(RuntimeError):
     pass
 
 
-_KINDS = frozenset({"session_plan", "session_goal", "room_work_item"})
+_KINDS = frozenset({"session_todo", "session_goal", "room_work_item"})
 _SENSITIVE = frozenset({".git", ".ssh", ".aws", ".env", "secrets", "credentials", "keychains"})
 
 
@@ -737,7 +737,7 @@ class WorkDocumentService:
             row = self._row(conn, document_id)
             kind = str(row["authority_kind"])
             authority_id = str(row["authority_id"])
-            if kind == "session_plan":
+            if kind == "session_todo":
                 session_id = authority_id
             elif kind == "session_goal":
                 goal = conn.execute(
@@ -861,22 +861,51 @@ class WorkDocumentService:
 
 
     def _authority(self, conn: sqlite3.Connection, kind: str, authority_id: str) -> dict[str, object]:
-        if kind == "session_plan":
-            row = conn.execute("SELECT event_id,sequence,status FROM agent_plan_state_events WHERE session_id=? ORDER BY sequence DESC LIMIT 1", (authority_id,)).fetchone()
+        if kind == "session_todo":
+            row = conn.execute(
+                """
+                SELECT event_id, revision, operation, phases_json
+                FROM agent_todo_events
+                WHERE session_id = ?
+                ORDER BY revision DESC
+                LIMIT 1
+                """,
+                (authority_id,),
+            ).fetchone()
             if row is None:
-                raise WorkDocumentError("session plan authority was not found")
-            revision = int(
-                conn.execute(
-                    """
-                    SELECT
-                        (SELECT COALESCE(MAX(sequence),0) FROM agent_plan_events WHERE session_id=?) +
-                        (SELECT COALESCE(MAX(sequence),0) FROM agent_plan_state_events WHERE session_id=?)
-                    """,
-                    (authority_id, authority_id),
-                ).fetchone()[0]
-            )
-            status = str(row["status"])
-            terminal_state = status if status in {"completed", "cancelled"} else ""
+                raise WorkDocumentError("session Todo authority was not found")
+            revision = int(row["revision"])
+            try:
+                phases = json.loads(str(row["phases_json"]))
+            except (TypeError, ValueError) as error:
+                raise WorkDocumentError("session Todo authority is invalid") from error
+            task_statuses = [
+                str(task.get("status") or "")
+                for phase in phases if isinstance(phase, Mapping)
+                for task in (
+                    phase.get("tasks")
+                    if isinstance(phase.get("tasks"), list)
+                    else []
+                )
+                if isinstance(task, Mapping)
+            ] if isinstance(phases, list) else []
+            operation = str(row["operation"])
+            if operation == "rm":
+                status = "cleared"
+                terminal_state = "cleared"
+            elif task_statuses and not any(
+                item in {"pending", "in_progress"}
+                for item in task_statuses
+            ):
+                status = (
+                    "cancelled"
+                    if all(item == "abandoned" for item in task_statuses)
+                    else "completed"
+                )
+                terminal_state = status
+            else:
+                status = "active"
+                terminal_state = ""
         elif kind == "session_goal":
             row = conn.execute("SELECT event_id,sequence,status FROM agent_thread_goal_events WHERE goal_id=? ORDER BY sequence DESC LIMIT 1", (authority_id,)).fetchone()
             if row is None:

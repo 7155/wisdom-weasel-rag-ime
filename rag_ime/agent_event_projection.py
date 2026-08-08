@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+import json
 from typing import Any
 
 from .agent_blocks import bind_block_scope
@@ -8,7 +9,12 @@ from .agent_prompt_support import bounded_text
 from .agent_protocol import AgentEventEnvelope
 from .agent_room_kernel import kernel_owns_room_execution
 from .agent_room_public_timeline import RoomPublicTimelineProjector
-from .pi_runtime_public import public_code_tool_activity, redact_mapping
+from .pi_runtime_public import (
+    GROUPED_QUESTIONS_SCHEMA_VERSION,
+    grouped_questions_from_wire,
+    public_code_tool_activity,
+    redact_mapping,
+)
 from .contracts.json_schema import validate_contract
 
 
@@ -164,6 +170,47 @@ class AgentEventProjectionService:
                         "summary": "正在整理正式 Post",
                         "requestId": f"{dispatch_id}:provider",
                     }
+                message = event.payload.get("message")
+                usage = _public_token_usage(
+                    message.get("usage")
+                    if isinstance(message, Mapping)
+                    else None
+                )
+                response_post = self.room_kernel.post_for_dispatch(
+                    dispatch_id
+                )
+                public_data["runtimeTurnId"] = event.turn_id
+                usage_reported = (
+                    event.payload.get("usageReported") is True
+                )
+                cache_usage_reported = (
+                    event.payload.get("cacheUsageReported") is True
+                )
+                public_data["usageReported"] = usage_reported
+                public_data["cacheUsageReported"] = (
+                    cache_usage_reported
+                    if usage_reported
+                    else False
+                )
+                if isinstance(message, Mapping):
+                    provider = bounded_text(
+                        message.get("provider"),
+                        maximum=80,
+                    )
+                    model = bounded_text(
+                        message.get("model"),
+                        maximum=160,
+                    )
+                    if provider:
+                        public_data["provider"] = provider
+                    if model:
+                        public_data["model"] = model
+                if usage_reported and usage is not None:
+                    public_data["usage"] = usage
+                if response_post is not None:
+                    public_data["responsePostId"] = str(
+                        response_post.get("postId") or ""
+                    )
             elif event.event_type == "turn_failed":
                 dispatch_id = str(binding["dispatchId"])
                 public_data = _public_turn_failure(
@@ -212,6 +259,11 @@ class AgentEventProjectionService:
                 ):
                     mapped_type = "participant_activity"
                     details = runtime_failure_receipt.get("details")
+                    retry_at_ms = (
+                        int(details.get("availableAtMs") or 0)
+                        if isinstance(details, Mapping)
+                        else 0
+                    )
                     public_data = {
                         "status": "retry_wait",
                         "summary": (
@@ -226,6 +278,17 @@ class AgentEventProjectionService:
                             int(details.get("attempt") or 0)
                             if isinstance(details, Mapping)
                             else 0
+                        ),
+                        **(
+                            {
+                                "retryAtMs": retry_at_ms,
+                                "retryDelayMs": max(
+                                    0,
+                                    retry_at_ms - event.created_at_ms,
+                                ),
+                            }
+                            if retry_at_ms
+                            else {}
                         ),
                     }
                 elif missing_commit:
@@ -245,6 +308,10 @@ class AgentEventProjectionService:
                 event_type=mapped_type,
                 public_data=public_data,
                 topic_id=str(room.get("activeTopicId") or ""),
+                allow_after_terminal=(
+                    event.event_type == "message_completed"
+                    and str(binding.get("state") or "") == "committed"
+                ),
             )
             if event.event_type not in _TRANSIENT_RUNTIME_EVENT_TYPES:
                 self.room_kernel_projection.sync_room(
@@ -466,6 +533,17 @@ def room_event_projection(
     for flag in ("ok", "isError", "due"):
         if isinstance(payload.get(flag), bool):
             data[flag] = bool(payload[flag])
+    if event.event_type == "reasoning_summary":
+        source = bounded_text(payload.get("source"), maximum=80)
+        if source:
+            data["source"] = source
+        items = payload.get("items")
+        if isinstance(items, list):
+            data["items"] = [
+                bounded_text(item, maximum=240)
+                for item in items[:12]
+                if bounded_text(item, maximum=240)
+            ]
     if event.event_type in {"approval_required", "approval_resolved"}:
         if isinstance(payload.get("automatic"), bool):
             data["automatic"] = bool(payload["automatic"])
@@ -703,6 +781,24 @@ def _public_room_message(
     return public
 
 
+def _public_token_usage(
+    value: object,
+) -> dict[str, int] | None:
+    if not isinstance(value, Mapping):
+        return None
+    keys = ("input", "output", "cacheRead", "cacheWrite", "totalTokens")
+    if not any(
+        isinstance(value.get(key), (int, float))
+        and not isinstance(value.get(key), bool)
+        for key in keys
+    ):
+        return None
+    return {
+        key: max(0, _signed_integer(value.get(key), default=0))
+        for key in keys
+    }
+
+
 def _room_scalar_projection(
     payload: Mapping[str, object],
     keys: tuple[str, ...],
@@ -765,7 +861,9 @@ _ROOM_TOOL_RESULT_KEYS = (
 _ROOM_TOOL_NAMES = frozenset(
     {
         "room_state",
+        "room_define",
         "room_collaborate",
+        "room_integrate",
         "room_post",
         "room_commit",
     }
@@ -773,6 +871,8 @@ _ROOM_TOOL_NAMES = frozenset(
 
 _ROOM_REQUEST_TEXT_LIMITS = {
     "targetParticipantRef": 240,
+    "childTaskId": 240,
+    "workspacePolicy": 120,
     "intent": 120,
     "objective": 1_000,
     "expectedOutput": 1_000,
@@ -805,8 +905,18 @@ _ROOM_RESULT_KEYS_BY_TOOL = {
         "accepted",
         "enqueued",
         "deduplicated",
+        "childTaskId",
+        "childDispatchId",
+        "workspacePolicy",
         "targetParticipantRef",
         "currentResponsibilityContinues",
+    ),
+    "room_integrate": (
+        "integrated",
+        "idempotent",
+        "noChanges",
+        "childTaskId",
+        "workspaceIntegrationRef",
     ),
     "room_post": (
         "published",
@@ -832,6 +942,9 @@ _ROOM_RESULT_BOOLEAN_KEYS = frozenset(
         "enqueued",
         "deduplicated",
         "published",
+        "integrated",
+        "idempotent",
+        "noChanges",
         "currentResponsibilityContinues",
         "executionPerformed",
         "settlementStaged",
@@ -844,6 +957,10 @@ _ROOM_RESULT_TEXT_LIMITS = {
     "stateRevision": 160,
     "summary": 500,
     "status": 160,
+    "childTaskId": 240,
+    "childDispatchId": 240,
+    "workspacePolicy": 120,
+    "workspaceIntegrationRef": 240,
     "targetParticipantRef": 240,
     "postRef": 240,
     "canonicalTool": 120,
@@ -979,18 +1096,38 @@ def _room_user_input_disclosure(
                 payload.get(field),
                 maximum=maximum,
             )
-    raw_options = payload.get("options")
-    if isinstance(raw_options, list):
-        disclosure["options"] = [
-            option
-            for value in raw_options[:100]
-            if (
-                option := bounded_text(
-                    value,
-                    maximum=240,
+    if request_kind == "grouped_questions":
+        raw_questions = payload.get("questions")
+        if isinstance(raw_questions, list):
+            try:
+                questions = grouped_questions_from_wire(
+                    json.dumps(
+                        {
+                            "schemaVersion": GROUPED_QUESTIONS_SCHEMA_VERSION,
+                            "questions": raw_questions,
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
                 )
-            )
-        ]
+            except (TypeError, ValueError):
+                questions = []
+            if questions:
+                disclosure["schemaVersion"] = GROUPED_QUESTIONS_SCHEMA_VERSION
+                disclosure["questions"] = questions
+    else:
+        raw_options = payload.get("options")
+        if isinstance(raw_options, list):
+            disclosure["options"] = [
+                option
+                for value in raw_options[:100]
+                if (
+                    option := bounded_text(
+                        value,
+                        maximum=240,
+                    )
+                )
+            ]
     timeout = payload.get("timeout")
     if (
         isinstance(timeout, (int, float))

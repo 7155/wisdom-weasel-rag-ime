@@ -1565,166 +1565,166 @@ export interface SessionMemoryRecallV1 {
   /**
    * @maxItems 8
    */
-  plan?:
+  todo?:
     | []
     | [
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
       ]
     | [
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
-        },
-      ]
-    | [
-        {
-          status: 'pending' | 'in_progress';
-          title: string;
-        },
-        {
-          status: 'pending' | 'in_progress';
-          title: string;
-        },
-        {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
       ]
     | [
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
-        },
-        {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
       ]
     | [
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
-        },
-        {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
       ]
     | [
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
-        },
-        {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
       ]
     | [
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
-        },
-        {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
       ]
     | [
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
+        },
+      ]
+    | [
+        {
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
         {
-          status: 'pending' | 'in_progress';
-          title: string;
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
+        },
+        {
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
+        },
+        {
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
+        },
+        {
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
+        },
+        {
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
+        },
+        {
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
+        },
+        {
+          status: 'pending' | 'in_progress' | 'blocked';
+          content: string;
         },
       ];
   task?: {

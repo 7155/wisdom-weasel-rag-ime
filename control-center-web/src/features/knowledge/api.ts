@@ -40,6 +40,8 @@ export interface KnowledgeRetrievalConfig {
   threshold: number;
   lexicalWeight: number;
   denseWeight: number;
+  graphEnabled: boolean;
+  graphWeight: number;
   rrfK: number;
   candidateMultiplier: number;
 }
@@ -160,6 +162,79 @@ export interface KnowledgeIndexRuntimeStatus {
   dimensions: number | null;
   vectorCount: number | null;
   reason: string;
+}
+
+export type KnowledgeEmbeddingProvider =
+  | 'environment'
+  | 'none'
+  | 'local-hash'
+  | 'sentence-transformers'
+  | 'mlx-bert'
+  | 'openai-compatible';
+
+export type KnowledgeDenseBackend = 'sqlite-exact' | 'usearch';
+
+export interface KnowledgeEmbeddingProfile {
+  source: 'environment' | 'settings';
+  provider: KnowledgeEmbeddingProvider;
+  model: string;
+  baseUrl: string;
+  dimensions: number;
+  secretReference: string;
+  queryPrefix: string;
+  documentPrefix: string;
+  denseBackend: KnowledgeDenseBackend;
+  secretAvailable: boolean;
+  profileSha256: string;
+  secretsVisible: false;
+}
+
+export type KnowledgeEmbeddingCandidate = Omit<
+  KnowledgeEmbeddingProfile,
+  'source' | 'secretAvailable' | 'profileSha256' | 'secretsVisible'
+>;
+
+export interface KnowledgeEmbeddingProfileState {
+  profile: KnowledgeEmbeddingProfile;
+  phase: 'active' | 'applied_pending_restart' | 'applied_pending_rebuild';
+  runtime: {
+    provider: Record<string, unknown>;
+    fingerprint: string;
+    dimensions: number | null;
+    vectorCount: number;
+    chunkCount: number;
+    coverage: number;
+    available: boolean;
+    degraded: boolean;
+    reason: string;
+  };
+}
+
+export interface KnowledgeEmbeddingProbe {
+  ready: true;
+  profileSha256: string;
+  provider: string;
+  model: string;
+  fingerprint: string;
+  dimensions: number;
+  semantic: boolean;
+  latencyMs: number;
+  secretsVisible: false;
+}
+
+export interface KnowledgeEmbeddingImpact {
+  candidate: KnowledgeEmbeddingCandidate;
+  probe: KnowledgeEmbeddingProbe;
+  currentProfileSha256: string;
+  configurationChanges: Record<string, JsonValue>;
+  requiresWorkerRestart: boolean;
+  requiresRebuild: boolean;
+  affectedBases: Array<{ kbId: string; name: string; documentCount: number; chunkCount: number }>;
+  affectedBaseCount: number;
+  affectedDocumentCount: number;
+  affectedChunkCount: number;
+  approvalRequiredForApply: true;
+  secretsVisible: false;
 }
 
 export interface KnowledgeReindexPreview {
@@ -284,6 +359,8 @@ export const knowledgeLibraryKeys = {
   documentContent: (baseId: string, documentId: string) => [...knowledgeLibraryKeys.root, 'document-content', baseId, documentId] as const,
   worker: () => [...knowledgeLibraryKeys.root, 'worker'] as const,
   parsers: () => [...knowledgeLibraryKeys.root, 'parsers'] as const,
+  embeddingProfile: () => [...knowledgeLibraryKeys.root, 'embedding-profile'] as const,
+  settings: () => [...knowledgeLibraryKeys.root, 'settings'] as const,
   graph: (baseId: string, filters: KnowledgeGraphFilters = {}) => [
     ...knowledgeLibraryKeys.root,
     'graph',
@@ -355,7 +432,40 @@ export function useKnowledgeLibraryQueries(baseId: string) {
     queryFn: ({ signal }) => transport.request({ pathId: 'knowledgeParsers.list', signal }),
     staleTime: 30_000,
   });
-  return { base, bases, documents, jobs, parsers, transport, worker };
+  const embeddingProfile = useQuery({
+    queryKey: knowledgeLibraryKeys.embeddingProfile(),
+    queryFn: async ({ signal }) => normalizeEmbeddingProfileState(await transport.request({
+      pathId: 'knowledgeEmbedding.profile',
+      signal,
+    })),
+    staleTime: 10_000,
+  });
+  const settings = useQuery({
+    queryKey: knowledgeLibraryKeys.settings(),
+    queryFn: ({ signal }) => transport.request({ pathId: 'configuration.settings', signal }),
+    staleTime: 10_000,
+  });
+  return { base, bases, documents, embeddingProfile, jobs, parsers, settings, transport, worker };
+}
+
+export async function probeKnowledgeEmbedding(
+  transport: ControlTransport,
+  profile: KnowledgeEmbeddingCandidate,
+): Promise<KnowledgeEmbeddingProbe> {
+  return normalizeEmbeddingProbe(await transport.request({
+    pathId: 'knowledgeEmbedding.probe',
+    body: { profile: jsonRecord({ ...profile }) },
+  }));
+}
+
+export async function previewKnowledgeEmbeddingImpact(
+  transport: ControlTransport,
+  profile: KnowledgeEmbeddingCandidate,
+): Promise<KnowledgeEmbeddingImpact> {
+  return normalizeEmbeddingImpact(await transport.request({
+    pathId: 'knowledgeEmbedding.impact',
+    body: { profile: jsonRecord({ ...profile }) },
+  }));
 }
 
 export function useKnowledgeGraphQuery(baseId: string, filters: KnowledgeGraphFilters) {
@@ -918,6 +1028,8 @@ function normalizeRetrievalConfig(value: unknown): KnowledgeRetrievalConfig {
     threshold: boundedNumber(row.threshold, 0, 1, 0),
     lexicalWeight: boundedNumber(row.lexicalWeight ?? row.lexical_weight, 0, 10, 1),
     denseWeight: boundedNumber(row.denseWeight ?? row.dense_weight, 0, 10, 1),
+    graphEnabled: (row.graphEnabled ?? row.graph_enabled) !== false,
+    graphWeight: boundedNumber(row.graphWeight ?? row.graph_weight, 0, 10, .7),
     rrfK: boundedNumber(row.rrfK ?? row.rrf_k, 1, 1_000, 60),
     candidateMultiplier: boundedNumber(row.candidateMultiplier ?? row.candidate_multiplier, 1, 20, 4),
   };
@@ -952,6 +1064,113 @@ function mergeDocumentContentPages(detail: KnowledgeDocumentDetail, pages: Knowl
 
 function isActiveJobStatus(value: string): boolean {
   return ['queued', 'running', 'parsing', 'embedding', 'indexing'].includes(value.toLowerCase());
+}
+
+function normalizeEmbeddingProfileState(value: unknown): KnowledgeEmbeddingProfileState {
+  const root = record(value);
+  const profile = record(root.profile);
+  const runtime = record(root.runtime);
+  const rawPhase = text(root.phase);
+  return {
+    profile: {
+      source: text(profile.source) === 'environment' ? 'environment' : 'settings',
+      provider: embeddingProvider(profile.provider),
+      model: text(profile.model),
+      baseUrl: text(profile.baseUrl),
+      dimensions: number(profile.dimensions),
+      secretReference: text(profile.secretReference),
+      queryPrefix: text(profile.queryPrefix),
+      documentPrefix: text(profile.documentPrefix),
+      denseBackend: text(profile.denseBackend) === 'usearch' ? 'usearch' : 'sqlite-exact',
+      secretAvailable: bool(profile.secretAvailable),
+      profileSha256: text(profile.profileSha256),
+      secretsVisible: false,
+    },
+    phase: rawPhase === 'active' || rawPhase === 'applied_pending_rebuild'
+      ? rawPhase
+      : 'applied_pending_restart',
+    runtime: {
+      provider: record(runtime.provider),
+      fingerprint: text(runtime.fingerprint),
+      dimensions: nullableNumber(runtime.dimensions),
+      vectorCount: number(runtime.vectorCount),
+      chunkCount: number(runtime.chunkCount),
+      coverage: Math.max(0, Math.min(1, number(runtime.coverage))),
+      available: bool(runtime.available),
+      degraded: bool(runtime.degraded),
+      reason: text(runtime.reason),
+    },
+  };
+}
+
+function normalizeEmbeddingProbe(value: unknown): KnowledgeEmbeddingProbe {
+  const payload = record(value);
+  if (payload.ready !== true || payload.secretsVisible !== false) {
+    throw new Error('Embedding Probe 没有返回可验证的无密钥收据。');
+  }
+  return {
+    ready: true,
+    profileSha256: text(payload.profileSha256),
+    provider: text(payload.provider),
+    model: text(payload.model),
+    fingerprint: text(payload.fingerprint),
+    dimensions: number(payload.dimensions),
+    semantic: bool(payload.semantic),
+    latencyMs: number(payload.latencyMs),
+    secretsVisible: false,
+  };
+}
+
+function normalizeEmbeddingImpact(value: unknown): KnowledgeEmbeddingImpact {
+  const payload = record(value);
+  if (payload.approvalRequiredForApply !== true || payload.secretsVisible !== false) {
+    throw new Error('Embedding 影响预览没有通过安全边界。');
+  }
+  const candidate = embeddingCandidate(record(payload.candidate));
+  return {
+    candidate,
+    probe: normalizeEmbeddingProbe(payload.probe),
+    currentProfileSha256: text(payload.currentProfileSha256),
+    configurationChanges: Object.fromEntries(
+      Object.entries(record(payload.configurationChanges)).map(([key, item]) => [key, jsonValue(item)]),
+    ),
+    requiresWorkerRestart: bool(payload.requiresWorkerRestart),
+    requiresRebuild: bool(payload.requiresRebuild),
+    affectedBases: list(payload.affectedBases).map((item) => {
+      const row = record(item);
+      return {
+        kbId: text(row.kbId),
+        name: text(row.name),
+        documentCount: number(row.documentCount),
+        chunkCount: number(row.chunkCount),
+      };
+    }).filter((item) => Boolean(item.kbId)),
+    affectedBaseCount: number(payload.affectedBaseCount),
+    affectedDocumentCount: number(payload.affectedDocumentCount),
+    affectedChunkCount: number(payload.affectedChunkCount),
+    approvalRequiredForApply: true,
+    secretsVisible: false,
+  };
+}
+
+export function embeddingCandidate(value: Record<string, unknown>): KnowledgeEmbeddingCandidate {
+  return {
+    provider: embeddingProvider(value.provider),
+    model: text(value.model),
+    baseUrl: text(value.baseUrl),
+    dimensions: number(value.dimensions),
+    secretReference: text(value.secretReference),
+    queryPrefix: text(value.queryPrefix),
+    documentPrefix: text(value.documentPrefix),
+    denseBackend: text(value.denseBackend) === 'usearch' ? 'usearch' : 'sqlite-exact',
+  };
+}
+
+function embeddingProvider(value: unknown): KnowledgeEmbeddingProvider {
+  const provider = text(value, 'none');
+  return ['environment', 'none', 'local-hash', 'sentence-transformers', 'mlx-bert', 'openai-compatible'].includes(provider)
+    ? provider as KnowledgeEmbeddingProvider
+    : 'none';
 }
 
 export function knowledgeIndexRuntimeStatus(value: unknown): KnowledgeIndexRuntimeStatus {

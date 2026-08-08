@@ -528,9 +528,9 @@ class SessionMemoryRecallTests(unittest.TestCase):
                 {"role": "user", "text": "继续完成这个功能"},
                 {"role": "assistant", "text": "我已经接通基础召回"},
             ],
-            planning_context={
+            todo_context={
                 "items": [
-                    {"status": "in_progress", "title": "验证压缩后的上下文刷新"}
+                    {"status": "in_progress", "content": "验证压缩后的上下文刷新"}
                 ]
             },
             task_context={
@@ -550,7 +550,7 @@ class SessionMemoryRecallTests(unittest.TestCase):
         rendered = str(self.context_runtime.materialize(self.session_id)["prompt"])
         self.assertIn("## 当前任务", rendered)
         self.assertIn("完成 Session 压缩后的 RAG 刷新", rendered)
-        self.assertIn("## 当前计划", rendered)
+        self.assertIn("## 当前 Todo", rendered)
         self.assertIn("验证压缩后的上下文刷新", rendered)
         self.assertIn("## 最近对话", rendered)
         self.assertIn("我已经接通基础召回", rendered)

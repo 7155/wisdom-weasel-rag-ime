@@ -71,6 +71,7 @@ _ROOM_RUNTIME_SOURCE_KEYS = (
     "memoryCapture",
     "roomToolBootstrap",
     "runtimeToolNames",
+    "ask",
     "toolBridge",
     "toolArtifacts",
     "providerContextJournal",

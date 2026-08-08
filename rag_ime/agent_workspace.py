@@ -376,6 +376,7 @@ class PreparedWorkspaceLspMutation:
     server: str
     request: Mapping[str, object]
     files: tuple[PreparedWorkspaceLspFile, ...]
+    references_evidence: Mapping[str, object] | None = None
 
     @property
     def root_digest(self) -> str:
@@ -427,6 +428,7 @@ _DEFAULT_LSP_SERVERS = (
     ),
 )
 _LSP_MAX_RESULT_ITEMS = 200
+_LSP_MAX_REFERENCES_EVIDENCE_ITEMS = 64
 _LSP_MAX_FILES = 16
 _LSP_MAX_TOTAL_WRITE_BYTES = 4 * 1024 * 1024
 _LSP_MAX_DIFF_BYTES = 128 * 1024
@@ -1910,6 +1912,60 @@ class WorkspaceHarness:
             **_normalize_lsp_range(range_value),
         }
 
+    def _build_lsp_references_evidence(
+        self,
+        raw: object,
+        *,
+        root: Path,
+        target: Path,
+        position: Mapping[str, int],
+        server: str,
+        preimage_sha256: str,
+    ) -> dict[str, object]:
+        if raw is None:
+            raise WorkspaceLspError(
+                "references_required",
+                "workspace_lsp rename requires a references result",
+            )
+        if not isinstance(raw, list):
+            raise WorkspaceLspError(
+                "references_evidence_invalid",
+                "workspace_lsp references result is malformed",
+            )
+        locations: list[dict[str, object]] = []
+        for value in raw:
+            normalized = self._normalize_lsp_location(value, root)
+            if normalized is None:
+                raise WorkspaceLspError(
+                    "references_evidence_invalid",
+                    "workspace_lsp references result contains a foreign or malformed location",
+                )
+            location_path = Path(str(normalized["path"]))
+            if (
+                location_path.is_symlink()
+                or not location_path.is_file()
+                or self._is_sensitive(location_path, root)
+            ):
+                raise WorkspaceLspError(
+                    "references_evidence_invalid",
+                    "workspace_lsp references result contains a non-file location",
+                )
+            if len(locations) < _LSP_MAX_REFERENCES_EVIDENCE_ITEMS:
+                locations.append(normalized)
+        return {
+            "root": str(root),
+            "path": str(target),
+            "relativePath": str(target.relative_to(root)),
+            "line": position["line"] + 1,
+            "column": position["character"] + 1,
+            "server": server,
+            "resourceRevision": _workspace_resource_revision_from_sha256(preimage_sha256),
+            "preimageSha256": preimage_sha256,
+            "count": len(locations),
+            "truncated": len(raw) > len(locations),
+            "items": locations,
+        }
+
     def _normalize_lsp_symbol(
         self,
         value: object,
@@ -2002,7 +2058,6 @@ class WorkspaceHarness:
             maximum=20_000,
         ) / 1_000
         client = self._lsp_client(root, config, timeout_seconds)
-        client.open_document(target, self._lsp_language_id(config, target))
         position = self._lsp_position(args)
         request: dict[str, object] = {
             "path": str(target),
@@ -2010,6 +2065,8 @@ class WorkspaceHarness:
             "column": position["character"] + 1,
             "server": config.name,
         }
+        references_evidence: dict[str, object] | None = None
+        expected_preimage_sha256: str | None = None
         if operation == "rename":
             new_name = str(args.get("newName") or "").strip()
             if (
@@ -2024,6 +2081,55 @@ class WorkspaceHarness:
                     "newName must be 1-240 single-line characters",
                 )
             request["newName"] = new_name
+            try:
+                reference_raw = target.read_bytes()
+            except OSError as exc:
+                raise WorkspaceLspError(
+                    "stale_snapshot",
+                    "workspace_lsp rename target changed before references were read",
+                ) from exc
+            expected_preimage_sha256 = hashlib.sha256(reference_raw).hexdigest()
+            client.open_document(target, self._lsp_language_id(config, target))
+            synced = client.open_documents.get(target)
+            if synced is None or synced[0] != expected_preimage_sha256:
+                raise WorkspaceLspError(
+                    "stale_snapshot",
+                    "workspace_lsp rename target changed while synchronizing references",
+                )
+            raw_references = self._lsp_request(
+                client,
+                "textDocument/references",
+                {
+                    "textDocument": {"uri": target.as_uri()},
+                    "position": dict(position),
+                    "context": {"includeDeclaration": True},
+                },
+                timeout_seconds,
+            )
+            try:
+                current_raw = target.read_bytes()
+            except OSError as exc:
+                raise WorkspaceLspError(
+                    "stale_snapshot",
+                    "workspace_lsp rename target changed after references were read",
+                ) from exc
+            if (
+                target.is_symlink()
+                or not target.is_file()
+                or hashlib.sha256(current_raw).hexdigest() != expected_preimage_sha256
+            ):
+                raise WorkspaceLspError(
+                    "stale_snapshot",
+                    "workspace_lsp rename references are stale for the current file",
+                )
+            references_evidence = self._build_lsp_references_evidence(
+                raw_references,
+                root=root,
+                target=target,
+                position=position,
+                server=config.name,
+                preimage_sha256=expected_preimage_sha256,
+            )
             workspace_edit = self._lsp_request(
                 client,
                 "textDocument/rename",
@@ -2035,6 +2141,7 @@ class WorkspaceHarness:
                 timeout_seconds,
             )
         else:
+            client.open_document(target, self._lsp_language_id(config, target))
             title = str(args.get("title") or "").strip()
             if not title or len(title) > 500 or "\x00" in title:
                 raise WorkspaceLspError(
@@ -2093,6 +2200,8 @@ class WorkspaceHarness:
             server=config.name,
             request=request,
             workspace_edit=workspace_edit,
+            expected_preimage_sha256=expected_preimage_sha256,
+            references_evidence=references_evidence,
         )
 
     def _prepare_lsp_workspace_edit(
@@ -2103,6 +2212,8 @@ class WorkspaceHarness:
         server: str,
         request: Mapping[str, object],
         workspace_edit: object,
+        expected_preimage_sha256: str | None = None,
+        references_evidence: Mapping[str, object] | None = None,
     ) -> PreparedWorkspaceLspMutation:
         if not isinstance(workspace_edit, Mapping):
             raise WorkspaceLspError(
@@ -2179,6 +2290,16 @@ class WorkspaceHarness:
                     "workspace_lsp edit targets an unauthorized, sensitive, or symlink path",
                 )
             raw = path.read_bytes()
+            preimage_sha256 = hashlib.sha256(raw).hexdigest()
+            if (
+                expected_preimage_sha256 is not None
+                and str(path) == str(request.get("path") or "")
+                and preimage_sha256 != expected_preimage_sha256
+            ):
+                raise WorkspaceLspError(
+                    "stale_snapshot",
+                    "workspace_lsp rename target changed after references were read",
+                )
             if len(raw) > 2 * 1024 * 1024 or b"\x00" in raw:
                 raise WorkspaceLspError(
                     "workspace_edit_out_of_bounds",
@@ -2209,7 +2330,7 @@ class WorkspaceHarness:
             files.append(
                 PreparedWorkspaceLspFile(
                     path=path,
-                    preimage_sha256=hashlib.sha256(raw).hexdigest(),
+                    preimage_sha256=preimage_sha256,
                     preimage_size=len(raw),
                     postimage_sha256=hashlib.sha256(after_raw).hexdigest(),
                     postimage=after_raw,
@@ -2223,6 +2344,11 @@ class WorkspaceHarness:
             server=server,
             request=dict(request),
             files=tuple(sorted(files, key=lambda item: str(item.path))),
+            references_evidence=(
+                dict(references_evidence)
+                if references_evidence is not None
+                else None
+            ),
         )
 
     def lsp_mutation_preview(
@@ -2251,6 +2377,12 @@ class WorkspaceHarness:
                     }
                     for item in prepared.files
                 ],
+                **(
+                    {"referencesEvidence": dict(prepared.references_evidence)}
+                    if prepared.operation == "rename"
+                    and prepared.references_evidence is not None
+                    else {}
+                ),
             },
             "baseState": {
                 "operation": prepared.operation,
@@ -2266,8 +2398,219 @@ class WorkspaceHarness:
                     }
                     for item in prepared.files
                 ],
+                **(
+                    {
+                        "referencesEvidence": dict(prepared.references_evidence),
+                        "referencesEvidenceSha256": _lsp_references_evidence_digest(
+                            prepared.references_evidence
+                        ),
+                    }
+                    if prepared.operation == "rename"
+                    and prepared.references_evidence is not None
+                    else {}
+                ),
             },
         }
+
+    def _validate_lsp_references_evidence(
+        self,
+        *,
+        roots: Sequence[Path],
+        root: Path,
+        action_payload: Mapping[str, object],
+        base_state: Mapping[str, object],
+    ) -> dict[str, object]:
+        payload_value = action_payload.get("referencesEvidence")
+        state_value = base_state.get("referencesEvidence")
+        if not isinstance(payload_value, Mapping) or not isinstance(state_value, Mapping):
+            raise WorkspaceLspError(
+                "references_required",
+                "workspace_lsp rename approval is missing references evidence",
+            )
+        evidence = dict(payload_value)
+        if evidence != dict(state_value):
+            raise WorkspaceLspError(
+                "invalid_approval",
+                "workspace_lsp references evidence disagrees with its preview",
+            )
+        if str(base_state.get("referencesEvidenceSha256") or "") != (
+            _lsp_references_evidence_digest(evidence)
+        ):
+            raise WorkspaceLspError(
+                "invalid_approval",
+                "workspace_lsp references evidence is not bound to its preview",
+            )
+        expected_keys = {
+            "root",
+            "path",
+            "relativePath",
+            "line",
+            "column",
+            "server",
+            "resourceRevision",
+            "preimageSha256",
+            "count",
+            "truncated",
+            "items",
+        }
+        if set(evidence) != expected_keys:
+            raise WorkspaceLspError(
+                "references_evidence_invalid",
+                "workspace_lsp references evidence has an unsupported shape",
+            )
+        request_path = str(action_payload.get("path") or "")
+        request_server = str(action_payload.get("server") or "")
+        request_line = action_payload.get("line")
+        request_column = action_payload.get("column")
+        if (
+            not request_path
+            or not request_server
+            or isinstance(request_line, bool)
+            or not isinstance(request_line, int)
+            or isinstance(request_column, bool)
+            or not isinstance(request_column, int)
+            or request_line < 1
+            or request_line > 10_000_000
+            or request_column < 1
+            or request_column > 10_000_000
+        ):
+            raise WorkspaceLspError(
+                "references_evidence_invalid",
+                "workspace_lsp references evidence has no exact rename position",
+            )
+        try:
+            target, selected_root = self._resolve_existing_path(
+                roots,
+                request_path,
+                allow_directory=False,
+            )
+        except WorkspaceHarnessError as exc:
+            raise WorkspaceLspError(
+                "path_not_allowed",
+                "workspace_lsp references evidence targets an unauthorized path",
+            ) from exc
+        if (
+            selected_root != root
+            or target.is_symlink()
+            or not target.is_file()
+            or self._is_sensitive(target, root)
+        ):
+            raise WorkspaceLspError(
+                "references_evidence_invalid",
+                "workspace_lsp references evidence targets a foreign or invalid path",
+            )
+        evidence_line = evidence["line"]
+        evidence_column = evidence["column"]
+        if (
+            isinstance(evidence_line, bool)
+            or not isinstance(evidence_line, int)
+            or evidence_line < 1
+            or evidence_line > 10_000_000
+            or isinstance(evidence_column, bool)
+            or not isinstance(evidence_column, int)
+            or evidence_column < 1
+            or evidence_column > 10_000_000
+        ):
+            raise WorkspaceLspError(
+                "references_evidence_invalid",
+                "workspace_lsp references evidence has an invalid position",
+            )
+        if (
+            evidence["root"] != str(root)
+            or evidence["path"] != str(target)
+            or evidence["relativePath"] != str(target.relative_to(root))
+            or evidence["server"] != request_server
+            or str(base_state.get("server") or "") != request_server
+            or evidence["line"] != request_line
+            or evidence["column"] != request_column
+        ):
+            raise WorkspaceLspError(
+                "references_evidence_invalid",
+                "workspace_lsp references evidence is foreign to the approved position",
+            )
+        preimage_sha256 = str(evidence["preimageSha256"] or "")
+        resource_revision = str(evidence["resourceRevision"] or "")
+        if (
+            not re.fullmatch(r"[a-f0-9]{64}", preimage_sha256)
+            or resource_revision
+            != _workspace_resource_revision_from_sha256(preimage_sha256)
+        ):
+            raise WorkspaceLspError(
+                "references_evidence_invalid",
+                "workspace_lsp references evidence has an invalid workspace revision",
+            )
+        try:
+            current_raw = target.read_bytes()
+        except OSError as exc:
+            raise WorkspaceLspError(
+                "stale_snapshot",
+                "workspace_lsp rename target disappeared after references approval",
+            ) from exc
+        if hashlib.sha256(current_raw).hexdigest() != preimage_sha256:
+            raise WorkspaceLspError(
+                "stale_snapshot",
+                "workspace_lsp references evidence is stale for the current file",
+            )
+        items = evidence["items"]
+        count = evidence["count"]
+        if (
+            not isinstance(items, list)
+            or isinstance(count, bool)
+            or not isinstance(count, int)
+            or count != len(items)
+            or count > _LSP_MAX_REFERENCES_EVIDENCE_ITEMS
+            or not isinstance(evidence["truncated"], bool)
+        ):
+            raise WorkspaceLspError(
+                "references_evidence_invalid",
+                "workspace_lsp references evidence exceeds its bound",
+            )
+        item_keys = {"path", "relativePath", "line", "column", "endLine", "endColumn"}
+        for item in items:
+            if not isinstance(item, Mapping) or set(item) != item_keys:
+                raise WorkspaceLspError(
+                    "references_evidence_invalid",
+                    "workspace_lsp references evidence contains an invalid location",
+                )
+            raw_item_path = item.get("path")
+            if not isinstance(raw_item_path, str) or not raw_item_path:
+                raise WorkspaceLspError(
+                    "references_evidence_invalid",
+                    "workspace_lsp references evidence contains an invalid location path",
+                )
+            item_path = Path(raw_item_path)
+            try:
+                resolved_item_path = item_path.resolve(strict=True)
+            except (OSError, RuntimeError):
+                raise WorkspaceLspError(
+                    "references_evidence_invalid",
+                    "workspace_lsp references evidence location is no longer available",
+                )
+            if (
+                item_path.is_symlink()
+                or str(resolved_item_path) != raw_item_path
+                or not _is_within(resolved_item_path, root)
+                or not resolved_item_path.is_file()
+                or self._is_sensitive(resolved_item_path, root)
+                or item.get("relativePath") != str(resolved_item_path.relative_to(root))
+            ):
+                raise WorkspaceLspError(
+                    "references_evidence_invalid",
+                    "workspace_lsp references evidence contains a foreign location",
+                )
+            for coordinate in ("line", "column", "endLine", "endColumn"):
+                value = item.get(coordinate)
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, int)
+                    or value < 1
+                    or value > 10_000_000
+                ):
+                    raise WorkspaceLspError(
+                        "references_evidence_invalid",
+                        "workspace_lsp references evidence contains an invalid range",
+                    )
+        return evidence
 
     def apply_lsp_mutation(
         self,
@@ -2300,6 +2643,16 @@ class WorkspaceHarness:
                 "stale_snapshot",
                 "workspace_lsp authorized root changed after approval preview",
             )
+        references_evidence = (
+            self._validate_lsp_references_evidence(
+                roots=roots,
+                root=root,
+                action_payload=action_payload,
+                base_state=base_state,
+            )
+            if operation == "rename"
+            else None
+        )
         payload_files = action_payload.get("files")
         state_files = base_state.get("files")
         if (
@@ -2417,6 +2770,11 @@ class WorkspaceHarness:
                     }
                     for target, _, _, _, pre_hash, post_hash in prepared
                 ],
+                **(
+                    {"referencesEvidence": references_evidence}
+                    if references_evidence is not None
+                    else {}
+                ),
                 "undoAvailable": False,
             },
             "workspace-lsp-mutation-receipt.v1.json",
@@ -3394,6 +3752,16 @@ class WorkspaceHarness:
             except (ProcessLookupError, PermissionError):
                 pass
 
+
+def _lsp_references_evidence_digest(value: Mapping[str, object]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
 def _validated_lsp(
     payload: dict[str, object],

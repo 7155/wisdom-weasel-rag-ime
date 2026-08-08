@@ -101,6 +101,28 @@ class _FakeOrganizer:
         }
 
 
+class _ResumableOrganizer(_FakeOrganizer):
+    def __init__(self) -> None:
+        super().__init__(fail=True)
+        self.model_runs: list[tuple[str, str]] = []
+        self.failed_runs = 0
+        self.finished_runs = 0
+
+    def begin_run(
+        self,
+        run_id: str,
+        *,
+        frozen_input_sha256: str = "",
+    ) -> None:
+        self.model_runs.append((run_id, frozen_input_sha256))
+
+    def fail_run(self, _error: BaseException) -> None:
+        self.failed_runs += 1
+
+    def finish_run(self) -> None:
+        self.finished_runs += 1
+
+
 class _MultiTopicOrganizer(_FakeOrganizer):
     def curate_owner_memory(
         self,
@@ -3513,6 +3535,34 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
         self.assertEqual(scope["pendingSourceCount"], 1)
         self.assertEqual(scope["lastSourceCursor"]["createdAtMs"], 0)
         self.assertGreater(scope["nextDueAtMs"], 1_000)
+
+    def test_failed_model_batch_reuses_stable_model_run_on_retry(self) -> None:
+        self._checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:resumable-model-run",
+            turn_id="turn:resumable-model-run",
+            text="记忆整理失败后必须续跑同一批冻结证据，不能重复创建模型会话。",
+            created_at_ms=100,
+        )
+        organizer = _ResumableOrganizer()
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=organizer,
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            auto_apply=True,
+        )
+
+        failed = curator.run_due(current_ms=1_000)
+        organizer.fail = False
+        resumed = curator.run_due(current_ms=901_001)
+
+        self.assertFalse(failed["ok"], failed)
+        self.assertTrue(resumed["ok"], resumed)
+        self.assertEqual(organizer.failed_runs, 1)
+        self.assertEqual(organizer.finished_runs, 1)
+        self.assertEqual(len(organizer.model_runs), 2)
+        self.assertEqual(organizer.model_runs[0], organizer.model_runs[1])
 
 
 if __name__ == "__main__":

@@ -373,11 +373,34 @@ describe('WorkDocumentsFeature', () => {
     first.unmount();
 
     const unknown = new MockControlTransport({
-      capabilities: { features: {} },
+      capabilities: { features: {}, routeIds: [] },
     });
     renderFeature(unknown);
     expect(await screen.findByRole('heading', { name: '工作文档暂不可用' })).toBeInTheDocument();
     expect(unknown.requests).toHaveLength(0);
+  });
+
+  it('keeps documents readable when a legacy host omits newer management commands', async () => {
+    const document = workDocument({ documentId: DOCUMENT_ID_ACTIVE, title: '只读宿主仍可查看' });
+    const transport = new MockControlTransport({
+      capabilities: {
+        features: { workDocuments: true },
+        routeIds: ['workDocuments.list', 'workDocuments.get'],
+      },
+      routes: {
+        'workDocuments.list': () => listResponse([document]),
+        'workDocuments.get': () => detailResponse(document),
+      },
+    });
+
+    renderFeature(transport);
+
+    expect(await screen.findByRole('heading', { name: '只读宿主仍可查看' })).toBeInTheDocument();
+    expect(screen.getByText('当前宿主以阅读为主')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '历史归档' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '当前宿主不支持归档' })).toBeDisabled();
+    expect(transport.requests.some((call) => call.request.pathId === 'workDocuments.list')).toBe(true);
+    expect(transport.requests.some((call) => call.request.pathId === 'workDocuments.get')).toBe(true);
   });
 
   it('refetches active and detail projections after reconnect', async () => {
@@ -523,10 +546,10 @@ function receipt(
 function workDocument(overrides: Partial<WorkDocumentV1> = {}): WorkDocumentV1 {
   return {
     documentId: DOCUMENT_ID_DEFAULT,
-    authorityKind: 'session_plan',
+    authorityKind: 'session_todo',
     authorityId: 'session-1',
     authorityRevision: 3,
-    authorityKey: 'session_plan:session-1:3',
+    authorityKey: 'session_todo:session-1:3',
     documentRevision: 2,
     contentSha256: CONTENT_SHA256,
     workspaceRoot: '/workspace',

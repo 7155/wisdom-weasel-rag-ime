@@ -14,6 +14,7 @@ import {
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Virtuoso } from 'react-virtuoso';
+import { useControlTransport } from '@/app/control-transport';
 import {
   Button,
   Dialog,
@@ -38,8 +39,19 @@ import {
   InlineNotice,
   QueryState,
   StatusBadge,
+  asRecord,
+  numberValue,
   publicErrorText,
 } from '@/features/overview/management-ui';
+import {
+  ManagementMutationWorkflow,
+  parseManagementWorkPreview,
+  parseManagementWorkReceipt,
+} from '@/features/overview/management-mutation';
+import {
+  configurationMutationPathIds,
+  useConfigurationMutationBoundary,
+} from '@/features/configuration/api';
 import {
   chooseKnowledgeFiles,
   cancelKnowledgeJob,
@@ -49,8 +61,10 @@ import {
   importKnowledgeDocuments,
   knowledgeLibraryKeys,
   openKnowledgeHit,
+  previewKnowledgeEmbeddingImpact,
   previewKnowledgeReindex,
   previewKnowledgeChunking,
+  probeKnowledgeEmbedding,
   rebuildKnowledgeBase,
   retryKnowledgeDocument,
   searchKnowledgeBase,
@@ -62,6 +76,10 @@ import {
   type DocumentKnowledgeBase,
   type KnowledgeDocument,
   type KnowledgeIndexRuntimeStatus,
+  type KnowledgeEmbeddingCandidate,
+  type KnowledgeEmbeddingImpact,
+  type KnowledgeEmbeddingProfileState,
+  type KnowledgeEmbeddingProvider,
   type KnowledgeParserMode,
   type KnowledgeRetrievalConfig,
   type KnowledgeReindexPreview,
@@ -402,6 +420,8 @@ export function KnowledgeFeature() {
                       key={selectedBase.id}
                       base={selectedBase}
                       documents={documents}
+                      embeddingState={queries.embeddingProfile.data}
+                      embeddingStateError={queries.embeddingProfile.error}
                       indexRuntime={knowledgeIndexRuntimeStatus(queries.worker.data)}
                       onAgentEnabled={(agentEnabled) => updateMutation.mutate({ agentEnabled })}
                       onParser={(parser) => updateMutation.mutate({ parser })}
@@ -422,6 +442,7 @@ export function KnowledgeFeature() {
                       chunkPreviewError={chunkPreviewMutation.error}
                       chunkPreviewing={chunkPreviewMutation.isPending}
                       refreshParser={() => void Promise.all([queries.parsers.refetch(), queries.worker.refetch()])}
+                      settingsEnvelope={queries.settings.data}
                       worker={worker}
                     />
                   </TabsContent>
@@ -606,7 +627,9 @@ function KnowledgeSearchPanel({ base, onOpenHit, transport }: { base: DocumentKn
         <span>阈值 {base.retrievalConfig.threshold.toFixed(2)}</span>
         {base.retrievalConfig.mode === 'hybrid' ? <span>L {base.retrievalConfig.lexicalWeight.toFixed(1)} / D {base.retrievalConfig.denseWeight.toFixed(1)}</span> : null}
         {base.retrievalConfig.mode === 'hybrid' ? <span>RRF K {base.retrievalConfig.rrfK} · 候选 ×{base.retrievalConfig.candidateMultiplier}</span> : null}
-        {base.retrievalConfig.mode === 'hybrid' ? <span>图谱辅助 自动</span> : null}
+        {base.retrievalConfig.mode === 'hybrid' ? (
+          <span>{base.retrievalConfig.graphEnabled ? `图谱 ×${base.retrievalConfig.graphWeight.toFixed(1)}` : '图谱关闭'}</span>
+        ) : null}
       </div>
       <p className="knowledge-search__score-note">排名分融合关键词、向量与已就绪图谱的候选名次，只用于排列召回片段，不代表答案正确率。</p>
       {searchMutation.error ? <InlineNotice title="检索失败" tone="warning">{publicErrorText(searchMutation.error, '知识服务暂时无法完成检索。')}</InlineNotice> : null}
@@ -657,6 +680,8 @@ function KnowledgeSettingsPanel({
   chunkPreviewError,
   chunkPreviewing,
   documents,
+  embeddingState,
+  embeddingStateError,
   indexRuntime,
   onAgentEnabled,
   onParser,
@@ -673,6 +698,7 @@ function KnowledgeSettingsPanel({
   reindexPreview,
   reindexPreviewing,
   refreshParser,
+  settingsEnvelope,
   updateError,
   worker,
 }: {
@@ -681,6 +707,8 @@ function KnowledgeSettingsPanel({
   chunkPreviewError: unknown;
   chunkPreviewing: boolean;
   documents: readonly KnowledgeDocument[];
+  embeddingState: KnowledgeEmbeddingProfileState | undefined;
+  embeddingStateError: unknown;
   indexRuntime: KnowledgeIndexRuntimeStatus;
   onAgentEnabled: (enabled: boolean) => void;
   onParser: (parser: KnowledgeParserMode) => void;
@@ -697,6 +725,7 @@ function KnowledgeSettingsPanel({
   reindexPreview: KnowledgeReindexPreview | null;
   reindexPreviewing: boolean;
   refreshParser: () => void;
+  settingsEnvelope: unknown;
   updateError: unknown;
   worker: WorkerState;
 }) {
@@ -719,6 +748,8 @@ function KnowledgeSettingsPanel({
       ? '阈值必须在 0–1 之间。'
       : retrieval.lexicalWeight < 0 || retrieval.lexicalWeight > 10 || retrieval.denseWeight < 0 || retrieval.denseWeight > 10
         ? '检索权重必须在 0–10 之间。'
+        : retrieval.graphWeight < 0 || retrieval.graphWeight > 10
+          ? '图谱权重必须在 0–10 之间。'
         : retrieval.lexicalWeight + retrieval.denseWeight <= 0
           ? 'Lexical 和 Dense 权重不能同时为 0。'
           : retrieval.rrfK < 1 || retrieval.rrfK > 1_000 || retrieval.candidateMultiplier < 1 || retrieval.candidateMultiplier > 20
@@ -784,28 +815,22 @@ function KnowledgeSettingsPanel({
         <div className="knowledge-settings-fields knowledge-settings-fields--advanced">
           <Field htmlFor="knowledge-lexical-weight" label="Lexical 权重"><Input id="knowledge-lexical-weight" max={10} min={0} onChange={(event) => setRetrieval({ ...retrieval, lexicalWeight: Number(event.target.value) })} step={0.1} type="number" value={retrieval.lexicalWeight} /></Field>
           <Field htmlFor="knowledge-dense-weight" label="Dense 权重"><Input id="knowledge-dense-weight" max={10} min={0} onChange={(event) => setRetrieval({ ...retrieval, denseWeight: Number(event.target.value) })} step={0.1} type="number" value={retrieval.denseWeight} /></Field>
+          <Switch checked={retrieval.graphEnabled} disabled={retrieval.mode !== 'hybrid'} label="启用图谱增强" onCheckedChange={(graphEnabled) => setRetrieval({ ...retrieval, graphEnabled })} />
+          <Field htmlFor="knowledge-graph-weight" label="Graph 权重"><Input disabled={retrieval.mode !== 'hybrid' || !retrieval.graphEnabled} id="knowledge-graph-weight" max={10} min={0} onChange={(event) => setRetrieval({ ...retrieval, graphWeight: Number(event.target.value) })} step={0.05} type="number" value={retrieval.graphWeight} /></Field>
           <Field htmlFor="knowledge-rrf-k" label="RRF K"><Input id="knowledge-rrf-k" max={1_000} min={1} onChange={(event) => setRetrieval({ ...retrieval, rrfK: Number(event.target.value) })} type="number" value={retrieval.rrfK} /></Field>
           <Field htmlFor="knowledge-candidate-multiplier" label="候选倍数"><Input id="knowledge-candidate-multiplier" max={20} min={1} onChange={(event) => setRetrieval({ ...retrieval, candidateMultiplier: Number(event.target.value) })} type="number" value={retrieval.candidateMultiplier} /></Field>
         </div>
         {retrievalError ? <p className="knowledge-inline-error" role="alert">{retrievalError}</p> : null}
         <div className="knowledge-settings__actions"><Button disabled={pending || Boolean(retrievalError) || equalConfig(retrieval, base.retrievalConfig)} loading={pending} onClick={() => onSaveRetrieval(retrieval)} size="small" variant="primary">保存检索设置</Button></div>
       </section>
-      <section>
-        <div className="knowledge-settings__heading"><Database size={16} /><div><strong>Embedding 与索引</strong><span>运行时只读状态</span></div></div>
-        <div className="knowledge-index-status">
-          <StatusBadge label={indexRuntime.available ? indexRuntime.degraded ? '降级' : '可用' : '未就绪'} tone={indexRuntime.available ? indexRuntime.degraded ? 'warning' : 'success' : 'neutral'} />
-          <span>{indexRuntime.reason || '这部分由知识服务自动管理。'}</span>
-        </div>
-        <div className="knowledge-settings-fields knowledge-settings-fields--index">
-          <Field htmlFor="knowledge-dense-provider" label="Dense Provider"><Input disabled id="knowledge-dense-provider" readOnly value={indexRuntime.provider} /></Field>
-          <Field htmlFor="knowledge-dense-model" label="Model / Fingerprint"><Input disabled id="knowledge-dense-model" readOnly value={indexRuntime.fingerprint || indexRuntime.model} /></Field>
-          <Field htmlFor="knowledge-dense-dimension" label="维度"><Input disabled id="knowledge-dense-dimension" readOnly value={indexRuntime.dimensions ?? '未报告'} /></Field>
-          <Field htmlFor="knowledge-vector-count" label="向量数量"><Input disabled id="knowledge-vector-count" readOnly value={indexRuntime.vectorCount ?? '未报告'} /></Field>
-          <Field htmlFor="knowledge-index-revision" label="索引 revision"><Input disabled id="knowledge-index-revision" readOnly value={indexRevisionLabel(documents)} /></Field>
-          <Field htmlFor="knowledge-config-revision" label="配置 revision"><Input disabled id="knowledge-config-revision" readOnly value={String(base.revision)} /></Field>
-        </div>
-        <InlineNotice title="当前检索索引" tone="info">识别服务、模型和维度由知识服务统一管理；这里显示的是实际运行状态，不会把未生效的草稿当成已保存。</InlineNotice>
-      </section>
+      <KnowledgeEmbeddingSettings
+        baseRevision={String(base.revision)}
+        documents={documents}
+        error={embeddingStateError}
+        fallbackRuntime={indexRuntime}
+        settingsEnvelope={settingsEnvelope}
+        state={embeddingState}
+      />
       <section>
         <div className="knowledge-settings__heading"><RefreshCw size={16} /><div><strong>索引重建</strong><span>{base.documentCount} 个材料 · {base.chunkCount} 个现有片段</span></div></div>
         {reindexPreview ? (
@@ -818,6 +843,265 @@ function KnowledgeSettingsPanel({
       </section>
     </div>
   );
+}
+
+type EmbeddingMutationContext = {
+  candidate: KnowledgeEmbeddingCandidate;
+  changes: KnowledgeEmbeddingImpact['configurationChanges'];
+  impact: KnowledgeEmbeddingImpact;
+};
+
+function KnowledgeEmbeddingSettings({
+  baseRevision,
+  documents,
+  error,
+  fallbackRuntime,
+  settingsEnvelope,
+  state,
+}: {
+  baseRevision: string;
+  documents: readonly KnowledgeDocument[];
+  error: unknown;
+  fallbackRuntime: KnowledgeIndexRuntimeStatus;
+  settingsEnvelope: unknown;
+  state: KnowledgeEmbeddingProfileState | undefined;
+}) {
+  const transport = useControlTransport();
+  const queryClient = useQueryClient();
+  const mutationBoundary = useConfigurationMutationBoundary();
+  const [candidate, setCandidate] = useState<KnowledgeEmbeddingCandidate>(emptyEmbeddingCandidate());
+  const [draftDirty, setDraftDirty] = useState(false);
+  const [verifiedDraftKey, setVerifiedDraftKey] = useState('');
+  const profileRevision = state?.profile.profileSha256 ?? '';
+  const draftKey = JSON.stringify(candidate);
+  const settingsRoot = asRecord(settingsEnvelope);
+  const runtimeConfig = asRecord(settingsRoot.runtimeConfig);
+  const rawRuntimeRevision = settingsRoot.runtimeRevision ?? runtimeConfig.runtimeRevision;
+  const runtimeRevision = Number.isInteger(rawRuntimeRevision) && numberValue(rawRuntimeRevision) >= 0
+    ? numberValue(rawRuntimeRevision)
+    : null;
+  const validationError = embeddingCandidateError(candidate);
+
+  useEffect(() => {
+    if (!state || draftDirty) return;
+    setCandidate(candidateFromEmbeddingState(state));
+  }, [draftDirty, profileRevision, state]);
+
+  const probeMutation = useMutation({
+    mutationKey: ['knowledge-library', 'embedding', 'probe'],
+    mutationFn: (profile: KnowledgeEmbeddingCandidate) => probeKnowledgeEmbedding(transport, profile),
+    onSuccess: (_receipt, profile) => setVerifiedDraftKey(JSON.stringify(profile)),
+  });
+  const verified = Boolean(probeMutation.data && verifiedDraftKey === draftKey);
+  const updateCandidate = (patch: Partial<KnowledgeEmbeddingCandidate>) => {
+    setCandidate((current) => ({ ...current, ...patch }));
+    setDraftDirty(true);
+    setVerifiedDraftKey('');
+    probeMutation.reset();
+  };
+  const selectProvider = (provider: KnowledgeEmbeddingProvider) => {
+    if (provider === 'environment' || provider === 'none') {
+      updateCandidate({ provider, model: '', baseUrl: '', dimensions: 0, secretReference: '', queryPrefix: '', documentPrefix: '', denseBackend: 'sqlite-exact' });
+      return;
+    }
+    if (provider === 'local-hash') {
+      updateCandidate({ provider, model: 'deterministic-term-vector-v1', baseUrl: '', dimensions: candidate.dimensions >= 8 ? candidate.dimensions : 96, secretReference: '', queryPrefix: '', documentPrefix: '' });
+      return;
+    }
+    updateCandidate({ provider, model: candidate.model === 'deterministic-term-vector-v1' ? '' : candidate.model, baseUrl: provider === 'openai-compatible' ? candidate.baseUrl : '', secretReference: provider === 'openai-compatible' ? candidate.secretReference : '' });
+  };
+  const refreshAuthoritativeState = async () => {
+    await queryClient.invalidateQueries({ queryKey: knowledgeLibraryKeys.root });
+    setDraftDirty(false);
+    setVerifiedDraftKey('');
+  };
+  const blockedReason = runtimeRevision === null
+    ? '当前设置 revision 尚未就绪，请刷新后重试。'
+    : validationError
+      ? validationError
+      : !verified
+        ? '请先测试候选模型；只有 Probe 成功的同一份配置才能进入影响预览。'
+        : '';
+  const phase = state?.phase ?? 'applied_pending_restart';
+  const runtime = state?.runtime;
+  const runtimeProvider = String(runtime?.provider.provider ?? fallbackRuntime.provider);
+  const runtimeModel = String(runtime?.provider.model ?? fallbackRuntime.model);
+  const fingerprint = runtime?.fingerprint || fallbackRuntime.fingerprint;
+  const dimensions = runtime?.dimensions ?? fallbackRuntime.dimensions;
+  const vectorCount = runtime?.vectorCount ?? fallbackRuntime.vectorCount;
+  const phaseLabel = phase === 'active' ? '已生效' : phase === 'applied_pending_rebuild' ? '待重建' : '待 Worker 重启';
+  const phaseTone = phase === 'active' ? 'success' : 'warning';
+
+  return (
+    <section aria-label="Embedding 与索引">
+      <div className="knowledge-settings__heading"><Database size={16} /><div><strong>Embedding 与索引</strong><span>全局 Profile · Probe · 批准 · 重建</span></div></div>
+      {error ? <InlineNotice title="无法读取活动 Embedding Profile" tone="warning">{publicErrorText(error, '当前草稿不会自动应用。')}</InlineNotice> : null}
+      <div className="knowledge-index-status">
+        <StatusBadge label={phaseLabel} tone={phaseTone} />
+        <span>{runtime?.reason || fallbackRuntime.reason || '配置状态与实际向量覆盖率分别核对。'}</span>
+      </div>
+      <div className="knowledge-settings-fields knowledge-settings-fields--index">
+        <Field htmlFor="knowledge-embedding-provider" label="Embedding Provider">
+          <Select
+            id="knowledge-embedding-provider"
+            onValueChange={(value) => selectProvider(value as KnowledgeEmbeddingProvider)}
+            options={embeddingProviderOptions}
+            value={candidate.provider}
+          />
+        </Field>
+        <Field htmlFor="knowledge-embedding-model" label="Embedding 模型">
+          <Input disabled={['environment', 'none', 'local-hash'].includes(candidate.provider)} id="knowledge-embedding-model" maxLength={1_000} onChange={(event) => updateCandidate({ model: event.target.value })} value={candidate.model} />
+        </Field>
+        <Field htmlFor="knowledge-embedding-base-url" label="兼容 API 地址">
+          <Input disabled={candidate.provider !== 'openai-compatible'} id="knowledge-embedding-base-url" maxLength={2_000} onChange={(event) => updateCandidate({ baseUrl: event.target.value })} placeholder="https://host.example/v1" value={candidate.baseUrl} />
+        </Field>
+        <Field htmlFor="knowledge-embedding-dimensions" label="向量维度">
+          <Input disabled={['environment', 'none'].includes(candidate.provider)} id="knowledge-embedding-dimensions" max={65_536} min={0} onChange={(event) => updateCandidate({ dimensions: Number(event.target.value) })} type="number" value={candidate.dimensions} />
+        </Field>
+        <Field htmlFor="knowledge-embedding-secret-reference" label="密钥环境变量名">
+          <Input disabled={candidate.provider !== 'openai-compatible'} id="knowledge-embedding-secret-reference" maxLength={128} onChange={(event) => updateCandidate({ secretReference: event.target.value })} placeholder="PAW_EMBEDDING_API_KEY" value={candidate.secretReference} />
+        </Field>
+      </div>
+      <details className="knowledge-embedding-advanced">
+        <summary>高级参数</summary>
+        <div className="knowledge-settings-fields knowledge-settings-fields--advanced">
+          <Field htmlFor="knowledge-embedding-backend" label="Dense 索引后端">
+            <Select disabled={['environment', 'none'].includes(candidate.provider)} id="knowledge-embedding-backend" onValueChange={(value) => updateCandidate({ denseBackend: value === 'usearch' ? 'usearch' : 'sqlite-exact' })} options={[{ value: 'sqlite-exact', label: 'SQLite exact' }, { value: 'usearch', label: 'USearch ANN' }]} value={candidate.denseBackend} />
+          </Field>
+          <Field htmlFor="knowledge-embedding-query-prefix" label="Query Prefix">
+            <Input disabled={['environment', 'none', 'local-hash'].includes(candidate.provider)} id="knowledge-embedding-query-prefix" maxLength={500} onChange={(event) => updateCandidate({ queryPrefix: event.target.value })} value={candidate.queryPrefix} />
+          </Field>
+          <Field htmlFor="knowledge-embedding-document-prefix" label="Document Prefix">
+            <Input disabled={['environment', 'none', 'local-hash'].includes(candidate.provider)} id="knowledge-embedding-document-prefix" maxLength={500} onChange={(event) => updateCandidate({ documentPrefix: event.target.value })} value={candidate.documentPrefix} />
+          </Field>
+        </div>
+      </details>
+      {validationError ? <p className="knowledge-inline-error" role="alert">{validationError}</p> : null}
+      <div className="knowledge-settings__actions">
+        <Button disabled={Boolean(validationError) || !state} loading={probeMutation.isPending} onClick={() => probeMutation.mutate(candidate)} size="small">测试候选模型</Button>
+      </div>
+      {probeMutation.error ? <InlineNotice title="候选模型测试失败" tone="warning">{publicErrorText(probeMutation.error, '不会保存或重启当前 Worker。')}</InlineNotice> : null}
+      {verified && probeMutation.data ? (
+        <InlineNotice title="Probe 已通过" tone="success">
+          {probeMutation.data.provider} · {probeMutation.data.model || '无向量模型'} · {probeMutation.data.dimensions} 维 · {probeMutation.data.latencyMs.toFixed(1)} ms；收据不包含密钥。
+        </InlineNotice>
+      ) : null}
+      <ManagementMutationWorkflow<EmbeddingMutationContext>
+        availability={mutationBoundary.availability(blockedReason)}
+        description="先再次 Probe 并列出所有受影响知识库；批准后保存 Profile、重启隔离 Worker，再逐库重建。旧 fingerprint 向量保留用于配置回滚。"
+        draftKey={JSON.stringify({ draftKey, profileRevision, runtimeRevision })}
+        mutationKey={['knowledge-library', 'embedding', 'apply']}
+        onApply={async (preview) => parseManagementWorkReceipt(
+          await mutationBoundary.request({
+            pathId: configurationMutationPathIds.apply,
+            body: {
+              changes: preview.context.changes,
+              expectedRuntimeRevision: preview.expectedRuntimeRevision,
+              previewToken: preview.previewToken,
+              payloadSha256: preview.payloadSha256,
+              confirmText: preview.requiredConfirm,
+            },
+          }),
+          configurationMutationPathIds.apply,
+          preview.payloadSha256,
+        )}
+        onApplied={() => void refreshAuthoritativeState()}
+        onPreview={async () => {
+          if (!verified || runtimeRevision === null || !state) throw new Error('候选 Profile 已变化，请重新 Probe。');
+          const impact = await previewKnowledgeEmbeddingImpact(transport, candidate);
+          if (impact.currentProfileSha256 !== state.profile.profileSha256 || impact.probe.profileSha256 !== probeMutation.data?.profileSha256) {
+            throw new Error('活动 Profile 或 Probe 收据已经变化，请刷新后重试。');
+          }
+          const context: EmbeddingMutationContext = { candidate: { ...candidate }, changes: impact.configurationChanges, impact };
+          const preview = parseManagementWorkPreview(
+            await mutationBoundary.request({
+              pathId: configurationMutationPathIds.preview,
+              body: { changes: impact.configurationChanges, expectedRuntimeRevision: runtimeRevision },
+            }),
+            configurationMutationPathIds.apply,
+            context,
+          );
+          return {
+            ...preview,
+            summary: {
+              ...preview.summary,
+              title: '切换 Knowledge Embedding Profile？',
+              items: [
+                `候选：${impact.probe.provider} / ${impact.probe.model || '无向量模型'} / ${impact.probe.dimensions} 维`,
+                `影响 ${impact.affectedBaseCount} 个知识库、${impact.affectedDocumentCount} 个文档、${impact.affectedChunkCount} 个片段`,
+                impact.requiresWorkerRestart ? '保存后需要重启 Knowledge Worker' : 'Worker 配置 fingerprint 不变',
+                impact.requiresRebuild ? '新 Profile 生效前必须逐库重建向量索引' : '当前没有需要重建的文档',
+              ],
+              risk: 'R2',
+            },
+          };
+        }}
+        onRollback={async (receipt, preview) => parseManagementWorkReceipt(
+          await mutationBoundary.request({
+            pathId: configurationMutationPathIds.rollback,
+            body: { receiptId: receipt.receiptId, rollbackToken: receipt.rollbackToken, payloadSha256: receipt.payloadSha256, confirmText: 'rollback' },
+          }),
+          configurationMutationPathIds.rollback,
+          preview.payloadSha256,
+        )}
+        onRolledBack={() => void refreshAuthoritativeState()}
+        risk="R2"
+        title="切换 Embedding Profile"
+      />
+      <div className="knowledge-settings-fields knowledge-settings-fields--index">
+        <Field htmlFor="knowledge-dense-provider" label="实际 Provider"><Input disabled id="knowledge-dense-provider" readOnly value={runtimeProvider || '未报告'} /></Field>
+        <Field htmlFor="knowledge-dense-model" label="实际 Model / Fingerprint"><Input disabled id="knowledge-dense-model" readOnly value={fingerprint || runtimeModel || '未报告'} /></Field>
+        <Field htmlFor="knowledge-dense-dimension" label="实际维度"><Input disabled id="knowledge-dense-dimension" readOnly value={dimensions ?? '未报告'} /></Field>
+        <Field htmlFor="knowledge-vector-count" label="当前 fingerprint 向量"><Input disabled id="knowledge-vector-count" readOnly value={vectorCount ?? '未报告'} /></Field>
+        <Field htmlFor="knowledge-index-revision" label="索引 revision"><Input disabled id="knowledge-index-revision" readOnly value={indexRevisionLabel(documents)} /></Field>
+        <Field htmlFor="knowledge-config-revision" label="配置 revision"><Input disabled id="knowledge-config-revision" readOnly value={baseRevision} /></Field>
+      </div>
+      <InlineNotice title="生效判定" tone="info">只有 Worker fingerprint 与活动 Profile 一致，且当前 fingerprint 的向量覆盖全部片段，才显示“已生效”；配置保存成功不等于索引重建完成。</InlineNotice>
+    </section>
+  );
+}
+
+const embeddingProviderOptions = [
+  { value: 'environment', label: '沿用环境配置' },
+  { value: 'none', label: '关闭 Dense（仅关键词）' },
+  { value: 'local-hash', label: 'Local Hash（基线）' },
+  { value: 'sentence-transformers', label: 'Sentence Transformers' },
+  { value: 'mlx-bert', label: 'MLX BERT' },
+  { value: 'openai-compatible', label: 'OpenAI-compatible Embedding' },
+];
+
+function emptyEmbeddingCandidate(): KnowledgeEmbeddingCandidate {
+  return { provider: 'environment', model: '', baseUrl: '', dimensions: 0, secretReference: '', queryPrefix: '', documentPrefix: '', denseBackend: 'sqlite-exact' };
+}
+
+function candidateFromEmbeddingState(state: KnowledgeEmbeddingProfileState): KnowledgeEmbeddingCandidate {
+  if (state.profile.source === 'environment') return emptyEmbeddingCandidate();
+  return {
+    provider: state.profile.provider,
+    model: state.profile.model,
+    baseUrl: state.profile.baseUrl,
+    dimensions: state.profile.dimensions,
+    secretReference: state.profile.secretReference,
+    queryPrefix: state.profile.queryPrefix,
+    documentPrefix: state.profile.documentPrefix,
+    denseBackend: state.profile.denseBackend,
+  };
+}
+
+function embeddingCandidateError(candidate: KnowledgeEmbeddingCandidate): string {
+  if (!Number.isInteger(candidate.dimensions) || candidate.dimensions < 0 || candidate.dimensions > 65_536) return '向量维度必须是 0–65536 的整数。';
+  if (candidate.provider === 'local-hash' && candidate.dimensions < 8) return 'Local Hash 至少需要 8 维。';
+  if (['sentence-transformers', 'mlx-bert', 'openai-compatible'].includes(candidate.provider) && !candidate.model.trim()) return '当前 Provider 必须填写模型 ID 或本机模型目录。';
+  if (candidate.provider === 'openai-compatible') {
+    try {
+      const parsed = new URL(candidate.baseUrl);
+      if (!['http:', 'https:'].includes(parsed.protocol)) return '兼容 API 地址必须使用 HTTP(S)。';
+    } catch {
+      return 'OpenAI-compatible Provider 必须填写有效的 HTTP(S) API 地址。';
+    }
+    if (candidate.secretReference && !/^[A-Z][A-Z0-9_]{2,127}$/u.test(candidate.secretReference)) return '密钥引用必须是大写环境变量名，页面不会保存明文密钥。';
+  }
+  return '';
 }
 
 function CreateKnowledgeBaseDialog({

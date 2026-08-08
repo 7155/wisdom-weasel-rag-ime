@@ -2,6 +2,28 @@
 
 审计基线：产品 `a4c12fc`、Pi `692bb0e878772129766b9eb837a8caa57f48e0e7`（历史原始审计基线为 `feea050`）。审计日期：2026-07-20。
 
+## 2026-08-01 Control Center 任务流转投影增补
+
+本节只更新任务生命周期的可见投影，不改变 Kernel、取消、结算或
+`isFinal` 的权威 owner。Control Center 的任务页不再用三个统计数字代替流程，
+而是从同一份 Room snapshot/SSE reducer 投影：
+
+```text
+任务创建 -> 每项分工 -> 伙伴派发/执行 -> 共同结果
+```
+
+每个 Task 形成一条路径，按 `taskId` 关联 Dispatch，并同时显示伙伴、动作和
+等待/执行/完成/失败/停止状态。详细公开进度、复核、回执和可选私有 Session
+披露继续保留在图下方。窄容器转为纵向流，不产生横向滚动；图标和文字重复颜色
+语义，活动连线遵守 `prefers-reduced-motion`。
+
+最终态继续 fail closed：只有 `root.isFinal && root.state == completed` 才把共同
+结果画成完成。`blocked`、`failed`、`cancelled`、`cancelling` 和
+`cancelled_with_unknowns` 均保持各自的未完成/待处理语义，公开 Post 数量或成员
+回复不能让图自行推断成功。当前证据是 source-focused React tests、TypeScript
+检查以及 1440×1000/430×900 浏览器投影检查；这不是 installed macOS 或发布放行
+证据。
+
 ## 2026-07-21 受管工具产物与前端文件预览增补
 
 本节只增加交付与展示链，不改变 Root final、取消或权限结论。产品不再让模型或浏览器传任意文件路径：`workspace_patch` 的已批准结果先核对授权根、普通文件、postimage digest 和批准 Diff，再导入 Session-scoped media store。工具回执中的 `agentBlocks` 不进入 Provider 文本；它们由独立缓冲器交给最终 assistant message，或在 Pi Host 中交给后续 `room_post/room_commit`。Room Kernel 会再次核对 Session、media receipt、MIME、大小、digest 和 canonical content URL，伪造或跨 Session 文件块 fail closed。

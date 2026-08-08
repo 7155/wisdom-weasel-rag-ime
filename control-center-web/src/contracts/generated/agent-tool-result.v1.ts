@@ -21,7 +21,7 @@ export interface AgentToolResultV1 {
     | 'configuration'
     | 'agents'
     | 'browser'
-    | 'agent_plan'
+    | 'todo'
     | 'agent_goal'
     | 'desktop_semantic'
     | 'plugins'
@@ -103,6 +103,13 @@ export interface AgentToolResultV1 {
     | 'validate'
     | 'propose_install'
     | 'list_bases'
+    | 'get_base'
+    | 'list_documents'
+    | 'create_base'
+    | 'configure_base'
+    | 'import_text'
+    | 'rebuild_preview'
+    | 'rebuild'
     | 'search'
     | 'find'
     | 'open'
@@ -150,7 +157,13 @@ export interface AgentToolResultV1 {
     | 'references'
     | 'diagnostics'
     | 'rename'
-    | 'code_action_apply';
+    | 'code_action_apply'
+    | 'init'
+    | 'done'
+    | 'drop'
+    | 'append'
+    | 'view'
+    | 'rm';
   result: {
     [k: string]: unknown;
   };

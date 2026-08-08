@@ -1,6 +1,7 @@
 import {
   roomActivityLaneIdentity,
   type RoomActivityProjection,
+  type RoomMessageProjection,
   type RoomProjectionState,
 } from '@/contracts/room-reducer';
 import { approvalNeedsHumanDecision } from '@/contracts/approval-decision';
@@ -18,6 +19,7 @@ export interface RoomExecutionLane {
 export interface RoomTurnExecution {
   activities: RoomActivityProjection[];
   lanes: RoomExecutionLane[];
+  messageIds: string[];
   userMessageIds: string[];
 }
 
@@ -34,7 +36,7 @@ export function selectRoomTurnExecution(
   turnId: string,
 ): RoomTurnExecution {
   const turn = projection.turnsById[turnId];
-  if (!turn) return { activities: [], lanes: [], userMessageIds: [] };
+  if (!turn) return { activities: [], lanes: [], messageIds: [], userMessageIds: [] };
 
   const activities = turn.activityIds
     .map((id) => projection.activitiesById[id])
@@ -70,12 +72,12 @@ export function selectRoomTurnExecution(
     );
   }
 
-  const userMessageIds: string[] = [];
+  const messageIds: string[] = [];
   for (const messageId of turn.messageIds) {
     const message = projection.messagesById[messageId];
     if (!message) continue;
+    messageIds.push(messageId);
     if (message.role === 'user') {
-      userMessageIds.push(messageId);
       continue;
     }
     const exactKey = message.dispatchId
@@ -119,7 +121,63 @@ export function selectRoomTurnExecution(
       messageIds: [],
     });
   }
-  return { activities, lanes: [...lanes.values()], userMessageIds };
+  const originalMessageIndexById = new Map(
+    turn.messageIds.map((messageId, index) => [messageId, index]),
+  );
+  const orderedMessageIds = messageIds.sort((leftId, rightId) => (
+    compareRoomMessages(
+      projection.messagesById[leftId]!,
+      projection.messagesById[rightId]!,
+      originalMessageIndexById.get(leftId) ?? Number.MAX_SAFE_INTEGER,
+      originalMessageIndexById.get(rightId) ?? Number.MAX_SAFE_INTEGER,
+    )
+  ));
+  return {
+    activities,
+    lanes: [...lanes.values()],
+    messageIds: orderedMessageIds,
+    userMessageIds: orderedMessageIds.filter((messageId) => (
+      projection.messagesById[messageId]?.role === 'user'
+    )),
+  };
+}
+
+function compareRoomMessages(
+  left: RoomMessageProjection,
+  right: RoomMessageProjection,
+  leftIndex: number,
+  rightIndex: number,
+): number {
+  const leftSequence = left.chronology?.roomEventSequence ?? left.sequence;
+  const rightSequence = right.chronology?.roomEventSequence ?? right.sequence;
+  if (leftSequence !== undefined || rightSequence !== undefined) {
+    if (leftSequence === undefined) return 1;
+    if (rightSequence === undefined) return -1;
+    const sequenceOrder = leftSequence - rightSequence;
+    if (sequenceOrder !== 0) return sequenceOrder;
+  }
+  const timeOrder = (
+    left.chronology?.createdAtMs ?? left.createdAtMs
+  ) - (
+    right.chronology?.createdAtMs ?? right.createdAtMs
+  );
+  if (timeOrder !== 0) return timeOrder;
+  if (left.chronology?.afterPostId === right.id) return 1;
+  if (right.chronology?.afterPostId === left.id) return -1;
+  const orderKeyOrder = (left.chronology?.orderKey ?? '').localeCompare(
+    right.chronology?.orderKey ?? '',
+  );
+  if (orderKeyOrder !== 0) return orderKeyOrder;
+  const identityOrder = (
+    left.sourceEventId
+    || left.sourceMessageId
+    || left.id
+  ).localeCompare(
+    right.sourceEventId
+    || right.sourceMessageId
+    || right.id,
+  );
+  return identityOrder || leftIndex - rightIndex;
 }
 
 /** Only explicit unresolved human requests pause a Room lane for Session action. */

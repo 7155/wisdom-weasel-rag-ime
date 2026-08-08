@@ -1,9 +1,9 @@
 {
   "schemaVersion": "rag-ime.skill-routing-card-catalog.v1",
   "scope": {
-    "bundledSkillEntries": 13,
+    "bundledSkillEntries": 14,
     "projectedBundledCards": 3,
-    "canonicalCards": 39
+    "canonicalCards": 40
   },
   "collisionPolicy": {
     "default": "reject",
@@ -18,6 +18,7 @@
         "memory-curation",
         "plugin-creator",
         "quality-gate",
+        "rag-retrieval-optimization",
         "review-feedback-resolution",
         "structured-handoff",
         "systematic-debugging",
@@ -27,7 +28,7 @@
     }
   },
   "coverage": {
-    "representedSourceEntries": 48,
+    "representedSourceEntries": 49,
     "duplicateSourceMultiplicity": {
       "openai-docs": 2,
       "codeagent": 2,
@@ -404,6 +405,18 @@
         "用户需要模拟器、实验台、地图、图表、比较、场景或可调参数探索"
       ],
       "does": "在对话中创建可视化或可交互的探索工具。"
+    },
+    {
+      "name": "rag-retrieval-optimization",
+      "when": [
+        "Agent 建库、导入、重建或调优 Knowledge RAG",
+        "需优化 chunk、embedding、混合检索或 Agentic RAG"
+      ],
+      "does": "诊断并优化 Knowledge RAG，经 Tool 批准且可回滚。",
+      "notFor": [
+        "普通问答",
+        "个人 Memory"
+      ]
     },
     {
       "name": "memory-curation",

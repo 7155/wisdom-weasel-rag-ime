@@ -21,7 +21,13 @@ export interface ApprovalDecisionView {
  */
 export function approvalDecisionView(value: unknown): ApprovalDecisionView {
   const payload = record(value);
-  const result = record(payload.result ?? payload.publicResult);
+  const carrier = record(payload.result ?? payload.publicResult);
+  const details = record(carrier.details);
+  const result = {
+    ...carrier,
+    ...details,
+    ...record(details.result),
+  };
   const approval = record(payload.approval ?? result.approval);
   const preview = record(payload.preview ?? result.preview ?? approval.preview);
   const arbitration = record(
@@ -102,6 +108,9 @@ export function approvalDecisionView(value: unknown): ApprovalDecisionView {
       payload.modelDecisionStatus,
       result.modelDecisionStatus,
       approval.modelDecisionStatus,
+      payload.decisionStatus,
+      result.decisionStatus,
+      approval.decisionStatus,
     ),
     model,
     receiptId: firstText(

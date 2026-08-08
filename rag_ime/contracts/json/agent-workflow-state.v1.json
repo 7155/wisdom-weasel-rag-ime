@@ -3,57 +3,96 @@
   "$id": "rag-ime.contract.agent-workflow-state.v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "ok", "sessionId", "plan", "goal", "actGate"],
+  "required": ["schemaVersion", "ok", "sessionId", "todo", "goal", "actGate"],
   "properties": {
     "schemaVersion": { "const": "rag-ime.agent-workflow-state.v1" },
     "ok": { "const": true },
     "sessionId": { "type": "string", "minLength": 1, "maxLength": 240 },
-    "plan": { "$ref": "#/$defs/plan" },
+    "todo": { "$ref": "#/$defs/todo" },
     "goal": { "$ref": "#/$defs/goal" },
     "actGate": { "$ref": "#/$defs/actGate" }
   },
   "$defs": {
-    "planItem": {
+    "todoTask": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "title", "status", "position", "sequence", "updatedAtMs"],
+      "required": ["content", "status"],
       "properties": {
-        "id": { "type": "string", "minLength": 1, "maxLength": 160 },
-        "title": { "type": "string", "minLength": 1, "maxLength": 240 },
-        "status": { "type": "string", "enum": ["pending", "in_progress", "completed"] },
-        "position": { "type": "integer", "minimum": 0 },
-        "sequence": { "type": "integer", "minimum": 1 },
-        "updatedAtMs": { "type": "integer", "minimum": 0 }
+        "content": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "in_progress", "blocked", "completed", "abandoned"]
+        },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
       }
     },
-    "plan": {
+    "todoPhase": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaVersion", "id", "sessionId", "revision", "title", "status", "actor", "note", "updatedAtMs", "editable", "actApproved", "items", "counts"],
+      "required": ["name", "tasks"],
       "properties": {
-        "schemaVersion": { "const": "rag-ime.agent-plan.v2" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "tasks": {
+          "type": "array",
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/todoTask" }
+        }
+      }
+    },
+    "todo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "id", "sessionId", "revision", "actor", "updatedAtMs", "roomLineage", "phases", "counts"],
+      "properties": {
+        "schemaVersion": { "const": "rag-ime.agent-todo.v1" },
         "id": { "type": "string", "minLength": 1, "maxLength": 300 },
         "sessionId": { "type": "string", "minLength": 1, "maxLength": 240 },
         "revision": { "type": "integer", "minimum": 0 },
-        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
-        "status": { "type": "string", "enum": ["draft", "review", "approved", "executing", "completed", "cancelled"] },
         "actor": { "type": "string", "maxLength": 120 },
-        "note": { "type": "string", "maxLength": 600 },
         "updatedAtMs": { "type": "integer", "minimum": 0 },
-        "editable": { "type": "boolean" },
-        "actApproved": { "type": "boolean" },
-        "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/planItem" } },
+        "roomLineage": {
+          "oneOf": [
+            { "$ref": "#/$defs/roomTodoLineage" },
+            { "type": "null" }
+          ]
+        },
+        "phases": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/todoPhase" }
+        },
         "counts": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["total", "pending", "inProgress", "completed"],
+          "required": ["total", "pending", "inProgress", "completed", "abandoned"],
           "properties": {
             "total": { "type": "integer", "minimum": 0, "maximum": 100 },
             "pending": { "type": "integer", "minimum": 0, "maximum": 100 },
             "inProgress": { "type": "integer", "minimum": 0, "maximum": 1 },
-            "completed": { "type": "integer", "minimum": 0, "maximum": 100 }
+            "blocked": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "completed": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "abandoned": { "type": "integer", "minimum": 0, "maximum": 100 }
           }
         }
+      }
+    },
+    "roomTodoLineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "roomId", "rootId", "taskId", "workItemId", "dispatchId", "sessionId", "participantId", "generation", "taskRevision", "ownershipRevision", "workItemRevision"],
+      "properties": {
+        "schemaVersion": { "const": "wisdom-weasel.room-todo-lineage.v1" },
+        "roomId": { "type": "string", "minLength": 1, "maxLength": 320 },
+        "rootId": { "type": "string", "minLength": 1, "maxLength": 320 },
+        "taskId": { "type": "string", "minLength": 1, "maxLength": 320 },
+        "workItemId": { "type": "string", "minLength": 1, "maxLength": 320 },
+        "dispatchId": { "type": "string", "minLength": 1, "maxLength": 320 },
+        "sessionId": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "participantId": { "type": "string", "minLength": 1, "maxLength": 320 },
+        "generation": { "type": "integer", "minimum": 0 },
+        "taskRevision": { "type": "integer", "minimum": 0 },
+        "ownershipRevision": { "type": "integer", "minimum": 0 },
+        "workItemRevision": { "type": "integer", "minimum": 0 }
       }
     },
     "evidence": {
@@ -143,12 +182,12 @@
     "actGate": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["allowed", "reason", "message", "planRevision", "goalRevision"],
+      "required": ["allowed", "reason", "message", "todoRevision", "goalRevision"],
       "properties": {
         "allowed": { "type": "boolean" },
-        "reason": { "type": "string", "enum": ["approved", "user_execution_request", "plan_required", "plan_not_approved", "plan_completed", "plan_cancelled", "goal_paused", "goal_completed", "goal_cancelled", "goal_budget_exhausted"] },
+        "reason": { "type": "string", "enum": ["approved", "user_execution_request", "goal_paused", "goal_completed", "goal_cancelled", "goal_budget_exhausted"] },
         "message": { "type": "string", "minLength": 1, "maxLength": 300 },
-        "planRevision": { "type": "integer", "minimum": 0 },
+        "todoRevision": { "type": "integer", "minimum": 0 },
         "goalRevision": { "type": "integer", "minimum": 0 }
       }
     }

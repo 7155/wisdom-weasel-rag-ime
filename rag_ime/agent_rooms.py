@@ -45,7 +45,8 @@ ROOM_EVENT_TYPES = frozenset(
     }
 )
 
-ROOM_SNAPSHOT_EVENT_LIMIT = 2000
+ROOM_SNAPSHOT_EVENT_LIMIT = 200
+ROOM_HISTORY_PAGE_LIMIT = 200
 ROOM_COLLABORATION_ROLES = frozenset(
     {
         "coordinator",
@@ -841,6 +842,32 @@ class AgentRoomStore:
             ).fetchone()
         return _participant_payload(row) if row is not None else None
 
+    def room_ids_for_session(
+        self,
+        session_id: str,
+        *,
+        active_only: bool = True,
+    ) -> list[str]:
+        """Return every Room whose participant identity owns this Session."""
+
+        active_filter = (
+            "AND p.participant_status = 'active' AND r.status = 'active'"
+            if active_only
+            else ""
+        )
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT DISTINCT p.room_id
+                FROM agent_room_participants AS p
+                JOIN agent_rooms AS r ON r.id = p.room_id
+                WHERE p.session_id = ? {active_filter}
+                ORDER BY p.room_id
+                """,  # noqa: S608 - active_filter is a fixed internal clause
+                (session_id,),
+            ).fetchall()
+        return [str(row["room_id"]) for row in rows]
+
     def participants_for_sessions(
         self,
         session_ids: Sequence[str],
@@ -886,6 +913,7 @@ class AgentRoomStore:
         requested_participant_ids: Sequence[str] = (),
         profiles: Mapping[str, Mapping[str, object]] | None = None,
         authoritative_participant_id: str = "",
+        conversation_only: bool = False,
     ) -> dict[str, object]:
         room = self.get(room_id)
         if room["status"] != "active":
@@ -896,6 +924,7 @@ class AgentRoomStore:
             requested_participant_ids=requested_participant_ids,
             profiles=profiles,
             authoritative_participant_id=authoritative_participant_id,
+            conversation_only=conversation_only,
         )
 
     def plan_routes(
@@ -906,6 +935,7 @@ class AgentRoomStore:
         requested_participant_ids: Sequence[str] = (),
         profiles: Mapping[str, Mapping[str, object]] | None = None,
         authoritative_participant_id: str = "",
+        conversation_only: bool = False,
     ) -> list[dict[str, object]]:
         room = self.get(room_id)
         if room["status"] != "active":
@@ -916,6 +946,7 @@ class AgentRoomStore:
             requested_participant_ids=requested_participant_ids,
             profiles=profiles,
             authoritative_participant_id=authoritative_participant_id,
+            conversation_only=conversation_only,
         )
 
     def route_target(self, room_id: str, text: str) -> dict[str, object]:
@@ -1613,6 +1644,61 @@ class AgentRoomStore:
                 (room_id, max(0, int(after_sequence)), bounded),
             ).fetchall()
         return [_room_event_payload(row) for row in rows]
+
+    def history_page(
+        self,
+        room_id: str,
+        *,
+        before_sequence: int = 0,
+        limit: int = 100,
+    ) -> dict[str, object]:
+        """Return one bounded retained-event page, oldest to newest."""
+
+        self.get(room_id)
+        bounded = max(1, min(int(limit), ROOM_HISTORY_PAGE_LIMIT))
+        with self._connect() as conn:
+            bounds = conn.execute(
+                """
+                SELECT COALESCE(MIN(sequence), 0) AS first_sequence,
+                       COALESCE(MAX(sequence), 0) AS last_sequence
+                FROM agent_room_events WHERE room_id = ?
+                """,
+                (room_id,),
+            ).fetchone()
+            retained_first = int(bounds["first_sequence"]) if bounds is not None else 0
+            retained_last = int(bounds["last_sequence"]) if bounds is not None else 0
+            cursor = int(before_sequence)
+            if cursor <= 0:
+                cursor = retained_last + 1
+            rows = conn.execute(
+                """
+                SELECT * FROM (
+                    SELECT * FROM agent_room_events
+                    WHERE room_id = ? AND sequence < ?
+                    ORDER BY sequence DESC LIMIT ?
+                ) ORDER BY sequence ASC
+                """,
+                (room_id, cursor, bounded),
+            ).fetchall()
+        items = [_room_event_payload(row) for row in rows]
+        first_sequence = int(items[0]["sequence"]) if items else 0
+        last_sequence = int(items[-1]["sequence"]) if items else 0
+        has_more = bool(items and retained_first < first_sequence)
+        response: dict[str, object] = {
+            "schemaVersion": "rag-ime.agent-room-event-page.v1",
+            "ok": True,
+            "roomId": room_id,
+            "items": items,
+            "firstSequence": first_sequence,
+            "lastSequence": last_sequence,
+            "nextBeforeSequence": first_sequence if has_more else 0,
+            "hasMore": has_more,
+            "retainedFirstSequence": retained_first,
+            "retainedLastSequence": retained_last,
+            "retainedPrefixTruncated": retained_first > 1,
+        }
+        validate_contract(response, "agent-room-event-page.v1.json")
+        return response
 
     def snapshot(self, room_id: str) -> dict[str, object]:
         """Read room metadata and the retained timeline from one SQLite snapshot."""

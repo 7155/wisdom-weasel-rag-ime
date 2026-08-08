@@ -67,6 +67,13 @@ describe('preview control transport', () => {
         status: 'active',
       },
     });
+    expect(sessions.find((session) => session.id === 'session-room-future')).toMatchObject({
+      roomParticipant: {
+        roomId: 'room-preview',
+        participantId: 'participant-future',
+        status: 'active',
+      },
+    });
     expect(sessions.find((session) => session.id === 'session-preview')).not.toHaveProperty('roomParticipant');
   });
 
@@ -85,7 +92,7 @@ describe('preview control transport', () => {
     expect(snapshot.tasks).toEqual(expect.arrayContaining([
       expect.objectContaining({
         taskId: 'room-preview:root-preview:task-review',
-        currentOwnerParticipantId: 'participant-firstlight',
+        currentOwnerParticipantId: 'participant-future',
         ownershipRevision: 1,
       }),
     ]));
@@ -94,7 +101,7 @@ describe('preview control transport', () => {
         receiptId: 'room-preview:root-preview:receipt-owner-review',
         details: expect.objectContaining({
           fromParticipantId: 'participant-present',
-          toParticipantId: 'participant-firstlight',
+          toParticipantId: 'participant-future',
         }),
       }),
     ]));
@@ -102,7 +109,7 @@ describe('preview control transport', () => {
     const requirement = parseRoomRequirementsReadProjection(
       record(record(raw).requirementsByRootId)[snapshot.roots[0]!.rootId],
     );
-    expect(requirement.anchors[0]?.originalText).toBe('核对多端网关回放与责任闭环');
+    expect(requirement.anchors[0]?.originalText).toBe('并行实现 Room 任务图，整合后交给独立伙伴复核');
 
     const receipt = await createControlRoomKernelCommandTransport(transport).execute(
       buildCancelRootCommand(
@@ -209,6 +216,43 @@ describe('preview control transport', () => {
       id: 'room-preview-1',
       activeTopicId: 'room-preview-1:topic-1',
     });
+  });
+
+  it('dismisses preview Ask cards only after a durable resolution event', async () => {
+    const transport = createPreviewTransport();
+    const sessionId = 'session-input';
+    const events: Record<string, unknown>[] = [];
+    const unsubscribe = transport.subscribe(
+      {
+        pathId: 'agent.session.events',
+        params: { sessionId },
+        lastEventId: `${sessionId}:4`,
+      },
+      { next: (event) => events.push(record(event)) },
+    );
+
+    await transport.request({
+      pathId: 'agent.session.ui.resolve',
+      params: { sessionId },
+      body: {
+        requestId: 'preview-grouped-question',
+        value: '{"answers":[]}',
+        resolutionSource: 'direct_user',
+      },
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        eventType: 'user_input_required',
+        sequence: 5,
+        payload: expect.objectContaining({
+          requestId: 'preview-grouped-question',
+          resolutionState: 'resolved',
+          resolutionSource: 'direct_user',
+        }),
+      }),
+    ]);
+    unsubscribe();
   });
 
   it('exercises background job logs and cancellation through production routes', async () => {

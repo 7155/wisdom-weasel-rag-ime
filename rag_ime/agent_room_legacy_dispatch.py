@@ -124,7 +124,7 @@ class RoomLegacyDispatchService:
         requested_participant_ids: Sequence[str],
         attachment_ids: Sequence[str],
     ) -> dict[str, object]:
-        """Start managed collaboration directly; roleplay remains conversation."""
+        """Route ordinary chat to one responder; WorkItems use Kernel."""
 
         room = self.host.rooms.get(room_id)
         if (
@@ -132,134 +132,18 @@ class RoomLegacyDispatchService:
             and str(room.get("roomKind") or "collaboration")
             == "collaboration"
         ):
-            active = [
-                value
-                for value in room.get("participants", ())
-                if isinstance(value, Mapping)
-                and str(value.get("status") or "") == "active"
-            ]
-            if not active:
-                raise ValueError(
-                    "managed Room work requires an active participant"
-                )
-            active_by_id = {
-                str(value.get("id") or ""): value
-                for value in active
-            }
-            requested_ids = list(
-                dict.fromkeys(
-                    str(value or "").strip()
-                    for value in requested_participant_ids
-                    if str(value or "").strip()
-                )
+            # An unaddressed message is ordinary conversation, not an implicit
+            # WorkItem. The Kernel still owns its single selected Dispatch;
+            # only a caller supplying a confirmed WorkItem may open managed
+            # alignment or parallel work lanes.
+            return self.host.room_application.post_message(
+                room_id,
+                message=message,
+                client_message_id=client_message_id,
+                requested_participant_ids=requested_participant_ids,
+                work_item_id="",
+                attachment_ids=attachment_ids,
             )
-            if any(value not in active_by_id for value in requested_ids):
-                raise ValueError("invited room participant is unavailable")
-            moderator_id = str(
-                room.get("moderatorParticipantId") or ""
-            )
-            role_coordinators = [
-                value
-                for value in active
-                if str(value.get("collaborationRole") or "") == "coordinator"
-            ]
-            coordinator = (
-                active_by_id[requested_ids[0]]
-                if len(requested_ids) == 1
-                else active_by_id.get(moderator_id)
-                or (role_coordinators[0] if len(role_coordinators) == 1 else active[0])
-            )
-            coordinator_id = str(coordinator["id"])
-            coordinator_session_id = str(coordinator["sessionId"])
-
-            def _ensure_coordinator_available(
-                _session_id: str,
-            ) -> None:
-                latest = self.host.rooms.participant(coordinator_id)
-                self.host.room_application._assert_targets_available(
-                    [latest]
-                )
-
-            try:
-                self.host.room_turns.hold_priority_if_idle(
-                    [coordinator_session_id],
-                    ensure_available=_ensure_coordinator_available,
-                )
-            except RoomSessionBusyError:
-                raise ValueError(
-                    f"{coordinator.get('displayName') or 'Room participant'} "
-                    "is currently busy"
-                ) from None
-            try:
-                peer_count = len(active) - 1
-                routing_policy = str(room.get("routingPolicy") or "")
-                managed_client_id = (
-                    f"managed-room-ingress:v2:{routing_policy}:{peer_count}:"
-                    f"{client_message_id or uuid.uuid4()}"
-                )
-                acceptance = [
-                    (
-                        "用户的明确请求已完成，且结论由实际操作结果或伙伴公开"
-                        "提交的内容直接支撑。"
-                    ),
-                ]
-                expected_output = (
-                    "完成用户请求并提交可复核的结果、证据和剩余风险。"
-                )
-                if peer_count and routing_policy == "parallel":
-                    acceptance.extend(
-                        (
-                            f"{str(value.get('displayName') or '一位伙伴')} 完成自己负责的"
-                            "平级部分，并公开具体操作、结果、验证和剩余风险。"
-                        )
-                        for value in active
-                    )
-                    acceptance.append(
-                        (
-                            "每个人的初步结果都公开后，最初发起的伙伴也完成自己的"
-                            "集成工作，再邀请其余伙伴共同做最后检查；等检查结果"
-                            "全部回来、分歧已处理，才发布正式回复。"
-                        )
-                    )
-                    expected_output = (
-                        "所有伙伴并行完成各自平级部分；结果到齐后共同复核、"
-                        "综合并发布有证据的正式回复。"
-                    )
-                elif peer_count:
-                    acceptance.append(
-                        (
-                            f"当前伙伴已邀请其余 {peer_count} 位成员分别完成不同的"
-                            "工作，自己同时继续；等大家公开结果后再一起综合。"
-                        )
-                    )
-                    expected_output = (
-                        "各伙伴完成不同部分，结果到齐后共同检查并交付最终成果。"
-                    )
-                work_item = self.host.room_work.create(
-                    room_id=room_id,
-                    objective=message,
-                    expected_output=expected_output,
-                    current_owner_participant_id=coordinator_id,
-                    created_by_participant_id=coordinator_id,
-                    client_message_id=managed_client_id,
-                    accountable_participant_id=coordinator_id,
-                    topic_id=str(room.get("activeTopicId") or ""),
-                    acceptance_criteria=acceptance,
-                )
-                return self.host.room_application.post_message(
-                    room_id,
-                    message=message,
-                    client_message_id=client_message_id,
-                    requested_participant_ids=(
-                        [] if routing_policy == "parallel" else [coordinator_id]
-                    ),
-                    work_item_id=str(work_item["id"]),
-                    attachment_ids=attachment_ids,
-                )
-            finally:
-                self.host.room_turns.release_priority_session(
-                    coordinator_session_id
-                )
 
         return self._post_session_messages(
             room_id,

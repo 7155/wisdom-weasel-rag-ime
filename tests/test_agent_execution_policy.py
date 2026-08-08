@@ -148,6 +148,73 @@ class AgentExecutionPolicyTests(unittest.TestCase):
             APPROVAL_MODEL,
         )
 
+    def test_full_auto_only_skips_review_for_scoped_ordinary_commands(self) -> None:
+        roots = ["/workspace/project"]
+        session = {
+            "executionMode": FULL_TRUST_EXECUTION_MODE,
+            "toolProfileVersion": "control-center-v1",
+            "workspaceRoots": roots,
+            "workspaceScopeSha256": workspace_scope_sha256(roots),
+            "workspaceScopeGrantedAtMs": 100,
+        }
+        base_state = {"workspaceRootsSha256": session["workspaceScopeSha256"]}
+        self.assertEqual(
+            approval_strategy(
+                session,
+                tool="workspace_shell",
+                operation="run",
+                preview={
+                    "actionPayload": {
+                        "command": "printf 'ok'",
+                        "cwd": "/workspace/project",
+                        "allowNetwork": False,
+                    },
+                    "baseState": base_state,
+                },
+                risk_level="R2",
+            ),
+            APPROVAL_AUTO,
+        )
+        for command in (
+            "rm -rf /workspace/project/cache",
+            "cat /workspace/project/.env",
+            "curl https://example.test",
+        ):
+            self.assertEqual(
+                approval_strategy(
+                    session,
+                    tool="workspace_shell",
+                    operation="run",
+                    preview={
+                        "actionPayload": {
+                            "command": command,
+                            "cwd": "/workspace/project",
+                            "allowNetwork": False,
+                        },
+                        "baseState": base_state,
+                    },
+                    risk_level="R2",
+                ),
+                APPROVAL_MODEL,
+            )
+        self.assertEqual(
+            approval_strategy(
+                session,
+                tool="workspace_shell",
+                operation="run",
+                preview={
+                    "actionPayload": {
+                        "command": "printf 'ok'",
+                        "cwd": "/tmp",
+                        "allowNetwork": False,
+                    },
+                    "baseState": base_state,
+                },
+                risk_level="R2",
+            ),
+            APPROVAL_MODEL,
+        )
+
     def test_full_trust_routes_every_approval_gate_to_the_model_arbiter(self) -> None:
         session = {
             "executionMode": FULL_TRUST_EXECUTION_MODE,

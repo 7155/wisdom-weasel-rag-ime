@@ -7,6 +7,7 @@
     "schemaVersion": {"type": "string", "const": "rag-ime.agent-approval.v1"},
     "approvalId": {"type": "string", "minLength": 1},
     "sessionId": {"type": "string", "minLength": 1},
+    "toolCallId": {"type": "string", "minLength": 1, "maxLength": 512},
     "toolId": {"type": "string", "minLength": 1},
     "operation": {"type": "string", "minLength": 1},
     "payloadSha256": {"type": "string", "minLength": 64},
@@ -21,10 +22,10 @@
     "causalMetadata": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["planId", "planRevision", "goalId", "goalRevision", "turnId", "roomBound"],
+      "required": ["todoId", "todoRevision", "goalId", "goalRevision", "turnId", "roomBound"],
       "properties": {
-        "planId": {"type": "string", "maxLength": 240},
-        "planRevision": {"type": "integer", "minimum": 0},
+        "todoId": {"type": "string", "maxLength": 240},
+        "todoRevision": {"type": "integer", "minimum": 0},
         "goalId": {"type": "string", "maxLength": 240},
         "goalRevision": {"type": "integer", "minimum": 0},
         "turnId": {"type": "string", "maxLength": 240},

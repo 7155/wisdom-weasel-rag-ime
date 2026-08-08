@@ -33,7 +33,7 @@ TOOL_CALLS: dict[str, dict[str, object]] = {
     "configuration": {"op": "history"},
     "agents": {"op": "catalog"},
     "browser": {"op": "status"},
-    "agent_plan": {"op": "list"},
+    "todo": {"op": "view"},
     "agent_goal": {"op": "list"},
     "plugins": {"op": "list"},
     "work_documents": {"op": "list", "limit": 1},
@@ -115,23 +115,23 @@ def run_matrix(*, keep_workspace: bool = False) -> dict[str, object]:
         )
         session = dict(created["session"])
         session_id = str(session["id"])
-        review = service.agent.sessions.mutate_agent_plan(
+        todo_task = "在隔离工作区验证读、写与命令工具"
+        service.agent.sessions.mutate_agent_todo(
             session_id,
             {
-                "action": "submit_review",
-                "title": "Agent Tool execution matrix",
-                "items": [
+                "op": "init",
+                "list": [
                     {
-                        "title": "在隔离工作区验证读、写与命令工具",
-                        "status": "pending",
+                        "phase": "验证",
+                        "items": [todo_task],
                     }
                 ],
             },
             actor="agent-tool-matrix",
-        )["plan"]
-        service.agent.sessions.mutate_agent_plan(
+        )
+        service.agent.sessions.mutate_agent_todo(
             session_id,
-            {"action": "approve", "expectedRevision": review["revision"]},
+            {"op": "start", "task": todo_task},
             actor="agent-tool-matrix",
         )
 

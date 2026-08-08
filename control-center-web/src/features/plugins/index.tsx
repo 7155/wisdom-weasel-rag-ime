@@ -690,6 +690,7 @@ function ToolDetail({
   );
   const schema = asRecord(item.schema ?? item.inputSchema ?? item.parameters);
   const DetailIcon = item.kind === 'skill' ? Sparkles : item.kind === 'extension' ? Boxes : Wrench;
+  const fixed = item.alwaysAvailable === true;
 
   return (
     <aside aria-label="能力详情" className="plugins-detail">
@@ -749,75 +750,92 @@ function ToolDetail({
         </div>
       </dl>
 
-      <section aria-label="能力披露优先级" className="capability-precedence">
-        <header>
-          <span>
-            <small>后端核对的当前结果</small>
-            <strong>{capabilityEffectiveLabel(item.disclosure.effective)}</strong>
-          </span>
-          <StatusBadge
-            label={capabilityScopeLabel(item.effectiveScope)}
-            tone={item.disclosure.effective === 'enabled' ? 'success' : 'neutral'}
-          />
-        </header>
-        <dl>
-          {sessionOwnerId ? (
-            <div>
-              <dt>1 · 当前对话临时设置</dt>
-              <dd>{preferenceLabel(sessionPreference)}<small>由当前对话控制 · {shortDigest(sessionOwnerId)}</small></dd>
-            </div>
-          ) : null}
+      {fixed ? (
+        <section aria-label="固定能力策略" className="capability-precedence">
+          <header>
+            <span>
+              <small>产品内置规则</small>
+              <strong>固定加载</strong>
+            </span>
+            <StatusBadge label="基础能力" tone="success" />
+          </header>
+          <p>
+            普通伙伴会话始终加载此能力，不参与当前对话、当前项目或所有对话的披露开关；
+            执行权限仍由 Runtime 单独核对。
+          </p>
+        </section>
+      ) : (
+        <>
+          <section aria-label="能力披露优先级" className="capability-precedence">
+            <header>
+              <span>
+                <small>后端核对的当前结果</small>
+                <strong>{capabilityEffectiveLabel(item.disclosure.effective)}</strong>
+              </span>
+              <StatusBadge
+                label={capabilityScopeLabel(item.effectiveScope)}
+                tone={item.disclosure.effective === 'enabled' ? 'success' : 'neutral'}
+              />
+            </header>
+            <dl>
+              {sessionOwnerId ? (
+                <div>
+                  <dt>1 · 当前对话临时设置</dt>
+                  <dd>{preferenceLabel(sessionPreference)}<small>由当前对话控制 · {shortDigest(sessionOwnerId)}</small></dd>
+                </div>
+              ) : null}
+              {projectAvailable ? (
+                <div>
+                  <dt>{sessionOwnerId ? '2' : '1'} · 当前项目默认</dt>
+                  <dd>{preferenceLabel(projectPreference)}<small>由当前授权工作区控制 · {shortDigest(projectOwnerId ?? '')}</small></dd>
+                </div>
+              ) : null}
+              <div>
+                <dt>{sessionOwnerId ? (projectAvailable ? '3' : '2') : (projectAvailable ? '2' : '1')} · 所有对话默认</dt>
+                <dd>{preferenceLabel(defaultPreference)}<small>由所有对话设置控制</small></dd>
+              </div>
+              <div>
+                <dt>最后 · 产品内置默认</dt>
+                <dd>{item.effectiveScope === 'built_in_default' ? capabilityEffectiveLabel(item.disclosure.effective) : '由后端目录决定'}<small>仅在上层全部继承时使用</small></dd>
+              </div>
+            </dl>
+            <p>按上列顺序取第一个非“继承默认”的值；披露结果不会改变执行授权。</p>
+          </section>
+
+          <Field
+            className="capability-default-field"
+            description="由所有对话设置控制。影响未被当前项目默认或当前对话临时设置覆盖的对话；未在工作的对话会在下一轮重新加载时生效，不会取消运行中任务或授予执行权限。"
+            htmlFor={`capability-global-default-${item.canonicalId.replace(/[^a-z0-9_-]/giu, '-')}`}
+            label="所有对话默认披露"
+          >
+            <Select
+              aria-label={`${item.displayName}的所有对话默认披露`}
+              disabled={!defaultsAvailable || defaultPending}
+              id={`capability-global-default-${item.canonicalId.replace(/[^a-z0-9_-]/giu, '-')}`}
+              onValueChange={onDefaultPreferenceChange}
+              options={capabilityPreferenceOptions}
+              value={defaultPreference}
+            />
+          </Field>
           {projectAvailable ? (
-            <div>
-              <dt>{sessionOwnerId ? '2' : '1'} · 当前项目默认</dt>
-              <dd>{preferenceLabel(projectPreference)}<small>由当前授权工作区控制 · {shortDigest(projectOwnerId ?? '')}</small></dd>
-            </div>
+            <Field
+              className="capability-default-field"
+              description={`由当前授权工作区${projectOwnerId ? `（${shortDigest(projectOwnerId)}）` : ''}控制。优先于所有对话默认；当前对话临时设置仍优先。`}
+              htmlFor={`capability-project-default-${item.canonicalId.replace(/[^a-z0-9_-]/giu, '-')}`}
+              label="当前项目默认披露"
+            >
+              <Select
+                aria-label={`${item.displayName}的当前项目默认披露`}
+                disabled={projectPending}
+                id={`capability-project-default-${item.canonicalId.replace(/[^a-z0-9_-]/giu, '-')}`}
+                onValueChange={onProjectPreferenceChange}
+                options={capabilityPreferenceOptions}
+                value={projectPreference}
+              />
+            </Field>
           ) : null}
-          <div>
-            <dt>{sessionOwnerId ? (projectAvailable ? '3' : '2') : (projectAvailable ? '2' : '1')} · 所有对话默认</dt>
-            <dd>{preferenceLabel(defaultPreference)}<small>由所有对话设置控制</small></dd>
-          </div>
-          <div>
-            <dt>最后 · 产品内置默认</dt>
-            <dd>{item.effectiveScope === 'built_in_default' ? capabilityEffectiveLabel(item.disclosure.effective) : '由后端目录决定'}<small>仅在上层全部继承时使用</small></dd>
-          </div>
-        </dl>
-        <p>按上列顺序取第一个非“继承默认”的值；披露结果不会改变执行授权。</p>
-      </section>
-
-
-      <Field
-        className="capability-default-field"
-        description="由所有对话设置控制。影响未被当前项目默认或当前对话临时设置覆盖的对话；未在工作的对话会在下一轮重新加载时生效，不会取消运行中任务或授予执行权限。"
-        htmlFor={`capability-global-default-${item.canonicalId.replace(/[^a-z0-9_-]/giu, '-')}`}
-        label="所有对话默认披露"
-      >
-        <Select
-          aria-label={`${item.displayName}的所有对话默认披露`}
-          disabled={!defaultsAvailable || defaultPending}
-          id={`capability-global-default-${item.canonicalId.replace(/[^a-z0-9_-]/giu, '-')}`}
-          onValueChange={onDefaultPreferenceChange}
-          options={capabilityPreferenceOptions}
-          value={defaultPreference}
-        />
-      </Field>
-      {projectAvailable ? (
-        <Field
-          className="capability-default-field"
-          description={`由当前授权工作区${projectOwnerId ? `（${shortDigest(projectOwnerId)}）` : ''}控制。优先于所有对话默认；当前对话临时设置仍优先。`}
-          htmlFor={`capability-project-default-${item.canonicalId.replace(/[^a-z0-9_-]/giu, '-')}`}
-          label="当前项目默认披露"
-        >
-          <Select
-            aria-label={`${item.displayName}的当前项目默认披露`}
-            disabled={projectPending}
-            id={`capability-project-default-${item.canonicalId.replace(/[^a-z0-9_-]/giu, '-')}`}
-            onValueChange={onProjectPreferenceChange}
-            options={capabilityPreferenceOptions}
-            value={projectPreference}
-          />
-        </Field>
-      ) : null}
+        </>
+      )}
 
 
       {operations.length || unknownOperationCount ? (

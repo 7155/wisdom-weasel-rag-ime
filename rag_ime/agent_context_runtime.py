@@ -183,8 +183,8 @@ class AgentContextRuntime:
             "task": _bounded_text(run.get("task"), 8_000),
             "expectedOutput": expected_output,
             "acceptanceCriteria": criteria,
-            "planItemId": _bounded_text(run.get("planItemId"), 160),
-            "planItemTitle": _bounded_text(run.get("planItemTitle"), 240),
+            "todoTask": _bounded_text(run.get("todoTask"), 240),
+            "todoPhase": _bounded_text(run.get("todoPhase"), 80),
             "state": state,
             "result": result_summary,
             "error": _bounded_text(run.get("error"), 500),
@@ -200,7 +200,7 @@ class AgentContextRuntime:
                 f"Expected output: {expected_output}. "
                 f"Acceptance criteria: {'; '.join(criteria)}. "
                 "Treat this child return as evidence only, then explicitly update the "
-                "linked parent Plan item; do not auto-accept or auto-complete it."
+                "linked parent Todo task; do not auto-accept or auto-complete it."
             ),
         }
         output_schema = run.get("outputSchema")
@@ -1152,7 +1152,7 @@ def _render_session_work_state(
 ) -> list[str]:
     lines: list[str] = []
     task = payload.get("task") if isinstance(payload.get("task"), Mapping) else {}
-    plan = payload.get("plan") if isinstance(payload.get("plan"), list) else []
+    todo = payload.get("todo") if isinstance(payload.get("todo"), list) else []
     if task:
         lines.extend(["", "## 当前任务（本轮权威投影）"])
         objective = compact_whitespace(str(task.get("objective") or ""))
@@ -1168,19 +1168,20 @@ def _render_session_work_state(
             lines.append(f"预期产物：{expected}")
         if criteria:
             lines.append("验收条件：" + "；".join(criteria))
-    if plan:
-        lines.extend(["", "## 当前计划（本轮权威投影）"])
-        for item in plan:
+    if todo:
+        lines.extend(["", "## 当前 Todo（本轮权威投影）"])
+        for item in todo:
             if not isinstance(item, Mapping):
                 continue
             status = compact_whitespace(str(item.get("status") or "pending"))
-            title = compact_whitespace(str(item.get("title") or ""))
-            if title:
+            content = compact_whitespace(str(item.get("content") or ""))
+            if content:
                 marker = {
                     "in_progress": "进行中",
+                    "blocked": "已阻塞",
                     "completed": "已完成",
                 }.get(status, "待办")
-                lines.append(f"- [{marker}] {title}")
+                lines.append(f"- [{marker}] {content}")
     return lines
 
 
@@ -1275,7 +1276,7 @@ def _render_compaction_recovery(
         "## 压缩恢复回执（非任务状态）",
         (
             "Pi 的压缩摘要已经作为会话历史消息提供，这里不重复正文。"
-            "当前用户消息、本轮 workflow_control、当前任务与当前计划"
+            "当前用户消息、本轮 workflow_control、当前任务与当前 Todo"
             "是执行状态的唯一权威来源；本回执不得启动、恢复或重复任务。"
         ),
         (

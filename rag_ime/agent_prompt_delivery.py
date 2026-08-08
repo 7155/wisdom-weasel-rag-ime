@@ -9,6 +9,7 @@ from .agent_context_runtime import (
     render_context_items,
     render_provider_context_items,
 )
+from .agent_execution_policy import execution_policy_prompt
 from .pi_runtime_values import PiRuntimeTurnConflict
 from .text_utils import compact_whitespace
 
@@ -150,6 +151,7 @@ class AgentPromptDeliveryService:
             session_context_prompt="\n\n".join(
                 value
                 for value in (
+                    execution_policy_prompt(session),
                     memory_context,
                     (
                         self.room_public_recovery_context(session_id)

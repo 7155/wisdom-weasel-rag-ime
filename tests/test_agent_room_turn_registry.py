@@ -223,6 +223,51 @@ class RuntimeTurnBindingTests(unittest.TestCase):
                 )
         self.assertFalse(registry.session_turn_active("session:target"))
 
+    def test_cancelled_turn_rejects_late_events_and_allows_next_turn(
+        self,
+    ) -> None:
+        registry = RoomTurnRegistry()
+        old = self._event("runtime-turn:old", "text_delta")
+        current = self._event("runtime-turn:current", "text_delta")
+        registry.begin(
+            "session:target",
+            "room-root:old",
+            dispatch_id="dispatch:old",
+        )
+        registry.accept(
+            "session:target",
+            "runtime-turn:old",
+            "room-root:old",
+        )
+
+        registry.record_cancellation(
+            "room-root:old",
+            "cancel:old",
+        )
+        registry.cancel("session:target", "room-root:old")
+
+        self.assertFalse(registry.allows_room_event(old))
+        self.assertEqual(
+            registry.registered_turn_for_event(old),
+            "room-root:old",
+        )
+        self.assertFalse(registry.session_turn_active("session:target"))
+
+        registry.begin(
+            "session:target",
+            "room-root:current",
+            dispatch_id="dispatch:current",
+        )
+        self.assertFalse(registry.allows_room_event(current))
+        registry.accept(
+            "session:target",
+            "runtime-turn:current",
+            "room-root:current",
+        )
+        self.assertTrue(registry.allows_room_event(current))
+        self.assertFalse(registry.allows_room_event(old))
+        self.assertTrue(registry.session_turn_active("session:target"))
+
 
 class TurnTargetSnapshotTests(unittest.TestCase):
     def setUp(self) -> None:

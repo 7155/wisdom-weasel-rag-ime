@@ -90,6 +90,13 @@ class RoomManagementService:
     def snapshot(self, room_id: str) -> dict[str, object]:
         return self.lifecycle.snapshot(room_id)
 
+    def history(
+        self,
+        room_id: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        return self.lifecycle.history(room_id, payload)
+
     def topics(
         self,
         room_id: str,

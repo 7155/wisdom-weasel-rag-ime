@@ -9,10 +9,12 @@ from rag_ime.agent_configuration import (
     AgentConfigurationStore,
     default_agent_configuration,
 )
+from rag_ime.agent_execution_policy import read_only_blocks_effect
 from rag_ime.agent_session_policy import AgentSessionPolicyService
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_tool_ids import CONTROL_TOOL_IDS
 from rag_ime.agent_tools import ControlToolGateway, _TOOL_SPEC_BY_ID
+from rag_ime.pi_runtime import _tools_for_session
 
 
 class _Runtime:
@@ -105,6 +107,56 @@ class _Extensions:
                 }
             ],
         }
+class _RoomCapabilityGateway:
+    def __init__(self) -> None:
+        self.room_calls: list[tuple[str, dict[str, object]]] = []
+        self.product_authorization_calls = 0
+        self.product_execution_calls: list[dict[str, object]] = []
+
+    def execute_room_capability_tool(
+        self,
+        session_id: str,
+        tool: str,
+        args: dict[str, object],
+        *,
+        tool_call_id: str,
+        load_receipt_id: str,
+    ) -> dict[str, object]:
+        del session_id, tool_call_id, load_receipt_id
+        self.room_calls.append((tool, dict(args)))
+        return {"ok": True, "tool": tool}
+
+    def authorize_room_product_tool(
+        self,
+        session_id: str,
+        tool: str,
+        args: dict[str, object],
+        *,
+        tool_call_id: str,
+        load_receipt_id: str,
+    ) -> dict[str, object]:
+        del session_id, tool, args, tool_call_id, load_receipt_id
+        self.product_authorization_calls += 1
+        return {"invocationReceipt": {"receiptId": "invocation:blocked"}}
+
+    def record_room_product_tool_execution(
+        self,
+        session_id: str,
+        invocation_receipt_id: str,
+        *,
+        status: str,
+        result_hash: str,
+    ) -> dict[str, object]:
+        receipt = {
+            "sessionId": session_id,
+            "invocationReceiptId": invocation_receipt_id,
+            "status": status,
+            "resultHash": result_hash,
+        }
+        self.product_execution_calls.append(receipt)
+        return {"executionReceipt": receipt}
+
+
 
 
 class AgentCapabilityPolicyTests(unittest.TestCase):
@@ -140,7 +192,11 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def _gateway(self) -> ControlToolGateway:
+    def _gateway(
+        self,
+        *,
+        collaboration: object | None = None,
+    ) -> ControlToolGateway:
         return ControlToolGateway(
             sessions=self.sessions,
             management=object(),
@@ -149,6 +205,7 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
             configuration_store=self.configuration,
             governed_skills=_Skills(),
             extensions=_Extensions(),
+            collaboration=collaboration,
         )
 
     def test_tool_inventory_ids_exactly_match_specs(self) -> None:
@@ -383,6 +440,321 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
                 )
             },
         )
+
+    def test_todo_and_ask_are_fixed_for_ordinary_sessions_despite_hiding(self) -> None:
+        session = self.sessions.create(title="fixed base tools")
+        session_id = str(session["id"])
+
+        updated = self.policy.update_session(
+            session_id,
+            {
+                "toolAllowlistMode": "explicit",
+                "allowedTools": ["memory"],
+                "capabilityDisclosurePreferences": {
+                    "tool:todo": "disabled",
+                    "tool:ask": "disabled",
+                },
+            },
+        )
+
+        self.assertIn("todo", updated["session"]["allowedTools"])
+        catalog = self._gateway().manifests(session_id=session_id)
+        todo = next(
+            item
+            for item in catalog["items"]
+            if item["canonicalId"] == "tool:todo"
+        )
+        self.assertEqual(todo["authorization"]["state"], "authorized")
+        self.assertEqual(todo["disclosure"]["effective"], "enabled")
+        self.assertEqual(todo["disclosure"]["reason"], "required_session_tool")
+        ask = next(
+            item
+            for item in catalog["items"]
+            if item["canonicalId"] == "tool:ask"
+        )
+        self.assertEqual(ask["authorization"]["state"], "authorized")
+        self.assertEqual(ask["disclosure"]["effective"], "enabled")
+        self.assertEqual(ask["disclosure"]["reason"], "required_session_tool")
+        self.assertTrue(ask["alwaysAvailable"])
+        runtime_todo = next(
+            item
+            for item in self._gateway().runtime_manifests(
+                self.sessions.get(session_id)
+            )
+            if item["name"] == "todo"
+        )
+        self.assertTrue(runtime_todo["alwaysAvailable"])
+
+    def test_reviewer_and_read_only_collaborator_manifest_fences_workspace_mutations(
+        self,
+    ) -> None:
+        sessions = (
+            self.sessions.create(
+                title="Reviewer",
+                mode="coordinator",
+                tool_profile_version="control-center-v1",
+                execution_mode="read_only",
+                workspace_roots=[str(self.root)],
+            ),
+            self.sessions.create(
+                title="read-only collaborator",
+                mode="coordinator",
+                tool_profile_version="subagent-readonly-v1",
+                workspace_roots=[str(self.root)],
+            ),
+        )
+        expected_lsp_reads = {
+            "status",
+            "symbols",
+            "hover",
+            "definition",
+            "references",
+            "diagnostics",
+        }
+        forbidden_tools = {
+            "workspace_patch",
+            "workspace_edit",
+            "workspace_write",
+            "workspace_shell",
+        }
+        gateway = self._gateway()
+        for session in sessions:
+            manifests = gateway.runtime_manifests(dict(session))
+            by_name = {str(item["name"]): item for item in manifests}
+            self.assertTrue(
+                {"workspace_list", "workspace_read", "workspace_search", "workspace_lsp"}
+                <= set(by_name)
+            )
+            self.assertTrue(forbidden_tools.isdisjoint(by_name))
+            self.assertNotIn("workspace_job", by_name)
+            lsp = by_name["workspace_lsp"]
+            branches = lsp["parameters"].get("oneOf", [])
+            lsp_operations = {
+                str(branch["properties"]["op"]["const"])
+                for branch in branches
+                if isinstance(branch, dict)
+                and isinstance(branch.get("properties"), dict)
+                and isinstance(branch["properties"].get("op"), dict)
+                and "const" in branch["properties"]["op"]
+            }
+            self.assertEqual(lsp_operations, expected_lsp_reads)
+            knowledge = by_name["knowledge"]
+            knowledge_operations = {
+                str(branch["properties"]["op"]["const"])
+                for branch in knowledge["parameters"].get("oneOf", [])
+            }
+            self.assertEqual(
+                knowledge_operations,
+                {
+                    "list_bases",
+                    "get_base",
+                    "list_documents",
+                    "search",
+                    "find",
+                    "open",
+                    "status",
+                    "rebuild_preview",
+                },
+            )
+        for blocked_tool, operation in (
+            ("workspace_shell", "run"),
+            ("workspace_job", "start"),
+            ("workspace_job", "cancel"),
+            ("workspace_patch", "apply"),
+            ("workspace_edit", "apply"),
+            ("workspace_write", "apply"),
+            ("workspace_lsp", "rename"),
+            ("workspace_lsp", "code_action_apply"),
+            ("knowledge", "create_base"),
+            ("knowledge", "configure_base"),
+            ("knowledge", "import_text"),
+            ("knowledge", "rebuild"),
+            ("bash", "run"),
+            ("edit", "apply"),
+            ("write", "apply"),
+            ("apply_patch", "apply"),
+        ):
+            self.assertTrue(read_only_blocks_effect(blocked_tool, operation))
+        selected = _tools_for_session(
+            (
+                "workspace_list",
+                "workspace_read",
+                "workspace_search",
+                "workspace_lsp",
+                "workspace_patch",
+                "workspace_edit",
+                "workspace_write",
+                "workspace_shell",
+                "workspace_job",
+            ),
+            {
+                "mode": "coordinator",
+                "toolProfileVersion": "control-center-v1",
+                "executionMode": "read_only",
+            },
+        )
+        self.assertEqual(
+            selected,
+            (
+                "workspace_list",
+                "workspace_read",
+                "workspace_search",
+                "workspace_lsp",
+            ),
+        )
+
+
+    def test_read_only_room_public_and_workspace_read_surfaces_remain_usable(
+        self,
+    ) -> None:
+        session = self.sessions.create(
+            title="Reviewer public controls",
+            mode="coordinator",
+            tool_profile_version="control-center-v1",
+            execution_mode="read_only",
+            workspace_roots=[str(self.root)],
+        )
+        (self.root / "review.txt").write_text(
+            "read-only review evidence\n",
+            encoding="utf-8",
+        )
+        room_gateway = _RoomCapabilityGateway()
+        gateway = self._gateway(collaboration=room_gateway)
+        session_id = str(session["id"])
+
+        for index, tool in enumerate(("room_state", "room_post", "room_commit")):
+            result = gateway.execute(
+                {
+                    "schemaVersion": "rag-ime.agent-tool-call.v1",
+                    "sessionId": session_id,
+                    "tool": tool,
+                    "toolCallId": f"tool:room-public:{index}",
+                    "args": {},
+                }
+            )
+            self.assertTrue(result["ok"])
+        self.assertEqual(
+            [tool for tool, _args in room_gateway.room_calls],
+            ["room_state", "room_post", "room_commit"],
+        )
+
+        read_result = gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": session_id,
+                "tool": "workspace_read",
+                "toolCallId": "tool:workspace-read",
+                "args": {"op": "read", "path": "review.txt"},
+            }
+        )
+        self.assertEqual(read_result["result"]["content"], "read-only review evidence\n")
+        search_result = gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": session_id,
+                "tool": "workspace_search",
+                "toolCallId": "tool:workspace-search",
+                "args": {"op": "search", "query": "review evidence"},
+            }
+        )
+        self.assertTrue(search_result["result"]["matches"])
+        lsp_status = gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": session_id,
+                "tool": "workspace_lsp",
+                "toolCallId": "tool:workspace-lsp-status",
+                "args": {"op": "status"},
+            }
+        )
+        self.assertIn(
+            lsp_status["result"]["state"],
+            {"ready", "available", "unavailable"},
+        )
+        self.assertEqual(
+            [receipt["status"] for receipt in room_gateway.product_execution_calls],
+            ["applied", "applied", "applied"],
+        )
+
+    def test_live_read_only_policy_rejects_stale_grant_before_room_auth_and_apply(
+        self,
+    ) -> None:
+        managed = self.sessions.create(
+            title="managed before review",
+            mode="coordinator",
+            tool_profile_version="control-center-v1",
+            execution_mode="workspace_managed",
+            workspace_roots=[str(self.root)],
+        )
+        managed_id = str(managed["id"])
+        self.assertTrue(managed["workspaceScopeSha256"])
+        gateway = self._gateway(
+            collaboration=_RoomCapabilityGateway(),
+        )
+        initial_names = {
+            str(item["name"])
+            for item in gateway.runtime_manifests(dict(managed))
+        }
+        self.assertIn("workspace_patch", initial_names)
+        approval = self.sessions.create_approval(
+            session_id=managed_id,
+            tool_name="workspace_patch",
+            operation="apply",
+            payload_sha256="a" * 64,
+            preview={"actionPayload": {}, "baseState": {}},
+            risk_level="R2",
+        )
+        approved = self.sessions.decide_approval(
+            str(approval["approvalId"]),
+            approved=True,
+            payload_sha256=str(approval["payloadSha256"]),
+        )
+        live = self.sessions.set_runtime_policy(
+            managed_id,
+            mode="coordinator",
+            tool_profile_version="control-center-v1",
+            execution_mode="read_only",
+            grant_workspace_scope=True,
+            allowed_tools=None,
+            workspace_roots=[str(self.root)],
+        )
+        self.assertEqual(live["workspaceScopeSha256"], "")
+        current_names = {
+            str(item["name"])
+            for item in gateway.runtime_manifests(dict(managed))
+        }
+        self.assertNotIn("workspace_patch", current_names)
+        with self.assertRaisesRegex(ValueError, "read-only policy"):
+            gateway.execute(
+                {
+                    "schemaVersion": "rag-ime.agent-tool-call.v1",
+                    "sessionId": managed_id,
+                    "tool": "workspace_patch",
+                    "toolCallId": "tool:stale-patch",
+                    "args": {
+                        "op": "apply",
+                        "path": "review.txt",
+                        "oldText": "before",
+                        "newText": "after",
+                        "expectedOccurrences": 1,
+                    },
+                }
+            )
+        collaboration = gateway.collaboration
+        self.assertIsInstance(collaboration, _RoomCapabilityGateway)
+        self.assertEqual(collaboration.product_authorization_calls, 0)
+        with self.assertRaisesRegex(ValueError, "read-only policy"):
+            gateway._execute_product_tool(
+                request={},
+                session=managed,
+                tool="workspace_patch",
+                args={"op": "apply"},
+                spec=_TOOL_SPEC_BY_ID["workspace_patch"],
+                operation="apply",
+                room_authorization=None,
+            )
+        with self.assertRaisesRegex(ValueError, "read-only policy"):
+            gateway.apply_approval(approved)
 
 
 if __name__ == "__main__":

@@ -20,7 +20,10 @@ import {
 } from '@/contracts/approval-decision';
 import { publicAgentErrorText } from '../public-error';
 import { MarkdownBody } from './MarkdownRenderer';
-import { toggleDisclosurePreservingAnchor } from './disclosure-anchor';
+import {
+  toggleDisclosureOnKeyPreservingAnchor,
+  toggleDisclosurePreservingAnchor,
+} from './disclosure-anchor';
 import { publicToolLabel } from './public-tool-result';
 import type { AgentBlockRenderProps } from './renderer-contract';
 import {
@@ -280,18 +283,28 @@ export function ErrorBlockRenderer({ block }: AgentBlockRenderProps) {
 }
 
 export function ReasoningSummaryBlockRenderer({ block }: AgentBlockRenderProps) {
+  const [open, setOpen] = useState(false);
+  if (text(block.data.source) !== 'provider_reasoning_summary') return null;
   const values = Array.isArray(block.data.items) ? block.data.items : [];
   const items = values
     .filter((value): value is string => typeof value === 'string')
     .map((value) => value.replace(/\s+/gu, ' ').trim())
     .filter(Boolean)
     .slice(0, 12);
-  const fallback = text(block.data.summary ?? block.data.text ?? block.data.detail)
-    || '正在整理信息与下一步。';
+  const fallback = text(block.data.summary ?? block.data.text ?? block.data.detail);
+  if (!items.length && !fallback) return null;
   const state = text(block.data.state ?? block.status) || 'completed';
   return (
-    <details className="agent-rich-collapsible agent-reasoning-summary" data-tone="info">
-      <summary>
+    <details
+      className="agent-rich-collapsible agent-reasoning-summary"
+      data-tone="info"
+      open={open}
+    >
+      <summary
+        aria-expanded={open}
+        onClick={(event) => toggleDisclosurePreservingAnchor(event, setOpen)}
+        onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setOpen)}
+      >
         <span className="agent-insert-icon"><CircleDashed size={16} /></span>
         <span>思考摘要</span>
         <small>{state === 'running' ? '思考中' : `${items.length || 1} 项`}</small>
@@ -369,6 +382,7 @@ function ToolActivityBlock({
       <summary
         aria-expanded={open}
         onClick={(event) => toggleDisclosurePreservingAnchor(event, setOpen)}
+        onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setOpen)}
       >
         <span className="agent-insert-icon">
           {running ? <CircleDashed className="agent-tool-activity__spinner" size={15} /> : <Wrench size={15} />}
@@ -454,8 +468,24 @@ function safeFieldValue(value: unknown): string {
   return '';
 }
 
-export function BlockedMedia({ icon, label }: { icon: ReactNode; label: string }) {
-  return <div className="agent-inline-notice" data-tone="neutral">{icon}<span>{label}</span></div>;
+export function BlockedMedia({
+  detail,
+  icon,
+  label,
+}: {
+  detail?: string;
+  icon: ReactNode;
+  label: string;
+}) {
+  return (
+    <div className="agent-inline-notice agent-media-error" data-tone="warning" role="status">
+      {icon}
+      <span>
+        <strong>{label}</strong>
+        {detail ? <small>{detail}</small> : null}
+      </span>
+    </div>
+  );
 }
 
 function statusIcon(tone: string): ReactNode {

@@ -1,17 +1,23 @@
 ---
 name: improve-codebase-architecture
-description: Inspect real codebase friction and produce a small, evidence-backed architecture improvement shortlist before any refactor. Use when the user explicitly asks to improve architecture, reduce structural complexity, or find high-value refactoring candidates.
+description: Find evidence-backed architecture improvements before refactoring.
 when:
-  - 用户明确要求体检代码架构、寻找重构候选或降低结构复杂度
-does: 从真实热点、所有权和依赖证据中形成少量候选，并等待用户选定。
-input: 目标仓库、当前任务边界、近期改动、架构文档和可运行验证。
-output: 一至三个候选、证据、收益、风险、删除测试和推荐顺序。
+  - User explicitly asks to improve codebase architecture
+does: Inspect real friction and return one to three candidates for user selection.
+input: Repository, scope, recent changes, architecture docs, and checks.
+output: Candidates with evidence, benefit, risk, and deletion test.
 notFor:
-  - 已定位的单点缺陷修复、纯格式整理或为了行数而拆文件
-  - 未经选择直接进行大范围重构
+  - Known local bug or formatting cleanup
+  - An unselected broad refactor
 ---
 
 # Improve Codebase Architecture
+
+Method provenance: this Room-bounded Skill adapts Matt Pocock's
+`improve-codebase-architecture` at upstream commit
+`2ab958093e83e0ec752e6c1c5932da465bf23e0c`. Its deep-module vocabulary and
+deletion test are retained; Room alignment, execution, workspace, review, and
+user-decision gates remain authoritative.
 
 ## Evidence Standard
 
@@ -72,7 +78,7 @@ Reject a candidate when it only moves lines, creates a wrapper without hiding
 complexity, duplicates a runtime path, or requires broad migration before any
 behavior can be verified.
 
-## Exit Contract
+## Output Contract
 
 Return the shortlist and stop at `awaiting_selection`, `no_high-value_candidate`,
 or `blocked_by_missing_evidence`.

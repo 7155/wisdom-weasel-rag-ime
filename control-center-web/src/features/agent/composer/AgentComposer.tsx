@@ -19,6 +19,7 @@ import {
   type CompositionEvent,
   type KeyboardEvent,
 } from 'react';
+import { useOptionalControlTransport } from '@/app/control-transport';
 import { IconButton } from '@/components/primitives';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type {
@@ -498,10 +499,11 @@ function ComposerAttachmentPreview({
   attachment: ComposerAttachment;
   sessionId: string;
 }) {
+  const transport = useOptionalControlTransport();
   const [localUrl, setLocalUrl] = useState('');
   const [failed, setFailed] = useState(false);
   const isImage = attachment.mimeType.toLowerCase().startsWith('image/');
-  const managedUrl = isImage
+  const managedPath = isImage
     && attachment.sessionId === sessionId
     && attachment.sha256
     ? managedContentUrl({
@@ -512,6 +514,9 @@ function ComposerAttachmentPreview({
       mimeTypeHint: attachment.mimeType,
       byteSizeHint: attachment.byteSize,
     })
+    : null;
+  const managedUrl = managedPath
+    ? transport?.agentMediaContentUrl?.(managedPath) ?? managedPath
     : null;
 
   useEffect(() => {

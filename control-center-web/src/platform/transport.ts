@@ -244,6 +244,7 @@ export interface ControlTransport {
   capabilities(): Promise<FrontendCapabilities>;
   request<Response = unknown>(request: ControlRequest): Promise<Response>;
   browserSnapshotImageUrl?(snapshotId: string): string;
+  agentMediaContentUrl?(receiptPath: string): string;
   subscribe<Event = UiControlEvent | unknown>(
     request: ControlSubscription,
     observer: ControlEventObserver<Event>,
@@ -271,6 +272,34 @@ export function assertBrowserSnapshotId(snapshotId: unknown): asserts snapshotId
     || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(snapshotId)
   ) {
     throw new TypeError('Browser snapshot image requires a bounded snapshotId');
+  }
+}
+
+export function managedAgentMediaContentPath(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.startsWith('/api/agent/media/')) return null;
+  try {
+    const url = new URL(value, 'http://rag-ime.local');
+    const match = /^\/api\/agent\/media\/([^/]+)\/content$/u.exec(url.pathname);
+    if (!match || url.hash) return null;
+    const mediaId = decodeURIComponent(match[1] ?? '');
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(mediaId)) return null;
+    const sessionIds = url.searchParams.getAll('sessionId');
+    const roomIds = url.searchParams.getAll('roomId');
+    const owner = sessionIds.length === 1 && roomIds.length === 0
+      ? { key: 'sessionId', value: sessionIds[0] ?? '' }
+      : roomIds.length === 1 && sessionIds.length === 0
+        ? { key: 'roomId', value: roomIds[0] ?? '' }
+        : null;
+    if (
+      !owner
+      || !/^[A-Za-z0-9._:-]{1,240}$/u.test(owner.value)
+      || [...url.searchParams.keys()].some((key) => key !== owner.key)
+    ) {
+      return null;
+    }
+    return `/api/agent/media/${encodeURIComponent(mediaId)}/content?${owner.key}=${encodeURIComponent(owner.value)}`;
+  } catch {
+    return null;
   }
 }
 

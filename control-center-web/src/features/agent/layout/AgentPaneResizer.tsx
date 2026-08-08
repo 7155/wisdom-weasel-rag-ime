@@ -17,7 +17,7 @@ const PANE_CONFIG = {
     max: 420,
     storageKey: 'wisdom-weasel.agent.status-width',
     variable: '--agent-status-width',
-    label: '调整状态面板宽度',
+    label: '调整任务中心宽度',
   },
 } as const;
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   appendOptimisticRoomMessage,
   createRoomProjection,
+  parseRoomEventPage,
   parseRoomEventSnapshot,
   reduceRoomEvent,
   reduceRoomEvents,
@@ -264,6 +265,92 @@ describe('RoomEventReducer', () => {
         text: '最终公开回复',
       });
     }
+  });
+
+  it('keeps different source events when their assistant text happens to match', () => {
+    const events = [
+      wireRoomEvent(1, 'participant_message', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        message: roomServerMessage('provider-reply-1', '相同的最终回复'),
+      }),
+      wireRoomEvent(2, 'room_post', {
+        post: roomPost('post-1', '相同的最终回复', 'dispatch-1'),
+      }),
+      wireRoomEvent(3, 'participant_message', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        message: roomServerMessage('provider-reply-late', '相同的最终回复'),
+      }),
+    ];
+    const projection = reduceRoomEvents(
+      createRoomProjection('room-1'),
+      events.map((event) => parseRoomEvent(event)),
+    );
+
+    expect(projection.messageOrder).toEqual([
+      'provider-reply-1',
+      'post-1',
+      'provider-reply-late',
+    ]);
+    expect(projection.turnsById['room-turn-1'].messageIds).toEqual([
+      'provider-reply-1',
+      'post-1',
+      'provider-reply-late',
+    ]);
+    expect(Object.values(projection.messagesById)).toHaveLength(3);
+    expect(projection.messagesById['post-1']).toMatchObject({
+      postKind: 'result',
+      text: '相同的最终回复',
+    });
+  });
+
+  it('coalesces runtime and RoomPost aliases only when they share publication identity', () => {
+    const events = [
+      wireRoomEvent(1, 'participant_message', {
+        rootId: 'room-turn-1',
+        sourceEventId: 'publication:reply-1',
+        message: roomServerMessage('provider-reply-1', '流式完成稿'),
+      }),
+      wireRoomEvent(2, 'room_post', {
+        post: {
+          ...roomPost('post-1', '正式公开回复', ''),
+          chronology: {
+            schemaVersion: 'wisdom-weasel.room-post-chronology.v1',
+            roomEventId: 'publication:reply-1',
+            roomEventSequence: 1,
+            createdAtMs: 10,
+            afterPostId: null,
+            orderKey: 'room-event:00000000000000000001',
+          },
+        },
+      }),
+      wireRoomEvent(3, 'participant_message', {
+        rootId: 'room-turn-1',
+        sourceEventId: 'publication:reply-1',
+        message: roomServerMessage('provider-reply-late', '重复回放的运行稿'),
+      }),
+    ];
+    const projection = reduceRoomEvents(
+      createRoomProjection('room-1'),
+      events.map((event) => parseRoomEvent(event)),
+    );
+
+    expect(projection.messageOrder).toEqual(['post-1']);
+    expect(projection.turnsById['room-turn-1'].messageIds).toEqual(['post-1']);
+    expect(Object.values(projection.messagesById)).toHaveLength(1);
+    expect(projection.messagesById['post-1']).toMatchObject({
+      sourceEventId: 'publication:reply-1',
+      sequence: 1,
+      createdAtMs: 10,
+      postKind: 'result',
+      text: '正式公开回复',
+      chronology: {
+        roomEventId: 'publication:reply-1',
+        roomEventSequence: 1,
+        orderKey: 'room-event:00000000000000000001',
+      },
+    });
   });
 
   it('replaces only the matching execution lane when an authorized RoomPost is published', () => {
@@ -1103,6 +1190,55 @@ describe('RoomEventReducer', () => {
     });
   });
 
+  it('settles an interrupted tool activity when its Root is aborted', () => {
+    const events = [
+      roomEvent(1, 'route_decision', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        targetParticipantId: 'participant-1',
+      }),
+      parseRoomEvent(wireRoomEvent(2, 'participant_activity', {
+        data: {
+          rootId: 'room-turn-1',
+          dispatchId: 'dispatch-1',
+          toolCallId: 'call-bash',
+          toolName: 'bash',
+        },
+        sourceEventId: 'session-room-1:2',
+        sourceEventType: 'tool_started',
+      })),
+    ];
+    const rootAborted = parseRoomEvent({
+      ...wireRoomEvent(3, 'turn_completed', {
+        rootId: 'room-turn-1',
+        status: 'aborted',
+      }),
+      participantId: null,
+      sourceSessionId: '',
+      createdAtMs: 0,
+    });
+
+    let state = createRoomProjection('room-1');
+    for (const event of [...events, rootAborted]) {
+      state = reduceRoomEvent(state, event).state;
+    }
+    const activity = Object.values(state.activitiesById).find(
+      (candidate) => candidate.payload.toolCallId === 'call-bash',
+    );
+    const publicProgress = selectRoomParticipantPublicProgress(state).find(
+      (candidate) => candidate.kind === 'tool',
+    );
+
+    expect(activity).toMatchObject({
+      status: 'aborted',
+      updatedAtMs: 20,
+    });
+    expect(publicProgress).toMatchObject({
+      kind: 'tool',
+      status: 'aborted',
+    });
+  });
+
   it('preserves settled lane evidence when Root aborts only unfinished work', () => {
     const routeOne = roomEvent(1, 'route_decision', {
       rootId: 'room-turn-1',
@@ -1239,6 +1375,33 @@ describe('RoomEventReducer', () => {
       wireRoomEvent(3, 'turn_completed', {}),
     ], { firstSequence: 1 }))).toThrow(/contiguous/);
   });
+
+  it('validates bounded Room history pages and their cursor invariants', () => {
+    const items = [
+      wireRoomEvent(3, 'participant_status', { status: 'working' }),
+      wireRoomEvent(4, 'turn_completed', {}),
+    ];
+    const rawPage = {
+      schemaVersion: 'rag-ime.agent-room-event-page.v1',
+      ok: true,
+      roomId: 'room-1',
+      items,
+      firstSequence: 3,
+      lastSequence: 4,
+      nextBeforeSequence: 3,
+      hasMore: true,
+      retainedFirstSequence: 1,
+      retainedLastSequence: 10,
+      retainedPrefixTruncated: false,
+    };
+    const page = parseRoomEventPage(rawPage);
+
+    expect(page.items.map((event) => event.sequence)).toEqual([3, 4]);
+    expect(() => parseRoomEventPage({
+      ...rawPage,
+      lastSequence: 5,
+    })).toThrow(/bounds/);
+  });
   it('projects model arbitration as running work instead of human review', () => {
     const pending = roomEvent(1, 'participant_activity', {
       rootId: 'room-turn-1',
@@ -1295,6 +1458,169 @@ describe('RoomEventReducer', () => {
     });
   });
 
+
+
+  it('projects a canonical user wait and clears it only from a later user RoomPost on the same Root', () => {
+    const question = wireRoomEvent(1, 'room_post', {
+      post: {
+        schemaVersion: 'wisdom-weasel.room-post.v2',
+        postId: 'wait-post-1',
+        roomId: 'room-1',
+        rootId: 'room-turn-1',
+        generation: 0,
+        authorActorRef: 'participant:facilitator',
+        kind: 'wait',
+        visibility: 'room',
+        content: '请选择发布方式。',
+        question: {
+          prompt: '发布预览版还是稳定版？',
+          options: [
+            { value: 'preview', label: '预览版', recommended: true },
+            { value: 'stable', label: '稳定版' },
+          ],
+        },
+        idempotencyKey: 'wait-post-1',
+        publicationSource: { kind: 'room_commit', ref: 'commit:wait-1' },
+        createdAtMs: 10,
+      },
+    });
+    let state = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      parseRoomEvent(question),
+    ).state;
+    expect(state.pendingUserQuestion).toMatchObject({
+      postId: 'wait-post-1',
+      roomId: 'room-1',
+      rootId: 'room-turn-1',
+      sequence: 1,
+      prompt: '发布预览版还是稳定版？',
+      options: [
+        { value: 'preview', label: '预览版', recommended: true },
+        { value: 'stable', label: '稳定版' },
+      ],
+    });
+
+    state = appendOptimisticRoomMessage(state, {
+      clientMessageId: 'answer-client-1',
+      text: 'stable',
+      nowMs: 20,
+    });
+    state = reduceRoomEvent(state, parseRoomEvent(wireRoomEvent(2, 'user_message', {
+      messageId: 'answer-message-1',
+      clientMessageId: 'answer-client-1',
+      rootId: 'room-turn-1',
+      text: 'stable',
+    }))).state;
+    expect(state.pendingUserQuestion?.postId).toBe('wait-post-1');
+
+    const unrelatedPost = wireRoomEvent(3, 'room_post', {
+      post: {
+        schemaVersion: 'wisdom-weasel.room-post.v2',
+        postId: 'unrelated-user-post',
+        roomId: 'room-1',
+        rootId: 'another-root',
+        generation: 0,
+        authorActorRef: 'user:local',
+        kind: 'request',
+        visibility: 'room',
+        content: '另一项任务',
+        idempotencyKey: 'user-message:unrelated',
+        publicationSource: { kind: 'user', ref: 'unrelated' },
+        createdAtMs: 30,
+      },
+    });
+    unrelatedPost.turnId = 'another-root';
+    state = reduceRoomEvent(state, parseRoomEvent(unrelatedPost)).state;
+    expect(state.pendingUserQuestion?.postId).toBe('wait-post-1');
+
+    let terminalState = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      parseRoomEvent(question),
+    ).state;
+    const rootTerminal = wireRoomEvent(2, 'turn_completed', {
+      rootId: 'room-turn-1',
+      status: 'completed',
+    });
+    rootTerminal.participantId = null;
+    rootTerminal.sourceSessionId = '';
+    terminalState = reduceRoomEvent(terminalState, parseRoomEvent(rootTerminal)).state;
+    expect(terminalState.pendingUserQuestion?.postId).toBe('wait-post-1');
+    expect(terminalState.messagesById['wait-post-1']?.question).toMatchObject({
+      status: 'pending',
+    });
+
+    const acceptedAnswer = wireRoomEvent(4, 'room_post', {
+      post: {
+        schemaVersion: 'wisdom-weasel.room-post.v2',
+        postId: 'answer-post-1',
+        roomId: 'room-1',
+        rootId: 'room-turn-1',
+        generation: 0,
+        authorActorRef: 'user:local',
+        kind: 'request',
+        visibility: 'room',
+        content: 'stable',
+        idempotencyKey: 'user-message:answer-client-1',
+        publicationSource: { kind: 'user', ref: 'answer-client-1' },
+        createdAtMs: 40,
+      },
+    });
+    acceptedAnswer.participantId = null;
+    state = reduceRoomEvent(state, parseRoomEvent(acceptedAnswer)).state;
+    expect(state.pendingUserQuestion).toBeUndefined();
+    expect(state.messagesById['wait-post-1']?.question).toMatchObject({
+      status: 'answered',
+      answer: '稳定版',
+    });
+    expect(state.messagesById['answer-post-1']?.answerToPostId).toBe('wait-post-1');
+  });
+  it('reconciles one optimistic answer through user_message and its authoritative user RoomPost', () => {
+    const clientMessageId = 'room-web-answer-1';
+    let state = appendOptimisticRoomMessage(createRoomProjection('room-1'), {
+      clientMessageId,
+      text: '采用稳定版',
+      nowMs: 1,
+    });
+    const acceptedMessage = wireRoomEvent(1, 'user_message', {
+      messageId: 'accepted-answer-1',
+      clientMessageId,
+      rootId: 'room-turn-1',
+      text: '采用稳定版',
+    });
+    acceptedMessage.participantId = null;
+    state = reduceRoomEvent(state, parseRoomEvent(acceptedMessage)).state;
+
+    const acceptedPost = wireRoomEvent(2, 'room_post', {
+      post: {
+        schemaVersion: 'wisdom-weasel.room-post.v2',
+        postId: 'answer-post-1',
+        roomId: 'room-1',
+        rootId: 'room-turn-1',
+        generation: 0,
+        authorActorRef: 'user:local',
+        kind: 'request',
+        visibility: 'room',
+        content: '采用稳定版',
+        idempotencyKey: `user-message:${clientMessageId}`,
+        publicationSource: { kind: 'user', ref: clientMessageId },
+        createdAtMs: 20,
+      },
+    });
+    acceptedPost.participantId = null;
+    state = reduceRoomEvent(state, parseRoomEvent(acceptedPost)).state;
+
+    expect(state.messageOrder).toEqual(['answer-post-1']);
+    expect(state.turnOrder).toEqual(['room-turn-1']);
+    expect(state.turnsById['room-turn-1'].messageIds).toEqual(['answer-post-1']);
+    expect(state.messagesById['answer-post-1']).toMatchObject({
+      clientMessageId,
+      role: 'user',
+      projectionKind: 'post',
+      rootId: 'room-turn-1',
+      text: '采用稳定版',
+    });
+    expect(state.optimisticByClientMessageId[clientMessageId]).toBeUndefined();
+  });
 });
 
 function wireRoomEvent(
@@ -1309,7 +1635,7 @@ function wireRoomEvent(
     sequence,
     turnId: 'room-turn-1',
     eventType,
-    participantId: 'participant-1',
+    participantId: 'participant-1' as string | null,
     sourceSessionId: 'session-room-1',
     createdAtMs: sequence * 10,
     payload,
@@ -1382,7 +1708,7 @@ function roomPost(postId: string, content: string, dispatchId: string) {
     roomId: 'room-1',
     rootId: 'room-turn-1',
     generation: 0,
-    dispatchId,
+    ...(dispatchId ? { dispatchId } : {}),
     authorActorRef: 'participant-1',
     kind: 'result',
     visibility: 'room',

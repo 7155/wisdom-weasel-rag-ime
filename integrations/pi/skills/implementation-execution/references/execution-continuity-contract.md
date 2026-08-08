@@ -39,9 +39,9 @@ an index, not a diary or the detailed implementation record.
 
 ## Layer 2: One Work Item, One WorkDocument
 
-Use the existing Runtime authority: `session_plan`, `session_goal`, or
+Use the existing Runtime authority: `session_todo`, `session_goal`, or
 `room_work_item`. Its authority key identifies one WorkDocument automatically;
-do not invent another work ID. All plan revisions, code slices, reviews, and
+do not invent another work ID. All Todo revisions, code slices, reviews, and
 commits for that responsibility update the same canonical active file. A commit
 never creates a WorkDocument.
 
@@ -68,6 +68,24 @@ Source: <message/event or RequirementAnchor ref>; UTF-8 SHA-256: <required>
 <derived scope, decisions, plan, progress, and explanation>
 ```
 
+For Room implementation, keep one compact block below the interpretation:
+
+```markdown
+### Workspace Ledger
+- Room / responsibility: <Room ref; Root, WorkItem or Task ref; owner>
+- Requirements: <current requirement revision and acceptance aliases>
+- Binding: <binding ref; policy; common baseline; physical workspace when bound>
+- Delivery / integration: <authoritative lifecycle and evidence refs>
+- Cleanup: <cleaned, retained, retry-bound, abandoned, or attention reason>
+```
+
+Replace this block from the latest Runtime task context and workspace receipts;
+do not append a transition diary. Keep the binding and final integration/cleanup
+outcome after the physical worktree is removed. Retained, conflicting,
+cancelled, blocked, incomplete, or orphaned work stays unresolved until a
+receipted retry/rebind or snapshot/hash-bound abandonment. This mirror never
+creates a workspace, authorizes integration or cleanup, or overrides Runtime.
+
 The original request and vision are immutable. Later corrections append; they
 never rewrite history. AI interpretation may be replaced as understanding
 improves. In a Room, copy original RequirementAnchor bytes, not a derived
@@ -83,8 +101,8 @@ redaction marker instead of the secret and alter no other user text.
    against the verbatim request, vision, and corrections. Repair drift first.
 3. Inspect source before editing it. Source wins over stale navigation notes.
 4. Update the same WorkDocument only when interpretation, decision, slice,
-   evidence, blocker, failed approach, or next action changes. Do not append a
-   Tool or commit transcript.
+   evidence, blocker, failed approach, next action, or authoritative workspace
+   lifecycle changes. Do not append a Tool or commit transcript.
 5. Only the active implementation owner writes it. Helpers return proposed
    deltas so concurrent Agents do not race on one file.
 6. Rewriting unchanged content is a no-op.

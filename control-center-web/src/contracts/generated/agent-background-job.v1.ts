@@ -28,11 +28,18 @@ export interface AgentBackgroundJobV1 {
   error: string;
   approvalId: string;
   causalMetadata: {
-    planId: string;
-    planRevision: number;
+    todoId: string;
+    todoRevision: number;
     goalId: string;
     goalRevision: number;
     turnId: string;
     roomBound: boolean;
+  };
+  roomLineage?: {
+    roomId: string;
+    rootId: string;
+    generation: number;
+    taskId: string;
+    dispatchId: string;
   };
 }

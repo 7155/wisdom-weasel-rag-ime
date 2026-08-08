@@ -23,6 +23,59 @@ class AgentEventHubTests(unittest.TestCase):
         self.assertEqual([item.event_id for item in replay], [second.event_id])
         self.assertEqual(len(recorded), 3)
 
+    def test_approval_events_are_idempotent_and_carry_tool_identity(self) -> None:
+        hub = AgentEventHub()
+
+        required = hub.publish(
+            "session-a",
+            "approval_required",
+            {
+                "approvalId": "approval-1",
+                "toolCallId": "tool-call-1",
+                "state": "pending",
+            },
+            turn_id="turn-1",
+        )
+        repeated_required = hub.publish(
+            "session-a",
+            "approval_required",
+            {
+                "approvalId": "approval-1",
+                "toolCallId": "tool-call-1",
+                "state": "pending",
+            },
+            turn_id="turn-1",
+        )
+        resolved = hub.publish(
+            "session-a",
+            "approval_resolved",
+            {
+                "approvalId": "approval-1",
+                "toolCallId": "tool-call-1",
+                "state": "rejected",
+            },
+            turn_id="turn-1",
+        )
+        repeated_resolved = hub.publish(
+            "session-a",
+            "approval_resolved",
+            {
+                "approvalId": "approval-1",
+                "toolCallId": "tool-call-1",
+                "state": "failed",
+            },
+            turn_id="turn-1",
+        )
+
+        self.assertIs(required, repeated_required)
+        self.assertIs(resolved, repeated_resolved)
+        self.assertEqual(required.payload["toolCallId"], "tool-call-1")
+        self.assertEqual(resolved.payload["toolCallId"], "tool-call-1")
+        self.assertEqual(
+            [event.event_type for event in hub.replay("session-a")[0]],
+            ["approval_required", "approval_resolved"],
+        )
+
     def test_subscribe_replays_then_streams_live_event(self) -> None:
         hub = AgentEventHub()
         first = hub.publish("session-a", "status_changed", {"status": "busy"})

@@ -38,6 +38,7 @@ _LEGACY_SKILL_ALIASES = {
     "room-managed-task-execution": "implementation-execution",
     "room-implementation-execution": "implementation-execution",
     "room-test-driven-implementation": "test-driven-implementation",
+    "diagnosing-bugs": "systematic-debugging",
     "room-systematic-debugging": "systematic-debugging",
     "room-independent-vision-review": "independent-review",
     "room-review-feedback-resolution": "review-feedback-resolution",

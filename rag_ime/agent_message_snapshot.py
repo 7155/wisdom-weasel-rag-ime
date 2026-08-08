@@ -168,7 +168,7 @@ class AgentMessageSnapshotService:
             ),
             "telemetry": telemetry,
             "messageQueue": message_queue,
-            "plan": workflow["plan"],
+            "todo": workflow["todo"],
             "goal": workflow["goal"],
             "actGate": workflow["actGate"],
             "backgroundJobs": list(background_jobs.get("items") or []),
@@ -198,11 +198,17 @@ class AgentMessageSnapshotService:
             if not approval_id or approval_id in visible_ids:
                 continue
             event_id = f"{session_id}:snapshot:{approval_id}"
+            causal = approval.get("causalMetadata")
+            causal_turn_id = (
+                str(causal.get("turnId") or "").strip()
+                if isinstance(causal, Mapping)
+                else ""
+            )
             live_events.append(
                 AgentEventEnvelope(
                     event_id=event_id,
                     session_id=session_id,
-                    turn_id=f"approval:{approval_id}",
+                    turn_id=causal_turn_id or f"approval:{approval_id}",
                     sequence=max(1, last_sequence),
                     created_at_ms=int(
                         approval.get("requestedAtMs") or 0

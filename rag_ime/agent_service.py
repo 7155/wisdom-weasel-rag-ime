@@ -25,6 +25,11 @@ from .agent_approval_application import AgentApprovalApplicationService
 from .agent_approval_model import ApprovalModelArbiter
 from .agent_background_jobs import AgentBackgroundJobService
 from .agent_context_runtime import AgentContextRuntime
+from .agent_execution_policy import (
+    execution_policy_prompt,
+    read_only_blocks_effect,
+    read_only_policy_active,
+)
 from .work_documents import WorkDocumentService
 from .agent_command_receipts import (
     AgentCommandReceiptStore,
@@ -100,6 +105,7 @@ from .agent_room_kernel_application import RoomKernelApplicationService
 from .agent_room_settlement import RoomSettleLifecycleService
 from .agent_room_kernel_projection import RoomKernelProjection
 from .agent_room_kernel_worker import KernelCommandBus, RoomKernelWorker, RoomKernelWorkerLoop
+from .agent_room_workspaces import RoomWorkspaceCoordinator
 from .agent_room_runtime_coordinator import RoomKernelRuntimeCoordinator
 from .agent_room_turn_registry import RoomTurnRegistry
 from .agent_room_learning_governance import RoomLearningGovernanceStore
@@ -114,7 +120,7 @@ from .agent_runtime_driver import (
     RuntimeDriverFactory,
     ToolManifestProvider,
 )
-from .agent_rooms import AgentRoomEventHub, AgentRoomStore
+from .agent_rooms import AgentRoomEventHub, AgentRoomNotFound, AgentRoomStore
 from .agent_room_public_timeline import RoomPublicTimelineProjector
 from .agent_roles import PersonaManifest
 from .agent_sessions import AgentSessionStore
@@ -248,6 +254,14 @@ class AgentService:
             ),
         )
         self.rooms.initialize()
+        self.room_workspaces = RoomWorkspaceCoordinator(
+            root_dir=(
+                self.runtime_factory.session_root.expanduser().resolve(strict=False).parent
+                / "room-workspaces"
+            ),
+            sessions=self.sessions,
+            writer_quiescence_provider=self._room_workspace_writer_quiescence,
+        )
         self.room_work = AgentRoomWorkStore(db_path)
         self.room_work.initialize()
         self.room_kernel = RoomKernelStore(
@@ -378,14 +392,12 @@ class AgentService:
             events=self.events,
             media_resolver=self.media.resolve_pi_image,
             runtime_driver_factory=self.runtime_factory,
+            runtime_provider=lambda: self.runtime,
             tool_gateway_token=self.tool_token,
+            tool_gateway_url=self.tool_gateway_url,
+            tool_manifest_provider=self._runtime_tool_manifest,
             compaction_observer=self._checkpoint_runtime_compaction,
-            room_bound_provider=lambda session_id: (
-                self.room_turns.session_turn_active(session_id)
-                or self._active_room_dispatch_authorizes_work(
-                    session_id
-                )
-            ),
+            room_context_provider=self._room_delegation_context,
         )
         self.session_application = AgentSessionApplicationService(
             sessions=self.sessions,
@@ -757,7 +769,6 @@ class AgentService:
                 "transient": True,
                 "context": None,
                 "telemetry": None,
-                "reason": "runtime does not expose transient debug context",
             }
         return dict(provider(session_id, str(turn_id or "")))
 
@@ -765,43 +776,56 @@ class AgentService:
         self,
         session: Mapping[str, object],
     ) -> list[Mapping[str, object]]:
-        runtime_capability = self.room_capabilities.manifest_for_runtime(str(session.get("id") or ""))
+        session_id = str(session.get("id") or "").strip()
+        if session_id:
+            # Prompt/runtime callbacks may retain an earlier Session mapping.
+            # The durable lease policy is authoritative for this disclosure.
+            session = self.sessions.get(session_id)
+        runtime_capability = self.room_capabilities.manifest_for_runtime(session_id)
         if runtime_capability is not None:
             manifest, _binding = runtime_capability
-            return [
-                {
-                    "name": tool["name"],
-                    "description": tool["description"],
-                    "parameters": dict(tool["inputSchema"]),
-                    "when": list(tool["when"]),
-                    "notFor": list(tool["notFor"]),
-                    "input": tool["input"],
-                    "output": tool["output"],
-                    "does": tool["does"],
-                    "profile": "room-kernel-v2",
-                    "risk": tool["risk"],
-                    **(
-                        {"modelVisible": False}
-                        if tool.get("modelVisible") is False
-                        else {}
-                    ),
-                    **(
-                        {
-                            "runtimeProjections": [
-                                dict(item)
-                                for item in tool["runtimeProjections"]
-                                if isinstance(item, Mapping)
-                            ]
-                        }
-                        if tool.get("runtimeProjections")
-                        else {}
-                    ),
-                }
-                for tool in manifest["tools"]
-                if isinstance(tool, Mapping) and tool.get("authorized") is True
-            ]
+            projected: list[dict[str, object]] = []
+            for raw_tool in manifest["tools"]:
+                if not isinstance(raw_tool, Mapping) or raw_tool.get("authorized") is not True:
+                    continue
+                tool = dict(raw_tool)
+                if read_only_policy_active(session):
+                    tool = _project_read_only_room_tool(tool)
+                    if tool is None:
+                        continue
+                projected.append(
+                    {
+                        "name": tool["name"],
+                        "description": tool["description"],
+                        "parameters": dict(tool["inputSchema"]),
+                        "when": list(tool["when"]),
+                        "notFor": list(tool["notFor"]),
+                        "input": tool["input"],
+                        "output": tool["output"],
+                        "does": tool["does"],
+                        "profile": "room-kernel-v2",
+                        "risk": tool["risk"],
+                        **(
+                            {"modelVisible": False}
+                            if tool.get("modelVisible") is False
+                            else {}
+                        ),
+                        **(
+                            {
+                                "runtimeProjections": [
+                                    dict(item)
+                                    for item in tool["runtimeProjections"]
+                                    if isinstance(item, Mapping)
+                                ]
+                            }
+                            if tool.get("runtimeProjections")
+                            else {}
+                        ),
+                    }
+                )
+            return projected
         historical_binding = self.room_capabilities.runtime_binding(
-            str(session.get("id") or ""),
+            session_id,
             active_only=False,
         )
         if (
@@ -909,31 +933,58 @@ class AgentService:
                 )
             identity = self.room_capabilities.runtime_identity(session_id)
             task_context: dict[str, object] = {}
-            if isinstance(identity, Mapping):
-                dispatch_id = str(identity.get("dispatchId") or "")
+            dispatch_id = (
+                str(identity.get("dispatchId") or "")
+                if isinstance(identity, Mapping)
+                else ""
+            )
+            task_id = (
+                str(identity.get("taskId") or "")
+                if isinstance(identity, Mapping)
+                else ""
+            )
+            task: Mapping[str, object] = {}
+            if dispatch_id:
                 try:
                     dispatch = self.room_kernel.dispatch(dispatch_id)
-                    task = self.room_kernel.task(
-                        str(dispatch.get("taskId") or "")
+                    resolved_task_id = str(
+                        dispatch.get("taskId") or task_id
                     )
+                    task = self.room_kernel.task(resolved_task_id)
+                    task_id = resolved_task_id
                 except (KeyError, ValueError):
                     task = {}
-                if isinstance(task, Mapping) and task:
-                    task_context = {
-                        "kind": "room_task",
-                        "roomId": room_id,
-                        "rootId": str(task.get("rootId") or ""),
-                        "dispatchId": dispatch_id,
-                        "taskId": str(task.get("taskId") or ""),
-                        "state": str(task.get("state") or ""),
-                        "objective": str(task.get("objective") or ""),
-                        "expectedOutput": str(
-                            task.get("expectedOutput") or ""
-                        ),
-                        "acceptanceCriterionIds": list(
-                            task.get("acceptanceCriterionIds") or []
-                        ),
-                    }
+            if not task_id and isinstance(identity, Mapping):
+                task_id = str(identity.get("taskId") or "")
+            if not task and task_id:
+                try:
+                    task = self.room_kernel.task(task_id)
+                except (KeyError, ValueError):
+                    task = {}
+            if isinstance(task, Mapping) and task:
+                task_context = {
+                    "kind": "room_task",
+                    "roomId": room_id,
+                    "rootId": str(
+                        task.get("rootId")
+                        or (
+                            identity.get("rootId")
+                            if isinstance(identity, Mapping)
+                            else ""
+                        )
+                        or ""
+                    ),
+                    "dispatchId": dispatch_id,
+                    "taskId": str(task.get("taskId") or task_id),
+                    "state": str(task.get("state") or ""),
+                    "objective": str(task.get("objective") or ""),
+                    "expectedOutput": str(
+                        task.get("expectedOutput") or ""
+                    ),
+                    "acceptanceCriterionIds": list(
+                        task.get("acceptanceCriterionIds") or []
+                    ),
+                }
             return {
                 "contextKind": "room",
                 "contextAvailable": bool(requests and task_context),
@@ -957,8 +1008,14 @@ class AgentService:
             }
 
         message_snapshot = self.message_snapshot.messages(session_id)
+        snapshot_messages = message_snapshot.get("items")
+        if not isinstance(snapshot_messages, list):
+            # Older in-process projections used ``messages``; the canonical
+            # snapshot contract is ``items``. Keep context assembly tolerant
+            # while reading the authoritative snapshot, not Provider output.
+            snapshot_messages = message_snapshot.get("messages")
         requests: list[dict[str, object]] = []
-        for message in list(message_snapshot.get("messages") or []):
+        for message in list(snapshot_messages or []):
             if not isinstance(message, Mapping):
                 continue
             if str(message.get("role") or "") != "user":
@@ -982,9 +1039,9 @@ class AgentService:
             if isinstance(workflow.get("goal"), Mapping)
             else {}
         )
-        plan = (
-            workflow.get("plan")
-            if isinstance(workflow.get("plan"), Mapping)
+        todo = (
+            workflow.get("todo")
+            if isinstance(workflow.get("todo"), Mapping)
             else {}
         )
         current_task = {
@@ -1007,16 +1064,21 @@ class AgentService:
                 if goal.get("configured") is True
                 else {}
             ),
-            "plan": {
-                "title": str(plan.get("title") or ""),
-                "status": str(plan.get("status") or ""),
-                "items": [
+            "todo": {
+                "phases": [
                     {
-                        "title": str(item.get("title") or ""),
-                        "status": str(item.get("status") or ""),
+                        "name": str(phase.get("name") or ""),
+                        "tasks": [
+                            {
+                                "content": str(item.get("content") or ""),
+                                "status": str(item.get("status") or ""),
+                            }
+                            for item in list(phase.get("tasks") or [])
+                            if isinstance(item, Mapping)
+                        ],
                     }
-                    for item in list(plan.get("items") or [])[-20:]
-                    if isinstance(item, Mapping)
+                    for phase in list(todo.get("phases") or [])
+                    if isinstance(phase, Mapping)
                 ],
             },
         }
@@ -1207,6 +1269,11 @@ class AgentService:
 
 
     def _runtime_session_context(self, session: Mapping[str, object]) -> Mapping[str, object]:
+        delegation = getattr(self, "delegation", None)
+        if delegation is not None:
+            delegated = delegation.runtime_session_context(session)
+            if delegated:
+                return delegated
         bound = self.room_capabilities.manifest_for_runtime(str(session.get("id") or ""))
         if bound is None:
             tombstone = self.room_capabilities.runtime_binding(
@@ -1221,11 +1288,16 @@ class AgentService:
                         "capabilityEpoch": tombstone["capabilityEpoch"],
                         "status": tombstone["state"],
                     },
-                    "sessionContext": (
-                        self.memory_context_application.provider_context(
-                            session_id,
-                            include_room_recovery=True,
+                    "sessionContext": "\n\n".join(
+                        value
+                        for value in (
+                            execution_policy_prompt(session),
+                            self.memory_context_application.provider_context(
+                                session_id,
+                                include_room_recovery=True,
+                            ),
                         )
+                        if value
                     ),
                 }
             return {}
@@ -1289,10 +1361,15 @@ class AgentService:
                 "runtimeBindingHash": runtime_binding_hash,
             },
             "managedSystemPrompt": prompt["stableSystemPrompt"],
-            "sessionContext": (
-                self.memory_context_application.provider_context(
-                    str(session.get("id") or "")
+            "sessionContext": "\n\n".join(
+                value
+                for value in (
+                    execution_policy_prompt(session),
+                    self.memory_context_application.provider_context(
+                        str(session.get("id") or "")
+                    ),
                 )
+                if value
             ),
             "providerContext": prompt["providerContext"],
             "providerContextDelta": prompt["providerContextDelta"],
@@ -1342,6 +1419,7 @@ class AgentService:
         task_context = self.room_kernel_runtime.task_context.render(
             task,
             dispatch,
+            room_id=str(root["roomId"]),
         )
         return room_compaction_recovery_context(
             task_context,
@@ -1359,7 +1437,7 @@ class AgentService:
         dispatch: Mapping[str, object],
         _prepared_at_ms: int,
     ) -> Mapping[str, object]:
-        """Refresh generic Agent RAG before a Kernel Dispatch reaches Pi."""
+        """Initialize generic Agent RAG once for this context epoch."""
 
         session_id = str(
             dispatch.get("targetSessionId") or ""
@@ -1367,13 +1445,13 @@ class AgentService:
         task_id = str(dispatch.get("taskId") or "").strip()
         if not session_id or not task_id:
             raise RoomKernelFenceError(
-                "Room Dispatch cannot refresh Agent RAG without Session and Task"
+                "Room Dispatch cannot initialize Agent RAG without Session and Task"
             )
         task = self.room_kernel.task(task_id)
         query = str(task.get("objective") or "").strip()
         if not query:
             query = "继续当前 Room 任务"
-        return self.memory_context_application.refresh_for_turn(
+        return self.memory_context_application.ensure_bootstrap(
             self.sessions.get(session_id),
             query_text=query,
         )
@@ -1489,47 +1567,67 @@ class AgentService:
         validate_contract(state, "agent-workflow-state.v1.json")
         return state
 
+    def _active_room_dispatch_context(
+        self,
+        session_id: str,
+    ) -> dict[str, object] | None:
+        live = self.room_kernel.session_binding(session_id)
+        bound = self.room_capabilities.manifest_for_runtime(session_id)
+        if live is None or bound is None:
+            return None
+        manifest, binding = bound
+        if (
+            str(binding.get("state") or "") != "active"
+            or str(manifest.get("dispatchId") or "")
+            != str(live.get("dispatchId") or "")
+            or str(manifest.get("rootId") or "")
+            != str(live.get("rootId") or "")
+            or int(manifest.get("generation", -1))
+            != int(live.get("generation", -2))
+        ):
+            return None
+        return dict(live)
+
     def _active_room_dispatch_authorizes_work(
         self,
         session_id: str,
     ) -> bool:
-        live = self.room_kernel.session_binding(session_id)
-        bound = self.room_capabilities.manifest_for_runtime(session_id)
-        if live is None or bound is None:
-            return False
-        manifest, binding = bound
-        return (
-            str(binding.get("state") or "") == "active"
-            and str(manifest.get("dispatchId") or "")
-            == str(live.get("dispatchId") or "")
-            and str(manifest.get("rootId") or "")
-            == str(live.get("rootId") or "")
-            and int(manifest.get("generation", -1))
-            == int(live.get("generation", -2))
-        )
+        return self._active_room_dispatch_context(session_id) is not None
 
-    def mutate_plan(
+    def _room_delegation_context(
         self,
         session_id: str,
-        payload: Mapping[str, object],
     ) -> dict[str, object]:
-        request = dict(payload)
-        validate_contract(request, "agent-plan-mutation.v1.json")
-        if request["action"] == "cancel":
-            self._transition_lifecycle_cancellation(
-                session_id,
-                request,
-                scope_kind="plan",
+        live = self._active_room_dispatch_context(session_id)
+        if live is None:
+            if self.room_turns.session_turn_active(session_id):
+                raise RoomKernelFenceError(
+                    "Room-bound delegation has no canonical Kernel Dispatch lineage"
+                )
+            return {
+                "roomBound": False,
+                "roomId": "",
+                "rootId": "",
+                "taskId": "",
+                "dispatchId": "",
+                "generation": 0,
+            }
+        lineage = {
+            "roomId": str(live.get("roomId") or ""),
+            "rootId": str(live.get("rootId") or ""),
+            "taskId": str(live.get("taskId") or ""),
+            "dispatchId": str(live.get("dispatchId") or ""),
+        }
+        if not all(lineage.values()) or "generation" not in live:
+            raise RoomKernelFenceError(
+                "Room-bound delegation has incomplete Kernel Dispatch lineage"
             )
-        else:
-            self.sessions.mutate_agent_plan(session_id, request)
-        state = self.publish_workflow_state(session_id, reason=f"plan:{request['action']}")
-        try:
-            self.work_documents.observe_authority("session_plan", session_id)
-        except Exception:
-            # The reconciler owns filesystem recovery; Plan state remains canonical.
-            pass
-        return state
+        return {
+            "roomBound": True,
+            **lineage,
+            "generation": int(live["generation"]),
+        }
+
 
     def mutate_goal(
         self,
@@ -1539,11 +1637,7 @@ class AgentService:
         request = dict(payload)
         validate_contract(request, "agent-goal-mutation.v1.json")
         if request["action"] in {"pause", "cancel"}:
-            self._transition_lifecycle_cancellation(
-                session_id,
-                request,
-                scope_kind="goal",
-            )
+            self._transition_goal_cancellation(session_id, request)
         else:
             self.sessions.mutate_agent_goal(session_id, request)
         state = self.publish_workflow_state(session_id, reason=f"goal:{request['action']}")
@@ -1558,22 +1652,16 @@ class AgentService:
                 pass
         return state
 
-    def _transition_lifecycle_cancellation(
+    def _transition_goal_cancellation(
         self,
         session_id: str,
         request: Mapping[str, object],
-        *,
-        scope_kind: str,
     ) -> dict[str, object]:
         action = str(request["action"])
-        if scope_kind == "plan":
-            source = self.sessions.agent_plan(session_id)
-            scope_id = str(source["id"])
-            expected_terminal = "cancelled"
-        else:
-            source = self.sessions.agent_goal(session_id)
-            scope_id = str(source["goalId"])
-            expected_terminal = "paused" if action == "pause" else "cancelled"
+        scope_kind = "goal"
+        source = self.sessions.agent_goal(session_id)
+        scope_id = str(source["goalId"])
+        expected_terminal = "paused" if action == "pause" else "cancelled"
         source_revision = int(source["revision"])
         expected_revision = request.get("expectedRevision")
         existing = None
@@ -1609,18 +1697,11 @@ class AgentService:
                 "action": action,
                 "reason": str(request.get("reason") or request.get("note") or ""),
             }
-            if scope_kind == "plan":
-                mutation = self.sessions.mutate_agent_plan(
-                    session_id,
-                    request,
-                    lifecycle_request=lifecycle_request,
-                )
-            else:
-                mutation = self.sessions.mutate_agent_goal(
-                    session_id,
-                    request,
-                    lifecycle_request=lifecycle_request,
-                )
+            mutation = self.sessions.mutate_agent_goal(
+                session_id,
+                request,
+                lifecycle_request=lifecycle_request,
+            )
             existing = dict(mutation["lifecycleAudit"])
         audit = self._cancel_lifecycle_owners(existing)
         self.events.publish(
@@ -1776,7 +1857,7 @@ class AgentService:
         return {
             "ok": True,
             "result": {
-                "plan": state["plan"],
+                "todo": state["todo"],
                 "goal": state["goal"],
                 "actGate": state["actGate"],
             },
@@ -1820,7 +1901,7 @@ class AgentService:
         )
         goal_id = str(goal.get("goalId") or "")
         goal_status = str(goal.get("status") or "cleared")
-        gate_reason = str(gate.get("reason") or "plan_not_approved")
+        gate_reason = str(gate.get("reason") or "governance_blocked")
         continuation = self.sessions.agent_goal_continuation_budget(
             session_id,
             goal_id=goal_id,
@@ -1846,11 +1927,7 @@ class AgentService:
                 decision = "budget_exhausted"
                 reason = "goal_budget_exhausted"
             elif gate.get("allowed") is not True:
-                decision = (
-                    "cancelled"
-                    if gate_reason == "plan_cancelled"
-                    else "blocked"
-                )
+                decision = "blocked"
                 reason = gate_reason
             elif settle_attempt >= GOAL_SETTLE_ATTEMPT_LIMIT:
                 decision = "stalled"
@@ -1910,12 +1987,12 @@ class AgentService:
                 elif str(goal.get("status") or "") == "completed":
                     decision = "completed"
                     claim_reason = "goal_completed"
+                elif str(goal.get("status") or "") == "cancelled":
+                    decision = "cancelled"
+                    claim_reason = "goal_cancelled"
                 elif goal.get("budgetExceeded") is True:
                     decision = "budget_exhausted"
                     claim_reason = "goal_budget_exhausted"
-                elif str(current_gate.get("reason") or "") == "plan_cancelled":
-                    decision = "cancelled"
-                    claim_reason = "plan_cancelled"
                 else:
                     decision = "blocked"
                 reason = claim_reason
@@ -1945,10 +2022,10 @@ class AgentService:
             )
             result["message"] = (
                 '<managed-goal-follow-up origin="goal-supervisor">'
-                "当前 Goal 仍处于 active，且计划授权和预算允许继续。"
-                "一次回答结束不代表 Goal 完成；立即选择一个尚未完成、已获授权、"
-                "能够产生新验收证据的下一步并实际执行。不要只汇报进度或复述计划。"
-                "若已经没有这种下一步，使用现有 Goal/Plan 生命周期把状态更新为"
+                "当前 Goal 仍处于 active，Todo 中有正在执行的任务，且预算允许继续。"
+                "一次回答结束不代表 Goal 完成；立即完成 Todo 中当前正在执行、"
+                "能够产生新验收证据的下一步。不要只汇报进度或复述 Todo。"
+                "先同步更新 Todo 状态；若已经没有可继续的下一步，再把 Goal 更新为"
                 "完成、暂停或取消，而不是继续空转。"
                 "</managed-goal-follow-up>"
             )
@@ -1975,7 +2052,7 @@ class AgentService:
         return {
             "ok": True,
             "result": {
-                "plan": state["plan"],
+                "todo": state["todo"],
                 "goal": state["goal"],
                 "actGate": state["actGate"],
             },
@@ -1993,6 +2070,8 @@ class AgentService:
             "workflow_changed",
             {"reason": reason, **state},
         )
+        for room_id in self.rooms.room_ids_for_session(session_id):
+            self.room_kernel_projection.sync_room(room_id)
         return state
 
     def create_session(self, payload: Mapping[str, object]) -> dict[str, object]:
@@ -2188,6 +2267,13 @@ class AgentService:
 
     def room_snapshot(self, room_id: str) -> dict[str, object]:
         return self.room_management.snapshot(room_id)
+
+    def room_history(
+        self,
+        room_id: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        return self.room_management.history(room_id, payload)
 
     def room_kernel_snapshot(self, room_id: str) -> dict[str, object]:
         return self.room_kernel_application.snapshot(room_id)
@@ -2523,6 +2609,18 @@ class AgentService:
         if str(payload.get("roomId") or "") != room_id:
             raise RoomKernelFenceError("control command path Room does not match payload")
         result = self.room_kernel_commands.control(payload)
+        if str(payload.get("commandKind") or "") in {
+            "cancel_root",
+            "cancel_target",
+            "panic",
+        }:
+            self.room_kernel_application.reconcile_workspace_retention(
+                room_id=room_id,
+                root_id=str(payload.get("rootId") or ""),
+                reason=(
+                    "Room control cancellation retained isolated workspace evidence"
+                ),
+            )
         self.room_kernel_projection.sync_room(room_id)
         root_id = str(payload.get("rootId") or "")
         if root_id:
@@ -2729,8 +2827,8 @@ class AgentService:
         return self.room_management.create_room(payload)
 
     def post_room_message(self, room_id: str, payload: Mapping[str, object]) -> dict[str, object]:
-        message = str(payload.get("message") or "").strip()
-        if not message:
+        message = str(payload.get("message") or "")
+        if not message.strip():
             raise ValueError("room message must not be empty")
         if len(message) > ROOM_MESSAGE_CHAR_LIMIT:
             raise ValueError(
@@ -2738,6 +2836,14 @@ class AgentService:
             )
         client_message_id = _optional_client_message_id(payload.get("clientMessageId"))
         work_item_id = _optional_work_item_id(payload.get("workItemId"))
+        answer_to_post_id = str(payload.get("answerToPostId") or "").strip()
+        answer_to_root_id = str(payload.get("answerToRootId") or "").strip()
+        if bool(answer_to_post_id) != bool(answer_to_root_id):
+            raise ValueError(
+                "Room clarification answers require answerToPostId and answerToRootId"
+            )
+        if len(answer_to_post_id) > 320 or len(answer_to_root_id) > 320:
+            raise ValueError("Room clarification answer identity is too long")
         attachment_ids = _room_attachment_ids(payload.get("attachmentIds"))
         requested_ids = payload.get("participantIds")
         if requested_ids is None:
@@ -2758,6 +2864,8 @@ class AgentService:
                 requested_participant_ids=requested_participant_ids,
                 work_item_id=work_item_id,
                 attachment_ids=attachment_ids,
+                answer_to_post_id=answer_to_post_id,
+                answer_to_root_id=answer_to_root_id,
             )
         claim = self.command_receipts.begin(
             command_scope="room_message",
@@ -2768,6 +2876,8 @@ class AgentService:
                 "participantIds": requested_participant_ids,
                 "workItemId": work_item_id,
                 "attachmentIds": attachment_ids,
+                "answerToPostId": answer_to_post_id,
+                "answerToRootId": answer_to_root_id,
             },
         )
         if claim.replay_response is not None:
@@ -2780,6 +2890,8 @@ class AgentService:
                 requested_participant_ids=requested_participant_ids,
                 work_item_id=work_item_id,
                 attachment_ids=attachment_ids,
+                answer_to_post_id=answer_to_post_id,
+                answer_to_root_id=answer_to_root_id,
             )
         except Exception as exc:
             self.command_receipts.fail(
@@ -2797,6 +2909,15 @@ class AgentService:
             client_message_id=client_message_id,
             response=response,
         )
+
+    def start_room_execution(
+        self,
+        room_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Typed start command for the post-clarification Room intake branch."""
+
+        return self.room_application.start_execution(room_id, payload)
 
     def _resolve_room_attachments(
         self,
@@ -2931,14 +3052,20 @@ class AgentService:
         requested_participant_ids: Sequence[str],
         work_item_id: str,
         attachment_ids: Sequence[str],
+        answer_to_post_id: str,
+        answer_to_root_id: str,
     ) -> dict[str, object]:
         if kernel_owns_room_execution(self.room_kernel.mode):
             room = self.rooms.get(room_id)
-            owner = room_message_owner(
-                work_item_id=work_item_id,
-                room_kind=str(
-                    room.get("roomKind") or "collaboration"
-                ),
+            owner = (
+                "kernel"
+                if answer_to_post_id and answer_to_root_id
+                else room_message_owner(
+                    work_item_id=work_item_id,
+                    room_kind=str(
+                        room.get("roomKind") or "collaboration"
+                    ),
+                )
             )
             if owner == "session":
                 return self.room_legacy_dispatch.post_conversation(
@@ -2952,16 +3079,6 @@ class AgentService:
                 raise RoomKernelFenceError(
                     f"unsupported Room message owner: {owner}"
                 )
-            if not work_item_id:
-                return self.room_legacy_dispatch.post_conversation(
-                    room_id,
-                    message=message,
-                    client_message_id=client_message_id,
-                    requested_participant_ids=(
-                        requested_participant_ids
-                    ),
-                    attachment_ids=attachment_ids,
-                )
             return self.room_application.post_message(
                 room_id,
                 message=message,
@@ -2969,6 +3086,12 @@ class AgentService:
                 requested_participant_ids=requested_participant_ids,
                 work_item_id=work_item_id,
                 attachment_ids=attachment_ids,
+                answer_to_post_id=answer_to_post_id,
+                answer_to_root_id=answer_to_root_id,
+            )
+        if answer_to_post_id or answer_to_root_id:
+            raise ValueError(
+                "clarification answer identity requires managed Room execution"
             )
         return self.room_legacy_dispatch.post_message(
             room_id,
@@ -3503,27 +3626,6 @@ class AgentService:
     ) -> dict[str, object]:
         return self.memory_context_application.refresh(payload)
 
-    def _memory_trigger_for_session(self, session_id: str) -> str:
-        return self.task_context.trigger(session_id)
-
-    def _memory_room_ids(self, session_id: str) -> tuple[str, ...]:
-        return self.task_context.room_ids(session_id)
-
-    def _memory_task_context(self, session_id: str) -> dict[str, object]:
-        return self.task_context.resolve(session_id)
-
-    def _remember_recall_query(self, session_id: str, query_text: str) -> None:
-        self.memory_context_application.remember_query(
-            session_id,
-            query_text,
-        )
-
-    def _memory_recall_query(self, session_id: str, *, fallback: str = "") -> str:
-        return self.memory_context_application.recall_query(
-            session_id,
-            fallback=fallback,
-        )
-
     def _replace_recent_recall_messages(
         self,
         session_id: str,
@@ -3602,16 +3704,25 @@ class AgentService:
         )
 
     def abort(self, session_id: str) -> dict[str, object]:
-        runtime_receipt = self.runtime.abort(session_id)
+        runtime_receipt: Mapping[str, object] = {}
+        try:
+            raw_runtime_receipt = self.runtime.abort(session_id)
+            if isinstance(raw_runtime_receipt, Mapping):
+                runtime_receipt = raw_runtime_receipt
+        finally:
+            approval_cancellation = (
+                self.approval_application.cancel_pending_for_session(
+                    session_id,
+                    reason="user_abort",
+                    turn_id=str(runtime_receipt.get("turnId") or ""),
+                )
+            )
         return {
             "schemaVersion": "rag-ime.agent-abort.v1",
             "ok": True,
             "sessionId": session_id,
-            "runtimeReceipt": (
-                dict(runtime_receipt)
-                if isinstance(runtime_receipt, Mapping)
-                else {}
-            ),
+            "runtimeReceipt": dict(runtime_receipt),
+            "approvalCancellation": approval_cancellation,
         }
 
     def compact(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
@@ -3892,6 +4003,279 @@ class AgentService:
             heartbeat_seconds=heartbeat_seconds,
         )
 
+    def _room_root_child_quiescence(
+        self,
+        root_id: str,
+        generation: int,
+        dispatch_id: str = "",
+    ) -> dict[str, object]:
+        owners = [
+            self.delegation.root_child_quiescence(
+                root_id=root_id,
+                generation=int(generation),
+                dispatch_id=dispatch_id,
+            ),
+            self.background_jobs.root_child_quiescence(
+                root_id=root_id,
+                generation=int(generation),
+                dispatch_id=dispatch_id,
+            ),
+        ]
+        pending_targets: list[dict[str, object]] = []
+        errors: list[str] = []
+        counts = {"queued": 0, "running": 0, "cancelling": 0}
+        unknown_count = 0
+        for owner in owners:
+            if not isinstance(owner, Mapping):
+                errors.append("child owner returned an invalid receipt")
+                unknown_count += 1
+                continue
+            for key in counts:
+                counts[key] += int(
+                    (owner.get("counts") or {}).get(key, 0)
+                    if isinstance(owner.get("counts"), Mapping)
+                    else 0
+                )
+            targets = owner.get("pendingTargets")
+            if isinstance(targets, list):
+                pending_targets.extend(
+                    item for item in targets if isinstance(item, Mapping)
+                )
+            if owner.get("quiescent") is not True and not targets:
+                errors.append("child owner did not prove quiescence")
+                unknown_count += 1
+            owner_errors = owner.get("errors")
+            if isinstance(owner_errors, list):
+                errors.extend(str(item)[:240] for item in owner_errors[:8])
+            unknown_count += int(owner.get("unknownCount") or 0)
+        if unknown_count or errors:
+            state = "unknown"
+        elif pending_targets:
+            state = "pending"
+        else:
+            state = "quiescent"
+        return {
+            "schemaVersion": "rag-ime.root-child-quiescence.v1",
+            "owner": "roomRoot",
+            "rootId": str(root_id),
+            "generation": int(generation),
+            "dispatchId": str(dispatch_id or ""),
+            "state": state,
+            "quiescent": state == "quiescent",
+            "pendingCount": len(pending_targets) + len(errors),
+            "unknownCount": unknown_count,
+            "counts": {**counts, "total": sum(counts.values())},
+            "pendingTargets": pending_targets,
+            "errors": errors[:8],
+        }
+
+    def _room_workspace_writer_quiescence(
+        self,
+        request: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        """Build one exact-lineage cleanup fence from existing runtime owners."""
+
+        root_id = str(request.get("rootId") or "")
+        task_id = str(request.get("taskId") or "")
+        dispatch_id = str(request.get("dispatchId") or "")
+        session_id = str(request.get("ownerSessionId") or "")
+        if not all((root_id, task_id, dispatch_id, session_id)):
+            raise RuntimeError(
+                "workspace writer quiescence requires root/task/dispatch/session lineage"
+            )
+        dispatch = self.room_kernel.dispatch(dispatch_id)
+        if any(
+            str(dispatch.get(key) or "") != expected
+            for key, expected in {
+                "rootId": root_id,
+                "taskId": task_id,
+                "targetSessionId": session_id,
+            }.items()
+        ):
+            raise RuntimeError(
+                "workspace writer quiescence does not match the canonical Dispatch"
+            )
+        generation = int(dispatch.get("generation", -1))
+        # Capability revocation is the admission fence.  Any invocation that was
+        # authorized before this point but cannot subsequently seal its execution
+        # receipt remains pending/unknown and blocks cleanup below.
+        self.room_kernel_runtime.revoke_session(
+            session_id,
+            int(time.time() * 1000),
+        )
+        children = self._room_root_child_quiescence(
+            root_id,
+            generation,
+            dispatch_id,
+        )
+        with sqlite_connection(self.db_path, row_factory=sqlite3.Row) as conn:
+            rows = conn.execute(
+                """
+                SELECT manifest.manifest_id, manifest.manifest_hash,
+                       manifest.generation, binding.session_id,
+                       invocation.receipt_id AS invocation_receipt_id,
+                       invocation.canonical_tool_name,
+                       invocation.command_hash,
+                       execution.execution_receipt_id,
+                       execution.session_id AS execution_session_id,
+                       execution.status, execution.result_hash
+                FROM room_v2_capability_manifests AS manifest
+                JOIN room_v2_capability_runtime_bindings AS binding
+                  ON binding.manifest_id = manifest.manifest_id
+                 AND binding.manifest_hash = manifest.manifest_hash
+                LEFT JOIN room_v2_tool_invocation_receipts AS invocation
+                  ON invocation.manifest_id = manifest.manifest_id
+                 AND invocation.manifest_hash = manifest.manifest_hash
+                LEFT JOIN room_v2_tool_execution_receipts AS execution
+                  ON execution.invocation_receipt_id = invocation.receipt_id
+                WHERE manifest.root_id=? AND manifest.task_id=?
+                  AND manifest.dispatch_id=? AND manifest.generation=?
+                  AND binding.session_id=?
+                ORDER BY manifest.manifest_id, invocation.receipt_id
+                """,
+                (root_id, task_id, dispatch_id, generation, session_id),
+            ).fetchall()
+        invalid_execution_sessions = [
+            str(row["execution_receipt_id"])
+            for row in rows
+            if row["execution_receipt_id"] is not None
+            and str(row["execution_session_id"] or "") != session_id
+        ]
+        registry_known = bool(rows) and not invalid_execution_sessions
+        pending = [
+            str(row["invocation_receipt_id"])
+            for row in rows
+            if row["invocation_receipt_id"] is not None
+            and row["execution_receipt_id"] is None
+        ]
+        registry_material = [
+            {
+                "manifestId": str(row["manifest_id"]),
+                "manifestHash": str(row["manifest_hash"]),
+                "generation": int(row["generation"]),
+                "invocationReceiptId": str(row["invocation_receipt_id"] or ""),
+                "toolName": str(row["canonical_tool_name"] or ""),
+                "commandHash": str(row["command_hash"] or ""),
+                "executionReceiptId": str(row["execution_receipt_id"] or ""),
+                "executionSessionId": str(row["execution_session_id"] or ""),
+                "status": str(row["status"] or ""),
+                "resultHash": str(row["result_hash"] or ""),
+            }
+            for row in rows
+        ]
+        registry_revision = hashlib.sha256(
+            json.dumps(
+                registry_material,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        background_known = (
+            children.get("quiescent") is True
+            and int(children.get("unknownCount") or 0) == 0
+        )
+        dispatch_settled = str(dispatch.get("state") or "") in {
+            "committed",
+            "failed",
+            "cancelled",
+            "dead_letter",
+        }
+        dispatch_revision = hashlib.sha256(
+            json.dumps(
+                dispatch,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        receipt = {
+            "schemaVersion": "wisdom-weasel.room-workspace-writer-quiescence.v1",
+            **dict(request),
+            "foregroundMutatingInvocations": {
+                "known": registry_known,
+                "activeCount": len(pending) + len(invalid_execution_sessions),
+                "registryRevision": registry_revision,
+                "pendingInvocationReceiptIds": pending[:32],
+                "invalidExecutionReceiptIds": invalid_execution_sessions[:32],
+            },
+            "backgroundWork": {
+                "known": background_known,
+                "activeCount": int(children.get("pendingCount") or 0),
+                "receiptRef": hashlib.sha256(
+                    json.dumps(
+                        children,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest(),
+            },
+            "managedPiTurn": {
+                "known": True,
+                "settled": dispatch_settled,
+                "sessionId": session_id,
+                "dispatchId": dispatch_id,
+                "receiptRef": dispatch_revision,
+            },
+        }
+        receipt["receiptRevision"] = hashlib.sha256(
+            json.dumps(
+                receipt,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        return receipt
+
+    def _cancel_room_root_children(
+        self,
+        root_id: str,
+        generation: int,
+        reason: str,
+        request_id: str,
+    ) -> dict[str, object]:
+        delegation = self.delegation.cancel_root_children(
+            request_id=request_id,
+            root_id=root_id,
+            generation=int(generation),
+            reason=reason,
+        )
+        background = self.background_jobs.cancel_root_children(
+            request_id=request_id,
+            root_id=root_id,
+            generation=int(generation),
+            reason=reason,
+        )
+        quiescence = self._room_root_child_quiescence(
+            root_id,
+            int(generation),
+        )
+        return {
+            "schemaVersion": "rag-ime.root-child-cancellation.v1",
+            "owner": "roomRoot",
+            "requestId": str(request_id),
+            "rootId": str(root_id),
+            "generation": int(generation),
+            "state": (
+                "terminated"
+                if quiescence["quiescent"]
+                else "requested"
+            ),
+            "targetIds": [
+                *[
+                    str(item)
+                    for item in delegation.get("targetIds", [])
+                ],
+                *[
+                    str(item)
+                    for item in background.get("targetIds", [])
+                ],
+            ],
+            "pendingTargets": list(quiescence["pendingTargets"]),
+            "receipts": [delegation, background],
+            "delegation": delegation,
+            "backgroundJob": background,
+            "quiescence": quiescence,
+        }
+
     def _bind_room_kernel_runtime(self, *, start_worker: bool = True) -> None:
         prior = getattr(self, "room_kernel_worker_loop", None)
         if prior is not None:
@@ -3977,11 +4361,15 @@ class AgentService:
             public_timeline=self.room_public_timeline,
             wake_worker=self.room_kernel_worker_loop.wake,
             revoke_session=self.room_kernel_runtime.revoke_session,
+            define_room=self.room_application.define_room,
             artifact_hash_provider=self._room_artifact_hash_provider,
+            workspaces=self.room_workspaces,
             media_receipt_provider=lambda media_id, session_id: self.media.receipt(
                 media_id,
                 session_id=session_id,
             ),
+            root_child_quiescence=self._room_root_child_quiescence,
+            cancel_root_children=self._cancel_room_root_children,
             root_state_observer=(
                 self._project_room_work_from_kernel_root
             ),
@@ -3992,11 +4380,22 @@ class AgentService:
             capabilities=self.room_capabilities,
             application=self.room_kernel_application,
         )
+        self.room_workspaces.recover_integrated_cleanups()
         if start_worker:
             self.room_kernel_worker_loop.start()
 
     def _sync_all_room_kernel_projections(self) -> None:
         for room_id in self.room_kernel.room_ids():
+            try:
+                self.rooms.get(room_id)
+            except AgentRoomNotFound:
+                continue
+            self.room_kernel_application.reconcile_workspace_retention(
+                room_id=room_id,
+                reason=(
+                    "Room runtime terminal state retained isolated workspace evidence"
+                ),
+            )
             self.room_kernel_projection.sync_room(room_id)
             for root_id in self.room_kernel.root_ids(room_id):
                 root = self.room_kernel.root(root_id)
@@ -4008,6 +4407,10 @@ class AgentService:
     def _reconcile_room_work_from_kernel(self) -> int:
         projected = 0
         for room_id in self.room_kernel.room_ids():
+            try:
+                self.rooms.get(room_id)
+            except AgentRoomNotFound:
+                continue
             for root_id in self.room_kernel.root_ids(room_id):
                 projected += self._project_room_work_from_kernel_root(
                     self.room_kernel.root(root_id)
@@ -4018,7 +4421,43 @@ class AgentService:
         self,
         root: Mapping[str, object],
     ) -> int:
-        projected = self.room_work.project_kernel_root(root)
+        room_id = str(root.get("roomId") or "")
+        root_id = str(root.get("rootId") or "")
+        snapshot = self.room_kernel_projection.snapshot(room_id)
+        final_posts = [
+            item
+            for item in snapshot.get("posts") or []
+            if isinstance(item, Mapping)
+            and item.get("rootId") == root_id
+            and item.get("kind") == "result"
+            and str(item.get("content") or "").strip()
+        ]
+        task_results = [
+            item
+            for item in snapshot.get("tasks") or []
+            if isinstance(item, Mapping)
+            and item.get("rootId") == root_id
+            and str(item.get("resultSummary") or "").strip()
+        ]
+        result_summary = (
+            str(final_posts[-1].get("content") or "")
+            if final_posts
+            else (
+                str(
+                    max(
+                        task_results,
+                        key=lambda item: int(item.get("resultAtMs") or 0),
+                    ).get("resultSummary")
+                    or ""
+                )
+                if task_results
+                else ""
+            )
+        )
+        projected = self.room_work.project_kernel_root(
+            root,
+            result_summary=result_summary,
+        )
         for work in projected:
             state = str(work.get("state") or "")
             self._publish_room_work_activity(
@@ -4119,8 +4558,8 @@ class AgentService:
 
     def close(self) -> None:
         self.room_kernel_worker_loop.close()
-        self.runtime.stop()
         self.delegation.close()
+        self.runtime.stop()
         self.background_jobs.close()
         self.events.close()
         self._remove_observation_room_observer()
@@ -4140,7 +4579,6 @@ class AgentService:
             role_book_resolver=self.role_books.prompt_block,
         )
         self.runtime_factory.reconfigure(config)
-        self.delegation.reconfigure(config)
         self.runtime = self.runtime_factory.create(
             RuntimeDriverContext(
                 sessions=self.sessions,
@@ -4154,6 +4592,7 @@ class AgentService:
             purpose="interactive",
             session_context_provider=self._runtime_session_context,
         )
+        self.delegation.reconfigure(config)
         self._bind_room_kernel_runtime()
         self.room_intercom.notify()
         return self.runtime_status()
@@ -4162,7 +4601,6 @@ class AgentService:
         self.room_kernel_worker_loop.close()
         self.runtime.stop()
         self.runtime_factory.apply_policy(policy)
-        self.delegation.refresh_runtime_factory()
         self.runtime = self.runtime_factory.create(
             RuntimeDriverContext(
                 sessions=self.sessions,
@@ -4176,6 +4614,7 @@ class AgentService:
             purpose="interactive",
             session_context_provider=self._runtime_session_context,
         )
+        self.delegation.refresh_runtime_factory()
         self._bind_room_kernel_runtime()
         self.room_intercom.notify()
         return self.runtime.runtime_status()
@@ -4538,6 +4977,7 @@ def _room_skill_stage(dispatch: Mapping[str, object]) -> str:
     """Map a Kernel-owned intent to policy selection without letting Skills route."""
 
     return {
+        "align": "requirements",
         "execute": "implementation",
         "review": "vision-review",
         "revise": "feedback",
@@ -4631,6 +5071,49 @@ def _room_effective_tool_profile(
     """Tool visibility is independent from the unified execution mode."""
 
     return str(session_profile or CONTROL_CENTER_TOOL_PROFILE).strip()
+
+
+def _project_read_only_room_tool(
+    tool: Mapping[str, object],
+) -> dict[str, object] | None:
+    """Project a persisted Room tool without workspace mutation operations."""
+
+    name = str(tool.get("name") or "")
+    if not name.startswith("workspace_"):
+        return dict(tool)
+    raw_schema = tool.get("inputSchema")
+    if not isinstance(raw_schema, Mapping):
+        return dict(tool)
+    raw_properties = raw_schema.get("properties")
+    if not isinstance(raw_properties, Mapping):
+        return dict(tool)
+    raw_operation = raw_properties.get("op")
+    if not isinstance(raw_operation, Mapping):
+        return dict(tool)
+    raw_operations = raw_operation.get("enum")
+    if not isinstance(raw_operations, Sequence) or isinstance(
+        raw_operations,
+        (str, bytes),
+    ):
+        return dict(tool)
+    operations = [
+        str(operation)
+        for operation in raw_operations
+        if not read_only_blocks_effect(name, operation)
+    ]
+    if not operations:
+        return None
+    if len(operations) == len(raw_operations):
+        return dict(tool)
+    schema = dict(raw_schema)
+    properties = dict(raw_properties)
+    operation_schema = dict(raw_operation)
+    operation_schema["enum"] = operations
+    properties["op"] = operation_schema
+    schema["properties"] = properties
+    projected = dict(tool)
+    projected["inputSchema"] = schema
+    return projected
 
 
 def _lifecycle_cancellation_request_id(

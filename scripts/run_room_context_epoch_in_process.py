@@ -340,6 +340,43 @@ def _room_work_policy_override(
         agent_room_runtime_coordinator.core_agent_policy_prompt = original
 
 
+def _initialize_collaboration_workspace(workspace: Path) -> str:
+    """Commit the synthetic fixture so isolated writable Room lanes are real."""
+
+    commands = (
+        ("init", "-q"),
+        ("add", "--all"),
+        (
+            "-c",
+            "user.name=Room Canary",
+            "-c",
+            "user.email=room-canary@example.invalid",
+            "commit",
+            "-qm",
+            "Room canary baseline",
+        ),
+    )
+    for command in commands:
+        subprocess.run(
+            ["git", "-C", str(workspace), *command],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    completed = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    commit = completed.stdout.strip()
+    if not commit:
+        raise RuntimeError("Room collaboration canary has no Git baseline")
+    return commit
+
+
 def _seed_relevant_memory(
     db_path: Path,
     *,
@@ -458,6 +495,29 @@ def _report_session_ids(report: Mapping[str, object]) -> tuple[str, ...]:
     return session_ids
 
 
+def _report_dispatch_ids(report: Mapping[str, object]) -> tuple[str, ...]:
+    dispatch = report.get("dispatch")
+    if not isinstance(dispatch, Mapping):
+        epochs = report.get("epochs")
+        if isinstance(epochs, list) and epochs and isinstance(epochs[-1], Mapping):
+            dispatch = epochs[-1].get("dispatch")
+    dispatch_ids = (
+        tuple(str(value) for value in dispatch.get("dispatchIds") or [] if str(value))
+        if isinstance(dispatch, Mapping)
+        else ()
+    )
+    if dispatch_ids:
+        return tuple(dict.fromkeys(dispatch_ids))
+    dispatches = report.get("dispatches")
+    if isinstance(dispatches, list):
+        return tuple(dict.fromkeys(
+            str(item.get("dispatchId") or "")
+            for item in dispatches
+            if isinstance(item, Mapping) and str(item.get("dispatchId") or "")
+        ))
+    return ()
+
+
 def _room_tool_surface_evidence(
     service: DebugImeService,
     db_path: Path,
@@ -477,16 +537,7 @@ def _room_tool_surface_evidence(
     normal_surfaces_consistent = all(
         tools == normal_tools for tools in normal_tool_sets
     )
-    dispatch = report.get("dispatch")
-    if not isinstance(dispatch, Mapping):
-        epochs = report.get("epochs")
-        if isinstance(epochs, list) and epochs and isinstance(epochs[-1], Mapping):
-            dispatch = epochs[-1].get("dispatch")
-    dispatch_ids = (
-        [str(value) for value in dispatch.get("dispatchIds") or []]
-        if isinstance(dispatch, Mapping)
-        else []
-    )
+    dispatch_ids = list(_report_dispatch_ids(report))
     if not dispatch_ids:
         raise RuntimeError("Room canary has no Dispatch for capability audit")
     placeholders = ",".join("?" for _ in dispatch_ids)
@@ -580,10 +631,34 @@ def _isolated_project_command_executor(
     workspace: Path,
 ) -> dict[str, object]:
     resolved_workspace = workspace.resolve(strict=True)
+    allowed_roots = {resolved_workspace}
+    if (resolved_workspace / ".git").exists():
+        listed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(resolved_workspace),
+                "worktree",
+                "list",
+                "--porcelain",
+                "-z",
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        for field in listed.stdout.split(b"\0"):
+            if field.startswith(b"worktree "):
+                allowed_roots.add(
+                    Path(os.fsdecode(field[len(b"worktree ") :])).resolve(
+                        strict=True
+                    )
+                )
     if (
         prepared.command != TEST_COMMAND
-        or prepared.cwd != resolved_workspace
-        or prepared.roots != (resolved_workspace,)
+        or len(prepared.roots) != 1
+        or prepared.cwd != prepared.roots[0]
+        or prepared.cwd not in allowed_roots
         or prepared.allow_network
     ):
         raise RuntimeError(
@@ -595,10 +670,10 @@ def _isolated_project_command_executor(
     try:
         completed = subprocess.run(
             TEST_COMMAND.split(),
-            cwd=resolved_workspace,
+            cwd=prepared.cwd,
             env={
-                "HOME": str(resolved_workspace),
-                "TMPDIR": str(resolved_workspace),
+                "HOME": str(prepared.cwd),
+                "TMPDIR": str(prepared.cwd),
                 "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
                 "LANG": "en_US.UTF-8",
                 "LC_ALL": "en_US.UTF-8",
@@ -775,9 +850,9 @@ def _create_deterministic_canary_roles(
     roles: list[dict[str, str]] = []
     specs = (
         (
-            ("A", "terra", "implementer"),
-            ("B", "sol", "reviewer"),
-            ("C", "terra", "coordinator"),
+            ("A", "terra", "coordinator"),
+            ("B", "sol", "implementer"),
+            ("C", "terra", "reviewer"),
         )
         if collaboration
         else (
@@ -831,6 +906,10 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
         if args.scenario in WORKSPACE_SCENARIOS:
             workspace = state / "project-workspace"
             project_seed = seed_project_workspace(workspace)
+            if args.scenario == COLLABORATION_SCENARIO:
+                project_seed["gitBaseCommit"] = (
+                    _initialize_collaboration_workspace(workspace)
+                )
             if args.scenario == AGENT_SESSION_SCENARIO:
                 boundary_path = workspace / READ_BOUNDARY_PATH
                 boundary_path.write_text(
@@ -1074,17 +1153,17 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
                             {
                                 "roleId": "companion-present-v1",
                                 "roleVersion": "1",
-                                "collaborationRole": "implementer",
+                                "collaborationRole": "coordinator",
                             },
                             {
                                 "roleId": "companion-firstlight-v1",
                                 "roleVersion": "1",
-                                "collaborationRole": "reviewer",
+                                "collaborationRole": "implementer",
                             },
                             {
                                 "roleId": "companion-future-v1",
                                 "roleVersion": "1",
-                                "collaborationRole": "coordinator",
+                                "collaborationRole": "reviewer",
                             },
                         ]
                         if args.scenario == COLLABORATION_SCENARIO
@@ -1113,7 +1192,6 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
                         args.provider_mode == "configured"
                     ),
                     "provider_mode": args.provider_mode,
-                    "request_style": args.collaboration_request_style,
                 }
                 if args.scenario == AGENT_SESSION_SCENARIO:
                     report = run_agent_session_canary(
@@ -1223,11 +1301,6 @@ def _run(args: argparse.Namespace) -> dict[str, object]:
             "model": runtime.model,
             "providerMode": args.provider_mode,
             "scenario": args.scenario,
-            "collaborationRequestStyle": (
-                args.collaboration_request_style
-                if args.scenario == COLLABORATION_SCENARIO
-                else None
-            ),
             "providerEvidence": (
                 "network-audit-and-provider-usage"
                 if checks.get("externalProviderRequestObserved") is True
@@ -1365,15 +1438,6 @@ def parse_args() -> argparse.Namespace:
             "Absolute timeout for the full three-member collaboration. "
             "Defaults to three times --turn-timeout so one Provider-call "
             "budget is not reused as the A/B/C workflow deadline."
-        ),
-    )
-    parser.add_argument(
-        "--collaboration-request-style",
-        choices=("scripted", "natural"),
-        default="scripted",
-        help=(
-            "Use the deterministic protocol script, or a natural user goal "
-            "that does not disclose Tool names, parameters, or call order."
         ),
     )
     parser.add_argument("--epochs", type=int, choices=(1, 2, 3), default=1)

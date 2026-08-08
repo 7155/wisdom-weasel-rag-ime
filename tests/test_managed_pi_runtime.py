@@ -30,6 +30,7 @@ from rag_ime.managed_pi_runtime import (
     read_managed_pi_runtime_acceptance_report,
     read_managed_pi_runtime_retention_plan,
     rollback_managed_pi_runtime,
+    snapshot_managed_pi_runtime,
     write_managed_pi_runtime_manifest,
     write_managed_pi_runtime_retention_report,
 )
@@ -60,6 +61,34 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         self.assertIn("work_documents", discovered.tools)
         self.assertNotIn("workDocuments", discovered.tools)
         self.assertTrue((self.app_support / "PiRuntime" / POINTER_NAME).is_file())
+
+    def test_read_only_snapshot_verifies_runtime_without_lifecycle_lock(self) -> None:
+        payload, _ = self._payload("runtime-read-only")
+        installed = install_managed_pi_runtime(payload, self.app_support)
+
+        with patch(
+            "rag_ime.managed_pi_runtime._managed_runtime_lock",
+            side_effect=AssertionError("read-only snapshot opened lifecycle lock"),
+        ):
+            snapshot = snapshot_managed_pi_runtime(
+                self.app_support,
+                expected_pi_version="0.80.7",
+            )
+
+        self.assertEqual(snapshot.runtime_version, installed.runtime_version)
+        self.assertEqual(snapshot.manifest_sha256, installed.manifest_sha256)
+        self.assertEqual(snapshot.executable, installed.executable)
+
+    def test_read_only_snapshot_still_rejects_runtime_tampering(self) -> None:
+        payload, _ = self._payload("runtime-read-only-tampered")
+        installed = install_managed_pi_runtime(payload, self.app_support)
+        installed.executable.write_text("tampered\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            ManagedPiRuntimeError,
+            "size mismatch|digest mismatch",
+        ):
+            snapshot_managed_pi_runtime(self.app_support)
 
     def test_managed_default_reaches_every_coordinator_native_projection(self) -> None:
         """The managed Pi manifest must expose every native coding projection.

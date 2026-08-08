@@ -1,11 +1,12 @@
 import { useEffect, type RefObject } from 'react';
 
 const CLEARANCE_PROPERTY = '--workspace-composer-clearance';
-const DOCK_SELECTOR = '.agent-composer-wrap, .room-composer-dock';
+const DOCK_SELECTOR = '.agent-composer-dock, .room-composer-dock';
 
 /**
- * Publishes the floating composer dock's real rendered height onto its host
- * surface so the timeline can reserve exactly that much footer space.
+ * Publishes the floating composer dock or in-place question card's real
+ * rendered height onto its host surface so the timeline can reserve exactly
+ * that much footer space.
  *
  * The clearance used to be a hardcoded constant per workspace, which meant the
  * dock silently grew past it whenever composer typography, an attachment row,

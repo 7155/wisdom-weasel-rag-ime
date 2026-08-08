@@ -297,8 +297,10 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 "--require-delete-resync",
                 "--auto-query",
                 "xian zai",
+                "--auto-commit-key",
+                "8",
                 "--auto-key",
-                "7",
+                "option-7",
                 "--wait",
                 "15",
             ],
@@ -313,7 +315,9 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIn("open_test_file=0", result.stdout)
         self.assertIn("auto_type=0", result.stdout)
         self.assertIn("auto_query=xian zai", result.stdout)
-        self.assertIn("auto_key=7", result.stdout)
+        self.assertIn("auto_commit_key=8", result.stdout)
+        self.assertIn("auto_key=option-7", result.stdout)
+        self.assertIn("xian zai\t8\toption-7\t10\tcontinuous_pinyin", result.stdout)
         self.assertIn("require_mixed_panel=0", result.stdout)
         self.assertIn("require_side_panel=1", result.stdout)
         self.assertIn("require_side_commit=1", result.stdout)
@@ -333,6 +337,25 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertIn("--require-delete-resync", result.stdout)
         self.assertIn("--require-balanced-quota", result.stdout)
         self.assertNotIn("--require-mixed-panel", result.stdout)
+
+    def test_soak_wrapper_rejects_bare_number_as_assistant_action(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [
+                "bash",
+                str(root / "scripts" / "soak_squirrel_foreground_trace.sh"),
+                "--dry-run",
+                "--auto-key",
+                "7",
+            ],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--auto-key must be tab or option-0 through option-9", result.stderr)
 
     def test_soak_wrapper_requires_delete_resync_by_default(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -419,6 +442,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
 
         self.assertIn("Press Backspace/Delete", manual_text)
         self.assertIn("updated foreground context", manual_text)
+        self.assertIn("commit one native Rime candidate with the ordinary number key", manual_text)
+        self.assertIn("Select assistant candidates only with Tab or Option+number", manual_text)
 
     def test_foreground_trace_wrapper_dry_run_reports_gate(self) -> None:
         root = Path(__file__).resolve().parents[1]

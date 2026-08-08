@@ -10,26 +10,32 @@ import '../../src/components/primitives/primitives.css';
 const projection = createRoomKernelProjection('room-kernel-qa');
 projection.lastSequence = 218;
 projection.rootsById['root-research-2026-07-19-with-a-deliberately-long-identifier'] = {
-  schemaVersion: 'wisdom-weasel.room-root-execution.v2',
+  schemaVersion: 'wisdom-weasel.room-root-execution.v3',
   rootId: 'root-research-2026-07-19-with-a-deliberately-long-identifier',
   roomId: projection.roomId,
   generation: 3,
   state: 'completed',
-  owner: '证据审查员与知识治理负责人',
+  facilitatorParticipantId: '证据审查员与知识治理负责人',
+  reporterParticipantId: null,
+  reporterSelectionReceiptId: null,
   requirementAnchorRef: 'requirement:research',
   createdByActorRef: 'user:fixture',
   terminalReceiptId: null,
   activeProfileRef: null,
   budgetPolicyRef: 'budget:fixture',
+  independentReviewRequired: false,
   createdAtMs: 1,
   isFinal: false,
   updatedAtMs: 218,
 };
 projection.rootsById['root-implementation'] = {
-  schemaVersion: 'wisdom-weasel.room-root-execution.v2', rootId: 'root-implementation', roomId: projection.roomId,
-  generation: 1, state: 'running', owner: '实现者', requirementAnchorRef: 'requirement:implementation',
+  schemaVersion: 'wisdom-weasel.room-root-execution.v3', rootId: 'root-implementation', roomId: projection.roomId,
+  generation: 1, state: 'running', facilitatorParticipantId: '实现者',
+  reporterParticipantId: null, reporterSelectionReceiptId: null,
+  requirementAnchorRef: 'requirement:implementation',
   createdByActorRef: 'user:fixture', terminalReceiptId: null, activeProfileRef: null,
-  budgetPolicyRef: 'budget:fixture', createdAtMs: 2, isFinal: false, updatedAtMs: 217,
+  budgetPolicyRef: 'budget:fixture', independentReviewRequired: false,
+  createdAtMs: 2, isFinal: false, updatedAtMs: 217,
 };
 projection.postOrder.push('post-finding', 'post-decision');
 projection.postsById['post-finding'] = {
@@ -48,10 +54,12 @@ projection.postsById['post-decision'] = {
 projection.sessionsById['session-private-research-with-long-id'] = {
   sessionId: 'session-private-research-with-long-id',
   rootId: 'root-research-2026-07-19-with-a-deliberately-long-identifier',
+  taskId: null, taskKind: null, workItemId: null, dispatchId: null,
   generation: 3, state: 'completed', updatedAtMs: 215,
 };
 projection.sessionsById['session-private-implementation'] = {
   sessionId: 'session-private-implementation', rootId: 'root-implementation',
+  taskId: null, taskKind: null, workItemId: null, dispatchId: null,
   generation: 1, state: 'running', updatedAtMs: 218,
 };
 

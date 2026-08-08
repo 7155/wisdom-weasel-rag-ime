@@ -9,6 +9,18 @@ export interface DebugTurnSummary {
   providerRequestCount: number;
   toolCallCount: number;
   runningToolCount: number;
+  turnOrdinal?: number;
+  assemblyPhase?: 'initial' | 'incremental' | 'compaction_recovery';
+  summary?: string;
+}
+
+export type DebugTurnPhase = 'initial' | 'incremental' | 'compaction_recovery' | 'retained_start';
+
+export interface DebugTurnDescription {
+  phase: DebugTurnPhase;
+  ordinal?: number;
+  label: string;
+  description: string;
 }
 
 export interface DebugContextDelta {
@@ -114,6 +126,52 @@ export interface DebugContextResponse {
   availableTurns: DebugTurnSummary[];
   context?: DebugContextRecord;
   telemetry: JsonRecord;
+}
+
+export function describeDebugTurn(
+  context: DebugContextRecord,
+  availableTurns: DebugTurnSummary[],
+): DebugTurnDescription {
+  const summary = availableTurns.find((turn) => turn.turnId === context.turnId);
+  const rawOrdinal = number(context.raw.turnOrdinal);
+  const ordinal = summary?.turnOrdinal ?? (rawOrdinal > 0 ? rawOrdinal : undefined);
+  const rawPhase = text(context.raw.assemblyPhase);
+  const explicitPhase = summary?.assemblyPhase
+    ?? (rawPhase === 'initial' || rawPhase === 'incremental' || rawPhase === 'compaction_recovery'
+      ? rawPhase
+      : undefined);
+
+  if (explicitPhase === 'initial' || ordinal === 1) {
+    return {
+      phase: 'initial',
+      ordinal,
+      label: '首轮装配',
+      description: '从系统指令、项目约束、可用能力与第一条用户输入开始建立上下文。',
+    };
+  }
+  if (explicitPhase === 'compaction_recovery' || contextHasCompactionRecovery(context)) {
+    return {
+      phase: 'compaction_recovery',
+      ordinal,
+      label: '压缩后恢复',
+      description: '旧消息已被低分辨率恢复材料替代；下方展示恢复材料如何与最近对话重新装配。',
+    };
+  }
+  const oldestRetainedTurn = [...availableTurns]
+    .sort((left, right) => left.capturedAtMs - right.capturedAtMs)[0];
+  if (oldestRetainedTurn?.turnId === context.turnId && ordinal === undefined) {
+    return {
+      phase: 'retained_start',
+      label: '最早保留轮次',
+      description: '这是当前本机保留窗口中的第一轮；更早历史可能已经轮换，不能据此认定为项目首轮。',
+    };
+  }
+  return {
+    phase: 'incremental',
+    ordinal,
+    label: '增量装配',
+    description: '沿用稳定前缀，只把本轮输入、运行时上下文与工具结果追加到对话尾部。',
+  };
 }
 
 export function normalizeDebugContextResponse(value: unknown): DebugContextResponse {
@@ -331,6 +389,7 @@ function normalizeTurnSummary(value: unknown): DebugTurnSummary | undefined {
   const item = record(value);
   const turnId = text(item.turnId);
   if (!turnId) return undefined;
+  const rawPhase = text(item.assemblyPhase);
   return {
     turnId,
     clientMessageId: text(item.clientMessageId),
@@ -340,7 +399,26 @@ function normalizeTurnSummary(value: unknown): DebugTurnSummary | undefined {
     providerRequestCount: number(item.providerRequestCount),
     toolCallCount: number(item.toolCallCount),
     runningToolCount: number(item.runningToolCount),
+    turnOrdinal: optionalNumber(item.turnOrdinal),
+    assemblyPhase: rawPhase === 'initial' || rawPhase === 'incremental' || rawPhase === 'compaction_recovery'
+      ? rawPhase
+      : undefined,
+    summary: text(item.summary) || undefined,
   };
+}
+
+function contextHasCompactionRecovery(context: DebugContextRecord): boolean {
+  const candidates = context.modelCalls.flatMap((call) => [
+    ...call.contextMessages,
+    ...call.contextDelta.addedMessages,
+  ]);
+  return candidates.some((candidate) => {
+    const item = record(candidate);
+    const customType = text(item.customType).toLowerCase();
+    if (customType.includes('compaction-recovery')) return true;
+    const preview = messagePreview(candidate).toLowerCase();
+    return preview.includes('<compaction-recovery>') || preview.includes('<room-compaction-recovery>');
+  });
 }
 
 function commonMessagePrefix(left: unknown[], right: unknown[]): number {

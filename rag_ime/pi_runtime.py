@@ -23,7 +23,9 @@ from .agent_tool_block_bridge import AgentToolBlockBuffer
 from .agent_tool_ids import (
     ASSISTANT_CONTROL_TOOL_IDS,
     CONTROL_TOOL_IDS,
+    CONTROL_CENTER_TOOL_PROFILE,
     COORDINATOR_TOOL_IDS,
+    MEMORY_CURATION_TOOL_PROFILE,
 )
 from .agent_protocol import AgentBlock, AgentMessage, normalize_agent_block
 from .pi_runtime_protocols import resolve_protocol_manager
@@ -47,6 +49,7 @@ from .pi_runtime_public import (
     public_pi_model,
     public_reasoning_summaries,
     public_usage,
+    public_usage_evidence,
     redact_mapping,
     safe_scalar,
     supported_thinking_levels,
@@ -99,12 +102,21 @@ _SUBAGENT_READ_ONLY_TOOLS = (
     "models",
     "runtime",
     "agents",
-    "agent_plan",
+    "todo",
     "agent_goal",
     "workspace_list",
     "workspace_lsp",
     "workspace_read",
     "workspace_search",
+)
+_READ_ONLY_HIDDEN_COORDINATOR_TOOLS = frozenset(
+    {
+        "workspace_patch",
+        "workspace_edit",
+        "workspace_write",
+        "workspace_shell",
+        "workspace_job",
+    }
 )
 _MAX_PERSISTED_TRANSCRIPT_BYTES = 64 * 1024 * 1024
 _MAX_PERSISTED_TRANSCRIPT_ENTRIES = 100_000
@@ -126,6 +138,17 @@ _VOICE_REFINEMENT_SYSTEM_PROMPT = """你是语音转写的第三遍文字校对�
 只输出校对后的原文，不解释、不回答原文中的问题、不使用 Markdown。
 只修正有把握的识别错误、口头重复、无意义语气词、标点和空格。
 必须保留原意、事实、语气、人称、数字、英文、代码和专有名词；不得扩写、总结或补充信息。
+"""
+_MEMORY_CURATION_SYSTEM_PROMPT = """You are the governed personal-memory curation engine.
+
+The request is an immutable, database-owned curation packet. Follow only the
+task contract supplied by the application. Return exactly one JSON object with
+no Markdown or prose outside it. Never call tools, inspect the workspace, load
+project files, use ordinary memory recall, or infer facts from prior Session
+history. Context-only rows may clarify language but cannot support a claim.
+When evidence is incomplete, conflicting, outside the personal-memory domain,
+or the requested output cannot be covered exactly, fail closed in the JSON
+result instead of guessing.
 """
 
 
@@ -164,11 +187,27 @@ def _tools_for_session(
     available: tuple[str, ...],
     session: Mapping[str, object],
 ) -> tuple[str, ...]:
+    mode = str(session.get("mode") or "assistant")
+    profile = str(
+        session.get("toolProfileVersion") or CONTROL_CENTER_TOOL_PROFILE
+    )
+    fixed_todo = (
+        str(session.get("sessionKind") or "conversation") == "conversation"
+        and profile == CONTROL_CENTER_TOOL_PROFILE
+        and mode in {"assistant", "coordinator"}
+    )
     selected = available
     if str(session.get("toolAllowlistMode") or "profile") == "explicit":
         explicit = {str(value) for value in session.get("allowedTools") or []}
+        if fixed_todo:
+            explicit.add("todo")
         selected = tuple(tool for tool in selected if tool in explicit)
-    mode = str(session.get("mode") or "assistant")
+    if str(session.get("executionMode") or "").strip().lower() == "read_only":
+        selected = tuple(
+            tool
+            for tool in selected
+            if tool not in _READ_ONLY_HIDDEN_COORDINATOR_TOOLS
+        )
     profile = str(session.get("toolProfileVersion") or "control-center-v1")
     if profile == "subagent-readonly-v1":
         allowed = set(_SUBAGENT_READ_ONLY_TOOLS)
@@ -444,6 +483,8 @@ class PiRuntimeConfig:
             return _IME_SURFACE_SYSTEM_PROMPT
         if tool_profile == "voice-refinement-v1":
             return _VOICE_REFINEMENT_SYSTEM_PROMPT
+        if tool_profile == MEMORY_CURATION_TOOL_PROFILE:
+            return _MEMORY_CURATION_SYSTEM_PROMPT
         role = self.role_resolver(
             session.get("roleId") or "companion-present-v1",
             session.get("roleVersion") or "1",
@@ -541,6 +582,8 @@ class PiRuntimeConfig:
             environment["RAG_IME_AGENT_EXECUTION_MODE"] = str(
                 session.get("executionMode") or "per_action"
             )
+            if session.get("roomParticipant") is not None:
+                environment["RAG_IME_AGENT_ROOM_BOUND"] = "1"
             environment["RAG_IME_AGENT_DELEGATION_DEPTH"] = str(
                 session.get("delegationDepth") or 0
             )
@@ -1830,56 +1873,36 @@ class PiRuntimeManager:
                     turn_id=turn_id,
                 )
             elif update_type == "thinking_start":
-                raw_message = as_mapping(raw.get("message"))
-                message_id = pi_message_id(raw_message, turn_id)
-                content_index = as_integer(update.get("contentIndex"))
-                reasoning_id = f"reasoning:{message_id}:{content_index}"
                 self.events.publish(
                     session_id,
                     "status_changed",
                     {
                         "status": "analyzing",
                         "phase": "reasoning",
-                        "summary": "正在分析问题与下一步",
-                    },
-                    turn_id=turn_id,
-                )
-                self.events.publish(
-                    session_id,
-                    "reasoning_summary",
-                    {
-                        "requestId": reasoning_id,
-                        "sourceMessageId": message_id,
-                        "summary": "正在分析问题与下一步",
-                        "items": [],
-                        "source": "runtime_status",
-                        "state": "running",
+                        "summary": "正在等待 Provider 的公开思考摘要",
                     },
                     turn_id=turn_id,
                 )
             elif update_type == "thinking_end":
                 raw_message = as_mapping(raw.get("message"))
                 summaries = public_reasoning_summaries(raw_message)
-                message_id = pi_message_id(raw_message, turn_id)
-                content_index = as_integer(update.get("contentIndex"))
-                reasoning_id = f"reasoning:{message_id}:{content_index}"
-                self.events.publish(
-                    session_id,
-                    "reasoning_summary",
-                    {
-                        "requestId": reasoning_id,
-                        "sourceMessageId": message_id,
-                        "summary": summaries[-1] if summaries else "分析阶段已完成",
-                        "items": summaries,
-                        "source": (
-                            "provider_reasoning_summary"
-                            if summaries
-                            else "runtime_status"
-                        ),
-                        "state": "completed",
-                    },
-                    turn_id=turn_id,
-                )
+                if summaries:
+                    message_id = pi_message_id(raw_message, turn_id)
+                    content_index = as_integer(update.get("contentIndex"))
+                    reasoning_id = f"reasoning:{message_id}:{content_index}"
+                    self.events.publish(
+                        session_id,
+                        "reasoning_summary",
+                        {
+                            "requestId": reasoning_id,
+                            "sourceMessageId": message_id,
+                            "summary": summaries[-1],
+                            "items": summaries,
+                            "source": "provider_reasoning_summary",
+                            "state": "completed",
+                        },
+                        turn_id=turn_id,
+                    )
             return
         if event_type in {"auto_retry_start", "auto_retry_end"}:
             self.events.publish(
@@ -1920,6 +1943,7 @@ class PiRuntimeManager:
             event_payload: dict[str, object] = {
                 "message": message.to_payload(),
                 "usage": public_usage(raw.get("message")),
+                **public_usage_evidence(raw_message),
             }
             if role == "user" and client_message_id:
                 event_payload["clientMessageId"] = client_message_id
@@ -2295,6 +2319,11 @@ class PiRuntimeManager:
                 raise PiRuntimeError("approval request is no longer pending")
             client = self._client
             turn_id = self._active_turn_id
+        approval = self.sessions.get_approval(approval_id)
+        tool_call_id = str(approval.get("toolCallId") or "").strip()
+        causal = approval.get("causalMetadata")
+        if isinstance(causal, Mapping):
+            turn_id = str(causal.get("turnId") or "").strip() or turn_id
         client.respond_extension_ui(request_id, confirmed=approved)
         with self._lock:
             self._pending_approval_requests.pop(approval_id, None)
@@ -2304,6 +2333,7 @@ class PiRuntimeManager:
             {
                 "approvalId": approval_id,
                 "state": resolution_state or ("approved" if approved else "rejected"),
+                **({"toolCallId": tool_call_id} if tool_call_id else {}),
             },
             turn_id=turn_id,
         )

@@ -36,6 +36,12 @@ runtime dependencies and their names do not imply endorsement.
 - [OpenLess](https://github.com/Open-Less/openless): MIT voice-pipeline and
   push-to-talk architecture reference. No OpenLess source is intentionally
   copied.
+- [Matt Pocock Skills](https://github.com/mattpocock/skills): MIT debugging and
+  codebase-architecture method reference. The Room-bounded
+  `systematic-debugging` and `improve-codebase-architecture` Skills adapt the
+  upstream `diagnosing-bugs` and `improve-codebase-architecture` methods from
+  commit `2ab958093e83e0ec752e6c1c5932da465bf23e0c`; Room policy and runtime
+  authority remain project-owned.
 - [LazyTyper releases](https://github.com/oldcai/LazyTyper-releases): interaction
   reference only. The linked repository is a binary release channel and does
   not establish an open-source license for reusable code.

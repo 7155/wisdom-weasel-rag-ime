@@ -90,6 +90,8 @@ def _registry_entry(value: Mapping[str, object]) -> dict[str, object]:
         "operation": f"product.{name}",
         "inputSchema": dict(schema),
     }
+    if value.get("alwaysAvailable") is True:
+        entry["alwaysAvailable"] = True
     projections = _runtime_projections(value.get("runtimeProjections"), name)
     if projections:
         entry["runtimeProjections"] = projections

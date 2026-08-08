@@ -56,6 +56,25 @@ class RoomPeerReviewTests(unittest.TestCase):
             self.peer.resolve_conflict(resolution_receipt_id="resolution:bad", round_id="round:conflict", open_matrix_revision_id="matrix:1", resolved_matrix_revision_id="matrix:2bad", authority_kind="independent_arbiter", authority_ref="reviewer-a", resolution_verdict="pass", rationale="self", created_at_ms=6)
         resolved = self.peer.resolve_conflict(resolution_receipt_id="resolution:ok", round_id="round:conflict", open_matrix_revision_id="matrix:1", resolved_matrix_revision_id="matrix:2", authority_kind="independent_arbiter", authority_ref="arbiter", resolution_verdict="pass", rationale="evidence wins", created_at_ms=6)
         self.assertEqual(resolved["resolutionVerdict"], "pass")
+        kernel = RoomKernelStore(self.db, mode="test")
+        linked = kernel.independent_finding_resolution(
+            root_id="root:1",
+            review_target_revision="commit:1",
+            finding_id="journey-failed",
+        )
+        self.assertIsNotNone(linked)
+        assert linked is not None
+        self.assertEqual(
+            linked["resolutionReceiptId"],
+            "resolution:ok",
+        )
+        self.assertIsNone(
+            kernel.independent_finding_resolution(
+                root_id="root:1",
+                review_target_revision="commit:1",
+                finding_id="unrelated-finding",
+            )
+        )
         receipt = self._signed_receipt("receipt:conflict")
         self.peer.record_runner_receipt(receipt)
         self.requirements.link_proof(proof_id="proof:conflict", root_id="root:1", catalog_revision_id="catalog:1", criterion_id="criterion:journey", receipt_id=receipt["receiptId"], linked_by="runner:test", created_at_ms=7)
@@ -196,20 +215,18 @@ class RoomPeerReviewTests(unittest.TestCase):
         """Seed a Root that is quiescent *and* backed by real acceptance evidence.
 
         The delivery gate is the subject of these tests, so the Root must already
-        clear the Kernel's own acceptance fence; otherwise every case would be
-        rejected for a missing criterion before the gate is ever consulted.
+        clear the Kernel's acceptance and Reporter fences; otherwise every case
+        would be rejected before the delivery gate is ever consulted.
         """
 
         kernel = RoomKernelStore(self.db, mode="cohort", enforce_test_delivery_gate=enforce)
         task_id, dispatch_id = f"task:{root_id}", f"dispatch:{root_id}"
-        kernel.create_root(
+        kernel.create_root_with_task(
             {"schemaVersion": ROOT_EXECUTION_SCHEMA_VERSION, "rootId": root_id, "roomId": "room:1", "generation": 0,
-             "state": "running", "facilitatorParticipantId": "author", "reporterParticipantId": None,
+             "state": "running", "facilitatorParticipantId": "author", "reporterParticipantId": "author",
              "reporterSelectionReceiptId": None, "requirementAnchorRef": "anchor:1", "createdByActorRef": "user:test",
-             "terminalReceiptId": None, "activeProfileRef": None, "budgetPolicyRef": "budget:test", "createdAtMs": 1},
-            budget=1, max_hops=1, max_depth=1, acceptance_criteria=("criterion:journey",), now_ms=1,
-        )
-        kernel.create_task(
+             "terminalReceiptId": None, "activeProfileRef": None, "budgetPolicyRef": "budget:test",
+             "independentReviewRequired": False, "createdAtMs": 1},
             {"schemaVersion": ROOM_TASK_SCHEMA_VERSION, "taskId": task_id, "rootId": root_id, "parentTaskId": None,
              "taskKind": "work", "currentOwnerParticipantId": "author", "ownershipRevision": 0,
              "ownershipReceiptId": None, "invitationId": None, "reviewState": "not_required",
@@ -217,25 +234,115 @@ class RoomPeerReviewTests(unittest.TestCase):
              "contextEvidenceRefs": [],
              "expectedOutput": "A signed browser receipt.", "requirementItemIds": ["req:1"],
              "acceptanceCriterionIds": ["criterion:journey"], "revision": 0, "state": "active"},
-            now_ms=1,
+            budget=3, max_hops=2, max_depth=1,
+            acceptance_criteria=("criterion:journey",), now_ms=1,
         )
-        kernel.enqueue_dispatch(
-            {"schemaVersion": DISPATCH_ENVELOPE_SCHEMA_VERSION, "dispatchId": dispatch_id, "rootId": root_id,
-             "taskId": task_id, "parentDispatchId": None, "generation": 0, "hopCount": 0, "depth": 0, "budgetCost": 1,
-             "targetSessionId": "session:author", "targetParticipantId": "author", "triggerId": f"trigger:{root_id}",
-             "intentKind": "execute", "idempotencyKey": f"key:{root_id}", "attempt": 0, "capabilityEpoch": 1,
-             "runtimeProfileRevision": "runtime-profile:test-v1", "state": "pending"},
-            now_ms=2,
+        alignment_dispatch_id = f"dispatch:align:{root_id}"
+        alignment = {
+            "schemaVersion": DISPATCH_ENVELOPE_SCHEMA_VERSION,
+            "dispatchId": alignment_dispatch_id,
+            "rootId": root_id,
+            "taskId": task_id,
+            "parentDispatchId": None,
+            "generation": 0,
+            "hopCount": 0,
+            "depth": 0,
+            "budgetCost": 1,
+            "targetSessionId": "session:author",
+            "targetParticipantId": "author",
+            "triggerId": f"trigger:align:{root_id}",
+            "intentKind": "align",
+            "idempotencyKey": f"key:align:{root_id}",
+            "attempt": 0,
+            "capabilityEpoch": 1,
+            "runtimeProfileRevision": "runtime-profile:test-v1",
+            "state": "pending",
+        }
+        kernel.enqueue_dispatch(alignment, now_ms=2)
+        alignment_lease = kernel.lease_next(
+            now_ms=3,
+            ttl_ms=30_000,
+            dispatch_id=alignment_dispatch_id,
         )
-        lease = kernel.lease_next(now_ms=3, ttl_ms=30_000)
+        self.assertIsNotNone(alignment_lease)
+        assert alignment_lease is not None
+        kernel.record_runtime_dispatch_intent(
+            alignment_dispatch_id,
+            now_ms=3,
+        )
+        kernel.accept_runtime_receipt(
+            lease_token=str(alignment_lease["leaseToken"]),
+            runtime_receipt={
+                "schemaVersion": (
+                    "wisdom-weasel.room-runtime-receipt.v1"
+                ),
+                "receiptKind": "dispatch_accepted",
+                "status": "accepted",
+                "rootId": root_id,
+                "dispatchId": alignment_dispatch_id,
+                "generation": 0,
+                "sessionId": "session:author",
+                "capabilityEpoch": 1,
+                "turnId": f"turn:{alignment_dispatch_id}",
+            },
+            now_ms=3,
+        )
+        execute = {
+            **alignment,
+            "dispatchId": dispatch_id,
+            "parentDispatchId": alignment_dispatch_id,
+            "hopCount": 1,
+            "triggerId": f"trigger:execute:{root_id}",
+            "intentKind": "execute",
+            "idempotencyKey": f"key:execute:{root_id}",
+            "capabilityEpoch": 2,
+        }
+        defined_task = {
+            **kernel.task(task_id),
+            "revision": 1,
+        }
+        with kernel._connect(immediate=True) as conn:
+            defined = kernel.revise_definition_in_transaction(
+                conn,
+                root_id=root_id,
+                dispatch_id=alignment_dispatch_id,
+                invocation_receipt_id=f"invocation:define:{root_id}",
+                task_payload=defined_task,
+                acceptance_criteria=("criterion:journey",),
+                independent_review_required=False,
+                execute_dispatch_payload=execute,
+                details={
+                    "definitionFenceId": f"definition:{root_id}",
+                    "catalogRevisionId": "catalog:1",
+                    "catalogRevision": 1,
+                    "anchorRefs": ["anchor:1"],
+                    "requirementItemIds": ["req:1"],
+                    "acceptanceCriterionIds": ["criterion:journey"],
+                    "implementationParticipantId": "author",
+                    "workItemId": f"work:{root_id}",
+                    "independentReviewRequired": False,
+                },
+                now_ms=4,
+            )
+        self.assertEqual(
+            defined["receipt"]["details"]["operation"],
+            "room_define",
+        )
+        lease = kernel.lease_next(
+            now_ms=5,
+            ttl_ms=30_000,
+            dispatch_id=dispatch_id,
+        )
         assert lease is not None
-        kernel.record_runtime_dispatch_intent(dispatch_id, now_ms=3)
+        kernel.record_runtime_dispatch_intent(dispatch_id, now_ms=5)
         kernel.accept_runtime_receipt(
             lease_token=str(lease["leaseToken"]),
             runtime_receipt={"schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
                              "receiptKind": "dispatch_accepted", "status": "accepted", "rootId": root_id,
-                             "dispatchId": dispatch_id, "generation": 0, "turnId": f"turn:{dispatch_id}"},
-            now_ms=3,
+                             "dispatchId": dispatch_id, "generation": 0,
+                             "sessionId": "session:author", "capabilityEpoch": 2,
+                             "turnId": f"turn:{dispatch_id}"},
+            now_ms=5,
         )
         gate_item = {"criterionId": "criterion:journey", "status": "pass", "evidenceRefs": ["receipt:" + root_id]}
         kernel.apply_commit(
@@ -245,11 +352,124 @@ class RoomPeerReviewTests(unittest.TestCase):
                                     "receiptId": f"quality:{root_id}", "rootId": root_id, "taskId": task_id,
                                     "dispatchId": dispatch_id, "generation": 0, "originalRequestChecked": True,
                                     "verdict": "ready_to_deliver", "items": [gate_item], "residualRisks": [],
-                                    "createdAtMs": 4},
-             "evidenceRefs": ["receipt:" + root_id], "requirementCoverage": ["criterion:journey"], "createdAtMs": 4},
-            generation=0, now_ms=4,
+                                    "createdAtMs": 6},
+             "evidenceRefs": ["receipt:" + root_id], "requirementCoverage": ["criterion:journey"], "createdAtMs": 6},
+            generation=0, now_ms=6,
         )
+        self._complete_reporter_terminal(kernel, root_id=root_id)
         return kernel
+
+    def _complete_reporter_terminal(
+        self,
+        kernel: RoomKernelStore,
+        *,
+        root_id: str,
+    ) -> None:
+        """Exercise the real ReportDispatch lane required before Root finalization."""
+
+        report = kernel.ensure_report_dispatch(
+            root_id,
+            reporter_participant_id="author",
+            reporter_session_id="session:author",
+            workspace={
+                "workspacePolicy": "read_only",
+                "workspaceRoot": "/tmp/room-peer-review-report",
+                "workspaceBaseRoot": "/tmp/room-peer-review-report",
+                "workspaceSnapshotSha256": "f" * 64,
+                "workspaceIntegrationState": "not_required",
+                "workspaceIntegrationRef": None,
+            },
+            now_ms=7,
+        )
+        self.assertTrue(report["created"])
+        report_dispatch = report["dispatch"]
+        report_task = report["task"]
+        assert isinstance(report_dispatch, dict)
+        assert isinstance(report_task, dict)
+        report_dispatch_id = str(report_dispatch["dispatchId"])
+        report_task_id = str(report_task["taskId"])
+        lease = kernel.lease_next(
+            now_ms=8,
+            ttl_ms=30_000,
+            dispatch_id=report_dispatch_id,
+        )
+        self.assertIsNotNone(lease)
+        assert lease is not None
+        kernel.record_runtime_dispatch_intent(report_dispatch_id, now_ms=8)
+        kernel.accept_runtime_receipt(
+            lease_token=str(lease["leaseToken"]),
+            runtime_receipt={
+                "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
+                "receiptKind": "dispatch_accepted",
+                "status": "accepted",
+                "rootId": root_id,
+                "dispatchId": report_dispatch_id,
+                "generation": 0,
+                "sessionId": str(report_dispatch["targetSessionId"]),
+                "capabilityEpoch": int(report_dispatch["capabilityEpoch"]),
+                "turnId": f"turn:{report_dispatch_id}",
+            },
+            now_ms=8,
+        )
+        evidence_ref = f"receipt:{root_id}"
+        report_commit_id = f"commit:report:{root_id}"
+        post_proposal = {
+            "schemaVersion": "wisdom-weasel.room-post.v2",
+            "postId": f"post:report:{root_id}",
+            "roomId": "room:1",
+            "rootId": root_id,
+            "generation": 0,
+            "taskId": report_task_id,
+            "dispatchId": report_dispatch_id,
+            "authorActorRef": "author",
+            "kind": "result",
+            "visibility": "room",
+            "content": "The verified result is ready for delivery.",
+            "idempotencyKey": f"post:report:{root_id}",
+            "publicationSource": {
+                "kind": "room_commit",
+                "ref": report_commit_id,
+            },
+            "createdAtMs": 9,
+        }
+        kernel.apply_commit(
+            {
+                "schemaVersion": ROOM_COMMIT_SCHEMA_VERSION,
+                "commitId": report_commit_id,
+                "dispatchId": report_dispatch_id,
+                "action": "post",
+                "contentHash": "sha256:report",
+                "postProposal": post_proposal,
+                "continuation": {"decision": "complete"},
+                "qualityGateReceipt": {
+                    "schemaVersion": "wisdom-weasel.room-quality-gate-receipt.v1",
+                    "receiptId": f"quality:report:{root_id}",
+                    "rootId": root_id,
+                    "taskId": report_task_id,
+                    "dispatchId": report_dispatch_id,
+                    "generation": 0,
+                    "originalRequestChecked": True,
+                    "verdict": "ready_to_deliver",
+                    "items": [
+                        {
+                            "criterionId": "criterion:journey",
+                            "status": "pass",
+                            "evidenceRefs": [evidence_ref],
+                        }
+                    ],
+                    "residualRisks": [],
+                    "createdAtMs": 9,
+                },
+                "evidenceRefs": [evidence_ref],
+                "requirementCoverage": ["criterion:journey"],
+                "createdAtMs": 9,
+            },
+            generation=0,
+            now_ms=9,
+            post_proposal=post_proposal,
+        )
+        existing = kernel.report_readiness(root_id)["existing"]
+        self.assertTrue(existing["readyForTerminal"])
 
 
 if __name__ == "__main__": unittest.main()

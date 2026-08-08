@@ -19,7 +19,7 @@
       "required": ["documentId", "authorityKind", "authorityId", "authorityRevision", "authorityKey", "documentRevision", "contentSha256", "workspaceRoot", "path", "activePath", "archivePath", "state", "title", "terminalReceiptId", "error", "createdAtMs", "updatedAtMs"],
       "properties": {
         "documentId": {"type": "string", "pattern": "^workdoc_[a-f0-9]{32}$"},
-        "authorityKind": {"type": "string", "enum": ["session_plan", "session_goal", "room_work_item"]},
+        "authorityKind": {"type": "string", "enum": ["session_todo", "session_goal", "room_work_item"]},
         "authorityId": {"type": "string", "minLength": 1, "maxLength": 240},
         "authorityRevision": {"type": "integer", "minimum": 0},
         "authorityKey": {"type": "string", "minLength": 1, "maxLength": 320},

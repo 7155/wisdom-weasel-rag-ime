@@ -13,6 +13,7 @@ from rag_ime.agent_workspace import (
     WorkspaceHarness,
     WorkspaceLspError,
     WorkspaceLspServerConfig,
+    _lsp_references_evidence_digest,
     _lsp_sandbox_profile,
 )
 from rag_ime.contracts.json_schema import validate_contract
@@ -50,6 +51,9 @@ while True:
         break
     method = message.get("method", "")
     params = message.get("params", {})
+    if method:
+        with Path(".lsp-methods.log").open("a", encoding="utf-8") as log:
+            log.write(method + "\n")
     if "id" not in message:
         if method == "exit":
             break
@@ -223,6 +227,21 @@ class WorkspaceLspHarnessTests(unittest.TestCase):
             preview["baseState"],
         )
         self.assertTrue(receipt["mutationApplied"])
+        references_evidence = receipt["referencesEvidence"]
+        self.assertEqual(references_evidence["root"], str(self.root.resolve()))
+        self.assertEqual(references_evidence["path"], str(self.main.resolve()))
+        self.assertEqual(references_evidence["line"], 1)
+        self.assertEqual(references_evidence["column"], 3)
+        self.assertEqual(references_evidence["resourceRevision"].startswith("sha256:"), True)
+        self.assertEqual(references_evidence["count"], 1)
+        self.assertLess(
+            (self.root / ".lsp-methods.log").read_text(encoding="utf-8").splitlines().index(
+                "textDocument/references"
+            ),
+            (self.root / ".lsp-methods.log").read_text(encoding="utf-8").splitlines().index(
+                "textDocument/rename"
+            ),
+        )
         validate_contract(receipt, "workspace-lsp-mutation-receipt.v1.json")
         self.assertEqual(self.main.read_text(encoding="utf-8"), "😀bar\n")
 
@@ -261,6 +280,93 @@ class WorkspaceLspHarnessTests(unittest.TestCase):
                 stale_preview["baseState"],
             )
         self.assertEqual(raised.exception.code, "stale_snapshot")
+
+    def test_rename_rejects_missing_stale_and_foreign_reference_evidence(self) -> None:
+        prepared = self.harness.prepare_lsp_mutation(
+            self.session,
+            "rename",
+            {"path": str(self.main), "line": 1, "column": 3, "newName": "bar"},
+        )
+        preview = self.harness.lsp_mutation_preview(prepared)
+        missing_payload = dict(preview["actionPayload"])
+        missing_payload.pop("referencesEvidence")
+        with self.assertRaises(WorkspaceLspError) as missing:
+            self.harness.apply_lsp_mutation(
+                self.session,
+                "rename",
+                missing_payload,
+                preview["baseState"],
+            )
+        self.assertEqual(missing.exception.code, "references_required")
+
+        stale_payload = dict(preview["actionPayload"])
+        stale_state = dict(preview["baseState"])
+        stale_evidence = dict(stale_payload["referencesEvidence"])
+        stale_evidence["preimageSha256"] = "0" * 64
+        stale_evidence["resourceRevision"] = "sha256:" + "0" * 64
+        stale_payload["referencesEvidence"] = stale_evidence
+        stale_state["referencesEvidence"] = dict(stale_evidence)
+        stale_state["referencesEvidenceSha256"] = _lsp_references_evidence_digest(
+            stale_evidence
+        )
+        with self.assertRaises(WorkspaceLspError) as stale:
+            self.harness.apply_lsp_mutation(
+                self.session,
+                "rename",
+                stale_payload,
+                stale_state,
+            )
+        self.assertEqual(stale.exception.code, "stale_snapshot")
+
+        foreign_payload = dict(preview["actionPayload"])
+        foreign_state = dict(preview["baseState"])
+        foreign_evidence = dict(foreign_payload["referencesEvidence"])
+        foreign_evidence["root"] = str(self.temp.name) + "/foreign"
+        foreign_payload["referencesEvidence"] = foreign_evidence
+        foreign_state["referencesEvidence"] = dict(foreign_evidence)
+        foreign_state["referencesEvidenceSha256"] = _lsp_references_evidence_digest(
+            foreign_evidence
+        )
+        with self.assertRaises(WorkspaceLspError) as foreign:
+            self.harness.apply_lsp_mutation(
+                self.session,
+                "rename",
+                foreign_payload,
+                foreign_state,
+            )
+        self.assertEqual(foreign.exception.code, "references_evidence_invalid")
+
+        original_request = self.harness._lsp_request
+        observed_methods: list[str] = []
+
+        def fail_references(
+            client: object,
+            method: str,
+            params: object,
+            timeout_seconds: float,
+            *,
+            discard_on_failure: bool = True,
+        ) -> object:
+            observed_methods.append(method)
+            if method == "textDocument/references":
+                raise WorkspaceLspError("request_failed", "references unavailable")
+            return original_request(
+                client,
+                method,
+                params,
+                timeout_seconds,
+                discard_on_failure=discard_on_failure,
+            )
+
+        self.harness._lsp_request = fail_references  # type: ignore[method-assign]
+        with self.assertRaises(WorkspaceLspError) as failed:
+            self.harness.prepare_lsp_mutation(
+                self.session,
+                "rename",
+                {"path": str(self.main), "line": 1, "column": 3, "newName": "bar"},
+            )
+        self.assertEqual(failed.exception.code, "request_failed")
+        self.assertEqual(observed_methods[-1], "textDocument/references")
 
     def test_security_rejects_roots_symlinks_sensitive_paths_and_resource_ops(self) -> None:
         outside = Path(self.temp.name) / "outside.py"

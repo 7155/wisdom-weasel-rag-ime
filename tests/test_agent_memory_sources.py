@@ -368,6 +368,40 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
                 ("personal_memory", "applied_personal_receipt", "candidate"),
             )
 
+    def test_document_knowledge_receipt_cannot_opt_into_personal_memory(self) -> None:
+        result = self.store.checkpoint_tool_receipt(
+            {
+                "approvalId": "approval:knowledge-import",
+                "sessionId": self.session["id"],
+                "toolId": "knowledge",
+                "state": "applied",
+                "receipt": {
+                    "mutationApplied": True,
+                    "memoryDomain": "document_knowledge",
+                    # Defense-in-depth: even an erroneous worker field cannot
+                    # cross the Knowledge -> personal Memory boundary.
+                    "personalMemoryEligible": True,
+                    "summary": "已导入公开企业手册到文档知识库。",
+                },
+            },
+            created_at_ms=302,
+        )
+
+        self.assertTrue(result["stored"])
+        self.assertNotIn("evidence", result)
+        self.assertFalse(result["source"]["metadata"]["personalMemoryEligible"])
+        self.assertEqual(
+            result["source"]["metadata"]["personalMemoryExclusionReason"],
+            "document_knowledge_boundary",
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM agent_memory_evidence"
+                ).fetchone()[0],
+                0,
+            )
+
     def test_compaction_summary_is_role_owned_and_idempotent(self) -> None:
         first = self.store.checkpoint_compaction(
             session_id=str(self.session["id"]),

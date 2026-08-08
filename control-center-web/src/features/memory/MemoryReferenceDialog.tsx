@@ -116,6 +116,17 @@ export function MemoryReferenceDialog({
 
         {!query.isPending && !query.error && resolvedReference ? (
           <div className="memory-reference-view" data-reference-key={currentKey}>
+            <nav className="memory-reference-path" aria-label="Book Atom Evidence 引用路径">
+              <ol>
+                {stack.map((step, index) => (
+                  <li data-current={index === stack.length - 1 || undefined} key={referenceKey(step)}>
+                    <span>{referenceKindCode(step.kind)}</span>
+                    <small>{step.label || step.referenceId}</small>
+                    {index < stack.length - 1 ? <ChevronRight aria-hidden="true" size={13} /> : null}
+                  </li>
+                ))}
+              </ol>
+            </nav>
             <div className="memory-reference-view__identity">
               <span><Fingerprint size={16} /></span>
               <div><small>稳定引用</small><strong>{current.referenceId}</strong></div>
@@ -138,7 +149,7 @@ export function MemoryReferenceDialog({
             {content ? <p className="memory-reference-view__content">{content}</p> : null}
 
             <dl className="memory-reference-view__facts">
-              <ReferenceFact label="引用类型" value={referenceKindLabel(current.kind)} />
+              <ReferenceFact label="当前层" value={referenceKindLabel(current.kind)} />
               <ReferenceFact label="来源类别" value={resolvedReference.source.sourceKind || resolvedReference.source.kind} />
               <ReferenceFact label="来源对象" value={resolvedReference.source.id} />
               <ReferenceFact
@@ -172,8 +183,8 @@ export function MemoryReferenceDialog({
               </section>
             ) : null}
 
-            <section className="memory-reference-view__children" aria-label="来源证据与引用">
-              <header><span><GitBranch size={15} /><strong>来源证据与引用</strong></span><small>{references.length} 条</small></header>
+            <section className="memory-reference-view__children" aria-label={referenceChildrenTitle(current.kind)}>
+              <header><span><GitBranch size={15} /><strong>{referenceChildrenTitle(current.kind)}</strong></span><small>{references.length} 条</small></header>
               {references.length ? references.map((reference) => {
                 const childKey = referenceKey(reference);
                 const loop = visited.has(childKey);
@@ -185,7 +196,7 @@ export function MemoryReferenceDialog({
                     onClick={() => openReference(reference)}
                     type="button"
                   >
-                    <span><small>{referenceKindLabel(reference.kind)}</small><strong>{reference.label || reference.referenceId}</strong><em>{reference.referenceId}</em></span>
+                    <span><small>{referenceKindCode(reference.kind)} · {referenceKindLabel(reference.kind)}</small><strong>{reference.label || reference.referenceId}</strong><em>{reference.referenceId}</em></span>
                     {loop ? <b>已在路径中</b> : depthLimited ? <b>已到最深层</b> : <ChevronRight size={15} />}
                   </button>
                 );
@@ -203,7 +214,7 @@ export function MemoryReferenceDialog({
         <DialogFooter>
           {stack.length > 1 ? (
             <Button leadingIcon={<ArrowLeft size={14} />} onClick={() => setStack((items) => items.slice(0, -1))} variant="quiet">
-              返回上一层
+              返回 {referenceKindCode(stack[stack.length - 2]!.kind)}
             </Button>
           ) : null}
           <Button onClick={() => onOpenChange(false)}>关闭</Button>
@@ -225,19 +236,41 @@ function referenceTime(item: MemoryReferenceV1['item'] | undefined): string {
     : '未标注';
 }
 
+function referenceKindCode(kind: MemoryReferenceKind): string {
+  return ({
+    event: 'Evidence',
+    evidence: 'Evidence',
+    atom: 'Atom',
+    book: 'Book',
+    timeline: 'Timeline',
+    role_book_revision: 'Role Book',
+  } as const)[kind];
+}
+
 function referenceKindLabel(kind: MemoryReferenceKind): string {
   return ({
-    event: '原始事件',
-    evidence: '对话证据与审计',
-    atom: '关于我的事实',
-    book: '长期主题',
-    timeline: '活动时间线',
-    role_book_revision: '伙伴记忆版本',
+    event: 'Evidence · 原始来源事件',
+    evidence: 'Evidence · 不可变证据',
+    atom: 'Atom · 记忆单元',
+    book: 'Book · 主题书',
+    timeline: 'Timeline · 活动时间线',
+    role_book_revision: 'Role Book · 伙伴记忆版本',
+  } as const)[kind];
+}
+
+function referenceChildrenTitle(kind: MemoryReferenceKind): string {
+  return ({
+    book: 'Book 中聚合的 Atom',
+    atom: 'Atom 的 Evidence',
+    evidence: 'Evidence 的原始来源',
+    event: '原始来源的关联证据',
+    timeline: 'Timeline 的 Evidence',
+    role_book_revision: 'Role Book 的 Evidence',
   } as const)[kind];
 }
 
 function referenceStatusLabel(status: string, kind: MemoryReferenceKind): string {
-  if (kind === 'evidence' && status === 'active') return '审计保留';
+  if (kind === 'evidence' && status === 'active') return '已引用';
   return ({
     active: '使用中',
     approved: '已确认',

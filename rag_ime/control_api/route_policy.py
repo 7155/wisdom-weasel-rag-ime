@@ -67,7 +67,6 @@ class ControlPathId(str, Enum):
     AGENT_SESSION_CONTEXT_TRACE_GET = "agent.session.contextTrace.get"
     AGENT_SESSION_DEBUG_CONTEXT_GET = "agent.session.debugContext.get"
     AGENT_SESSION_WORKFLOW_GET = "agent.session.workflow.get"
-    AGENT_SESSION_PLAN_MUTATE = "agent.session.plan.mutate"
     AGENT_SESSION_GOAL_MUTATE = "agent.session.goal.mutate"
     AGENT_ARTIFACT_GET = "agent.artifact.get"
     AGENT_MEDIA_LIST = "agent.media.list"
@@ -77,12 +76,14 @@ class ControlPathId(str, Enum):
     AGENT_ROOMS_CREATE = "agent.rooms.create"
     AGENT_ROOM_GET = "agent.room.get"
     AGENT_ROOM_SNAPSHOT = "agent.room.snapshot"
+    AGENT_ROOM_HISTORY = "agent.room.history"
     AGENT_ROOM_ARCHIVE = "agent.room.archive"
     AGENT_ROOM_PARTICIPANT_ADD = "agent.room.participant.add"
     AGENT_ROOM_PARTICIPANT_REMOVE = "agent.room.participant.remove"
     AGENT_ROOM_PARTICIPANT_UPDATE = "agent.room.participant.update"
     AGENT_ROOM_DELETE = "agent.room.delete"
     AGENT_ROOM_MESSAGE = "agent.room.message"
+    AGENT_ROOM_START_EXECUTION = "agent.room.startExecution"
     AGENT_ROOM_ABORT = "agent.room.abort"
     AGENT_ROOM_EVENTS = "agent.room.events"
     AGENT_ROOM_TOPICS = "agent.room.topics"
@@ -232,6 +233,9 @@ class ControlPathId(str, Enum):
     KNOWLEDGE_BASES_REBUILD = "knowledgeBases.rebuild"
     KNOWLEDGE_WORKER_HEALTH = "knowledgeWorker.health"
     KNOWLEDGE_PARSERS_LIST = "knowledgeParsers.list"
+    KNOWLEDGE_EMBEDDING_PROFILE = "knowledgeEmbedding.profile"
+    KNOWLEDGE_EMBEDDING_PROBE = "knowledgeEmbedding.probe"
+    KNOWLEDGE_EMBEDDING_IMPACT = "knowledgeEmbedding.impact"
     DIAGNOSTICS_RUNTIME = "diagnostics.runtime"
     DIAGNOSTICS_PREDICTOR = "diagnostics.predictor"
     DIAGNOSTICS_MODELS = "diagnostics.models"
@@ -735,7 +739,6 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_SESSION_CONTEXT_TRACE_GET, ControlMethod.GET, "/api/agent/sessions/{sessionId}/context-traces/{traceId}", "/control/v1/agent/sessions/{sessionId}/context-traces/{traceId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_CONTEXT_TRACE),
         _route(ControlPathId.AGENT_SESSION_DEBUG_CONTEXT_GET, ControlMethod.GET, "/api/agent/sessions/{sessionId}/debug-context", None, params=_SESSION, query={"turnId"}),
         _route(ControlPathId.AGENT_SESSION_WORKFLOW_GET, ControlMethod.GET, "/api/agent/sessions/{sessionId}/workflow", "/control/v1/agent/sessions/{sessionId}/workflow", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION),
-        _route(ControlPathId.AGENT_SESSION_PLAN_MUTATE, ControlMethod.POST, "/api/agent/sessions/{sessionId}/plan", "/control/v1/agent/sessions/{sessionId}/plan", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"action", "expectedRevision", "title", "items", "note"}, required_body={"action"}, remote_body={"action", "expectedRevision", "title", "items", "note"}),
         _route(ControlPathId.AGENT_SESSION_GOAL_MUTATE, ControlMethod.POST, "/api/agent/sessions/{sessionId}/goal", "/control/v1/agent/sessions/{sessionId}/goal", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"action", "expectedRevision", "confirmed", "objective", "successCriteria", "evidenceExpectations", "tokenBudget", "timeBudgetMs", "summary", "reason", "evidence"}, required_body={"action"}, remote_body={"action", "expectedRevision", "confirmed", "objective", "successCriteria", "evidenceExpectations", "tokenBudget", "timeBudgetMs", "summary", "reason", "evidence"}),
         _route(ControlPathId.AGENT_ARTIFACT_GET, ControlMethod.GET, "/api/agent/artifacts/{artifactId}", "/control/v1/agent/artifacts/{artifactId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ARTIFACT, query={"sessionId", "limit"}, required_query={"sessionId"}),
         _route(ControlPathId.AGENT_MEDIA_LIST, ControlMethod.GET, "/api/agent/media", "/control/v1/agent/media", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"sessionId", "roomId", "limit"}),
@@ -746,6 +749,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_ROOMS_CREATE, ControlMethod.POST, "/api/agent/rooms", "/control/v1/agent/rooms", body={"title", "roomKind", "avatar", "description", "scenarioPrompt", "participants", "routingPolicy", "routingConfig", "moderatorRoleId", "workspaceRoots", "executionMode", "workspaceScopeConfirmation", "dangerousModeConfirmation"}, required_body={"participants"}),
         _route(ControlPathId.AGENT_ROOM_GET, ControlMethod.GET, "/api/agent/rooms/{roomId}", "/control/v1/agent/rooms/{roomId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM),
         _route(ControlPathId.AGENT_ROOM_SNAPSHOT, ControlMethod.GET, "/api/agent/rooms/{roomId}/snapshot", "/control/v1/agent/rooms/{roomId}/snapshot", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM),
+        _route(ControlPathId.AGENT_ROOM_HISTORY, ControlMethod.GET, "/api/agent/rooms/{roomId}/history", "/control/v1/agent/rooms/{roomId}/history", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM, query={"beforeSequence", "limit"}),
         _route(ControlPathId.AGENT_ROOM_KERNEL_SNAPSHOT, ControlMethod.GET, "/api/agent/rooms/{roomId}/kernel/snapshot", "/control/v1/agent/rooms/{roomId}/kernel/snapshot", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM),
         _route(ControlPathId.AGENT_ROOM_KERNEL_EVENTS, ControlMethod.GET, "/api/agent/rooms/{roomId}/kernel/events", "/control/v1/agent/rooms/{roomId}/kernel/events", scopes=[ControlScope.AGENT_READ], remote_safe=True, subscription=True, params=_ROOM, query=_LAST_EVENT_QUERY, required_query=_LAST_EVENT_QUERY),
         _route(ControlPathId.AGENT_ROOM_KERNEL_COMMAND, ControlMethod.POST, "/api/agent/rooms/{roomId}/kernel/commands", "/control/v1/agent/rooms/{roomId}/kernel/commands", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"schemaVersion", "commandId", "rootId", "roomId", "commandKind", "targetKind", "targetId", "sourceKind", "sourceId", "idempotencyKey", "generation", "payload", "createdAtMs"}, required_body={"schemaVersion", "commandId", "roomId", "commandKind", "sourceKind", "sourceId", "idempotencyKey", "generation", "payload", "createdAtMs"}, remote_body={"schemaVersion", "commandId", "rootId", "roomId", "commandKind", "targetKind", "targetId", "sourceKind", "sourceId", "idempotencyKey", "generation", "payload", "createdAtMs"}, remote_required_body={"schemaVersion", "commandId", "roomId", "commandKind", "sourceKind", "sourceId", "idempotencyKey", "generation", "payload", "createdAtMs"}),
@@ -773,7 +777,8 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_ROOM_PARTICIPANT_REMOVE, ControlMethod.PATCH, "/api/agent/rooms/{roomId}/participants", "/control/v1/agent/rooms/{roomId}/participants", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"participantId"}, required_body={"participantId"}, remote_body={"participantId"}, remote_required_body={"participantId"}),
         _route(ControlPathId.AGENT_ROOM_PARTICIPANT_UPDATE, ControlMethod.PATCH, "/api/agent/rooms/{roomId}/participants", "/control/v1/agent/rooms/{roomId}/participants", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"participantId", "collaborationRole"}, required_body={"participantId", "collaborationRole"}, remote_body={"participantId", "collaborationRole"}, remote_required_body={"participantId", "collaborationRole"}),
         _route(ControlPathId.AGENT_ROOM_DELETE, ControlMethod.DELETE, "/api/agent/rooms/{roomId}", None, params=_ROOM, body={"confirmTitle"}, required_body={"confirmTitle"}),
-        _route(ControlPathId.AGENT_ROOM_MESSAGE, ControlMethod.POST, "/api/agent/rooms/{roomId}/messages", "/control/v1/agent/rooms/{roomId}/messages", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"message", "clientMessageId", "participantIds", "workItemId", "attachmentIds"}, required_body={"message"}, remote_body={"message", "clientMessageId", "participantIds", "workItemId", "attachmentIds"}, remote_required_body={"message", "clientMessageId"}),
+        _route(ControlPathId.AGENT_ROOM_MESSAGE, ControlMethod.POST, "/api/agent/rooms/{roomId}/messages", "/control/v1/agent/rooms/{roomId}/messages", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"message", "clientMessageId", "participantIds", "workItemId", "attachmentIds", "answerToPostId", "answerToRootId"}, required_body={"message"}, remote_body={"message", "clientMessageId", "participantIds", "workItemId", "attachmentIds", "answerToPostId", "answerToRootId"}, remote_required_body={"message", "clientMessageId"}),
+        _route(ControlPathId.AGENT_ROOM_START_EXECUTION, ControlMethod.POST, "/api/agent/rooms/{roomId}/start-execution", "/control/v1/agent/rooms/{roomId}/start-execution", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"action", "rootId", "clientActionId"}, required_body={"action", "rootId", "clientActionId"}, remote_body={"action", "rootId", "clientActionId"}, remote_required_body={"action", "rootId", "clientActionId"}, remote_body_values={"action": {"start_execution"}}),
         _route(ControlPathId.AGENT_ROOM_ABORT, ControlMethod.POST, "/api/agent/rooms/{roomId}/abort", "/control/v1/agent/rooms/{roomId}/abort", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"roomTurnId", "clientRequestId"}, required_body={"roomTurnId", "clientRequestId"}, remote_body={"roomTurnId", "clientRequestId"}, remote_required_body={"roomTurnId", "clientRequestId"}),
         _route(ControlPathId.AGENT_ROOM_EVENTS, ControlMethod.GET, "/api/agent/rooms/{roomId}/events", "/control/v1/agent/rooms/{roomId}/events", scopes=[ControlScope.AGENT_READ], remote_safe=True, subscription=True, params=_ROOM, query=_LAST_EVENT_QUERY, required_query=_LAST_EVENT_QUERY),
         _route(ControlPathId.AGENT_ROOM_TOPICS, ControlMethod.GET, "/api/agent/rooms/{roomId}/topics", "/control/v1/agent/rooms/{roomId}/topics", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM, query={"includeArchived"}),
@@ -904,6 +909,9 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.KNOWLEDGE_BASES_REBUILD, ControlMethod.POST, "/api/knowledge-bases/{kbId}/rebuild", None, params=_KNOWLEDGE_BASE, body={"previewToken", "payloadSha256", "expectedRevision", "confirmText"}, required_body={"previewToken", "payloadSha256", "expectedRevision", "confirmText"}),
         _route(ControlPathId.KNOWLEDGE_WORKER_HEALTH, ControlMethod.GET, "/api/knowledge-bases/health", None),
         _route(ControlPathId.KNOWLEDGE_PARSERS_LIST, ControlMethod.GET, "/api/knowledge-bases/parsers", None),
+        _route(ControlPathId.KNOWLEDGE_EMBEDDING_PROFILE, ControlMethod.GET, "/api/knowledge-bases/embedding-profile", None),
+        _route(ControlPathId.KNOWLEDGE_EMBEDDING_PROBE, ControlMethod.POST, "/api/knowledge-bases/embedding-probe", None, body={"profile"}, required_body={"profile"}),
+        _route(ControlPathId.KNOWLEDGE_EMBEDDING_IMPACT, ControlMethod.POST, "/api/knowledge-bases/embedding-impact", None, body={"profile"}, required_body={"profile"}),
         _route(ControlPathId.DIAGNOSTICS_RUNTIME, ControlMethod.GET, "/api/runtime/status", "/control/v1/diagnostics/runtime", scopes=[ControlScope.DIAGNOSTICS_READ], remote_safe=True),
         _route(ControlPathId.DIAGNOSTICS_PREDICTOR, ControlMethod.GET, "/api/predictor/status", "/control/v1/diagnostics/predictor", scopes=[ControlScope.DIAGNOSTICS_READ], remote_safe=True),
         _route(ControlPathId.DIAGNOSTICS_MODELS, ControlMethod.GET, "/api/models/status", "/control/v1/diagnostics/models", scopes=[ControlScope.DIAGNOSTICS_READ], remote_safe=True),

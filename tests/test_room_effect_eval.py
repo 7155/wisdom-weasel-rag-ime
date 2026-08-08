@@ -34,6 +34,82 @@ class RoomTaskEffectEvalTests(unittest.TestCase):
         self.assertLess(metrics["progressiveDisclosureRatio"], 0.4)
         self.assertLess(metrics["toolProgressiveDisclosureRatio"], 1.0)
 
+    def test_full_auto_room_fixture_freezes_sequence_and_skill_boundaries(self) -> None:
+        document = json.loads(self.fixtures.read_text(encoding="utf-8"))
+        contract = document["fullAutoRoomContract"]
+        self.assertEqual(contract["authority"], "Personal Agent Workbench")
+        self.assertEqual(contract["referenceOnly"], "Cat Cafe")
+        self.assertEqual(
+            contract["sequence"],
+            [
+                "room_state",
+                "room_commit(wait, waitingFor=user)",
+                "ordinary-user-message resume under the same Root",
+                "progressively disclose/load room_define",
+                "room_define",
+                "room_state for final acceptance aliases",
+                "room_commit(handoff)",
+                "Facilitator decomposition and directed Worker Dispatches",
+                "bounded implementation",
+                "Facilitator-owned integration workspace",
+                "optional distinct-reviewer handoff after integration",
+                "Kernel settlement",
+                "facilitator/reporter-only final public summary",
+            ],
+        )
+
+        cases = {item["id"]: item for item in contract["cases"]}
+        self.assertEqual(
+            set(cases),
+            {
+                "intake-no-fanout",
+                "wait-resume-same-root",
+                "define-bind-and-fence",
+                "workspace-and-review-boundary",
+            },
+        )
+        boundary = cases["workspace-and-review-boundary"]
+        self.assertIn(
+            "Facilitator owns decomposition, assignment, reassignment, and integration",
+            boundary["required"],
+        )
+        self.assertIn(
+            "one Facilitator-owned integration workspace",
+            boundary["required"],
+        )
+        self.assertIn(
+            "review is optional and only after integration",
+            boundary["required"],
+        )
+        self.assertIn(
+            "integration evidence plus Kernel gates when review is not chosen",
+            boundary["required"],
+        )
+        self.assertIn("review before integration", boundary["forbidden"])
+        self.assertIn("assignment by free-text mention", boundary["forbidden"])
+        self.assertTrue(all(item["required"] for item in cases.values()))
+        self.assertTrue(all(item["forbidden"] for item in cases.values()))
+
+        skill_text = {
+            skill_id: " ".join(
+                (self.skills_root / skill_id / "SKILL.md")
+                .read_text(encoding="utf-8")
+                .casefold()
+                .split()
+            )
+            for skill_id in contract["skillExpectations"]
+        }
+        for skill_id, terms in contract["skillExpectations"].items():
+            with self.subTest(skill=skill_id):
+                for term in terms:
+                    with self.subTest(term=term):
+                        self.assertIn(term.casefold(), skill_text[skill_id])
+
+        combined_skill_text = "\n".join(skill_text.values())
+        for term in contract["prohibitionExpectations"]:
+            with self.subTest(prohibition=term):
+                self.assertIn(term.casefold(), combined_skill_text)
+
     def test_confirmed_requirements_can_route_directly_to_planning(self) -> None:
         document = json.loads(self.fixtures.read_text(encoding="utf-8"))
         case = next(
@@ -73,7 +149,7 @@ class RoomTaskEffectEvalTests(unittest.TestCase):
         policy = RoomSkillPolicy(self.policy_path, self.skills_root)
         catalog = policy.catalog()
         expected_keys = {"name", "when", "notFor", "input", "output", "does"}
-        self.assertEqual(len(catalog), 8)
+        self.assertEqual(len(catalog), 9)
         self.assertTrue(all(set(item) == expected_keys for item in catalog))
         loaded = policy.load_exact("structured-handoff")
         self.assertEqual(set(loaded), expected_keys | {"body", "contentRevision"})

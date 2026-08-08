@@ -565,6 +565,7 @@ class DebugImeService:
             project=config.project,
             facade=self,
             knowledge_client=self.knowledge_client,
+            knowledge_control=self.knowledge_control,
             workspace_harness=self.agent.background_jobs.workspace_harness,
             background_jobs=self.agent.background_jobs,
             delegation=self.agent.delegation,
@@ -6689,6 +6690,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     response = control.health()
                 elif knowledge_parts == ("parsers",):
                     response = control.parsers()
+                elif knowledge_parts == ("embedding-profile",):
+                    response = control.embedding_profile()
                 elif len(knowledge_parts) == 1:
                     response = control.get_base(knowledge_parts[0])
                 elif len(knowledge_parts) == 2 and knowledge_parts[1] == "documents":
@@ -6955,6 +6958,18 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self._write_json(
                 HTTPStatus.OK,
                 self.service.agent.room_snapshot(agent_room_id),
+            )
+            return
+        if agent_room_id and room_action == "history":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.room_history(
+                    agent_room_id,
+                    {
+                        "beforeSequence": _query_first(query, "beforeSequence"),
+                        "limit": _query_first(query, "limit"),
+                    },
+                ),
             )
             return
         if agent_room_id and room_action == "topics":
@@ -7719,6 +7734,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 if knowledge_parts == ():
                     response = control.create_base(payload)
                     status = HTTPStatus.CREATED
+                elif knowledge_parts == ("embedding-probe",):
+                    response = control.embedding_probe(payload)
+                    status = HTTPStatus.OK
+                elif knowledge_parts == ("embedding-impact",):
+                    response = control.embedding_impact(payload)
+                    status = HTTPStatus.OK
                 elif len(knowledge_parts) == 3 and knowledge_parts[1:] == ("delete", "preview"):
                     response = control.delete_preview(knowledge_parts[0], payload)
                     status = HTTPStatus.OK
@@ -8011,6 +8032,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.ACCEPTED,
                     self.service.agent.post_room_message(agent_room_id, payload),
                 )
+            elif agent_room_id and room_action == "start-execution":
+                self._write_json(
+                    HTTPStatus.ACCEPTED,
+                    self.service.agent.start_room_execution(agent_room_id, payload),
+                )
             elif agent_room_id and room_action == "abort":
                 self._write_json(
                     HTTPStatus.OK,
@@ -8057,11 +8083,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 )
             elif agent_session_id and agent_action == "compact":
                 self._write_json(HTTPStatus.OK, self.service.agent.compact(agent_session_id, payload))
-            elif agent_session_id and agent_action == "plan":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.agent.mutate_plan(agent_session_id, payload),
-                )
             elif agent_session_id and agent_action == "goal":
                 self._write_json(
                     HTTPStatus.OK,

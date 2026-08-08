@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Protocol
 
+from .agent_execution_policy import workspace_scope_is_granted
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations, sqlite_connection
 from .sensitive_content import is_sensitive_mapping_key, redact_sensitive_text
@@ -54,12 +55,13 @@ _DESTRUCTIVE_TEXT = re.compile(
     r"\b(?:drop|truncate)\s+(?:table|database)\b|\bdelete\s+from\b|\bshutdown\b|\breboot\b)"
 )
 _SENSITIVE_TARGET = re.compile(
-    r"(?i)(?:^|[/\\\s])(?:\.env(?:\.[^/\\\s]*)?|\.git-credentials|\.netrc|auth\.json|"
-    r"credentials\.json|id_rsa|id_ed25519|[^/\\\s]+\.(?:pem|key|p12|pfx|sqlite|sqlite3|db))"
-    r"(?:$|[/\\\s])"
+    r"(?i)(?:^|[/\\\s\"'`,;:])(?:\.env(?:\.[^/\\\s\"'`,;:]*)?|"
+    r"\.git-credentials|\.netrc|auth\.json|credentials\.json|id_rsa|"
+    r"id_ed25519|[^/\\\s\"'`,;:]+\.(?:pem|key|p12|pfx|sqlite|sqlite3|db))"
+    r"(?=$|[/\\\s\"'`,;:])"
 )
 _NETWORK_TEXT = re.compile(
-    r"(?i)(?:\ballowNetwork\b|\b(?:curl|wget|ssh|scp|sftp|rsync|ftp|telnet|ncat|nc)\b|https?://)"
+    r"(?i)(?:\b(?:curl|wget|ssh|scp|sftp|rsync|ftp|telnet|ncat|nc)\b|https?://)"
 )
 _IRREVERSIBLE_EFFECTS = frozenset(
     {
@@ -394,6 +396,41 @@ def pending_model_arbitration() -> dict[str, object]:
         "thinkingLevel": APPROVAL_MODEL_THINKING_LEVEL,
         "promptVersion": APPROVAL_MODEL_PROMPT_VERSION,
     }
+def _strict_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes"}
+
+
+def _approval_causal_turn_id(approval: Mapping[str, object]) -> str:
+    causal = approval.get("causalMetadata")
+    if not isinstance(causal, Mapping):
+        return ""
+    return str(causal.get("turnId") or "").strip()[:240]
+
+
+def _approval_arguments(
+    approval: Mapping[str, object],
+    preview: Mapping[str, object],
+) -> Mapping[str, object]:
+    for key in ("actionPayload", "arguments", "args", "toolArguments"):
+        value = preview.get(key)
+        if isinstance(value, Mapping):
+            return value
+    for key in ("arguments", "args", "toolArguments"):
+        value = approval.get(key)
+        if isinstance(value, Mapping):
+            return value
+    return {}
+
+
+def _workspace_scope_granted(session: Mapping[str, object]) -> bool:
+    try:
+        return workspace_scope_is_granted(session)
+    except (TypeError, ValueError):
+        return False
+
+
 
 
 def _model_input(
@@ -418,25 +455,68 @@ def _model_input(
         approval.get("toolId") or approval.get("toolName") or ""
     )[:120]
     operation = str(approval.get("operation") or "")[:120]
+    arguments = _approval_arguments(approval, preview)
+    raw_arguments = json.dumps(
+        arguments,
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
     risk_signals: list[str] = []
-    if _DESTRUCTIVE_TEXT.search(raw_preview):
+    if _DESTRUCTIVE_TEXT.search(raw_preview) or _DESTRUCTIVE_TEXT.search(
+        raw_arguments
+    ):
         risk_signals.append("destructive_effect")
-    if _SENSITIVE_TARGET.search(raw_preview):
+    if _SENSITIVE_TARGET.search(raw_preview) or _SENSITIVE_TARGET.search(
+        raw_arguments
+    ):
         risk_signals.append("sensitive_target")
-    if _NETWORK_TEXT.search(raw_preview):
+    if (
+        _NETWORK_TEXT.search(raw_arguments)
+        or _strict_bool(arguments.get("allowNetwork"))
+    ):
         risk_signals.append("network_effect")
     if (
         (tool, operation) in _IRREVERSIBLE_EFFECTS
         or str(approval.get("riskLevel") or "") == "R3"
     ):
         risk_signals.append("irreversible_effect")
-    if (
-        not session.get("workspaceScopeGranted")
-        and tool.startswith("workspace_")
-    ):
+    scope_granted = _workspace_scope_granted(session)
+    if not scope_granted and tool.startswith("workspace_"):
         risk_signals.append("scope_not_authorized")
+    scope_sha256 = str(
+        session.get("workspaceScopeSha256") or ""
+    ).strip().lower()[:64]
+    base_state = (
+        preview.get("baseState")
+        if isinstance(preview.get("baseState"), Mapping)
+        else {}
+    )
+    preview_scope_sha256 = str(
+        base_state.get("workspaceRootsSha256")
+        or base_state.get("workspaceRootSha256")
+        or ""
+    ).strip().lower()[:64]
+    if (
+        tool.startswith("workspace_")
+        and preview_scope_sha256
+        and scope_sha256
+        and preview_scope_sha256 != scope_sha256
+    ):
+        risk_signals.append("cross_workspace")
     if context.get("contextAvailable") is not True:
         risk_signals.append("insufficient_evidence")
+    risk_signals = list(dict.fromkeys(risk_signals))
+    workspace_scope = {
+        "roots": _bounded_untrusted(
+            list(session.get("workspaceRoots") or [])[:8]
+        ),
+        "granted": scope_granted,
+        "scopeSha256": scope_sha256,
+        "previewScopeSha256": preview_scope_sha256,
+    }
+    tool_call_id = str(approval.get("toolCallId") or "").strip()[:512]
+    turn_id = _approval_causal_turn_id(approval)
     return {
         "schemaVersion": "rag-ime.agent-approval-model-input.v2",
         "promptVersion": APPROVAL_MODEL_PROMPT_VERSION,
@@ -445,28 +525,37 @@ def _model_input(
             dict(item)
             for item in history
         ],
+        "requestIdentity": {
+            "turnId": turn_id,
+            "toolCallId": tool_call_id,
+        },
         "currentApproval": {
             "approvalId": str(approval.get("approvalId") or "")[:200],
             "sessionId": str(approval.get("sessionId") or "")[:200],
             "tool": tool,
             "operation": operation,
+            "turnId": turn_id,
+            "toolCallId": tool_call_id,
             "riskLevel": str(approval.get("riskLevel") or "")[:20],
             "payloadSha256": str(
                 approval.get("payloadSha256") or ""
             )[:64],
+            "arguments": _bounded_untrusted(arguments),
             "preview": _bounded_untrusted(preview),
+            "workspaceScope": workspace_scope,
+            "riskClassification": {
+                "riskLevel": str(approval.get("riskLevel") or "")[:20],
+                "signals": risk_signals,
+            },
         },
         "authority": {
             "executionMode": str(
                 session.get("executionMode") or ""
             )[:40],
-            "workspaceScopeGranted": (
-                session.get("workspaceScopeGranted") is True
-            ),
-            "workspaceScopeSha256": str(
-                session.get("workspaceScopeSha256") or ""
-            )[:64],
-            "riskSignals": list(dict.fromkeys(risk_signals)),
+            "workspaceScopeGranted": scope_granted,
+            "workspaceRoots": workspace_scope["roots"],
+            "workspaceScopeSha256": scope_sha256,
+            "riskSignals": risk_signals,
         },
     }
 

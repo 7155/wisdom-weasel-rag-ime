@@ -108,6 +108,95 @@ def discover_managed_pi_runtime(
         )
 
 
+def snapshot_managed_pi_runtime(
+    app_support: str | Path,
+    *,
+    expected_pi_version: str = "",
+    maximum_attempts: int = 3,
+) -> ManagedPiRuntimeInstallation:
+    """Verify the active immutable runtime without opening its lifecycle lock.
+
+    Production discovery must keep using :func:`discover_managed_pi_runtime` so
+    activation, rollback, and retention share one lifecycle lock.  Read-only
+    evaluation sandboxes may lack permission to create or chmod that lock.  For
+    those callers, verify every manifest-bound file and accept the snapshot only
+    when the atomic pointer has identical bytes before and after verification.
+    """
+
+    if maximum_attempts < 1:
+        raise ManagedPiRuntimeError(
+            "managed Pi read-only snapshot maximum attempts must be positive"
+        )
+    app_root_input = Path(app_support).expanduser()
+    if app_root_input.is_symlink():
+        raise ManagedPiRuntimeError(
+            "managed Pi application support root must not be a symlink"
+        )
+    try:
+        app_root = app_root_input.resolve(strict=True)
+    except OSError as exc:
+        raise ManagedPiRuntimeError(
+            "managed Pi application support root is missing"
+        ) from exc
+    if not app_root.is_dir():
+        raise ManagedPiRuntimeError(
+            "managed Pi application support root must be a real directory"
+        )
+    runtime_input = app_root / "PiRuntime"
+    if runtime_input.is_symlink():
+        raise ManagedPiRuntimeError("managed Pi runtime root must not be a symlink")
+    try:
+        runtime_root = runtime_input.resolve(strict=True)
+    except OSError as exc:
+        raise ManagedPiRuntimeError("managed Pi runtime root is missing") from exc
+    if not runtime_root.is_dir():
+        raise ManagedPiRuntimeError("managed Pi runtime root must be a real directory")
+
+    pointer_path = runtime_root / POINTER_NAME
+    for _attempt in range(maximum_attempts):
+        if not pointer_path.is_file() or pointer_path.is_symlink():
+            raise ManagedPiRuntimeError("managed Pi runtime pointer is missing")
+        pointer_before = _read_limited_bytes(pointer_path)
+        pointer = _parse_json_object(pointer_before, pointer_path)
+        if pointer.get("schemaVersion") != POINTER_SCHEMA_VERSION:
+            raise ManagedPiRuntimeError(
+                "managed Pi runtime pointer schema is unsupported"
+            )
+        version = _safe_version(
+            pointer.get("version"),
+            label="runtime pointer version",
+        )
+        manifest_sha256 = _sha256_text(
+            pointer.get("manifestSha256"),
+            label="runtime manifest digest",
+        )
+        try:
+            installation = _load_installation(
+                runtime_root=runtime_root,
+                runtime_dir=runtime_root / version,
+                expected_manifest_sha256=manifest_sha256,
+                expected_pi_version=expected_pi_version,
+                verify_all_files=True,
+            )
+        except ManagedPiRuntimeError:
+            try:
+                pointer_after_failure = _read_limited_bytes(pointer_path)
+            except ManagedPiRuntimeError:
+                continue
+            if pointer_after_failure != pointer_before:
+                continue
+            raise
+        try:
+            pointer_after = _read_limited_bytes(pointer_path)
+        except ManagedPiRuntimeError:
+            continue
+        if pointer_after == pointer_before:
+            return installation
+    raise ManagedPiRuntimeError(
+        "managed Pi runtime pointer changed during read-only snapshot"
+    )
+
+
 def inspect_managed_pi_runtime(
     app_support: str | Path,
     *,

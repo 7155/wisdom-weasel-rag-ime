@@ -15,7 +15,7 @@ ASSISTANT_CONTROL_TOOL_IDS = (
     "configuration",
     "agents",
     "browser",
-    "agent_plan",
+    "todo",
     "agent_goal",
     "plugins",
     "work_documents",

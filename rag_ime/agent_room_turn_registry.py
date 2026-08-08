@@ -464,10 +464,11 @@ class RoomTurnRegistry:
             return True
         key = (event.session_id, event.turn_id)
         with self.lock:
-            if (
-                key in self.turn_by_session_turn
-                or key in self.cancelled_turn_by_session_turn
-            ):
+            if key in self.cancelled_turn_by_session_turn:
+                return False
+            if self.cancelled_root_by_session.get(event.session_id):
+                return False
+            if key in self.turn_by_session_turn:
                 return True
             if event.session_id in self.pending_turn_by_session:
                 self._buffer_pending_event_locked(key, event)

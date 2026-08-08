@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Braces,
   Check,
-  ChevronRight,
+  ChevronDown,
   Clipboard,
   Database,
   FileText,
@@ -12,7 +12,6 @@ import {
   MessageSquareText,
   PackageOpen,
   Wrench,
-  X,
 } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useControlTransport } from '@/app/control-transport';
@@ -30,6 +29,30 @@ interface DebugStage {
   channel: 'system' | 'tools' | 'messages' | 'wire';
   note?: string;
 }
+
+const RUNTIME_CONTEXT_LABELS: Record<string, string> = {
+  'rag-ime-execution-mode': '执行模式',
+  'rag-ime-memory-recall': '本上下文记忆召回',
+  'rag-ime-work-state': '当前工作状态',
+  'rag-ime-compaction-recovery': '压缩恢复回执',
+  'rag-ime-room-compaction-recovery': 'Room 压缩恢复',
+  'rag-ime-session-context': 'Session 上下文',
+  'rag-ime-workflow': '工作流状态增量',
+  'rag-ime-lifecycle': '生命周期增量',
+  'rag-ime-turn-context': '本轮临时上下文',
+};
+
+const RUNTIME_CONTEXT_ORDER: Record<string, number> = {
+  'rag-ime-execution-mode': 0,
+  'rag-ime-memory-recall': 1,
+  'rag-ime-work-state': 2,
+  'rag-ime-compaction-recovery': 3,
+  'rag-ime-room-compaction-recovery': 4,
+  'rag-ime-session-context': 5,
+  'rag-ime-workflow': 6,
+  'rag-ime-lifecycle': 7,
+  'rag-ime-turn-context': 8,
+};
 
 export function DebugContextInspector({
   sessionId,
@@ -59,8 +82,6 @@ export function DebugContextInspector({
   const stages = useMemo(() => debugStages(response.context), [response.context]);
   const [copiedId, setCopiedId] = useState('');
   const [view, setView] = useState<DebugView>('semantic');
-  const [selectedStageId, setSelectedStageId] = useState('');
-  const selectedStage = stages.find((stage) => stage.id === selectedStageId);
 
   async function copyStage(stage: DebugStage): Promise<void> {
     const rendered = renderDebugValue(stage, view);
@@ -85,8 +106,8 @@ export function DebugContextInspector({
         <SegmentedControl
           aria-label="上下文展示形式"
           items={[
-            { value: 'semantic', label: '模型语义' },
-            { value: 'raw', label: '原始 JSON' },
+            { value: 'semantic', label: '阅读视图' },
+            { value: 'raw', label: '原始数据' },
           ]}
           onValueChange={setView}
           value={view}
@@ -102,60 +123,237 @@ export function DebugContextInspector({
       ) : null}
       {response.available ? <DebugTelemetryStrip telemetry={response.telemetry} /> : null}
       {stages.length ? (
-        <div className="debug-context-inspector__workspace" data-detail-open={Boolean(selectedStage) || undefined}>
+        <div className="debug-context-inspector__workspace">
           <ol className="debug-context-inspector__pipeline" data-view={view} aria-label="模型上下文注入顺序">
             {stages.map((stage, index) => (
-              <li key={stage.id} data-channel={stage.channel}>
-                <button
-                  aria-pressed={selectedStage?.id === stage.id}
-                  onClick={() => setSelectedStageId(stage.id)}
-                  type="button"
-                >
-                  <span className="debug-context-inspector__ordinal">{index + 1}</span>
-                  <DebugStageIcon channel={stage.channel} />
-                  <span className="debug-context-inspector__stage-copy">
-                    <strong>{stage.label}</strong>
-                    <small>{stage.detail}</small>
-                  </span>
-                  <em>{view === 'semantic' ? '模型语义' : stage.channel === 'wire' ? '传输 JSON' : '原始数据'}</em>
-                  <ChevronRight size={14} />
-                </button>
-              </li>
+              <DebugStageDocument
+                copied={copiedId === stage.id}
+                index={index}
+                key={stage.id}
+                onCopy={() => void copyStage(stage)}
+                stage={stage}
+                view={view}
+              />
             ))}
           </ol>
-          {selectedStage ? (
-            <aside className="debug-context-inspector__stage-detail" data-view={view} aria-label={`${selectedStage.label}详情`}>
-              <header>
-                <span>
-                  <small>{selectedStage.channel === 'wire' ? 'Provider 传输' : '本步上下文增量'}</small>
-                  <strong>{selectedStage.label}</strong>
-                  <p>{selectedStage.detail}</p>
-                </span>
-                <div>
-                  <IconButton
-                    icon={copiedId === selectedStage.id ? <Check size={14} /> : <Clipboard size={14} />}
-                    label={copiedId === selectedStage.id ? '已复制' : `复制${selectedStage.label}`}
-                    onClick={() => void copyStage(selectedStage)}
-                    size="small"
-                    tooltip
-                  />
-                  <IconButton
-                    icon={<X size={15} />}
-                    label="关闭上下文详情"
-                    onClick={() => setSelectedStageId('')}
-                    size="small"
-                    tooltip
-                  />
-                </div>
-              </header>
-              {selectedStage.note ? <p className="debug-context-inspector__stage-note">{selectedStage.note}</p> : null}
-              <pre>{renderDebugValue(selectedStage, view)}</pre>
-            </aside>
-          ) : null}
         </div>
       ) : null}
     </section>
   );
+}
+
+function DebugStageDocument({
+  copied,
+  index,
+  onCopy,
+  stage,
+  view,
+}: {
+  copied: boolean;
+  index: number;
+  onCopy: () => void;
+  stage: DebugStage;
+  view: DebugView;
+}) {
+  const [expanded, setExpanded] = useState(stage.channel === 'messages');
+  const contentId = `debug-context-stage-${index + 1}`;
+  return (
+    <li data-channel={stage.channel} data-expanded={expanded || undefined}>
+      <article>
+        <header>
+          <span className="debug-context-inspector__ordinal" aria-hidden="true">{index + 1}</span>
+          <button
+            aria-controls={contentId}
+            aria-expanded={expanded}
+            aria-label={`${expanded ? '收起' : '展开'}${stage.label}`}
+            className="debug-context-inspector__stage-toggle"
+            onClick={() => setExpanded((value) => !value)}
+            type="button"
+          >
+            <span className="debug-context-inspector__stage-icon"><DebugStageIcon channel={stage.channel} /></span>
+            <span className="debug-context-inspector__stage-copy">
+              <span><small>{debugChannelLabel(stage.channel)}</small><strong>{stage.label}</strong></span>
+              <em>{stage.detail}</em>
+            </span>
+            <ChevronDown size={15} />
+          </button>
+          <IconButton
+            icon={copied ? <Check size={14} /> : <Clipboard size={14} />}
+            label={copied ? `已复制${stage.label}` : `复制${stage.label}`}
+            onClick={onCopy}
+            size="small"
+            tooltip
+          />
+        </header>
+        {expanded ? (
+          <div className="debug-context-inspector__stage-body" data-view={view} id={contentId}>
+            {stage.note ? <p className="debug-context-inspector__stage-note">{stage.note}</p> : null}
+            <DebugStageContent stage={stage} view={view} />
+          </div>
+        ) : null}
+      </article>
+    </li>
+  );
+}
+
+function DebugStageContent({ stage, view }: { stage: DebugStage; view: DebugView }) {
+  if (view === 'raw') {
+    return <pre className="debug-context-inspector__raw">{renderDebugValue(stage, view)}</pre>;
+  }
+  if (stage.channel === 'messages' && stage.kind === 'json') {
+    return <DebugMessageList value={stage.value} />;
+  }
+  if (stage.channel === 'tools') {
+    return <DebugToolList value={stage.value} />;
+  }
+  if (stage.channel === 'wire') {
+    return <DebugProviderRequest value={stage.value} />;
+  }
+  if (stage.id === 'system:skills') {
+    return <DebugSkillList value={stage.value} />;
+  }
+  return (
+    <div
+      className="debug-context-inspector__prose"
+      data-current={stage.id === 'messages:current' || undefined}
+    >
+      {renderDebugValue(stage, view)}
+    </div>
+  );
+}
+
+function DebugMessageList({ value }: { value: unknown }) {
+  const messages = Array.isArray(value) ? value : [value];
+  return (
+    <div className="debug-context-inspector__messages">
+      {messages.map((item, index) => {
+        const message = record(item);
+        const role = text(message.role) || 'message';
+        const customType = text(message.customType);
+        return (
+          <article data-role={role} key={`${role}:${customType}:${index}`}>
+            <small>{debugMessageRoleLabel(role, customType)}</small>
+            <div>{semanticContent(message.content ?? item) || '(无文本内容)'}</div>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function DebugToolList({ value }: { value: unknown }) {
+  const container = record(value);
+  const schemas = array(container.schemas ?? value);
+  const activeTools = array(container.activeTools).map(String);
+  const tools = schemas.length ? schemas : activeTools;
+  return (
+    <div className="debug-context-inspector__tools">
+      {tools.map((item, index) => {
+        const schema = record(item);
+        const fn = record(schema.function);
+        const name = typeof item === 'string'
+          ? item
+          : text(schema.name) || text(fn.name) || activeTools[index] || `工具 ${index + 1}`;
+        const description = text(schema.description) || text(fn.description);
+        const parameters = record(schema.parameters ?? fn.parameters);
+        const properties = record(parameters.properties);
+        const required = new Set(array(parameters.required).map(String));
+        return (
+          <section key={`${name}:${index}`}>
+            <header><strong>{name}</strong>{description ? <p>{description}</p> : null}</header>
+            {Object.keys(properties).length ? (
+              <dl>
+                {Object.entries(properties).map(([key, definition]) => {
+                  const field = record(definition);
+                  return (
+                    <div key={key}>
+                      <dt>{key}{required.has(key) ? <b>必填</b> : null}</dt>
+                      <dd>{text(field.type) || 'any'}{text(field.description) ? ` · ${text(field.description)}` : ''}</dd>
+                    </div>
+                  );
+                })}
+              </dl>
+            ) : <small>参数由 Provider 管理，或此工具没有参数。</small>}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function DebugSkillList({ value }: { value: unknown }) {
+  return (
+    <div className="debug-context-inspector__skills">
+      {array(value).map((item, index) => {
+        const skill = record(item);
+        const name = text(skill.name) || `Skill ${index + 1}`;
+        return (
+          <section key={`${name}:${index}`}>
+            <strong>{name}</strong>
+            {text(skill.description) ? <p>{text(skill.description)}</p> : null}
+            {text(skill.filePath) ? <code>{text(skill.filePath)}</code> : null}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function DebugProviderRequest({ value }: { value: unknown }) {
+  const payload = record(value);
+  const controls = ([
+    ['模型', payload.model],
+    ['接口', payload.api],
+    ['流式', payload.stream],
+    ['最大输出', payload.max_tokens ?? payload.max_output_tokens],
+    ['思考强度', payload.reasoning_effort ?? record(payload.reasoning).effort],
+  ] as Array<[string, unknown]>).filter(([, item]) => item !== undefined);
+  const instructions = text(payload.instructions) || text(payload.system);
+  const messages = payload.input ?? payload.messages;
+  const tools = array(payload.tools);
+  const known = new Set([
+    'model', 'api', 'stream', 'max_tokens', 'max_output_tokens', 'reasoning_effort',
+    'reasoning', 'instructions', 'system', 'input', 'messages', 'tools',
+  ]);
+  const remaining = Object.fromEntries(Object.entries(payload).filter(([key]) => !known.has(key)));
+  return (
+    <div className="debug-context-inspector__provider">
+      {controls.length ? (
+        <dl>
+          {controls.map(([label, item]) => <div key={label}><dt>{label}</dt><dd>{scalar(item)}</dd></div>)}
+        </dl>
+      ) : null}
+      {instructions ? (
+        <section><h4>System / Instructions</h4><div className="debug-context-inspector__prose">{instructions}</div></section>
+      ) : null}
+      {messages !== undefined ? (
+        <section><h4>Messages</h4><DebugMessageList value={messages} /></section>
+      ) : null}
+      {tools.length ? (
+        <section><h4>Tools</h4><DebugToolList value={{ schemas: tools }} /></section>
+      ) : null}
+      {Object.keys(remaining).length ? (
+        <section><h4>其他传输参数</h4><pre className="debug-context-inspector__raw">{semanticObject(remaining)}</pre></section>
+      ) : null}
+      {!Object.keys(payload).length ? <p className="debug-context-inspector__empty">本次请求没有可显示的内容</p> : null}
+    </div>
+  );
+}
+
+function debugChannelLabel(channel: DebugStage['channel']): string {
+  if (channel === 'tools') return '工具通道';
+  if (channel === 'wire') return 'Provider 传输';
+  if (channel === 'messages') return '消息上下文';
+  return '系统上下文';
+}
+
+function debugMessageRoleLabel(role: string, customType: string): string {
+  if (customType) return RUNTIME_CONTEXT_LABELS[customType] ?? customType;
+  if (role === 'assistant') return 'Assistant';
+  if (role === 'user') return 'User';
+  if (role === 'tool' || role === 'toolResult') return 'Tool';
+  if (role === 'system' || role === 'developer') return 'System';
+  return role;
 }
 
 function DebugStorage({ storage }: { storage: Record<string, unknown> }) {
@@ -264,9 +462,17 @@ function debugStages(context: Record<string, unknown>): DebugStage[] {
   const windows = array(context.contextWindows);
   const initialMessages = array(record(windows[0]).messages);
   const currentMessageIndex = lastUserMessageIndex(initialMessages);
-  const history = currentMessageIndex >= 0
-    ? initialMessages.filter((_, index) => index !== currentMessageIndex)
-    : initialMessages;
+  const runtimeProjection = currentRuntimeContextStages(
+    initialMessages,
+    currentMessageIndex,
+  );
+  stages.push(...runtimeProjection.stages);
+  const history = initialMessages.filter(
+    (_, index) => (
+      index !== currentMessageIndex
+      && !runtimeProjection.messageIndexes.has(index)
+    ),
+  );
   if (history.length) {
     stages.push({
       id: 'messages:history',
@@ -384,6 +590,52 @@ function lastUserMessageIndex(messages: unknown[]): number {
     if (text(record(messages[index]).role) === 'user') return index;
   }
   return -1;
+}
+
+function currentRuntimeContextStages(
+  messages: unknown[],
+  currentUserIndex: number,
+): { stages: DebugStage[]; messageIndexes: Set<number> } {
+  const messageIndexes = new Set<number>();
+  if (currentUserIndex < 0) return { stages: [], messageIndexes };
+  let start = currentUserIndex;
+  while (start > 0 && text(record(messages[start - 1]).role) !== 'assistant') {
+    start -= 1;
+  }
+  let end = currentUserIndex + 1;
+  while (end < messages.length && text(record(messages[end]).role) !== 'assistant') {
+    end += 1;
+  }
+  const contexts = messages
+    .slice(start, end)
+    .map((value, offset) => ({
+      message: record(value),
+      index: start + offset,
+    }))
+    .filter(({ message }) => Boolean(
+      RUNTIME_CONTEXT_LABELS[text(message.customType)],
+    ))
+    .sort((left, right) => (
+      (RUNTIME_CONTEXT_ORDER[text(left.message.customType)] ?? Number.MAX_SAFE_INTEGER)
+      - (RUNTIME_CONTEXT_ORDER[text(right.message.customType)] ?? Number.MAX_SAFE_INTEGER)
+    ));
+  const stages = contexts.map(({ message, index }) => {
+    messageIndexes.add(index);
+    const customType = text(message.customType);
+    const result = stage(
+      `messages:runtime:${index}`,
+      RUNTIME_CONTEXT_LABELS[customType] ?? customType,
+      message.content,
+      'messages',
+    );
+    if (customType === 'rag-ime-execution-mode') {
+      result.note = '执行模式是工具结构通道之后的消息增量；模式未变化时不会每轮重复追加。';
+    } else if (customType === 'rag-ime-memory-recall') {
+      result.note = '这里只显示实际召回证据；当前任务、工作状态和最近对话不会混入 RAG 区块。';
+    }
+    return result;
+  });
+  return { stages, messageIndexes };
 }
 
 function DebugStageIcon({ channel }: { channel: DebugStage['channel'] }): ReactNode {

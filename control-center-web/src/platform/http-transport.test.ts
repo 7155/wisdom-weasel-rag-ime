@@ -17,6 +17,14 @@ describe('HttpControlTransport', () => {
     expect(transport.browserSnapshotImageUrl('snap_remote-1')).toBe(
       'https://gateway.example.test/api/browser/snapshots/snap_remote-1/image',
     );
+    expect(transport.agentMediaContentUrl(
+      '/api/agent/media/media_remote_fixture_01/content?roomId=room:remote-1',
+    )).toBe(
+      'https://gateway.example.test/api/agent/media/media_remote_fixture_01/content?roomId=room%3Aremote-1',
+    );
+    expect(() => transport.agentMediaContentUrl(
+      'https://evil.example.test/api/agent/media/media_remote_fixture_01/content?roomId=room:remote-1',
+    )).toThrow(/managed receipt path/);
     expect(() => transport.browserSnapshotImageUrl('../private')).toThrow(/bounded snapshotId/);
   });
 

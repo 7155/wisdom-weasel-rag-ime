@@ -5,7 +5,9 @@ import {
   PackageOpen,
 } from 'lucide-react';
 import { useState } from 'react';
+import { useOptionalControlTransport } from '@/app/control-transport';
 import { IconButton } from '@/components/primitives';
+import { managedAgentMediaContentPath } from '@/platform/transport';
 import { AgentFileBlock } from '../file-preview/AgentFileBlock';
 import { stickerAsset } from './PersonaAvatar';
 import { BlockedMedia } from './StructuredRenderers';
@@ -65,10 +67,23 @@ export function CitationBlockRenderer({ block }: AgentBlockRenderProps) {
 }
 
 export function ImageBlockRenderer({ block }: AgentBlockRenderProps) {
+  const transport = useOptionalControlTransport();
+  const [failedSource, setFailedSource] = useState('');
   const data = block.data;
-  const source = safeManagedImageReceipt(text(data.receiptUrl));
-  if (!source) {
-    return <BlockedMedia icon={<ImageIcon size={16} />} label="图片回执不可用" />;
+  const receiptPath = managedAgentMediaContentPath(text(data.receiptUrl));
+  const source = receiptPath
+    ? transport?.agentMediaContentUrl?.(receiptPath) ?? receiptPath
+    : '';
+  if (!source || failedSource === source) {
+    return (
+      <BlockedMedia
+        detail={source
+          ? '附件回执存在，但当前无法读取。请重试；若仍失败，请重新上传。'
+          : '这条消息没有可验证的附件回执。请重新上传图片后发送。'}
+        icon={<ImageIcon size={16} />}
+        label={source ? '图片无法读取' : '图片回执不可用'}
+      />
+    );
   }
   const width = imageDimension(data.width ?? data.pixelWidth);
   const height = imageDimension(data.height ?? data.pixelHeight);
@@ -81,6 +96,7 @@ export function ImageBlockRenderer({ block }: AgentBlockRenderProps) {
         decoding="async"
         width={width || undefined}
         height={height || undefined}
+        onError={() => setFailedSource(source)}
       />
       {text(data.caption) ? <figcaption>{text(data.caption)}</figcaption> : null}
     </figure>
@@ -100,7 +116,13 @@ export function AudioBlockRenderer({ block }: AgentBlockRenderProps) {
   const [unplayable, setUnplayable] = useState(false);
   const source = safeMediaSource(text(data.receiptUrl ?? data.src ?? data.url), 'audio');
   if (!source) {
-    return <BlockedMedia icon={<FileAudio size={16} />} label="音频回执不可用" />;
+    return (
+      <BlockedMedia
+        detail="这条消息没有可验证的音频回执。请重新上传音频后发送。"
+        icon={<FileAudio size={16} />}
+        label="音频回执不可用"
+      />
+    );
   }
   const name = text(data.name) || '音频附件';
   return (
@@ -126,7 +148,13 @@ export function StickerBlockRenderer({ block }: AgentBlockRenderProps) {
   const data = block.data;
   const source = stickerAsset(text(data.assetId ?? data.stickerId));
   if (!source) {
-    return <BlockedMedia icon={<ImageIcon size={16} />} label="贴纸资产不可用" />;
+    return (
+      <BlockedMedia
+        detail="贴纸资源已失效。请从当前 Persona 的贴纸列表重新选择。"
+        icon={<ImageIcon size={16} />}
+        label="贴纸资产不可用"
+      />
+    );
   }
   return (
     <img
@@ -149,25 +177,6 @@ export function UnknownBlockRenderer({ block }: AgentBlockRenderProps) {
   );
 }
 
-function safeManagedImageReceipt(value: string): string | null {
-  if (!value.startsWith('/api/agent/media/')) return null;
-  try {
-    const url = new URL(value, 'http://rag-ime.local');
-    if (!/^\/api\/agent\/media\/[^/]+\/content$/u.test(url.pathname) || url.hash) return null;
-    const sessionIds = url.searchParams.getAll('sessionId');
-    const roomIds = url.searchParams.getAll('roomId');
-    const ownerValues = sessionIds.length === 1 && roomIds.length === 0
-      ? { key: 'sessionId', values: sessionIds }
-      : roomIds.length === 1 && sessionIds.length === 0
-        ? { key: 'roomId', values: roomIds }
-        : undefined;
-    if (!ownerValues || !/^[A-Za-z0-9._:-]{1,240}$/u.test(ownerValues.values[0] ?? '')) return null;
-    if ([...url.searchParams.keys()].some((key) => key !== ownerValues.key)) return null;
-    return `${url.pathname}?${ownerValues.key}=${encodeURIComponent(ownerValues.values[0]!)}`;
-  } catch {
-    return null;
-  }
-}
 
 function safeLink(value: string | undefined): string | undefined {
   if (!value) return undefined;

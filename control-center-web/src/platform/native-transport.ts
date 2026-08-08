@@ -23,6 +23,7 @@ import {
   assertBrowserSnapshotId,
   assertControlRequest,
   assertControlSubscription,
+  managedAgentMediaContentPath,
   controlRequestWirePayload,
   controlSubscriptionWirePayload,
   type AgentImagePasteOptions,
@@ -142,6 +143,12 @@ export class NativeControlTransport implements ControlTransport {
   browserSnapshotImageUrl(snapshotId: string): string {
     assertBrowserSnapshotId(snapshotId);
     return `http://127.0.0.1:8766/api/browser/snapshots/${encodeURIComponent(snapshotId)}/image`;
+  }
+
+  agentMediaContentUrl(receiptPath: string): string {
+    const managedPath = managedAgentMediaContentPath(receiptPath);
+    if (!managedPath) throw new TypeError('Agent media content requires a managed receipt path');
+    return new URL(managedPath, 'http://127.0.0.1:8766').toString();
   }
 
   subscribe<Event = unknown>(

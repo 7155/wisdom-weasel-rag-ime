@@ -44,7 +44,7 @@ describe('AgentPaneResizer', () => {
       </main>,
     );
     const workspace = container.querySelector<HTMLElement>('.agent-feature')!;
-    const separator = screen.getByRole('separator', { name: '调整状态面板宽度' });
+    const separator = screen.getByRole('separator', { name: '调整任务中心宽度' });
 
     fireEvent.keyDown(separator, { key: 'ArrowLeft', shiftKey: true });
     expect(workspace.style.getPropertyValue('--agent-status-width')).toBe('344px');

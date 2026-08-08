@@ -1,0 +1,88 @@
+{
+  "snapshot": {
+    "roomId": "room:legacy-version-replay",
+    "lastSequence": 2,
+    "snapshotHash": "sha256:a68a5b5a5c11565c2a5ee877ddef5fb18853535d2e6cff3c201f62b9b8c0f17f",
+    "roots": [
+      {
+        "schemaVersion": "wisdom-weasel.room-root-execution.v3",
+        "rootId": "root:legacy-version-replay",
+        "roomId": "room:legacy-version-replay",
+        "generation": 0,
+        "state": "running",
+        "facilitatorParticipantId": "participant:legacy-facilitator",
+        "reporterParticipantId": null,
+        "reporterSelectionReceiptId": null,
+        "requirementAnchorRef": "requirement-anchor:legacy@sha256:test",
+        "createdByActorRef": "user:legacy",
+        "terminalReceiptId": null,
+        "activeProfileRef": null,
+        "budgetPolicyRef": "room-budget:legacy-v1",
+        "independentReviewRequired": true,
+        "createdAtMs": 100
+      }
+    ],
+    "tasks": [],
+    "taskUpdatedAtMsById": {},
+    "dispatches": [],
+    "posts": [],
+    "sessions": [],
+    "receipts": []
+  },
+  "replayEvents": [
+    {
+      "schemaVersion": "wisdom-weasel.room-event-envelope.v2",
+      "entityKind": "root",
+      "entityId": "root:legacy-version-replay",
+      "eventKind": "state_changed",
+      "sequence": 1,
+      "occurredAtMs": 110,
+      "payload": {
+        "root": {
+          "schemaVersion": "wisdom-weasel.room-root-execution.v3",
+          "rootId": "root:legacy-version-replay",
+          "roomId": "room:legacy-version-replay",
+          "generation": 0,
+          "state": "running",
+          "facilitatorParticipantId": "participant:legacy-facilitator",
+          "reporterParticipantId": null,
+          "reporterSelectionReceiptId": null,
+          "requirementAnchorRef": "requirement-anchor:legacy@sha256:test",
+          "createdByActorRef": "user:legacy",
+          "terminalReceiptId": null,
+          "activeProfileRef": null,
+          "budgetPolicyRef": "room-budget:legacy-v1",
+          "independentReviewRequired": true,
+          "createdAtMs": 100
+        }
+      }
+    },
+    {
+      "schemaVersion": "wisdom-weasel.room-event-envelope.v2",
+      "entityKind": "root",
+      "entityId": "root:legacy-version-replay",
+      "eventKind": "state_changed",
+      "sequence": 2,
+      "occurredAtMs": 200,
+      "payload": {
+        "root": {
+          "schemaVersion": "wisdom-weasel.room-root-execution.v3",
+          "rootId": "root:legacy-version-replay",
+          "roomId": "room:legacy-version-replay",
+          "generation": 0,
+          "state": "running",
+          "facilitatorParticipantId": "participant:legacy-facilitator",
+          "reporterParticipantId": null,
+          "reporterSelectionReceiptId": null,
+          "requirementAnchorRef": "requirement-anchor:legacy@sha256:test",
+          "createdByActorRef": "user:legacy",
+          "terminalReceiptId": null,
+          "activeProfileRef": null,
+          "budgetPolicyRef": "room-budget:legacy-v1",
+          "independentReviewRequired": true,
+          "createdAtMs": 100
+        }
+      }
+    }
+  ]
+}

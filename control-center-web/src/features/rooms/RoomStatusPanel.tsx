@@ -11,7 +11,6 @@ import {
   Paperclip,
   PanelRightClose,
   Radar,
-  ShieldCheck,
   TriangleAlert,
   type LucideIcon,
 } from 'lucide-react';
@@ -25,11 +24,11 @@ import type {
   RoomTurnProjection,
 } from '@/contracts/room-reducer';
 import type { RoomKernelProjection, RootProjection } from '@/contracts/room-kernel-reducer';
-import type { RoomTaskV3 } from '@/contracts/generated/room-task.v3';
+import type { ReviewFinding, RoomTaskV3 } from '@/contracts/generated/room-task.v3';
 import type { RoomParticipantPublicProgressProjection } from '@/contracts/room-reducer';
 import type { RoomSummary, RoomWorkItem } from './room-types';
 import { useAgentLiveStore } from '../agent/state/live-store';
-import { ROOM_PUBLIC_PROGRESS_KIND_LABELS, roomCollaborationRoleLabel, roomParticipantPublicProgressSummary } from './room-copy';
+import { ROOM_PUBLIC_PROGRESS_KIND_LABELS, roomCollaborationRoleDescription, roomCollaborationRoleLabel, roomParticipantPublicProgressSummary } from './room-copy';
 import { roomActivityNeedsSessionAction } from './runtime/room-execution-lanes';
 import { roomProjection, useRoomLiveStore, type RoomKernelSyncProjection } from './state/live-store';
 import { publicToolName } from '../agent/tool-presentation';
@@ -68,16 +67,21 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
   const participantProgress = selectRoomParticipantPublicProgress(projection);
   const currentRoot = kernelProjection
     ? Object.values(kernelProjection.rootsById).sort((left, right) => (
-      Math.max(right.updatedAtMs, right.createdAtMs)
-        - Math.max(left.updatedAtMs, left.createdAtMs)
+      Math.max(right.updatedAtMs ?? 0, right.createdAtMs ?? 0)
+        - Math.max(left.updatedAtMs ?? 0, left.createdAtMs ?? 0)
       || left.rootId.localeCompare(right.rootId)
     ))[0]
     : undefined;
   const currentRootTasks = currentRoot && kernelProjection
-    ? Object.values(kernelProjection.tasksById).filter((task) => task.rootId === currentRoot.rootId)
+    ? Object.values(kernelProjection.tasksById).filter((task) => (
+      task.rootId === currentRoot.rootId && task.taskKind !== 'report'
+    ))
     : [];
   const currentRootDispatches = currentRoot && kernelProjection
-    ? Object.values(kernelProjection.dispatchesById).filter((dispatch) => dispatch.rootId === currentRoot.rootId)
+    ? Object.values(kernelProjection.dispatchesById).filter((dispatch) => (
+      dispatch.rootId === currentRoot.rootId
+      && kernelProjection.tasksById[dispatch.taskId]?.taskKind !== 'report'
+    ))
     : [];
   const latestFinalPost = currentRoot && roomRootIsTerminal(currentRoot) && kernelProjection
     ? kernelProjection.postOrder
@@ -136,6 +140,22 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
             tasks={currentRootTasks}
           />
         ) : null}
+        {reviewTasks.length ? (
+          <RoomStatusSection
+            count={reviewTasks.reduce((count, task) => count + (task.reviewFindings?.length ?? 0), 0)}
+            defaultOpen={reviewTasks.some((task) => (
+              task.reviewState !== 'accepted'
+              || (task.reviewFindings ?? []).some((finding) => (
+                finding.gateEffect === 'blocking'
+                && ['open', 'contested', 'escalated'].includes(finding.state)
+              ))
+            ))}
+            icon={Radar}
+            title="独立复核"
+          >
+            <RoomReviewLedger room={room} tasks={reviewTasks} />
+          </RoomStatusSection>
+        ) : null}
         {latestFinalPost ? <RoomFinalPublicReply post={latestFinalPost} room={room} /> : null}
         <RoomStatusSection count={turn ? 1 : 0} icon={ListChecks} title="当前回合">
           {turn ? (
@@ -172,17 +192,10 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
             : <RoomStatusEmpty>任务开始后，这里会显示谁在做、谁会一起检查</RoomStatusEmpty>}
         </RoomStatusSection>
 
-        <RoomStatusSection count={3} defaultOpen={false} icon={ShieldCheck} title="协作规则">
-          <div className="agent-status-files">
-            <RoomStatusRow detail="普通消息、点名和询问不会悄悄改变由谁一起检查结果" icon={ShieldCheck} title="一起检查的人始终明确" />
-            <RoomStatusRow detail="只有伙伴明确接手后，负责这部分的人才会改变" icon={GitBranch} title="交接必须被接受" />
-            <RoomStatusRow detail="协作次数和返修次数都有上限，超出后会停下来请你决定" icon={ListChecks} title="不会无限循环" />
-          </div>
-        </RoomStatusSection>
 
         <RoomStatusSection
           count={activityGroups.length}
-          defaultOpen={activities.some((activity) => ['running', 'waiting', 'failed'].includes(roomActivityStatus(activity)))}
+          defaultOpen={activities.some((activity) => ['running', 'waiting', 'failed', 'aborted'].includes(roomActivityStatus(activity)))}
           icon={GitBranch}
           title="关键步骤"
         >
@@ -303,6 +316,7 @@ const ROOM_STATUS_PARTICIPANT_STATE_LABELS: Record<
   waiting: '等待中',
   completed: '已完成',
   failed: '需要关注',
+  aborted: '已停止',
   idle: '已加入',
 };
 
@@ -387,6 +401,123 @@ function RoomPhaseContinuity({
   </section>;
 }
 
+const ROOM_REVIEW_STATE_LABELS: Record<RoomTaskV3['reviewState'], string> = {
+  not_required: '无需复核',
+  required: '等待复核',
+  in_review: '复核中',
+  accepted: '已通过',
+  accepted_with_notes: '有建议，通过',
+  changes_requested: '需要修正',
+  disputed: '存在申诉',
+  escalated: '已升级',
+  stale: '结果已过期',
+};
+
+const ROOM_FINDING_STATE_LABELS: Record<ReviewFinding['state'], string> = {
+  open: '待处理',
+  resolved: '已修正',
+  dismissed: '已驳回',
+  accepted_risk: '已接受风险',
+  contested: '申诉中',
+  escalated: '已升级',
+};
+
+function RoomReviewLedger({
+  room,
+  tasks,
+}: {
+  room?: RoomSummary;
+  tasks: RoomTaskV3[];
+}) {
+  return <div className="room-review-ledger">
+    {tasks.map((task) => {
+      const reviewer = room?.participants.find((participant) => (
+        participant.id === task.currentOwnerParticipantId
+      ))?.displayName ?? '独立复核伙伴';
+      const findings = task.reviewFindings ?? [];
+      return <article
+        className="room-review-ledger__task"
+        data-state={task.reviewState}
+        key={task.taskId}
+      >
+        <header>
+          <span>
+            <strong>{reviewer}</strong>
+            <small>第 {task.reviewRound ?? 1} 轮 · 核对 {task.reviewOfTaskIds.length} 项结果</small>
+          </span>
+          <em>{roomReviewStateLabel(task)}</em>
+        </header>
+        {findings.length ? (
+          <div className="room-review-ledger__findings">
+            {findings.map((finding) => (
+              <RoomReviewFinding finding={finding} key={finding.findingId} />
+            ))}
+          </div>
+        ) : (
+          <p className="room-review-ledger__empty">
+            {task.reviewState === 'changes_requested' && task.state === 'active'
+              ? '负责人正在按复核意见返修，已有发现与回应继续保留。'
+              : task.reviewState === 'in_review' && (task.reviewRound ?? 1) > 1
+                ? '复核伙伴正在重新检查返修后的结果。'
+                : task.reviewState === 'accepted'
+                  ? '本轮没有需要记录的问题。'
+                  : '复核伙伴正在检查已集成结果。'}
+          </p>
+        )}
+      </article>;
+    })}
+  </div>;
+}
+
+function roomReviewStateLabel(task: RoomTaskV3): string {
+  if (task.reviewState === 'changes_requested' && task.state === 'active') return '返修中';
+  if (task.reviewState === 'in_review' && (task.reviewRound ?? 1) > 1) return '重新复核';
+  return ROOM_REVIEW_STATE_LABELS[task.reviewState];
+}
+
+function RoomReviewFinding({ finding }: { finding: ReviewFinding }) {
+  const criterionId = text(finding.scope.criterionId);
+  const invariantId = text(finding.scope.invariantId);
+  const scope = criterionId
+    ? `验收项 ${criterionId}`
+    : invariantId
+      ? `系统约束 ${invariantId}`
+      : '整体结果';
+  return <article
+    className="room-review-finding"
+    data-effect={finding.gateEffect}
+    data-state={finding.state}
+  >
+    <header>
+      <span>{finding.gateEffect === 'blocking' ? '阻断' : '建议'}</span>
+      <strong>{finding.findingId}</strong>
+      <i>{ROOM_FINDING_STATE_LABELS[finding.state]}</i>
+    </header>
+    <p>{finding.observation}</p>
+    <dl>
+      <div><dt>范围</dt><dd>{scope}</dd></div>
+      <div><dt>应该</dt><dd>{finding.expected}</dd></div>
+      <div><dt>影响</dt><dd>{finding.userImpact}</dd></div>
+    </dl>
+    {finding.dispositionRationale ? (
+      <p className="room-review-finding__disposition">
+        <strong>处理说明</strong>{finding.dispositionRationale}
+      </p>
+    ) : null}
+    {finding.response ? (
+      <p className="room-review-finding__response" data-action={finding.response.action}>
+        <strong>{finding.response.action === 'fixed' ? '修正回应' : '申诉回应'}</strong>
+        {finding.response.rationale}
+      </p>
+    ) : null}
+    <details>
+      <summary>查看复现与证据</summary>
+      <ol>{finding.reproduction.map((step, index) => <li key={`${finding.findingId}:step:${index}`}>{step}</li>)}</ol>
+      <ul>{finding.evidenceRefs.map((ref) => <li key={ref}><code>{ref}</code></li>)}</ul>
+    </details>
+  </article>;
+}
+
 function RoomFinalPublicReply({
   post,
   room,
@@ -460,7 +591,7 @@ function RoomParticipantPublicLanes({
   }
 
   return <div
-    aria-label="伙伴公开思路与工作进度"
+    aria-label="伙伴自述与运行记录"
     aria-live="polite"
     aria-relevant="additions text"
     className="room-status-public-lanes"
@@ -501,13 +632,17 @@ function RoomParticipantPublicLanes({
         || work.offeredToParticipantId === participant?.id
       ));
       const state = latestUpdate?.status ?? (participant?.status === 'active' ? 'idle' : 'waiting');
-      const role = participant?.collaborationRole === 'coordinator'
-        ? '同时帮大家对齐进度'
-        : participant
-          ? roomCollaborationRoleLabel(participant.collaborationRole)
-          : '角色信息同步中';
+      const role = participant
+        ? roomCollaborationRoleLabel(participant.collaborationRole)
+        : '角色信息同步中';
       const hasPublicWork = ownedWork.length > 0 || latestUpdate !== undefined;
-      const roleSummary = `${role} · ${hasPublicWork ? '完成自己的部分' : '等待自己的部分开始'}`;
+      const roleSummary = participant
+        ? `${role} · ${hasPublicWork
+          ? roomCollaborationRoleDescription(participant.collaborationRole)
+          : participant.collaborationRole === 'reviewer'
+            ? '等待整合完成后开始'
+            : '等待本角色分工'}`
+        : role;
       return <article
         className="room-status-public-lane"
         data-participant-id={participant?.id ?? participantId}
@@ -543,7 +678,7 @@ function RoomParticipantPublicLanes({
               </time>
             </header>
             <p>{roomParticipantPublicProgressSummary(update)}</p>
-          </div>) : <p>等待公开状态、思路摘要或工具进度。</p>}
+          </div>) : <p>等待工作摘要、状态或工具进度。</p>}
         </div>
       </article>;
     })}
@@ -687,7 +822,7 @@ function RoomTurnIcon({ status }: { status: RoomProjectedStatus }) {
 
 function RoomActivityIcon({ status }: { status: RoomActivityProjection['status'] }) {
   if (status === 'running') return <LoaderCircle size={14} />;
-  if (status === 'waiting') return <CircleDashed size={14} />;
+  if (status === 'waiting' || status === 'aborted') return <CircleDashed size={14} />;
   if (status === 'failed') return <TriangleAlert size={14} />;
   return <Check size={14} />;
 }
@@ -744,10 +879,18 @@ function roomStatusActivityPresentation(
       text(activity.payload.toolName),
       text(activity.payload.displayName),
     );
+    const status = roomActivityStatus(activity);
+    const stateLabel = {
+      running: '正在处理',
+      waiting: '等待处理',
+      failed: '未完成',
+      aborted: '已停止',
+      completed: '已返回',
+    }[status];
     return {
       title: tool,
       detail: summary === '协作进度已经更新' || summary === tool
-        ? `${tool}${roomActivityStatus(activity) === 'completed' ? '已返回' : '正在处理'}`
+        ? `${tool}${stateLabel}`
         : summary,
     };
   }
@@ -769,6 +912,9 @@ function roomStatusActivityPresentation(
 function roomActivityStatus(
   activity: RoomActivityProjection,
 ): RoomActivityProjection['status'] {
+  if (['completed', 'failed', 'aborted'].includes(activity.status)) {
+    return activity.status;
+  }
   const automatic = activity.payload.automatic === true
     || text(activity.payload.decisionMode) === 'model'
     || text(activity.payload.mode) === 'model';
@@ -788,6 +934,7 @@ function roomActivityStatusLabel(status: RoomActivityProjection['status']): stri
     running: '进行中',
     waiting: '等待处理',
     failed: '未完成',
+    aborted: '已停止',
     completed: '完成',
   }[status];
 }

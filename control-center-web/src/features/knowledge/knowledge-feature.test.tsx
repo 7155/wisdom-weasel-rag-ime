@@ -44,6 +44,7 @@ describe('document knowledge library', () => {
     await user.click(screen.getByRole('button', { name: '检索' }));
     expect(await screen.findByRole('option', { name: /Tool 注册/ })).toBeInTheDocument();
     expect(screen.getByText('排名分融合关键词、向量与已就绪图谱的候选名次，只用于排列召回片段，不代表答案正确率。')).toBeInTheDocument();
+    expect(screen.getByText('图谱 ×0.7')).toBeInTheDocument();
     expect(screen.getByText('92 / 100（非正确率）')).toBeInTheDocument();
     expect(screen.getByText('混合检索 · 关键词候选第 1 · 向量候选第 2 · 图谱候选第 1 · 关联 Tool、Knowledge Worker')).toBeInTheDocument();
     expect(screen.getByText('Tool → mentions → 文档片段')).toBeInTheDocument();
@@ -107,9 +108,15 @@ describe('document knowledge library', () => {
     const denseWeight = screen.getByRole('spinbutton', { name: 'Dense 权重' });
     await user.clear(denseWeight);
     await user.type(denseWeight, '1.5');
+    const graphSwitch = screen.getByRole('switch', { name: '启用图谱增强' });
+    expect(graphSwitch).toBeChecked();
+    await user.click(graphSwitch);
     await user.click(screen.getByRole('button', { name: '保存检索设置' }));
     await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'knowledgeBases.update').at(-1)?.request.body).toMatchObject({
-      retrievalConfig: { mode: 'hybrid', topK: 10, threshold: .2, lexicalWeight: 1, denseWeight: 1.5, rrfK: 60, candidateMultiplier: 4 },
+      retrievalConfig: {
+        mode: 'hybrid', topK: 10, threshold: .2, lexicalWeight: 1, denseWeight: 1.5,
+        graphEnabled: false, graphWeight: .7, rrfK: 60, candidateMultiplier: 4,
+      },
       expectedRevision: 8,
     }));
     expect(screen.getByDisplayValue('local-hash:96:v1')).toBeDisabled();
@@ -123,6 +130,59 @@ describe('document knowledge library', () => {
       previewToken: 'preview-reindex', payloadSha256: 'sha256:reindex', expectedRevision: 8, confirmText: 'REBUILD',
     }));
     await waitFor(() => expect(screen.getByRole('tab', { name: '处理记录' })).toHaveAttribute('data-state', 'active'));
+  });
+
+  it('probes, previews, approves, and rolls back a global embedding profile without sending a secret', async () => {
+    const transport = createTransport();
+    const user = userEvent.setup();
+    renderKnowledge(transport, '/knowledge?tab=settings');
+
+    expect(await screen.findByRole('region', { name: 'Embedding 与索引' })).toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: 'Embedding Provider' }));
+    await user.click(await screen.findByRole('option', { name: 'OpenAI-compatible Embedding' }));
+    await user.type(screen.getByRole('textbox', { name: 'Embedding 模型' }), 'bge-m3');
+    await user.type(screen.getByRole('textbox', { name: '兼容 API 地址' }), 'https://embedding.example.test/v1');
+    const dimensions = screen.getByRole('spinbutton', { name: '向量维度' });
+    await user.clear(dimensions);
+    await user.type(dimensions, '1024');
+    await user.type(screen.getByRole('textbox', { name: '密钥环境变量名' }), 'PAW_EMBEDDING_API_KEY');
+    await user.click(screen.getByRole('button', { name: '测试候选模型' }));
+
+    expect(await screen.findByText('Probe 已通过')).toBeInTheDocument();
+    const probe = request(transport, 'knowledgeEmbedding.probe');
+    expect(probe?.body).toMatchObject({ profile: {
+      provider: 'openai-compatible', model: 'bge-m3', baseUrl: 'https://embedding.example.test/v1',
+      dimensions: 1024, secretReference: 'PAW_EMBEDDING_API_KEY', denseBackend: 'sqlite-exact',
+    } });
+    expect(JSON.stringify(probe?.body)).not.toContain('secret-value');
+
+    await user.click(screen.getByRole('button', { name: '查看影响' }));
+    expect(await screen.findByText('影响 1 个知识库、1 个文档、42 个片段')).toBeInTheDocument();
+    expect(request(transport, 'knowledgeEmbedding.impact')).toBeDefined();
+    expect(request(transport, 'configuration.settings.preview')?.body).toMatchObject({ expectedRuntimeRevision: 12 });
+
+    await user.click(screen.getByRole('button', { name: '确认这些更改' }));
+    await user.click(screen.getByRole('checkbox', { name: '我确认只执行上方列出的更改' }));
+    await user.click(screen.getByRole('button', { name: '确认执行' }));
+    await waitFor(() => expect(request(transport, 'configuration.settings.apply')?.body).toMatchObject({
+      expectedRuntimeRevision: 12,
+      previewToken: 'preview-embedding-settings',
+      payloadSha256: 'sha256:embedding-settings',
+      confirmText: 'apply',
+      changes: {
+        'knowledgeLibrary.embedding.provider': 'openai-compatible',
+        'knowledgeLibrary.embedding.model': 'bge-m3',
+        'knowledgeLibrary.embedding.secretReference': 'PAW_EMBEDDING_API_KEY',
+      },
+    }));
+    expect(await screen.findByText('这次更改已安全记录')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '撤销这次更改' }));
+    await waitFor(() => expect(request(transport, 'configuration.settings.rollback')?.body).toEqual({
+      receiptId: 'receipt-embedding-settings',
+      rollbackToken: 'rollback-embedding-settings',
+      payloadSha256: 'sha256:embedding-settings',
+      confirmText: 'rollback',
+    }));
   });
 
   it('retries a failed document and confirms deletion without leaking storage paths', async () => {
@@ -428,6 +488,7 @@ function renderKnowledge(transport: MockControlTransport, initialEntry = '/knowl
 function createTransport(options: { activeJob?: boolean; emptyGraph?: boolean; pagedDetail?: boolean; pollingGraph?: boolean } = {}): MockControlTransport {
   let graphRequestCount = 0;
   return new MockControlTransport({
+    capabilities: { features: { managementWorkContract: true, configurationSettingsWorkContract: true } },
     knowledgeAsset: (input) => ({ ...input, mimeType: 'image/png', byteSize: 3, sha256: input.assetId, blob: new Blob(['png'], { type: 'image/png' }) }),
     knowledgeDocumentSource: (input) => ({ ...input, mimeType: 'application/pdf', byteSize: 3, sha256: 'b'.repeat(64), blob: new Blob(['pdf'], { type: 'application/pdf' }) }),
     knowledgeImportReceipts: [{
@@ -441,6 +502,41 @@ function createTransport(options: { activeJob?: boolean; emptyGraph?: boolean; p
       'knowledgeBases.jobs.list': { items: [{ id: 'job-1', fileId: 'file-runtime', fileName: 'runtime.pdf', kind: 'reindex', parserMode: 'builtin', status: options.activeJob ? 'running' : 'succeeded', stage: options.activeJob ? 'indexing' : 'ready', progress: options.activeJob ? .8 : 1, cancellable: options.activeJob, revision: 3, createdAtMs: Date.now() - 2_000, startedAtMs: Date.now() - 1_500, finishedAtMs: options.activeJob ? 0 : Date.now() - 500, updatedAtMs: Date.now() - 500 }] },
       'knowledgeWorker.health': { ok: true, status: 'ready', dense: { available: true, degraded: false, kind: 'sqlite-vector-projection', fingerprint: 'local-hash:96:v1', vectorCount: 42 } },
       'knowledgeParsers.list': { items: [{ id: 'mineru_local_http', enabled: true, ready: true, status: 'ready' }] },
+      'knowledgeEmbedding.profile': {
+        ok: true,
+        profile: { source: 'settings', provider: 'local-hash', model: 'deterministic-term-vector-v1', baseUrl: '', dimensions: 96, secretReference: '', queryPrefix: '', documentPrefix: '', denseBackend: 'sqlite-exact', secretAvailable: false, profileSha256: 'profile-current', secretsVisible: false },
+        phase: 'active',
+        runtime: { provider: { provider: 'local-hash', model: 'deterministic-term-vector-v1' }, fingerprint: 'local-hash:96:v1', dimensions: 96, vectorCount: 42, chunkCount: 42, coverage: 1, available: true, degraded: true, reason: 'local baseline' },
+        secretsVisible: false,
+      },
+      'knowledgeEmbedding.probe': (request: ControlRequest) => {
+        const profile = (request.body as unknown as { profile: Record<string, unknown> }).profile;
+        return { ok: true, ready: true, profileSha256: 'profile-candidate', provider: profile.provider, model: profile.model, fingerprint: 'openai-compatible:bge-m3:test', dimensions: profile.dimensions, semantic: true, latencyMs: 12.5, secretsVisible: false };
+      },
+      'knowledgeEmbedding.impact': (request: ControlRequest) => {
+        const candidate = (request.body as unknown as { profile: Record<string, unknown> }).profile;
+        return {
+          ok: true, candidate,
+          probe: { ready: true, profileSha256: 'profile-candidate', provider: candidate.provider, model: candidate.model, fingerprint: 'openai-compatible:bge-m3:test', dimensions: candidate.dimensions, semantic: true, latencyMs: 12.5, secretsVisible: false },
+          currentProfileSha256: 'profile-current',
+          configurationChanges: Object.fromEntries(Object.entries(candidate).map(([key, value]) => [`knowledgeLibrary.embedding.${key}`, value])),
+          requiresWorkerRestart: true, requiresRebuild: true,
+          affectedBases: [{ kbId: 'kb-runtime', name: 'Agent Runtime 资料', documentCount: 1, chunkCount: 42 }],
+          affectedBaseCount: 1, affectedDocumentCount: 1, affectedChunkCount: 42,
+          approvalRequiredForApply: true, secretsVisible: false,
+        };
+      },
+      'configuration.settings': { ok: true, runtimeRevision: 12, settings: {} },
+      'configuration.settings.preview': {
+        ok: true, pathId: 'configuration.settings.apply', previewToken: 'preview-embedding-settings', payloadSha256: 'sha256:embedding-settings', requiredConfirm: 'apply', expiresAtMs: Date.now() + 60_000,
+        expectedRevision: { runtimeRevision: 12 }, summary: { title: '应用设置', items: ['更新 Embedding Profile'], risk: 'R2' },
+      },
+      'configuration.settings.apply': {
+        ok: true, pathId: 'configuration.settings.apply', receiptId: 'receipt-embedding-settings', payloadSha256: 'sha256:embedding-settings', appliedAtMs: Date.now(), rollbackAvailable: true, rollbackToken: 'rollback-embedding-settings',
+      },
+      'configuration.settings.rollback': {
+        ok: true, pathId: 'configuration.settings.rollback', receiptId: 'receipt-embedding-rollback', payloadSha256: 'sha256:embedding-settings', appliedAtMs: Date.now(), rollbackAvailable: false, rollbackToken: '',
+      },
       'knowledgeBases.search': {
         hits: [{
           id: 'chunk-tool', documentId: 'file-runtime', documentName: 'runtime.pdf', title: 'Tool 注册',
@@ -495,7 +591,10 @@ function knowledgeBase() {
     id: 'kb-runtime', name: 'Agent Runtime 资料', description: '只包含外部文档', documentCount: 1,
     chunkCount: 42, status: 'ready', agentEnabled: false, parserProvider: 'auto', updatedAtMs: Date.now(), revision: 8,
     chunkingConfig: { strategy: 'markdown', size: 1_200, overlap: 160, separator: '\n\n', respectHeadings: true, respectPageBoundaries: true },
-    retrievalConfig: { mode: 'hybrid', topK: 10, threshold: .2, lexicalWeight: 1, denseWeight: 1, rrfK: 60, candidateMultiplier: 4 },
+    retrievalConfig: {
+      mode: 'hybrid', topK: 10, threshold: .2, lexicalWeight: 1, denseWeight: 1,
+      graphEnabled: true, graphWeight: .7, rrfK: 60, candidateMultiplier: 4,
+    },
   };
 }
 

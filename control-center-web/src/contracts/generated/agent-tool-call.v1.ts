@@ -21,7 +21,7 @@ export interface AgentToolCallV1 {
     | 'configuration'
     | 'agents'
     | 'browser'
-    | 'agent_plan'
+    | 'todo'
     | 'agent_goal'
     | 'plugins'
     | 'work_documents'
@@ -36,7 +36,9 @@ export interface AgentToolCallV1 {
     | 'workspace_shell'
     | 'workspace_job'
     | 'room_state'
+    | 'room_define'
     | 'room_collaborate'
+    | 'room_integrate'
     | 'room_post'
     | 'room_commit';
   toolCallId: string;

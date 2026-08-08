@@ -398,6 +398,7 @@ class AgentSessionPolicyService:
             session,
             payload,
             requested_mode=requested_mode,
+            requested_profile=requested_profile,
         )
         for boolean_key in (
             "projectContextEnabled",
@@ -497,6 +498,7 @@ class AgentSessionPolicyService:
         payload: Mapping[str, object],
         *,
         requested_mode: str,
+        requested_profile: str,
     ) -> list[str] | None:
         requested_allowlist_mode = str(
             payload.get("toolAllowlistMode")
@@ -511,10 +513,15 @@ class AgentSessionPolicyService:
             raise ValueError(
                 "unsupported Agent tool allowlist mode"
             )
+        fixed_todo = (
+            str(session.get("sessionKind") or "conversation") == "conversation"
+            and requested_profile == CONTROL_CENTER_TOOL_PROFILE
+            and requested_mode in {"assistant", "coordinator"}
+        )
         if requested_allowlist_mode == "profile":
             return None
         if "allowedTools" not in payload:
-            return (
+            allowed_tools = (
                 [
                     str(value)
                     for value in session.get("allowedTools") or []
@@ -522,6 +529,9 @@ class AgentSessionPolicyService:
                 if session.get("toolAllowlistMode") == "explicit"
                 else []
             )
+            if fixed_todo and "todo" not in allowed_tools:
+                allowed_tools.append("todo")
+            return allowed_tools
         raw_allowed_tools = payload.get("allowedTools")
         if not isinstance(raw_allowed_tools, list):
             raise ValueError("allowedTools must be an array")
@@ -534,6 +544,8 @@ class AgentSessionPolicyService:
                 )
             if tool_id not in allowed_tools:
                 allowed_tools.append(tool_id)
+        if fixed_todo and "todo" not in allowed_tools:
+            allowed_tools.append("todo")
         if requested_mode == "assistant" and any(
             tool_id.startswith("workspace_")
             for tool_id in allowed_tools

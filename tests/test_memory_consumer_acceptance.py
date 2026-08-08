@@ -172,6 +172,7 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
         self.assertEqual(second_session_context, session_context)
         self.assertNotIn("## 最近对话", session_context)
         self.assertNotIn("输入法模型架构现在是什么？", session_context)
+        self.assertIn("<execution-mode", session_context)
         self.assertIn('<rag-ime-context type="memory_recall">', session_context)
         self.assertIn("## Session 记忆", session_context)
         self.assertIn(NEW_FACT, session_context)
@@ -200,6 +201,7 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
         self.assertNotIn(ROLE_MARKER, system_prompt)
         self.assertNotIn(NEW_ATOM_ID, system_prompt)
         self.assertNotIn(BOOK_ID, system_prompt)
+        self.assertNotIn("<execution-mode", system_prompt)
         self.assertNotIn("<rag-ime-context", system_prompt)
 
     def test_governed_correction_converges_tools_projection_and_new_session(

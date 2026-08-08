@@ -52,6 +52,28 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         catalog = gateway.manifests(session_id=str(session["id"]))["items"]
         return catalog, gateway.runtime_manifests(session)
 
+    def test_runtime_schema_projection_does_not_share_mutable_global_branches(self) -> None:
+        _, manifests = self._runtime_contracts(mode="coordinator")
+        todo = next(item for item in manifests if item["name"] == "todo")
+        append = next(
+            branch
+            for branch in todo["parameters"]["oneOf"]
+            if branch["properties"]["op"]["const"] == "append"
+        )
+        append.pop("additionalProperties")
+
+        _, fresh_manifests = self._runtime_contracts(mode="coordinator")
+        fresh_todo = next(
+            item for item in fresh_manifests if item["name"] == "todo"
+        )
+        fresh_append = next(
+            branch
+            for branch in fresh_todo["parameters"]["oneOf"]
+            if branch["properties"]["op"]["const"] == "append"
+        )
+
+        self.assertFalse(fresh_append["additionalProperties"])
+
     def test_planning_manifest_requires_dashboard_identifiers_for_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             store = AgentSessionStore(Path(temporary) / "agent.sqlite")
@@ -84,7 +106,11 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             item["id"]: set(item["effectiveOperations"])
             for item in catalog
             if item["enabled"] is True
+            and item.get("runtimeOwner") != "pi_host"
         }
+        native_ask = next(item for item in catalog if item["id"] == "ask")
+        self.assertEqual(native_ask["runtimeOwner"], "pi_host")
+        self.assertTrue(native_ask["alwaysAvailable"])
 
         self.assertEqual(
             {str(manifest["name"]) for manifest in manifests},
@@ -164,9 +190,10 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         # targets. Only the compact cards enter the prompt, so keep their
         # tighter Provider-facing budget independent from this transport
         # envelope.
-        # Goal lifecycle adds a full seven-operation internal schema; its compact
-        # public card remains covered by the independent Provider-facing limit.
-        self.assertLess(len(encoded), 48_000)
+        # Goal lifecycle, fixed Todo policy, and explicit Knowledge rerank
+        # controls add full internal schemas; their compact public cards remain
+        # covered by the independent Provider-facing limit.
+        self.assertLess(len(encoded), 52_000)
         self.assertLess(len(public_encoded), 12_000)
         self.assertTrue(all("profile" not in manifest for manifest in manifests))
         self.assertTrue(
@@ -243,21 +270,65 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         delegate = self._branch(tools["agents"], "delegate")
         self.assertEqual(
             delegate["anyOf"],
-            [{"required": ["tasks"]}, {"required": ["agent", "task"]}],
+            [
+                {"required": ["tasks"]},
+                {
+                    "required": [
+                        "agent",
+                        "task",
+                        "expectedOutput",
+                        "acceptanceCriteria",
+                    ]
+                },
+            ],
         )
-        self.assertEqual(delegate["properties"]["planItemId"]["maxLength"], 160)
+        self.assertEqual(delegate["properties"]["todoTask"]["maxLength"], 240)
+        todo_branches = {
+            branch["properties"]["op"]["const"]: branch
+            for branch in tools["todo"]["parameters"]["oneOf"]
+        }
+        self.assertEqual(
+            set(todo_branches),
+            {
+                "init",
+                "start",
+                "done",
+                "drop",
+                "block",
+                "unblock",
+                "append",
+                "view",
+                "rm",
+            },
+        )
+        self.assertEqual(
+            todo_branches["init"]["oneOf"],
+            [{"required": ["list"]}, {"required": ["items"]}],
+        )
+        self.assertEqual(todo_branches["start"]["required"], ["op", "task"])
+        self.assertEqual(
+            todo_branches["append"]["required"],
+            ["op", "phase", "items"],
+        )
+        self.assertEqual(todo_branches["view"]["required"], ["op"])
+        for operation in ("done", "drop", "block", "unblock"):
+            with self.subTest(todo_operation=operation):
+                self.assertEqual(todo_branches[operation]["required"], ["op"])
+                self.assertEqual(
+                    todo_branches[operation]["oneOf"],
+                    [{"required": ["task"]}, {"required": ["phase"]}],
+                )
+        self.assertEqual(todo_branches["rm"]["required"], ["op"])
+        self.assertEqual(
+            todo_branches["rm"]["not"],
+            {"required": ["task", "phase"]},
+        )
         abort = self._branch(tools["agents"], "abort")
         self.assertEqual(
             abort["anyOf"],
             [{"required": ["runId"]}, {"required": ["batchId"]}],
         )
         self.assertEqual(self._branch(tools["agents"], "status")["required"], ["op"])
-
-        plan_update = self._branch(tools["agent_plan"], "update")
-        self.assertEqual(
-            plan_update["anyOf"],
-            [{"required": ["title"]}, {"required": ["itemId"]}],
-        )
         goal_setup = self._branch(tools["agent_goal"], "confirm_setup")
         self.assertEqual(
             goal_setup["required"],

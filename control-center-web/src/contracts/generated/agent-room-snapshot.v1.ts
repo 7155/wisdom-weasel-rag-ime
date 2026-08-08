@@ -9,7 +9,7 @@ export interface AgentRoomSnapshotV1 {
   ok: true;
   room: Room;
   /**
-   * @maxItems 2000
+   * @maxItems 200
    */
   events: Event[];
   firstSequence: number;

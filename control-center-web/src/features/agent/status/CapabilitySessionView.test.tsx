@@ -58,6 +58,32 @@ describe('CapabilitySessionView', () => {
     expect(manageButton).toHaveFocus();
   });
 
+  it('shows fixed Ask and Todo without temporary disclosure controls', async () => {
+    const user = userEvent.setup();
+    const onPreferenceChange = vi.fn();
+    render(
+      <MemoryRouter>
+        <CapabilitySessionView
+          busy={false}
+          catalog={fixedCatalog()}
+          status="ready"
+          onPreferenceChange={onPreferenceChange}
+          onRetryCatalog={() => {}}
+          onRetryMutation={() => {}}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('当前对话会提供 2 项能力')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: '管理当前对话的工具与技能' }));
+    const dialog = screen.getByRole('dialog', { name: '管理当前对话的工具与技能' });
+    expect(dialog).toHaveTextContent('Ask');
+    expect(dialog).toHaveTextContent('Todo');
+    expect(screen.getAllByText('固定加载')).toHaveLength(2);
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(onPreferenceChange).not.toHaveBeenCalled();
+  });
+
   it('rejects a catalog owned by another Session instead of projecting its preferences', () => {
     expect(() => requireSessionCapabilityCatalog(catalog(), 'session-other'))
       .toThrow('能力目录不属于当前对话；不会显示或修改其他对话的设置。');
@@ -181,5 +207,49 @@ function catalog(): CapabilityCatalog {
       revision: 'tool-spec:1',
       effectiveAtMs: 1,
     }],
+  };
+}
+
+function fixedCatalog(): CapabilityCatalog {
+  const base = catalog();
+  const template = base.items[0]!;
+  const fixedItem = (
+    id: 'ask' | 'todo',
+    displayName: string,
+    description: string,
+  ): CapabilityCatalog['items'][number] => ({
+    ...template,
+    id,
+    canonicalId: `tool:${id}`,
+    displayName,
+    description,
+    alwaysAvailable: true,
+    disclosure: {
+      preference: 'inherit',
+      effective: 'enabled',
+      state: 'disclosed',
+      reason: 'required_session_tool',
+    },
+    effectiveScope: 'built_in_default',
+    reasons: ['required_session_tool'],
+  });
+  return {
+    ...base,
+    sessionPolicy: {
+      ...base.sessionPolicy!,
+      disclosurePreferences: {
+        globalDefault: {},
+        projectDefault: {},
+        session: {},
+        effective: {
+          'tool:ask': 'enabled',
+          'tool:todo': 'enabled',
+        },
+      },
+    },
+    items: [
+      fixedItem('ask', 'Ask', '向用户提出结构化选择'),
+      fixedItem('todo', 'Todo', '维护当前执行清单'),
+    ],
   };
 }

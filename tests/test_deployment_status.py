@@ -40,7 +40,7 @@ class InstalledProductAuditTests(unittest.TestCase):
             self._write_component(support / "app", "sidecar-runtime", commit)
             self._write_component(
                 support / "components" / "memory-book-maintenance",
-                "memory-book-maintenance",
+                "memory-maintenance-trigger",
                 "c" * 40,
             )
             self._write_squirrel(root, home)

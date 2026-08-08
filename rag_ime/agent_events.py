@@ -41,6 +41,10 @@ class AgentEventHub:
         self._events: dict[str, deque[AgentEventEnvelope]] = defaultdict(
             lambda: deque(maxlen=self._replay_limit)
         )
+        self._approval_event_cache: dict[
+            tuple[str, str, str, str],
+            AgentEventEnvelope,
+        ] = {}
         self._subscribers: dict[str, set[queue.Queue[AgentEventEnvelope]]] = defaultdict(set)
         self._projection_queue: queue.Queue[object] | None = None
         self._projection_thread: threading.Thread | None = None
@@ -63,6 +67,15 @@ class AgentEventHub:
         created_at_ms: int | None = None,
     ) -> AgentEventEnvelope:
         with self._lock:
+            approval_key = _approval_event_key(
+                session_id,
+                event_type,
+                payload,
+            )
+            if approval_key is not None:
+                existing = self._approval_event_cache.get(approval_key)
+                if existing is not None:
+                    return existing
             envelope = self._build_event_locked(
                 session_id,
                 event_type,
@@ -70,6 +83,8 @@ class AgentEventHub:
                 turn_id=turn_id,
                 created_at_ms=created_at_ms,
             )
+            if approval_key is not None:
+                self._approval_event_cache[approval_key] = envelope
             subscribers = tuple(self._subscribers.get(session_id, ()))
             observers = tuple(self._observers)
         for subscriber in subscribers:
@@ -106,7 +121,6 @@ class AgentEventHub:
         reason: str = "session_rewritten",
     ) -> AgentEventEnvelope:
         """Drop stale replay state and make live clients reload the runtime snapshot."""
-
         with self._lock:
             envelope = self._build_event_locked(
                 session_id,
@@ -119,6 +133,9 @@ class AgentEventHub:
             # replay would let a reconnect apply the old projection before the
             # authoritative snapshot has replaced it.
             self._events[session_id].clear()
+            for key in tuple(self._approval_event_cache):
+                if key[0] == session_id:
+                    self._approval_event_cache.pop(key, None)
             subscribers = tuple(self._subscribers.get(session_id, ()))
             for subscriber in subscribers:
                 while True:
@@ -330,7 +347,10 @@ class AgentEventHub:
             return [], True
         current_sequence = self._sequences.get(session_id)
         if current_sequence is None:
-            current_sequence = max(0, int(self._sequence_loader(session_id)))
+            current_sequence = max(
+                0,
+                int(self._sequence_loader(session_id)),
+            )
             self._sequences[session_id] = current_sequence
         if after_sequence > current_sequence:
             return [], True
@@ -339,7 +359,26 @@ class AgentEventHub:
         first_sequence = events[0].sequence
         if after_sequence < first_sequence - 1:
             return [], True
-        return [event for event in events if event.sequence > after_sequence], False
+        return [
+            event
+            for event in events
+            if event.sequence > after_sequence
+        ], False
+
+
+def _approval_event_key(
+    session_id: str,
+    event_type: str,
+    payload: Mapping[str, object] | None,
+) -> tuple[str, str, str, str] | None:
+    if event_type not in {"approval_required", "approval_resolved"}:
+        return None
+    source = payload if isinstance(payload, Mapping) else {}
+    approval_id = str(source.get("approvalId") or "").strip()
+    if not approval_id:
+        return None
+    state = "pending" if event_type == "approval_required" else "resolved"
+    return (str(session_id), event_type, approval_id, state)
 
 
 def _event_sequence(session_id: str, event_id: str) -> int | None:

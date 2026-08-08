@@ -9,7 +9,7 @@ final class ControlCenterAssetSchemeHandler: NSObject, WKURLSchemeHandler {
         "default-src 'none'",
         "script-src 'self'",
         "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: blob:",
+        "img-src 'self' data: blob: http://127.0.0.1:8766",
         "font-src 'self'",
         "media-src 'self' blob:",
         "worker-src 'self' blob:",

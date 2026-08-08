@@ -82,6 +82,7 @@ export function createPreviewTransport(): MockControlTransport {
   };
   const sessions: Record<string, unknown>[] = [
     previewSession('session-preview', '控制中心迁移', 'companion-present-v1', Date.now(), '1', { messageCount: 4, lastMessagePreview: '三条工作线已经收束到同一个控制入口。' }),
+    previewSession('session-input', '等待你的回答', 'companion-present-v1', Date.now() - 30_000, '1', { messageCount: 1, lastMessagePreview: '请把待审问答做成更清楚的协作界面。' }),
     // Genuinely empty so the preview can exercise the welcome state.
     previewSession('session-fresh', '新对话', 'companion-present-v1', Date.now() - 120_000),
     // Long transcript: gives the timeline a real scroll extent so follow and
@@ -96,6 +97,7 @@ export function createPreviewTransport(): MockControlTransport {
   const roomSessions: Record<string, unknown>[] = [
     previewRoomSession('session-room-present', '迁移作战室 · 澄·今', 'companion-present-v1', 'participant-present'),
     previewRoomSession('session-room-firstlight', '迁移作战室 · 澄·初', 'companion-firstlight-v1', 'participant-firstlight'),
+    previewRoomSession('session-room-future', '迁移作战室 · 澄·远', 'companion-future-v1', 'participant-future'),
   ];
   let personas: AgentPersonaV1[] = previewPersonas.map((persona) => ({
     ...persona,
@@ -168,16 +170,6 @@ export function createPreviewTransport(): MockControlTransport {
     previewWorkflow = withPreviewWorkflowSession(
       previewWorkflow,
       stringValue(record(request.params).sessionId) || 'session-preview',
-    );
-    return previewWorkflow;
-  };
-  routes['agent.session.plan.mutate'] = (request: ControlRequest) => {
-    previewWorkflow = mutatePreviewPlan(
-      withPreviewWorkflowSession(
-        previewWorkflow,
-        stringValue(record(request.params).sessionId) || 'session-preview',
-      ),
-      record(request.body),
     );
     return previewWorkflow;
   };
@@ -484,6 +476,31 @@ export function createPreviewTransport(): MockControlTransport {
     );
     return { ok: true };
   };
+  routes['agent.session.ui.resolve'] = (request: ControlRequest) => {
+    const sessionId = stringValue(record(request.params).sessionId);
+    const body = record(request.body);
+    const requestId = stringValue(body.requestId);
+    if (!sessionId || !requestId) throw new Error('Preview UI response requires its Session and request.');
+    const cancelled = body.cancelled === true;
+    previewTransport?.emit('agent.session.events', {
+      schemaVersion: 'rag-ime.agent-event.v1',
+      eventId: `${sessionId}:${requestId}:${cancelled ? 'cancelled' : 'resolved'}`,
+      sessionId,
+      turnId: `${sessionId}:turn-question`,
+      sequence: 5,
+      createdAtMs: Date.now(),
+      eventType: 'user_input_required',
+      payload: {
+        requestId,
+        requestKind: 'grouped_questions',
+        method: 'editor',
+        resolutionState: cancelled ? 'cancelled' : 'resolved',
+        resolutionSource: stringValue(body.resolutionSource) || 'direct_user',
+      },
+      resumeToken: `${sessionId}:5`,
+    });
+    return { ok: true };
+  };
   routes['agent.session.archive'] = (request: ControlRequest) => {
     const sessionId = stringValue(record(request.params).sessionId);
     const index = sessions.findIndex((session) => stringValue(session.id) === sessionId);
@@ -508,7 +525,7 @@ export function createPreviewTransport(): MockControlTransport {
     sessionId: stringValue(record(request.params).sessionId) || 'session-preview',
     items: [
       { entryId: 'session-preview:user-architecture', text: '把迁移进度按真实代码链整理一下，别把工具日志当回答。', role: 'user', createdAtMs: 0 },
-      { entryId: 'session-preview:assistant-architecture', text: '三条 Lane 已经收束到同一个可执行计划。', role: 'assistant', createdAtMs: 0 },
+      { entryId: 'session-preview:assistant-architecture', text: '三条 Lane 已经收束到同一个 Todo。', role: 'assistant', createdAtMs: 0 },
       { entryId: 'session-preview:user-media', text: '把完成状态和附件也保留成结构化块。', role: 'user', createdAtMs: 0 },
       { entryId: 'session-preview:assistant-media', text: '已完成。活动明细仍可追溯，附件也已经登记。', role: 'assistant', createdAtMs: 0 },
     ],
@@ -1231,7 +1248,7 @@ function previewResponse(pathId: ControlPathId): unknown {
     case 'agent.session.debugContext.get':
       return (request: ControlRequest) => previewDebugContext(
         stringValue(record(request.params).sessionId) || 'session-preview',
-        stringValue(record(request.query).turnId) || 'turn-preview',
+        stringValue(record(request.query).turnId) || 'turn-recovered',
       );
     case 'agent.rooms.list':
       return { ok: true, rooms: [previewRoomSnapshot('room-preview').room] };
@@ -1244,15 +1261,20 @@ function previewResponse(pathId: ControlPathId): unknown {
         stringValue(record(request.query).sessionId),
       );
     case 'agent.subagents.list':
-      return {
-        ok: true,
-        items: [previewSubagentBatch()],
+      return (request: ControlRequest) => {
+        const sessionId = stringValue(record(request.query).sessionId) || 'session-preview';
+        return {
+          ok: true,
+          items: [previewSubagentBatch(sessionId)],
+        };
       };
     case 'agent.subagent.get':
-      return {
+      return (request: ControlRequest) => ({
         ok: true,
-        batch: previewSubagentBatch(),
-      };
+        batch: previewSubagentBatch(
+          stringValue(record(request.query).sessionId) || 'session-preview',
+        ),
+      });
     case 'agent.artifact.get':
       return previewSubagentArtifact();
     case 'planning.dashboard':
@@ -1684,45 +1706,37 @@ function previewWorkflowState(sessionId: string): AgentWorkflowStateV1 {
     schemaVersion: 'rag-ime.agent-workflow-state.v1',
     ok: true,
     sessionId,
-    plan: {
-      schemaVersion: 'rag-ime.agent-plan.v2',
-      id: `plan:${sessionId}`,
+    todo: {
+      schemaVersion: 'rag-ime.agent-todo.v1',
+      id: `todo:${sessionId}`,
       sessionId,
       revision: 2,
-      title: '完成 Agent 工作流与前端验收',
-      status: 'review',
       actor: 'agent',
-      note: '等待用户批准后再进入 Act。',
       updatedAtMs: now,
-      editable: false,
-      actApproved: false,
-      items: [
+      roomLineage: null,
+      phases: [
         {
-          id: 'preview-plan:1',
-          title: '核对 Plan、Goal 与 Subagent 契约',
-          status: 'completed',
-          position: 1,
-          sequence: 1,
-          updatedAtMs: now - 60_000,
+          name: '实现',
+          tasks: [
+            { content: '核对 Todo 与 Goal 契约', status: 'completed' },
+            { content: '完成前端状态同步', status: 'in_progress' },
+          ],
         },
         {
-          id: 'preview-plan:2',
-          title: '完成前端交互与 Preview Transport',
-          status: 'in_progress',
-          position: 2,
-          sequence: 2,
-          updatedAtMs: now,
-        },
-        {
-          id: 'preview-plan:3',
-          title: '运行聚焦测试并核对真实 Payload',
-          status: 'pending',
-          position: 3,
-          sequence: 3,
-          updatedAtMs: now,
+          name: '验证',
+          tasks: [
+            { content: '核对真实 Provider 载荷', status: 'blocked', reason: '等待真实 Provider 环境' },
+          ],
         },
       ],
-      counts: { total: 3, pending: 1, inProgress: 1, completed: 1 },
+      counts: {
+        total: 3,
+        pending: 0,
+        inProgress: 1,
+        blocked: 1,
+        completed: 1,
+        abandoned: 0,
+      },
     },
     goal: {
       schemaVersion: 'rag-ime.agent-goal.v1',
@@ -1731,7 +1745,7 @@ function previewWorkflowState(sessionId: string): AgentWorkflowStateV1 {
       goalId: `goal:${sessionId}`,
       revision: 1,
       objective: '在明确预算内完成 Agent 工作流，并留下可复现的验证证据。',
-      successCriteria: '计划全部完成，并通过用户验收。',
+      successCriteria: 'Todo 全部收束，并通过用户验收。',
       evidenceExpectations: ['聚焦测试结果', '可定位的产物或变更记录'],
       status: 'active',
       budget: { tokenLimit: 48_000, timeLimitMs: 3_600_000 },
@@ -1746,7 +1760,7 @@ function previewWorkflowState(sessionId: string): AgentWorkflowStateV1 {
       allowed: true,
       reason: 'user_execution_request',
       message: '用户已请求执行，可在已授权工作区内继续；高风险操作仍需逐项审批。',
-      planRevision: 2,
+      todoRevision: 2,
       goalRevision: 1,
     },
   };
@@ -1760,9 +1774,9 @@ function withPreviewWorkflowSession(
   return {
     ...workflow,
     sessionId,
-    plan: {
-      ...workflow.plan,
-      id: `plan:${sessionId}`,
+    todo: {
+      ...workflow.todo,
+      id: `todo:${sessionId}`,
       sessionId,
     },
     goal: {
@@ -1771,74 +1785,6 @@ function withPreviewWorkflowSession(
       goalId: workflow.goal.configured ? `goal:${sessionId}` : '',
     },
   };
-}
-
-function mutatePreviewPlan(
-  workflow: AgentWorkflowStateV1,
-  body: Record<string, unknown>,
-): AgentWorkflowStateV1 {
-  const action = stringValue(body.action);
-  const now = Date.now();
-  if (action === 'reset') {
-    const plan = {
-      ...workflow.plan,
-      revision: workflow.plan.revision + 1,
-      title: stringValue(body.title) || '执行计划',
-      status: 'draft' as const,
-      note: '',
-      updatedAtMs: now,
-      editable: true,
-      actApproved: false,
-      items: [],
-      counts: { total: 0, pending: 0, inProgress: 0, completed: 0 },
-    };
-    return { ...workflow, plan, actGate: previewActGate(plan, workflow.goal) };
-  }
-  let status = workflow.plan.status;
-  if (action === 'submit_review') status = 'review';
-  if (action === 'approve') status = 'approved';
-  if (action === 'return_to_draft' || action === 'save') status = 'draft';
-  if (action === 'cancel') status = 'cancelled';
-  if (action === 'complete') status = 'completed';
-  const requestedItems: AgentWorkflowStateV1['plan']['items'] = Array.isArray(body.items)
-    ? body.items.map((item, index) => {
-      const value = record(item);
-      const itemStatus = stringValue(value.status);
-      return {
-        id: stringValue(value.id) || `preview-plan:${now}:${index + 1}`,
-        title: stringValue(value.title) || `步骤 ${index + 1}`,
-        status: (itemStatus === 'completed' || itemStatus === 'in_progress'
-          ? itemStatus
-          : 'pending') as AgentWorkflowStateV1['plan']['items'][number]['status'],
-        position: index + 1,
-        sequence: index + 1,
-        updatedAtMs: now,
-      };
-    })
-    : workflow.plan.items;
-  const items = requestedItems.map((item, index) => ({
-    ...item,
-    position: index + 1,
-    sequence: index + 1,
-  }));
-  const plan = {
-    ...workflow.plan,
-    revision: workflow.plan.revision + 1,
-    title: stringValue(body.title) || workflow.plan.title,
-    status,
-    note: stringValue(body.note) || workflow.plan.note,
-    updatedAtMs: now,
-    editable: status === 'draft',
-    actApproved: status === 'approved' || status === 'executing' || status === 'completed',
-    items,
-    counts: {
-      total: items.length,
-      pending: items.filter((item) => item.status === 'pending').length,
-      inProgress: items.filter((item) => item.status === 'in_progress').length,
-      completed: items.filter((item) => item.status === 'completed').length,
-    },
-  };
-  return { ...workflow, plan, actGate: previewActGate(plan, workflow.goal) };
 }
 
 function mutatePreviewGoal(
@@ -1863,7 +1809,7 @@ function mutatePreviewGoal(
       completionAudit: null,
       cancellationAudit: null,
     };
-    return { ...workflow, goal, actGate: previewActGate(workflow.plan, goal) };
+    return { ...workflow, goal, actGate: previewActGate(workflow.todo, goal) };
   }
   const now = Date.now();
   let status = workflow.goal.status;
@@ -1924,18 +1870,17 @@ function mutatePreviewGoal(
       : workflow.goal.cancellationAudit,
     updatedAtMs: now,
   };
-  return { ...workflow, goal, actGate: previewActGate(workflow.plan, goal) };
+  return { ...workflow, goal, actGate: previewActGate(workflow.todo, goal) };
 }
 
 function previewActGate(
-  plan: AgentWorkflowStateV1['plan'],
+  todo: AgentWorkflowStateV1['todo'],
   goal: AgentWorkflowStateV1['goal'],
 ): AgentWorkflowStateV1['actGate'] {
   const revisions = {
-    planRevision: plan.revision,
+    todoRevision: todo.revision,
     goalRevision: goal.revision,
   };
-  const planStatus = plan.status;
   if (goal.status === 'paused') {
     return { allowed: false, reason: 'goal_paused', message: 'Goal 已暂停。', ...revisions };
   }
@@ -1947,14 +1892,6 @@ function previewActGate(
   }
   if (goal.budgetExceeded) {
     return { allowed: false, reason: 'goal_budget_exhausted', message: 'Goal 预算已用尽。', ...revisions };
-  }
-  if (planStatus === 'approved' || planStatus === 'executing') {
-    return {
-      allowed: true,
-      reason: 'approved',
-      message: '计划已经批准；执行仍受工作区权限与高风险操作审批约束。',
-      ...revisions,
-    };
   }
   return {
     allowed: true,
@@ -2149,8 +2086,37 @@ function previewSubagentConsole(runId: string): Record<string, unknown> {
   };
 }
 
-function previewSubagentBatch(): Record<string, unknown> {
+function previewSubagentBatch(sessionId = 'session-preview'): Record<string, unknown> {
   const now = Date.now();
+  const rootId = 'room-preview:root-preview';
+  const roomTask = sessionId === 'session-room-present'
+    ? {
+        taskId: `${rootId}:task-integration`,
+        dispatchId: `${rootId}:dispatch-integration`,
+        templateId: 'worker' as const,
+        task: '整合并行检查结果并核对 Control API 边界',
+        state: 'running' as const,
+      }
+    : sessionId === 'session-room-firstlight'
+      ? {
+          taskId: `${rootId}:task-data`,
+          dispatchId: `${rootId}:dispatch-data`,
+          templateId: 'researcher' as const,
+          task: '核对数据投影与状态响应边界',
+          state: 'completed' as const,
+        }
+      : sessionId === 'session-room-future'
+        ? {
+            taskId: `${rootId}:task-review`,
+            dispatchId: `${rootId}:dispatch-review`,
+            templateId: 'reviewer' as const,
+            task: '独立复核多端回放证据',
+            state: 'queued' as const,
+          }
+        : null;
+  const batchId = roomTask
+    ? `subagent-batch:preview:${sessionId}`
+    : 'subagent-batch:preview';
   const budget = {
     maxTurns: 10,
     maxToolCalls: 18,
@@ -2160,27 +2126,34 @@ function previewSubagentBatch(): Record<string, unknown> {
   };
   const run = (
     id: string,
-    templateId: 'researcher' | 'reviewer',
+    templateId: 'researcher' | 'worker' | 'reviewer',
     task: string,
-    state: 'running' | 'completed',
+    state: 'queued' | 'running' | 'completed',
     ordinal: number,
   ) => ({
     schemaVersion: 'rag-ime.agent-subagent-run.v1',
     id,
-    batchId: 'subagent-batch:preview',
+    batchId,
     childSessionId: `subagent-runtime:${id}`,
-    planItemId: 'plan-item:preview-research',
-    planItemTitle: '核对研究证据',
+    todoTask: roomTask ? '完成当前协作任务' : '核对研究证据',
+    todoPhase: roomTask ? '协作' : '验证',
     templateId,
     templateVersion: '1',
     ordinal,
     task,
+    expectedOutput: roomTask ? '可复核的任务内协作结论' : '可复核的状态投影证据',
+    acceptanceCriteria: roomTask
+      ? ['结果归入当前 Room 任务', '公开投影不包含私有会话内容']
+      : ['状态与工具生命周期边界清晰'],
+    outputSchema: {},
     state,
     budget,
     usage: state === 'completed'
       ? { turnCount: 3, toolCount: 5, totalTokens: 4_820 }
-      : { turnCount: 2, toolCount: 3, totalTokens: 2_140 },
-    result: state === 'completed' ? { summary: '已核对来源与结论，结果已经交回主对话。' } : {},
+      : state === 'running'
+        ? { turnCount: 2, toolCount: 3, totalTokens: 2_140 }
+        : { turnCount: 0, toolCount: 0, totalTokens: 0 },
+    result: state === 'completed' ? { summary: '已核对来源与结论，结果已经交回负责人。' } : {},
     error: '',
     artifact: {
       schemaVersion: 'rag-ime.agent-artifact-ref.v1',
@@ -2191,20 +2164,54 @@ function previewSubagentBatch(): Record<string, unknown> {
       sha256: 'a'.repeat(64),
     },
     supervision: { phase: 'none', reason: '', requestedAtMs: null, graceMs: 0 },
-    createdAtMs: now - (state === 'running' ? 68_000 : 180_000),
-    startedAtMs: now - (state === 'running' ? 64_000 : 176_000),
-    updatedAtMs: now - (state === 'running' ? 2_000 : 92_000),
+    resultContextScheduledAtMs: state === 'completed' ? now - 90_000 : null,
+    createdAtMs: now - (state === 'queued' ? 20_000 : state === 'running' ? 68_000 : 180_000),
+    startedAtMs: state === 'queued' ? null : now - (state === 'running' ? 64_000 : 176_000),
+    updatedAtMs: now - (state === 'queued' ? 1_000 : state === 'running' ? 2_000 : 92_000),
     completedAtMs: state === 'completed' ? now - 92_000 : null,
   });
+  const runs = roomTask
+    ? [run(
+        `subagent-run:room:${sessionId}`,
+        roomTask.templateId,
+        roomTask.task,
+        roomTask.state,
+        0,
+      )]
+    : [
+        run('subagent-run:research', 'researcher', '检索 Agent 状态投影和知识来源证据', 'running', 0),
+        run('subagent-run:review', 'reviewer', '审阅前端交互与工具生命周期边界', 'completed', 1),
+      ];
+  const state = runs.some((item) => item.state === 'running')
+    ? 'running'
+    : runs.some((item) => item.state === 'queued') ? 'queued' : 'completed';
   return {
     schemaVersion: 'rag-ime.agent-subagent-batch.v1',
-    id: 'subagent-batch:preview',
-    parentSessionId: 'session-preview',
-    state: 'running',
-    runs: [
-      run('subagent-run:research', 'researcher', '检索 Agent 状态投影和知识来源证据', 'running', 0),
-      run('subagent-run:review', 'reviewer', '审阅前端交互与工具生命周期边界', 'completed', 1),
-    ],
+    id: batchId,
+    parentSessionId: sessionId,
+    parentRunId: roomTask ? `room-parent:${sessionId}` : 'run-parent:preview',
+    contextMode: roomTask ? 'fork' : 'fresh',
+    resultDeliveryMode: 'inline',
+    state,
+    depth: roomTask ? 1 : 0,
+    maxDepth: 2,
+    abortRequested: false,
+    causalMetadata: {
+      todoId: roomTask ? `todo:${roomTask.taskId}` : `todo:${sessionId}`,
+      todoRevision: 1,
+      goalId: roomTask ? `goal:${rootId}` : `goal:${sessionId}`,
+      goalRevision: 1,
+      roomBound: Boolean(roomTask),
+      roomId: roomTask ? 'room-preview' : '',
+      rootId: roomTask ? rootId : '',
+      taskId: roomTask?.taskId ?? '',
+      dispatchId: roomTask?.dispatchId ?? '',
+      generation: roomTask ? 1 : 0,
+    },
+    createdAtMs: now - 180_000,
+    updatedAtMs: now - 2_000,
+    completedAtMs: state === 'completed' ? now - 90_000 : null,
+    runs,
   };
 }
 
@@ -2281,20 +2288,89 @@ function previewContextTrace(
 }
 
 function previewDebugContext(sessionId: string, turnId: string): Record<string, unknown> {
-  const now = Date.now() - 17_000;
-  const systemPrompt = [
-    'You are the local RagIme coding agent. Follow the current role and workspace policy.',
-    '<workflow-state>',
-    '当前任务：完成 Agent 工作流并留下可复现验证证据。',
-    '行动状态：计划正在审阅；改变工作区前等待批准。',
-    '</workflow-state>',
-    '<rag-ime-context type="goal">',
-    '目标：完成 Agent 工作流并留下可复现验证证据。',
-    '</rag-ime-context>',
-    '<rag-ime-context type="lifecycle_hook">',
-    '项目完成时只生成记忆复盘建议，不直接写入长期记忆。',
-    '</rag-ime-context>',
-  ].join('\n');
+  const baseTime = Date.now() - 540_000;
+  const turnSpecs = [
+    {
+      turnId: 'turn-initial',
+      clientMessageId: 'preview-message-initial',
+      turnOrdinal: 1,
+      assemblyPhase: 'initial',
+      capturedAtMs: baseTime,
+      summary: '建立角色、项目边界与第一条用户输入',
+      prompt: '先帮我理解这个项目的目标与边界',
+    },
+    {
+      turnId: 'turn-steady',
+      clientMessageId: 'preview-message-steady',
+      turnOrdinal: 2,
+      assemblyPhase: 'incremental',
+      capturedAtMs: baseTime + 210_000,
+      summary: '沿用稳定前缀，追加实现问题与工具结果',
+      prompt: '继续核对 Provider 的上下文顺序',
+    },
+    {
+      turnId: 'turn-recovered',
+      clientMessageId: 'preview-message-recovered',
+      turnOrdinal: 3,
+      assemblyPhase: 'compaction_recovery',
+      capturedAtMs: baseTime + 420_000,
+      summary: '压缩后用恢复胶囊重建方向与最近对话',
+      prompt: '压缩以后，检查现在模型实际收到了什么',
+    },
+  ] as const;
+  const normalizedTurnId = turnId === 'turn-preview' ? 'turn-recovered' : turnId;
+  const selectedTurn = turnSpecs.find((turn) => turn.turnId === normalizedTurnId) ?? turnSpecs.at(-1)!;
+  const now = selectedTurn.capturedAtMs;
+  const userPrompt = selectedTurn.prompt;
+  const systemPrompt = 'You are the local RagIme coding agent. Follow the stable role and workspace policy.';
+  const runtimeContextMessages = [
+    {
+      role: 'custom',
+      customType: 'rag-ime-execution-mode',
+      content: '<execution-mode mode="full_trust">已授权操作直接执行；硬安全边界继续生效。</execution-mode>',
+      display: false,
+    },
+    {
+      role: 'custom',
+      customType: 'rag-ime-memory-recall',
+      content: '<rag-ime-context type="memory_recall">已召回：用户偏好真实运行时验证。</rag-ime-context>',
+      display: false,
+    },
+    {
+      role: 'custom',
+      customType: 'rag-ime-work-state',
+      content: '<work-state>当前任务：核对 Provider 上下文顺序。</work-state>',
+      display: false,
+    },
+    {
+      role: 'custom',
+      customType: 'rag-ime-workflow',
+      content: '<workflow-state>Todo 正在执行；完成后提交验证回执。</workflow-state>',
+      display: false,
+    },
+    {
+      role: 'custom',
+      customType: 'rag-ime-lifecycle',
+      content: '<lifecycle-hook>Session 已启动；压缩后刷新一次上下文。</lifecycle-hook>',
+      display: false,
+    },
+    {
+      role: 'custom',
+      customType: 'rag-ime-turn-context',
+      content: `<turn-context>${userPrompt}</turn-context>`,
+      display: false,
+    },
+    ...(selectedTurn.assemblyPhase === 'compaction_recovery' ? [{
+      role: 'custom',
+      customType: 'rag-ime-compaction-recovery',
+      content: '<compaction-recovery>原始愿景保持不变。已确认 Project/Room 边界与当前实现进度；继续核对 Provider 装配证据。</compaction-recovery>',
+      display: false,
+    }] : []),
+  ];
+  const providerRuntimeInput = runtimeContextMessages.map((message) => ({
+    role: 'user',
+    content: [{ type: 'input_text', text: message.content }],
+  }));
   const skills = [{
     name: 'context-inspector',
     description: 'Inspect the final provider context',
@@ -2307,29 +2383,39 @@ function previewDebugContext(sessionId: string, turnId: string): Record<string, 
   return {
     schemaVersion: 'rag-ime.pi-debug-context-response.v1',
     sessionId,
-    turnId,
+    turnId: selectedTurn.turnId,
     available: true,
     transient: true,
-    availableTurns: [{
-      turnId,
-      clientMessageId: 'preview-message',
-      capturedAtMs: now,
-      updatedAtMs: now + 420,
+    availableTurns: turnSpecs.map((turn) => ({
+      turnId: turn.turnId,
+      clientMessageId: turn.clientMessageId,
+      turnOrdinal: turn.turnOrdinal,
+      assemblyPhase: turn.assemblyPhase,
+      summary: turn.summary,
+      capturedAtMs: turn.capturedAtMs,
+      updatedAtMs: turn.capturedAtMs + 420,
       modelCallCount: 2,
       providerRequestCount: 2,
       toolCallCount: 2,
       runningToolCount: 0,
-    }],
+    })),
     context: {
       schemaVersion: 'rag-ime.pi-debug-context.v1',
       sessionId,
-      turnId,
-      clientMessageId: 'preview-message',
+      turnId: selectedTurn.turnId,
+      clientMessageId: selectedTurn.clientMessageId,
+      turnOrdinal: selectedTurn.turnOrdinal,
+      assemblyPhase: selectedTurn.assemblyPhase,
       capturedAtMs: now,
       updatedAtMs: now + 120,
-      prompt: '<agent-user-query>检查当前上下文与缓存命中情况</agent-user-query>',
+      prompt: `<agent-user-query>${userPrompt}</agent-user-query>`,
       systemPrompt,
-      systemPromptOptions: { cwd: '/Volumes/work/project', enabledTools: ['read', 'grep'], skills },
+      systemPromptOptions: {
+        customPrompt: systemPrompt,
+        cwd: '/Volumes/work/project',
+        enabledTools: ['read', 'grep'],
+        skills,
+      },
       model: { provider: 'openai', id: 'gpt-5.2', name: 'GPT-5.2', api: 'responses' },
       activeTools: ['read', 'grep', 'memory_search'],
       toolSchemas: [
@@ -2352,7 +2438,8 @@ function previewDebugContext(sessionId: string, turnId: string): Record<string, 
         index: 1,
         capturedAtMs: now + 80,
         messages: [
-          { role: 'user', content: [{ type: 'text', text: '检查当前上下文与缓存命中情况' }] },
+          ...runtimeContextMessages,
+          { role: 'user', content: [{ type: 'text', text: userPrompt }] },
           { role: 'assistant', content: [{ type: 'text', text: '我会读取真实运行时指标。' }] },
         ],
       }],
@@ -2362,7 +2449,10 @@ function previewDebugContext(sessionId: string, turnId: string): Record<string, 
         payload: {
           model: 'gpt-5.2',
           instructions: systemPrompt,
-          input: [{ role: 'user', content: [{ type: 'input_text', text: '检查当前上下文与缓存命中情况' }] }],
+          input: [
+            ...providerRuntimeInput,
+            { role: 'user', content: [{ type: 'input_text', text: userPrompt }] },
+          ],
           tools: providerTools,
           metadata: { skills },
         },
@@ -2374,9 +2464,35 @@ function previewDebugContext(sessionId: string, turnId: string): Record<string, 
           capturedAtMs: now + 80,
           updatedAtMs: now + 210,
           completedAtMs: now + 210,
-          contextMessages: [{ role: 'user', content: [{ type: 'text', text: '检查当前上下文与缓存命中情况' }] }],
-          contextDelta: { commonPrefixMessages: 0, removedMessageCount: 0, addedMessageCount: 1, addedMessages: [{ role: 'user', content: '检查当前上下文与缓存命中情况' }] },
-          providerExchanges: [{ index: 1, capturedAtMs: now + 120, status: 200, headers: { 'x-request-id': 'preview-1' }, payload: { model: 'gpt-5.2', instructions: systemPrompt, input: [{ role: 'user', content: '检查当前上下文与缓存命中情况' }], tools: providerTools, metadata: { skills } } }],
+          contextMessages: [
+            ...runtimeContextMessages,
+            { role: 'user', content: [{ type: 'text', text: userPrompt }] },
+          ],
+          contextDelta: {
+            commonPrefixMessages: selectedTurn.assemblyPhase === 'compaction_recovery' ? 2 : 0,
+            removedMessageCount: selectedTurn.assemblyPhase === 'compaction_recovery' ? 18 : 0,
+            addedMessageCount: runtimeContextMessages.length + 1,
+            addedMessages: [
+              ...runtimeContextMessages,
+              { role: 'user', content: userPrompt },
+            ],
+          },
+          providerExchanges: [{
+            index: 1,
+            capturedAtMs: now + 120,
+            status: 200,
+            headers: { 'x-request-id': 'preview-1' },
+            payload: {
+              model: 'gpt-5.2',
+              instructions: systemPrompt,
+              input: [
+                ...providerRuntimeInput,
+                { role: 'user', content: userPrompt },
+              ],
+              tools: providerTools,
+              metadata: { skills },
+            },
+          }],
           assistantMessage: { role: 'assistant', content: [{ type: 'toolCall', id: 'tool-preview-read', name: 'memory_search', arguments: { query: '上下文缓存' } }] },
         },
         {
@@ -2386,12 +2502,39 @@ function previewDebugContext(sessionId: string, turnId: string): Record<string, 
           updatedAtMs: now + 420,
           completedAtMs: now + 420,
           contextMessages: [
-            { role: 'user', content: [{ type: 'text', text: '检查当前上下文与缓存命中情况' }] },
+            ...runtimeContextMessages,
+            { role: 'user', content: [{ type: 'text', text: userPrompt }] },
             { role: 'assistant', content: [{ type: 'toolCall', id: 'tool-preview-read', name: 'memory_search' }] },
             { role: 'toolResult', content: [{ type: 'text', text: '缓存命中 90%' }] },
           ],
-          contextDelta: { baseCallIndex: 1, commonPrefixMessages: 1, removedMessageCount: 0, addedMessageCount: 2, addedMessages: [{ role: 'assistant', content: [{ type: 'toolCall', id: 'tool-preview-read', name: 'memory_search' }] }, { role: 'toolResult', content: '缓存命中 90%' }] },
-          providerExchanges: [{ index: 2, capturedAtMs: now + 300, status: 200, headers: { 'x-request-id': 'preview-2' }, payload: { model: 'gpt-5.2', instructions: systemPrompt, input: [{ role: 'tool', content: '缓存命中 90%' }], tools: providerTools, metadata: { skills } } }],
+          contextDelta: {
+            baseCallIndex: 1,
+            commonPrefixMessages: runtimeContextMessages.length + 1,
+            removedMessageCount: 0,
+            addedMessageCount: 2,
+            addedMessages: [
+              { role: 'assistant', content: [{ type: 'toolCall', id: 'tool-preview-read', name: 'memory_search' }] },
+              { role: 'toolResult', content: '缓存命中 90%' },
+            ],
+          },
+          providerExchanges: [{
+            index: 2,
+            capturedAtMs: now + 300,
+            status: 200,
+            headers: { 'x-request-id': 'preview-2' },
+            payload: {
+              model: 'gpt-5.2',
+              instructions: systemPrompt,
+              input: [
+                ...providerRuntimeInput,
+                { role: 'user', content: userPrompt },
+                { role: 'assistant', content: '调用 memory_search' },
+                { role: 'tool', content: '缓存命中 90%' },
+              ],
+              tools: providerTools,
+              metadata: { skills },
+            },
+          }],
           assistantMessage: { role: 'assistant', content: [{ type: 'text', text: '当前缓存命中率为 90%。' }] },
         },
       ],
@@ -2538,6 +2681,14 @@ function previewCapabilityCatalog(
   const effectiveAtMs = Date.now();
   const manifests = [
     previewTool('overview', '控制中心概览', '查看输入法、模型、记忆和最近活动的整体状态', 'control', 'R0', ['status', 'capabilities', 'recent_activity']),
+    {
+      ...previewTool('ask', 'Ask', '向用户提出仍需其决定的结构化选择', 'planning', 'R0', ['ask']),
+      alwaysAvailable: true,
+    },
+    {
+      ...previewTool('todo', 'Todo', '维护当前 Session 的分阶段执行清单', 'planning', 'R0', ['init', 'start', 'done', 'drop', 'block', 'unblock', 'append', 'view', 'rm']),
+      alwaysAvailable: true,
+    },
     previewTool('input', '输入法', '查看输入设置、方案与候选解释，并在批准后调整配置或词表', 'input', 'R1', ['get_settings', 'apply_settings', 'rollback_settings', 'profile', 'candidate_explain']),
     previewTool('voice', '语音输入', '查看语音状态，并在批准后切换已配置的语音 Provider', 'voice', 'R1', ['status', 'privacy_policy', 'provider_status', 'provider_preview', 'provider_apply']),
     previewTool('planning', '规划与任务', '查看每日计划，并在确认后更新任务状态', 'planning', 'R1', ['dashboard', 'task_action', 'undo_task_event']),
@@ -2546,6 +2697,36 @@ function previewCapabilityCatalog(
     previewTool('browser', '浏览器共驾', '读取已配对浏览器的页面，并在批准后执行可追踪操作', 'browser', 'R1', ['status', 'tabs', 'snapshot', 'navigate', 'click', 'type', 'stop']),
     previewTool('workspace_read', '读取文件', '读取已授权项目目录中的文件内容', 'workspace', 'R0', ['read']),
     previewTool('workspace_search', '搜索项目', '在已授权项目目录中检索文件与内容', 'workspace', 'R0', ['search']),
+    {
+      ...previewTool(
+        'workspace_lsp',
+        '代码智能',
+        '通过工作区语言服务器读取语义信息，并在审批后执行重命名或代码动作',
+        'workspace',
+        'R2',
+        ['status', 'symbols', 'hover', 'definition', 'references', 'diagnostics', 'rename', 'code_action_apply'],
+      ),
+      runtimeProjection: {
+        schemaVersion: 'rag-ime.workspace-lsp-status.v1',
+        runtimeInstanceId: 'workspace-lsp-11111111111111111111111111111111',
+        runtimeEpoch: 1,
+        observedAtMs: effectiveAtMs,
+        heartbeatExpiresAtMs: effectiveAtMs + 60_000,
+        current: true,
+        summary: '预览 Runtime 已连接工作区语言服务器',
+        state: 'ready',
+        roots: [{
+          root: '/Users/example/Projects/personal-agent-workbench',
+          state: 'ready',
+          servers: [{
+            name: 'typescript-language-server',
+            state: 'ready',
+            languageIds: ['typescript', 'typescriptreact'],
+            fileExtensions: ['.ts', '.tsx'],
+          }],
+        }],
+      },
+    },
     previewTool('workspace_edit', '修改文件', '通过快照保护修改已授权项目文件', 'workspace', 'R2', ['edit']),
     previewTool('workspace_shell', '运行命令', '在审批与已授权工作区边界内运行命令', 'workspace', 'R2', ['run']),
     previewTool('workspace_job', '后台任务', '启动并观察有界后台命令', 'workspace', 'R2', ['start', 'status', 'cancel']),
@@ -2553,9 +2734,10 @@ function previewCapabilityCatalog(
   const items = manifests.map((manifest) => {
     const id = stringValue(manifest.id);
     const canonicalId = `tool:${id}`;
-    const sessionPreference = sessionPreferences[canonicalId] ?? 'inherit';
-    const projectPreference = projectPreferences[canonicalId] ?? 'inherit';
-    const globalPreference = globalPreferences[canonicalId] ?? 'inherit';
+    const fixed = manifest.alwaysAvailable === true;
+    const sessionPreference = fixed ? 'inherit' : sessionPreferences[canonicalId] ?? 'inherit';
+    const projectPreference = fixed ? 'inherit' : projectPreferences[canonicalId] ?? 'inherit';
+    const globalPreference = fixed ? 'inherit' : globalPreferences[canonicalId] ?? 'inherit';
     const effective = sessionPreference !== 'inherit'
       ? sessionPreference
       : projectPreference !== 'inherit'
@@ -2590,12 +2772,12 @@ function previewCapabilityCatalog(
         preference: sessionPreference,
         effective,
         state: effective === 'enabled' ? 'disclosed' : 'hidden',
-        reason: effectiveScope === 'session' ? 'session_preference' : `inherited_${effectiveScope}`,
+        reason: fixed ? 'required_session_tool' : effectiveScope === 'session' ? 'session_preference' : `inherited_${effectiveScope}`,
 
         scope: effectiveScope,
       },
       effectiveScope,
-      reasons: [effectiveScope === 'session' ? 'session_preference' : `inherited_${effectiveScope}`],
+      reasons: [fixed ? 'required_session_tool' : effectiveScope === 'session' ? 'session_preference' : `inherited_${effectiveScope}`],
       revision: `preview:${id}:1`,
       effectiveAtMs,
     };

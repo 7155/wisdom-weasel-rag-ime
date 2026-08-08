@@ -7,6 +7,34 @@ from typing import Any
 from .agent_prompt_support import bounded_text
 from .agent_room_kernel import RoomKernelFenceError
 
+ROOM_TASK_HANDOFF_SCHEMA_VERSION = "wisdom-weasel.room-task-handoff.v1"
+
+
+def room_task_handoff_contract() -> dict[str, object]:
+    """Return compact audit fields for the stable Room handoff policy."""
+
+    return {
+        "schemaVersion": ROOM_TASK_HANDOFF_SCHEMA_VERSION,
+        "contextModeRule": "fork_if_parent_context_materially_helps_else_fresh",
+        "independentReview": "fresh_read_only",
+        "promptPrefix": "exact_managed_pi_transcript_prefix_plus_bounded_child_brief",
+        "questionOwner": "facilitator_reporter",
+        "participantQuestionPath": "structured_blocker_or_room_commit_wait",
+        "standaloneParentAsk": "native_ask_1_to_4_material_questions",
+        "lspReadonlyOperations": [
+            "status",
+            "symbols",
+            "hover",
+            "definition",
+            "references",
+            "diagnostics",
+        ],
+        "lspWriteOperations": ["rename", "code_action_apply"],
+        "lspWriteApproval": "existing_hash_bound_approval",
+        "exportedSymbolRule": "references_before_apply",
+    }
+
+
 
 class RoomTaskContextProjector:
     """Compose one immutable, bounded task packet for a Room Dispatch."""
@@ -26,6 +54,8 @@ class RoomTaskContextProjector:
         self,
         task: Mapping[str, object],
         dispatch: Mapping[str, object],
+        *,
+        room_id: str = "",
     ) -> str:
         snapshot = self.requirements.dispatch_context(
             str(dispatch.get("dispatchId") or "")
@@ -104,6 +134,7 @@ class RoomTaskContextProjector:
             "rootId": str(dispatch["rootId"]),
             "dispatchId": str(dispatch["dispatchId"]),
             "generation": int(dispatch["generation"]),
+            "handoff": room_task_handoff_contract(),
             "task": {
                 "taskId": str(task["taskId"]),
                 "parentTaskId": task.get("parentTaskId"),
@@ -130,6 +161,11 @@ class RoomTaskContextProjector:
                     "targetParticipantId"
                 ),
             },
+            "workspace": _workspace_ledger_projection(
+                task,
+                room_id=room_id,
+                root_id=str(dispatch["rootId"]),
+            ),
             "requirements": {
                 "original": originals,
                 "catalogRevisionId": (
@@ -217,6 +253,89 @@ class RoomTaskContextProjector:
                 raise RoomKernelFenceError(
                     f"Room task context binding mismatch: {key}"
                 )
+
+
+def _workspace_ledger_projection(
+    task: Mapping[str, object],
+    *,
+    room_id: str,
+    root_id: str,
+) -> dict[str, object]:
+    """Project the Task's authoritative workspace receipt into private context.
+
+    The packet lets the implementation Skill mirror one compact Workspace
+    Ledger block in its existing WorkDocument.  It is not a second lifecycle
+    owner: every value is copied from the canonical Task projection, and an
+    absent binding remains explicit instead of being inferred from a path.
+    """
+
+    binding_id = bounded_text(task.get("workspaceBindingId"), maximum=240)
+    policy = bounded_text(task.get("workspacePolicy"), maximum=80)
+    lifecycle = bounded_text(
+        task.get("workspaceLifecycleState"), maximum=80
+    )
+    cleanup = bounded_text(task.get("workspaceCleanupState"), maximum=80)
+    bound = bool(binding_id or policy or lifecycle or cleanup)
+    return {
+        "bound": bound,
+        "roomId": bounded_text(room_id, maximum=240),
+        "rootId": bounded_text(root_id, maximum=240),
+        "bindingId": binding_id,
+        "repositoryId": bounded_text(
+            task.get("workspaceRepositoryId"), maximum=128
+        ),
+        "policy": policy,
+        "workspaceRoot": bounded_text(
+            task.get("workspaceRoot"), maximum=2_000
+        ),
+        "baseline": {
+            "root": bounded_text(
+                task.get("workspaceBaseRoot"), maximum=2_000
+            ),
+            "commit": bounded_text(
+                task.get("workspaceBaseCommit"), maximum=240
+            ),
+            "snapshotSha256": bounded_text(
+                task.get("workspaceSnapshotSha256"), maximum=128
+            ),
+        },
+        "lifecycleState": lifecycle,
+        "attentionRequired": bool(
+            task.get("workspaceAttentionRequired")
+        ),
+        "delivery": {
+            "revision": bounded_text(
+                task.get("workspaceDeliveryRevision"), maximum=240
+            ),
+            "head": bounded_text(
+                task.get("workspaceDeliveryHead"), maximum=240
+            ),
+            "snapshotSha256": bounded_text(
+                task.get("workspaceDeliverySnapshotSha256"), maximum=128
+            ),
+        },
+        "integration": {
+            "state": bounded_text(
+                task.get("workspaceIntegrationState"), maximum=80
+            ),
+            "ref": bounded_text(
+                task.get("workspaceIntegrationRef"), maximum=240
+            ),
+            "patchSha256": bounded_text(
+                task.get("workspaceIntegrationPatchSha256"), maximum=128
+            ),
+            "revision": bounded_text(
+                task.get("workspaceIntegratedRevision"), maximum=240
+            ),
+            "snapshotSha256": bounded_text(
+                task.get("workspaceIntegratedSnapshotSha256"), maximum=128
+            ),
+        },
+        "cleanupState": cleanup,
+        "terminalReason": bounded_text(
+            task.get("workspaceTerminalReason"), maximum=2_000
+        ),
+    }
 
 
 def _requirement_item(

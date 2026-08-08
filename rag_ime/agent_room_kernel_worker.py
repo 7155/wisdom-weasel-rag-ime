@@ -29,9 +29,13 @@ class RoomRuntime(Protocol):
     def cancel_room(
         self,
         *,
+        cancel_id: str,
         session_id: str,
         root_id: str,
+        dispatch_id: str,
         generation: int,
+        turn_id: str,
+        capability_epoch: int,
     ) -> dict[str, object]: ...
 
 
@@ -237,11 +241,22 @@ class RoomKernelWorker:
                         str(intent["dispatchId"]),
                         self.clock_ms(),
                     )
+                if (
+                    not str(intent.get("turnId") or "").strip()
+                    or int(intent.get("capabilityEpoch", -1)) < 0
+                ):
+                    raise RoomKernelFenceError(
+                        "cancel intent has no active runtime receipt lineage"
+                    )
                 runtime_receipt = dict(
                     self.runtime.cancel_room(
+                        cancel_id=str(intent["cancelId"]),
                         session_id=str(intent["sessionId"]),
                         root_id=str(intent["rootId"]),
+                        dispatch_id=str(intent["dispatchId"]),
                         generation=int(intent["generation"]),
+                        turn_id=str(intent["turnId"]),
+                        capability_epoch=int(intent["capabilityEpoch"]),
                     )
                 )
                 if approval_cancellation is not None:
@@ -455,15 +470,16 @@ class RoomKernelWorkerLoop:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            changed = False
             try:
                 changed = bool(self.worker.reconcile())
                 changed = self.worker.run_once() is not None or changed
+                if changed:
+                    self.on_change()
             except Exception:
                 # A leased but unacknowledged effect is intentionally left for
                 # expiry reconciliation; it must never be replayed blindly.
+                # Projection callbacks are part of the same recoverable
+                # iteration: one stale read model must not kill the worker.
                 _LOG.exception("Room Kernel worker iteration failed")
-            if changed:
-                self.on_change()
             self._wake.wait(self.poll_seconds)
             self._wake.clear()

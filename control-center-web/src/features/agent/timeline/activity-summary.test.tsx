@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentActivityProjection } from '@/contracts/agent-reducer';
-import { ActivitySummary } from './ActivitySummary';
+import { ActivitySummary, PublicActivityFeed } from './ActivitySummary';
 
 afterEach(() => {
   cleanup();
@@ -36,6 +36,22 @@ describe('Agent tool activity details', () => {
     fireEvent.click(row!.querySelector('summary')!);
     expect(row).toHaveAttribute('open');
     expect(details).toHaveTextContent('运行状态已读取');
+  });
+
+  it('toggles a controlled disclosure by Enter and Space without native page activation', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-keyboard-disclosure',
+      toolName: 'overview',
+      result: { details: { result: { summary: '运行状态已读取' } } },
+    });
+    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    const summary = group.querySelector<HTMLElement>('summary')!;
+
+    fireEvent.keyDown(summary, { key: 'Enter' });
+    expect(group).toHaveAttribute('open');
+    fireEvent.keyDown(summary, { key: ' ' });
+    expect(group).not.toHaveAttribute('open');
   });
 
   it('preserves the scroll anchor and summary focus when an inline group changes height', () => {
@@ -89,7 +105,7 @@ describe('Agent tool activity details', () => {
         toolCallId: `call-large-${index}`,
         toolName: index === 17 ? 'workspace_edit' : 'workspace_read',
         result: { details: index === 17
-          ? { error: '执行计划尚未批准，写入未执行' }
+          ? { error: '当前 Todo 尚未进入执行中，写入未执行' }
           : { result: { summary: `已读取文件 ${index + 1}` } } },
       },
     ));
@@ -168,15 +184,15 @@ describe('Agent tool activity details', () => {
 
   it('renders an Act Gate refusal as an expected no-op rather than a Tool failure', () => {
     const activity = toolActivity('tool_finished', 'completed', {
-      toolCallId: 'call-plan-required',
+      toolCallId: 'call-goal-paused',
       toolName: 'edit',
       isError: false,
       governanceBlocked: true,
-      summary: '工作区变更未执行：请先提交执行计划并等待用户批准。',
+      summary: '工作区变更未执行：当前 Todo、Goal 或权限状态不允许执行。',
       result: {
         details: {
           ok: false,
-          error: 'Act Gate blocked workspace mutation (plan_required): 先创建执行计划并提交审阅。',
+          error: 'Act Gate blocked workspace mutation (goal_paused): 当前 Goal 已暂停，恢复后才能继续写入。',
         },
       },
     });
@@ -282,10 +298,10 @@ describe('Agent tool activity details', () => {
           evidenceHandle: 'private-evidence-handle',
           evidenceRequest: {
             path: '/Volumes/private/project/rag_ime',
-            pattern: 'agent_plan',
+            pattern: 'todo',
             limit: 40,
           },
-          evidenceSummary: 'rag_ime/agent_tools.py:81:def agent_plan(...):',
+          evidenceSummary: 'rag_ime/agent_tools.py:81:def _todo(...):',
           evidenceBytes: 2_048,
           evidenceSha256: 'a'.repeat(64),
         }),
@@ -295,13 +311,13 @@ describe('Agent tool activity details', () => {
 
     const { container } = render(<ActivitySummary activities={[activity]} inline />);
     const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
-    expect(group).toHaveTextContent('在 rag_ime 搜索 “agent_plan”');
+    expect(group).toHaveTextContent('在 rag_ime 搜索 “todo”');
     const dialog = openInlineActivity(container);
     const row = dialog.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
     fireEvent.click(row.querySelector('summary')!);
 
     expect(within(row).getByLabelText('工具调用参数')).toHaveTextContent('rag_ime');
-    expect(within(row).getByLabelText('工具调用参数')).toHaveTextContent('agent_plan');
+    expect(within(row).getByLabelText('工具调用参数')).toHaveTextContent('todo');
     expect(within(row).getByLabelText('工具返回片段')).toHaveTextContent('agent_tools.py:81');
     expect(container).not.toHaveTextContent('evidenceHandle');
     expect(container).not.toHaveTextContent('private-evidence-handle');
@@ -839,6 +855,44 @@ describe('Agent tool activity details', () => {
     expect(onOpenApproval).toHaveBeenCalledOnce();
     expect(onOpenApproval).toHaveBeenCalledWith(activity);
   });
+  it('shows a fail-closed approval inside its owning tool row', () => {
+    const activity = toolActivity('tool_finished', 'failed', {
+      toolCallId: 'call-owned-approval',
+      toolName: 'workspace_shell',
+      approvalId: 'approval-owned-1',
+      automatic: true,
+      result: {
+        details: {
+          result: {
+            summary: '审批未通过，命令没有执行。',
+            decisionMode: 'model',
+            decisionStatus: 'failed_closed',
+            approvalModelDecision: {
+              decision: 'deny',
+              status: 'failed_closed',
+              model: 'openai-codex/gpt-5.6-luna',
+              reasonCodes: ['model_timeout'],
+              rationaleSummary: '审批模型未能形成可验证裁决。',
+            },
+          },
+        },
+      },
+    });
+
+    const { container } = render(
+      <ActivitySummary activities={[activity]} inline />,
+    );
+    const details = openInlineActivity(container);
+    expect(details.querySelectorAll('.agent-activity-row')).toHaveLength(1);
+    const row = details.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+    expect(row).toHaveTextContent('审批未通过，命令没有执行');
+    expect(row).toHaveTextContent('Luna Max 独立判定');
+    expect(row).toHaveTextContent('无法形成可验证裁决，已按拒绝处理');
+    expect(row).toHaveTextContent('审批模型未能形成可验证裁决');
+    expect(row).toHaveTextContent('审批模型超时');
+  });
+
   it('shows the independent Luna approval agent without exposing human controls', () => {
     const onApprovalDecision = vi.fn();
     const activity: AgentActivityProjection = {
@@ -908,7 +962,7 @@ describe('Agent tool activity details', () => {
       <ActivitySummary activities={[activity]} inline />,
     );
 
-    expect(container).toHaveTextContent('独立审批 Agent（Luna Max）已拒绝这次操作');
+    expect(container).toHaveTextContent('独立审批 Agent（Luna Max）无法形成可验证裁决，已拒绝这次操作');
     const details = openInlineActivity(container);
     const row = details.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
     fireEvent.click(row.querySelector('summary')!);
@@ -917,6 +971,40 @@ describe('Agent tool activity details', () => {
     expect(row).toHaveTextContent('审批模型超时');
     expect(row).toHaveTextContent('已参考 4 条同一 Session 审批历史');
     expect(screen.queryByRole('button', { name: '批准' })).not.toBeInTheDocument();
+  });
+
+  it('auto-follows new public activity until the reader manually scrolls away', () => {
+    const reasoning: AgentActivityProjection = {
+      id: 'reasoning-public-feed',
+      turnId: 'turn-public-feed',
+      kind: 'reasoning_summary',
+      status: 'running',
+      summary: '正在核对事件顺序',
+      payload: {
+        source: 'provider_reasoning_summary',
+        items: ['正在核对事件顺序'],
+      },
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    };
+    const activity = (summary: string) => toolActivity('tool_progress', 'running', {
+      toolCallId: 'call-public-feed',
+      toolName: 'workspace_search',
+      summary,
+    });
+    const view = render(<PublicActivityFeed activities={[reasoning, activity('正在检索')]} />);
+    const feed = screen.getByRole('log', { name: '最新公开思考与工具活动' });
+    Object.defineProperty(feed, 'scrollHeight', { configurable: true, value: 300 });
+    Object.defineProperty(feed, 'clientHeight', { configurable: true, value: 100 });
+    feed.scrollTop = 200;
+
+    view.rerender(<PublicActivityFeed activities={[reasoning, activity('已找到第一批结果')]} />);
+    expect(feed.scrollTop).toBe(300);
+
+    feed.scrollTop = 40;
+    fireEvent.scroll(feed);
+    view.rerender(<PublicActivityFeed activities={[reasoning, activity('正在核对第二批结果')]} />);
+    expect(feed.scrollTop).toBe(40);
   });
 
 

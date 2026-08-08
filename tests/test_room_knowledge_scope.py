@@ -105,6 +105,61 @@ class RoomKnowledgeScopeTests(unittest.TestCase):
         self.assertNotIn("B关键词", [hit["text"] for hit in result["hits"]])
         self.assertNotIn("A关键词", [hit["text"] for hit in legacy["hits"]])
 
+    def test_personal_profile_is_visible_without_opening_room_private_scope(self) -> None:
+        with self._connect() as conn:
+            self._doc(
+                conn,
+                "profile",
+                "user",
+                "default",
+                "authoritative",
+                "user",
+                "default",
+                "个人偏好关键词",
+            )
+            conn.execute(
+                """
+                UPDATE memory_books
+                SET knowledge_domain = 'user_profile_preference',
+                    visibility = 'private'
+                WHERE book_id = 'profile'
+                """
+            )
+            conn.execute(
+                """
+                UPDATE memory_retrieval_docs
+                SET knowledge_domain = 'user_profile_preference',
+                    visibility = 'private'
+                WHERE doc_id = 'book:profile'
+                """
+            )
+            self._doc(
+                conn,
+                "participant",
+                "session",
+                "session:a",
+                "authoritative",
+                "session",
+                "session:a",
+                "Room 私有关键词",
+            )
+            payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="关键词",
+                    project="scope-test",
+                    top_k=10,
+                    visible_owners=(
+                        ("user", "default"),
+                        ("session", "session:a"),
+                    ),
+                ),
+            )
+
+        texts = [hit["text"] for hit in payload["hits"]]
+        self.assertIn("个人偏好关键词", texts)
+        self.assertNotIn("Room 私有关键词", texts)
+
     def test_context_projector_is_second_scope_defense_and_shadow_is_diff_only(self) -> None:
         session = self.sessions.create(title="a", created_at_ms=1)
         with self._connect() as conn:

@@ -39,6 +39,17 @@ def build_capability_catalog(
         )
         for manifest in tool_manifests
     ]
+    if not any(str(manifest.get("id") or "") == "ask" for manifest in tool_manifests):
+        items.append(
+            _tool_item(
+                _native_ask_manifest(session),
+                session=session,
+                global_preferences=global_preferences,
+                project_preferences=project_preferences,
+                session_preferences=session_preferences,
+                effective_at_ms=effective_at_ms,
+            )
+        )
     items.extend(
         sorted(
             _skill_items(
@@ -159,11 +170,21 @@ def _tool_item(
     canonical_id = f"tool:{tool_id}"
     authorized = session is not None and manifest.get("enabled") is True
     risk = str(manifest.get("riskLevel") or "R0")
-    disclosure = _disclosure(
-        canonical_id,
-        global_preferences=global_preferences,
-        project_preferences=project_preferences,
-        session_preferences=session_preferences,
+    disclosure = (
+        {
+            "preference": "inherit",
+            "effective": "enabled",
+            "state": "disclosed",
+            "reason": "required_session_tool",
+            "scope": "built_in_default",
+        }
+        if manifest.get("alwaysAvailable") is True
+        else _disclosure(
+            canonical_id,
+            global_preferences=global_preferences,
+            project_preferences=project_preferences,
+            session_preferences=session_preferences,
+        )
     )
     return {
         **dict(manifest),
@@ -205,6 +226,39 @@ def _tool_item(
         "revision": f"tool-spec:{manifest.get('version') or '1'}",
         "effectiveAtMs": effective_at_ms,
     }
+
+def _native_ask_manifest(
+    session: Mapping[str, object] | None,
+) -> dict[str, object]:
+    ordinary_session = (
+        session is not None
+        and str(session.get("sessionKind") or "conversation") == "conversation"
+        and str(session.get("toolProfileVersion") or "control-center-v1")
+        == "control-center-v1"
+        and str(session.get("mode") or "assistant")
+        in {"assistant", "coordinator"}
+    )
+    return {
+        "id": "ask",
+        "name": "ask",
+        "displayName": "Ask",
+        "runtimeOwner": "pi_host",
+        "category": "planning",
+        "description": "向用户提出仍需其决定的结构化选择",
+        "availability": "ready",
+        "riskLevel": "R0",
+        "effectiveOperations": ["ask"],
+        "enabled": ordinary_session,
+        "alwaysAvailable": True,
+        "operations": ["ask"],
+        "sessionModes": ["assistant", "coordinator"],
+        "does": "调查后收敛一组实质取舍，并等待用户回答。",
+        "when": ["仍有用户必须决定的实质取舍", "用户明确要求 Grill"],
+        "notFor": ["可检查的事实", "授权内的可逆默认", "普通进度确认"],
+        "output": "结构化问题组和用户选择回执",
+        "version": "1",
+    }
+
 
 
 def _skill_items(

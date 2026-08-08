@@ -12,7 +12,7 @@ const toolNames: Record<string, string> = {
   agents: '多人协作',
   browser: '浏览网页',
   plugins: '扩展能力',
-  agent_plan: '任务清单',
+  todo: 'Todo',
   agent_schedule: '定时提醒',
   desktop_semantic: '操作当前应用',
   room_state: '查看协作状态',
@@ -40,9 +40,6 @@ const toolNames: Record<string, string> = {
   grep: '搜索文本',
   find: '查找文件',
   ls: '浏览目录',
-  todo: '待办事项',
-  write_todos: '待办事项',
-  update_plan: '更新计划',
 };
 
 const toolIntents: Record<string, string> = {
@@ -58,7 +55,7 @@ const toolIntents: Record<string, string> = {
   configuration: '帮我查看设置或变更记录',
   agents: '请伙伴和我一起完成',
   browser: '帮我查看当前网页',
-  agent_plan: '帮我整理任务清单',
+  todo: '帮我维护 Todo',
   workspace_list: '帮我看看项目里有哪些文件',
   workspace_read: '帮我读取这个项目文件',
   workspace_search: '帮我在项目里搜索',

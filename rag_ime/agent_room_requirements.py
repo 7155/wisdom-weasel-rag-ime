@@ -58,6 +58,7 @@ class RequirementGovernanceStore:
         provenance: Mapping[str, object],
         created_at_ms: int,
         authenticity: str = "original_user_bytes",
+        _conn: sqlite3.Connection | None = None,
     ) -> tuple[dict[str, object], bool]:
         content = original_content if isinstance(original_content, bytes) else original_content.encode("utf-8")
         if not content:
@@ -67,7 +68,7 @@ class RequirementGovernanceStore:
         anchor = _required(anchor_id, "anchor_id")
         root = _required(root_id, "root_id")
         digest = _sha256(content)
-        with self._connect(immediate=True) as conn:
+        with self._write_connection(_conn) as conn:
             existing = conn.execute(
                 "SELECT * FROM room_v2_requirement_anchors WHERE anchor_id = ?",
                 (anchor,),
@@ -105,6 +106,31 @@ class RequirementGovernanceStore:
                 (anchor,),
             ).fetchone()
         return _anchor_payload(row), True
+
+    def append_anchor_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        anchor_id: str,
+        root_id: str,
+        original_content: bytes | str,
+        created_by: str,
+        provenance: Mapping[str, object],
+        created_at_ms: int,
+        authenticity: str = "original_user_bytes",
+    ) -> tuple[dict[str, object], bool]:
+        """Append an immutable Anchor inside a caller-owned transaction."""
+
+        return self.append_anchor(
+            anchor_id=anchor_id,
+            root_id=root_id,
+            original_content=original_content,
+            created_by=created_by,
+            provenance=provenance,
+            created_at_ms=created_at_ms,
+            authenticity=authenticity,
+            _conn=conn,
+        )
 
     def import_legacy_objective(
         self,
@@ -220,12 +246,19 @@ class RequirementGovernanceStore:
             ).fetchone()
         return _dispatch_binding_payload(row) if row is not None else None
 
-    def dispatch_context(self, dispatch_id: str) -> dict[str, object] | None:
-        """Read the requirement snapshot frozen for one Dispatch.
+    def dispatch_context(
+        self,
+        dispatch_id: str,
+        *,
+        catalog_revision_id: str | None = None,
+        anchor_refs: Sequence[str] | None = None,
+        context_fence: Mapping[str, object] | None = None,
+    ) -> dict[str, object] | None:
+        """Read a Dispatch snapshot, optionally through an explicit revision fence.
 
-        This is a read projection only. The provider journal persists the
-        returned value once, so later catalog revisions cannot rewrite what an
-        already-running Agent observed.
+        The durable DispatchBinding remains unchanged.  A post-definition
+        context is an explicit caller-supplied view keyed by a Kernel receipt,
+        never an in-place rewrite of the leased observation.
         """
 
         with self._connect() as conn:
@@ -239,7 +272,11 @@ class RequirementGovernanceStore:
             binding = _dispatch_binding_payload(row)
             anchor_ids = [
                 str(value)
-                for value in binding["anchorRefs"]
+                for value in (
+                    anchor_refs
+                    if anchor_refs is not None
+                    else binding["anchorRefs"]
+                )
             ]
             anchors_by_id: dict[str, sqlite3.Row] = {}
             if anchor_ids:
@@ -268,7 +305,9 @@ class RequirementGovernanceStore:
                 if anchor_id in anchors_by_id
             ]
             catalog_id = str(
-                binding.get("catalogRevisionId") or ""
+                catalog_revision_id
+                if catalog_revision_id is not None
+                else binding.get("catalogRevisionId") or ""
             )
             catalog: dict[str, object] | None = None
             if catalog_id:
@@ -394,10 +433,74 @@ class RequirementGovernanceStore:
                         ).fetchall()
                     ],
                 }
-        return {
+        result: dict[str, object] = {
             "binding": binding,
             "originalRequirements": originals,
             "catalog": catalog,
+        }
+        if context_fence is not None:
+            result["contextFence"] = dict(context_fence)
+        return result
+    def catalog_revision(self, catalog_revision_id: str) -> dict[str, object]:
+        """Return one immutable catalog with source spans preserved."""
+
+        with self._connect() as conn:
+            row = self._catalog_row(conn, catalog_revision_id)
+            items = conn.execute(
+                "SELECT * FROM room_v2_requirement_items "
+                "WHERE catalog_revision_id = ? ORDER BY item_id",
+                (catalog_revision_id,),
+            ).fetchall()
+            criteria = conn.execute(
+                "SELECT * FROM room_v2_acceptance_criteria "
+                "WHERE catalog_revision_id = ? ORDER BY criterion_id",
+                (catalog_revision_id,),
+            ).fetchall()
+        return {
+            "schemaVersion": "wisdom-weasel.requirement-catalog-revision.v1",
+            "catalogRevisionId": str(row["catalog_revision_id"]),
+            "rootId": str(row["root_id"]),
+            "revision": int(row["revision"]),
+            "supersedesRevisionId": (
+                str(row["supersedes_revision_id"])
+                if row["supersedes_revision_id"]
+                else None
+            ),
+            "anchorRefs": json.loads(str(row["anchor_refs_json"])),
+            "items": [
+                {
+                    "itemId": str(item["item_id"]),
+                    "kind": str(item["kind"]),
+                    "statement": str(item["statement"]),
+                    "origin": str(item["origin"]),
+                    "state": str(item["state"]),
+                    "sourceSpans": json.loads(str(item["source_spans_json"])),
+                    "supersedes": json.loads(str(item["supersedes_json"])),
+                    "ambiguity": str(item["ambiguity"] or ""),
+                    "confirmation": str(item["confirmation"] or ""),
+                }
+                for item in items
+            ],
+            "acceptanceCriteria": [
+                {
+                    "criterionId": str(criterion["criterion_id"]),
+                    "itemId": str(criterion["item_id"]),
+                    "acceptanceCriterionFullNameZh": str(
+                        criterion["acceptance_criterion_full_name_zh"]
+                    ),
+                    "criterionKind": str(criterion["criterion_kind"]),
+                    "expectedReceiptTypes": json.loads(
+                        str(criterion["expected_receipt_types_json"])
+                    ),
+                    "statement": str(criterion["statement"]),
+                }
+                for criterion in criteria
+            ],
+            "changeReason": str(row["change_reason"]),
+            "provenance": json.loads(str(row["provenance_json"])),
+            "createdBy": str(row["created_by"]),
+            "createdAtMs": int(row["created_at_ms"]),
+            "payloadHash": str(row["payload_hash"]),
         }
 
     def latest_gate_observation(self, root_id: str) -> dict[str, object] | None:
@@ -431,6 +534,67 @@ class RequirementGovernanceStore:
         created_by: str,
         created_at_ms: int,
     ) -> tuple[dict[str, object], bool]:
+        with self._connect(immediate=True) as conn:
+            return self._revise_catalog_in_connection(
+                conn,
+                catalog_revision_id=catalog_revision_id,
+                root_id=root_id,
+                expected_current_revision=expected_current_revision,
+                anchor_refs=anchor_refs,
+                items=items,
+                acceptance_criteria=acceptance_criteria,
+                change_reason=change_reason,
+                provenance=provenance,
+                created_by=created_by,
+                created_at_ms=created_at_ms,
+            )
+
+    def revise_catalog_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        catalog_revision_id: str,
+        root_id: str,
+        expected_current_revision: int,
+        anchor_refs: Sequence[str],
+        items: Sequence[Mapping[str, object]],
+        acceptance_criteria: Sequence[Mapping[str, object]],
+        change_reason: str,
+        provenance: Mapping[str, object],
+        created_by: str,
+        created_at_ms: int,
+    ) -> tuple[dict[str, object], bool]:
+        """Revise a catalog inside a caller-owned atomic Room transaction."""
+
+        return self._revise_catalog_in_connection(
+            conn,
+            catalog_revision_id=catalog_revision_id,
+            root_id=root_id,
+            expected_current_revision=expected_current_revision,
+            anchor_refs=anchor_refs,
+            items=items,
+            acceptance_criteria=acceptance_criteria,
+            change_reason=change_reason,
+            provenance=provenance,
+            created_by=created_by,
+            created_at_ms=created_at_ms,
+        )
+
+    def _revise_catalog_in_connection(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        catalog_revision_id: str,
+        root_id: str,
+        expected_current_revision: int,
+        anchor_refs: Sequence[str],
+        items: Sequence[Mapping[str, object]],
+        acceptance_criteria: Sequence[Mapping[str, object]],
+        change_reason: str,
+        provenance: Mapping[str, object],
+        created_by: str,
+        created_at_ms: int,
+    ) -> tuple[dict[str, object], bool]:
         root = _required(root_id, "root_id")
         anchors = list(_refs(anchor_refs))
         if not anchors:
@@ -442,100 +606,99 @@ class RequirementGovernanceStore:
         item_ids = {value["itemId"] for value in normalized_items}
         if any(value["itemId"] not in item_ids for value in normalized_criteria):
             raise ValueError("AcceptanceCriterion must reference an item in the same revision")
-        with self._connect(immediate=True) as conn:
-            anchor_rows = conn.execute(
-                f"SELECT * FROM room_v2_requirement_anchors WHERE anchor_id IN ({','.join('?' for _ in anchors)})",
-                anchors,
-            ).fetchall()
-            if len(anchor_rows) != len(anchors) or any(str(row["root_id"]) != root for row in anchor_rows):
-                raise RequirementRevisionConflict("RequirementAnchor belongs to another Root")
-            quarantined = {str(row["anchor_id"]) for row in anchor_rows if row["authenticity"] != "original_user_bytes"}
-            anchor_lengths = {
-                str(row["anchor_id"]): len(bytes(row["original_bytes"])) for row in anchor_rows
-            }
-            for item in normalized_items:
-                for span in item["sourceSpans"]:
-                    if span["anchorId"] not in anchors:
-                        raise ValueError("RequirementItem source span is outside catalog anchors")
-                    if span["anchorId"] in quarantined:
-                        raise RequirementRevisionConflict("legacy quarantined text cannot masquerade as original requirement")
-                    if int(span["endByte"]) > anchor_lengths[span["anchorId"]]:
-                        raise ValueError("RequirementItem source span exceeds original bytes")
-            current = conn.execute(
-                """
-                SELECT * FROM room_v2_requirement_catalog_revisions
-                WHERE root_id = ? ORDER BY revision DESC LIMIT 1
-                """,
-                (root,),
-            ).fetchone()
-            current_revision = int(current["revision"]) if current is not None else 0
-            if current_revision != int(expected_current_revision):
-                raise RequirementRevisionConflict(
-                    f"RequirementCatalog revision changed: expected {expected_current_revision}, current {current_revision}"
-                )
-            revision = current_revision + 1
-            supersedes = str(current["catalog_revision_id"]) if current is not None else None
-            material = {
-                "catalogRevisionId": _required(catalog_revision_id, "catalog_revision_id"),
-                "rootId": root, "revision": revision,
-                "supersedesRevisionId": supersedes, "anchorRefs": anchors,
-                "items": normalized_items, "acceptanceCriteria": normalized_criteria,
-                "changeReason": _required(change_reason, "change_reason"),
-                "provenance": dict(provenance),
-                "createdBy": _required(created_by, "created_by"),
-                "createdAtMs": _non_negative(created_at_ms, "created_at_ms"),
-            }
-            payload = {
-                "schemaVersion": "wisdom-weasel.requirement-catalog-revision.v1",
-                **material,
-                "payloadHash": _hash_json(material),
-            }
-            validate_contract(payload, "requirement-catalog-revision.v1.json")
+        anchor_rows = conn.execute(
+            f"SELECT * FROM room_v2_requirement_anchors WHERE anchor_id IN ({','.join('?' for _ in anchors)})",
+            anchors,
+        ).fetchall()
+        if len(anchor_rows) != len(anchors) or any(str(row["root_id"]) != root for row in anchor_rows):
+            raise RequirementRevisionConflict("RequirementAnchor belongs to another Root")
+        quarantined = {str(row["anchor_id"]) for row in anchor_rows if row["authenticity"] != "original_user_bytes"}
+        anchor_lengths = {
+            str(row["anchor_id"]): len(bytes(row["original_bytes"])) for row in anchor_rows
+        }
+        for item in normalized_items:
+            for span in item["sourceSpans"]:
+                if span["anchorId"] not in anchors:
+                    raise ValueError("RequirementItem source span is outside catalog anchors")
+                if span["anchorId"] in quarantined:
+                    raise RequirementRevisionConflict("legacy quarantined text cannot masquerade as original requirement")
+                if int(span["endByte"]) > anchor_lengths[span["anchorId"]]:
+                    raise ValueError("RequirementItem source span exceeds original bytes")
+        current = conn.execute(
+            """
+            SELECT * FROM room_v2_requirement_catalog_revisions
+            WHERE root_id = ? ORDER BY revision DESC LIMIT 1
+            """,
+            (root,),
+        ).fetchone()
+        current_revision = int(current["revision"]) if current is not None else 0
+        if current_revision != int(expected_current_revision):
+            raise RequirementRevisionConflict(
+                f"RequirementCatalog revision changed: expected {expected_current_revision}, current {current_revision}"
+            )
+        revision = current_revision + 1
+        supersedes = str(current["catalog_revision_id"]) if current is not None else None
+        material = {
+            "catalogRevisionId": _required(catalog_revision_id, "catalog_revision_id"),
+            "rootId": root, "revision": revision,
+            "supersedesRevisionId": supersedes, "anchorRefs": anchors,
+            "items": normalized_items, "acceptanceCriteria": normalized_criteria,
+            "changeReason": _required(change_reason, "change_reason"),
+            "provenance": dict(provenance),
+            "createdBy": _required(created_by, "created_by"),
+            "createdAtMs": _non_negative(created_at_ms, "created_at_ms"),
+        }
+        payload = {
+            "schemaVersion": "wisdom-weasel.requirement-catalog-revision.v1",
+            **material,
+            "payloadHash": _hash_json(material),
+        }
+        validate_contract(payload, "requirement-catalog-revision.v1.json")
+        conn.execute(
+            """
+            INSERT INTO room_v2_requirement_catalog_revisions(
+                catalog_revision_id, root_id, revision, supersedes_revision_id,
+                anchor_refs_json, change_reason, provenance_json, payload_hash,
+                created_by, created_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                payload["catalogRevisionId"], root, revision, supersedes,
+                _json(anchors), payload["changeReason"], _json(payload["provenance"]),
+                payload["payloadHash"], payload["createdBy"], payload["createdAtMs"],
+            ),
+        )
+        for item in normalized_items:
             conn.execute(
                 """
-                INSERT INTO room_v2_requirement_catalog_revisions(
-                    catalog_revision_id, root_id, revision, supersedes_revision_id,
-                    anchor_refs_json, change_reason, provenance_json, payload_hash,
-                    created_by, created_at_ms
+                INSERT INTO room_v2_requirement_items(
+                    catalog_revision_id, item_id, kind, statement, origin, state,
+                    source_spans_json, supersedes_json, ambiguity, confirmation
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    payload["catalogRevisionId"], root, revision, supersedes,
-                    _json(anchors), payload["changeReason"], _json(payload["provenance"]),
-                    payload["payloadHash"], payload["createdBy"], payload["createdAtMs"],
+                    payload["catalogRevisionId"], item["itemId"], item["kind"],
+                    item["statement"], item["origin"], item["state"],
+                    _json(item["sourceSpans"]), _json(item["supersedes"]),
+                    item["ambiguity"], item["confirmation"],
                 ),
             )
-            for item in normalized_items:
-                conn.execute(
-                    """
-                    INSERT INTO room_v2_requirement_items(
-                        catalog_revision_id, item_id, kind, statement, origin, state,
-                        source_spans_json, supersedes_json, ambiguity, confirmation
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        payload["catalogRevisionId"], item["itemId"], item["kind"],
-                        item["statement"], item["origin"], item["state"],
-                        _json(item["sourceSpans"]), _json(item["supersedes"]),
-                        item["ambiguity"], item["confirmation"],
-                    ),
-                )
-            for criterion in normalized_criteria:
-                conn.execute(
-                    """
-                    INSERT INTO room_v2_acceptance_criteria(
-                        catalog_revision_id, criterion_id, item_id,
-                        acceptance_criterion_full_name_zh, criterion_kind,
-                        expected_receipt_types_json, statement
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        payload["catalogRevisionId"], criterion["criterionId"],
-                        criterion["itemId"], criterion["acceptanceCriterionFullNameZh"],
-                        criterion["criterionKind"], _json(criterion["expectedReceiptTypes"]),
-                        criterion["statement"],
-                    ),
-                )
+        for criterion in normalized_criteria:
+            conn.execute(
+                """
+                INSERT INTO room_v2_acceptance_criteria(
+                    catalog_revision_id, criterion_id, item_id,
+                    acceptance_criterion_full_name_zh, criterion_kind,
+                    expected_receipt_types_json, statement
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    payload["catalogRevisionId"], criterion["criterionId"],
+                    criterion["itemId"], criterion["acceptanceCriterionFullNameZh"],
+                    criterion["criterionKind"], _json(criterion["expectedReceiptTypes"]),
+                    criterion["statement"],
+                ),
+            )
         return payload, True
 
     def record_verification_receipt(
@@ -837,6 +1000,17 @@ class RequirementGovernanceStore:
         if row is None:
             raise KeyError(catalog_revision_id)
         return row
+
+    @contextmanager
+    def _write_connection(
+        self,
+        conn: sqlite3.Connection | None,
+    ) -> Iterator[sqlite3.Connection]:
+        if conn is not None:
+            yield conn
+            return
+        with self._connect(immediate=True) as owned:
+            yield owned
 
     @contextmanager
     def _connect(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:

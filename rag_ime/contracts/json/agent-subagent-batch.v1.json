@@ -22,13 +22,21 @@
     "causalMetadata": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["planId", "planRevision", "goalId", "goalRevision", "roomBound"],
+      "required": [
+        "todoId", "todoRevision", "goalId", "goalRevision", "roomBound",
+        "roomId", "rootId", "taskId", "dispatchId", "generation"
+      ],
       "properties": {
-        "planId": {"type": "string", "maxLength": 240},
-        "planRevision": {"type": "integer", "minimum": 0},
+        "todoId": {"type": "string", "maxLength": 240},
+        "todoRevision": {"type": "integer", "minimum": 0},
         "goalId": {"type": "string", "maxLength": 240},
         "goalRevision": {"type": "integer", "minimum": 0},
-        "roomBound": {"type": "boolean"}
+        "roomBound": {"type": "boolean"},
+        "roomId": {"type": "string", "maxLength": 240},
+        "rootId": {"type": "string", "maxLength": 240},
+        "taskId": {"type": "string", "maxLength": 240},
+        "dispatchId": {"type": "string", "maxLength": 240},
+        "generation": {"type": "integer", "minimum": 0}
       }
     },
     "createdAtMs": {"type": "integer", "minimum": 0},

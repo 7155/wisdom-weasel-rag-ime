@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { RoomEventSnapshot } from '@/contracts/room-reducer';
+import type { RoomEventPage, RoomEventSnapshot } from '@/contracts/room-reducer';
 import { createRoomKernelProjection } from '@/contracts/room-kernel-reducer';
 import { roomEventFixture } from '@/test/fixtures/events';
 
@@ -102,6 +102,54 @@ describe('Room live store', () => {
     expect(useRoomLiveStore.getState().roomRevisions['room-1']).toBe(revision);
   });
 
+  it('prepends bounded history pages and preserves them across a newer snapshot', () => {
+    const store = useRoomLiveStore.getState();
+    const recent = [
+      roomEventFixture(3, 'participant_status', { status: 'working' }),
+      roomEventFixture(4, 'participant_status', { status: 'completed' }),
+    ];
+    expect(store.replaySnapshot(
+      'room-1',
+      roomHistorySnapshot(recent, 3, 4),
+    )).toBe(true);
+    expect(useRoomLiveStore.getState().historyByRoomId['room-1']?.hasMore).toBe(true);
+
+    const older = [
+      roomEventFixture(1, 'participant_status', { status: 'assigned' }),
+      roomEventFixture(2, 'participant_status', { status: 'accepted' }),
+    ];
+    const page = {
+      schemaVersion: 'rag-ime.agent-room-event-page.v1',
+      ok: true,
+      roomId: 'room-1',
+      items: older,
+      firstSequence: 1,
+      lastSequence: 2,
+      nextBeforeSequence: 0,
+      hasMore: false,
+      retainedFirstSequence: 1,
+      retainedLastSequence: 4,
+      retainedPrefixTruncated: false,
+    } satisfies RoomEventPage;
+
+    expect(store.prependHistory('room-1', page)).toBe(true);
+    expect(
+      useRoomLiveStore.getState().historyByRoomId['room-1']?.events.map((event) => event.sequence),
+    ).toEqual([1, 2, 3, 4]);
+
+    expect(store.replaySnapshot(
+      'room-1',
+      roomHistorySnapshot([
+        roomEventFixture(4, 'participant_status', { status: 'completed' }),
+        roomEventFixture(5, 'turn_completed', {}),
+      ], 4, 5),
+    )).toBe(true);
+    expect(
+      useRoomLiveStore.getState().historyByRoomId['room-1']?.events.map((event) => event.sequence),
+    ).toEqual([1, 2, 3, 4, 5]);
+    expect(useRoomLiveStore.getState().historyByRoomId['room-1']?.hasMore).toBe(false);
+  });
+
   it('drops every projection only when an explicit reset is requested', () => {
     const store = useRoomLiveStore.getState();
     store.ensure('room:a');
@@ -115,3 +163,23 @@ describe('Room live store', () => {
     expect(useRoomLiveStore.getState().kernelSyncByRoomId).toEqual({});
   });
 });
+
+function roomHistorySnapshot(
+  events: RoomEventSnapshot['events'],
+  firstSequence: number,
+  lastSequence: number,
+): RoomEventSnapshot {
+  return {
+    schemaVersion: 'rag-ime.agent-room-snapshot.v1',
+    ok: true,
+    room: {
+      id: 'room-1',
+      lastEventSequence: lastSequence,
+    },
+    events,
+    firstSequence,
+    lastSequence,
+    resumeToken: `room-1:${lastSequence}`,
+    truncated: firstSequence > 1,
+  } as unknown as RoomEventSnapshot;
+}

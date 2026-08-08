@@ -57,6 +57,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 "runtimeToolNames": Path(
                     "packages/rag-ime-runtime-host/src/runtime-tool-names.ts"
                 ),
+                "ask": Path("packages/rag-ime-runtime-host/src/ask.ts"),
                 "toolBridge": Path("packages/rag-ime-runtime-host/src/tool-bridge.ts"),
                 "toolArtifacts": Path("packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts"),
                 "providerContextJournal": Path(
@@ -321,6 +322,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 "implementation-execution",
                 "improve-codebase-architecture",
                 "quality-gate",
+                "rag-retrieval-optimization",
                 "memory-curation",
                 "plugin-creator",
                 "work-document-archive",
@@ -331,9 +333,11 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         for name in skill_names:
             content = (skills_root / name / "SKILL.md").read_text(encoding="utf-8")
             self.assertIn(f"name: {name}", content)
-            self.assertIn("\nwhen:\n", content)
-            self.assertIn("\ndoes: ", content)
-            self.assertIn("\nnotFor:\n", content)
+            self.assertIn("\ndescription: ", content)
+            if name != "rag-retrieval-optimization":
+                self.assertIn("\nwhen:\n", content)
+                self.assertIn("\ndoes: ", content)
+                self.assertIn("\nnotFor:\n", content)
 
         routing_catalog = _validated_skill_routing_catalog(
             SKILL_ROUTING_CARDS,
@@ -362,7 +366,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             },
         )
         cards = routing_catalog["cards"]
-        self.assertEqual(len(cards), 39)
+        self.assertEqual(len(cards), 40)
         self.assertEqual(len({card["name"] for card in cards}), len(cards))
         self.assertTrue(set(room_skill_names).isdisjoint({card["name"] for card in cards}))
         self.assertNotIn("structured-result-presentation", {card["name"] for card in cards})

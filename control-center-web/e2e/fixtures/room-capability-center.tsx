@@ -29,8 +29,14 @@ kernel.postsById['post-review'] = {
   publicationSource: { kind: 'room_commit', ref: 'commit:post-review' },
   content: '等待独立复核，不把另一个 Root 的完成状态当作自己的终态。', createdAtMs: 216,
 };
-kernel.sessionsById['session-room-research'] = { sessionId: 'session-room-research', rootId: 'root-research', generation: 3, state: 'running', updatedAtMs: 218 };
-kernel.sessionsById['session-reviewer'] = { sessionId: 'session-reviewer', rootId: 'root-review', generation: 1, state: 'queued', updatedAtMs: 217 };
+kernel.sessionsById['session-room-research'] = {
+  sessionId: 'session-room-research', rootId: 'root-research', taskId: null, taskKind: null,
+  workItemId: null, dispatchId: null, generation: 3, state: 'running', updatedAtMs: 218,
+};
+kernel.sessionsById['session-reviewer'] = {
+  sessionId: 'session-reviewer', rootId: 'root-review', taskId: null, taskKind: null,
+  workItemId: null, dispatchId: null, generation: 1, state: 'queued', updatedAtMs: 217,
+};
 
 createRoot(document.getElementById('root')!).render(<>
   <div className="qa-band"><RoomExecutionTopology
@@ -61,17 +67,20 @@ function root(
   updatedAtMs: number,
 ) {
   return {
-    schemaVersion: 'wisdom-weasel.room-root-execution.v2' as const,
+    schemaVersion: 'wisdom-weasel.room-root-execution.v3' as const,
     rootId,
     roomId: kernel.roomId,
     generation,
     state,
-    owner,
+    facilitatorParticipantId: owner,
+    reporterParticipantId: null,
+    reporterSelectionReceiptId: null,
     requirementAnchorRef: `requirement:${rootId}`,
     createdByActorRef: 'user:fixture',
     terminalReceiptId: null,
     activeProfileRef: 'profile:fixture',
     budgetPolicyRef: 'budget:fixture',
+    independentReviewRequired: false,
     createdAtMs: updatedAtMs - 100,
     isFinal: false,
     updatedAtMs,

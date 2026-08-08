@@ -45,6 +45,7 @@ export function RoomComposer({
   attachments,
   sending,
   taskBusyState,
+  pendingUserAnswer = false,
   inputRef,
   onDraftChange,
   onSend,
@@ -59,6 +60,7 @@ export function RoomComposer({
   attachments: RoomAttachmentReceipt[];
   sending: boolean;
   taskBusyState?: 'running' | 'blocked';
+  pendingUserAnswer?: boolean;
   inputRef?: { current: HTMLTextAreaElement | null };
   onDraftChange: (value: string) => void;
   onAttachmentsChange: (value: RoomAttachmentReceipt[]) => void;
@@ -77,7 +79,8 @@ export function RoomComposer({
   const [mention, setMention] = useState<RoomMentionDraft>();
   const [activeIndex, setActiveIndex] = useState(0);
   const roomCanCompose = room?.status === 'active';
-  const roomCanSend = roomCanCompose && !taskBusyState;
+  const pendingAnswerMode = Boolean(pendingUserAnswer);
+  const roomCanSend = roomCanCompose && (!taskBusyState || pendingAnswerMode);
   const participants = room?.participants.filter(
     (participant) => participant.status === 'active',
   ) ?? [];
@@ -88,13 +91,23 @@ export function RoomComposer({
     participants,
     composerDraft,
   )[0]?.id ?? '';
-  const canSend = Boolean(roomCanSend && (composerDraft.trim() || attachments.length) && !sending);
+  const canSend = Boolean(
+    roomCanSend
+    && (pendingAnswerMode ? composerDraft.trim() : composerDraft.trim() || attachments.length)
+    && !sending,
+  );
 
   useEffect(() => {
     setComposerDraft(draft);
     setMention(undefined);
     setActiveIndex(0);
   }, [draft]);
+
+  useEffect(() => {
+    if (!pendingAnswerMode) return;
+    setMention(undefined);
+    setActiveIndex(0);
+  }, [pendingAnswerMode]);
 
   function publishDraft(value: string): void {
     startTransition(() => onDraftChange(value));
@@ -109,6 +122,10 @@ export function RoomComposer({
   }
 
   function syncMention(value: string, caret: number | null): void {
+    if (pendingAnswerMode) {
+      setMention(undefined);
+      return;
+    }
     setMention(activeRoomMention(value, caret ?? value.length));
     setActiveIndex(0);
   }
@@ -230,10 +247,12 @@ export function RoomComposer({
           ><X size={12} /></button>
         </span>)}
       </div> : null}
-      {taskBusyState ? <p className="room-composer__task-lock" role="status">
-        {taskBusyState === 'blocked'
-          ? '当前任务已暂停。请在上方继续或停止任务；你可以先在这里准备下一条消息。'
-          : '当前任务仍在执行。完成或停止后才能发送下一项任务；你可以先在这里起草。'}
+      {taskBusyState || pendingAnswerMode ? <p className="room-composer__task-lock" role="status">
+        {pendingAnswerMode
+          ? '当前任务正在等待你的回答。这里只发送文字回答；点名和附件不会随回答发送。'
+          : taskBusyState === 'blocked'
+            ? '当前任务已暂停。请在上方继续或停止任务；你可以先在这里准备下一条消息。'
+            : '当前任务仍在执行。完成或停止后才能发送下一项任务；你可以先在这里起草。'}
       </p> : null}
       <div className="room-composer">
         <textarea
@@ -294,7 +313,11 @@ export function RoomComposer({
               submit();
             }
           }}
-          placeholder={taskBusyState ? '可以先起草下一项任务…' : composerPlaceholder(room)}
+          placeholder={pendingAnswerMode
+            ? '回答伙伴正在等待的问题…'
+            : taskBusyState
+              ? '可以先起草下一项任务…'
+              : composerPlaceholder(room)}
           aria-label="协作消息"
           aria-autocomplete="list"
           aria-controls={mention && mentionCandidates.length ? 'room-mention-menu' : undefined}
@@ -308,11 +331,11 @@ export function RoomComposer({
               className="room-composer__attachment"
               label="添加图片"
               icon={<Paperclip size={16} />}
-              disabled={!roomCanCompose || sending || attachments.length >= 8}
+              disabled={!roomCanCompose || sending || pendingAnswerMode || attachments.length >= 8}
               onClick={onPickAttachments}
               tooltip
             />
-            {roomCanCompose && participants.length ? <IconButton
+            {roomCanCompose && participants.length && !pendingAnswerMode ? <IconButton
               className="room-composer__mention"
               label="点名一位伙伴"
               icon={<AtSign size={16} />}
@@ -323,7 +346,13 @@ export function RoomComposer({
           </div>
           <IconButton
             className="room-composer__send"
-            label={taskBusyState === 'blocked' ? '先继续或停止当前任务' : taskBusyState ? '等待当前任务完成' : '发送消息'}
+            label={pendingAnswerMode
+              ? '发送问题回答'
+              : taskBusyState === 'blocked'
+                ? '先继续或停止当前任务'
+                : taskBusyState
+                  ? '等待当前任务完成'
+                  : '发送消息'}
             icon={<Send size={17} />}
             disabled={!canSend}
             onClick={submit}

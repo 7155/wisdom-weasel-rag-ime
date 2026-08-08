@@ -607,8 +607,7 @@ class OwnerMemoryCurator:
                     for event_id in item.get("sourceEventIds") or []
                     if isinstance(event_id, int)
                 ]
-                model_bundle = _with_owner_bundle_hash(
-                    {
+                model_bundle_payload = {
                         **bundle,
                         **existing_memory_context,
                         "inputs": model_inputs,
@@ -635,7 +634,6 @@ class OwnerMemoryCurator:
                             for item in model_inputs
                             for evidence_id in _input_evidence_ids(item)
                         ],
-                        "curationRunId": run_id,
                         "cursor": {
                             **dict(bundle.get("cursor") or {}),
                             "toSourceCreatedAtMs": boundary[0],
@@ -644,11 +642,26 @@ class OwnerMemoryCurator:
                             "batchSourceCount": len(model_inputs),
                         },
                     }
+                model_run_id = _owner_model_run_id(
+                    owner[0],
+                    owner[1],
+                    self.project,
+                    model_bundle_payload,
+                )
+                model_bundle = _with_owner_bundle_hash(
+                    {
+                        **model_bundle_payload,
+                        # This identity belongs to the frozen model request,
+                        # not to a single application attempt. A retry after
+                        # backoff must reopen the database-owned request rather
+                        # than create a fresh Pi Session for the same packet.
+                        "curationRunId": model_run_id,
+                    }
                 )
                 begin_model_run = getattr(self.organizer, "begin_run", None)
                 if callable(begin_model_run):
                     begin_model_run(
-                        run_id,
+                        model_run_id,
                         frozen_input_sha256=hashlib.sha256(
                             json.dumps(
                                 model_bundle,
@@ -670,6 +683,7 @@ class OwnerMemoryCurator:
                     compile_output = _with_personal_v2_run_identity(
                         compile_output,
                         run_id=run_id,
+                        model_run_id=model_run_id,
                     )
                 if not self.personal_v2:
                     compile_output = _reconcile_owner_compile_claim_keys(
@@ -4382,11 +4396,13 @@ def _with_personal_v2_run_identity(
     compile_output: Mapping[str, object],
     *,
     run_id: str,
+    model_run_id: str = "",
 ) -> dict[str, object]:
     result = dict(compile_output)
+    curation_run_id = compact_whitespace(model_run_id) or run_id
     for field in ("memoryAtoms", "memoryRetractions"):
         result[field] = [
-            {**dict(item), "curationRunId": run_id}
+            {**dict(item), "curationRunId": curation_run_id}
             for item in result.get(field) or []
             if isinstance(item, Mapping)
         ]
@@ -4614,6 +4630,29 @@ def _owner(owner_kind: object, owner_id: object) -> tuple[str, str]:
 def _owner_run_id(owner_kind: str, owner_id: str, current_ms: int) -> str:
     owner_hash = hashlib.sha256(f"{owner_kind}\0{owner_id}".encode("utf-8")).hexdigest()[:10]
     return f"memory_book_owner_{current_ms}_{owner_hash}_{uuid.uuid4().hex[:8]}"
+
+
+def _owner_model_run_id(
+    owner_kind: str,
+    owner_id: str,
+    project: str,
+    frozen_payload: Mapping[str, object],
+) -> str:
+    payload = dict(frozen_payload)
+    payload.pop("bundleHash", None)
+    payload.pop("curationRunId", None)
+    input_hash = hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    owner_hash = hashlib.sha256(
+        f"{owner_kind}\0{owner_id}\0{project}".encode("utf-8")
+    ).hexdigest()[:10]
+    return f"memory_model_owner_{owner_hash}_{input_hash[:24]}"
 
 
 def _legal_ints(value: object, legal: set[int]) -> list[int]:

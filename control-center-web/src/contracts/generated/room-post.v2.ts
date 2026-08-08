@@ -18,15 +18,9 @@ export interface RoomPostV2 {
   content: string;
   question?: {
     prompt: string;
-    /**
-     * @minItems 2
-     * @maxItems 5
-     */
-    options:
-      | [QuestionOption, QuestionOption]
-      | [QuestionOption, QuestionOption, QuestionOption]
-      | [QuestionOption, QuestionOption, QuestionOption, QuestionOption]
-      | [QuestionOption, QuestionOption, QuestionOption, QuestionOption, QuestionOption];
+    options: {
+      [k: string]: unknown;
+    } & QuestionOption[];
   };
   /**
    * @maxItems 16
@@ -875,6 +869,7 @@ export interface RoomPostV2 {
     kind: 'user' | 'room_commit' | 'room_post';
     ref: string;
   };
+  chronology?: Chronology;
   createdAtMs: number;
 }
 export interface QuestionOption {
@@ -882,4 +877,12 @@ export interface QuestionOption {
   label: string;
   description?: string;
   recommended?: boolean;
+}
+export interface Chronology {
+  schemaVersion: 'wisdom-weasel.room-post-chronology.v1';
+  roomEventId: string;
+  roomEventSequence: number;
+  createdAtMs: number;
+  afterPostId: string | null;
+  orderKey: string;
 }

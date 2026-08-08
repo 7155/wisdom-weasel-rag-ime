@@ -1,12 +1,12 @@
 import type { AgentActivityProjection } from '@/contracts/agent-reducer';
-import { approvalDecisionView, approvalNeedsHumanDecision } from '@/contracts/approval-decision';
+import { approvalDecisionReasonLabel, approvalDecisionView, approvalNeedsHumanDecision } from '@/contracts/approval-decision';
 import { publicToolName } from '../tool-presentation';
 const PUBLIC_TOOL_OUTPUT_MAX_CHARS = 6_000;
 const PUBLIC_TOOL_OUTPUT_MAX_LINES = 40;
 
 export interface PublicToolActivityProjection {
   kind: string;
-  status: AgentActivityProjection['status'];
+  status: AgentActivityProjection['status'] | 'aborted';
   payload: Record<string, unknown>;
 }
 
@@ -203,8 +203,8 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
 
   const operation = firstText([envelope, carrier, payload], ['operation']);
   if (operation) {
-    const operationLabel = toolId === 'agent_plan'
-      ? ({ list: '查看计划', update: '更新计划' } as Record<string, string>)[operation]
+    const operationLabel = toolId === 'todo'
+      ? ({ init: '建立 Todo', start: '开始任务', done: '完成任务', drop: '放弃任务', append: '追加任务', view: '查看 Todo', rm: '移除 Todo' } as Record<string, string>)[operation]
       : operationLabels[operation];
     append('operation', '操作', operationLabel ?? '受控操作');
   }
@@ -244,8 +244,29 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
         approvalDecision.decision === 'approve' ? '批准' : '拒绝',
       );
     }
+    if (approvalDecision.status === 'failed_closed') {
+      append(
+        'approvalDecisionStatus',
+        '审批状态',
+        '无法形成可验证裁决，已按拒绝处理',
+      );
+    }
+    if (approvalDecision.rationaleSummary) {
+      append(
+        'approvalRationale',
+        '裁决说明',
+        approvalDecision.rationaleSummary,
+      );
+    }
     if (approvalDecision.reasonCodes.length) {
-      append('approvalReasonCodes', '判定依据', boundedList(approvalDecision.reasonCodes, 8));
+      append(
+        'approvalReasonCodes',
+        '判定依据',
+        boundedList(
+          approvalDecision.reasonCodes.map(approvalDecisionReasonLabel),
+          8,
+        ),
+      );
     }
     if (approvalDecision.receiptId) {
       append('approvalDecisionReceiptId', '决策回执', approvalDecision.receiptId);
@@ -339,7 +360,7 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
     toolId,
     toolLabel,
     operation,
-    summary: summary || codeResult.summary || `${toolLabel} ${activity.status === 'running' ? '正在处理' : activity.status === 'failed' ? '执行失败' : '已完成'}`,
+    summary: summary || codeResult.summary || `${toolLabel} ${activity.status === 'running' ? '正在处理' : activity.status === 'failed' ? '执行失败' : activity.status === 'aborted' ? '已停止' : '已完成'}`,
     fields,
     request: codeResult.request,
     ...(codeResult.output ? { output: codeResult.output } : {}),
@@ -1025,11 +1046,12 @@ function boundedList(values: string[], limit: number): string {
   return `${visible.join('、')}${unique.length > visible.length ? `，另 ${unique.length - visible.length} 项` : ''}`;
 }
 
-function activityStatusLabel(status: AgentActivityProjection['status']): string {
+function activityStatusLabel(status: PublicToolActivityProjection['status']): string {
   switch (status) {
     case 'running': return '进行中';
     case 'waiting': return '等待确认';
     case 'failed': return '失败';
+    case 'aborted': return '已停止';
     case 'completed': return '已完成';
   }
 }

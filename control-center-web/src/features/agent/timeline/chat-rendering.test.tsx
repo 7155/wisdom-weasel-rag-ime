@@ -1,15 +1,16 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import type { UiAgentBlock, UiAgentMessage } from '@/contracts/ui-events';
 import { agentEventFixture } from '@/test/fixtures/events';
+import { StubControlTransport } from '@/test/stub-control-transport';
 import { useAgentLiveStore } from '../state/live-store';
 import {
   AgentTurn,
   agentScrollSeekConfiguration,
   interleavedTurnEntries,
 } from './AgentTimeline';
-import { AgentPlanCard } from './AgentPlanCard';
 import {
   AgentBlock,
   AgentBlocks,
@@ -26,54 +27,6 @@ afterEach(() => {
 });
 
 describe('Agent chat rendering', () => {
-  it('renders the session plan as a compact live checklist', () => {
-    const { container, rerender } = render(
-      <AgentPlanCard plan={{
-        id: 'plan:session-1',
-        sessionId: 'session-1',
-        revision: 3,
-        title: '执行计划',
-        status: 'executing',
-        actor: 'agent',
-        note: '',
-        updatedAtMs: 3,
-        editable: false,
-        actApproved: true,
-        items: [
-          { id: 'step-1', title: '核对上下文链路', status: 'completed', position: 1, sequence: 1, updatedAtMs: 1 },
-          { id: 'step-2', title: '实现执行清单', status: 'in_progress', position: 2, sequence: 2, updatedAtMs: 2 },
-          { id: 'step-3', title: '运行真实验收', status: 'pending', position: 3, sequence: 3, updatedAtMs: 3 },
-        ],
-        counts: { total: 3, pending: 1, inProgress: 1, completed: 1 },
-      }} />,
-    );
-
-    expect(screen.getByRole('region', { name: '会话执行计划' })).toHaveTextContent('第 2 / 3 步 · 1 项已完成');
-    expect(container.querySelectorAll('li[data-state="completed"]')).toHaveLength(1);
-    expect(container.querySelectorAll('li[data-state="in_progress"]')).toHaveLength(1);
-    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '33');
-
-    rerender(<AgentPlanCard plan={{
-      id: 'plan:session-1',
-      sessionId: 'session-1',
-      revision: 4,
-      title: '执行计划',
-      status: 'completed',
-      actor: 'agent',
-      note: '',
-      updatedAtMs: 5,
-      editable: false,
-      actApproved: false,
-      items: [
-        { id: 'step-1', title: '核对上下文链路', status: 'completed', position: 1, sequence: 1, updatedAtMs: 1 },
-        { id: 'step-2', title: '实现执行清单', status: 'completed', position: 2, sequence: 4, updatedAtMs: 4 },
-        { id: 'step-3', title: '运行真实验收', status: 'completed', position: 3, sequence: 5, updatedAtMs: 5 },
-      ],
-      counts: { total: 3, pending: 0, inProgress: 0, completed: 3 },
-    }} />);
-    expect(screen.getByRole('region', { name: '会话执行计划' })).toHaveTextContent('3 / 3 项已完成');
-    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
-  });
 
   it('uses authoritative event sequence before message clock drift', () => {
     const before = { ...assistantMessage('session-1', 'turn-1', '调用前', 120), timelineSequence: 8 };
@@ -219,9 +172,8 @@ describe('Agent chat rendering', () => {
       <AgentTurn sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
     );
 
-    const runningSummary = screen.getByRole('button', { name: /查看 Agent 思考摘要/ });
-    expect(runningSummary).toHaveTextContent('正在思考');
-    expect(runningSummary).toHaveTextContent('正在分析问题与下一步');
+    expect(screen.queryByRole('button', { name: /查看 Agent 思考摘要/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('正在分析问题与下一步')).not.toBeInTheDocument();
     expect(document.querySelector('details.agent-activity--inline')).not.toBeInTheDocument();
 
     act(() => useAgentLiveStore.getState().applyEvents(sessionId, [
@@ -267,6 +219,7 @@ describe('Agent chat rendering', () => {
         requestId: 'reasoning:separate',
         summary: '先分析代码路径',
         items: ['先分析代码路径'],
+        source: 'provider_reasoning_summary',
         state: 'completed',
       }),
       agentEventFixture(2, 'tool_started', {
@@ -683,6 +636,24 @@ describe('Agent chat rendering', () => {
 
     rerender(<AgentBlock block={imageBlock({ receiptUrl: '/companions/personas/companion-present-v9.webp', alt: '静态资产' })} />);
     expect(screen.queryByRole('img', { name: '静态资产' })).not.toBeInTheDocument();
+  });
+
+  it('resolves managed conversation images through the native media origin', () => {
+    const managedReceipt = '/api/agent/media/media_native_fixture_01/content?sessionId=session:native-1';
+    render(
+      <ControlTransportProvider transport={new StubControlTransport('native', {})}>
+        <AgentBlock block={imageBlock({ receiptUrl: managedReceipt, alt: '原始对话图片' })} />
+      </ControlTransportProvider>,
+    );
+
+    const image = screen.getByRole('img', { name: '原始对话图片' });
+    expect(image).toHaveAttribute(
+      'src',
+      'http://127.0.0.1:8766/api/agent/media/media_native_fixture_01/content?sessionId=session%3Anative-1',
+    );
+    fireEvent.error(image);
+    expect(screen.queryByRole('img', { name: '原始对话图片' })).not.toBeInTheDocument();
+    expect(screen.getByText('图片无法读取')).toBeInTheDocument();
   });
 
   it('keeps remote Markdown images blocked', () => {

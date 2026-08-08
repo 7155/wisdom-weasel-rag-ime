@@ -162,11 +162,20 @@ describe('MemoryFeature relations', () => {
     expect(transport.requests.some((call) => call.request.pathId === 'knowledge.database.apply')).toBe(false);
   });
 
-  it('keeps only evidence, current facts, and topic books in the primary memory chain', async () => {
+  it('visibly preserves the Evidence, Atom, and Book architecture and catalog', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({
       routes: {
-        'memory.summary': { ok: true, eventCount: 18, memoryItemCount: 14, memoryBookCount: 4, memoryAtomCount: 10, pendingCompileEvents: 2 },
+        'memory.summary': {
+          ok: true,
+          evidenceSourceCount: 18,
+          agentEvidenceCount: 6,
+          memoryBookCount: 4,
+          memoryAtomCount: 10,
+          memoryAtomTotalCount: 14,
+          memoryAtomArchivedCount: 4,
+          pendingCompileEvents: 2,
+        },
         'memory.pages': (request: ControlRequest) => memoryPage(String(request.params?.kind ?? '')),
         'memory.graph.get': (request: ControlRequest) => memoryGraph(String(request.query?.plane ?? '')),
         'memory.entity.get': (request: ControlRequest) => memoryEntity(
@@ -177,35 +186,39 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    const layerSelector = await screen.findByRole('radiogroup', { name: '事实链层级' });
+    const architecture = await screen.findByRole('list', { name: 'Evidence → Atom → Book' });
+    expect(within(architecture).getByRole('button', { name: /Evidence/ })).toHaveTextContent('24');
+    expect(within(architecture).getByRole('button', { name: /Atom/ })).toHaveTextContent('10');
+    expect(within(architecture).getByRole('button', { name: /Book/ })).toHaveTextContent('4');
+
+    const layerSelector = screen.getByRole('radiogroup', { name: 'Evidence Atom Book 三层记忆' });
     expect(within(layerSelector).getAllByRole('radio').map((item) => item.textContent)).toEqual([
-      '记忆来源',
-      '关于我的事实',
-      '长期主题',
+      'Evidence · 证据',
+      'Atom · 记忆单元',
+      'Book · 主题书',
     ]);
     expect(within(layerSelector).queryByRole('radio', { name: '应用' })).not.toBeInTheDocument();
     expect(within(layerSelector).queryByRole('radio', { name: '标签' })).not.toBeInTheDocument();
-    expect(within(layerSelector).queryByRole('radio', { name: '短语' })).not.toBeInTheDocument();
-    expect(within(layerSelector).queryByRole('radio', { name: '负反馈' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('tab', { name: '关系图' }));
     expect(await screen.findByRole('heading', { name: '记忆关系', level: 2 })).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: /Agent Runtime，11 条记忆/ })).toBeInTheDocument();
   });
 
-  it('labels active Agent evidence as audit-only instead of active memory', async () => {
+  it('labels linked Agent evidence as an intentional Agent capture', async () => {
     const transport = new MockControlTransport({
       routes: {
-        'memory.summary': { ok: true, memoryBookCount: 1, memoryAtomCount: 1 },
+        'memory.summary': { ok: true, memoryEvidenceCount: 1, memoryBookCount: 1, memoryAtomCount: 1 },
         'memory.pages': (request: ControlRequest) => ({
           ok: true,
           items: request.params?.kind === 'evidence' ? [{
-            id: 'evidence:workflow-noise',
-            title: 'curation_prepare 流程回执',
-            detail: 'user_message',
-            type: 'user_message',
+            id: 'evidence:agent-capture',
+            title: '回答默认先给结论，再补依据。',
+            detail: 'Agent 主动记录',
+            type: 'session_digest',
+            sourceChannel: 'agent_capture',
             status: 'active',
-            source: { kind: 'agent_memory_evidence', id: 'evidence:workflow-noise' },
+            source: { kind: 'agent_memory_evidence', id: 'evidence:agent-capture' },
             ownerKind: 'agent',
             ownerId: 'companion-present-v1',
           }] : [],
@@ -216,12 +229,12 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport, '/memory?layer=evidence');
 
-    expect(await screen.findByText('审计保留')).toBeInTheDocument();
-    expect(screen.getByText(/对话审计/u)).toBeInTheDocument();
-    expect(screen.queryByText('使用中')).not.toBeInTheDocument();
+    expect(await screen.findByText('已引用')).toBeInTheDocument();
+    expect(screen.getByText(/澄主动记录/u)).toBeInTheDocument();
+    expect(screen.queryByText('对话审计')).not.toBeInTheDocument();
   });
 
-  it('starts from active memory and keeps preserved history inspectable', async () => {
+  it('starts from current memory and keeps preserved history inspectable', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({
       routes: {
@@ -233,7 +246,7 @@ describe('MemoryFeature relations', () => {
 
     await waitFor(() => {
       const request = transport.requests.find((call) => call.request.pathId === 'memory.pages');
-      expect(request?.request.query?.status).toBe('active');
+      expect(request?.request.query?.status).toBe('current');
     });
     await user.click(await screen.findByRole('combobox', { name: '状态' }));
     expect(await screen.findByRole('option', { name: '历史保留' })).toBeInTheDocument();
@@ -250,11 +263,12 @@ describe('MemoryFeature relations', () => {
           ok: true,
           items: [{
             atomId: 'atom:structured-source',
-            text: '最终输入框内容优先进入记忆',
+            text: '用户长期居住在上海',
+            type: 'personal_fact',
             status: 'active',
             source: { type: 'input_event', id: 'input-memory:42' },
             ref: { kind: 'atom', referenceId: 'atom:structured-source' },
-            evidenceRefs: [{ sourceType: 'input_event', sourceId: 'input-memory:42', textPreview: 'AX 最终输入' }],
+            evidenceRefs: [{ sourceType: 'input_event', sourceId: 'input-memory:42', textPreview: '用户明确说明常住上海' }],
           }],
           nextCursor: '',
           limit: 50,
@@ -277,9 +291,9 @@ describe('MemoryFeature relations', () => {
             source: { kind: 'ax_focused_value', id: 'input-memory:42' },
             item: {
               id: 'input-memory:42',
-              title: 'AX 最终输入',
+              title: '用户明确说明常住上海',
               status: 'active',
-              text: '最终输入框内容优先进入记忆',
+              text: '用户长期居住在上海',
             },
             evidenceRefs: [],
           };
@@ -288,12 +302,58 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('button', { name: /最终输入框内容优先进入记忆/ }));
-    const detail = screen.getByRole('region', { name: '最终输入框内容优先进入记忆 详情' });
+    await user.click(await screen.findByRole('button', { name: /用户长期居住在上海/ }));
+    const detail = screen.getByRole('region', { name: '用户长期居住在上海 详情' });
     expect(within(detail).getByText('输入记录')).toBeInTheDocument();
-    await user.click(within(detail).getByRole('button', { name: /AX 最终输入/ }));
-    const dialog = await screen.findByRole('dialog', { name: 'AX 最终输入' });
+    await user.click(within(detail).getByRole('button', { name: /用户明确说明常住上海/ }));
+    const dialog = await screen.findByRole('dialog', { name: '用户明确说明常住上海' });
     expect(within(dialog).getByText('ax_focused_value')).toBeInTheDocument();
+    expect(within(
+      within(dialog).getByRole('navigation', { name: 'Book Atom Evidence 引用路径' }),
+    ).getByText('Evidence')).toBeInTheDocument();
+  });
+
+  it('does not hide Atom kinds behind a category-only frontend filter', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'memory.summary': { ok: true, memoryAtomCount: 3 },
+        'memory.pages': {
+          ok: true,
+          items: [
+            {
+              id: 'atom:preference',
+              type: 'durable_preference',
+              text: '用户偏好先给结论。',
+              status: 'active',
+              updated_at_ms: 10,
+            },
+            {
+              id: 'atom:principle',
+              type: 'personal_principle',
+              text: '用户要求工程判断基于真实运行证据。',
+              status: 'active',
+              updated_at_ms: 11,
+            },
+            {
+              id: 'atom:project-requirement',
+              type: 'project_requirement',
+              text: '项目要求保留 Evidence 到 Book 的完整链路。',
+              status: 'active',
+              updated_at_ms: 12,
+            },
+          ],
+          nextCursor: '',
+          limit: 50,
+        },
+      },
+    });
+    renderMemory(transport);
+
+    expect(await screen.findByRole('button', { name: /用户偏好先给结论/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /用户要求工程判断基于真实运行证据/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /项目要求保留 Evidence 到 Book 的完整链路/ })).toBeInTheDocument();
+    expect(screen.getByText('项目要求 · 0 条 Evidence')).toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', { name: '个人记忆类型' })).not.toBeInTheDocument();
   });
 
   it('keeps App counts as source-index statistics instead of a peer memory layer', async () => {
@@ -317,13 +377,13 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    expect(await screen.findByText('共 8 条 · 历史 4 · 碎片证据 2')).toBeInTheDocument();
-    expect(screen.getByText('8 条完整输入')).toBeInTheDocument();
+    expect(await screen.findByText('全部 8 · 历史 4')).toBeInTheDocument();
+    expect(screen.getByRole('list', { name: 'Evidence → Atom → Book' })).toBeInTheDocument();
     expect(screen.queryByRole('radio', { name: '应用' })).not.toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.params?.kind === 'apps')).toBe(false);
   });
 
-  it('opens every overview layer and routes role books independently', async () => {
+  it('opens every architecture layer while keeping Role Book separate', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({
       routes: {
@@ -334,16 +394,28 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    const pipeline = await screen.findByLabelText('记忆形成过程');
-    await user.click(within(pipeline).getByRole('button', { name: /记忆来源/ }));
+    let architecture = await screen.findByRole('list', { name: 'Evidence → Atom → Book' });
+    await user.click(within(architecture).getByRole('button', { name: /Evidence/ }));
     await waitFor(() => expect(transport.requests.some((call) => (
       call.request.pathId === 'memory.pages' && call.request.params?.kind === 'evidence'
     ))).toBe(true));
-    await user.click(within(screen.getByLabelText('记忆形成过程')).getByRole('button', { name: /长期主题/ }));
+    architecture = screen.getByRole('list', { name: 'Evidence → Atom → Book' });
+    await user.click(within(architecture).getByRole('button', { name: /Atom/ }));
+    await waitFor(() => expect(transport.requests.some((call) => (
+      call.request.pathId === 'memory.pages' && call.request.params?.kind === 'atoms'
+    ))).toBe(true));
+    architecture = screen.getByRole('list', { name: 'Evidence → Atom → Book' });
+    await user.click(within(architecture).getByRole('button', { name: /Book/ }));
     await waitFor(() => expect(transport.requests.some((call) => (
       call.request.pathId === 'memory.pages' && call.request.params?.kind === 'books'
     ))).toBe(true));
-    await user.click(within(screen.getByLabelText('记忆形成过程')).getByRole('button', { name: /伙伴记忆/ }));
+    const bookRequest = transport.requests.find((call) => (
+      call.request.pathId === 'memory.pages' && call.request.params?.kind === 'books'
+    ));
+    expect(bookRequest?.request.params?.status).toBeUndefined();
+    expect(screen.getByText(/Book 不复制事实/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: '伙伴记忆' }));
     expect(await screen.findByRole('heading', { name: '伙伴记忆', level: 3 })).toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.pathId === 'agent.roles.list')).toBe(true);
   });
@@ -454,6 +526,93 @@ describe('MemoryFeature relations', () => {
     expect(await screen.findByRole('tab', { name: tab, hidden: true })).toHaveAttribute('aria-selected', 'true');
     expect(await screen.findByRole('dialog', { name: `深链 ${layer}` })).toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.pathId === 'memory.reference.get')).toBe(true);
+  });
+
+  it('traces a Book through its Atom to immutable Evidence', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'memory.summary': { ok: true, memoryBookCount: 1, memoryAtomCount: 1, evidenceSourceCount: 1 },
+        'memory.pages': { ok: true, items: [], nextCursor: '', limit: 50 },
+        'memory.reference.get': (request: ControlRequest) => {
+          const kind = String(request.params?.kind ?? '');
+          const referenceId = String(request.params?.referenceId ?? '');
+          if (kind === 'book') {
+            return {
+              schemaVersion: 'rag-ime.memory-reference.v1',
+              settingsRevision: 'settings:test',
+              runtimeRevision: 1,
+              ok: true,
+              kind: 'book',
+              referenceId,
+              item: { id: referenceId, title: '输入法记忆 Book', status: 'active', summary: '只组织 Atom。' },
+              source: { kind: 'memory_book', id: referenceId },
+              ref: { kind: 'book', id: referenceId, referenceKind: 'book', referenceId },
+              evidenceRefs: [{
+                kind: 'atom',
+                id: 'atom:input-boundary',
+                referenceKind: 'atom',
+                referenceId: 'atom:input-boundary',
+                label: '输入边界 Atom',
+              }],
+            };
+          }
+          if (kind === 'atom') {
+            return {
+              schemaVersion: 'rag-ime.memory-reference.v1',
+              settingsRevision: 'settings:test',
+              runtimeRevision: 1,
+              ok: true,
+              kind: 'atom',
+              referenceId,
+              item: { id: referenceId, title: '输入边界 Atom', status: 'active', text: '提交后才形成完整输入。' },
+              source: { kind: 'memory_atom', id: referenceId },
+              ref: { kind: 'atom', id: referenceId, referenceKind: 'atom', referenceId },
+              evidenceRefs: [{
+                kind: 'evidence',
+                id: 'evidence:input-boundary',
+                referenceKind: 'evidence',
+                referenceId: 'evidence:input-boundary',
+                label: '完整输入 Evidence',
+              }],
+            };
+          }
+          return {
+            schemaVersion: 'rag-ime.memory-reference.v1',
+            settingsRevision: 'settings:test',
+            runtimeRevision: 1,
+            ok: true,
+            kind: 'evidence',
+            referenceId,
+            item: { id: referenceId, title: '完整输入 Evidence', status: 'active', text: '用户提交的不可变来源。' },
+            source: { kind: 'agent_memory_evidence', id: referenceId },
+            ref: { kind: 'evidence', id: referenceId, referenceKind: 'evidence', referenceId },
+            evidenceRefs: [],
+          };
+        },
+      },
+    });
+    renderMemory(transport, '/memory?layer=books&id=book%3Ainput-memory');
+
+    const dialog = await screen.findByRole('dialog', { name: '输入法记忆 Book' });
+    let path = within(dialog).getByRole('navigation', { name: 'Book Atom Evidence 引用路径' });
+    expect(within(path).getByText('Book')).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: /输入边界 Atom/ }));
+    expect(await within(dialog).findByRole('heading', { name: '输入边界 Atom' })).toBeInTheDocument();
+    path = within(dialog).getByRole('navigation', { name: 'Book Atom Evidence 引用路径' });
+    expect(within(path).getByText('Book')).toBeInTheDocument();
+    expect(within(path).getByText('Atom')).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: /完整输入 Evidence/ }));
+    expect(await within(dialog).findByRole('heading', { name: '完整输入 Evidence' })).toBeInTheDocument();
+    path = within(dialog).getByRole('navigation', { name: 'Book Atom Evidence 引用路径' });
+    expect(within(path).getByText('Book')).toBeInTheDocument();
+    expect(within(path).getByText('Atom')).toBeInTheDocument();
+    expect(within(path).getByText('Evidence')).toBeInTheDocument();
+    expect(transport.requests.filter((call) => call.request.pathId === 'memory.reference.get').map((call) => (
+      call.request.params?.kind
+    ))).toEqual(['book', 'atom', 'evidence']);
   });
 
   it('recursively opens evidence references, blocks cycles, and explains redaction', async () => {
@@ -591,12 +750,12 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('radio', { name: '长期主题' }));
+    await user.click(await screen.findByRole('radio', { name: 'Book · 主题书' }));
     await user.click(await screen.findByRole('button', { name: /控制中心迁移/ }));
     const editWorkflow = screen.getByText('编辑内容').closest('.mgmt-workflow');
     expect(editWorkflow).not.toBeNull();
     await user.click(within(editWorkflow as HTMLElement).getByRole('button', { name: '编辑' }));
-    const dialog = await screen.findByRole('dialog', { name: '编辑长期主题' });
+    const dialog = await screen.findByRole('dialog', { name: '编辑 Book · 主题书' });
     const title = within(dialog).getByRole('textbox', { name: '标题' });
     const summary = within(dialog).getByRole('textbox', { name: '摘要' });
     const tags = within(dialog).getByRole('textbox', { name: '标签' });
@@ -609,7 +768,7 @@ describe('MemoryFeature relations', () => {
     await user.clear(tags);
     await user.type(tags, '控制中心，真实环境');
     await user.click(within(dialog).getByRole('button', { name: '保存' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '编辑长期主题' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '编辑 Book · 主题书' })).not.toBeInTheDocument());
     expect(transport.requests.filter((call) => call.request.pathId === 'memory.edit')).toHaveLength(1);
     expect(document.body).not.toHaveTextContent('book-1');
   });
@@ -626,10 +785,10 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('radio', { name: '长期主题' }));
+    await user.click(await screen.findByRole('radio', { name: 'Book · 主题书' }));
     await user.click(await screen.findByRole('button', { name: /控制中心迁移/ }));
     await user.click(within(screen.getByText('编辑内容').closest('.mgmt-workflow') as HTMLElement).getByRole('button', { name: '编辑' }));
-    const dialog = await screen.findByRole('dialog', { name: '编辑长期主题' });
+    const dialog = await screen.findByRole('dialog', { name: '编辑 Book · 主题书' });
     const summary = within(dialog).getByRole('textbox', { name: '摘要' });
     await user.clear(summary);
     await user.type(summary, '失败后仍应保留的草稿');
@@ -643,67 +802,46 @@ describe('MemoryFeature relations', () => {
     expect(document.body).not.toHaveTextContent('rawJson');
   });
 
-  it('restores forgotten input evidence without exposing a raw-memory edit form', async () => {
+  it('keeps non-durable audit states out of the Evidence catalog', async () => {
     const user = userEvent.setup();
-    let disposition = 'not_for_memory';
     const transport = new MockControlTransport({
       routes: {
         'memory.summary': {
           ok: true,
-          eventCount: 18,
-          memoryItemCount: 14,
+          memoryEvidenceCount: 1,
+          evidenceSourceCount: 1,
+          forgottenSourceCount: 5_705,
           memoryBookCount: 4,
           memoryAtomCount: 10,
-          evidenceSourceCount: 1,
-          forgottenSourceCount: 1,
-          needsReviewSourceCount: 0,
-          owners: [{ ownerKind: 'user', ownerId: 'default', itemCount: 1 }],
         },
-        'memory.pages': (request: ControlRequest) => {
-          if (request.params?.kind !== 'evidence') {
-            return { ok: true, items: [], nextCursor: '', limit: 50 };
-          }
-          return {
-            ok: true,
-            items: [{
-              id: 'input-memory:42',
-              title: '嗯嗯那个这个',
-              detail: 'input_noise_filler',
-              status: disposition,
-              disposition,
-              source: 'squirrel_rime_commit_burst',
-              type: 'user_final',
-              ownerKind: 'user',
-              ownerId: 'default',
-              updatedAtMs: 1_900_000_100_020,
-            }],
-            nextCursor: '',
-            limit: 50,
-          };
-        },
-        'memory.source.disposition': (request: ControlRequest) => {
-          expect(request.body).toEqual({
-            sourceId: 'input-memory:42',
-            disposition: 'pending',
-          });
-          disposition = 'pending';
-          return { ok: true, changed: true };
-        },
+        'memory.pages': (request: ControlRequest) => ({
+          ok: true,
+          items: request.params?.kind === 'evidence' ? [{
+            id: 'source:durable-input',
+            title: '回答时默认先给结论。',
+            detail: '已整理进长期记忆',
+            status: 'consolidated',
+            disposition: 'consolidated',
+            sourceChannel: 'input_method',
+            type: 'user_final',
+            ownerKind: 'user',
+            ownerId: 'default',
+          }] : [],
+          nextCursor: '',
+          limit: 50,
+        }),
       },
     });
-    renderMemory(transport);
+    renderMemory(transport, '/memory?layer=evidence');
 
-    await user.click(await screen.findByRole('radio', { name: '记忆来源' }));
-    await user.click(await screen.findByRole('button', { name: /嗯嗯那个这个/ }));
-    expect(screen.queryByText('编辑内容')).not.toBeInTheDocument();
-    const workflow = screen.getByText('恢复证据').closest('.mgmt-workflow');
-    expect(workflow).not.toBeNull();
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '恢复' }));
-
-    await waitFor(() => expect(
-      transport.requests.filter((call) => call.request.pathId === 'memory.source.disposition'),
-    ).toHaveLength(1));
-    expect(await screen.findByText('遗忘证据')).toBeInTheDocument();
+    const evidenceRow = await screen.findByRole('button', { name: /回答时默认先给结论/ });
+    expect(evidenceRow).toHaveTextContent('输入法');
+    expect(document.body).not.toHaveTextContent('reviewed_non_durable_source');
+    expect(document.body).not.toHaveTextContent('命令执行完成');
+    expect(screen.queryByText('恢复证据')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: '状态' }));
+    expect(screen.queryByRole('option', { name: '已遗忘' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: '已过期' })).not.toBeInTheDocument();
   });
 
   it('loads bounded tag/group graphs and links keyboard node selection to accessible tables', async () => {
@@ -1068,7 +1206,7 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('radio', { name: '长期主题' }));
+    await user.click(await screen.findByRole('radio', { name: 'Book · 主题书' }));
     const book = await screen.findByRole('button', { name: /控制中心迁移/ });
     await user.click(book);
     const details = screen.getByRole('region', { name: '控制中心迁移 详情' });
@@ -1110,7 +1248,7 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('radio', { name: '长期主题' }));
+    await user.click(await screen.findByRole('radio', { name: 'Book · 主题书' }));
     await user.click(await screen.findByRole('button', { name: /控制中心迁移/ }));
     expect(await screen.findAllByRole('button', { name: '暂未开放' })).not.toHaveLength(0);
     expect(screen.queryByText('后端暂不支持')).not.toBeInTheDocument();

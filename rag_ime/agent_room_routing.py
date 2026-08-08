@@ -68,14 +68,15 @@ def plan_room_routes(
     requested_participant_ids: Sequence[str] = (),
     profiles: Mapping[str, Mapping[str, object]] | None = None,
     authoritative_participant_id: str = "",
+    conversation_only: bool = False,
 ) -> list[dict[str, object]]:
-    """Return deterministic routes for one addressed set or a peer-parallel Room.
+    """Return deterministic routes for one addressed set or managed fan-out.
 
-    A ``parallel`` Room adapts Cat Cafe's D7 invariant: every active peer
-    receives an independent invocation in the same wave.  A bound WorkItem
-    keeps one accountable owner, ordered first, while sibling Dispatches own
-    distinct Kernel Tasks under the same Root.
+    Ordinary conversation is deliberately single-responder, even when a Room
+    is configured for parallel managed work. Explicit participant mentions and
+    a confirmed WorkItem remain the only ingress paths that can fan out.
     """
+
 
     participants = [
         dict(item)
@@ -103,6 +104,28 @@ def plan_room_routes(
     authority = by_id.get(authority_id) if authority_id else None
     if authority_id and authority is None:
         raise ValueError("authoritative room participant is unavailable")
+    if policy == "parallel" and not conversation_only:
+        if (
+            authority is not None
+            and canonical_collaboration_role_id(
+                authority.get("collaborationRole")
+            )
+            == "reviewer"
+        ):
+            raise ValueError(
+                "Reviewer cannot own managed implementation ingress; "
+                "use the post-integration review handoff"
+            )
+        if any(
+            canonical_collaboration_role_id(item.get("collaborationRole"))
+            == "reviewer"
+            for item in selected
+        ):
+            raise ValueError(
+                "Reviewer cannot enter the implementation wave; "
+                "use the post-integration review handoff"
+            )
+
     if authority is not None and policy != "parallel":
         if selected and (
             len(selected) != 1 or str(selected[0]["id"]) != str(authority["id"])
@@ -120,7 +143,7 @@ def plan_room_routes(
         )
         return [decision]
 
-    if policy == "parallel":
+    if policy == "parallel" and not (conversation_only and not selected):
         if selected and authority is not None and not any(
             str(item["id"]) == str(authority["id"]) for item in selected
         ):
@@ -128,7 +151,17 @@ def plan_room_routes(
                 "Room participant selection conflicts with the WorkItem current owner"
             )
         if not selected:
-            selected = list(participants)
+            # A dedicated Reviewer enters only after the Facilitator has integrated
+            # the implementation. Implicit parallel ingress must not make review
+            # race the work it is meant to inspect.
+            selected = [
+                item
+                for item in participants
+                if canonical_collaboration_role_id(
+                    item.get("collaborationRole")
+                )
+                != "reviewer"
+            ]
             reason = "parallel"
         if authority is not None:
             selected = [
@@ -148,6 +181,7 @@ def plan_room_routes(
                 requested_participant_ids=(),
                 profiles=profiles,
                 authoritative_participant_id="",
+                conversation_only=conversation_only,
             )
         ]
     if len(selected) > MAX_ROOM_RESPONDERS:
@@ -172,6 +206,7 @@ def plan_room_route(
     requested_participant_ids: Sequence[str] = (),
     profiles: Mapping[str, Mapping[str, object]] | None = None,
     authoritative_participant_id: str = "",
+    conversation_only: bool = False,
 ) -> dict[str, object]:
     participants = [
         dict(item)
@@ -241,6 +276,15 @@ def plan_room_route(
         )
 
     if policy == "parallel":
+        if conversation_only:
+            return _natural_route_decision(
+                room,
+                text,
+                policy=policy,
+                participants=participants,
+                profiles=profiles,
+                config=config,
+            )
         raise ValueError(
             "parallel room routing requires plan_room_routes"
         )
@@ -261,6 +305,24 @@ def plan_room_route(
         )
         return _decision(room, policy, target, "sequential", ordered, ())
 
+    return _natural_route_decision(
+        room,
+        text,
+        policy=policy,
+        participants=participants,
+        profiles=profiles,
+        config=config,
+    )
+def _natural_route_decision(
+    room: Mapping[str, object],
+    text: str,
+    *,
+    policy: str,
+    participants: Sequence[Mapping[str, object]],
+    profiles: Mapping[str, Mapping[str, object]] | None,
+    config: Mapping[str, object],
+) -> dict[str, object]:
+    by_id = {str(item["id"]): item for item in participants}
     profile_values = profiles or {}
     candidates = [
         _natural_candidate(
@@ -281,7 +343,11 @@ def plan_room_route(
         ),
     )
     selected = ranked[0]
-    reason = "descriptor_match" if float(selected["score"]) > float(selected["jitter"]) else "natural_fallback"
+    reason = (
+        "descriptor_match"
+        if float(selected["score"]) > float(selected["jitter"])
+        else "natural_fallback"
+    )
     fallback_id = str(config.get("fallbackParticipantId") or "")
     if reason == "natural_fallback" and fallback_id in by_id:
         target = by_id[fallback_id]
@@ -289,6 +355,8 @@ def plan_room_route(
     else:
         target = by_id[str(selected["participantId"])]
     return _decision(room, policy, target, reason, participants, ranked)
+
+
 
 
 def _mentioned_participants(

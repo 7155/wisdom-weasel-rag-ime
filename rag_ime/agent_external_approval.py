@@ -142,7 +142,9 @@ class ExternalApprovalFinalizer:
                 "summary": str(
                     final_receipt.get("summary") or ""
                 ),
+                **_approval_event_identity(final),
             },
+            turn_id=_approval_turn_id(final),
         )
         return {
             "schemaVersion": "rag-ime.agent-approval-decision.v1",
@@ -402,6 +404,19 @@ def _final_receipt(
         )
     return receipt
 
+
+def _approval_event_identity(
+    approval: Mapping[str, object],
+) -> dict[str, object]:
+    tool_call_id = str(approval.get("toolCallId") or "").strip()
+    return {"toolCallId": tool_call_id} if tool_call_id else {}
+
+
+def _approval_turn_id(approval: Mapping[str, object]) -> str:
+    causal = approval.get("causalMetadata")
+    if not isinstance(causal, Mapping):
+        return ""
+    return str(causal.get("turnId") or "").strip()
 
 def _room_invocation_receipt_id(
     approval: Mapping[str, object],

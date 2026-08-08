@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -161,8 +162,12 @@ class RoomKernelRuntimeCoordinator:
         )
         role_book_prompt = self.role_book_prompt_resolver(session_id)
         session = self.session_resolver(session_id)
+        intent_kind = str(dispatch.get("intentKind") or "")
+        is_alignment = intent_kind == "align"
+        is_report = intent_kind == "close"
         is_root_coordinator = (
-            str(dispatch.get("targetParticipantId") or "")
+            not is_alignment
+            and str(dispatch.get("targetParticipantId") or "")
             == str(root.get("facilitatorParticipantId") or "")
             and not task.get("parentTaskId")
         )
@@ -208,6 +213,11 @@ class RoomKernelRuntimeCoordinator:
             "generation": generation,
             "protocolRevision": "room-v2",
             "capabilityRevision": capability_revision,
+            # Report execution is read-only with respect to the workspace, but
+            # it must still be able to append its one governed Room Post and
+            # Commit. `room-binding.access=read` would collapse the manifest to
+            # room_state only; filesystem mutability is fenced by the Task's
+            # read_only workspace policy and the report-only tool catalog.
             "access": "write",
         }
         participant_binding_id = f"participant-binding:{dispatch_id}"
@@ -286,7 +296,11 @@ class RoomKernelRuntimeCoordinator:
             entry_kind="dispatch_state",
             source_ref=dispatch_id,
             dedupe_key=f"dispatch:{dispatch_id}:provider-context",
-            content=self.task_context.render(task, dispatch),
+            content=self.task_context.render(
+                task,
+                dispatch,
+                room_id=room_id,
+            ),
             created_at_ms=prepared_at_ms,
         )
         replay = [
@@ -330,28 +344,6 @@ class RoomKernelRuntimeCoordinator:
             active_profile,
             guard_surfaces["prompt"] if guard_surfaces is not None else None,
         )
-        if is_root_coordinator:
-            peer_work_duty = (
-                "<peer-parallel-work>\n"
-                "你既要亲自做事，也要在最后把大家的结果汇在一起；这不代表你是"
-                "其他伙伴的上级。系统可能已经给每个人安排了各自的工作，先用"
-                " room_state 看清现状，不要把同一件事重复分给别人。你必须立即"
-                "推进自己的集成、实际运行和用户体验检查，不能整轮只安排别人、"
-                "等待或转述进度。\n"
-                "如果这一轮确实需要多人一起做、系统却还没有安排，再把工作拆成"
-                "互不重叠且能分别检查的部分，并用 room_collaborate 分别邀请其他"
-                "可用伙伴；自己同时继续。每位伙伴的初步结果都公开后，先完成"
-                "整合，再请其余每位伙伴根据已经公开的产物和证据共同做最后检查。"
-                "等检查结果全部回来、分歧已处理，才可提交完成并发布正式回复。"
-                "如果协作无法启动或继续，要清楚说明试过什么、卡在哪里、怎样才能"
-                "继续；不得假装别人已经工作，也不得跳过共同检查。\n"
-                "</peer-parallel-work>"
-            )
-            profile_overlay = "\n\n".join(
-                value
-                for value in (profile_overlay, peer_work_duty)
-                if value
-            )
         layers = _prompt_layers(
             persona=persona,
             session=session,
@@ -385,18 +377,61 @@ class RoomKernelRuntimeCoordinator:
             user_authorized=_manifest_group(product_tools, "userAuthorized"),
             effective=_manifest_group(product_tools, "effective"),
         )
+        user_authorized = tool_plan.user_authorized
+        template_allowed = tool_plan.template_allowed
+        role_allowed = tool_plan.role_allowed
+        profile_allowed = tool_plan.profile_allowed
+        state_allowed = tool_plan.state_allowed
+        runtime_registry = tool_plan.runtime_registry
+        if is_alignment:
+            # Alignment owns the progressive definition step; execution and
+            # collaboration remain unavailable until the definition fence has
+            # been durably recorded and the next handoff is committed.
+            alignment_tools = (
+                "room_state",
+                "room_post",
+                "room_commit",
+                "room_define",
+            )
+            user_authorized = alignment_tools
+            template_allowed = alignment_tools
+            role_allowed = alignment_tools
+            profile_allowed = alignment_tools
+            state_allowed = alignment_tools
+            runtime_registry = {
+                name: tool_plan.runtime_registry[name]
+                for name in alignment_tools
+            }
+        elif is_report:
+            # A ReportDispatch may project accepted Room evidence and publish
+            # the single final report, but it cannot mutate work, delegate, or
+            # reopen the execution graph.
+            report_tools = (
+                "room_state",
+                "room_post",
+                "room_commit",
+            )
+            user_authorized = report_tools
+            template_allowed = report_tools
+            role_allowed = report_tools
+            profile_allowed = report_tools
+            state_allowed = report_tools
+            runtime_registry = {
+                name: tool_plan.runtime_registry[name]
+                for name in report_tools
+            }
         bound = self.bind_capability_runtime(
             room_binding=room_binding,
             participant_binding=participant_binding,
             prompt_compile_receipt=prompt["receipt"],
             manifest_id=f"capability-manifest:{dispatch_id}",
             dispatch_id=dispatch_id,
-            user_authorized=tool_plan.user_authorized,
-            template_allowed=tool_plan.template_allowed,
-            role_allowed=tool_plan.role_allowed,
-            profile_allowed=tool_plan.profile_allowed,
-            state_allowed=tool_plan.state_allowed,
-            runtime_registry=tool_plan.runtime_registry,
+            user_authorized=user_authorized,
+            template_allowed=template_allowed,
+            role_allowed=role_allowed,
+            profile_allowed=profile_allowed,
+            state_allowed=state_allowed,
+            runtime_registry=runtime_registry,
             created_at_ms=prepared_at_ms,
             runtime_state="prepared",
         )
@@ -454,10 +489,17 @@ class RoomKernelRuntimeCoordinator:
                     expected_generation=int(dispatch["generation"]),
                     created_at_ms=now_ms,
                 )
+        stage = _room_skill_stage(dispatch)
+        selection = self.skill_policy.select_stage(stage)
         loaded = runtime_receipt.get("roomSkillLoad")
+        if selection["selection"] == "required" and not isinstance(
+            loaded,
+            Mapping,
+        ):
+            raise RoomKernelFenceError(
+                "Pi omitted the Skill required for this Room Dispatch stage"
+            )
         if isinstance(loaded, Mapping):
-            stage = _room_skill_stage(dispatch)
-            selection = self.skill_policy.select_stage(stage)
             if (
                 selection["selection"] != "required"
                 or loaded.get("name") != selection["skillId"]
@@ -465,22 +507,63 @@ class RoomKernelRuntimeCoordinator:
                 raise RoomKernelFenceError(
                     "Pi loaded a Skill outside the required Room policy"
                 )
+            skill_id = str(loaded["name"])
+            skill_hash = _required_text(loaded, "contentRevision")
+            catalog_revision = _required_text(
+                loaded,
+                "catalogRevision",
+            )
+            capability_epoch = int(dispatch["capabilityEpoch"])
+            dispatch_attempt = int(dispatch.get("attempt") or 0)
+            skill_binding = {
+                "dispatchId": dispatch_id,
+                "capabilityEpoch": capability_epoch,
+                "dispatchAttempt": dispatch_attempt,
+                "stage": stage,
+                "skillId": skill_id,
+                "skillHash": skill_hash,
+                "catalogRevision": catalog_revision,
+                "policyId": self.skill_policy.policy_id,
+                "policyVersion": self.skill_policy.version,
+                "hashRule": self.skill_policy.hash_rule,
+            }
+            binding_hash = hashlib.sha256(
+                json.dumps(
+                    skill_binding,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            receipt_id = (
+                f"room-skill-load:{dispatch_id}:{capability_epoch}:"
+                f"{dispatch_attempt}:{binding_hash}"
+            )
+            prior = self.skill_receipts.latest_for_session(
+                str(dispatch["targetSessionId"])
+            )
+            created_at_ms = (
+                int(prior["createdAtMs"])
+                if isinstance(prior, Mapping)
+                and str(prior.get("receiptId") or "") == receipt_id
+                else now_ms
+            )
             self.skill_receipts.pin_skill(
-                receipt_id=f"room-skill-load:{dispatch_id}",
+                receipt_id=receipt_id,
                 root_id=str(dispatch["rootId"]),
                 task_id=str(dispatch["taskId"]),
                 dispatch_id=dispatch_id,
                 session_id=str(dispatch["targetSessionId"]),
-                skill_id=str(loaded["name"]),
-                skill_hash=_required_text(loaded, "contentRevision"),
-                catalog_revision=_required_text(
-                    loaded,
-                    "catalogRevision",
-                ),
+                skill_id=skill_id,
+                skill_hash=skill_hash,
+                catalog_revision=catalog_revision,
                 load_reason="stage_required",
-                capability_epoch=int(dispatch["capabilityEpoch"]),
-                idempotency_key=f"{dispatch_id}/{stage}",
-                created_at_ms=now_ms,
+                capability_epoch=capability_epoch,
+                idempotency_key=(
+                    f"{dispatch_id}/{capability_epoch}/{dispatch_attempt}/"
+                    f"{stage}/{binding_hash}"
+                ),
+                created_at_ms=created_at_ms,
             )
 
     def resolve_collaboration_profile(
@@ -648,6 +731,7 @@ def _profile_overlay_prompt(
 
 def _room_skill_stage(dispatch: Mapping[str, object]) -> str:
     return {
+        "align": "requirements",
         "execute": "implementation",
         "review": "vision-review",
         "revise": "feedback",

@@ -132,7 +132,7 @@ class SessionMemoryRecallBuilder:
         vector_context_text: str = "",
         vector_context_weight: float = 0.0,
         recent_messages: Sequence[Mapping[str, object]] = (),
-        planning_context: Mapping[str, object] | None = None,
+        todo_context: Mapping[str, object] | None = None,
         task_context: Mapping[str, object] | None = None,
         compaction_recovery: Mapping[str, object] | None = None,
         max_items: int = 12,
@@ -274,7 +274,7 @@ class SessionMemoryRecallBuilder:
         query_sha256 = hashlib.sha256(query.encode("utf-8")).hexdigest()
         vector_context = _tail_text(vector_context_text, 6_000)
         conversation = _normalized_recent_messages(recent_messages)
-        plan = _normalized_plan(planning_context)
+        todo = _normalized_todo(todo_context)
         task = _normalized_task(task_context)
         recovery = (
             dict(compaction_recovery)
@@ -355,7 +355,7 @@ class SessionMemoryRecallBuilder:
             },
             "items": selected,
             "recentConversation": conversation,
-            "plan": plan,
+            "todo": todo,
             "task": task,
             "sourceIds": source_ids,
             "budget": {
@@ -936,7 +936,7 @@ def _message_text(value: Mapping[str, object]) -> str:
     return compact_whitespace("\n".join(parts))
 
 
-def _normalized_plan(value: Mapping[str, object] | None) -> list[dict[str, str]]:
+def _normalized_todo(value: Mapping[str, object] | None) -> list[dict[str, str]]:
     if not isinstance(value, Mapping):
         return []
     items = value.get("items")
@@ -947,11 +947,14 @@ def _normalized_plan(value: Mapping[str, object] | None) -> list[dict[str, str]]
         if not isinstance(item, Mapping):
             continue
         status = compact_whitespace(str(item.get("status") or "pending")).lower()
-        if status not in {"pending", "in_progress"}:
+        if status not in {"pending", "in_progress", "blocked"}:
             continue
-        title = truncate_text(str(item.get("title") or ""), 240)
-        if title:
-            result.append({"status": status, "title": title})
+        content = truncate_text(
+            str(item.get("content") or item.get("title") or ""),
+            240,
+        )
+        if content:
+            result.append({"status": status, "content": content})
         if len(result) >= 8:
             break
     return result

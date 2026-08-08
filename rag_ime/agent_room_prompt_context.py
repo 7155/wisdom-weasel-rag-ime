@@ -147,12 +147,12 @@ def room_participant_prompt(
                 "",
                 "当前阶段：普通对话，或还没有需要执行的工作。",
                 "普通闲聊直接回答。明确、可安全执行或只读核对的请求直接开始，"
-                "不要让用户先填写额外表格或回复固定开工口令。只有缺少的选择会真正"
-                "改变结果时，才用 user_input_required 一次提出一个必要问题，并给出"
-                "清楚选项；能从源码、配置或运行状态查明的事实自行核对。范围、验收、"
-                "权限或重大方案仍会改变结果时，使用 alignment-and-decision；只有"
-                "用户明确要求时，才把已确认决定写成术语表、ADR 或决策文档。"
-                "不要另起一套重复的目标、计划或伙伴任务流程。",
+                "不要让用户先填写额外表格或回复固定开工口令。只有 Facilitator/Reporter "
+                "在缺少且会改变结果的用户选择时，才加载 alignment-and-decision，再用原生 ask "
+                "一次提出一到四个必要问题并给出二到五个唯一选项；前置依赖改变后续问题时"
+                "才分开问。Room partner 把缺口用 room_commit(wait) 交给 Facilitator；"
+                "nested child 不调用 Room Tool，只返回 structured blocker。能从源码、配置或"
+                "运行状态查明的事实自行核对。不要另起一套重复的目标、计划或伙伴任务流程。",
             ]
         )
     if message:

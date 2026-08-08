@@ -159,16 +159,16 @@
         }
       }
     },
-    "plan": {
+    "todo": {
       "type": "array",
       "maxItems": 8,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["status", "title"],
+        "required": ["status", "content"],
         "properties": {
-          "status": {"enum": ["pending", "in_progress"]},
-          "title": {"type": "string", "minLength": 1, "maxLength": 240}
+          "status": {"enum": ["pending", "in_progress", "blocked"]},
+          "content": {"type": "string", "minLength": 1, "maxLength": 240}
         }
       }
     },

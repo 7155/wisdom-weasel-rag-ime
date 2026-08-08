@@ -126,6 +126,19 @@ class AgentMemorySourceStore:
         approval_id = compact_whitespace(str(approval.get("approvalId") or ""))
         if not summary or not approval_id:
             raise ValueError("applied tool receipt requires summary and approvalId")
+        tool_id = compact_whitespace(
+            str(approval.get("toolId") or approval.get("tool") or "")
+        ).lower()
+        memory_domain = compact_whitespace(
+            str(receipt.get("memoryDomain") or "")
+        ).lower()
+        document_knowledge_receipt = (
+            tool_id == "knowledge" or memory_domain == "document_knowledge"
+        )
+        personal_memory_eligible = (
+            receipt.get("personalMemoryEligible") is True
+            and not document_knowledge_receipt
+        )
         return self._checkpoint(
             session_id=str(approval.get("sessionId") or ""),
             pi_entry_id=f"approval:{approval_id}",
@@ -142,8 +155,13 @@ class AgentMemorySourceStore:
             metadata={
                 "applied": True,
                 "mutationApplied": True,
-                "personalMemoryEligible": (
-                    receipt.get("personalMemoryEligible") is True
+                "toolId": tool_id,
+                "memoryDomain": memory_domain,
+                "personalMemoryEligible": personal_memory_eligible,
+                "personalMemoryExclusionReason": (
+                    "document_knowledge_boundary"
+                    if document_knowledge_receipt
+                    else ""
                 ),
                 "approvalId": approval_id,
             },

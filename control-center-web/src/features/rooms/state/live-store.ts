@@ -7,6 +7,7 @@ import {
   createRoomProjection,
   reduceRoomEvents,
   replayRoomEventSnapshot,
+  type RoomEventPage,
   type RoomEventSnapshot,
   type OptimisticRoomMessageInput,
   type RoomProjectionState,
@@ -32,15 +33,25 @@ export interface RoomKernelSyncProjection {
   failureAtMs?: number;
 }
 
+export interface RoomHistoryWindow {
+  events: readonly UiRoomEvent[];
+  firstSequence: number;
+  hasMore: boolean;
+  retainedPrefixTruncated: boolean;
+}
+
 interface RoomLiveStore {
   projections: Record<string, RoomProjectionState>;
   roomRevisions: Record<string, number>;
   turnRevisions: Record<string, Record<string, number>>;
   kernelProjections: Record<string, RoomKernelProjection>;
   kernelSyncByRoomId: Record<string, RoomKernelSyncProjection>;
+  historyByRoomId: Record<string, RoomHistoryWindow>;
+  snapshotsByRoomId: Record<string, RoomEventSnapshot>;
   ensure(roomId: string): void;
   replaySnapshot(roomId: string, snapshot: RoomEventSnapshot): boolean;
   applyEvents(roomId: string, events: readonly UiRoomEvent[]): boolean;
+  prependHistory(roomId: string, page: RoomEventPage): boolean;
   appendOptimistic(
     roomId: string,
     input: OptimisticRoomMessageInput,
@@ -66,6 +77,8 @@ export const useRoomLiveStore = create<RoomLiveStore>((set, get) => ({
   turnRevisions: {},
   kernelProjections: {},
   kernelSyncByRoomId: {},
+  historyByRoomId: {},
+  snapshotsByRoomId: {},
   ensure(roomId) {
     if (!roomId || get().projections[roomId]) return;
     set((state) => ({
@@ -107,7 +120,18 @@ export const useRoomLiveStore = create<RoomLiveStore>((set, get) => ({
   replaySnapshot(roomId, snapshot) {
     const current = roomProjection(roomId);
     if (snapshot.lastSequence < current.lastSequence) return false;
-    const next = replayRoomEventSnapshot(current, snapshot);
+    const merged = mergeSnapshotWindow(snapshot, get().historyByRoomId[roomId]);
+    const next = replayRoomEventSnapshot(current, merged.snapshot);
+    set((state) => ({
+      historyByRoomId: {
+        ...state.historyByRoomId,
+        [roomId]: merged.window,
+      },
+      snapshotsByRoomId: {
+        ...state.snapshotsByRoomId,
+        [roomId]: merged.snapshot,
+      },
+    }));
     replaceProjection(set, get, roomId, next, allTurnIds(current, next));
     return true;
   },
@@ -118,10 +142,94 @@ export const useRoomLiveStore = create<RoomLiveStore>((set, get) => ({
     for (const event of events) {
       if (event.turnId) changedTurnIds.add(event.turnId);
     }
+    const baseSnapshot = get().snapshotsByRoomId[roomId];
+    const currentWindow = get().historyByRoomId[roomId];
+    if (baseSnapshot && currentWindow && events.length) {
+      const mergedEvents = appendLiveEvents(currentWindow.events, events);
+      const firstSequence = mergedEvents[0]?.sequence ?? 0;
+      const latest = mergedEvents.at(-1);
+      const updatedSnapshot: RoomEventSnapshot = {
+        ...baseSnapshot,
+        room: {
+          ...baseSnapshot.room,
+          lastEventSequence: latest?.sequence ?? baseSnapshot.room.lastEventSequence,
+        },
+        events: mergedEvents,
+        firstSequence,
+        lastSequence: latest?.sequence ?? baseSnapshot.lastSequence,
+        resumeToken: latest?.resumeToken ?? baseSnapshot.resumeToken,
+        truncated: firstSequence > 1,
+      };
+      set((state) => ({
+        historyByRoomId: {
+          ...state.historyByRoomId,
+          [roomId]: {
+            ...currentWindow,
+            events: mergedEvents,
+            firstSequence,
+            hasMore: currentWindow.hasMore || firstSequence > currentWindow.firstSequence,
+          },
+        },
+        snapshotsByRoomId: {
+          ...state.snapshotsByRoomId,
+          [roomId]: updatedSnapshot,
+        },
+      }));
+    }
     if (projection !== current) {
       replaceProjection(set, get, roomId, projection, changedTurnIds);
     }
     return projection.needsSnapshot;
+  },
+  prependHistory(roomId, page) {
+    if (page.roomId !== roomId) return false;
+    const current = roomProjection(roomId);
+    const window = get().historyByRoomId[roomId];
+    const snapshot = get().snapshotsByRoomId[roomId];
+    if (!window || !snapshot) return false;
+    if (!page.items.length) {
+      set((state) => ({
+        historyByRoomId: {
+          ...state.historyByRoomId,
+          [roomId]: {
+            ...window,
+            hasMore: false,
+            retainedPrefixTruncated: page.retainedPrefixTruncated,
+          },
+        },
+      }));
+      return true;
+    }
+    if (
+      !window.firstSequence
+      || page.lastSequence !== window.firstSequence - 1
+    ) return false;
+    const events = [...page.items, ...window.events];
+    if (events.length > roomEventWindowLimit) return false;
+    const mergedSnapshot: RoomEventSnapshot = {
+      ...snapshot,
+      events,
+      firstSequence: events[0]?.sequence ?? 0,
+      truncated: (events[0]?.sequence ?? 0) > 1,
+    };
+    const next = replayRoomEventSnapshot(current, mergedSnapshot);
+    set((state) => ({
+      historyByRoomId: {
+        ...state.historyByRoomId,
+        [roomId]: {
+          events,
+          firstSequence: mergedSnapshot.firstSequence,
+          hasMore: page.hasMore,
+          retainedPrefixTruncated: page.retainedPrefixTruncated,
+        },
+      },
+      snapshotsByRoomId: {
+        ...state.snapshotsByRoomId,
+        [roomId]: mergedSnapshot,
+      },
+    }));
+    replaceProjection(set, get, roomId, next, allTurnIds(current, next));
+    return true;
   },
   appendOptimistic(roomId, input) {
     const current = roomProjection(roomId);
@@ -164,17 +272,23 @@ export const useRoomLiveStore = create<RoomLiveStore>((set, get) => ({
       const turnRevisions = { ...state.turnRevisions };
       const kernelProjections = { ...state.kernelProjections };
       const kernelSyncByRoomId = { ...state.kernelSyncByRoomId };
+      const historyByRoomId = { ...state.historyByRoomId };
+      const snapshotsByRoomId = { ...state.snapshotsByRoomId };
       delete projections[roomId];
       delete roomRevisions[roomId];
       delete turnRevisions[roomId];
       delete kernelProjections[roomId];
       delete kernelSyncByRoomId[roomId];
+      delete historyByRoomId[roomId];
+      delete snapshotsByRoomId[roomId];
       return {
         projections,
         roomRevisions,
         turnRevisions,
         kernelProjections,
         kernelSyncByRoomId,
+        historyByRoomId,
+        snapshotsByRoomId,
       };
     });
   },
@@ -185,9 +299,64 @@ export const useRoomLiveStore = create<RoomLiveStore>((set, get) => ({
       turnRevisions: {},
       kernelProjections: {},
       kernelSyncByRoomId: {},
+      historyByRoomId: {},
+      snapshotsByRoomId: {},
     });
   },
 }));
+
+const roomEventWindowLimit = 2_000;
+
+function mergeSnapshotWindow(
+  snapshot: RoomEventSnapshot,
+  existing?: RoomHistoryWindow,
+): { snapshot: RoomEventSnapshot; window: RoomHistoryWindow } {
+  let events = [...snapshot.events];
+  let hasMore = snapshot.firstSequence > 1;
+  let retainedPrefixTruncated = false;
+  if (existing?.events.length && events.length) {
+    const older = existing.events.filter((event) => event.sequence < snapshot.firstSequence);
+    if (older.at(-1)?.sequence === snapshot.firstSequence - 1) {
+      events = [...older, ...events];
+      if (events.length > roomEventWindowLimit) {
+        events = events.slice(-roomEventWindowLimit);
+        hasMore = true;
+      } else {
+        hasMore = existing.hasMore;
+      }
+      retainedPrefixTruncated = existing.retainedPrefixTruncated;
+    }
+  }
+  const firstSequence = events[0]?.sequence ?? 0;
+  const mergedSnapshot: RoomEventSnapshot = {
+    ...snapshot,
+    events,
+    firstSequence,
+    truncated: firstSequence > 1,
+  };
+  return {
+    snapshot: mergedSnapshot,
+    window: {
+      events,
+      firstSequence,
+      hasMore,
+      retainedPrefixTruncated,
+    },
+  };
+}
+
+function appendLiveEvents(
+  current: readonly UiRoomEvent[],
+  incoming: readonly UiRoomEvent[],
+): UiRoomEvent[] {
+  const lastSequence = current.at(-1)?.sequence ?? 0;
+  const additions = incoming.filter((event) => event.sequence > lastSequence);
+  if (!additions.length) return [...current];
+  const combined = [...current, ...additions];
+  return combined.length > roomEventWindowLimit
+    ? combined.slice(-roomEventWindowLimit)
+    : combined;
+}
 
 export function roomProjection(roomId: string): RoomProjectionState {
   return (

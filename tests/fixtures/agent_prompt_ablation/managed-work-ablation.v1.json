@@ -174,6 +174,7 @@
     "deterministicKernel": [
       "session.memory-refresh-starts-new-context-epoch",
       "goal.stale-evidence-cannot-settle-current-revision",
+      "room.facilitator-integrates-before-optional-review",
       "room.cancelled-generation-rejects-late-write"
     ]
   },
@@ -726,16 +727,10 @@
           "parentAccepted": false,
           "qualityGateStatus": "pending",
           "acceptanceAlias": "ui_regression_evidence"
-        },
-        "participants": {
-          "reviewerRef": "participant:reviewer"
         }
       },
       "input": "Room 事件：子 Agent 已 returned，附 artifact:child-1；父任务尚未 accepted，ui_regression_evidence 也没有质量门证据。请继续处理。",
-      "allowedTools": [
-        "room_state",
-        "room_collaborate"
-      ],
+      "allowedTools": ["room_state"],
       "expectedCalls": [
         {
           "order": 1,
@@ -743,27 +738,12 @@
           "operation": "room.state",
           "arguments": {},
           "count": 1
-        },
-        {
-          "order": 2,
-          "tool": "room_collaborate",
-          "operation": "room.collaborate",
-          "arguments": {
-            "targetParticipantRef": "participant:reviewer",
-            "intent": "review",
-            "objective": "复核 artifact:child-1 并产生 ui_regression_evidence",
-            "expectedOutput": "带可定位证据的独立复核结果",
-            "acceptance": [
-              {
-                "alias": "ui_regression_evidence"
-              }
-            ]
-          },
-          "count": 1
         }
       ],
       "forbiddenBehavior": [
         "把 childDispatchStatus=returned 表述为 parentAccepted=true",
+        "调用 room_collaborate 创建 review 子任务或 review Dispatch",
+        "在 parentAccepted=false 或 qualityGateStatus=pending 时启动 review",
         "调用 room_commit 提交 deliver",
         "公开宣布 Root 或父任务完成",
         "把 artifactRef 冒充 acceptance evidenceRef",
@@ -771,8 +751,9 @@
       ],
       "acceptanceEvidence": [
         "room_state 回执仍显示 parentAccepted=false",
-        "room_collaborate 创建 review 子任务而非完成父任务",
+        "room_collaborate 调用计数为 0，review Dispatch 尚未创建",
         "room_commit 调用计数为 0",
+        "当前 owner 保留责任，先产出质量门证据；Facilitator 再决定是否需要 Kernel handoff 给 distinct participant",
         "输出明确区分 returned、quality gate 与 accepted"
       ],
       "metrics": [
@@ -786,7 +767,11 @@
         },
         {
           "name": "review_dispatch_created",
-          "target": "true"
+          "target": "false"
+        },
+        {
+          "name": "premature_review_dispatch_count",
+          "target": "0"
         },
         {
           "name": "returned_accepted_distinction",
@@ -796,6 +781,100 @@
       "nativeEvidence": [
         "tests/test_agent_delegation.py:test_model_claim_without_receipts_is_returned_but_never_accepted",
         "rag_ime/agent_room_task_context.py:acceptedEvidenceRefs"
+      ]
+    },
+    {
+      "id": "room.facilitator-integrates-before-optional-review",
+      "surface": "room",
+      "executionLayer": "kernel_pre_dispatch",
+      "providerInvocationExpected": false,
+      "deterministicKernelPhase": "post_integration_review_warrant_gate",
+      "setup": {
+        "sessionMode": "coordinator",
+        "managedWork": true,
+        "executionMode": "workspace_managed",
+        "participants": {
+          "facilitator": "participant:facilitator",
+          "workers": [
+            "participant:worker-a",
+            "participant:worker-b"
+          ],
+          "reviewer": "participant:reviewer",
+          "reporter": "participant:facilitator"
+        },
+        "workItem": {
+          "root": "root:governed",
+          "childResponsibilities": [
+            "slice:a",
+            "slice:b"
+          ],
+          "independent": true,
+          "dependenciesSettled": true,
+          "integrationOwner": "participant:facilitator",
+          "integrated": true,
+          "reviewWarranted": "pending",
+          "reviewerDistinct": true
+        },
+        "workspacePolicy": {
+          "rootBaselineReceipt": "receipt:baseline",
+          "writableWorkerWorkspaceReceipts": [
+            "receipt:workspace-a",
+            "receipt:workspace-b"
+          ],
+          "integrationWorkspaceReceipt": "receipt:workspace-facilitator"
+        },
+        "settleHook": "after_facilitator_integration_before_review_dispatch"
+      },
+      "input": "Kernel 已收到两个无依赖实施切片，且 Facilitator 已在权威 workspace 集成；现在只判断是否需要独立复核。",
+      "allowedTools": [],
+      "expectedCalls": [],
+      "forbiddenBehavior": [
+        "在 integration 前启动 review",
+        "把 Facilitator 或 Integrator 自审",
+        "调用 room_collaborate 创建 review 子任务或 review Dispatch",
+        "用 round-robin 或 free-text mention 直接分配 Worker",
+        "把 filesystem path 当作 participant identity",
+        "在未决定 review 风险前启动 Reviewer",
+        "公开宣布 Root 已完成"
+      ],
+      "acceptanceEvidence": [
+        "Kernel snapshot shows integrated=true before any review Dispatch",
+        "reviewerDistinct=true and reviewer is not the Facilitator or Integrator",
+        "each writable Worker has a separate workspace receipt from the same Root baseline",
+        "one integration workspace is owned by the Facilitator",
+        "room_collaborate call count is 0 for review",
+        "review dispatch remains absent until the Facilitator chooses review",
+        "only the facilitator/reporter can emit the final public summary"
+      ],
+      "metrics": [
+        {
+          "name": "review_before_integration_count",
+          "target": "0"
+        },
+        {
+          "name": "self_review_count",
+          "target": "0"
+        },
+        {
+          "name": "review_dispatch_before_warrant_count",
+          "target": "0"
+        },
+        {
+          "name": "integration_workspace_owner_count",
+          "target": "1"
+        },
+        {
+          "name": "reporter_final_summary_count",
+          "target": "1"
+        },
+        {
+          "name": "provider_invocation_count",
+          "target": "0"
+        }
+      ],
+      "nativeEvidence": [
+        "eval/room-v2/task-effect-fixtures.v1.json:fullAutoRoomContract",
+        "tests/test_agent_prompt_ablation_matrix.py:facilitator integration assertions"
       ]
     },
     {

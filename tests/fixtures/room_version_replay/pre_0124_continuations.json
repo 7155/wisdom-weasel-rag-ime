@@ -1,0 +1,160 @@
+{
+  "capturedBeforeMigrationVersion": 124,
+  "v2WriterRevision": "399d6a2",
+  "initialV3WriterRevision": "bb9864b",
+  "lateV3WriterRevision": "7c1c56e",
+  "v2SameTaskDispatch": {
+    "commit": {
+      "schemaVersion": "wisdom-weasel.room-commit.v2",
+      "commitId": "commit:legacy-parent",
+      "dispatchId": "dispatch:legacy-parent",
+      "action": "dispatch",
+      "contentHash": "sha256:legacy-v2-same-task",
+      "postProposal": null,
+      "continuation": {
+        "decision": "dispatch",
+        "childDispatch": {
+          "schemaVersion": "wisdom-weasel.room-dispatch-envelope.v2",
+          "dispatchId": "dispatch:legacy-peer",
+          "rootId": "root:1",
+          "taskId": "task:1",
+          "parentDispatchId": "dispatch:legacy-parent",
+          "generation": 0,
+          "hopCount": 1,
+          "depth": 0,
+          "budgetCost": 1,
+          "targetSessionId": "session:participant:b",
+          "targetParticipantId": "participant:b",
+          "triggerId": "trigger:legacy-peer",
+          "intentKind": "execute",
+          "idempotencyKey": "legacy-peer",
+          "attempt": 0,
+          "capabilityEpoch": 1,
+          "runtimeProfileRevision": "runtime-profile:test-v1",
+          "state": "pending"
+        }
+      },
+      "evidenceRefs": [],
+      "requirementCoverage": [],
+      "createdAtMs": 10
+    },
+    "materializedContinuation": {
+      "decision": "dispatch",
+      "childDispatch": {
+        "schemaVersion": "wisdom-weasel.room-dispatch-envelope.v2",
+        "dispatchId": "dispatch:legacy-peer",
+        "rootId": "root:1",
+        "taskId": "task:1",
+        "parentDispatchId": "dispatch:legacy-parent",
+        "generation": 0,
+        "hopCount": 1,
+        "depth": 0,
+        "budgetCost": 1,
+        "targetSessionId": "session:participant:b",
+        "targetParticipantId": "participant:b",
+        "triggerId": "trigger:legacy-peer",
+        "intentKind": "execute",
+        "idempotencyKey": "legacy-peer",
+        "attempt": 0,
+        "capabilityEpoch": 1,
+        "runtimeProfileRevision": "runtime-profile:test-v1",
+        "state": "pending"
+      }
+    }
+  },
+  "v2IdentitylessWait": {
+    "commit": {
+      "schemaVersion": "wisdom-weasel.room-commit.v2",
+      "commitId": "commit:legacy-parent",
+      "dispatchId": "dispatch:legacy-parent",
+      "action": "wait",
+      "contentHash": "sha256:legacy-v2-wait",
+      "postProposal": null,
+      "continuation": {
+        "decision": "wait"
+      },
+      "evidenceRefs": [],
+      "requirementCoverage": [],
+      "createdAtMs": 10
+    },
+    "materializedContinuation": {
+      "decision": "wait"
+    }
+  },
+  "initialV3IdentitylessWait": {
+    "commit": {
+      "schemaVersion": "wisdom-weasel.room-commit.v3",
+      "commitId": "commit:legacy-parent",
+      "dispatchId": "dispatch:legacy-parent",
+      "action": "wait",
+      "contentHash": "sha256:legacy-initial-v3-wait",
+      "postProposal": null,
+      "continuation": {
+        "decision": "wait"
+      },
+      "qualityGateReceipt": {
+        "schemaVersion": "wisdom-weasel.room-quality-gate-receipt.v1",
+        "receiptId": "quality:legacy-parent",
+        "rootId": "root:1",
+        "taskId": "task:1",
+        "dispatchId": "dispatch:legacy-parent",
+        "generation": 0,
+        "originalRequestChecked": true,
+        "verdict": "not_ready",
+        "items": [],
+        "residualRisks": [
+          "Historical v3 wait has no persisted resume identity."
+        ],
+        "createdAtMs": 10
+      },
+      "evidenceRefs": [],
+      "requirementCoverage": [],
+      "createdAtMs": 10
+    },
+    "materializedContinuation": {
+      "decision": "wait"
+    }
+  },
+  "lateV3ParticipantWait": {
+    "commit": {
+      "schemaVersion": "wisdom-weasel.room-commit.v3",
+      "commitId": "commit:legacy-parent",
+      "dispatchId": "dispatch:legacy-parent",
+      "action": "wait",
+      "contentHash": "sha256:legacy-late-v3-wait",
+      "postProposal": null,
+      "continuation": {
+        "decision": "wait",
+        "waitingFor": "participant",
+        "waitingForParticipantId": "participant:b",
+        "waitingForDispatchId": "dispatch:legacy-peer",
+        "resumeCondition": "The exact peer result is committed."
+      },
+      "qualityGateReceipt": {
+        "schemaVersion": "wisdom-weasel.room-quality-gate-receipt.v1",
+        "receiptId": "quality:legacy-parent",
+        "rootId": "root:1",
+        "taskId": "task:1",
+        "dispatchId": "dispatch:legacy-parent",
+        "generation": 0,
+        "originalRequestChecked": true,
+        "verdict": "not_ready",
+        "items": [],
+        "residualRisks": [
+          "Waiting for the exact participant result."
+        ],
+        "createdAtMs": 10
+      },
+      "evidenceRefs": [],
+      "requirementCoverage": [],
+      "createdAtMs": 10
+    },
+    "materializedContinuation": {
+      "decision": "wait",
+      "waitingFor": "participant",
+      "waitingForParticipantId": "participant:b",
+      "waitingForDispatchId": "dispatch:legacy-peer",
+      "resumeCondition": "The exact peer result is committed."
+    }
+  }
+}

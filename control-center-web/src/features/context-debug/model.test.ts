@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveToolBatches, normalizeDebugContextResponse } from './model';
+import { describeDebugTurn, deriveToolBatches, normalizeDebugContextResponse } from './model';
 
 describe('context debug model', () => {
   it('keeps model-call deltas and explicit runtime tool batches', () => {
@@ -65,6 +65,50 @@ describe('context debug model', () => {
     expect(response.context?.modelCalls[1]?.contextDelta).toMatchObject({
       commonPrefixMessages: 1,
       addedMessageCount: 1,
+    });
+  });
+
+  it('distinguishes an explicit first turn from compaction recovery evidence', () => {
+    const first = normalizeDebugContextResponse({
+      available: true,
+      availableTurns: [{
+        turnId: 'turn-first',
+        turnOrdinal: 1,
+        assemblyPhase: 'initial',
+      }],
+      context: {
+        sessionId: 'session-1',
+        turnId: 'turn-first',
+        modelCalls: [{ index: 1, contextMessages: [], contextDelta: { addedMessages: [] } }],
+      },
+    });
+    expect(describeDebugTurn(first.context!, first.availableTurns)).toMatchObject({
+      label: '首轮装配',
+      phase: 'initial',
+    });
+
+    const recovered = normalizeDebugContextResponse({
+      available: true,
+      availableTurns: [{ turnId: 'turn-recovered' }],
+      context: {
+        sessionId: 'session-1',
+        turnId: 'turn-recovered',
+        modelCalls: [{
+          index: 1,
+          contextMessages: [],
+          contextDelta: {
+            addedMessages: [{
+              role: 'custom',
+              customType: 'rag-ime-compaction-recovery',
+              content: '<compaction-recovery>保留原始愿景</compaction-recovery>',
+            }],
+          },
+        }],
+      },
+    });
+    expect(describeDebugTurn(recovered.context!, recovered.availableTurns)).toMatchObject({
+      label: '压缩后恢复',
+      phase: 'compaction_recovery',
     });
   });
 });

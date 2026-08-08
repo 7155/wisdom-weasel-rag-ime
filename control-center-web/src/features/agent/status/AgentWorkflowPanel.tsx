@@ -1,51 +1,43 @@
 import {
-  ArrowDown,
-  ArrowUp,
+  Circle,
+  CircleCheck,
   CirclePause,
   CirclePlay,
   Flag,
   ListChecks,
-  Pencil,
-  Plus,
-  RotateCcw,
+  LoaderCircle,
   ShieldCheck,
-  Trash2,
-  X,
 } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { useControlTransport } from '@/app/control-transport';
-import { Button, IconButton, Input, TextArea } from '@/components/primitives';
-import type { AgentPlanProjection } from '@/contracts/agent-reducer';
+import { Button, TextArea } from '@/components/primitives';
+import type { AgentTodoProjection } from '@/contracts/agent-reducer';
 import type {
   ActGate,
   AgentWorkflowStateV1,
   Goal,
-  Plan,
-  PlanItem,
+  Todo,
+  TodoTask,
 } from '@/contracts/generated/agent-workflow-state.v1';
 import type { JsonValue } from '@/platform/transport';
-import { AgentPlanCard } from '../timeline/AgentPlanCard';
 
 type MutationInput = {
   sessionId: string;
-  target: 'plan' | 'goal';
   body: { [key: string]: JsonValue };
 };
 
 export function AgentWorkflowPanel({
   sessionId,
-  fallbackPlan,
+  fallbackTodo,
   fallbackGoal,
   fallbackActGate,
-  currentTurnStartedAtMs,
   onWorkflowResolved,
 }: {
   sessionId: string;
-  fallbackPlan?: AgentPlanProjection;
+  fallbackTodo?: AgentTodoProjection;
   fallbackGoal?: Goal;
   fallbackActGate?: ActGate;
-  currentTurnStartedAtMs?: number;
   onWorkflowResolved?: (workflow: AgentWorkflowStateV1) => void;
 }) {
   const transport = useControlTransport();
@@ -62,33 +54,35 @@ export function AgentWorkflowPanel({
     },
     enabled: Boolean(sessionId),
     retry: false,
-    staleTime: 1_000,
+    staleTime: 500,
+    refetchInterval: 2_000,
+    refetchOnWindowFocus: true,
   });
-  const hasLivePlan = Boolean(fallbackPlan);
+  const hasLiveTodo = Boolean(fallbackTodo);
   const hasLiveGoal = Boolean(fallbackGoal);
   const hasLiveActGate = Boolean(fallbackActGate);
-  const hasLiveWorkflow = hasLivePlan || hasLiveGoal || hasLiveActGate;
+  const hasLiveWorkflow = hasLiveTodo || hasLiveGoal || hasLiveActGate;
   const workflow = useMemo(() => {
     const liveWorkflow = fallbackWorkflow(
       sessionId,
-      fallbackPlan,
+      fallbackTodo,
       fallbackGoal,
       fallbackActGate,
     );
     return mergeWorkflowState(
       workflowQuery.data,
       liveWorkflow,
-      hasLivePlan,
+      hasLiveTodo,
       hasLiveGoal,
       hasLiveActGate,
     );
   }, [
     fallbackActGate,
     fallbackGoal,
-    fallbackPlan,
+    fallbackTodo,
     hasLiveActGate,
     hasLiveGoal,
-    hasLivePlan,
+    hasLiveTodo,
     sessionId,
     workflowQuery.data,
   ]);
@@ -96,11 +90,9 @@ export function AgentWorkflowPanel({
     onWorkflowResolved?.(workflow);
   }, [onWorkflowResolved, workflow]);
   const mutation = useMutation({
-    mutationFn: async ({ sessionId: ownerSessionId, target, body }: MutationInput) => {
+    mutationFn: async ({ sessionId: ownerSessionId, body }: MutationInput) => {
       const next = await transport.request<AgentWorkflowStateV1>({
-        pathId: target === 'plan'
-          ? 'agent.session.plan.mutate'
-          : 'agent.session.goal.mutate',
+        pathId: 'agent.session.goal.mutate',
         params: { sessionId: ownerSessionId },
         body,
       });
@@ -113,9 +105,9 @@ export function AgentWorkflowPanel({
 
   if (workflowQuery.isPending && !workflowQuery.data && !hasLiveWorkflow) {
     return (
-      <div className="agent-workflow-panel" aria-label="任务与目标">
+      <div className="agent-workflow-panel" aria-label="Todo 与长期目标">
         <section className="agent-workflow-section">
-          <p role="status">正在读取计划与长期目标</p>
+          <p role="status">正在读取 Todo 与长期目标</p>
         </section>
       </div>
     );
@@ -128,10 +120,10 @@ export function AgentWorkflowPanel({
     && !isAbsentWorkflow(workflowQuery.error)
   ) {
     return (
-      <div className="agent-workflow-panel" aria-label="任务与目标">
+      <div className="agent-workflow-panel" aria-label="Todo 与长期目标">
         <section className="agent-workflow-section">
           <div className="agent-workflow-recovery" role="alert">
-            <span>暂时无法读取最新计划与长期目标。为避免误用旧状态，相关操作已暂停。</span>
+            <span>暂时无法读取最新 Todo 与长期目标。为避免误用旧状态，相关操作已暂停。</span>
             <Button
               size="small"
               loading={workflowQuery.isFetching}
@@ -152,10 +144,10 @@ export function AgentWorkflowPanel({
     && isAbsentWorkflow(workflowQuery.error)
   ) {
     return (
-      <div className="agent-workflow-panel" aria-label="任务与目标">
+      <div className="agent-workflow-panel" aria-label="Todo 与长期目标">
         <section className="agent-workflow-section">
           <div className="agent-workflow-recovery" data-state="room-managed" role="status">
-            <span>当前没有需要单独维护的计划。如果这段工作来自协作空间，分工、公开进度和最终回复会继续在那里显示。</span>
+            <span>当前没有 Todo。如果这段工作来自协作空间，分工、公开进度和最终回复会继续在那里显示。</span>
           </div>
         </section>
       </div>
@@ -163,13 +155,13 @@ export function AgentWorkflowPanel({
   }
 
   return (
-    <div className="agent-workflow-panel" aria-label="任务与目标">
+    <div className="agent-workflow-panel" aria-label="Todo 与长期目标">
       {workflowQuery.error && !isAbsentWorkflow(workflowQuery.error) ? (
         <div className="agent-workflow-recovery" role="alert">
           <span>
             {workflowQuery.data
               ? '状态刷新失败，当前显示上一次确认的结果。'
-              : '实时读取失败，当前继续显示这段对话已经确认的计划与目标。'}
+              : '实时读取失败，当前继续显示这段对话已经确认的 Todo 与目标。'}
           </span>
           <Button
             size="small"
@@ -180,290 +172,109 @@ export function AgentWorkflowPanel({
           </Button>
         </div>
       ) : null}
-      <PlanReview
-        key={`plan:${sessionId}`}
-        plan={workflow.plan}
-        gate={workflow.actGate}
-        currentTurnStartedAtMs={currentTurnStartedAtMs}
-        pending={mutation.isPending && mutation.variables?.sessionId === sessionId}
-        error={mutation.variables?.sessionId === sessionId && mutation.variables.target === 'plan'
-          ? mutation.error
-          : null}
-        mutate={(body) => mutation.mutateAsync({ sessionId, target: 'plan', body })}
-      />
+      <TodoProgress todo={workflow.todo} />
+      <ExecutionGate gate={workflow.actGate} />
       <GoalMode
         key={`goal:${sessionId}`}
         goal={workflow.goal}
         pending={mutation.isPending && mutation.variables?.sessionId === sessionId}
-        error={mutation.variables?.sessionId === sessionId && mutation.variables.target === 'goal'
-          ? mutation.error
-          : null}
-        mutate={(body) => mutation.mutateAsync({ sessionId, target: 'goal', body })}
+        error={mutation.variables?.sessionId === sessionId ? mutation.error : null}
+        mutate={(body) => mutation.mutateAsync({ sessionId, body })}
       />
     </div>
   );
 }
 
-function PlanReview({
-  plan,
-  gate,
-  currentTurnStartedAtMs,
-  pending,
-  error,
-  mutate,
-}: {
-  plan: Plan;
-  gate: ActGate;
-  currentTurnStartedAtMs?: number;
-  pending: boolean;
-  error: unknown;
-  mutate: (body: { [key: string]: JsonValue }) => Promise<unknown>;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [returning, setReturning] = useState(false);
-  const [confirmingAction, setConfirmingAction] = useState<'cancel' | 'reset' | null>(null);
-  const [reviewFeedback, setReviewFeedback] = useState('');
-  const [title, setTitle] = useState(plan.title);
-  const [items, setItems] = useState<PlanItem[]>(plan.items);
-  useEffect(() => {
-    if (editing) return;
-    setTitle(plan.title);
-    setItems(plan.items);
-  }, [editing, plan.revision, plan.title, plan.items]);
-  useEffect(() => {
-    if (plan.status !== 'draft') {
-      setEditing(false);
-      return;
-    }
-    if (plan.items.length === 0) setEditing(true);
-  }, [plan.status, plan.items.length]);
-  useEffect(() => {
-    setReturning(false);
-    setReviewFeedback('');
-    setConfirmingAction(null);
-  }, [plan.revision]);
-
-  const canSubmit = title.trim().length > 0 && items.length > 0
-    && items.every((item) => item.title.trim().length > 0);
-  const canAcceptCompletion = !['completed', 'cancelled'].includes(plan.status)
-    && plan.items.length > 0
-    && plan.items.every((item) => item.status === 'completed');
-  const runMutation = (
-    body: { [key: string]: JsonValue },
-    onSuccess?: () => void,
-  ) => {
-    void mutate(body).then(onSuccess).catch(() => undefined);
-  };
-  const save = (action: 'save' | 'submit_review') => runMutation({
-    action,
-    expectedRevision: plan.revision,
-    title: title.trim(),
-    items: items.map((item) => ({
-      id: item.id.startsWith('draft:') ? '' : item.id,
-      title: item.title.trim(),
-      status: item.status,
-    })),
-  }, () => setEditing(false));
-  const returnToDraft = () => runMutation({
-    action: 'return_to_draft',
-    expectedRevision: plan.revision,
-    note: reviewFeedback.trim(),
-  }, () => {
-    setReturning(false);
-    setReviewFeedback('');
-  });
-
+function TodoProgress({ todo }: { todo: Todo }) {
+  const settled = todo.counts.completed + todo.counts.abandoned;
   return (
-    <section className="agent-workflow-section agent-workflow-plan" aria-label="计划审阅与执行">
+    <section className="agent-workflow-section agent-workflow-todo" aria-label="Todo">
       <header>
         <span className="agent-workflow-section__icon"><ListChecks size={16} /></span>
-        <span><strong>执行计划</strong><small>{planStatusLabel(plan.status)}</small></span>
-        {plan.status === 'draft' && !editing ? (
-          <IconButton size="small" icon={<Pencil size={15} />} label="编辑计划" onClick={() => setEditing(true)} tooltip />
-        ) : null}
+        <span>
+          <strong>Todo</strong>
+          <small>{todo.counts.total ? `${settled}/${todo.counts.total} 已收束` : '暂无任务'}</small>
+        </span>
       </header>
-
-      {editing ? (
-        <div className="agent-plan-editor">
-          <label>
-            <span>计划标题</span>
-            <Input aria-label="计划标题" maxLength={160} value={title} onChange={(event) => setTitle(event.target.value)} />
-          </label>
-          <ol>
-            {items.map((item, index) => (
-              <li key={item.id}>
-                <span>{index + 1}</span>
-                <Input
-                  aria-label={`计划步骤 ${index + 1}`}
-                  maxLength={240}
-                  value={item.title}
-                  onChange={(event) => setItems((current) => current.map((candidate, itemIndex) => (
-                    itemIndex === index ? { ...candidate, title: event.target.value } : candidate
-                  )))}
-                />
-                <span className="agent-plan-editor__actions">
-                  <IconButton size="small" icon={<ArrowUp size={14} />} label={`上移步骤 ${index + 1}`} disabled={index === 0} onClick={() => setItems(moveItem(items, index, index - 1))} tooltip />
-                  <IconButton size="small" icon={<ArrowDown size={14} />} label={`下移步骤 ${index + 1}`} disabled={index === items.length - 1} onClick={() => setItems(moveItem(items, index, index + 1))} tooltip />
-                  <IconButton size="small" icon={<Trash2 size={14} />} label={`删除步骤 ${index + 1}`} onClick={() => setItems(items.filter((_, itemIndex) => itemIndex !== index))} tooltip />
-                </span>
-              </li>
-            ))}
-          </ol>
-          <Button
-            className="agent-workflow-add"
-            size="small"
-            variant="quiet"
-            leadingIcon={<Plus size={15} />}
-            onClick={() => setItems([...items, draftPlanItem(items.length)])}
-          >
-            添加步骤
-          </Button>
-          <div className="agent-workflow-actions">
-            {plan.items.length ? <Button size="small" variant="quiet" onClick={() => setEditing(false)}>取消</Button> : null}
-            <Button size="small" loading={pending} disabled={!canSubmit} onClick={() => save('save')}>保存草案</Button>
-            <Button size="small" variant="primary" loading={pending} disabled={!canSubmit} leadingIcon={<ShieldCheck size={15} />} onClick={() => save('submit_review')}>提交审阅</Button>
-          </div>
+      {todo.phases.length ? (
+        <div className="agent-todo-phases">
+          {todo.phases.map((phase) => {
+            const phaseSettled = phase.tasks.filter(
+              (task) => task.status === 'completed' || task.status === 'abandoned',
+            ).length;
+            return (
+              <section className="agent-todo-phase" key={phase.name} aria-label={phase.name}>
+                <header>
+                  <strong>{phase.name}</strong>
+                  <small>{phaseSettled}/{phase.tasks.length}</small>
+                </header>
+                <ul>
+                  {phase.tasks.map((task) => (
+                    <li key={task.content} data-state={task.status}>
+                      {todoTaskIcon(task.status)}
+                      <span>
+                        {task.content}
+                        {task.reason ? <small>{task.reason}</small> : null}
+                      </span>
+                      <small>{todoTaskStatusLabel(task.status)}</small>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            );
+          })}
         </div>
       ) : (
-        <>
-          <p
-            className="agent-workflow-plan__provenance"
-            data-predates-turn={Boolean(
-              currentTurnStartedAtMs
-              && plan.updatedAtMs > 0
-              && plan.updatedAtMs < currentTurnStartedAtMs
-            ) || undefined}
-          >
-            <strong>计划来源</strong>
-            <span>{planActorLabel(plan.actor)} · {formatWorkflowTime(plan.updatedAtMs)}</span>
-            <small>
-              {currentTurnStartedAtMs && plan.updatedAtMs > 0 && plan.updatedAtMs < currentTurnStartedAtMs
-                ? '这份计划来自更早的对话回合，请确认它仍适合当前任务。'
-                : '每轮开始前都会带入这份计划；你也可以在这里直接更新。'}
-            </small>
-          </p>
-          <AgentPlanCard plan={plan} />
-          <div className="agent-act-gate" data-open={gate.allowed || undefined}>
-            {gate.allowed ? <ShieldCheck size={15} /> : <CirclePause size={15} />}
-            <span>
-              <strong>
-                {gate.allowed
-                  ? String(gate.reason) === 'user_execution_request'
-                    ? '用户请求已允许继续'
-                    : '已经可以执行'
-                  : '执行条件未满足'}
-              </strong>
-              <small>{gate.message}</small>
-            </span>
-          </div>
-          {returning ? (
-            <div className="agent-plan-return-editor">
-              <label>
-                <span>退回意见</span>
-                <TextArea
-                  aria-describedby="agent-plan-return-help"
-                  aria-label="计划退回意见"
-                  autoFocus
-                  maxLength={600}
-                  rows={3}
-                  value={reviewFeedback}
-                  onChange={(event) => setReviewFeedback(event.target.value)}
-                />
-              </label>
-              <small id="agent-plan-return-help">请说明需要修改的内容；意见会随草案保留给下一位编辑者。</small>
-              <div className="agent-workflow-actions">
-                <Button size="small" variant="quiet" disabled={pending} onClick={() => {
-                  setReturning(false);
-                  setReviewFeedback('');
-                }}>保留当前版本</Button>
-                <Button size="small" variant="primary" leadingIcon={<RotateCcw size={15} />} loading={pending} disabled={!reviewFeedback.trim()} onClick={returnToDraft}>发送退回意见</Button>
-              </div>
-            </div>
-          ) : (
-            <div className="agent-workflow-actions">
-              {plan.status === 'review' && !canAcceptCompletion ? (
-                <>
-                  <Button size="small" variant="quiet" leadingIcon={<RotateCcw size={15} />} disabled={pending} onClick={() => setReturning(true)}>退回修改</Button>
-                  <Button size="small" variant="primary" leadingIcon={<ShieldCheck size={15} />} loading={pending} onClick={() => runMutation({ action: 'approve', expectedRevision: plan.revision })}>批准计划</Button>
-                </>
-              ) : null}
-              {plan.status === 'approved' && !canAcceptCompletion ? (
-                <Button size="small" variant="quiet" leadingIcon={<RotateCcw size={15} />} disabled={pending} onClick={() => setReturning(true)}>退回修改</Button>
-              ) : null}
-              {plan.status === 'approved' && !canAcceptCompletion ? (
-                <small className="agent-workflow-note">
-                  首个经治理的工作区写操作成功后，计划会自动进入执行中。
-                </small>
-              ) : null}
-              {canAcceptCompletion ? (
-                <Button
-                  size="small"
-                  variant="primary"
-                  leadingIcon={<ShieldCheck size={15} />}
-                  loading={pending}
-                  onClick={() => runMutation({ action: 'complete', expectedRevision: plan.revision })}
-                >
-                  验收并完成
-                </Button>
-              ) : null}
-              {['approved', 'executing'].includes(plan.status) ? (
-                confirmingAction === 'cancel' ? (
-                  <>
-                    <span className="agent-workflow-confirm">取消会停止执行并保留当前计划终态，确认继续？</span>
-                    <Button size="small" variant="quiet" disabled={pending} onClick={() => setConfirmingAction(null)}>继续执行</Button>
-                    <Button
-                      size="small"
-                      variant="danger"
-                      leadingIcon={<X size={15} />}
-                      loading={pending}
-                      onClick={() => runMutation(
-                        { action: 'cancel', expectedRevision: plan.revision },
-                        () => setConfirmingAction(null),
-                      )}
-                    >
-                      确认取消执行
-                    </Button>
-                  </>
-                ) : (
-                  <Button
-                    size="small"
-                    variant="quiet"
-                    leadingIcon={<X size={15} />}
-                    disabled={pending}
-                    onClick={() => setConfirmingAction('cancel')}
-                  >
-                    取消执行
-                  </Button>
-                )
-              ) : null}
-              {['completed', 'cancelled'].includes(plan.status) ? (
-                confirmingAction === 'reset' ? (
-                  <>
-                    <span className="agent-workflow-confirm">新计划会替换当前终态视图，确认继续？</span>
-                    <Button size="small" variant="quiet" disabled={pending} onClick={() => setConfirmingAction(null)}>保留当前计划</Button>
-                    <Button
-                      size="small"
-                      leadingIcon={<RotateCcw size={15} />}
-                      loading={pending}
-                      onClick={() => runMutation(
-                        { action: 'reset', expectedRevision: plan.revision, title: '执行计划', items: [] },
-                        () => setConfirmingAction(null),
-                      )}
-                    >
-                      确认新建计划
-                    </Button>
-                  </>
-                ) : (
-                  <Button size="small" leadingIcon={<RotateCcw size={15} />} disabled={pending} onClick={() => setConfirmingAction('reset')}>新建计划</Button>
-                )
-              ) : null}
-            </div>
-          )}
-        </>
+        <div className="agent-todo-empty">
+          <strong>当前没有 Todo</strong>
+          <p>需要多步执行时，伙伴会创建 Todo；状态变化会在这里同步刷新。</p>
+        </div>
       )}
-      {error ? <p className="agent-workflow-error" role="alert">{publicError(error)}</p> : null}
+      {todo.updatedAtMs > 0 ? (
+        <small className="agent-todo-updated">
+          {todo.actor ? `${todoActorLabel(todo.actor)} · ` : ''}{formatWorkflowTime(todo.updatedAtMs)}
+        </small>
+      ) : null}
     </section>
   );
+}
+
+function ExecutionGate({ gate }: { gate: ActGate }) {
+  return (
+    <div className="agent-act-gate" data-open={gate.allowed || undefined}>
+      {gate.allowed ? <ShieldCheck size={15} /> : <CirclePause size={15} />}
+      <span>
+        <strong>{gate.allowed ? '当前请求可以继续' : '执行条件未满足'}</strong>
+        <small>{gate.message}</small>
+      </span>
+    </div>
+  );
+}
+
+function todoTaskIcon(status: TodoTask['status']) {
+  if (status === 'completed') return <CircleCheck size={15} aria-hidden="true" />;
+  if (status === 'in_progress') return <LoaderCircle size={15} aria-hidden="true" />;
+  if (status === 'blocked' || status === 'abandoned') return <CirclePause size={15} aria-hidden="true" />;
+  return <Circle size={15} aria-hidden="true" />;
+}
+
+function todoTaskStatusLabel(status: TodoTask['status']): string {
+  return {
+    pending: '待处理',
+    in_progress: '进行中',
+    blocked: '已阻塞',
+    completed: '已完成',
+    abandoned: '已放弃',
+  }[status];
+}
+
+function todoActorLabel(actor: string): string {
+  const normalized = actor.trim().toLowerCase();
+  if (!normalized) return '';
+  if (normalized === 'agent') return '伙伴更新';
+  if (normalized.includes('control-center')) return '你在这里更新';
+  if (normalized === 'migration') return '已迁移';
+  return '系统更新';
 }
 
 function GoalMode({
@@ -590,46 +401,43 @@ function GoalMode({
   );
 }
 
-
 function fallbackWorkflow(
   sessionId: string,
-  plan?: AgentPlanProjection,
+  todo?: AgentTodoProjection,
   goal?: Goal,
   actGate?: ActGate,
 ): AgentWorkflowStateV1 {
-  const resolvedPlan = plan ?? emptyPlan(sessionId);
-  const projectedPlan: Plan = {
-    schemaVersion: 'rag-ime.agent-plan.v2',
-    ...resolvedPlan,
-    id: resolvedPlan.id || `plan:${sessionId}`,
-    sessionId: resolvedPlan.sessionId || sessionId,
-  };
+  const projectedTodo: Todo = todo ?? emptyTodo(sessionId);
   const projectedGoal = goal ?? emptyGoal(sessionId);
   return {
     schemaVersion: 'rag-ime.agent-workflow-state.v1',
     ok: true,
     sessionId,
-    plan: projectedPlan,
+    todo: {
+      ...projectedTodo,
+      id: projectedTodo.id || `todo:${sessionId}`,
+      sessionId: projectedTodo.sessionId || sessionId,
+    },
     goal: projectedGoal,
-    actGate: actGate && (!(plan && goal) || gateMatches(actGate, projectedPlan, projectedGoal))
+    actGate: actGate && gateMatches(actGate, projectedTodo, projectedGoal)
       ? actGate
-      : closedActGate(projectedPlan, projectedGoal),
+      : derivedActGate(projectedTodo, projectedGoal),
   };
 }
 
 function mergeWorkflowState(
   queried: AgentWorkflowStateV1 | undefined,
   live: AgentWorkflowStateV1,
-  hasLivePlan: boolean,
+  hasLiveTodo: boolean,
   hasLiveGoal: boolean,
   hasLiveActGate: boolean,
 ): AgentWorkflowStateV1 {
   if (!queried) return live;
-  const useLivePlan = hasLivePlan && (
-    live.plan.revision > queried.plan.revision
+  const useLiveTodo = hasLiveTodo && (
+    live.todo.revision > queried.todo.revision
     || (
-      live.plan.revision === queried.plan.revision
-      && live.plan.updatedAtMs > queried.plan.updatedAtMs
+      live.todo.revision === queried.todo.revision
+      && live.todo.updatedAtMs > queried.todo.updatedAtMs
     )
   );
   const useLiveGoal = hasLiveGoal && (
@@ -639,36 +447,33 @@ function mergeWorkflowState(
       && live.goal.updatedAtMs > queried.goal.updatedAtMs
     )
   );
-  const plan = useLivePlan ? live.plan : queried.plan;
+  const todo = useLiveTodo ? live.todo : queried.todo;
   const goal = useLiveGoal ? live.goal : queried.goal;
-  const liveGateMatches = hasLiveActGate && gateMatches(live.actGate, plan, goal);
-  const queriedGateMatches = gateMatches(queried.actGate, plan, goal);
+  const liveGateMatches = hasLiveActGate && gateMatches(live.actGate, todo, goal);
+  const queriedGateMatches = gateMatches(queried.actGate, todo, goal);
   return {
     ...queried,
-    plan,
+    todo,
     goal,
     actGate: liveGateMatches
       ? live.actGate
       : queriedGateMatches
         ? queried.actGate
-        : closedActGate(plan, goal),
+        : derivedActGate(todo, goal),
   };
 }
 
-function emptyPlan(sessionId: string): AgentPlanProjection {
+function emptyTodo(sessionId: string): Todo {
   return {
-    id: `plan:${sessionId}`,
+    schemaVersion: 'rag-ime.agent-todo.v1',
+    id: `todo:${sessionId}`,
     sessionId,
     revision: 0,
-    title: '执行计划',
-    status: 'draft',
-    actor: 'agent',
-    note: '',
+    actor: '',
     updatedAtMs: 0,
-    editable: true,
-    actApproved: false,
-    items: [],
-    counts: { total: 0, pending: 0, inProgress: 0, completed: 0 },
+    roomLineage: null,
+    phases: [],
+    counts: { total: 0, pending: 0, inProgress: 0, blocked: 0, completed: 0, abandoned: 0 },
   };
 }
 
@@ -693,18 +498,33 @@ function emptyGoal(sessionId: string): Goal {
   };
 }
 
-function closedActGate(plan: Plan, goal: Goal): ActGate {
-  return {
-    allowed: false,
-    reason: 'plan_not_approved',
-    message: '计划或目标刚刚更新，正在核对最新状态；请稍候再继续。',
-    planRevision: plan.revision,
+function derivedActGate(todo: Todo, goal: Goal): ActGate {
+  const base = {
+    todoRevision: todo.revision,
     goalRevision: goal.revision,
+  };
+  if (goal.configured && goal.status === 'paused') {
+    return { ...base, allowed: false, reason: 'goal_paused', message: '当前长期目标已暂停，恢复后才能继续写入。' };
+  }
+  if (goal.configured && goal.status === 'completed') {
+    return { ...base, allowed: false, reason: 'goal_completed', message: '当前长期目标已完成审计，请清除或设置新目标。' };
+  }
+  if (goal.configured && goal.status === 'cancelled') {
+    return { ...base, allowed: false, reason: 'goal_cancelled', message: '当前长期目标已取消，清除后才能开始新目标。' };
+  }
+  if (goal.configured && goal.budgetExceeded) {
+    return { ...base, allowed: false, reason: 'goal_budget_exhausted', message: '长期目标的 Token 或时间预算已经耗尽。' };
+  }
+  return {
+    ...base,
+    allowed: true,
+    reason: 'user_execution_request',
+    message: '用户的执行请求允许在已授权工作区内继续。',
   };
 }
 
-function gateMatches(gate: ActGate, plan: Plan, goal: Goal): boolean {
-  return gate.planRevision === plan.revision && gate.goalRevision === goal.revision;
+function gateMatches(gate: ActGate, todo: Todo, goal: Goal): boolean {
+  return gate.todoRevision === todo.revision && gate.goalRevision === goal.revision;
 }
 
 function assertWorkflowOwner(
@@ -717,35 +537,6 @@ function assertWorkflowOwner(
   return workflow;
 }
 
-function draftPlanItem(index: number): PlanItem {
-  return {
-    id: `draft:${Date.now()}:${index}`,
-    title: '',
-    status: 'pending',
-    position: index + 1,
-    sequence: 0,
-    updatedAtMs: 0,
-  };
-}
-
-
-function moveItem<T>(items: T[], from: number, to: number): T[] {
-  if (to < 0 || to >= items.length) return items;
-  const next = [...items];
-  const [item] = next.splice(from, 1);
-  if (!item) return items;
-  next.splice(to, 0, item);
-  return next;
-}
-
-function planActorLabel(actor: string): string {
-  const normalized = actor.trim().toLowerCase();
-  if (!normalized) return '来源未记录';
-  if (normalized === 'agent') return '伙伴创建';
-  if (normalized.includes('control-center')) return '你在这里更新';
-  return '系统更新';
-}
-
 function formatWorkflowTime(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '时间未记录';
   return new Intl.DateTimeFormat('zh-CN', {
@@ -754,17 +545,6 @@ function formatWorkflowTime(value: number): string {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value));
-}
-
-export function planStatusLabel(status: Plan['status']): string {
-  return {
-    draft: '草案',
-    review: '待审阅',
-    approved: '已批准',
-    executing: '执行中',
-    completed: '已完成',
-    cancelled: '已取消',
-  }[status];
 }
 
 export function goalStatusLabel(status: Goal['status']): string {
@@ -792,8 +572,6 @@ function goalBudgetRows(goal: Goal): { label: string; value: string; percent: nu
   return rows;
 }
 
-
-
 function formatCompact(value: number): string {
   return new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 }
@@ -812,14 +590,11 @@ function isAbsentWorkflow(error: unknown): boolean {
       : 0;
   if (status === 404) return true;
   const message = error instanceof Error ? error.message : '';
-  return /\b404\b|workflow (?:is )?not found|no workflow state|plan (?:does not exist|not found)/i.test(message);
+  return /\b404\b|workflow (?:is )?not found|no workflow state/i.test(message);
 }
 
 function publicError(error: unknown): string {
   if (!(error instanceof Error)) return '操作失败，请刷新后重试。';
-  if (/agent plan changed; refresh before saving/i.test(error.message)) {
-    return '计划已由其他操作更新，当前已显示最新状态，请重试。';
-  }
   if (/agent goal changed; refresh before saving/i.test(error.message)) {
     return '目标已由其他操作更新，当前已显示最新状态，请重试。';
   }

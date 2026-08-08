@@ -88,6 +88,17 @@ def build_parser() -> argparse.ArgumentParser:
             "batch and require a separate final Atom/Evidence catalog audit"
         ),
     )
+    parser.add_argument(
+        "--defer-real-semantic-projection",
+        action="store_true",
+        help=(
+            "curation-only recovery mode for a sandbox without the production "
+            "embedding runtime; a hashing projection may be built for bounded "
+            "organizer recall, but the result remains activation-ineligible "
+            "until the exact candidate is rebuilt and verified with a real "
+            "semantic provider"
+        ),
+    )
     return parser
 
 
@@ -125,7 +136,10 @@ def main(argv: list[str] | None = None) -> int:
             apply_database_migrations(migration_conn)
 
     embedding = embedding_provider_from_env()
-    if isinstance(embedding, (NullEmbeddingProvider, HashingEmbeddingProvider)):
+    if isinstance(embedding, NullEmbeddingProvider):
+        raise SystemExit("full-history acceptance requires a real semantic embedding provider")
+    semantic_projection_deferred = isinstance(embedding, HashingEmbeddingProvider)
+    if semantic_projection_deferred and not bool(args.defer_real_semantic_projection):
         raise SystemExit("full-history acceptance requires a real semantic embedding provider")
     core = private_shadow_core(working_db, embedding_provider=embedding)
     baseline = atom_first_memory_state_summary(working_db)
@@ -220,18 +234,30 @@ def main(argv: list[str] | None = None) -> int:
         and bool(rag.get("passed"))
     )
     final_audit_required = bool(args.defer_batch_verifier)
-    passed = execution_complete and not final_audit_required
+    passed = (
+        execution_complete
+        and not final_audit_required
+        and not semantic_projection_deferred
+    )
+    awaiting: list[str] = []
+    if execution_complete and semantic_projection_deferred:
+        awaiting.append("semantic_projection")
+    if execution_complete and final_audit_required:
+        awaiting.append("final_catalog_audit")
     summary: dict[str, object] = {
         "schemaVersion": "rag-ime.atom-first-historical-luna-evaluation.v1",
         "status": (
             "pass"
             if passed
-            else "awaiting_final_audit"
-            if execution_complete and final_audit_required
+            else "awaiting_" + "_and_".join(awaiting)
+            if awaiting
             else "iterate"
         ),
         "passed": passed,
+        "activationEligible": passed,
         "executionComplete": execution_complete,
+        "semanticProjectionDeferred": semantic_projection_deferred,
+        "realSemanticProjectionRequired": semantic_projection_deferred,
         "batchVerifierDeferred": final_audit_required,
         "finalCatalogAuditRequired": final_audit_required,
         "model": "gpt-5.6-luna",
@@ -480,13 +506,23 @@ def _write_public_report(path: Path, summary: Mapping[str, object]) -> None:
     books = dict(state.get("bookProjection") or {})
     reset = dict(summary.get("reset") or {})
     rag = dict(summary.get("rag") or {})
+    semantic_projection_deferred = bool(
+        summary.get("semanticProjectionDeferred")
+    )
     lines = [
         "# Atom-first Historical Memory Luna Evaluation",
         "",
         f"- Result: `{summary.get('status')}`.",
         "- Scope: disposable verified recovery candidate; production SQLite was not opened or modified.",
         f"- Model: `{summary.get('model')}`, thinking `{summary.get('thinking')}`.",
-        f"- Real semantic embedding: `{summary.get('embeddingProviderFingerprint')}`.",
+        (
+            "- Temporary curation-only embedding: "
+            f"`{summary.get('embeddingProviderFingerprint')}`; real semantic "
+            "projection is still required."
+            if semantic_projection_deferred
+            else "- Real semantic embedding: "
+            f"`{summary.get('embeddingProviderFingerprint')}`."
+        ),
         f"- Source recovery shadow unchanged: `{summary.get('sourceShadowUnchanged')}`.",
         "",
         "## Full-history flow",
@@ -503,7 +539,17 @@ def _write_public_report(path: Path, summary: Mapping[str, object]) -> None:
         "",
         "## Interpretation",
         "",
-        "The run validates the single Evidence -> Atom -> Book path on recovered private history, including independent verifier receipts, semantic vector projection, integrity, and raw-input immutability. It does not by itself prove installed Gateway behavior or foreground input-method behavior.",
+        (
+            "The run completes the single Evidence -> Atom -> Book curation path "
+            "on recovered private history, but remains activation-ineligible until "
+            "the same candidate receives a real semantic vector projection."
+            if semantic_projection_deferred
+            else "The run validates the single Evidence -> Atom -> Book path on "
+            "recovered private history, including independent verifier receipts, "
+            "semantic vector projection, integrity, and raw-input immutability. It "
+            "does not by itself prove installed Gateway behavior or foreground "
+            "input-method behavior."
+        ),
         "No raw input, Atom text, Book text, model output, database path, or private identifier is included.",
         "",
     ]
