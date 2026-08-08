@@ -844,6 +844,7 @@ class RoomKernelApplicationService:
                 "workspaceIntegrationState": str(
                     candidate.get("workspaceIntegrationState") or ""
                 ),
+                "workspaceActionHint": self._workspace_action_hint(candidate),
             }
             for candidate in snapshot["tasks"]
             if isinstance(candidate, Mapping)
@@ -999,6 +1000,19 @@ class RoomKernelApplicationService:
         if str(task.get("planTaskKind") or "") != "integration":
             return "continue_owned_work"
         if pending_integrations:
+            if any(
+                str(candidate.get("workspaceLifecycleState") or "")
+                in {
+                    "blocked",
+                    "conflict",
+                    "delivery_seal_uncertain",
+                    "failed",
+                    "incomplete",
+                    "orphaned",
+                }
+                for candidate in pending_integrations
+            ):
+                return "resolve_conflicted_peer_work"
             return "integrate_completed_peer_work"
 
         dependency_ids = {
@@ -1025,6 +1039,17 @@ class RoomKernelApplicationService:
             if scope_ready
             else "yield_to_dependency_frontier"
         )
+
+    @staticmethod
+    def _workspace_action_hint(task: Mapping[str, object]) -> str:
+        lifecycle = str(task.get("workspaceLifecycleState") or "")
+        return {
+            "conflict": "共享目录已有改动，先让原负责人解决冲突后重新提交",
+            "failed": "隔离工作区交付失败，请让原负责人重试或放弃",
+            "incomplete": "隔离工作区交付尚未完整，请让原负责人重试或放弃",
+            "orphaned": "隔离工作区需要恢复，请让原负责人重试或放弃",
+            "delivery_seal_uncertain": "交付回执待恢复，暂不能直接集成",
+        }.get(lifecycle, "")
 
     def assert_read_only_workspace_unchanged(
         self,
@@ -2618,6 +2643,7 @@ class RoomKernelApplicationService:
         )
         if next_action not in {
             "integrate_completed_peer_work",
+            "resolve_conflicted_peer_work",
             "yield_to_dependency_frontier",
         }:
             return

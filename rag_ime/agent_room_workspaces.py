@@ -1018,6 +1018,35 @@ class RoomWorkspaceCoordinator:
                 "attentionRequired": bool(binding.get("attentionRequired")),
                 **self._integration_receipt_refs(binding_id),
             }
+        if lifecycle_state == "conflict":
+            conflict_receipt = self.ledger.conflict_receipt(binding_id)
+            conflict_payload = (
+                conflict_receipt.get("payload")
+                if isinstance(conflict_receipt, Mapping)
+                else None
+            )
+            if not isinstance(conflict_payload, Mapping):
+                raise RoomWorkspaceError(
+                    "workspace conflict lost its durable conflict receipt"
+                )
+            return {
+                "integrated": False,
+                "conflict": True,
+                "idempotent": True,
+                "changedFiles": [
+                    str(value)
+                    for value in conflict_payload.get("changedFiles") or []
+                    if str(value).strip()
+                ],
+                "reason": str(conflict_payload.get("reason") or ""),
+                "workspaceBindingId": binding_id,
+                "integrationRef": str(
+                    conflict_payload.get("integrationRef") or ""
+                ),
+                "cleanupState": str(binding.get("cleanupState") or "retained"),
+                "workspaceLifecycleState": "conflict",
+                "attentionRequired": True,
+            }
         source = Path(str(task.get("workspaceRoot") or "")).resolve(strict=True)
         base = Path(str(task.get("workspaceBaseRoot") or "")).resolve(strict=True)
         expected_commit = str(task.get("workspaceBaseCommit") or "").strip()

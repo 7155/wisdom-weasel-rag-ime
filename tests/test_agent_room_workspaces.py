@@ -347,6 +347,11 @@ class RoomWorkspaceIdentityTests(unittest.TestCase):
         self.assertTrue(integrated["conflict"])
         self.assertIn("overlaps existing target changes", integrated["reason"])
         self.assertEqual(integrated["workspaceLifecycleState"], "conflict")
+        replay = self.coordinator.integrate(task, now_ms=12)
+        self.assertFalse(replay["integrated"])
+        self.assertTrue(replay["conflict"])
+        self.assertTrue(replay["idempotent"])
+        self.assertEqual(replay["reason"], integrated["reason"])
         self.assertTrue(worktree.is_dir())
         self.assertEqual(
             (self.root / "README.md").read_text(encoding="utf-8"),

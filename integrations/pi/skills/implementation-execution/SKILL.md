@@ -119,6 +119,11 @@ no automatic deletion timer.
   `currentResponsibility.nextAction` is `integrate_completed_peer_work`, call
   `room_integrate` once for each exact `pendingIntegrations.childTaskId`; do not
   implement a later feature or edit the shared workspace first. When it is
+  `resolve_conflicted_peer_work`, read each listed lifecycle and action hint, then
+  call `room_integrate(action=retry)` for the exact conflicted Task so its
+  existing owner resolves and redelivers the retained workspace; omit
+  `targetParticipantRef` to keep the current owner, and never retry by editing
+  the shared workspace or inventing a new Task. When it is
   `yield_to_dependency_frontier`, close the current Turn with
   `room_commit(deliver)` so the Kernel can bind the exact dependency wait and
   resume this stable integration Task after the next delivery. Only

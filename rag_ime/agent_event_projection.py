@@ -1487,6 +1487,7 @@ def _room_pending_integration_projection(value: object) -> list[dict[str, str]]:
             ("state", 120),
             ("workspaceLifecycleState", 120),
             ("workspaceIntegrationState", 120),
+            ("workspaceActionHint", 300),
         ):
             text = _redacted_room_text(item.get(key), maximum=maximum)
             if text:

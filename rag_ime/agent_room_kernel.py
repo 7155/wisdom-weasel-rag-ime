@@ -10349,8 +10349,11 @@ class RoomKernelStore:
             target_session_id = str(
                 retry_dispatch.get("targetSessionId") or ""
             )
-            target_participant_ref = str(
+            requested_target_participant_ref = str(
                 arguments.get("targetParticipantRef") or ""
+            ).strip()
+            target_participant_ref = str(
+                workspace_result.get("targetParticipantRef") or ""
             ).strip()
             retry_receipt_id = str(
                 workspace_result.get("retryBoundReceiptId") or ""
@@ -10406,8 +10409,16 @@ class RoomKernelStore:
                 or str(workspace_result.get("retryLeaseTokenSha256") or "")
                 != retry_token_sha256
                 or not target_participant_ref
-                or str(workspace_result.get("targetParticipantRef") or "")
-                != target_participant_ref
+                or (
+                    requested_target_participant_ref
+                    and requested_target_participant_ref
+                    != target_participant_ref
+                )
+                or (
+                    not requested_target_participant_ref
+                    and target_participant_id
+                    != str(task.get("currentOwnerParticipantId") or "")
+                )
             ):
                 raise RoomKernelFenceError(
                     "workspace retry is not bound to its exact durable retry lease"

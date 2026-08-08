@@ -2163,6 +2163,9 @@ class RoomWorkspaceLedgerStore:
     def source_lease_receipt(self, binding_id: str) -> dict[str, object] | None:
         return self._latest_event_receipt(binding_id, "source_lease_revoked")
 
+    def conflict_receipt(self, binding_id: str) -> dict[str, object] | None:
+        return self._latest_event_receipt(binding_id, "conflict")
+
     def target_applied_receipt(self, binding_id: str) -> dict[str, object] | None:
         return self._latest_event_receipt(binding_id, "target_applied")
 

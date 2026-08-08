@@ -1113,6 +1113,33 @@ class RoomKernelServiceTests(unittest.TestCase):
             "completed",
         )
 
+    def test_integration_responsibility_routes_conflicts_to_owner_retry(
+        self,
+    ) -> None:
+        self.assertEqual(
+            self.service.room_kernel_application._responsibility_next_action(
+                task={
+                    "planTaskKind": "integration",
+                    "dependencyTaskIds": ["task:feature"],
+                },
+                snapshot={"tasks": []},
+                pending_interventions=[],
+                pending_integrations=[
+                    {
+                        "childTaskId": "task:feature",
+                        "workspaceLifecycleState": "conflict",
+                    }
+                ],
+            ),
+            "resolve_conflicted_peer_work",
+        )
+        self.assertEqual(
+            self.service.room_kernel_application._workspace_action_hint(
+                {"workspaceLifecycleState": "conflict"}
+            ),
+            "共享目录已有改动，先让原负责人解决冲突后重新提交",
+        )
+
     def test_writable_plan_runs_feature_integration_review_and_one_report(
         self,
     ) -> None:
@@ -6130,7 +6157,6 @@ class RoomKernelServiceTests(unittest.TestCase):
             "childTaskId": child_task_id,
             "action": "retry",
             "reason": "Facilitator inspected the retained evidence and retried",
-            "targetParticipantRef": target_ref,
         }
         forged_mapping = {
             "workspaceBindingId": str(blocked_task["workspaceBindingId"]),
