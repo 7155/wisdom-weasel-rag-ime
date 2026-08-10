@@ -5,12 +5,12 @@ export const ROOM_PUBLIC_PROGRESS_KIND_LABELS: Record<
   RoomParticipantPublicProgressProjection['kind'],
   string
 > = {
-  reasoning: '伙伴自述 · 工作摘要',
-  progress: '伙伴自述 · 工作进度',
+  reasoning: '工作摘要',
+  progress: '进度更新',
   tool: '运行记录 · 工具进度',
   dispatch: '运行记录 · 协作安排',
   status: '运行记录 · 伙伴状态',
-  post: '伙伴自述 · 公开回复',
+  post: '公开回复',
   activity: '运行记录 · 协作动态',
 };
 

@@ -512,6 +512,47 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
         self.assertEqual(receipt["exitCode"], 0)
         self.assertEqual(captured, [prepared])
 
+    def test_read_only_command_rejects_network_and_background_jobs(self) -> None:
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+        session = {
+            **self.session,
+            "executionMode": "read_only",
+            "toolProfileVersion": "subagent-readonly-v1",
+        }
+
+        with self.assertRaisesRegex(WorkspaceHarnessError, "network access"):
+            harness.prepare_command(
+                session,
+                {
+                    "command": "curl https://example.com",
+                    "allowNetwork": True,
+                },
+            )
+        with self.assertRaisesRegex(WorkspaceHarnessError, "background"):
+            harness.prepare_background_command(
+                session,
+                {"command": "python3 -m http.server"},
+            )
+
+    def test_command_scope_digest_binds_source_write_policy(self) -> None:
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+        read_only = harness.prepare_command(
+            {
+                **self.session,
+                "executionMode": "read_only",
+                "toolProfileVersion": "subagent-readonly-v1",
+            },
+            {"command": "python3 -m unittest"},
+        )
+        writable = harness.prepare_command(
+            self.session,
+            {"command": "python3 -m unittest"},
+        )
+
+        self.assertNotEqual(read_only.roots_digest, writable.roots_digest)
+        self.assertTrue(harness.preview(read_only)["baseState"]["sourceReadOnly"])
+        self.assertFalse(harness.preview(writable)["baseState"]["sourceReadOnly"])
+
     def test_missing_sandbox_never_falls_back_to_an_unsandboxed_shell(self) -> None:
         harness = WorkspaceHarness(sandbox_executable=self.root / "missing-sandbox")
         prepared = harness.prepare_command(self.session, {"command": "pwd"})
@@ -782,6 +823,96 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
             )
         )
         self.assertNotIn("must-not-leak", wildcard["output"])
+
+    @unittest.skipUnless(sys.platform == "darwin", "requires the macOS sandbox harness")
+    def test_read_only_harness_runs_tests_but_only_writes_command_temp(self) -> None:
+        sandbox = Path("/usr/bin/sandbox-exec")
+        if not sandbox.is_file():
+            self.skipTest("sandbox-exec is unavailable")
+        source = self.root / "reviewed.py"
+        source.write_text("VALUE = 7\n", encoding="utf-8")
+        test_file = self.root / "test_reviewed.py"
+        test_file.write_text(
+            "import unittest\n"
+            "from reviewed import VALUE\n\n"
+            "class ReviewedTests(unittest.TestCase):\n"
+            "    def test_value(self):\n"
+            "        self.assertEqual(VALUE, 7)\n",
+            encoding="utf-8",
+        )
+        session = {
+            **self.session,
+            "executionMode": "read_only",
+            "toolProfileVersion": "subagent-readonly-v1",
+        }
+        harness = WorkspaceHarness()
+
+        tests = harness.execute(
+            harness.prepare_command(
+                session,
+                {
+                    "command": (
+                        "python3 -m unittest discover -s . "
+                        "-p 'test_reviewed.py'"
+                    ),
+                    "cwd": str(self.root),
+                },
+            )
+        )
+        source_write = harness.execute(
+            harness.prepare_command(
+                session,
+                {
+                    "command": "/bin/sh -c 'echo changed > reviewed.py'",
+                    "cwd": str(self.root),
+                },
+            )
+        )
+        temporary_write = harness.execute(
+            harness.prepare_command(
+                session,
+                {
+                    "command": (
+                        "/bin/sh -c 'echo cached > \"$TMPDIR/review-cache\" "
+                        "&& /bin/cat \"$TMPDIR/review-cache\"'"
+                    ),
+                    "cwd": str(self.root),
+                },
+            )
+        )
+
+        self.assertEqual(tests["exitCode"], 0, tests["output"])
+        self.assertIn("OK", tests["output"])
+        self.assertFalse(tests["networkAllowed"])
+        self.assertTrue(tests["sourceReadOnly"])
+        self.assertFalse(tests["mutationApplied"])
+        self.assertTrue(tests["validationSucceeded"])
+        self.assertFalse((self.root / "__pycache__").exists())
+        self.assertNotEqual(source_write["exitCode"], 0, source_write["output"])
+        self.assertEqual(source.read_text(encoding="utf-8"), "VALUE = 7\n")
+        self.assertEqual(temporary_write["exitCode"], 0, temporary_write["output"])
+        self.assertIn("cached", temporary_write["output"])
+
+    @unittest.skipUnless(sys.platform == "darwin", "requires the macOS sandbox harness")
+    def test_writable_harness_keeps_workspace_write_behavior(self) -> None:
+        sandbox = Path("/usr/bin/sandbox-exec")
+        if not sandbox.is_file():
+            self.skipTest("sandbox-exec is unavailable")
+        target = self.root / "ordinary-write.txt"
+        harness = WorkspaceHarness()
+
+        receipt = harness.execute(
+            harness.prepare_command(
+                self.session,
+                {
+                    "command": "/bin/sh -c 'echo ordinary > ordinary-write.txt'",
+                    "cwd": str(self.root),
+                },
+            )
+        )
+
+        self.assertEqual(receipt["exitCode"], 0, receipt["output"])
+        self.assertEqual(target.read_text(encoding="utf-8"), "ordinary\n")
 
     @unittest.skipUnless(sys.platform == "darwin", "requires the macOS sandbox harness")
     def test_real_harness_timeout_kills_the_process_group_before_a_late_write(self) -> None:

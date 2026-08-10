@@ -4,16 +4,39 @@ import { Button } from '@/components/primitives';
 import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
 import type { RootProjection } from '@/contracts/room-kernel-reducer';
 
+function authoritativeRootReceipts(
+  root: RootProjection | undefined,
+  receipts: readonly RoomKernelReceiptV1[],
+): RoomKernelReceiptV1[] {
+  if (!root) return [];
+  return receipts.filter((receipt) => (
+    receipt.rootId === root.rootId
+    && receipt.generation === root.generation
+    && receipt.status === 'applied'
+  ));
+}
+
+export function roomRootIntakePhase(
+  root: RootProjection | undefined,
+  receipts: readonly RoomKernelReceiptV1[],
+): string {
+  const latestIntake = authoritativeRootReceipts(root, receipts)
+    .filter((receipt) => receipt.details.purpose === 'intake_phase')
+    .sort((left, right) => (
+      right.createdAtMs - left.createdAtMs
+      || right.receiptId.localeCompare(left.receiptId)
+    ))[0];
+  return typeof latestIntake?.details.phase === 'string'
+    ? latestIntake.details.phase
+    : '';
+}
+
 export function roomRootRequiresStartAction(
   root: RootProjection | undefined,
   receipts: readonly RoomKernelReceiptV1[],
 ): boolean {
   if (!root || root.state !== 'waiting') return false;
-  const authoritative = receipts.filter((receipt) => (
-    receipt.rootId === root.rootId
-    && receipt.generation === root.generation
-    && receipt.status === 'applied'
-  ));
+  const authoritative = authoritativeRootReceipts(root, receipts);
   const definition = [...authoritative]
     .filter((receipt) => receipt.details.operation === 'room_define')
     .sort((left, right) => (
@@ -21,17 +44,7 @@ export function roomRootRequiresStartAction(
       || right.receiptId.localeCompare(left.receiptId)
     ))[0];
   if (definition?.details.requiresStartAction !== true) return false;
-  const latestIntake = [...authoritative]
-    .filter((receipt) => receipt.details.purpose === 'intake_phase')
-    .sort((left, right) => (
-      right.createdAtMs - left.createdAtMs
-      || right.receiptId.localeCompare(left.receiptId)
-    ))[0];
-  return Boolean(
-    latestIntake
-    && latestIntake.details.phase === 'awaiting_start'
-    && latestIntake.details.clarificationOccurred === true,
-  );
+  return roomRootIntakePhase(root, authoritative) === 'awaiting_start';
 }
 
 export function RoomStartActionGate({

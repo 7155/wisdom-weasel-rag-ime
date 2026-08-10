@@ -132,14 +132,90 @@ export function selectRoomTurnExecution(
       originalMessageIndexById.get(rightId) ?? Number.MAX_SAFE_INTEGER,
     )
   ));
+  const visibleLanes = coalesceInternalAttemptLanes([...lanes.values()]);
+  const laneIndex = new Map(visibleLanes.map((lane, index) => [lane.key, index]));
+  visibleLanes.sort((left, right) => compareExecutionLanes(
+    left,
+    right,
+    projection,
+    laneIndex.get(left.key) ?? Number.MAX_SAFE_INTEGER,
+    laneIndex.get(right.key) ?? Number.MAX_SAFE_INTEGER,
+  ));
   return {
     activities,
-    lanes: [...lanes.values()],
+    lanes: visibleLanes,
     messageIds: orderedMessageIds,
     userMessageIds: orderedMessageIds.filter((messageId) => (
       projection.messagesById[messageId]?.role === 'user'
     )),
   };
+}
+
+function compareExecutionLanes(
+  left: RoomExecutionLane,
+  right: RoomExecutionLane,
+  projection: RoomProjectionState,
+  leftIndex: number,
+  rightIndex: number,
+): number {
+  const earliestAtMs = (lane: RoomExecutionLane): number => Math.min(
+    ...lane.activities.map((activity) => activity.createdAtMs),
+    ...lane.messageIds.map((messageId) => (
+      projection.messagesById[messageId]?.chronology?.createdAtMs
+      ?? projection.messagesById[messageId]?.createdAtMs
+      ?? Number.MAX_SAFE_INTEGER
+    )),
+  );
+  const timeOrder = earliestAtMs(left) - earliestAtMs(right);
+  if (Number.isFinite(timeOrder) && timeOrder !== 0) return timeOrder;
+  const earliestSequence = (lane: RoomExecutionLane): number => Math.min(
+    ...lane.messageIds.map((messageId) => (
+      projection.messagesById[messageId]?.chronology?.roomEventSequence
+      ?? projection.messagesById[messageId]?.sequence
+      ?? Number.MAX_SAFE_INTEGER
+    )),
+  );
+  const sequenceOrder = earliestSequence(left) - earliestSequence(right);
+  if (Number.isFinite(sequenceOrder) && sequenceOrder !== 0) return sequenceOrder;
+  return leftIndex - rightIndex || left.key.localeCompare(right.key);
+}
+
+/**
+ * A Provider retry or an intake helper turn may get its own Dispatch without
+ * producing a public Post. Keep those records, but fold them into the next
+ * visible step for the same partner so stale failures do not become competing
+ * top-level status cards.
+ */
+function coalesceInternalAttemptLanes(
+  source: RoomExecutionLane[],
+): RoomExecutionLane[] {
+  const indexesByParticipant = new Map<string, number[]>();
+  source.forEach((lane, index) => {
+    const key = participantKey(lane.participantId, lane.sourceSessionId);
+    const indexes = indexesByParticipant.get(key) ?? [];
+    indexes.push(index);
+    indexesByParticipant.set(key, indexes);
+  });
+  const hidden = new Set<number>();
+  for (const indexes of indexesByParticipant.values()) {
+    let nextVisibleIndex: number | undefined;
+    for (let offset = indexes.length - 1; offset >= 0; offset -= 1) {
+      const index = indexes[offset]!;
+      const lane = source[index]!;
+      const isVisibleStep = lane.messageIds.length > 0 || nextVisibleIndex === undefined;
+      if (isVisibleStep) {
+        nextVisibleIndex = index;
+        continue;
+      }
+      const targetIndex = nextVisibleIndex;
+      if (targetIndex === undefined) continue;
+      const target = source[targetIndex];
+      if (!target) continue;
+      target.activities = [...lane.activities, ...target.activities];
+      hidden.add(index);
+    }
+  }
+  return source.filter((_lane, index) => !hidden.has(index));
 }
 
 function compareRoomMessages(

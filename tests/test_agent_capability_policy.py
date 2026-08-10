@@ -14,6 +14,7 @@ from rag_ime.agent_session_policy import AgentSessionPolicyService
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_tool_ids import CONTROL_TOOL_IDS
 from rag_ime.agent_tools import ControlToolGateway, _TOOL_SPEC_BY_ID
+from rag_ime.agent_workspace import WorkspaceHarness
 from rag_ime.pi_runtime import _tools_for_session
 
 
@@ -108,10 +109,11 @@ class _Extensions:
             ],
         }
 class _RoomCapabilityGateway:
-    def __init__(self) -> None:
+    def __init__(self, *, workspace_access: str = "") -> None:
         self.room_calls: list[tuple[str, dict[str, object]]] = []
         self.product_authorization_calls = 0
         self.product_execution_calls: list[dict[str, object]] = []
+        self.workspace_access = workspace_access
 
     def execute_room_capability_tool(
         self,
@@ -137,7 +139,12 @@ class _RoomCapabilityGateway:
     ) -> dict[str, object]:
         del session_id, tool, args, tool_call_id, load_receipt_id
         self.product_authorization_calls += 1
-        return {"invocationReceipt": {"receiptId": "invocation:blocked"}}
+        result: dict[str, object] = {
+            "invocationReceipt": {"receiptId": "invocation:blocked"}
+        }
+        if self.workspace_access:
+            result["workspaceAccess"] = self.workspace_access
+        return result
 
     def record_room_product_tool_execution(
         self,
@@ -196,6 +203,7 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
         self,
         *,
         collaboration: object | None = None,
+        workspace_harness: WorkspaceHarness | None = None,
     ) -> ControlToolGateway:
         return ControlToolGateway(
             sessions=self.sessions,
@@ -206,6 +214,7 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
             governed_skills=_Skills(),
             extensions=_Extensions(),
             collaboration=collaboration,
+            workspace_harness=workspace_harness,
         )
 
     def test_tool_inventory_ids_exactly_match_specs(self) -> None:
@@ -515,7 +524,6 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
             "workspace_patch",
             "workspace_edit",
             "workspace_write",
-            "workspace_shell",
         }
         gateway = self._gateway()
         for session in sessions:
@@ -524,6 +532,11 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
             self.assertTrue(
                 {"workspace_list", "workspace_read", "workspace_search", "workspace_lsp"}
                 <= set(by_name)
+            )
+            self.assertIn("workspace_shell", by_name)
+            self.assertEqual(
+                by_name["workspace_shell"]["parameters"]["oneOf"][0]["properties"]["op"]["const"],
+                "run",
             )
             self.assertTrue(forbidden_tools.isdisjoint(by_name))
             self.assertNotIn("workspace_job", by_name)
@@ -557,7 +570,6 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
                 },
             )
         for blocked_tool, operation in (
-            ("workspace_shell", "run"),
             ("workspace_job", "start"),
             ("workspace_job", "cancel"),
             ("workspace_patch", "apply"),
@@ -575,6 +587,7 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
             ("apply_patch", "apply"),
         ):
             self.assertTrue(read_only_blocks_effect(blocked_tool, operation))
+        self.assertFalse(read_only_blocks_effect("workspace_shell", "run"))
         selected = _tools_for_session(
             (
                 "workspace_list",
@@ -600,8 +613,106 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
                 "workspace_read",
                 "workspace_search",
                 "workspace_lsp",
+                "workspace_shell",
             ),
         )
+
+    def test_read_only_workspace_shell_executes_without_a_write_approval(self) -> None:
+        session = self.sessions.create(
+            title="Reviewer validation",
+            mode="coordinator",
+            tool_profile_version="subagent-readonly-v1",
+            execution_mode="read_only",
+            workspace_roots=[str(self.root)],
+        )
+        captured = []
+
+        def execute(prepared):
+            captured.append(prepared)
+            return {
+                "schemaVersion": "rag-ime.workspace-command-receipt.v1",
+                "mutationApplied": False,
+                "exitCode": 0,
+                "output": "OK\n",
+                "sourceReadOnly": prepared.source_read_only,
+            }
+
+        gateway = self._gateway(
+            workspace_harness=WorkspaceHarness(executor=execute),
+        )
+
+        response = gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": str(session["id"]),
+                "tool": "workspace_shell",
+                "toolCallId": "tool:review-validation",
+                "args": {
+                    "op": "run",
+                    "command": "python3 -m unittest tests.test_example",
+                    "cwd": str(self.root),
+                },
+            }
+        )
+
+        self.assertTrue(response["ok"])
+        self.assertNotIn("approvalRequired", response["result"])
+        self.assertEqual(response["result"]["exitCode"], 0)
+        self.assertEqual(len(captured), 1)
+        self.assertTrue(captured[0].source_read_only)
+        self.assertFalse(captured[0].allow_network)
+
+    def test_room_pre_collaboration_shell_uses_the_source_read_only_sandbox(
+        self,
+    ) -> None:
+        session = self.sessions.create(
+            title="Facilitator before peer lanes",
+            mode="coordinator",
+            tool_profile_version="control-center-v1",
+            execution_mode="full_trust",
+            workspace_roots=[str(self.root)],
+        )
+        captured = []
+
+        def execute(prepared):
+            captured.append(prepared)
+            return {
+                "schemaVersion": "rag-ime.workspace-command-receipt.v1",
+                "mutationApplied": False,
+                "exitCode": 0,
+                "output": "OK\n",
+                "sourceReadOnly": prepared.source_read_only,
+            }
+
+        room_gateway = _RoomCapabilityGateway(
+            workspace_access="source_read_only"
+        )
+        gateway = self._gateway(
+            collaboration=room_gateway,
+            workspace_harness=WorkspaceHarness(executor=execute),
+        )
+
+        response = gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": str(session["id"]),
+                "tool": "workspace_shell",
+                "toolCallId": "tool:facilitator-pre-collaboration",
+                "args": {
+                    "op": "run",
+                    "command": "python3 -m unittest tests.test_example",
+                    "cwd": str(self.root),
+                },
+            }
+        )
+
+        self.assertTrue(response["ok"])
+        self.assertNotIn("approvalRequired", response["result"])
+        self.assertEqual(len(captured), 1)
+        self.assertTrue(captured[0].source_read_only)
+        self.assertFalse(captured[0].allow_network)
+        self.assertEqual(room_gateway.product_authorization_calls, 1)
+        self.assertEqual(len(room_gateway.product_execution_calls), 1)
 
 
     def test_read_only_room_public_and_workspace_read_surfaces_remain_usable(

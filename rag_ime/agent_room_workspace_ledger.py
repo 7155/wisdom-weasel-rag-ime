@@ -2054,6 +2054,30 @@ class RoomWorkspaceLedgerStore:
             ).fetchone()
             return _binding_payload(row) if row is not None else None
 
+    def active_binding_for_session(
+        self,
+        session_id: str,
+    ) -> dict[str, object] | None:
+        """Return the exact isolated write lease currently owned by a Session."""
+
+        session_id = _required_text(session_id, "session_id")
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM room_workspace_bindings
+                WHERE current_owner_session_id=?
+                  AND workspace_policy='isolated_writable'
+                  AND state IN ('reserved','materialized','work_started','retry_bound')
+                ORDER BY updated_at_ms DESC, binding_id
+                """,
+                (session_id,),
+            ).fetchall()
+        if len(rows) > 1:
+            raise RoomWorkspaceLedgerConflict(
+                "Session owns more than one active isolated workspace lease"
+            )
+        return _binding_payload(rows[0]) if rows else None
+
     def events(self, binding_id: str) -> list[dict[str, object]]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -2076,6 +2100,24 @@ class RoomWorkspaceLedgerStore:
                 ORDER BY updated_at_ms, binding_id
                 """,
                 terminal,
+            ).fetchall()
+        return [_binding_payload(row) for row in rows]
+
+    def cleaned_integration_projection_candidates(
+        self,
+    ) -> list[dict[str, object]]:
+        """Read terminal integrations that may need a legacy Kernel backfill."""
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM room_workspace_bindings
+                WHERE workspace_policy='isolated_writable'
+                  AND state='cleaned'
+                  AND cleanup_state='cleaned'
+                  AND attention_required=0
+                ORDER BY updated_at_ms, binding_id
+                """
             ).fetchall()
         return [_binding_payload(row) for row in rows]
 

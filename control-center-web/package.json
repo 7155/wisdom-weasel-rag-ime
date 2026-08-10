@@ -36,6 +36,7 @@
     "@tanstack/react-query": "^5.101.2",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
+    "d3-contour": "4.0.2",
     "lucide-react": "^1.24.0",
     "motion": "^12.42.2",
     "react": "^19.2.7",
@@ -43,6 +44,7 @@
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.1",
     "react-virtuoso": "^4.18.10",
+    "react-zoom-pan-pinch": "4.0.3",
     "remark-gfm": "^4.0.1",
     "shiki": "^3.23.0",
     "zustand": "^5.0.14"
@@ -53,6 +55,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/d3-contour": "3.0.6",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",

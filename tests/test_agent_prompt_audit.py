@@ -205,6 +205,19 @@ class AgentPromptAuditTests(unittest.TestCase):
         )
         self.assertIn("唯一最终回复", prompt)
 
+    def test_facilitator_fans_out_ready_peer_slices_before_local_implementation(
+        self,
+    ) -> None:
+        prompt = collaboration_role("coordinator", "1").system_prompt
+
+        self.assertIn("四位伙伴都可以承担功能切片", prompt)
+        self.assertIn("先完成所有当前可并行的 room_collaborate", prompt)
+        self.assertIn("再读取实现文件或运行实现命令", prompt)
+        self.assertIn("复核是集成后的临时任务职责", prompt)
+        self.assertIn("有修改可能的功能切片一开始就用 isolated_writable", prompt)
+        self.assertIn("只读任务不能靠改目标、handoff 或换负责人变成可写", prompt)
+        self.assertIn("新建可写实现切片", prompt)
+
     def test_unpinned_role_book_is_zero_bytes_not_a_status_message(self) -> None:
         persona = agent_role("companion-present-v1", "1").persona_prompt
         without_role_book = compose_persona_layer(persona, "")

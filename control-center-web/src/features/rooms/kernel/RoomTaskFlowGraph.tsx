@@ -1,10 +1,10 @@
 import {
-  ArrowRight,
   Bot,
   CircleAlert,
   CircleCheck,
+  CircleDot,
+  CirclePlus,
   CircleStop,
-  ChevronRight,
   Clock3,
   GitBranch,
   ListChecks,
@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useId, type CSSProperties, type ReactNode } from 'react';
 
+import type { Todo } from '@/contracts/generated/agent-workflow-state.v1';
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
 import type { RoomDispatchEnvelopeV2 } from '@/contracts/generated/room-dispatch-envelope.v2';
 import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
@@ -38,13 +39,28 @@ import {
 } from './RoomTaskAuthorityDetails';
 import { projectRoomTaskAuthority } from './room-task-authority';
 
-type FlowVisualState = 'waiting' | 'active' | 'complete' | 'attention' | 'cancelled';
-type TaskColumn = 2 | 3 | 4;
+export type FlowVisualState = 'waiting' | 'active' | 'complete' | 'attention' | 'cancelled';
+type TaskColumn = 2 | 3;
+
+export type RoomTaskConversationTarget = {
+  dispatchId?: string;
+  rootId: string;
+  taskId: string;
+};
+
+export type RoomTaskDispatchStopTarget = {
+  dispatchId: string;
+  participantId: string;
+  rootId: string;
+  taskId: string;
+};
 
 type TaskGraphNode = {
   task: RoomTaskV3;
   dispatches: RoomDispatchEnvelopeV2[];
   dependencyIds: string[];
+  dependencyCompletedCount: number;
+  dependencyTotalCount: number;
   dependencyOwnerParticipantIds: string[];
   parentId?: string;
   downstreamIds: string[];
@@ -55,6 +71,14 @@ type TaskGraphNode = {
   result?: string;
   column: TaskColumn;
   row: number;
+};
+
+type TaskProgressMetric = {
+  completed: number;
+  detail: string;
+  mode: 'determinate' | 'indeterminate' | 'waiting' | 'attention' | 'cancelled';
+  source: 'todo' | 'verification' | 'dependency' | 'task';
+  total?: number;
 };
 
 type GraphPoint = {
@@ -84,12 +108,11 @@ export type RoomTaskWorkspaceLifecycleView = {
   title: string;
 };
 
-const FLOW_ROW_HEIGHT = 132;
+const FLOW_ROW_HEIGHT = 112;
 const MAX_VISIBLE_SUBAGENT_RUNS = 4;
 const TASK_COLUMN_BOUNDS: Readonly<Record<TaskColumn, { left: number; right: number }>> = {
-  2: { left: 150, right: 385 },
-  3: { left: 395, right: 625 },
-  4: { left: 635, right: 865 },
+  2: { left: 190, right: 490 },
+  3: { left: 510, right: 810 },
 };
 
 const subagentTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
@@ -126,26 +149,37 @@ export function RoomTaskFlowGraph({
   dispatches,
   finalPostCount,
   goal,
+  navigableRootIds = new Set<string>(),
+  onNavigateToTask,
+  onStopDispatch,
   participantLabels,
   participantProgress,
   posts,
   root,
+  sessionsById = {},
   tasks,
   terminalReceipt,
+  stoppingDispatchIds = new Set<string>(),
+  workItems = [],
 }: {
   dispatches: RoomDispatchEnvelopeV2[];
   finalPostCount: number;
   goal: string;
+  navigableRootIds?: ReadonlySet<string>;
+  onNavigateToTask?: (target: RoomTaskConversationTarget) => void;
+  onStopDispatch?: (target: RoomTaskDispatchStopTarget) => void;
   participantLabels: Record<string, string>;
   participantProgress: RoomParticipantPublicProgressProjection[];
   posts: RoomPostV2[];
   root: RootProjection;
+  sessionsById?: Record<string, PrivateSessionProjection>;
   tasks: RoomTaskV3[];
   subagentsByTaskId?: Record<string, RoomTaskSubagentRun[]>;
   terminalReceipt?: RoomKernelReceiptV1;
+  stoppingDispatchIds?: ReadonlySet<string>;
+  workItems?: RoomWorkItem[];
 }) {
   const visibleTasks = tasks.filter(roomTaskIsVisibleWork);
-  const markerId = `room-task-edge-${useId().replace(/:/g, '')}`;
   const nodes = taskGraphNodes(visibleTasks, dispatches, participantProgress, posts);
   const rowCount = Math.max(1, ...nodes.map((node) => node.row));
   const flowRowHeight = FLOW_ROW_HEIGHT;
@@ -159,13 +193,20 @@ export function RoomTaskFlowGraph({
     waiting: visibleTasks.filter((task) => ['pending', 'waiting'].includes(task.state)).length,
     attention: visibleTasks.filter((task) => ['blocked', 'failed', 'cancelled'].includes(task.state)).length,
   };
-  const finalState = rootFlowState(root);
+  const finalState = roomRootVisualState(root, visibleTasks, dispatches);
   const canvasStyle = {
     '--room-task-flow-height': `${graphHeight}px`,
     '--room-task-flow-row-count': rowCount,
   } as CSSProperties;
-  const hasContinuation = nodes.some((node) => node.column === 3);
-  const hasReview = nodes.some((node) => node.column === 4);
+  const hasContinuation = nodes.some((node) => node.column === 3 && node.task.taskKind !== 'review');
+  const hasReview = nodes.some((node) => node.task.taskKind === 'review');
+  const continuationStageLabel = hasContinuation && hasReview
+    ? '接续 / 复核'
+    : hasReview
+      ? '复核'
+      : hasContinuation
+        ? '接续 / 汇总'
+        : '';
 
   return <section
     aria-label="任务依赖图"
@@ -176,11 +217,20 @@ export function RoomTaskFlowGraph({
     <header className="room-task-flow__header">
       <span>
         <strong>任务依赖图</strong>
-        <small>这里只看先后关系和当前状态；详细进展在下方工作卡中展开</small>
+        <small>这里只看先后关系和权威进度；详细证据可聚焦任务查看</small>
       </span>
-      <b>{visibleTasks.length
-        ? `${visibleTasks.length} 项 · ${counts.completed} 已完成 · ${counts.active} 执行中 · ${counts.waiting} 等待中${counts.attention ? ` · ${counts.attention} 需关注` : ''}`
-        : '等待拆分任务'}</b>
+      {visibleTasks.length ? <div
+        aria-label={`${visibleTasks.length} 项任务，${counts.completed} 项已完成，${counts.active} 项执行中，${counts.waiting} 项等待中${counts.attention ? `，${counts.attention} 项需要处理` : ''}`}
+        aria-valuemax={visibleTasks.length}
+        aria-valuemin={0}
+        aria-valuenow={counts.completed}
+        className="room-task-flow__overall-progress"
+        role="progressbar"
+        title={`${counts.completed} / ${visibleTasks.length} 已完成`}
+      >
+        <span aria-hidden="true"><i style={{ transform: `scaleX(${counts.completed / visibleTasks.length})` }} /></span>
+        <b>{counts.completed} / {visibleTasks.length}</b>
+      </div> : <b>等待拆分任务</b>}
     </header>
     <ul aria-label="任务状态图例" className="room-task-flow__state-legend">
       <li data-state="complete">已完成</li>
@@ -192,8 +242,7 @@ export function RoomTaskFlowGraph({
     <div className="room-task-flow__stage-labels" aria-hidden="true">
       <span><GitBranch size={14} />共同目标</span>
       <span><ListChecks size={14} />分工</span>
-      {hasContinuation ? <span><ArrowRight size={14} />接续 / 汇总</span> : <span />}
-      {hasReview ? <span><ShieldCheck size={14} />复核</span> : <span />}
+      {continuationStageLabel ? <span><ShieldCheck size={14} />{continuationStageLabel}</span> : <span />}
       <span><CircleCheck size={14} />结果</span>
     </div>
     <div className="room-task-flow__canvas" style={canvasStyle}>
@@ -203,24 +252,8 @@ export function RoomTaskFlowGraph({
         preserveAspectRatio="none"
         viewBox={`0 0 1000 ${graphHeight}`}
       >
-        <defs>
-          <marker
-            id={markerId}
-            markerHeight="7"
-            markerWidth="7"
-            orient="auto"
-            refX="6"
-            refY="3.5"
-            viewBox="0 0 7 7"
-          >
-            <path d="M 0 0 L 7 3.5 L 0 7 z" />
-          </marker>
-        </defs>
         {edges.map((edge) => <g data-state={edge.state} key={edge.id}>
-          <path
-            d={taskGraphEdgePath(edge)}
-            markerEnd={`url(#${markerId})`}
-          />
+          <path d={taskGraphEdgePath(edge)} />
         </g>)}
       </svg>
       <CompactFlowNode
@@ -229,17 +262,49 @@ export function RoomTaskFlowGraph({
         icon={<GitBranch size={16} />}
         label={goal || '共同目标'}
         stage="goal"
-        state={visibleTasks.length ? 'complete' : rootFlowState(root)}
-        stateLabel={visibleTasks.length ? '已拆分' : rootStateLabel(root)}
+        state={visibleTasks.length ? 'complete' : finalState}
+        stateLabel={visibleTasks.length ? '已拆分' : rootStateLabel(root, finalState)}
         style={{ gridRow: `1 / span ${rowCount}` }}
         title="共同目标"
       />
-      {nodes.map((node) => <TaskNode
-        key={node.task.taskId}
-        node={node}
-        participantLabels={participantLabels}
-        style={{ gridColumn: node.column, gridRow: node.row }}
-      />)}
+      {nodes.map((node) => {
+        const authority = projectRoomTaskAuthority({
+          dispatches: node.dispatches,
+          generation: root.generation,
+          sessionsById,
+          task: node.task,
+          workItems,
+        });
+        const activeDispatch = authority.canonicalDispatch
+          && roomDispatchIsActive(authority.canonicalDispatch)
+          ? authority.canonicalDispatch
+          : undefined;
+        return <TaskNode
+          canonicalDispatchId={authority.canonicalDispatch?.dispatchId}
+          key={node.task.taskId}
+          navigateToTask={onNavigateToTask && navigableRootIds.has(node.task.rootId)
+            ? onNavigateToTask
+            : undefined}
+          node={node}
+          onStopDispatch={activeDispatch ? onStopDispatch : undefined}
+          participantLabels={participantLabels}
+          participantSessionId={taskOwnerSessionId(
+            node,
+            authority.canonicalDispatch,
+            sessionsById,
+            root.generation,
+          )}
+          progress={taskNodeProgress(node, authority.todo)}
+          stopDispatchTarget={activeDispatch ? {
+            dispatchId: activeDispatch.dispatchId,
+            participantId: activeDispatch.targetParticipantId,
+            rootId: activeDispatch.rootId,
+            taskId: activeDispatch.taskId,
+          } : undefined}
+          stopPending={Boolean(activeDispatch && stoppingDispatchIds.has(activeDispatch.dispatchId))}
+          style={{ gridColumn: node.column, gridRow: node.row }}
+        />;
+      })}
       <CompactFlowNode
         className="room-task-flow__result-node"
         detail={finalPostCount
@@ -248,10 +313,10 @@ export function RoomTaskFlowGraph({
             ? '完成确认已到达'
             : '等待所有前置任务交付'}
         icon={<CircleCheck size={16} />}
-        label={rootFinalLabel(root)}
+        label={rootFinalLabel(root, finalState)}
         stage="result"
         state={finalState}
-        stateLabel={rootStateLabel(root)}
+        stateLabel={rootStateLabel(root, finalState)}
         style={{ gridRow: `1 / span ${rowCount}` }}
         title="共同结果"
       />
@@ -265,7 +330,7 @@ export function RoomTaskFlowGraph({
         {roomPublicActivityText(node.result || node.task.objective) || '协作任务'}；负责人 {participantLabel(node.task.currentOwnerParticipantId, participantLabels)}；
         {taskStateLabel(node.task.state)}。
       </li>)}
-      <li>{rootFinalLabel(root)}，{rootStateLabel(root)}。</li>
+      <li>{rootFinalLabel(root, finalState)}，{rootStateLabel(root, finalState)}。</li>
     </ol>
   </section>;
 }
@@ -358,7 +423,7 @@ export function RoomTaskWorkList({
             <small>完成情况</small>
             <strong>{workspaceAttention ? '需要处理' : verification.label}</strong>
           </span>
-          <ChevronRight aria-hidden="true" size={15} />
+          <CirclePlus aria-hidden="true" size={15} />
         </summary>
         <div className="room-task-work-card__body">
           <dl className="room-task-work-card__facts">
@@ -454,7 +519,7 @@ function TaskWorkspaceDetails({
       <summary>
         <ShieldCheck aria-hidden="true" size={14} />
         <span><strong>审计详情</strong><small>路径、校验值与内部关联</small></span>
-        <ChevronRight aria-hidden="true" size={14} />
+        <CirclePlus aria-hidden="true" size={14} />
       </summary>
       <dl>{auditFields.map((field) => <div key={field.id}>
         <dt>{field.label}</dt>
@@ -840,14 +905,29 @@ function stringValue(value: unknown): string {
 }
 
 function TaskNode({
+  canonicalDispatchId,
+  navigateToTask,
   node,
+  onStopDispatch,
   participantLabels,
+  participantSessionId,
+  progress,
+  stopDispatchTarget,
+  stopPending,
   style,
 }: {
+  canonicalDispatchId?: string;
+  navigateToTask?: (target: RoomTaskConversationTarget) => void;
   node: TaskGraphNode;
+  onStopDispatch?: (target: RoomTaskDispatchStopTarget) => void;
   participantLabels: Record<string, string>;
+  participantSessionId?: string;
+  progress: TaskProgressMetric;
+  stopDispatchTarget?: RoomTaskDispatchStopTarget;
+  stopPending: boolean;
   style: CSSProperties;
 }) {
+  const evidenceId = useId();
   const { task } = node;
   const taskLabel = roomPublicActivityText(node.result || task.objective) || '协作任务';
   const expectedOutput = roomPublicActivityText(task.expectedOutput) || '按约定完成交付';
@@ -857,28 +937,231 @@ function TaskNode({
   const dependencyLabel = dependencyCount
     ? `等待 ${dependencyCount} 项真实前置任务`
     : '无前置任务，可并行';
+  const latestProgress = node.progress
+    ? roomPublicActivityText(roomParticipantPublicProgressSummary(node.progress))
+    : '';
+  const evidence = [
+    progress.detail,
+    node.result ? `最近提交：${node.result}` : latestProgress ? `最近进展：${latestProgress}` : '',
+    `交付目标：${expectedOutput}`,
+  ].filter(Boolean);
+  const taskTarget = {
+    ...(canonicalDispatchId ? { dispatchId: canonicalDispatchId } : {}),
+    rootId: task.rootId,
+    taskId: task.taskId,
+  };
+  const ownerContent = <>
+    <span aria-hidden="true">{Array.from(owner.trim())[0] || '伙'}</span>
+    <span><small>负责人</small><strong>{owner}</strong></span>
+  </>;
   return <article
     aria-label={`${taskLabel}，负责人 ${owner}，${taskStateLabel(task.state)}`}
+    aria-describedby={evidenceId}
     className="room-task-flow__task-node"
     data-state={state}
     data-task-kind={task.taskKind}
     data-task-stage={taskStageLabel(node)}
+    data-turn-navigation={navigateToTask ? 'ready' : 'unavailable'}
     style={style}
     title={`交付目标：${expectedOutput}\n前置关系：${dependencyLabel}`}
   >
+    <button
+      aria-label={navigateToTask
+        ? `查看${taskLabel}对应的协作对话`
+        : `暂时无法定位${taskLabel}的协作对话`}
+      className="room-task-flow__task-open"
+      disabled={!navigateToTask}
+      onClick={() => navigateToTask?.(taskTarget)}
+      type="button"
+    />
     <header>
       <small>{node.result ? '任务结果' : taskStageLabel(node)}</small>
       <strong>{taskLabel}</strong>
     </header>
-    <div className="room-task-flow__task-owner">
-      <span aria-hidden="true">{Array.from(owner.trim())[0] || '伙'}</span>
-      <span><small>负责人</small><strong>{owner}</strong></span>
+    {participantSessionId ? <a
+      aria-label={`打开${owner}的伙伴对话`}
+      className="room-task-flow__task-owner"
+      href={`#/agent?session=${encodeURIComponent(participantSessionId)}`}
+      onClick={(event) => event.stopPropagation()}
+    >{ownerContent}</a> : <button
+      aria-label={`暂无${owner}的可用伙伴对话`}
+      className="room-task-flow__task-owner"
+      disabled
+      type="button"
+    >{ownerContent}</button>}
+    <div className="room-task-flow__task-progress-slot">
+      {stopDispatchTarget && onStopDispatch ? <button
+        aria-label={`${stopPending ? '正在停止' : '停止'}${owner}的这次运行`}
+        className="room-task-flow__task-stop"
+        disabled={stopPending}
+        onClick={(event) => {
+          event.stopPropagation();
+          onStopDispatch(stopDispatchTarget);
+        }}
+        title="只停止这位伙伴当前这次运行，其他任务继续"
+        type="button"
+      >
+        <CircleStop aria-hidden="true" size={12} />
+        <span>{stopPending ? '正在停止' : '停止这次运行'}</span>
+      </button> : null}
+      <TaskProgressGlyph metric={progress} state={state} />
     </div>
-    <div className="room-task-flow__task-state">
-      <FlowStateIcon state={state} />
-      <span><small>当前状态</small><strong>{taskStateLabel(task.state)}</strong></span>
-    </div>
+    <aside className="room-task-flow__task-evidence" id={evidenceId} role="tooltip">
+      {evidence.map((item) => <span key={item}>{item}</span>)}
+    </aside>
   </article>;
+}
+
+function roomDispatchIsActive(dispatch: RoomDispatchEnvelopeV2): boolean {
+  return ['pending', 'leased', 'running', 'retry_wait', 'timer_wait', 'unknown']
+    .includes(dispatch.state);
+}
+
+function taskOwnerSessionId(
+  node: TaskGraphNode,
+  dispatch: RoomDispatchEnvelopeV2 | undefined,
+  sessionsById: Record<string, PrivateSessionProjection>,
+  generation: number,
+): string | undefined {
+  if (!dispatch) return undefined;
+  const session = sessionsById[dispatch.targetSessionId];
+  if (
+    !session
+    || session.sessionId !== dispatch.targetSessionId
+    || session.participantId !== node.task.currentOwnerParticipantId
+    || session.rootId !== node.task.rootId
+    || session.taskId !== node.task.taskId
+    || session.taskKind !== node.task.taskKind
+    || session.dispatchId !== dispatch.dispatchId
+    || session.generation !== generation
+  ) return undefined;
+  return session.sessionId;
+}
+
+function taskNodeProgress(node: TaskGraphNode, todo?: Todo): TaskProgressMetric {
+  const { task } = node;
+  const attention = ['blocked', 'failed'].includes(task.state);
+  const cancelled = task.state === 'cancelled';
+  if (todo && todo.counts.total > 0) {
+    return {
+      completed: Math.min(todo.counts.completed, todo.counts.total),
+      detail: `Todo ${todo.counts.completed} / ${todo.counts.total} 已完成`,
+      mode: cancelled ? 'cancelled' : attention ? 'attention' : 'determinate',
+      source: 'todo',
+      total: todo.counts.total,
+    };
+  }
+  const verifications = task.verifications ?? [];
+  if (verifications.length > 0) {
+    const completed = verifications.filter((item) => item.result === 'pass').length;
+    const failed = verifications.filter((item) => item.result === 'fail').length;
+    return {
+      completed,
+      detail: failed
+        ? `验证 ${completed} / ${verifications.length} 已通过，${failed} 项未通过`
+        : `验证 ${completed} / ${verifications.length} 已通过`,
+      mode: cancelled ? 'cancelled' : attention || failed > 0 ? 'attention' : 'determinate',
+      source: 'verification',
+      total: verifications.length,
+    };
+  }
+  if (node.dependencyTotalCount > 0 && ['pending', 'waiting', 'active', 'review'].includes(task.state)) {
+    return {
+      completed: node.dependencyCompletedCount,
+      detail: `前置 ${node.dependencyCompletedCount} / ${node.dependencyTotalCount} 已完成`,
+      mode: attention ? 'attention' : 'determinate',
+      source: 'dependency',
+      total: node.dependencyTotalCount,
+    };
+  }
+  if (task.state === 'completed') {
+    return {
+      completed: 1,
+      detail: '任务已完成',
+      mode: 'determinate',
+      source: 'task',
+      total: 1,
+    };
+  }
+  const publicProgress = node.progress
+    ? roomPublicActivityText(roomParticipantPublicProgressSummary(node.progress))
+    : '';
+  if (attention) {
+    return {
+      completed: 0,
+      detail: publicProgress || taskStateLabel(task.state),
+      mode: 'attention',
+      source: 'task',
+    };
+  }
+  if (cancelled) {
+    return {
+      completed: 0,
+      detail: '任务已停止',
+      mode: 'cancelled',
+      source: 'task',
+    };
+  }
+  if (['pending', 'waiting'].includes(task.state)) {
+    return {
+      completed: 0,
+      detail: publicProgress || '等待开始',
+      mode: 'waiting',
+      source: 'task',
+    };
+  }
+  return {
+    completed: 0,
+    detail: publicProgress || '正在执行；暂无可计算的完成分母',
+    mode: 'indeterminate',
+    source: 'task',
+  };
+}
+
+function TaskProgressGlyph({
+  metric,
+  state,
+}: {
+  metric: TaskProgressMetric;
+  state: FlowVisualState;
+}) {
+  const determinate = typeof metric.total === 'number' && metric.total > 0;
+  const total = metric.total ?? 0;
+  const value = determinate
+    ? Math.min(100, Math.max(0, (metric.completed / total) * 100))
+    : 28;
+  const label = `${metric.detail}，${taskFlowStateLabel(state)}`;
+  return <span
+    aria-label={label}
+    aria-valuemax={determinate ? total : undefined}
+    aria-valuemin={determinate ? 0 : undefined}
+    aria-valuenow={determinate ? metric.completed : undefined}
+    className="room-task-flow__task-progress"
+    data-mode={metric.mode}
+    data-source={metric.source}
+    role={determinate ? 'progressbar' : 'status'}
+  >
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <circle className="room-task-flow__task-progress-track" cx="12" cy="12" r="9" pathLength="100" />
+      <circle
+        className="room-task-flow__task-progress-value"
+        cx="12"
+        cy="12"
+        r="9"
+        pathLength="100"
+        style={{ strokeDasharray: `${value} 100` }}
+      />
+    </svg>
+    <FlowStateIcon state={state} />
+  </span>;
+}
+
+function taskFlowStateLabel(state: FlowVisualState): string {
+  if (state === 'complete') return '已完成';
+  if (state === 'active') return '正在执行';
+  if (state === 'attention') return '需要处理';
+  if (state === 'cancelled') return '已停止';
+  return '等待中';
 }
 
 export function RoomTaskSubagentRuns({
@@ -1043,7 +1326,7 @@ function FlowStateIcon({ state }: { state: FlowVisualState }) {
   if (state === 'complete') return <CircleCheck aria-hidden="true" size={13} />;
   if (state === 'attention') return <CircleAlert aria-hidden="true" size={13} />;
   if (state === 'cancelled') return <CircleStop aria-hidden="true" size={13} />;
-  if (state === 'active') return <ArrowRight aria-hidden="true" size={13} />;
+  if (state === 'active') return <CircleDot aria-hidden="true" size={13} />;
   return <Clock3 aria-hidden="true" size={13} />;
 }
 
@@ -1113,22 +1396,30 @@ function taskGraphNodes(
     }
   }
   const sortedTasks = [...tasks].sort((left, right) => left.taskId.localeCompare(right.taskId));
-  const columnTasks: Record<TaskColumn, RoomTaskV3[]> = { 2: [], 3: [], 4: [] };
+  const columnTasks: Record<TaskColumn, RoomTaskV3[]> = { 2: [], 3: [] };
   for (const task of sortedTasks) {
     const hasPredecessor = Boolean(
       dependenciesByTaskId.get(task.taskId)?.length
       || (task.parentTaskId && taskById.has(task.parentTaskId)),
     );
-    const column: TaskColumn = task.taskKind === 'review' ? 4 : hasPredecessor ? 3 : 2;
+    const column: TaskColumn = task.taskKind === 'review' || hasPredecessor ? 3 : 2;
     columnTasks[column].push(task);
   }
-  return ([2, 3, 4] as const).flatMap((column) => (
+  return ([2, 3] as const).flatMap((column) => (
     columnTasks[column].map((task, index) => {
       const taskDispatches = dispatchesByTaskId.get(task.taskId) ?? [];
+      const predecessorIds = [...new Set([
+        ...(dependenciesByTaskId.get(task.taskId) ?? []),
+        ...(task.parentTaskId && taskById.has(task.parentTaskId) ? [task.parentTaskId] : []),
+      ])];
       return {
         task,
         dispatches: taskDispatches,
         dependencyIds: dependenciesByTaskId.get(task.taskId) ?? [],
+        dependencyCompletedCount: predecessorIds.filter((taskId) => (
+          taskById.get(taskId)?.state === 'completed'
+        )).length,
+        dependencyTotalCount: predecessorIds.length,
         parentId: task.parentTaskId && taskById.has(task.parentTaskId)
           ? task.parentTaskId
           : undefined,
@@ -1173,8 +1464,8 @@ function taskGraphEdges(
   if (!nodes.length) {
     return [{
       id: 'goal:result',
-      from: { x: 130, y: graphMidpoint },
-      to: { x: 885, y: graphMidpoint },
+      from: { x: 170, y: graphMidpoint },
+      to: { x: 830, y: graphMidpoint },
       state: 'waiting',
     }];
   }
@@ -1188,7 +1479,7 @@ function taskGraphEdges(
     if (!predecessorIds.length) {
       edges.push({
         id: `goal:${node.task.taskId}`,
-        from: { x: 130, y: graphMidpoint },
+        from: { x: 170, y: graphMidpoint },
         to: { x: target.left, y: target.y },
         state: taskFlowState(node.task.state),
       });
@@ -1210,7 +1501,7 @@ function taskGraphEdges(
       edges.push({
         id: `${node.task.taskId}:result`,
         from: { x: target.right, y: target.y },
-        to: { x: 885, y: graphMidpoint },
+        to: { x: 830, y: graphMidpoint },
         state: taskFlowState(node.task.state),
       });
     }
@@ -1364,10 +1655,23 @@ function taskFlowState(state: RoomTaskV3['state']): FlowVisualState {
   return 'waiting';
 }
 
-function rootFlowState(root: RootProjection): FlowVisualState {
+export function roomRootVisualState(
+  root: RootProjection,
+  tasks: RoomTaskV3[],
+  dispatches: RoomDispatchEnvelopeV2[],
+): FlowVisualState {
   if (root.isFinal && root.state === 'completed') return 'complete';
-  if (root.state === 'blocked' || root.state === 'failed' || root.state === 'cancelled_with_unknowns') return 'attention';
   if (root.state === 'cancelled') return 'cancelled';
+  if (root.state === 'failed' || root.state === 'cancelled_with_unknowns') return 'attention';
+  const hasActiveFrontier = tasks.some((task) => ['active', 'review'].includes(task.state))
+    || dispatches.some((dispatch) => ['leased', 'running'].includes(dispatch.state));
+  if (hasActiveFrontier) return 'active';
+  const hasWaitingFrontier = tasks.some((task) => ['pending', 'waiting'].includes(task.state))
+    || dispatches.some((dispatch) => (
+      ['pending', 'retry_wait', 'timer_wait'].includes(dispatch.state)
+    ));
+  if (hasWaitingFrontier) return 'waiting';
+  if (root.state === 'blocked') return 'attention';
   if (root.state === 'running' || root.state === 'cancelling') return 'active';
   return 'waiting';
 }
@@ -1399,16 +1703,19 @@ function dispatchIntentLabel(intent: RoomDispatchEnvelopeV2['intentKind']): stri
   } as const)[intent];
 }
 
-function rootFinalLabel(root: RootProjection): string {
+function rootFinalLabel(root: RootProjection, state: FlowVisualState): string {
   if (root.isFinal && root.state === 'completed') return '共同结果已完成';
+  if (state === 'active' || state === 'waiting') return '等待共同结果';
   if (root.state === 'blocked') return '等待处理阻塞';
   if (root.state === 'failed') return '共同工作未完成';
   if (root.state === 'cancelled' || root.state === 'cancelled_with_unknowns') return '共同工作已停止';
   return '等待共同结果';
 }
 
-function rootStateLabel(root: RootProjection): string {
+function rootStateLabel(root: RootProjection, state: FlowVisualState): string {
   if (root.isFinal && root.state === 'completed') return '已验证';
+  if (state === 'active') return root.state === 'cancelling' ? '正在停止' : '推进中';
+  if (state === 'waiting') return root.state === 'pending' ? '等待开始' : '等待下一步';
   if (root.state === 'blocked') return '已阻塞';
   if (root.state === 'failed') return '未完成';
   if (root.state === 'cancelled') return '已停止';

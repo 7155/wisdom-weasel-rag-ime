@@ -366,16 +366,16 @@ def main() -> int:
                 "grep",
                 "find",
                 "ls",
-                "edit",
-                "write",
                 "bash",
             }
+            forbidden_native_schema_names = {"edit", "write"}
             hidden_target_names = {
                 str(item["name"])
                 for item in native_manifests
             }
             if (
                 not native_schema_names.issubset(active_schema_names)
+                or active_schema_names & forbidden_native_schema_names
                 or "room_collaborate" in active_schema_names
                 or active_schema_names & hidden_target_names
             ):

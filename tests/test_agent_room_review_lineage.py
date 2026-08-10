@@ -50,7 +50,7 @@ def _finding(
         "findingId": "finding:F1",
         "fingerprint": _fingerprint(scope=canonical_scope),
         "gateEffect": "blocking",
-        "impact": "high",
+        "impact": "critical",
         "category": "correctness",
         "scope": canonical_scope,
         "observation": "The reviewed command still returns the stale value.",

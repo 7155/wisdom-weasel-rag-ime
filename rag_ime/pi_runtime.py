@@ -51,6 +51,7 @@ from .pi_runtime_public import (
     public_usage,
     public_usage_evidence,
     redact_mapping,
+    runtime_tool_result_is_error,
     safe_scalar,
     supported_thinking_levels,
     ui_confirmation_value,
@@ -108,13 +109,13 @@ _SUBAGENT_READ_ONLY_TOOLS = (
     "workspace_lsp",
     "workspace_read",
     "workspace_search",
+    "workspace_shell",
 )
 _READ_ONLY_HIDDEN_COORDINATOR_TOOLS = frozenset(
     {
         "workspace_patch",
         "workspace_edit",
         "workspace_write",
-        "workspace_shell",
         "workspace_job",
     }
 )
@@ -1981,13 +1982,19 @@ class PiRuntimeManager:
             }
             result_key = "partialResult" if event_type == "tool_execution_update" else "result"
             raw_result = raw.get(result_key)
+            result_is_error = runtime_tool_result_is_error(
+                tool_name,
+                raw_result,
+                reported_is_error=bool(raw.get("isError")),
+            )
+            payload["isError"] = result_is_error
             public_result = public_code_tool_activity(
                 tool_name,
                 raw_args,
                 raw_result,
             )
             if (
-                bool(raw.get("isError"))
+                result_is_error
                 and public_result.get("outputPreview")
             ):
                 public_result["error"] = public_result["outputPreview"]
@@ -2000,11 +2007,11 @@ class PiRuntimeManager:
                 # Keep the generic carrier only when projection is unavailable
                 # or a failed mutation has no safe error preview.
                 if not public_result or (
-                    bool(raw.get("isError"))
+                    result_is_error
                     and not public_result.get("outputPreview")
                 ):
                     payload[result_key] = redact_mapping(as_mapping(raw_result))
-            if event_type == "tool_execution_end" and not bool(raw.get("isError")):
+            if event_type == "tool_execution_end" and not result_is_error:
                 captured = self._tool_blocks.capture(
                     raw.get("result"),
                     source_ref=(

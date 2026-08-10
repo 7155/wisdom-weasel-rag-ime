@@ -1314,8 +1314,8 @@ class DebugManagementApiTests(unittest.TestCase):
 
         self.assertTrue(status["ok"])
         self.assertEqual(status["policy"], "auto_governed")
-        self.assertTrue(status["autoApply"])
-        self.assertFalse(status["scheduledDraftOnly"])
+        self.assertFalse(status["autoApply"])
+        self.assertTrue(status["scheduledDraftOnly"])
         self.assertEqual(status["automation"]["runsPerDay"], 2)
         self.assertEqual(
             status["automation"]["model"],
@@ -1335,8 +1335,11 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(status["modelCuration"]["runs"], [])
         self.assertTrue(status["bookProjection"]["inSync"])
         self.assertEqual(status["ownerCuration"]["policy"]["cadence"], "twice_daily")
-        self.assertTrue(
+        self.assertFalse(
             status["ownerCuration"]["policy"]["autoApplyGovernedWrites"]
+        )
+        self.assertTrue(
+            status["ownerCuration"]["policy"]["semanticWritesRequireReview"]
         )
         self.assertGreaterEqual(status["compileState"]["pendingEventCount"], 1)
         self.assertEqual(status["pendingDraftCount"], 1)
@@ -1448,6 +1451,58 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(config.batch_limit, 321)
         runner.run_once.assert_called_once_with(force=True)
         organizer.close.assert_called_once_with()
+
+    def test_scheduled_gateway_memory_maintenance_never_auto_applies_its_draft(self) -> None:
+        managed = MemoryMaintenanceSettings(
+            automatic_organization_enabled=True,
+            dreaming_enabled=False,
+        )
+        executor = Mock(
+            reference="openai-codex/gpt-5.6-luna",
+            thinking_level="max",
+            selected_model={"contextWindow": 400_000},
+        )
+        organizer = Mock(curation_protocol_version="atom-first-v1")
+        curator = Mock()
+        curator.run_due.return_value = {"ok": True, "results": []}
+
+        with (
+            patch(
+                "rag_ime.debug_server.MemoryMaintenanceSettings.load",
+                return_value=managed,
+            ),
+            patch(
+                "rag_ime.debug_server.run_due_lexicon_organization",
+                return_value={"ok": True},
+            ),
+            patch(
+                "rag_ime.debug_server.build_governed_memory_model_executor",
+                return_value=executor,
+            ),
+            patch(
+                "rag_ime.debug_server.ManagedPiMemoryOrganizer",
+                return_value=organizer,
+            ),
+            patch(
+                "rag_ime.debug_server.OwnerMemoryCurator",
+                return_value=curator,
+            ) as curator_type,
+            patch.object(
+                self.service,
+                "_execute_gateway_memory_dreaming",
+                return_value={"ok": True, "skipped": True},
+            ),
+        ):
+            report = self.service._execute_gateway_memory_maintenance({})
+
+        self.assertTrue(report["ok"])
+        self.assertFalse(curator_type.call_args.kwargs["auto_apply"])
+        curator.run_due.assert_called_once_with(
+            manual=False,
+            owner_kind="",
+            owner_id="",
+            instruction="",
+        )
 
     def test_gateway_maintenance_skips_dreaming_only_when_both_lanes_are_disabled(
         self,
@@ -2395,7 +2450,8 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(roles["items"][0]["displayName"], "澄·远")
         self.assertNotIn("systemPrompt", roles["items"][0])
         self.assertEqual(maintenance["policy"], "auto_governed")
-        self.assertTrue(maintenance["autoApply"])
+        self.assertFalse(maintenance["autoApply"])
+        self.assertTrue(maintenance["scheduledDraftOnly"])
         self.assertEqual(model_catalog["providers"][0]["displayName"], "OpenRouter")
         self.assertEqual(command_catalog["items"][0]["invocation"], "/review")
         self.assertEqual(

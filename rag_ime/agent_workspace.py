@@ -24,7 +24,9 @@ from urllib.parse import unquote, urlparse
 from .agent_execution_policy import (
     FULL_TRUST_EXECUTION_MODE,
     normalize_execution_mode,
+    read_only_policy_active,
     workspace_scope_is_granted,
+    workspace_scope_sha256,
 )
 from .contracts.json_schema import validate_contract
 
@@ -58,6 +60,7 @@ _SENSITIVE_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".sqlite", ".sqlite3", ".
 _MAX_SEARCH_FILES = 5_000
 _PI_TOOL_RESULT_MAX_BYTES = 50 * 1024
 _PI_READ_MAX_LINES = 2_000
+_NO_AUTHORIZED_WORKSPACE = "当前对话尚未选择授权工作区，请先在对话权限中选择目录"
 _FORBIDDEN_COMMAND = re.compile(
     r"(?ix)(?:^|[;&|()\s])"
     r"(?:sudo|su|security|tccutil|csrutil|spctl|kmutil|kextload|nvram|diskutil|"
@@ -235,12 +238,18 @@ class PreparedWorkspaceCommand:
     timeout_seconds: int
     allow_network: bool
     repository_metadata_roots: tuple[Path, ...] = ()
+    source_read_only: bool = False
 
     @property
     def roots_digest(self) -> str:
         values = [str(root) for root in self.roots]
         values.extend(
             f"repository-metadata:{root}" for root in self.repository_metadata_roots
+        )
+        values.append(
+            "workspace-access:source-read-only"
+            if self.source_read_only
+            else "workspace-access:writable"
         )
         return hashlib.sha256("\n".join(values).encode("utf-8")).hexdigest()
 
@@ -1195,7 +1204,26 @@ class WorkspaceHarness:
         session: Mapping[str, object],
         args: Mapping[str, object],
     ) -> dict[str, object]:
-        roots = self._lsp_requested_roots(session, args)
+        try:
+            roots = self._lsp_requested_roots(session, args)
+        except WorkspaceHarnessError as exc:
+            if str(exc) != _NO_AUTHORIZED_WORKSPACE:
+                raise
+            observed_at_ms = int(time.time() * 1000)
+            return _validated_lsp(
+                {
+                    "schemaVersion": "rag-ime.workspace-lsp-status.v1",
+                    "runtimeInstanceId": self._lsp_runtime_instance_id,
+                    "runtimeEpoch": self._lsp_generation,
+                    "observedAtMs": observed_at_ms,
+                    "heartbeatExpiresAtMs": observed_at_ms + self._lsp_heartbeat_ttl_ms,
+                    "current": not self._lsp_closed,
+                    "summary": "当前 Session 尚未授权工作区",
+                    "state": "unavailable",
+                    "roots": [],
+                },
+                "workspace-lsp-status.v1.json",
+            )
         self._cleanup_idle_lsp_clients()
         observed_at_ms = int(time.time() * 1000)
         with self._lsp_lock:
@@ -2874,6 +2902,7 @@ class WorkspaceHarness:
                 "preimageSize": prepared.preimage_size,
                 "postimageSha256": prepared.postimage_sha256,
                 "workspaceRootSha256": prepared.roots_digest,
+                "workspaceScopeSha256": workspace_scope_sha256((prepared.root,)),
                 **(
                     {"readOrigin": prepared.read_origin.as_dict()}
                     if prepared.read_origin is not None
@@ -3056,6 +3085,7 @@ class WorkspaceHarness:
                 "preimageSize": prepared.preimage_size,
                 "postimageSha256": prepared.postimage_sha256,
                 "workspaceRootSha256": prepared.roots_digest,
+                "workspaceScopeSha256": workspace_scope_sha256((prepared.root,)),
                 **(
                     {"readOrigin": prepared.read_origin.as_dict()}
                     if prepared.read_origin is not None
@@ -3184,6 +3214,7 @@ class WorkspaceHarness:
                 "preimageSize": prepared.preimage_size,
                 "postimageSha256": prepared.postimage_sha256,
                 "workspaceRootSha256": prepared.roots_digest,
+                "workspaceScopeSha256": workspace_scope_sha256((prepared.root,)),
             },
         }
 
@@ -3269,6 +3300,11 @@ class WorkspaceHarness:
             raise WorkspaceHarnessError("workspace commands require a coordinator session")
         roots = self._session_roots(session)
         repository_metadata_roots = _linked_worktree_metadata_roots(roots)
+        source_read_only = read_only_policy_active(session)
+        if source_read_only and tool_name == "workspace_job":
+            raise WorkspaceHarnessError(
+                "background workspace jobs are not available in read-only mode"
+            )
         model_arbitrated = (
             normalize_execution_mode(
                 session.get("executionMode"),
@@ -3312,6 +3348,10 @@ class WorkspaceHarness:
             raise WorkspaceHarnessError("background shell syntax is not accepted; use workspace_job")
 
         allow_network = _strict_bool(args.get("allowNetwork"))
+        if source_read_only and allow_network:
+            raise WorkspaceHarnessError(
+                "network access is not available for read-only validation commands"
+            )
         if _NETWORK_COMMAND.search(command) and not allow_network:
             raise WorkspaceHarnessError("network command requires an explicit allowNetwork approval")
         raw_cwd = str(args.get("cwd") or "").strip()
@@ -3336,6 +3376,7 @@ class WorkspaceHarness:
             repository_metadata_roots=repository_metadata_roots,
             timeout_seconds=timeout,
             allow_network=allow_network,
+            source_read_only=source_read_only,
         )
 
     def execute(self, prepared: PreparedWorkspaceCommand) -> dict[str, object]:
@@ -3355,6 +3396,15 @@ class WorkspaceHarness:
                     "after": "本次允许" if prepared.allow_network else "保持拒绝",
                 },
                 {
+                    "label": "工作区写入",
+                    "before": "允许授权范围内写入",
+                    "after": (
+                        "源码只读；仅本次临时缓存可写"
+                        if prepared.source_read_only
+                        else "保持允许"
+                    ),
+                },
+                {
                     "label": "超时",
                     "before": "",
                     "after": f"{prepared.timeout_seconds} 秒",
@@ -3366,15 +3416,19 @@ class WorkspaceHarness:
                 "timeoutSeconds": prepared.timeout_seconds,
                 "allowNetwork": prepared.allow_network,
             },
-            "baseState": {"workspaceRootsSha256": prepared.roots_digest},
+            "baseState": {
+                "workspaceRootsSha256": prepared.roots_digest,
+                "workspaceScopeSha256": workspace_scope_sha256(prepared.roots),
+                "sourceReadOnly": prepared.source_read_only,
+            },
         }
 
     def _session_roots(self, session: Mapping[str, object]) -> tuple[Path, ...]:
         if str(session.get("mode") or "") != "coordinator":
-            raise WorkspaceHarnessError("workspace tools require a coordinator session")
+            raise WorkspaceHarnessError("工作区工具需要协调模式的对话")
         values = session.get("workspaceRoots")
         if not isinstance(values, list) or not values:
-            raise WorkspaceHarnessError("coordinator session has no authorized workspace")
+            raise WorkspaceHarnessError(_NO_AUTHORIZED_WORKSPACE)
         roots: list[Path] = []
         for value in values:
             root = Path(str(value)).expanduser().resolve(strict=True)
@@ -3633,7 +3687,12 @@ class WorkspaceHarness:
         succeeded = int(exit_code) == 0 and not timed_out and not output_limited
         return {
             "schemaVersion": "rag-ime.workspace-command-receipt.v1",
-            "mutationApplied": succeeded,
+            "mutationApplied": succeeded and not prepared.source_read_only,
+            **(
+                {"validationSucceeded": succeeded}
+                if prepared.source_read_only
+                else {}
+            ),
             "summary": (
                 "命令执行超时"
                 if timed_out
@@ -3648,6 +3707,8 @@ class WorkspaceHarness:
             "timedOut": timed_out,
             "outputLimited": output_limited,
             "networkAllowed": prepared.allow_network,
+            "sourceReadOnly": prepared.source_read_only,
+            "temporaryWritesDiscarded": prepared.source_read_only,
             "output": decoded,
             "outputBytes": len(output),
             "undoAvailable": False,
@@ -3669,15 +3730,24 @@ class WorkspaceHarness:
                 roots=prepared.sandbox_roots,
                 temporary=temporary,
                 allow_network=prepared.allow_network,
+                writable_roots=not prepared.source_read_only,
             )
+            cache_directory = temporary / "cache"
+            python_cache_directory = cache_directory / "python"
             environment = {
                 "HOME": str(temporary),
                 "TMPDIR": str(temporary),
+                "XDG_CACHE_HOME": str(cache_directory),
+                "PYTHONPYCACHEPREFIX": str(python_cache_directory),
+                "npm_config_cache": str(cache_directory / "npm"),
+                "PIP_CACHE_DIR": str(cache_directory / "pip"),
+                "COREPACK_HOME": str(cache_directory / "corepack"),
                 "PATH": _workspace_command_path(),
                 "LANG": "en_US.UTF-8",
                 "LC_ALL": "en_US.UTF-8",
                 "GIT_CONFIG_GLOBAL": "/dev/null",
                 "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_OPTIONAL_LOCKS": "0",
             }
             process = subprocess.Popen(
                 [str(sandbox), "-p", profile, "/bin/zsh", "-f", "-c", prepared.command],
@@ -3926,6 +3996,7 @@ def _sandbox_profile(
     roots: Sequence[Path],
     temporary: Path,
     allow_network: bool,
+    writable_roots: bool = True,
 ) -> str:
     lines = [
         "(version 1)",
@@ -3944,7 +4015,8 @@ def _sandbox_profile(
     for root in roots:
         escaped = _profile_escape(str(root))
         lines.append(f'(allow file-read* (subpath "{escaped}"))')
-        lines.append(f'(allow file-write* (subpath "{escaped}"))')
+        if writable_roots:
+            lines.append(f'(allow file-write* (subpath "{escaped}"))')
     temp = _profile_escape(str(temporary))
     lines.append(f'(allow file-read* (subpath "{temp}"))')
     lines.append(f'(allow file-write* (subpath "{temp}"))')

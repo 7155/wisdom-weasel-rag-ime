@@ -9,6 +9,11 @@ export type RootStopTarget = {
   generation: number;
 };
 
+export type RoomKernelCancelTarget = RootStopTarget & {
+  targetKind: 'task' | 'dispatch';
+  targetId: string;
+};
+
 export interface RoomKernelCommandTransport {
   readonly kind: 'fixture' | 'control';
   execute(command: RoomKernelCommandV1): Promise<RoomKernelReceiptV1>;
@@ -56,6 +61,35 @@ export function buildCancelRootCommand(
     createdAtMs: identity.createdAtMs,
   };
   return parseContract('room-kernel-command.v1', command);
+}
+
+export function buildCancelTargetCommand(
+  target: RoomKernelCancelTarget,
+  identity: { commandId: string; sourceId: string; createdAtMs: number },
+): RoomKernelCommandV1 {
+  return parseContract('room-kernel-command.v1', {
+    schemaVersion: 'wisdom-weasel.room-kernel-command.v1',
+    commandId: identity.commandId,
+    rootId: target.rootId,
+    roomId: target.roomId,
+    commandKind: 'cancel_target',
+    targetKind: target.targetKind,
+    targetId: target.targetId,
+    sourceKind: 'control_center',
+    sourceId: identity.sourceId,
+    idempotencyKey: [
+      'cancel-target',
+      target.roomId,
+      target.rootId,
+      target.targetKind,
+      target.targetId,
+      target.generation,
+      identity.commandId,
+    ].join(':'),
+    generation: target.generation,
+    payload: {},
+    createdAtMs: identity.createdAtMs,
+  });
 }
 
 export function buildRetryRootCommand(

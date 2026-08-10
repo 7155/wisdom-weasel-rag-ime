@@ -10,6 +10,7 @@ import {
   AgentTurn,
   agentScrollSeekConfiguration,
   interleavedTurnEntries,
+  visibleAgentTurnIds,
 } from './AgentTimeline';
 import {
   AgentBlock,
@@ -696,6 +697,45 @@ describe('Agent chat rendering', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('当前模型不可用，请切换模型后重试');
     expect(screen.queryByText(/not supported by any configured account/i)).not.toBeInTheDocument();
     expect(container.querySelectorAll('.agent-inline-notice[data-tone="danger"]')).toHaveLength(0);
+  });
+
+  it('keeps Room public posts auditable without rendering them as another Session turn', () => {
+    const sessionId = 'session-1';
+    const currentTurnId = '831ba902-637d-48aa-b92f-2b1c32c4c969';
+    const roomTurnId = 'room-root:98459a93-e95c-4e9b-9054-693131c2af66';
+    const current = assistantMessage(sessionId, currentTurnId, '当前 Session 的真实回答。', 100);
+    const roomPost: UiAgentMessage = {
+      ...assistantMessage(sessionId, roomTurnId, 'Room 公共交付不应复制到 Session。', 110),
+      id: 'room-post:post-98459a93',
+      blocks: [{
+        id: 'room-post:post-98459a93:text',
+        type: 'text',
+        status: 'completed',
+        presentationKind: 'markdown',
+        data: {
+          text: 'Room 公共交付不应复制到 Session。',
+        },
+        source: { kind: 'room_post', ref: 'post-98459a93' },
+        visibility: 'room_post',
+      }],
+    };
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [current, roomPost],
+      liveEvents: [],
+      lastSequence: 1_101,
+      resumeToken: `${sessionId}:1101`,
+      status: 'idle',
+    });
+
+    const projection = useAgentLiveStore.getState().projections[sessionId];
+    expect(projection.messagesById[roomPost.id]).toBeDefined();
+    expect(visibleAgentTurnIds(projection)).toEqual([currentTurnId]);
+
+    const { container } = render(
+      <AgentTurn sessionId={sessionId} turnId={roomTurnId} onApprovalDecision={() => {}} />,
+    );
+    expect(container.querySelector('.agent-assistant-turn')).not.toBeInTheDocument();
+    expect(screen.queryByText('Room 公共交付不应复制到 Session。')).not.toBeInTheDocument();
   });
 });
 

@@ -298,6 +298,8 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn('"workspace_read",', script)
         self.assertIn('"modelVisible": False', script)
         self.assertIn('"nativeCodingToolSchemas": sorted(native_schema_names)', script)
+        self.assertIn('forbidden_native_schema_names = {"edit", "write"}', script)
+        self.assertIn("active_schema_names & forbidden_native_schema_names", script)
         self.assertNotIn('"name": "room_post"', script)
         for method in (
             "session.open",

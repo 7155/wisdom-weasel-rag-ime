@@ -45,7 +45,6 @@ import { SafeFieldList } from './BlockRenderer';
 import {
   toggleDisclosureOnKeyPreservingAnchor,
   toggleDisclosurePreservingAnchor,
-  useAutoFollowScroll,
 } from './disclosure-anchor';
 import { publicToolResultView, safeSourceLabels, type PublicToolResultView } from './public-tool-result';
 import { publicAgentErrorText } from '../public-error';
@@ -388,29 +387,17 @@ export function PublicActivityFeed({
   const active = activities.some((activity) => (
     activity.status === 'running' || activity.status === 'waiting'
   ));
-  const contentKey = entries.map((entry) => (
-    `${entry.id}:${entry.status}:${entry.summary}`
-  )).join('\u001f');
-  const { onScroll, scrollRef } = useAutoFollowScroll<HTMLDivElement>(contentKey, active);
   if (!active || entries.length === 0) return null;
   return (
-    <section className="agent-public-activity" aria-label="最新公开思考与工具活动">
+    <section className="agent-public-activity" role="status" aria-label="本轮最新进展" aria-live="polite">
       <header>
         <span>
-          <strong>最新活动</strong>
-          <small>Provider 公开摘要与 Tool 回执</small>
+          <strong>最新进展</strong>
+          <small>本轮最近的思考摘要与工具状态</small>
         </span>
-        <b>{entries.length} 条</b>
       </header>
       <div
-        aria-label="最新公开思考与工具活动"
-        aria-live="polite"
-        aria-relevant="additions text"
         className="agent-public-activity__feed"
-        onScroll={onScroll}
-        ref={scrollRef}
-        role="log"
-        tabIndex={0}
       >
         {entries.map((entry) => (
           <article data-kind={entry.kind} data-state={entry.status} key={entry.id}>
@@ -482,9 +469,14 @@ function publicActivityFeedEntries(
       order: order++,
     });
   }
-  return entries
+  const ordered = entries.sort(
+    (left, right) => left.timestamp - right.timestamp || left.order - right.order,
+  );
+  const latestReasoning = [...ordered].reverse().find((entry) => entry.kind === 'reasoning');
+  const latestTool = [...ordered].reverse().find((entry) => entry.kind === 'tool');
+  return [latestReasoning, latestTool]
+    .filter((entry): entry is PublicActivityFeedEntry & { order: number } => Boolean(entry))
     .sort((left, right) => left.timestamp - right.timestamp || left.order - right.order)
-    .slice(-24)
     .map(({ order: _order, ...entry }) => entry);
 }
 

@@ -166,11 +166,44 @@ class RoomContextJournalTests(unittest.TestCase):
         }
         first, created = self.context.publish_post(post)
         self.assertTrue(created)
+
+        # A facilitator may wait while sibling work is still running.  That
+        # aggregate Root state must not revoke an otherwise-current child
+        # Dispatch's ability to publish progress in the same generation.
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """
+                UPDATE room_kernel_roots
+                SET state = 'waiting', updated_at_ms = 2
+                WHERE root_id = 'root:live'
+                """
+            )
+        waiting_post, waiting_created = self.context.publish_post(
+            {
+                **post,
+                "postId": "post:while-root-waits",
+                "idempotencyKey": "post:while-root-waits",
+                "publicationSource": {
+                    "kind": "room_post",
+                    "ref": "invoke:room-post:while-root-waits",
+                },
+            }
+        )
+        self.assertTrue(waiting_created)
+        self.assertEqual(waiting_post["dispatchId"], "dispatch:live")
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE room_kernel_roots
+                SET state = 'running', updated_at_ms = 3
+                WHERE root_id = 'root:live'
+                """
+            )
+            conn.execute(
+                """
                 UPDATE room_kernel_dispatches
-                SET state = 'committed', updated_at_ms = 2
+                SET state = 'committed', updated_at_ms = 3
                 WHERE dispatch_id = 'dispatch:live'
                 """
             )

@@ -37,6 +37,7 @@ import type {
   CapabilityMutationOutcome,
   CapabilityPreference,
 } from '@/features/plugins/capability-policy';
+import { usePageVisibility } from '@/platform/use-page-visibility';
 import { useAgentLiveStore } from '../state/live-store';
 import type { AgentCommand, ToolManifest } from '../types';
 import { publicToolResultView } from '../timeline/public-tool-result';
@@ -91,6 +92,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
 }, ref) {
   const transport = useControlTransport();
   const contentReady = useDeferredStatusContent(open);
+  const pageVisible = usePageVisibility();
   const projection = useAgentLiveStore((state) => state.projections[sessionId]);
   const view = useMemo(() => projectStatusPanel(projection), [projection]);
   const [resolvedWorkflow, setResolvedWorkflow] = useState<AgentWorkflowStateV1>();
@@ -117,8 +119,8 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
       query: { sessionId, limit: 50 },
       signal,
     }),
-    enabled: open && contentReady && Boolean(sessionId),
-    refetchInterval: open && contentReady
+    enabled: open && contentReady && pageVisible && Boolean(sessionId),
+    refetchInterval: open && contentReady && pageVisible
       ? (query) => hasActiveSubagentRuns(subagentRuns(query.state.data)) ? 1_000 : 5_000
       : false,
     retry: false,

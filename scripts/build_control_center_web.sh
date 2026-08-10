@@ -22,15 +22,22 @@ if [[ "$BUILD_CHANNEL" == "production" \
 fi
 
 if [[ "${RAG_IME_SKIP_WEB_INSTALL:-0}" != "1" ]]; then
-  CI=true pnpm --dir "$WEB" install --frozen-lockfile
+  (
+    cd "$WEB"
+    CI=true pnpm --config.manage-package-manager-versions=true \
+      install --frozen-lockfile
+  )
 fi
 
 node "$ROOT/scripts/generate_control_center_contracts.mjs" --check
-pnpm --dir "$WEB" typecheck
-pnpm --dir "$WEB" test
-VITE_CONTROL_TRANSPORT="$CONTROL_TRANSPORT" \
-VITE_BUILD_CHANNEL="$BUILD_CHANNEL" \
-  pnpm --dir "$WEB" build
+(
+  cd "$WEB"
+  pnpm --config.manage-package-manager-versions=true typecheck
+  pnpm --config.manage-package-manager-versions=true test
+  VITE_CONTROL_TRANSPORT="$CONTROL_TRANSPORT" \
+  VITE_BUILD_CHANNEL="$BUILD_CHANNEL" \
+    pnpm --config.manage-package-manager-versions=true build
+)
 
 [[ -f "$WEB/dist/index.html" ]] || {
   echo "missing control-center-web/dist/index.html" >&2

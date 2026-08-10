@@ -22,6 +22,7 @@ from .agent_room_capabilities import (
     REVIEW_FINDING_RE_REVIEW_EXCEPTION_CATEGORIES,
     RoomCapabilityManifestStore,
     canonical_review_finding_fingerprint,
+    review_finding_is_p0,
 )
 from .agent_room_continuations import (
     RoomContinuationFactory,
@@ -29,6 +30,7 @@ from .agent_room_continuations import (
 )
 from .agent_room_kernel import RoomKernelFenceError, RoomKernelStore
 from .agent_room_kernel_contracts import (
+    REVIEW_AXIS_SET,
     ROOM_COMMIT_SCHEMA_VERSION,
 )
 from .agent_room_quality_gate import (
@@ -90,8 +92,10 @@ class SettlementApplication(Protocol):
         evidence_refs: Sequence[str],
         child_task: Mapping[str, object],
         pending_parent_task: Mapping[str, object],
+        pending_parent_quality_gate_receipt: Mapping[str, object],
         now_ms: int,
         parent_commit_id: str,
+        review_axis: str | None = None,
     ) -> dict[str, object]:
         ...
 
@@ -137,12 +141,21 @@ class RoomSettleLifecycleService:
         capabilities: RoomCapabilityManifestStore,
         application: SettlementApplication,
         clock_ms: Callable[[], int] | None = None,
+        wake_worker: Callable[[], object] | None = None,
+        record_runtime_turn_completed: Callable[
+            [str, str, str, int],
+            object,
+        ],
     ) -> None:
         self.rooms = rooms
         self.kernel = kernel
         self.capabilities = capabilities
         self.application = application
         self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
+        self.wake_worker = wake_worker or (lambda: None)
+        self.record_runtime_turn_completed = (
+            record_runtime_turn_completed
+        )
         self.continuations = RoomContinuationFactory(
             rooms=rooms,
             kernel=kernel,
@@ -163,6 +176,7 @@ class RoomSettleLifecycleService:
             payload,
             "dispatchAttempt",
         )
+        timestamp = self.clock_ms()
 
         bound = self.capabilities.manifest_for_runtime(
             session_id,
@@ -189,6 +203,11 @@ class RoomSettleLifecycleService:
             dispatch_id=dispatch_id,
         )
         if definition is not None:
+            self.kernel.assert_settlement_runtime_attempt(
+                dispatch_id,
+                runtime_turn_id=runtime_turn_id,
+                dispatch_attempt=dispatch_attempt,
+            )
             dispatch = self.kernel.dispatch(dispatch_id)
             define_invocation = self.capabilities.latest_runtime_invocation(
                 session_id=session_id,
@@ -206,6 +225,28 @@ class RoomSettleLifecycleService:
                 raise RoomKernelFenceError(
                     "room_define fence is missing its committed execution receipt"
                 )
+            bridge = self.kernel.record_definition_runtime_settled(
+                root_id=root_id,
+                dispatch_id=dispatch_id,
+                session_id=session_id,
+                generation=generation,
+                capability_epoch=capability_epoch,
+                runtime_turn_id=runtime_turn_id,
+                now_ms=self.clock_ms(),
+            )
+            if bridge["released"]:
+                try:
+                    self.wake_worker()
+                except Exception:
+                    # The durable outbox release is authoritative; the normal
+                    # worker poll recovers a failed best-effort wake-up.
+                    pass
+            self.record_runtime_turn_completed(
+                session_id,
+                runtime_turn_id,
+                dispatch_id,
+                timestamp,
+            )
             return {
                 "schemaVersion": "wisdom-weasel.room-settle-lifecycle-result.v1",
                 "state": "committed",
@@ -213,6 +254,8 @@ class RoomSettleLifecycleService:
                 "settleAttempt": settle_attempt,
                 "executionReceipt": define_execution,
                 "definitionReceipt": definition["receipt"],
+                "runtimeSettlementReceipt": bridge["receipt"],
+                "executionDispatchReleased": bridge["released"],
                 "replayed": True,
             }
 
@@ -225,7 +268,18 @@ class RoomSettleLifecycleService:
             execution = self.capabilities.execution_receipt(
                 str(invocation["receiptId"])
             )
-            if execution is not None:
+            if execution is not None and execution.get("status") == "applied":
+                self.kernel.assert_settlement_runtime_attempt(
+                    dispatch_id,
+                    runtime_turn_id=runtime_turn_id,
+                    dispatch_attempt=dispatch_attempt,
+                )
+                self.record_runtime_turn_completed(
+                    session_id,
+                    runtime_turn_id,
+                    dispatch_id,
+                    timestamp,
+                )
                 return {
                     "schemaVersion": "wisdom-weasel.room-settle-lifecycle-result.v1",
                     "state": "committed",
@@ -234,7 +288,6 @@ class RoomSettleLifecycleService:
                     "executionReceipt": execution,
                     "replayed": True,
                 }
-        timestamp = self.clock_ms()
         settle_receipt_id = _stable_id(
             "room-settle",
             dispatch_id,
@@ -287,6 +340,12 @@ class RoomSettleLifecycleService:
                 follow_up_kind="continue",
             )
 
+        self.kernel.assert_settlement_runtime_attempt(
+            dispatch_id,
+            runtime_turn_id=runtime_turn_id,
+            dispatch_attempt=dispatch_attempt,
+        )
+
         try:
             commit = self._canonical_commit(
                 manifest=manifest,
@@ -302,6 +361,7 @@ class RoomSettleLifecycleService:
                 dispatch_attempt=dispatch_attempt,
                 reason=str(exc),
                 follow_up_kind="repair_commit",
+                invocation_receipt_id=str(invocation["receiptId"]),
             )
 
         result = self.application.settle(
@@ -313,6 +373,12 @@ class RoomSettleLifecycleService:
                 "runtimeTurnId": runtime_turn_id,
                 "dispatchAttempt": dispatch_attempt,
             },
+        )
+        self.record_runtime_turn_completed(
+            session_id,
+            runtime_turn_id,
+            dispatch_id,
+            timestamp,
         )
         return {
             "schemaVersion": "wisdom-weasel.room-settle-lifecycle-result.v1",
@@ -333,7 +399,25 @@ class RoomSettleLifecycleService:
         dispatch_attempt: int,
         reason: str,
         follow_up_kind: str,
+        invocation_receipt_id: str = "",
     ) -> dict[str, object]:
+        rejected_invocation = str(invocation_receipt_id or "").strip()
+        if (
+            rejected_invocation
+            and self.capabilities.execution_receipt(rejected_invocation) is None
+        ):
+            self.capabilities.record_runtime_execution(
+                session_id=str(settle_receipt["sessionId"]),
+                invocation_receipt_id=rejected_invocation,
+                status="rejected",
+                result_hash=_sha256_json(
+                    {
+                        "invocationReceiptId": rejected_invocation,
+                        "reason": _bounded(reason, 500),
+                    }
+                ),
+                created_at_ms=int(settle_receipt["createdAtMs"]),
+            )
         result = self.application.settle(
             room_id,
             {
@@ -597,11 +681,31 @@ class RoomSettleLifecycleService:
             (child, self.kernel.task(str(child["taskId"])))
             for child in children
         ]
+        canonical_abandonment = getattr(
+            self.kernel,
+            "task_has_canonical_abandonment",
+            None,
+        )
+
+        def is_closed_abandonment(child_task: Mapping[str, object]) -> bool:
+            return bool(
+                callable(canonical_abandonment)
+                and child_task.get("state") == "cancelled"
+                and child_task.get("workspaceLifecycleState") == "abandoned"
+                and child_task.get("workspaceCleanupState")
+                in {"cleaned", "missing"}
+                and not bool(child_task.get("workspaceAttentionRequired"))
+                and canonical_abandonment(
+                    str(child_task.get("taskId") or "")
+                )
+            )
+
         unfinished_work = [
             child_task
             for child, child_task in records
             if str(child.get("intentKind") or "") in {"execute", "revise"}
             and child_task.get("state") != "completed"
+            and not is_closed_abandonment(child_task)
         ]
         if unfinished_work:
             raise RoomCommitProposalError(
@@ -613,18 +717,41 @@ class RoomSettleLifecycleService:
             for _child, child_task in records
             if child_task.get("workspacePolicy") == "isolated_writable"
             and child_task.get("workspaceIntegrationState") != "applied"
+            and not is_closed_abandonment(child_task)
         ]
         if pending_integrations:
             raise RoomCommitProposalError(
                 "仍有独立 worktree 尚未合入；先用 room_integrate 完成集成和验证"
             )
-        latest_attempts = self.kernel.latest_review_attempts(
-            str(root["rootId"])
+        latest_attempts_loader = getattr(
+            self.kernel,
+            "latest_review_attempts",
+            None,
         )
+        if callable(latest_attempts_loader):
+            latest_attempts = latest_attempts_loader(str(root["rootId"]))
+        else:
+            latest_attempt = self.kernel.latest_review_attempt(
+                str(root["rootId"])
+            )
+            latest_attempts = [latest_attempt] if latest_attempt else []
         independent_review_required = root.get("independentReviewRequired")
         if not isinstance(independent_review_required, bool):
             raise RoomCommitProposalError(
                 "Root independent review policy is missing or invalid; "
+                "completion is blocked"
+            )
+        raw_required_axes = root.get("requiredReviewAxes")
+        if raw_required_axes is None:
+            required_review_axes: tuple[str, ...] = ()
+        elif isinstance(raw_required_axes, list) and all(
+            isinstance(axis, str) and axis in REVIEW_AXIS_SET
+            for axis in raw_required_axes
+        ):
+            required_review_axes = tuple(dict.fromkeys(raw_required_axes))
+        else:
+            raise RoomCommitProposalError(
+                "Root required review axes are missing or invalid; "
                 "completion is blocked"
             )
         if not latest_attempts:
@@ -634,6 +761,29 @@ class RoomSettleLifecycleService:
                     "独立复核，不能直接发布最终回复"
                 )
             return
+        if required_review_axes:
+            typed_attempts = [
+                attempt
+                for attempt in latest_attempts
+                if isinstance(attempt.get("payload"), Mapping)
+                and attempt["payload"].get("reviewAxis")
+                in required_review_axes
+            ]
+            present_axes = {
+                str(attempt["payload"]["reviewAxis"])
+                for attempt in typed_attempts
+            }
+            missing_axes = [
+                axis
+                for axis in required_review_axes
+                if axis not in present_axes
+            ]
+            if missing_axes:
+                raise RoomCommitProposalError(
+                    "独立复核尚未完成全部必需角度："
+                    + "、".join(missing_axes)
+                )
+            latest_attempts = typed_attempts
         for latest_attempt in latest_attempts:
             latest_review = latest_attempt.get("dispatch")
             review_task = latest_attempt.get("payload")
@@ -697,13 +847,9 @@ class RoomSettleLifecycleService:
                 if isinstance(finding, Mapping)
                 and (
                     (
-                        finding.get("gateEffect") == "blocking"
+                        review_finding_is_p0(finding)
                         and finding.get("state")
                         in {"open", "contested", "escalated"}
-                    )
-                    or (
-                        finding.get("gateEffect") == "advisory"
-                        and finding.get("state") == "open"
                     )
                 )
             ]
@@ -711,6 +857,50 @@ class RoomSettleLifecycleService:
                 raise RoomCommitProposalError(
                     "最新独立复核仍有未明确处置的 Review Finding"
                 )
+        if independent_review_required:
+            required_review_tasks_loader = getattr(
+                self.kernel,
+                "required_review_task_ids",
+                None,
+            )
+            required_review_tasks = (
+                set(required_review_tasks_loader(str(root["rootId"])))
+                if callable(required_review_tasks_loader)
+                else {
+                    str(value)
+                    for attempt in latest_attempts
+                    for value in attempt.get("reviewOfTaskIds", ())
+                    if str(value or "").strip()
+                }
+            )
+            axes_to_check = required_review_axes or ("combined",)
+            for axis in axes_to_check:
+                axis_attempts = (
+                    latest_attempts
+                    if axis == "combined"
+                    else [
+                        attempt
+                        for attempt in latest_attempts
+                        if isinstance(attempt.get("payload"), Mapping)
+                        and attempt["payload"].get("reviewAxis") == axis
+                    ]
+                )
+                reviewed_tasks = {
+                    str(value)
+                    for attempt in axis_attempts
+                    for value in attempt.get("reviewOfTaskIds", ())
+                    if str(value or "").strip()
+                }
+                if required_review_tasks - reviewed_tasks:
+                    raise RoomCommitProposalError(
+                        "独立复核尚未覆盖全部实现与集成范围"
+                        + (
+                            f"（{axis}）"
+                            if axis != "combined"
+                            else ""
+                        )
+                        + "；请把剩余范围交给未参与对应实现或集成的伙伴交叉复核"
+                    )
 
     def _assert_review_evidence_ready(
         self,
@@ -730,72 +920,89 @@ class RoomSettleLifecycleService:
             != str(root.get("facilitatorParticipantId") or "")
         ):
             return
-        latest_attempt = self.kernel.latest_review_attempt(
-            str(root["rootId"])
+        latest_attempts_loader = getattr(
+            self.kernel,
+            "latest_review_attempts",
+            None,
         )
-        if latest_attempt is None:
+        if callable(latest_attempts_loader):
+            latest_attempts = latest_attempts_loader(str(root["rootId"]))
+        else:
+            latest_attempt = self.kernel.latest_review_attempt(
+                str(root["rootId"])
+            )
+            latest_attempts = [latest_attempt] if latest_attempt else []
+        raw_required_axes = root.get("requiredReviewAxes")
+        if isinstance(raw_required_axes, list) and raw_required_axes:
+            latest_attempts = [
+                attempt
+                for attempt in latest_attempts
+                if isinstance(attempt.get("payload"), Mapping)
+                and attempt["payload"].get("reviewAxis")
+                in raw_required_axes
+            ]
+        if not latest_attempts:
             return
-        latest_review = latest_attempt.get("dispatch")
-        review_task = latest_attempt.get("payload")
-        review_commit = latest_attempt.get("commit")
-        if not isinstance(latest_review, Mapping):
-            latest_review = {}
-        if not isinstance(review_task, Mapping):
-            review_task = {}
-        review_task = {
-            **dict(review_task),
-            "state": str(latest_attempt.get("taskState") or ""),
-        }
-        if not isinstance(review_commit, Mapping):
-            review_commit = None
-        gate = (
-            review_commit.get("qualityGateReceipt")
-            if isinstance(review_commit, Mapping)
-            else None
-        )
-        review_evidence = {
-            str(ref)
-            for item in (
-                gate.get("items", ())
-                if isinstance(gate, Mapping)
-                else ()
+        for latest_attempt in latest_attempts:
+            latest_review = latest_attempt.get("dispatch")
+            review_task = latest_attempt.get("payload")
+            review_commit = latest_attempt.get("commit")
+            if not isinstance(latest_review, Mapping):
+                latest_review = {}
+            if not isinstance(review_task, Mapping):
+                review_task = {}
+            if not isinstance(review_commit, Mapping):
+                review_commit = None
+            gate = (
+                review_commit.get("qualityGateReceipt")
+                if isinstance(review_commit, Mapping)
+                else None
             )
-            if isinstance(item, Mapping) and item.get("status") == "pass"
-            for ref in item.get("evidenceRefs", ())
-            if str(ref).strip()
-        }
-        binding = (
-            review_commit.get("reviewEvidenceBinding")
-            if isinstance(review_commit, Mapping)
-            else None
-        )
-        bound_evidence = {
-            str(ref)
-            for ref in (
-                binding.get("evidenceRefs", ())
-                if isinstance(binding, Mapping)
-                else ()
+            review_evidence = {
+                str(ref)
+                for item in (
+                    gate.get("items", ())
+                    if isinstance(gate, Mapping)
+                    else ()
+                )
+                if isinstance(item, Mapping) and item.get("status") == "pass"
+                for ref in item.get("evidenceRefs", ())
+                if str(ref).strip()
+            }
+            binding = (
+                review_commit.get("reviewEvidenceBinding")
+                if isinstance(review_commit, Mapping)
+                else None
             )
-            if str(ref).strip()
-        }
-        expected_binding = (
-            isinstance(binding, Mapping)
-            and binding.get("reviewTargetRevision")
-            == review_task.get("reviewTargetRevision")
-            and binding.get("taskId") == review_task.get("taskId")
-            and binding.get("dispatchId") == latest_review.get("dispatchId")
-            and int(binding.get("notBeforeMs") or -1)
-            == int(review_task.get("reviewEvidenceNotBeforeMs") or 0)
-            and bound_evidence == review_evidence
-        )
-        if not expected_binding:
-            raise RoomCommitProposalError(
-                "最新独立复核的 evidence 未绑定到当前 reviewTargetRevision"
+            bound_evidence = {
+                str(ref)
+                for ref in (
+                    binding.get("evidenceRefs", ())
+                    if isinstance(binding, Mapping)
+                    else ()
+                )
+                if str(ref).strip()
+            }
+            expected_binding = (
+                isinstance(binding, Mapping)
+                and binding.get("reviewTargetRevision")
+                == review_task.get("reviewTargetRevision")
+                and binding.get("taskId") == review_task.get("taskId")
+                and binding.get("dispatchId") == latest_review.get("dispatchId")
+                and int(binding.get("notBeforeMs") or -1)
+                == int(review_task.get("reviewEvidenceNotBeforeMs") or 0)
+                and bound_evidence == review_evidence
             )
-        if not bound_evidence.intersection(evidence_refs):
-            raise RoomCommitProposalError(
-                "最终回复必须直接引用最新独立复核的成功 evidenceRef"
-            )
+            if not expected_binding:
+                raise RoomCommitProposalError(
+                    "独立复核的 evidence 未绑定到当前 reviewTargetRevision"
+                )
+            # The Kernel-owned review commit and its exact evidence binding are
+            # already the authority for whether this review axis passed.  Do
+            # not make the Facilitator copy those opaque refs into a final
+            # proposal as a second source of truth: a transcription omission
+            # is presentation debt, not a P0 review failure.  Invalid, stale,
+            # missing, or rejected review bindings still fail closed above.
 
     def _canonical_review_findings(
         self,
@@ -818,11 +1025,11 @@ class RoomSettleLifecycleService:
         if value is None:
             prior_blockers = any(
                 isinstance(item, Mapping)
-                and item.get("gateEffect") == "blocking"
+                and review_finding_is_p0(item)
                 and item.get("state") in {"open", "contested", "escalated"}
                 for item in task.get("reviewFindings", ())
             )
-            if decision == "wait" and not prior_blockers:
+            if decision in {"wait", "deliver"} and not prior_blockers:
                 return []
             raise RoomCommitProposalError(
                 "Reviewer completion requires the complete reviewFindings array"
@@ -838,6 +1045,17 @@ class RoomSettleLifecycleService:
             raise RoomCommitProposalError(
                 "Reviewer Task is missing reviewTargetRevision"
             )
+        static_errors = _review_finding_static_errors(
+            value,
+            evidence_refs=evidence_refs,
+            runtime_evidence_refs=runtime_evidence_refs,
+        )
+        if static_errors:
+            raise RoomCommitProposalError(
+                "reviewFindings has independently repairable field errors; "
+                "fix all listed fields in one retry: "
+                + "; ".join(static_errors)
+            )
         room = self.rooms.get(str(root["roomId"]))
         participant_refs = participant_ref_map(room["participants"])
         previous_findings = [
@@ -852,13 +1070,13 @@ class RoomSettleLifecycleService:
         previous_blocking_scopes = {
             _review_scope_key(item.get("scope"))
             for item in previous_findings
-            if item.get("gateEffect") == "blocking"
+            if review_finding_is_p0(item)
         }
         previous_blocking_scopes.discard(None)
         previous_blocking = {
             str(item.get("findingId") or ""): item
             for item in previous_findings
-            if item.get("gateEffect") == "blocking"
+            if review_finding_is_p0(item)
             and item.get("state") in {"open", "contested", "escalated"}
             and str(item.get("findingId") or "").strip()
         }
@@ -989,7 +1207,7 @@ class RoomSettleLifecycleService:
                         "re-review must preserve each Blocking Finding "
                         "findingId and fingerprint"
                     )
-                if gate_effect != "blocking":
+                if gate_effect != "blocking" or impact != "critical":
                     raise RoomCommitProposalError(
                         "a prior Blocking Finding cannot be downgraded"
                     )
@@ -1024,35 +1242,25 @@ class RoomSettleLifecycleService:
                 gate_effect = "advisory"
                 impact = "normal"
                 late_scope_downgraded = True
-            if gate_effect == "blocking":
-                if impact not in {"critical", "high"}:
-                    raise RoomCommitProposalError(
-                        "Blocking Finding requires critical/high impact"
-                    )
-                if category not in REVIEW_FINDING_BLOCKING_CATEGORIES:
-                    raise RoomCommitProposalError(
-                        f"reviewFindings[{index}].category is not admissible "
-                        "as blocking"
-                    )
-                invariant_id = str(scope.get("invariantId") or "").strip()
-                if (
-                    invariant_id
-                    and invariant_id
-                    not in REVIEW_FINDING_GOVERNANCE_INVARIANTS
-                ):
-                    raise RoomCommitProposalError(
-                        f"reviewFindings[{index}].scope.invariantId is not "
-                        "a governed invariant"
-                    )
-            if gate_effect == "advisory" and impact != "normal":
-                raise RoomCommitProposalError(
-                    "critical/high findings must be blocking"
+            invariant_id = str(scope.get("invariantId") or "").strip()
+            admissible_p0 = (
+                gate_effect == "blocking"
+                and impact == "critical"
+                and category in REVIEW_FINDING_BLOCKING_CATEGORIES
+                and (
+                    not invariant_id
+                    or invariant_id
+                    in REVIEW_FINDING_GOVERNANCE_INVARIANTS
                 )
+            )
+            if gate_effect == "blocking" and not admissible_p0:
+                gate_effect = "advisory"
+                late_scope_downgraded = True
             if state == "accepted_risk" and gate_effect != "advisory":
                 raise RoomCommitProposalError(
                     "a blocking finding cannot be accepted as risk by Reviewer"
                 )
-            if gate_effect == "blocking" and state == "resolved":
+            if admissible_p0 and state == "resolved":
                 if (
                     not same_finding
                     or not isinstance(response, Mapping)
@@ -1063,7 +1271,7 @@ class RoomSettleLifecycleService:
                         "a resolved Blocking Finding requires verified fix "
                         "lineage from an earlier review revision"
                     )
-            if gate_effect == "blocking" and state == "dismissed":
+            if admissible_p0 and state == "dismissed":
                 resolver = getattr(
                     getattr(self, "kernel", None),
                     "independent_finding_resolution",
@@ -1158,26 +1366,15 @@ class RoomSettleLifecycleService:
         blockers = [
             finding
             for finding in findings
-            if finding["gateEffect"] == "blocking"
+            if review_finding_is_p0(finding)
             and finding["state"] in {"open", "contested", "escalated"}
         ]
         escalated = [
             finding for finding in blockers if finding["state"] == "escalated"
         ]
-        open_advisories = [
-            finding
-            for finding in findings
-            if finding["gateEffect"] == "advisory"
-            and finding["state"] == "open"
-        ]
         if decision == "deliver" and blockers:
             raise RoomCommitProposalError(
                 "Reviewer cannot deliver with an open Blocking Finding"
-            )
-        if decision == "deliver" and open_advisories:
-            raise RoomCommitProposalError(
-                "Reviewer cannot deliver with an open Advisory Finding; "
-                "record an explicit disposition first"
             )
         if decision == "handoff" and not blockers:
             raise RoomCommitProposalError(
@@ -1209,7 +1406,7 @@ class RoomSettleLifecycleService:
                 blockers = [
                     finding
                     for finding in findings
-                    if finding.get("gateEffect") == "blocking"
+                    if review_finding_is_p0(finding)
                     and finding.get("state") in {"open", "contested"}
                 ]
                 if blockers:
@@ -1229,7 +1426,7 @@ class RoomSettleLifecycleService:
         open_findings = {
             str(finding.get("findingId") or ""): finding
             for finding in findings
-            if finding.get("gateEffect") == "blocking"
+            if review_finding_is_p0(finding)
             and finding.get("state") in {"open", "contested"}
         }
         selected_evidence = set(evidence_refs)
@@ -1337,13 +1534,14 @@ class RoomSettleLifecycleService:
                 ),
                 None,
             )
-            if (
-                caller is None
-                or canonical_collaboration_role_id(
-                    caller.get("collaborationRole")
-                )
-                != "reviewer"
-            ):
+            active_review_owner_id = str(
+                task.get("currentOwnerParticipantId")
+                or dispatch.get("targetParticipantId")
+                or ""
+            )
+            if caller is None or str(
+                dispatch.get("targetParticipantId") or ""
+            ) != active_review_owner_id:
                 raise RoomCommitProposalError(
                     "only the active Reviewer may return a revision handoff"
                 )
@@ -1423,6 +1621,16 @@ class RoomSettleLifecycleService:
                     str(root["rootId"])
                 )
             )
+        final_aggregation_has_accepted_proof = bool(
+            decision == "deliver"
+            and not is_review_task
+            and not task.get("parentTaskId")
+            and task_criteria
+            and all(
+                accepted_evidence_by_criterion.get(criterion_id)
+                for criterion_id in task_criteria
+            )
+        )
         review_evidence_not_before_ms = (
             int(task.get("reviewEvidenceNotBeforeMs") or 0)
             if is_review_task
@@ -1490,6 +1698,12 @@ class RoomSettleLifecycleService:
                 generation=int(dispatch["generation"]),
                 invocation_receipt_id=str(invocation["receiptId"]),
                 now_ms=now_ms,
+                prune_unverifiable_refs=(
+                    is_review_task or decision == "handoff"
+                ),
+                prefer_accepted_evidence=(
+                    final_aggregation_has_accepted_proof
+                ),
             )
         except RoomQualityGateError as exc:
             raise RoomCommitProposalError(str(exc)) from exc
@@ -1681,6 +1895,18 @@ class RoomSettleLifecycleService:
                     field_name="acceptanceAliases",
                 )
                 intent = _required_text(arguments, "intent")
+                raw_review_axis = arguments.get("reviewAxis")
+                review_axis = (
+                    str(raw_review_axis).strip()
+                    if raw_review_axis is not None
+                    else None
+                )
+                if review_axis is not None and review_axis not in REVIEW_AXIS_SET:
+                    raise RoomCommitProposalError("reviewAxis is invalid")
+                if intent != "review" and review_axis is not None:
+                    raise RoomCommitProposalError(
+                        "reviewAxis is only valid for a review handoff"
+                    )
                 built = self.continuations.build(
                     parent_dispatch=dispatch,
                     parent_task=task,
@@ -1726,8 +1952,12 @@ class RoomSettleLifecycleService:
                                 ),
                                 "state": "waiting",
                             },
+                            pending_parent_quality_gate_receipt=(
+                                quality_gate_receipt
+                            ),
                             parent_commit_id=commit_id,
                             now_ms=now_ms,
+                            review_axis=review_axis,
                         )
                     )
                     built.update(
@@ -1777,6 +2007,20 @@ class RoomSettleLifecycleService:
                 raise RoomCommitProposalError(str(exc)) from exc
         elif decision == "wait":
             waiting_for = _required_text(arguments, "waitingFor")
+            retry_wait_target = None
+            if waiting_for == "external":
+                try:
+                    retry_wait_target = (
+                        self.kernel.workspace_retry_wait_target(
+                            root_id=str(root["rootId"]),
+                            parent_dispatch_id=str(dispatch["dispatchId"]),
+                            generation=int(root["generation"]),
+                        )
+                    )
+                except RoomKernelFenceError as exc:
+                    raise RoomCommitProposalError(str(exc)) from exc
+                if retry_wait_target is not None:
+                    waiting_for = "participant"
             continuation.update(
                 {
                     "waitingFor": waiting_for,
@@ -1793,7 +2037,19 @@ class RoomSettleLifecycleService:
                     continuation["questionOptions"] = [
                         dict(option) for option in question_options
                     ]
-            if waiting_for == "participant":
+            if retry_wait_target is not None:
+                retry_dispatch = retry_wait_target["dispatch"]
+                waiting_participant_id = str(
+                    retry_dispatch["targetParticipantId"]
+                )
+                continuation.update(
+                    {
+                        "waitingForParticipantId": waiting_participant_id,
+                        "waitingForDispatchId": retry_dispatch["dispatchId"],
+                    }
+                )
+                post_proposal["mentions"] = [waiting_participant_id]
+            elif waiting_for == "participant":
                 room = self.rooms.get(str(root["roomId"]))
                 participant_refs = participant_ref_map(
                     room["participants"]
@@ -2067,6 +2323,66 @@ def _string_list(value: object, name: str) -> list[str]:
             seen.add(text)
             result.append(text)
     return result
+
+
+def _review_finding_static_errors(
+    value: Sequence[object],
+    *,
+    evidence_refs: Sequence[str],
+    runtime_evidence_refs: set[str],
+    limit: int = 8,
+) -> list[str]:
+    """Collect independent field errors before stateful review validation."""
+
+    errors: list[str] = []
+    selected_evidence = set(evidence_refs)
+    allowed_fields = (
+        ("gateEffect", 16, {"blocking", "advisory"}),
+        ("impact", 16, {"critical", "high", "normal"}),
+        ("category", 32, REVIEW_FINDING_CATEGORY_SET),
+    )
+    for index, raw in enumerate(value):
+        if not isinstance(raw, Mapping):
+            errors.append(f"reviewFindings[{index}] must be an object")
+            if len(errors) >= limit:
+                break
+            continue
+        for key, text_limit, allowed in allowed_fields:
+            candidate = str(raw.get(key) or "").strip()
+            if (
+                not candidate
+                or len(candidate) > text_limit
+                or candidate not in allowed
+            ):
+                errors.append(f"reviewFindings[{index}].{key} is invalid")
+                if len(errors) >= limit:
+                    break
+        if len(errors) >= limit:
+            break
+        try:
+            finding_evidence = _string_list(
+                raw.get("evidenceRefs"),
+                f"reviewFindings[{index}].evidenceRefs",
+            )
+        except RoomCommitProposalError as exc:
+            errors.append(str(exc))
+        else:
+            if not finding_evidence:
+                errors.append(
+                    f"reviewFindings[{index}].evidenceRefs must not be empty"
+                )
+            elif not set(finding_evidence).issubset(runtime_evidence_refs):
+                errors.append(
+                    f"reviewFindings[{index}] cites stale or foreign evidence"
+                )
+            elif not set(finding_evidence).issubset(selected_evidence):
+                errors.append(
+                    f"reviewFindings[{index}] evidence must also appear in "
+                    "room_commit evidence"
+                )
+        if len(errors) >= limit:
+            break
+    return errors[:limit]
 
 
 def _stable_id(prefix: str, *parts: str) -> str:

@@ -150,6 +150,41 @@ describe('Room live store', () => {
     expect(useRoomLiveStore.getState().historyByRoomId['room-1']?.hasMore).toBe(false);
   });
 
+  it('keeps explicitly loaded history beyond the live retention window', () => {
+    const store = useRoomLiveStore.getState();
+    const recent = Array.from({ length: 2_000 }, (_value, index) => (
+      roomEventFixture(index + 201, 'participant_status', { status: 'working' })
+    ));
+    expect(store.replaySnapshot(
+      'room-1',
+      roomHistorySnapshot(recent, 201, 2_200),
+    )).toBe(true);
+
+    const older = Array.from({ length: 200 }, (_value, index) => (
+      roomEventFixture(index + 1, 'participant_status', { status: 'completed' })
+    ));
+    const page = {
+      schemaVersion: 'rag-ime.agent-room-event-page.v1',
+      ok: true,
+      roomId: 'room-1',
+      items: older,
+      firstSequence: 1,
+      lastSequence: 200,
+      nextBeforeSequence: 0,
+      hasMore: false,
+      retainedFirstSequence: 1,
+      retainedLastSequence: 2_200,
+      retainedPrefixTruncated: false,
+    } satisfies RoomEventPage;
+
+    expect(store.prependHistory('room-1', page)).toBe(true);
+    const history = useRoomLiveStore.getState().historyByRoomId['room-1'];
+    expect(history?.events).toHaveLength(2_200);
+    expect(history?.events[0]?.sequence).toBe(1);
+    expect(history?.events.at(-1)?.sequence).toBe(2_200);
+    expect(history?.hasMore).toBe(false);
+  });
+
   it('drops every projection only when an explicit reset is requested', () => {
     const store = useRoomLiveStore.getState();
     store.ensure('room:a');

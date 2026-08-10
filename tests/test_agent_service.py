@@ -21,6 +21,7 @@ from rag_ime.agent_prompt_delivery import AgentPromptAcceptanceUnknown
 from rag_ime.agent_service import AgentService, pi_runtime_config_from_settings
 from rag_ime.agent_room_kernel import RoomKernelFenceError
 from rag_ime.agent_tools import ControlToolGateway
+from rag_ime.agent_workspace import WorkspaceHarness
 from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
 from rag_ime.pi_runtime_values import PiRuntimeTurnConflict
 
@@ -147,6 +148,201 @@ class AgentServiceTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.service.close()
         self.tmp.cleanup()
+
+    def test_startup_cleanup_recovery_binds_delegation_owner_first(self) -> None:
+        observed: list[dict[str, object]] = []
+
+        def recover_after_owner_bind(coordinator: object) -> list[dict[str, object]]:
+            writer_quiescence = coordinator._writer_quiescence_provider  # type: ignore[attr-defined]
+            owner = writer_quiescence.__self__
+            observed.append(
+                owner._room_root_child_quiescence(
+                    "root:startup-cleanup-order",
+                    0,
+                    "dispatch:startup-cleanup-order",
+                )
+            )
+            return []
+
+        restarted: AgentService | None = None
+        with patch(
+            "rag_ime.agent_service.RoomWorkspaceCoordinator.recover_integrated_cleanups",
+            autospec=True,
+            side_effect=recover_after_owner_bind,
+        ):
+            restarted = AgentService(
+                db_path=self.root / "startup-cleanup-order.sqlite",
+                runtime_config=PiRuntimeConfig(
+                    enabled=False,
+                    executable=None,
+                    agent_dir=self.root / "startup-cleanup-order-agent",
+                    session_dir=self.root / "startup-cleanup-order-sessions",
+                    logs_dir=self.root / "startup-cleanup-order-logs",
+                ),
+                room_kernel_worker_enabled=False,
+                background_job_execution_owner=False,
+            )
+        try:
+            self.assertEqual(len(observed), 1)
+            self.assertFalse(observed[0]["quiescent"], observed[0])
+            self.assertEqual(observed[0]["state"], "unknown")
+            self.assertGreater(int(observed[0]["unknownCount"]), 0)
+        finally:
+            if restarted is not None:
+                restarted.close()
+
+    def test_startup_cleanup_recovery_projects_cleaned_binding_into_kernel(
+        self,
+    ) -> None:
+        cleaned = {
+            "integrated": True,
+            "taskId": "task:startup-cleanup-projection",
+            "workspaceBindingId": "binding:startup-cleanup-projection",
+            "integrationRef": "integration:startup-cleanup-projection",
+            "integrationPatchSha256": "a" * 64,
+            "integratedRevision": "git:startup-cleanup-projection",
+            "integratedSnapshotSha256": "b" * 64,
+            "workspaceLifecycleState": "cleaned",
+            "cleanupState": "cleaned",
+            "attentionRequired": False,
+            "updatedAtMs": 12,
+        }
+        restarted: AgentService | None = None
+        with (
+            patch(
+                "rag_ime.agent_service.RoomWorkspaceCoordinator.recover_integrated_cleanups",
+                autospec=True,
+                return_value=[cleaned],
+            ),
+            patch(
+                "rag_ime.agent_service.RoomKernelStore.record_workspace_integration",
+                autospec=True,
+            ) as project_cleanup,
+        ):
+            restarted = AgentService(
+                db_path=self.root / "startup-cleanup-projection.sqlite",
+                runtime_config=PiRuntimeConfig(
+                    enabled=False,
+                    executable=None,
+                    agent_dir=self.root / "startup-cleanup-projection-agent",
+                    session_dir=self.root / "startup-cleanup-projection-sessions",
+                    logs_dir=self.root / "startup-cleanup-projection-logs",
+                ),
+                room_kernel_worker_enabled=False,
+                background_job_execution_owner=False,
+            )
+        try:
+            project_cleanup.assert_called_once_with(
+                restarted.room_kernel,
+                "task:startup-cleanup-projection",
+                integration_ref="integration:startup-cleanup-projection",
+                workspace_result=cleaned,
+                now_ms=12,
+            )
+        finally:
+            if restarted is not None:
+                restarted.close()
+
+    def test_startup_cleanup_recovery_does_not_project_failed_binding(
+        self,
+    ) -> None:
+        failed = {
+            "taskId": "task:startup-cleanup-failed",
+            "workspaceBindingId": "binding:startup-cleanup-failed",
+            "workspaceLifecycleState": "cleanup_failed",
+            "cleanupState": "failed",
+            "attentionRequired": True,
+            "updatedAtMs": 13,
+        }
+        restarted: AgentService | None = None
+        with (
+            patch(
+                "rag_ime.agent_service.RoomWorkspaceCoordinator.recover_integrated_cleanups",
+                autospec=True,
+                return_value=[failed],
+            ),
+            patch(
+                "rag_ime.agent_service.RoomKernelStore.record_workspace_integration",
+                autospec=True,
+            ) as project_cleanup,
+        ):
+            restarted = AgentService(
+                db_path=self.root / "startup-cleanup-failed.sqlite",
+                runtime_config=PiRuntimeConfig(
+                    enabled=False,
+                    executable=None,
+                    agent_dir=self.root / "startup-cleanup-failed-agent",
+                    session_dir=self.root / "startup-cleanup-failed-sessions",
+                    logs_dir=self.root / "startup-cleanup-failed-logs",
+                ),
+                room_kernel_worker_enabled=False,
+                background_job_execution_owner=False,
+            )
+        try:
+            project_cleanup.assert_not_called()
+        finally:
+            if restarted is not None:
+                restarted.close()
+
+    def test_repeated_runtime_bind_replays_cleanup_through_canonical_projection(
+        self,
+    ) -> None:
+        cleaned = {
+            "integrated": True,
+            "taskId": "task:startup-cleanup-replay",
+            "workspaceBindingId": "binding:startup-cleanup-replay",
+            "integrationRef": "integration:startup-cleanup-replay",
+            "integrationPatchSha256": "c" * 64,
+            "integratedRevision": "git:startup-cleanup-replay",
+            "integratedSnapshotSha256": "d" * 64,
+            "workspaceLifecycleState": "cleaned",
+            "cleanupState": "cleaned",
+            "attentionRequired": False,
+            "updatedAtMs": 14,
+        }
+        restarted: AgentService | None = None
+        with (
+            patch(
+                "rag_ime.agent_service.RoomWorkspaceCoordinator.recover_integrated_cleanups",
+                autospec=True,
+                return_value=[cleaned],
+            ),
+            patch(
+                "rag_ime.agent_service.RoomKernelStore.record_workspace_integration",
+                autospec=True,
+            ) as project_cleanup,
+        ):
+            restarted = AgentService(
+                db_path=self.root / "startup-cleanup-replay.sqlite",
+                runtime_config=PiRuntimeConfig(
+                    enabled=False,
+                    executable=None,
+                    agent_dir=self.root / "startup-cleanup-replay-agent",
+                    session_dir=self.root / "startup-cleanup-replay-sessions",
+                    logs_dir=self.root / "startup-cleanup-replay-logs",
+                ),
+                room_kernel_worker_enabled=False,
+                background_job_execution_owner=False,
+            )
+            restarted._bind_room_kernel_runtime(start_worker=False)
+        try:
+            self.assertEqual(project_cleanup.call_count, 2)
+            for observed in project_cleanup.call_args_list:
+                self.assertEqual(
+                    observed.args,
+                    (restarted.room_kernel, "task:startup-cleanup-replay"),
+                )
+                self.assertEqual(
+                    observed.kwargs,
+                    {
+                        "integration_ref": "integration:startup-cleanup-replay",
+                        "workspace_result": cleaned,
+                        "now_ms": 14,
+                    },
+                )
+        finally:
+            if restarted is not None:
+                restarted.close()
 
     def test_debug_context_forwards_the_runtime_payload(self) -> None:
         session = self.service.create_session({"title": "debug context"})[
@@ -760,6 +956,88 @@ class AgentServiceTests(unittest.TestCase):
             json.dumps(context, ensure_ascii=False),
         )
 
+    def test_room_approval_context_uses_durable_root_request_after_timeline_churn(self) -> None:
+        session = self.service.create_session(
+            {"title": "Room 审批上下文保留"}
+        )["session"]
+        session_id = str(session["id"])
+        with (
+            patch.object(
+                self.service.rooms,
+                "participant_for_session",
+                return_value={
+                    "id": "participant:worker",
+                    "roomId": "room:shared",
+                },
+            ),
+            patch.object(
+                self.service.rooms,
+                "list_events",
+                return_value=[
+                    {
+                        "eventType": "participant_activity",
+                        "payload": {"summary": "高频工具进展"},
+                        "turnId": "root:current",
+                        "createdAtMs": 30,
+                    }
+                ],
+            ),
+            patch.object(
+                self.service.room_capabilities,
+                "runtime_identity",
+                return_value={"dispatchId": "dispatch:current"},
+            ),
+            patch.object(
+                self.service.room_kernel,
+                "dispatch",
+                return_value={
+                    "dispatchId": "dispatch:current",
+                    "taskId": "task:current",
+                },
+            ),
+            patch.object(
+                self.service.room_kernel,
+                "task",
+                return_value={
+                    "rootId": "root:current",
+                    "taskId": "task:current",
+                    "state": "active",
+                    "objective": "完成用户确认的实现",
+                    "expectedOutput": "测试回执",
+                    "acceptanceCriterionIds": ["criterion:1"],
+                },
+            ),
+            patch.object(
+                self.service.room_kernel,
+                "user_request_posts",
+                return_value=[
+                    {
+                        "role": "user",
+                        "text": "开始行动并运行测试。",
+                        "turnId": "root:current",
+                        "createdAtMs": 20,
+                    }
+                ],
+            ),
+        ):
+            context = self.service._approval_model_context(
+                {"sessionId": session_id},
+                session,
+            )
+
+        self.assertTrue(context["contextAvailable"])
+        self.assertEqual(
+            context["userRequests"],
+            [
+                {
+                    "role": "user",
+                    "text": "开始行动并运行测试。",
+                    "turnId": "root:current",
+                    "createdAtMs": 20,
+                }
+            ],
+        )
+
     def test_full_automation_model_approval_applies_and_audits_a_hash_bound_preview(self) -> None:
         session = self.service.create_session({"title": "完全信任测试"})["session"]
         session_id = str(session["id"])
@@ -809,6 +1087,145 @@ class AgentServiceTests(unittest.TestCase):
         self.assertIsNotNone(
             self.service.sessions.get_approval(str(approval["approvalId"]))["decidedAtMs"]
         )
+
+    def test_full_trust_scoped_git_commit_does_not_wait_for_the_model_arbiter(self) -> None:
+        workspace = self.root / "room-commit"
+        workspace.mkdir()
+        session = self.service.create_session({"title": "Room local commit"})["session"]
+        session_id = str(session["id"])
+        session = self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "workspaceRoots": [str(workspace)],
+                "executionMode": "full_trust",
+                "grantWorkspaceScope": True,
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+            },
+        )["session"]
+        task = "commit isolated result"
+        self.service.sessions.mutate_agent_todo(
+            session_id,
+            {"op": "init", "phase": "Room delivery", "items": [task]},
+            actor="test-user",
+        )
+        self.service.sessions.mutate_agent_todo(
+            session_id,
+            {"op": "start", "task": task},
+            actor="test-user",
+        )
+        gateway = ControlToolGateway(
+            sessions=self.service.sessions,
+            management=object(),
+            core=object(),
+            project="room-acceptance",
+            workspace_harness=WorkspaceHarness(
+                executor=lambda _prepared: {
+                    "schemaVersion": "rag-ime.workspace-command-receipt.v1",
+                    "mutationApplied": True,
+                    "summary": "local commit applied",
+                    "exitCode": 0,
+                    "output": "",
+                }
+            ),
+        )
+        self.service.bind_approval_executor(gateway.apply_approval)
+        gateway.bind_auto_approval_executor(self.service.auto_approve_pending)
+
+        with patch.object(
+            self.service.approval_model,
+            "decide",
+            side_effect=AssertionError("scoped full-trust command reached model approval"),
+        ) as decide:
+            response = gateway.execute(
+                {
+                    "schemaVersion": "rag-ime.agent-tool-call.v1",
+                    "sessionId": session_id,
+                    "tool": "workspace_shell",
+                    "toolCallId": "tool:room-local-commit",
+                    "args": {
+                        "op": "run",
+                        "command": 'git commit -m "room acceptance"',
+                        "cwd": str(workspace),
+                        "allowNetwork": False,
+                    },
+                }
+            )
+
+        decide.assert_not_called()
+        result = response["result"]
+        self.assertTrue(result["autoApproved"])
+        self.assertEqual(result["decisionMode"], "policy")
+        self.assertEqual(result["approval"]["state"], "applied")
+        self.assertEqual(result["receipt"]["exitCode"], 0)
+
+    def test_full_trust_scoped_text_edit_does_not_wait_for_the_model_arbiter(self) -> None:
+        workspace = self.root / "room-edit"
+        workspace.mkdir()
+        target = workspace / "customer.py"
+        target.write_text("status = 'old'\n", encoding="utf-8")
+        session = self.service.create_session({"title": "Room safe edit"})["session"]
+        session_id = str(session["id"])
+        self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "workspaceRoots": [str(workspace)],
+                "executionMode": "full_trust",
+                "grantWorkspaceScope": True,
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+            },
+        )
+        task = "apply safe edit"
+        self.service.sessions.mutate_agent_todo(
+            session_id,
+            {"op": "init", "phase": "Room delivery", "items": [task]},
+            actor="test-user",
+        )
+        self.service.sessions.mutate_agent_todo(
+            session_id,
+            {"op": "start", "task": task},
+            actor="test-user",
+        )
+        gateway = ControlToolGateway(
+            sessions=self.service.sessions,
+            management=object(),
+            core=object(),
+            project="room-acceptance",
+            workspace_harness=WorkspaceHarness(executor=lambda _prepared: {}),
+        )
+        self.service.bind_approval_executor(gateway.apply_approval)
+        gateway.bind_auto_approval_executor(self.service.auto_approve_pending)
+
+        with patch.object(
+            self.service.approval_model,
+            "decide",
+            side_effect=AssertionError("scoped full-trust edit reached model approval"),
+        ) as decide:
+            response = gateway.execute(
+                {
+                    "schemaVersion": "rag-ime.agent-tool-call.v1",
+                    "sessionId": session_id,
+                    "tool": "workspace_edit",
+                    "toolCallId": "tool:room-safe-edit",
+                    "args": {
+                        "op": "apply",
+                        "path": str(target),
+                        "resourceRevision": "sha256:"
+                        + hashlib.sha256(target.read_bytes()).hexdigest(),
+                        "edits": [
+                            {"oldText": "status = 'old'", "newText": "status = 'new'"}
+                        ],
+                    },
+                }
+            )
+
+        decide.assert_not_called()
+        result = response["result"]
+        self.assertTrue(result["autoApproved"])
+        self.assertEqual(result["decisionMode"], "policy")
+        self.assertEqual(result["approval"]["state"], "applied")
+        self.assertEqual(target.read_text(encoding="utf-8"), "status = 'new'\n")
 
     def test_full_automation_model_rejection_is_terminal_without_human_approval(self) -> None:
         session = self.service.create_session(
@@ -873,6 +1290,74 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(
             resolved.payload["toolCallId"],
             "tool:approval-rejection",
+        )
+
+    def test_full_automation_expiry_race_closes_the_pending_pi_tool_call(self) -> None:
+        session = self.service.create_session(
+            {"title": "自动审批过期竞态"}
+        )["session"]
+        session_id = str(session["id"])
+        self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "workspaceRoots": [self.root.as_posix()],
+                "toolProfileVersion": "control-center-auto-approve-v1",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+            },
+        )
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="workspace_shell",
+            operation="run",
+            payload_sha256="c" * 64,
+            preview={"title": "运行测试", "summary": "运行一条有界测试命令"},
+            risk_level="R2",
+        )
+        approval = self.service.sessions.bind_approval_tool_call(
+            str(approval["approvalId"]),
+            tool_call_id="tool:approval-expiry-race",
+        )
+
+        def expire_while_model_runs(*_args: object) -> dict[str, object]:
+            self.service.sessions.get_approval(
+                str(approval["approvalId"]),
+                now_ms=int(approval["expiresAtMs"]),
+            )
+            return {
+                "receiptId": "approval-model-decision:late",
+                "decision": "deny",
+                "status": "failed_closed",
+                "reasonCodes": ["policy_boundary"],
+                "rationaleSummary": "审批模型未在有效期内完成。",
+            }
+
+        with (
+            patch.object(
+                self.service.approval_model,
+                "decide",
+                side_effect=expire_while_model_runs,
+            ),
+            patch.object(
+                self.service.runtime,
+                "has_pending_approval",
+                return_value=True,
+            ),
+            patch.object(
+                self.service.runtime,
+                "resolve_approval",
+            ) as resolve_approval,
+        ):
+            result = self.service.auto_approve_pending(approval)
+
+        self.assertTrue(result["terminal"])
+        self.assertEqual(result["approval"]["state"], "expired")
+        self.assertTrue(result["runtimeNotified"])
+        resolve_approval.assert_called_once_with(
+            session_id,
+            str(approval["approvalId"]),
+            approved=False,
+            resolution_state="expired",
         )
 
     def test_paused_or_exhausted_goal_blocks_provider_prompt_before_runtime(self) -> None:
@@ -2845,6 +3330,198 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertEqual(response["items"], history)
 
+    def test_recent_room_message_snapshot_skips_runtime_and_bounds_events(
+        self,
+    ) -> None:
+        session = self.service.create_session(
+            {"title": "Room 近期快照"}
+        )["session"]
+        session_id = str(session["id"])
+        room_user_event = {
+            "eventId": "room:user:recent",
+            "eventType": "user_message",
+            "turnId": "root:recent",
+            "sequence": 1,
+            "createdAtMs": 10,
+            "payload": {"text": "先显示正在发生的工作"},
+        }
+        for index in range(80):
+            self.service.events.publish(
+                session_id,
+                "reasoning_summary",
+                {"summary": f"近期进展 {index + 1}"},
+                turn_id="turn:recent",
+                created_at_ms=100 + index,
+            )
+
+        with (
+            patch.object(
+                self.service.message_snapshot,
+                "_room_recent_public_messages",
+                return_value={
+                    "participantId": "participant:recent",
+                    "events": [room_user_event],
+                },
+            ),
+            patch.object(
+                self.service.message_snapshot,
+                "_runtime_provider",
+                side_effect=AssertionError(
+                    "recent Room snapshot must not restore Pi Runtime"
+                ),
+            ),
+        ):
+            response = self.service.message_snapshot.messages(
+                session_id,
+                view="recent",
+            )
+
+        sequences = [
+            int(event["sequence"])
+            for event in response["liveEvents"]
+        ]
+        self.assertEqual(response["snapshotScope"], "recent")
+        self.assertTrue(response["partial"])
+        self.assertEqual(len(response["liveEvents"]), 48)
+        self.assertEqual(sequences, list(range(33, 81)))
+        self.assertEqual(response["recentFromSequence"], 33)
+        self.assertEqual(response["lastSequence"], 80)
+        self.assertEqual(response["resumeToken"], f"{session_id}:80")
+        self.assertEqual(
+            [item["id"] for item in response["items"]],
+            ["room-event:room:user:recent"],
+        )
+
+    def test_recent_room_message_snapshot_never_loads_full_room_history(
+        self,
+    ) -> None:
+        room = self.service.create_room(
+            {
+                "title": "Room 轻量首屏",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {
+                        "roleId": "companion-present-v1",
+                        "roleVersion": "1",
+                    },
+                    {
+                        "roleId": "companion-firstlight-v1",
+                        "roleVersion": "1",
+                    },
+                ],
+            }
+        )["room"]
+        target = room["participants"][0]
+        room_id = str(room["id"])
+        session_id = str(target["sessionId"])
+        user_event = self.service.rooms.append_event(
+            room_id=room_id,
+            event_type="user_message",
+            payload={"text": "立即显示最近的 Room 对话"},
+            turn_id="root:recent-fast",
+            created_at_ms=10,
+        )
+
+        with (
+            patch.object(
+                self.service.rooms,
+                "list_events",
+                side_effect=AssertionError(
+                    "recent snapshot must not load the full Room history"
+                ),
+            ) as full_history,
+            patch.object(
+                self.service.rooms,
+                "recent_public_messages",
+                wraps=self.service.rooms.recent_public_messages,
+            ) as recent_history,
+        ):
+            response = self.service.message_snapshot.messages(
+                session_id,
+                view="recent",
+            )
+
+        full_history.assert_not_called()
+        recent_history.assert_called_once_with(room_id, limit=100)
+        self.assertEqual(response["snapshotScope"], "recent")
+        self.assertTrue(response["partial"])
+        self.assertEqual(
+            [item["id"] for item in response["items"]],
+            ["room-event:" + str(user_event["eventId"])],
+        )
+
+    def test_full_message_snapshot_remains_complete_after_recent_window(
+        self,
+    ) -> None:
+        session = self.service.create_session(
+            {"title": "Room 完整快照兼容"}
+        )["session"]
+        session_id = str(session["id"])
+        for index in range(60):
+            self.service.events.publish(
+                session_id,
+                "reasoning_summary",
+                {"summary": f"完整进展 {index + 1}"},
+                turn_id="turn:full",
+                created_at_ms=100 + index,
+            )
+        runtime_snapshot = {
+            "messages": [],
+            "toolHistoryEvents": [],
+            "telemetry": None,
+            "messageQueue": None,
+        }
+        with (
+            patch.object(
+                self.service.message_snapshot,
+                "_room_public_messages",
+                return_value={
+                    "participantId": "participant:full",
+                    "events": [],
+                },
+            ),
+            patch.object(
+                self.service.runtime,
+                "session_snapshot",
+                create=True,
+                return_value=runtime_snapshot,
+            ) as session_snapshot,
+        ):
+            response = self.service.messages(session_id)
+
+        session_snapshot.assert_called_once_with(session_id)
+        self.assertEqual(len(response["liveEvents"]), 60)
+        self.assertNotIn("snapshotScope", response)
+        self.assertNotIn("partial", response)
+
+    def test_recent_view_keeps_ordinary_session_on_full_snapshot_contract(
+        self,
+    ) -> None:
+        session = self.service.create_session(
+            {"title": "普通 Session 近期请求"}
+        )["session"]
+        session_id = str(session["id"])
+        runtime_snapshot = {
+            "messages": [],
+            "toolHistoryEvents": [],
+            "telemetry": None,
+            "messageQueue": None,
+        }
+        with patch.object(
+            self.service.runtime,
+            "session_snapshot",
+            create=True,
+            return_value=runtime_snapshot,
+        ) as session_snapshot:
+            response = self.service.message_snapshot.messages(
+                session_id,
+                view="recent",
+            )
+
+        session_snapshot.assert_called_once_with(session_id)
+        self.assertNotIn("snapshotScope", response)
+        self.assertNotIn("partial", response)
+
     def test_room_message_snapshot_projects_public_conversation_once(
         self,
     ) -> None:
@@ -3707,7 +4384,11 @@ class AgentServiceTests(unittest.TestCase):
                 "autoApply": False,
                 "due": True,
                 "dueReason": "idle",
-                "compileState": {"pendingEventCount": 4},
+                "compileState": {"pendingEventCount": 999},
+                "ownerCuration": {
+                    "pendingSourceCount": 4,
+                    "needsReviewSourceCount": 2,
+                },
                 "pendingDraftCount": 1,
                 "runs": [],
             }
@@ -3734,6 +4415,10 @@ class AgentServiceTests(unittest.TestCase):
             ["memory_maintenance_updated"] * 3,
         )
         self.assertTrue(all(event.payload["due"] is True for event in events))
+        self.assertTrue(all(event.payload["pendingSourceCount"] == 4 for event in events))
+        self.assertTrue(all(event.payload["needsReviewSourceCount"] == 2 for event in events))
+        self.assertTrue(all(event.payload["legacyPendingEventCount"] == 999 for event in events))
+        self.assertTrue(all("4 条受治理证据" in event.payload["summary"] for event in events))
 
     def test_session_input_and_runtime_capabilities_fail_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "workspaceRoots must be an array"):
@@ -4700,6 +5385,47 @@ class AgentServiceTests(unittest.TestCase):
             str(stale["approvalId"]),
             approved=False,
             resolution_state="stale",
+        )
+
+    def test_approval_list_reconciles_an_expired_pending_pi_request(self) -> None:
+        session = self.service.create_session(
+            {"title": "审批轮询恢复"}
+        )["session"]
+        session_id = str(session["id"])
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="workspace_shell",
+            operation="run",
+            payload_sha256="f" * 64,
+            preview={"summary": "已过期的测试命令"},
+            risk_level="R2",
+            requested_at_ms=100,
+            ttl_ms=1_000,
+        )
+        approval = self.service.sessions.bind_approval_tool_call(
+            str(approval["approvalId"]),
+            tool_call_id="tool:expired-list-recovery",
+        )
+
+        with (
+            patch.object(
+                self.service.runtime,
+                "has_pending_approval",
+                return_value=True,
+            ),
+            patch.object(
+                self.service.runtime,
+                "resolve_approval",
+            ) as resolve_approval,
+        ):
+            result = self.service.list_approvals({"sessionId": session_id})
+
+        self.assertEqual(result["items"][0]["state"], "expired")
+        resolve_approval.assert_called_once_with(
+            session_id,
+            str(approval["approvalId"]),
+            approved=False,
+            resolution_state="expired",
         )
 
     def test_approved_operation_executes_before_pi_is_released_and_returns_receipt(self) -> None:

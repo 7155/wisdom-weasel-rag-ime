@@ -16,6 +16,7 @@ from rag_ime.agent_room_settlement import (
     RoomCommitProposalError,
     RoomSettleLifecycleService,
 )
+from rag_ime.agent_room_kernel import RoomKernelFenceError
 from rag_ime.agent_room_kernel_contracts import (
     DISPATCH_ENVELOPE_SCHEMA_VERSION,
     ROOM_TASK_SCHEMA_VERSION,
@@ -458,6 +459,62 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             }
         )["result"]
 
+    def _seed_workspace_retry(self) -> tuple[str, str]:
+        task_id = "task:workspace-retry-wait-target"
+        dispatch_id = "dispatch:workspace-retry-wait-target"
+        parent_task = self.service.room_kernel.task("task:settle")
+        self.service.room_kernel.create_task(
+            {
+                **parent_task,
+                "taskId": task_id,
+                "parentTaskId": "task:settle",
+                "taskKind": "work",
+                "currentOwnerParticipantId": str(self.target["id"]),
+                "ownershipRevision": 1,
+                "ownershipReceiptId": None,
+                "reviewState": "not_required",
+                "reviewOfTaskIds": [],
+                "reviewAuthorParticipantIds": [],
+                "objective": "Retry one retained isolated implementation.",
+                "expectedOutput": "A delivered retry result.",
+                "workspacePolicy": "isolated_writable",
+                "workspaceRoot": str(self.workspace_root / "retry-child"),
+                "workspaceBindingId": "binding:workspace-retry-wait-target",
+                "workspaceLifecycleState": "retry_bound",
+                "workspaceCleanupState": "not_authorized",
+                "workspaceAttentionRequired": False,
+                "workspaceTerminalReason": "",
+                "workspaceIntegrationState": "pending",
+                "revision": int(parent_task.get("revision") or 0) + 1,
+                "state": "active",
+            },
+            now_ms=self.now_ms + 3,
+        )
+        self.service.room_kernel.enqueue_dispatch(
+            {
+                "schemaVersion": DISPATCH_ENVELOPE_SCHEMA_VERSION,
+                "dispatchId": dispatch_id,
+                "rootId": "root:settle",
+                "taskId": task_id,
+                "parentDispatchId": "dispatch:settle",
+                "generation": 0,
+                "hopCount": 1,
+                "depth": 1,
+                "budgetCost": 1,
+                "targetSessionId": str(self.target["sessionId"]),
+                "targetParticipantId": str(self.target["id"]),
+                "triggerId": "invoke:workspace-retry-wait-target",
+                "intentKind": "retry",
+                "idempotencyKey": dispatch_id,
+                "attempt": 0,
+                "capabilityEpoch": 7,
+                "runtimeProfileRevision": "runtime-profile:settle-v1",
+                "state": "pending",
+            },
+            now_ms=self.now_ms + 4,
+        )
+        return task_id, dispatch_id
+
     def _pin_independent_review(
         self,
         *,
@@ -550,6 +607,225 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 },
             }
         )["result"]
+
+    def _handoff_and_complete_review_axis(
+        self,
+        *,
+        facilitator_dispatch_id: str,
+        review_axis: str,
+        suffix: str,
+        source_evidence_ref: str,
+        review_findings: list[dict[str, object]] | None = None,
+        expected_next_review_axis: str | None = None,
+    ) -> dict[str, str]:
+        """Run one explicit review axis and return its exact resume lineage."""
+
+        facilitator_evidence_ref = self._record_workspace_evidence(
+            session_id=self.session_id,
+            suffix=f"{suffix}-facilitator",
+        )
+        handoff = self._commit_and_settle_dispatch(
+            session_id=self.session_id,
+            dispatch_id=facilitator_dispatch_id,
+            decision="handoff",
+            suffix=f"{suffix}-handoff",
+            evidence_ref=facilitator_evidence_ref,
+            targetParticipantRef="P1",
+            intent="review",
+            reviewAxis=review_axis,
+            nextTask=f"独立完成 {review_axis} 角度复核",
+            expectedOutput="公开复核结论与本轮新鲜证据",
+            acceptanceAliases=["AC-1"],
+        )
+        self.assertEqual(handoff["state"], "committed", handoff)
+        receipt = handoff["settleResult"]["receipt"]
+        review_task_id = str(receipt["details"]["childTaskId"])
+        review_dispatch_id = str(receipt["details"]["childDispatchId"])
+        self.assertEqual(
+            self.service.room_kernel.task(review_task_id)["reviewAxis"],
+            review_axis,
+        )
+        review_task = self.service.room_kernel.task(review_task_id)
+        self.assertEqual(
+            set(review_task["reviewOfTaskIds"]),
+            set(
+                self.service.room_kernel.required_review_task_ids(
+                    "root:settle"
+                )
+            ),
+            {
+                "reviewTask": review_task,
+                "children": self.service.room_kernel.collaboration_children(
+                    "root:settle"
+                ),
+            },
+        )
+
+        self._pin_independent_review(
+            dispatch_id=review_dispatch_id,
+            session_id=str(self.target["sessionId"]),
+            suffix=f"{suffix}-{review_axis}",
+        )
+        self.service.room_kernel_worker.run_once()
+        review_evidence_ref = self._record_workspace_evidence(
+            session_id=str(self.target["sessionId"]),
+            suffix=f"{suffix}-{review_axis}-evidence",
+        )
+        reviewed = self._commit_and_settle_dispatch(
+            session_id=str(self.target["sessionId"]),
+            dispatch_id=review_dispatch_id,
+            decision="deliver",
+            suffix=f"{suffix}-{review_axis}-deliver",
+            evidence_ref=review_evidence_ref,
+            reviewFindings=list(review_findings or ()),
+        )
+        self.assertEqual(reviewed["state"], "committed", reviewed)
+        resume_ids = reviewed["settleResult"]["receipt"]["details"][
+            "resumedDispatchIds"
+        ]
+        if expected_next_review_axis is None:
+            self.assertEqual(len(resume_ids), 1)
+            facilitator_resume_dispatch_id = str(resume_ids[0])
+            next_review_task_id = ""
+            next_review_dispatch_id = ""
+        else:
+            self.assertEqual(resume_ids, [])
+            attempts = self.service.room_kernel.latest_review_attempts(
+                "root:settle"
+            )
+            next_attempt = next(
+                attempt
+                for attempt in attempts
+                if attempt["payload"].get("reviewAxis")
+                == expected_next_review_axis
+            )
+            next_review_task_id = str(next_attempt["taskId"])
+            next_review_dispatch_id = str(
+                next_attempt["dispatch"]["dispatchId"]
+            )
+            self.assertEqual(next_attempt["taskState"], "active")
+            self.assertEqual(next_attempt["dispatch"]["state"], "pending")
+            facilitator_resume_dispatch_id = ""
+        return {
+            "reviewTaskId": review_task_id,
+            "reviewDispatchId": review_dispatch_id,
+            "reviewEvidenceRef": review_evidence_ref,
+            "sourceEvidenceRef": source_evidence_ref,
+            "facilitatorEvidenceRef": facilitator_evidence_ref,
+            "facilitatorResumeDispatchId": facilitator_resume_dispatch_id,
+            "nextReviewTaskId": next_review_task_id,
+            "nextReviewDispatchId": next_review_dispatch_id,
+        }
+
+    def test_completed_review_axis_deterministically_starts_the_missing_axis(
+        self,
+    ) -> None:
+        technical = self._handoff_and_complete_review_axis(
+            facilitator_dispatch_id="dispatch:settle",
+            review_axis="technical",
+            suffix="automatic-review-technical",
+            source_evidence_ref="evidence:settle",
+            expected_next_review_axis="requirements",
+        )
+        requirements_task_id = technical["nextReviewTaskId"]
+        requirements_dispatch_id = technical["nextReviewDispatchId"]
+        requirements_task = self.service.room_kernel.task(
+            requirements_task_id
+        )
+        self.assertEqual(requirements_task["reviewAxis"], "requirements")
+        self.assertEqual(requirements_task["workspacePolicy"], "read_only")
+        self.assertEqual(
+            requirements_task["reviewOfTaskIds"],
+            self.service.room_kernel.task(technical["reviewTaskId"])[
+                "reviewOfTaskIds"
+            ],
+        )
+        self.assertEqual(
+            self.service.room_kernel.task("task:settle")["state"],
+            "waiting",
+        )
+
+        self._pin_independent_review(
+            dispatch_id=requirements_dispatch_id,
+            session_id=str(self.target["sessionId"]),
+            suffix="automatic-review-requirements",
+        )
+        self.service.room_kernel_worker.run_once()
+        requirements_evidence = self._record_workspace_evidence(
+            session_id=str(self.target["sessionId"]),
+            suffix="automatic-review-requirements-evidence",
+        )
+        requirements = self._commit_and_settle_dispatch(
+            session_id=str(self.target["sessionId"]),
+            dispatch_id=requirements_dispatch_id,
+            decision="deliver",
+            suffix="automatic-review-requirements-deliver",
+            evidence_ref=requirements_evidence,
+            reviewFindings=[],
+        )
+
+        self.assertEqual(requirements["state"], "committed", requirements)
+        resume_ids = requirements["settleResult"]["receipt"]["details"][
+            "resumedDispatchIds"
+        ]
+        self.assertEqual(
+            len(resume_ids),
+            1,
+            self.service.room_kernel.latest_review_attempts("root:settle"),
+        )
+        self.assertEqual(
+            self.service.room_kernel.task("task:settle")["state"],
+            "active",
+        )
+        self.assertEqual(
+            {
+                attempt["payload"].get("reviewAxis")
+                for attempt in self.service.room_kernel.latest_review_attempts(
+                    "root:settle"
+                )
+                if attempt["taskState"] == "completed"
+                and attempt["payload"].get("reviewState")
+                in {"accepted", "accepted_with_notes"}
+            },
+            {"technical", "requirements"},
+        )
+
+    def _complete_materialized_review_axis(
+        self,
+        *,
+        review_dispatch_id: str,
+        suffix: str,
+        review_findings: list[dict[str, object]] | None = None,
+    ) -> dict[str, str]:
+        """Complete a Kernel-chained review axis and return its resume."""
+
+        self._pin_independent_review(
+            dispatch_id=review_dispatch_id,
+            session_id=str(self.target["sessionId"]),
+            suffix=suffix,
+        )
+        self.service.room_kernel_worker.run_once()
+        evidence_ref = self._record_workspace_evidence(
+            session_id=str(self.target["sessionId"]),
+            suffix=f"{suffix}-evidence",
+        )
+        settled = self._commit_and_settle_dispatch(
+            session_id=str(self.target["sessionId"]),
+            dispatch_id=review_dispatch_id,
+            decision="deliver",
+            suffix=f"{suffix}-deliver",
+            evidence_ref=evidence_ref,
+            reviewFindings=list(review_findings or ()),
+        )
+        self.assertEqual(settled["state"], "committed", settled)
+        resume_ids = settled["settleResult"]["receipt"]["details"][
+            "resumedDispatchIds"
+        ]
+        self.assertEqual(len(resume_ids), 1)
+        return {
+            "reviewEvidenceRef": evidence_ref,
+            "facilitatorResumeDispatchId": str(resume_ids[0]),
+        }
 
     def test_review_required_root_cannot_bypass_after_room_policy_mutation(self) -> None:
         self.service.update_room(
@@ -697,6 +973,105 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         )
         self.assertTrue(receipt["details"]["qualityGateReceiptId"])
 
+    def test_committed_room_turn_is_terminal_in_recent_session_snapshot(
+        self,
+    ) -> None:
+        turn_id = "turn:dispatch:settle"
+        self.service.events.publish(
+            self.session_id,
+            "status_changed",
+            {"status": "working", "phase": "analyzing"},
+            turn_id=turn_id,
+        )
+        self.service.events.publish(
+            self.session_id,
+            "reasoning_summary",
+            {"summary": "已核对当前工作并准备提交", "state": "completed"},
+            turn_id=turn_id,
+        )
+        self._invoke_commit("deliver")
+
+        settled = self._settle()
+        # Match the installed failure: Pi is already idle and the Room child
+        # is committed, while the recent partial window still lacks the
+        # Provider turn's terminal event.
+        self.service.sessions.set_status(self.session_id, "idle")
+        recent = self.service.message_snapshot.messages(
+            self.session_id,
+            view="recent",
+        )
+
+        self.assertEqual(settled["state"], "committed")
+        self.assertEqual(recent["status"], "idle")
+        self.assertTrue(recent["partial"])
+        terminal_events = [
+            event
+            for event in recent["liveEvents"]
+            if event["turnId"] == turn_id
+            and event["eventType"] in {"turn_completed", "turn_failed"}
+        ]
+        self.assertEqual(len(terminal_events), 1)
+        self.assertEqual(
+            terminal_events[0]["payload"]["terminalEvent"],
+            "room_commit_settlement",
+        )
+        replayed = self._settle()
+        replay_recent = self.service.message_snapshot.messages(
+            self.session_id,
+            view="recent",
+        )
+        self.assertTrue(replayed["replayed"])
+        self.assertEqual(
+            len(
+                [
+                    event
+                    for event in replay_recent["liveEvents"]
+                    if event["turnId"] == turn_id
+                    and event["eventType"]
+                    in {"turn_completed", "turn_failed"}
+                ]
+            ),
+            1,
+        )
+
+    def test_settle_rejects_a_turn_outside_the_accepted_runtime_attempt(
+        self,
+    ) -> None:
+        self._invoke_commit("deliver")
+
+        with self.assertRaisesRegex(
+            RoomKernelFenceError,
+            "active runtime turn",
+        ):
+            self.service.settle_room_runtime(
+                {
+                    "schemaVersion": (
+                        "wisdom-weasel.room-runtime-settle-request.v1"
+                    ),
+                    "sessionId": self.session_id,
+                    "dispatchId": "dispatch:settle",
+                    "rootId": "root:settle",
+                    "generation": 0,
+                    "capabilityEpoch": 7,
+                    "runtimeTurnId": "turn:newer-or-unrelated",
+                    "dispatchAttempt": 0,
+                    "settleScopeId": "scope:wrong-turn",
+                    "settleAttempt": 1,
+                    "resourceUsage": {},
+                }
+            )
+
+        self.assertEqual(
+            self.service.room_kernel.dispatch("dispatch:settle")["state"],
+            "running",
+        )
+        self.assertIsNone(
+            self.service.sessions.runtime_turn_terminal_event(
+                self.session_id,
+                "turn:newer-or-unrelated",
+            )
+        )
+
     def test_room_post_is_immediate_and_commit_publishes_final_summary(self) -> None:
         published = self._invoke_post("public evidence from room_post")
         self._invoke_commit("deliver")
@@ -809,6 +1184,13 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(review_task["parentTaskId"], "task:settle")
         self.assertEqual(review_task["taskKind"], "review")
+        self.assertEqual(review_task["reviewAxis"], "technical")
+        self.assertEqual(
+            self.service.room_kernel.root("root:settle")[
+                "requiredReviewAxes"
+            ],
+            ["technical", "requirements"],
+        )
         self.assertEqual(
             review_task["currentOwnerParticipantId"],
             self.target["id"],
@@ -843,6 +1225,57 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         self.assertNotIn(
             "resumeDispatchId",
             continuation["payload"],
+        )
+
+    def test_review_handoff_accepts_an_independent_peer_without_reserved_reviewer_role(
+        self,
+    ) -> None:
+        self.service.update_room_participant_role(
+            self.room_id,
+            {
+                "participantId": str(self.target["id"]),
+                "collaborationRole": "implementer",
+            },
+        )
+        facilitator_evidence = self._record_workspace_evidence(
+            session_id=self.session_id,
+            suffix="peer-review",
+        )
+        self._invoke_commit(
+            "handoff",
+            targetParticipantRef="P1",
+            intent="review",
+            nextTask="独立复核自己未参与实现或集成的范围",
+            expectedOutput="公开复核结论与新鲜证据",
+            acceptanceAliases=["AC-1"],
+            evidence=[
+                {
+                    "acceptance": "AC-1",
+                    "refs": ["evidence:settle", facilitator_evidence],
+                }
+            ],
+        )
+
+        settled = self._settle()
+
+        self.assertEqual(settled["state"], "committed", settled)
+        receipt = settled["settleResult"]["receipt"]
+        review_task_id = str(receipt["details"]["childTaskId"])
+        review_dispatch_id = str(receipt["details"]["childDispatchId"])
+        review_task = self.service.room_kernel.task(review_task_id)
+        initial_review_target_revision = str(
+            review_task["reviewTargetRevision"]
+        )
+        self.assertEqual(review_task["taskKind"], "review")
+        self.assertEqual(
+            review_task["currentOwnerParticipantId"],
+            self.target["id"],
+        )
+        self.assertEqual(
+            self.service.rooms.participant(str(self.target["id"]))[
+                "collaborationRole"
+            ],
+            "implementer",
         )
 
         skill_id = "independent-review"
@@ -943,8 +1376,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         resumed = child_settled["settleResult"]["receipt"]["details"][
             "resumedDispatchIds"
         ]
-        self.assertEqual(len(resumed), 1)
-        resume_dispatch_id = str(resumed[0])
+        self.assertEqual(resumed, [])
         self.assertEqual(
             self.service.room_kernel.task(review_task_id)["reviewState"],
             "accepted_with_notes",
@@ -964,28 +1396,44 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(
             self.service.room_kernel.task("task:settle")["state"],
-            "active",
+            "waiting",
         )
         self.assertEqual(
             self.service.room_kernel.root("root:settle")["state"],
             "running",
         )
+        requirements_attempt = next(
+            attempt
+            for attempt in self.service.room_kernel.latest_review_attempts(
+                "root:settle"
+            )
+            if attempt["payload"].get("reviewAxis") == "requirements"
+        )
+        requirements_dispatch_id = str(
+            requirements_attempt["dispatch"]["dispatchId"]
+        )
         resumed_continuation = self.service.room_kernel.continuation(
             str(receipt["details"]["commitId"])
         )
         self.assertEqual(
-            resumed_continuation["payload"]["resumeDispatchId"],
-            resume_dispatch_id,
+            resumed_continuation["payload"]["waitingForDispatchId"],
+            requirements_dispatch_id,
         )
-
+        requirements_review = self._complete_materialized_review_axis(
+            review_dispatch_id=requirements_dispatch_id,
+            suffix="peer-review-requirements",
+        )
+        requirements_evidence = requirements_review["reviewEvidenceRef"]
+        resume_dispatch_id = requirements_review[
+            "facilitatorResumeDispatchId"
+        ]
         self.service.room_kernel_worker.run_once()
         resume_dispatch = self.service.room_kernel.dispatch(
             resume_dispatch_id
         )
-        self.assertEqual(resume_dispatch["intentKind"], "resume")
-        self.assertEqual(
-            resume_dispatch["targetParticipantId"],
-            self.owner["id"],
+        final_facilitator_evidence = self._record_workspace_evidence(
+            session_id=self.session_id,
+            suffix="peer-review-final-facilitator",
         )
         loaded_final = self.service.room_capability_tool_load(
             {
@@ -1005,7 +1453,10 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 "evidence": [
                     {
                         "acceptance": "AC-1",
-                        "refs": [reviewer_evidence],
+                        # The final proposal owns fresh Facilitator evidence.
+                        # Accepted review-axis refs remain Kernel-owned and do
+                        # not need to be copied into this presentation layer.
+                        "refs": [final_facilitator_evidence],
                     }
                 ],
                 "residualRisks": [],
@@ -1068,7 +1519,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 "evidence": [
                     {
                         "acceptance": "AC-1",
-                        "refs": [reviewer_evidence],
+                        "refs": [reviewer_evidence, requirements_evidence],
                     }
                 ],
                 "residualRisks": [],
@@ -1121,7 +1572,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 "evidence": [
                     {
                         "acceptance": "AC-1",
-                        "refs": [reviewer_evidence],
+                        "refs": [reviewer_evidence, requirements_evidence],
                     }
                 ],
                 "residualRisks": [],
@@ -1170,10 +1621,12 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         review_posts = [
             post for post in posts if post["kind"] == "review_result"
         ]
-        self.assertEqual(len(review_posts), 1)
-        self.assertEqual(
-            review_posts[0]["authorActorRef"],
-            self.target["id"],
+        self.assertEqual(len(review_posts), 2)
+        self.assertTrue(
+            all(
+                post["authorActorRef"] == self.target["id"]
+                for post in review_posts
+            )
         )
         self.assertEqual(
             final_posts[0]["authorActorRef"],
@@ -1246,7 +1699,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 {
                     "findingId": "Finding-1",
                     "gateEffect": "blocking",
-                    "impact": "high",
+                    "impact": "critical",
                     "category": "correctness",
                     "scope": {"acceptance": "AC-1"},
                     "observation": "集成结果在边界输入下仍返回旧值",
@@ -1260,7 +1713,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 {
                     "findingId": "Regression-1",
                     "gateEffect": "blocking",
-                    "impact": "high",
+                    "impact": "critical",
                     "category": "regression",
                     "scope": {"acceptance": "AC-1"},
                     "observation": "修复后的边界行为在回归检查中仍需确认",
@@ -1402,7 +1855,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 {
                     "findingId": "Finding-1",
                     "gateEffect": "blocking",
-                    "impact": "high",
+                    "impact": "critical",
                     "category": "correctness",
                     "scope": {"acceptance": "AC-1"},
                     "observation": "集成结果在边界输入下仍返回旧值",
@@ -1415,7 +1868,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 {
                     "findingId": "Regression-1",
                     "gateEffect": "blocking",
-                    "impact": "high",
+                    "impact": "critical",
                     "category": "regression",
                     "scope": {"acceptance": "AC-1"},
                     "observation": "修复后的边界行为在回归检查中仍需确认",
@@ -1431,8 +1884,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         facilitator_resume_ids = review_settled["settleResult"]["receipt"][
             "details"
         ]["resumedDispatchIds"]
-        self.assertEqual(len(facilitator_resume_ids), 1)
-        facilitator_resume_id = str(facilitator_resume_ids[0])
+        self.assertEqual(facilitator_resume_ids, [])
         self.assertEqual(
             self.service.room_kernel.task(review_task_id)["reviewState"],
             "accepted",
@@ -1465,15 +1917,44 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             binding["notBeforeMs"],
             final_review_task["reviewEvidenceNotBeforeMs"],
         )
-
-
+        requirements_attempt = next(
+            attempt
+            for attempt in self.service.room_kernel.latest_review_attempts(
+                "root:settle"
+            )
+            if attempt["payload"].get("reviewAxis") == "requirements"
+        )
+        requirements_review = self._complete_materialized_review_axis(
+            review_dispatch_id=str(
+                requirements_attempt["dispatch"]["dispatchId"]
+            ),
+            suffix="revision-loop-requirements",
+        )
+        final_resume_id = requirements_review[
+            "facilitatorResumeDispatchId"
+        ]
+        requirements_evidence = requirements_review["reviewEvidenceRef"]
         self.service.room_kernel_worker.run_once()
+        final_facilitator_evidence = self._record_workspace_evidence(
+            session_id=self.session_id,
+            suffix="revision-loop-final-facilitator",
+        )
         final_settled = self._commit_and_settle_dispatch(
             session_id=self.session_id,
-            dispatch_id=facilitator_resume_id,
+            dispatch_id=final_resume_id,
             decision="deliver",
             suffix="revision-loop-final",
-            evidence_ref=final_review_evidence,
+            evidence_ref=requirements_evidence,
+            evidence=[
+                {
+                    "acceptance": "AC-1",
+                    "refs": [
+                        final_review_evidence,
+                        requirements_evidence,
+                        final_facilitator_evidence,
+                    ],
+                }
+            ],
         )
         self.assertEqual(final_settled["state"], "committed", final_settled)
         root = self.service.room_kernel.root("root:settle")
@@ -1605,6 +2086,79 @@ class RoomSettleLifecycleTests(unittest.TestCase):
 
         self.assertEqual(settled["state"], "repair_commit")
         self.assertIn("必须用 deliver 返回 Facilitator", settled["reason"])
+
+    def test_receipted_clean_abandonment_does_not_block_final_delivery(
+        self,
+    ) -> None:
+        root = self.service.room_kernel.root("root:settle")
+        task = self.service.room_kernel.task("task:settle")
+        dispatch = self.service.room_kernel.dispatch("dispatch:settle")
+        abandoned = {
+            "taskId": "task:abandoned-child",
+            "state": "cancelled",
+            "workspacePolicy": "isolated_writable",
+            "workspaceLifecycleState": "abandoned",
+            "workspaceCleanupState": "cleaned",
+            "workspaceAttentionRequired": False,
+            "workspaceIntegrationState": "pending",
+        }
+        child = {
+            "taskId": "task:abandoned-child",
+            "intentKind": "revise",
+            "targetParticipantId": str(self.target["id"]),
+            "resultPublic": False,
+        }
+        with (
+            patch.object(
+                self.service.room_kernel,
+                "collaboration_children",
+                return_value=[child],
+            ),
+            patch.object(
+                self.service.room_kernel,
+                "task",
+                return_value=abandoned,
+            ),
+            patch.object(
+                self.service.room_kernel,
+                "task_has_canonical_abandonment",
+                return_value=True,
+            ),
+        ):
+            self.service.room_settle_lifecycle._assert_managed_collaboration_ready(
+                decision="deliver",
+                root=root,
+                task=task,
+                dispatch=dispatch,
+            )
+
+        with (
+            patch.object(
+                self.service.room_kernel,
+                "collaboration_children",
+                return_value=[child],
+            ),
+            patch.object(
+                self.service.room_kernel,
+                "task",
+                return_value=abandoned,
+            ),
+            patch.object(
+                self.service.room_kernel,
+                "task_has_canonical_abandonment",
+                return_value=False,
+            ),
+            self.assertRaisesRegex(
+                RoomCommitProposalError,
+                "子任务没有完成",
+            ),
+        ):
+            self.service.room_settle_lifecycle._assert_managed_collaboration_ready(
+                decision="deliver",
+                root=root,
+                task=task,
+                dispatch=dispatch,
+            )
 
 
     def test_non_reviewer_handoff_rejects_revision_intent(self) -> None:
@@ -1900,6 +2454,36 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             "failed",
         )
 
+    def test_repair_follow_ups_respect_budget_used_by_an_earlier_dispatch(self) -> None:
+        self._invoke_commit(
+            "deliver",
+            publicSummary=(
+                "工作已完成；内部 rootId 为 root:settle，"
+                "evidenceRef 为 evidence:settle。"
+            ),
+        )
+        with sqlite3.connect(self.service.room_kernel.db_path) as connection:
+            connection.execute(
+                "UPDATE room_kernel_root_limits SET repair_used=1 "
+                "WHERE root_id='root:settle'"
+            )
+
+        first = self._settle(1)
+        second = self._settle(2)
+        third = self._settle(3)
+        blocked = self._settle(4)
+
+        self.assertEqual(first["state"], "repair_commit")
+        self.assertEqual(second["state"], "repair_commit")
+        self.assertEqual(third["state"], "repair_commit")
+        self.assertEqual(blocked["state"], "blocked")
+        self.assertEqual(blocked["guardReceipt"]["details"]["attempt"], 4)
+        self.assertEqual(blocked["guardReceipt"]["details"]["maxAttempts"], 4)
+        self.assertEqual(
+            self.service.room_kernel.dispatch("dispatch:settle")["state"],
+            "failed",
+        )
+
     def test_wait_public_summary_cannot_claim_unverified_success(self) -> None:
         self._invoke_commit(
             "wait",
@@ -1994,6 +2578,113 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             continuation["payload"]["waitingForDispatchId"],
             target_dispatch_id,
         )
+
+    def test_external_wait_for_one_workspace_retry_is_exact_participant_wait(
+        self,
+    ) -> None:
+        _task_id, retry_dispatch_id = self._seed_workspace_retry()
+        self._invoke_commit("wait")
+
+        settled = self._settle()
+
+        self.assertEqual(settled["state"], "committed")
+        commit_id = str(
+            settled["settleResult"]["receipt"]["details"]["commitId"]
+        )
+        continuation = self.service.room_kernel.continuation(commit_id)
+        self.assertEqual(
+            continuation["payload"]["waitingFor"],
+            "participant",
+        )
+        self.assertEqual(
+            continuation["payload"]["waitingForParticipantId"],
+            self.target["id"],
+        )
+        self.assertEqual(
+            continuation["payload"]["waitingForDispatchId"],
+            retry_dispatch_id,
+        )
+
+    def test_old_external_wait_resumes_after_exact_workspace_retry_completes(
+        self,
+    ) -> None:
+        task_id, retry_dispatch_id = self._seed_workspace_retry()
+        self._invoke_commit("wait")
+        with patch.object(
+            self.service.room_kernel,
+            "workspace_retry_wait_target",
+            return_value=None,
+        ):
+            settled = self._settle()
+        self.assertEqual(settled["state"], "committed")
+        commit_id = str(
+            settled["settleResult"]["receipt"]["details"]["commitId"]
+        )
+        self.assertEqual(
+            self.service.room_kernel.continuation(commit_id)["payload"][
+                "waitingFor"
+            ],
+            "external",
+        )
+
+        with sqlite3.connect(self.service.room_kernel.db_path) as connection:
+            wait_created_at_ms = int(
+                connection.execute(
+                    "SELECT created_at_ms FROM room_kernel_continuations "
+                    "WHERE commit_id=?",
+                    (commit_id,),
+                ).fetchone()[0]
+            )
+            task = self.service.room_kernel.task(task_id)
+            completed_task = {
+                **task,
+                "workspaceLifecycleState": "delivered",
+                "revision": int(task["revision"]) + 1,
+                "state": "completed",
+            }
+            connection.execute(
+                "UPDATE room_kernel_tasks SET state='completed',payload_json=? "
+                "WHERE task_id=?",
+                (
+                    json.dumps(
+                        completed_task,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    task_id,
+                ),
+            )
+            connection.execute(
+                "UPDATE room_kernel_dispatches "
+                "SET state='committed',updated_at_ms=? "
+                "WHERE dispatch_id=?",
+                (wait_created_at_ms + 1, retry_dispatch_id),
+            )
+            connection.execute(
+                "UPDATE room_kernel_outbox SET state='committed' "
+                "WHERE dispatch_id=?",
+                (retry_dispatch_id,),
+            )
+
+        resumed = self.service.room_kernel.pending_dispatch(
+            now_ms=self.now_ms + 10,
+        )
+        self.assertIsNotNone(resumed)
+        assert resumed is not None
+        self.assertEqual(resumed["intentKind"], "resume")
+        continuation = self.service.room_kernel.continuation(commit_id)
+        self.assertEqual(continuation["state"], "resumed")
+        self.assertEqual(continuation["childDispatchId"], resumed["dispatchId"])
+        all_resumes = [
+            item
+            for item in self.service.room_kernel_snapshot(self.room_id)[
+                "dispatches"
+            ]
+            if item["intentKind"] == "resume"
+            and item["parentDispatchId"] == "dispatch:settle"
+        ]
+        self.assertEqual(len(all_resumes), 1)
 
     def test_commit_wakes_worker_after_public_projection(self) -> None:
         order: list[str] = []
@@ -2119,7 +2810,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             self._invoke_commit("deliver", evidence=None)
 
     def test_quality_gate_pass_requires_fresh_committed_evidence(self) -> None:
-        self._invoke_commit(
+        staged = self._invoke_commit(
             "deliver",
             evidence=[
                 {
@@ -2135,6 +2826,89 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         self.assertIn("AC-1 使用了无法核实的 evidenceRef", settled["reason"])
         self.assertIn("删除这些位置的旧引用", settled["reason"])
         self.assertIn("最小成功工具结果", settled["reason"])
+        invocation_id = str(staged["invocationReceipt"]["receiptId"])
+        execution = self.service.room_capabilities.execution_receipt(
+            invocation_id
+        )
+        self.assertIsNotNone(execution)
+        assert execution is not None
+        self.assertEqual(execution["status"], "rejected")
+        replay = self._settle()
+        self.assertEqual(replay["state"], "repair_commit")
+        self.assertEqual(replay["guardReceipt"], settled["guardReceipt"])
+        self.assertEqual(
+            self.service.room_capabilities.execution_receipt(invocation_id)[
+                "status"
+            ],
+            "rejected",
+        )
+
+    def test_final_aggregation_uses_exact_kernel_accepted_evidence(self) -> None:
+        with patch.object(
+            self.service.room_kernel,
+            "accepted_evidence_by_criterion",
+            return_value={"criterion:settle": ["evidence:settle"]},
+        ):
+            self._invoke_commit(
+                "deliver",
+                evidence=[
+                    {
+                        "acceptance": "AC-1",
+                        "refs": ["evidence:settle-with-transcription-error"],
+                    }
+                ],
+            )
+            settled = self._settle()
+
+        self.assertEqual(settled["state"], "committed", settled)
+        receipt = settled["settleResult"]["receipt"]
+        committed = self.service.room_kernel.commit(
+            str(receipt["details"]["commitId"])
+        )
+        self.assertEqual(committed["evidenceRefs"], ["evidence:settle"])
+        self.assertEqual(
+            committed["qualityGateReceipt"]["items"][0]["evidenceRefs"],
+            ["evidence:settle"],
+        )
+
+    def test_handoff_drops_unverifiable_refs_and_still_creates_review(self) -> None:
+        current_evidence = self._record_workspace_evidence(
+            session_id=self.session_id,
+            suffix="handoff-prunes-stale",
+        )
+        self._invoke_commit(
+            "handoff",
+            targetParticipantRef="P1",
+            intent="review",
+            nextTask="独立复核当前结果",
+            expectedOutput="复核结论",
+            acceptanceAliases=["AC-1"],
+            evidence=[
+                {
+                    "acceptance": "AC-1",
+                    "refs": [
+                        "execution:stale-transcript-ref",
+                        current_evidence,
+                    ],
+                }
+            ],
+        )
+
+        settled = self._settle()
+
+        self.assertEqual(settled["state"], "committed", settled)
+        receipt = settled["settleResult"]["receipt"]
+        self.assertEqual(receipt["details"]["settleDecision"], "dispatch")
+        self.assertTrue(receipt["details"]["childTaskId"])
+        self.assertTrue(receipt["details"]["childDispatchId"])
+        committed = self.service.room_kernel.commit(
+            str(receipt["details"]["commitId"])
+        )
+        self.assertEqual(
+            committed["qualityGateReceipt"]["verdict"],
+            "ready_to_deliver",
+        )
+        self.assertEqual(committed["evidenceRefs"], [current_evidence])
 
     def test_non_passing_quality_gate_cannot_deliver(self) -> None:
         self._invoke_commit(
@@ -2147,8 +2921,135 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         self.assertEqual(settled["state"], "repair_commit")
         self.assertIn("每个验收项都有成功工具结果支持", settled["reason"])
 
+    def test_writer_quiescence_recovers_legacy_rejected_commit_invocation(
+        self,
+    ) -> None:
+        staged = self._invoke_commit(
+            "deliver",
+            evidence=[
+                {
+                    "acceptance": "AC-1",
+                    "refs": ["evidence:not-committed"],
+                }
+            ],
+        )
+        first = self._settle()
+        self.assertEqual(first["state"], "repair_commit")
+        invocation_id = str(staged["invocationReceipt"]["receiptId"])
+        with sqlite3.connect(self.service.db_path) as conn:
+            conn.execute(
+                "DELETE FROM room_v2_tool_execution_receipts "
+                "WHERE invocation_receipt_id=?",
+                (invocation_id,),
+            )
+
+        self._invoke_commit("wait")
+        committed = self._settle(attempt=2)
+        self.assertEqual(committed["state"], "committed")
+
+        quiescence = self.service._room_workspace_writer_quiescence(
+            {
+                "workspaceBindingId": "binding:legacy-rejected-commit",
+                "rootId": "root:settle",
+                "taskId": "task:settle",
+                "dispatchId": "dispatch:settle",
+                "ownerSessionId": self.session_id,
+            }
+        )
+        foreground = quiescence["foregroundMutatingInvocations"]
+        self.assertEqual(foreground["activeCount"], 0, foreground)
+        self.assertEqual(
+            foreground["settleRejectedInvocationReceiptIds"],
+            [invocation_id],
+        )
+
 
 class RoomQualityGateDiagnosticTests(unittest.TestCase):
+    def test_independent_review_prunes_stale_refs_when_current_proof_exists(
+        self,
+    ) -> None:
+        criterion_id = "criterion:review"
+        gate = canonicalize_quality_gate(
+            evidence_proposal=[
+                {
+                    "acceptance": "AC-1",
+                    "refs": [
+                        "execution:current-review",
+                        "execution:stale-one",
+                        "execution:stale-two",
+                    ],
+                }
+            ],
+            residual_risks=[],
+            decision="deliver",
+            root_id="root:review-pruning",
+            task_id="task:review-pruning",
+            dispatch_id="dispatch:review-pruning",
+            generation=0,
+            task_criteria=(criterion_id,),
+            acceptance_aliases={"AC-1": criterion_id},
+            requirement_context={
+                "originalRequirements": ["完成独立复核"],
+                "catalog": {
+                    "acceptanceCriteria": [
+                        {"criterionId": criterion_id, "proofs": []}
+                    ]
+                },
+            },
+            accepted_evidence_by_criterion={},
+            runtime_evidence_refs=["execution:current-review"],
+            invocation_receipt_id="invoke:review-pruning",
+            now_ms=100,
+            prune_unverifiable_refs=True,
+        )
+
+        self.assertEqual(
+            gate.evidence_refs,
+            ("execution:current-review",),
+        )
+        self.assertEqual(
+            gate.receipt["items"][0]["evidenceRefs"],
+            ["execution:current-review"],
+        )
+
+    def test_independent_review_still_rejects_when_no_current_proof_exists(
+        self,
+    ) -> None:
+        criterion_id = "criterion:review"
+        with self.assertRaisesRegex(
+            RoomQualityGateError,
+            "无法核实的 evidenceRef",
+        ):
+            canonicalize_quality_gate(
+                evidence_proposal=[
+                    {
+                        "acceptance": "AC-1",
+                        "refs": ["execution:stale-only"],
+                    }
+                ],
+                residual_risks=[],
+                decision="deliver",
+                root_id="root:review-pruning",
+                task_id="task:review-pruning",
+                dispatch_id="dispatch:review-pruning",
+                generation=0,
+                task_criteria=(criterion_id,),
+                acceptance_aliases={"AC-1": criterion_id},
+                requirement_context={
+                    "originalRequirements": ["完成独立复核"],
+                    "catalog": {
+                        "acceptanceCriteria": [
+                            {"criterionId": criterion_id, "proofs": []}
+                        ]
+                    },
+                },
+                accepted_evidence_by_criterion={},
+                runtime_evidence_refs=[],
+                invocation_receipt_id="invoke:review-pruning",
+                now_ms=100,
+                prune_unverifiable_refs=True,
+            )
+
     def test_unknown_refs_report_every_affected_acceptance_alias(self) -> None:
         criteria = ("criterion:one", "criterion:two", "criterion:three")
         with self.assertRaises(RoomQualityGateError) as raised:
@@ -2305,6 +3206,60 @@ class RoomQualityGateDiagnosticTests(unittest.TestCase):
         self.assertIn("每次成功工具执行只能直接证明一个验收项", message)
         self.assertNotIn("execution:shared", message)
 
+    def test_shared_room_state_ref_uses_exact_accepted_child_evidence(
+        self,
+    ) -> None:
+        criteria = ("criterion:one", "criterion:two")
+        gate = canonicalize_quality_gate(
+            evidence_proposal=[
+                {
+                    "acceptance": "AC-1",
+                    "refs": ["execution:room-state"],
+                },
+                {
+                    "acceptance": "AC-2",
+                    "refs": ["execution:room-state"],
+                },
+            ],
+            residual_risks=[],
+            decision="deliver",
+            root_id="root:accepted-child",
+            task_id="task:accepted-child",
+            dispatch_id="dispatch:accepted-child",
+            generation=0,
+            task_criteria=criteria,
+            acceptance_aliases={
+                "AC-1": criteria[0],
+                "AC-2": criteria[1],
+            },
+            requirement_context={
+                "originalRequirements": ["逐项验证两个验收条件"],
+                "catalog": {
+                    "acceptanceCriteria": [
+                        {"criterionId": criteria[0], "proofs": []},
+                        {"criterionId": criteria[1], "proofs": []},
+                    ]
+                },
+            },
+            accepted_evidence_by_criterion={
+                criteria[0]: ["execution:accepted-one"],
+                criteria[1]: ["execution:accepted-two"],
+            },
+            runtime_evidence_refs=["execution:room-state"],
+            invocation_receipt_id="invoke:accepted-child",
+            now_ms=100,
+        )
+
+        self.assertEqual(gate.receipt["verdict"], "ready_to_deliver")
+        self.assertEqual(
+            gate.evidence_refs,
+            ("execution:accepted-one", "execution:accepted-two"),
+        )
+        self.assertEqual(
+            [item["evidenceRefs"] for item in gate.receipt["items"]],
+            [["execution:accepted-one"], ["execution:accepted-two"]],
+        )
+
     def test_distinct_runtime_receipts_can_cover_distinct_acceptance_items(
         self,
     ) -> None:
@@ -2367,7 +3322,7 @@ class ReviewFindingAdmissibilityTests(unittest.TestCase):
     def _finding(
         *,
         gate_effect: str = "blocking",
-        impact: str = "high",
+        impact: str = "critical",
         category: str = "correctness",
         scope: dict[str, object] | None = None,
         state: str = "open",
@@ -2405,33 +3360,137 @@ class ReviewFindingAdmissibilityTests(unittest.TestCase):
             runtime_evidence_refs={"evidence:review"},
         )
 
-    def test_blocker_requires_high_impact_and_high_risk_category(self) -> None:
+    def test_deliver_without_findings_normalizes_to_empty_array(self) -> None:
+        self.assertEqual(
+            self.service._canonical_review_findings(
+                value=None,
+                task=self.task,
+                root={"roomId": "room:admissibility"},
+                decision="deliver",
+                acceptance_aliases={"AC-1": "criterion:one"},
+                evidence_refs=["evidence:review"],
+                runtime_evidence_refs={"evidence:review"},
+            ),
+            [],
+        )
+
+    def test_deliver_cannot_omit_prior_open_p0_findings(self) -> None:
+        self.task["reviewFindings"] = [self._finding()]
+
         with self.assertRaisesRegex(
             RoomCommitProposalError,
-            "Blocking Finding requires critical/high impact",
+            "complete reviewFindings array",
         ):
-            self._canonical(
-                self._finding(impact="normal"),
-                decision="handoff",
-            )
-        with self.assertRaisesRegex(
-            RoomCommitProposalError,
-            "category is not admissible as blocking",
-        ):
-            self._canonical(
-                self._finding(category="maintainability"),
-                decision="handoff",
+            self.service._canonical_review_findings(
+                value=None,
+                task=self.task,
+                root={"roomId": "room:admissibility"},
+                decision="deliver",
+                acceptance_aliases={"AC-1": "criterion:one"},
+                evidence_refs=["evidence:review"],
+                runtime_evidence_refs={"evidence:review"},
             )
 
-    def test_blocker_invariant_scope_must_be_governed(self) -> None:
-        with self.assertRaisesRegex(
-            RoomCommitProposalError,
-            "invariantId is not a governed invariant",
-        ):
-            self._canonical(
-                self._finding(scope={"invariantId": "opinion:clean-code"}),
+    def test_non_p0_requested_blockers_are_recorded_as_advisory(self) -> None:
+        normal = self._canonical(
+            self._finding(impact="normal"),
+            decision="deliver",
+        )
+        maintainability = self._canonical(
+            self._finding(
+                impact="high",
+                category="maintainability",
+            ),
+            decision="deliver",
+        )
+
+        self.assertEqual(normal[0]["gateEffect"], "advisory")
+        self.assertEqual(normal[0]["impact"], "normal")
+        self.assertEqual(
+            maintainability[0]["gateEffect"],
+            "advisory",
+        )
+        self.assertEqual(maintainability[0]["impact"], "high")
+        self.assertIn(
+            "Advisory",
+            str(maintainability[0]["dispositionRationale"]),
+        )
+
+    def test_static_finding_field_errors_are_reported_together(self) -> None:
+        findings = [
+            {
+                **self._finding(),
+                "findingId": "Finding-evidence",
+                "evidenceRefs": [],
+            },
+            {
+                **self._finding(),
+                "findingId": "Finding-impact",
+                "impact": "severe",
+            },
+            {
+                **self._finding(),
+                "findingId": "Finding-category",
+                "category": "unknown",
+            },
+            {
+                **self._finding(),
+                "findingId": "Finding-gate-effect",
+                "gateEffect": "stop",
+            },
+        ]
+
+        with self.assertRaises(RoomCommitProposalError) as raised:
+            self.service._canonical_review_findings(
+                value=findings,
+                task=self.task,
+                root={"roomId": "room:admissibility"},
                 decision="handoff",
+                acceptance_aliases={"AC-1": "criterion:one"},
+                evidence_refs=["evidence:review"],
+                runtime_evidence_refs={"evidence:review"},
             )
+
+        message = str(raised.exception)
+        self.assertIn(
+            "reviewFindings[0].evidenceRefs must not be empty",
+            message,
+        )
+        self.assertIn("reviewFindings[1].impact is invalid", message)
+        self.assertIn("reviewFindings[2].category is invalid", message)
+        self.assertIn("reviewFindings[3].gateEffect is invalid", message)
+
+    def test_static_finding_field_feedback_is_bounded(self) -> None:
+        findings = [
+            {
+                **self._finding(),
+                "findingId": f"Finding-{index}",
+                "impact": "severe",
+            }
+            for index in range(9)
+        ]
+
+        with self.assertRaises(RoomCommitProposalError) as raised:
+            self.service._canonical_review_findings(
+                value=findings,
+                task=self.task,
+                root={"roomId": "room:admissibility"},
+                decision="handoff",
+                acceptance_aliases={"AC-1": "criterion:one"},
+                evidence_refs=["evidence:review"],
+                runtime_evidence_refs={"evidence:review"},
+            )
+
+        message = str(raised.exception)
+        self.assertEqual(message.count(".impact is invalid"), 8)
+        self.assertNotIn("reviewFindings[8].impact is invalid", message)
+
+    def test_blocker_invariant_scope_must_be_governed(self) -> None:
+        non_governed = self._canonical(
+            self._finding(scope={"invariantId": "opinion:clean-code"}),
+            decision="deliver",
+        )
+        self.assertEqual(non_governed[0]["gateEffect"], "advisory")
 
         canonical = self._canonical(
             self._finding(
@@ -2446,19 +3505,17 @@ class ReviewFindingAdmissibilityTests(unittest.TestCase):
             {"invariantId": "room-governance:security"},
         )
 
-    def test_open_advisory_cannot_be_delivered_as_terminal_review(self) -> None:
-        with self.assertRaisesRegex(
-            RoomCommitProposalError,
-            "open Advisory Finding",
-        ):
-            self._canonical(
-                self._finding(
-                    gate_effect="advisory",
-                    impact="normal",
-                    category="maintainability",
-                ),
-                decision="deliver",
-            )
+    def test_open_advisory_is_delivered_with_notes(self) -> None:
+        open_advisory = self._canonical(
+            self._finding(
+                gate_effect="advisory",
+                impact="normal",
+                category="maintainability",
+            ),
+            decision="deliver",
+        )
+        self.assertEqual(open_advisory[0]["state"], "open")
+        self.assertEqual(open_advisory[0]["gateEffect"], "advisory")
 
         canonical = self._canonical(
             self._finding(
@@ -2507,7 +3564,7 @@ class ReviewScopeLockTests(unittest.TestCase):
                     "findingId": "Finding-1",
                     "fingerprint": f"sha256:{'b' * 64}",
                     "gateEffect": "blocking",
-                    "impact": "high",
+                    "impact": "critical",
                     "category": "correctness",
                     "scope": {"criterionId": "criterion:one"},
                     "state": "resolved",
@@ -2526,7 +3583,7 @@ class ReviewScopeLockTests(unittest.TestCase):
         return {
             "findingId": "Finding-2",
             "gateEffect": "blocking",
-            "impact": "high",
+            "impact": "critical",
             "category": category,
             "scope": {"acceptance": acceptance},
             "observation": "后续复核发现一个新问题",
@@ -2555,16 +3612,14 @@ class ReviewScopeLockTests(unittest.TestCase):
             evidence_refs=["evidence:late"],
             runtime_evidence_refs={"evidence:late"},
         )
-    def test_late_unrelated_blocker_becomes_advisory_and_cannot_open_revision(
+    def test_late_unrelated_blocker_becomes_non_blocking_advisory(
         self,
     ) -> None:
         finding = self._finding(category="ux", acceptance="AC-2")
 
-        with self.assertRaisesRegex(
-            RoomCommitProposalError,
-            "open Advisory Finding",
-        ):
-            self._canonical(finding, decision="deliver")
+        open_advisory = self._canonical(finding, decision="deliver")
+        self.assertEqual(open_advisory[0]["gateEffect"], "advisory")
+        self.assertEqual(open_advisory[0]["state"], "open")
         disposed = {
             **finding,
             "state": "dismissed",
@@ -2610,7 +3665,7 @@ class ReviewFindingContinuityTests(unittest.TestCase):
         self.finding = {
             "findingId": "Finding-1",
             "gateEffect": "blocking",
-            "impact": "high",
+            "impact": "critical",
             "category": "correctness",
             "scope": {"acceptance": "AC-1"},
             "observation": "边界输入仍返回旧值",

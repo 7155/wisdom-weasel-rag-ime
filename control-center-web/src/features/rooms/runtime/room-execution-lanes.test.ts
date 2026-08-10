@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { createRoomProjection } from '@/contracts/room-reducer';
+import {
+  createRoomProjection,
+  type RoomActivityProjection,
+} from '@/contracts/room-reducer';
 
 import {
   roomActivityNeedsSessionAction,
@@ -245,6 +248,58 @@ describe('selectRoomTurnExecution', () => {
     ]);
   });
 
+  it('hides superseded internal attempts once a later public step exists', () => {
+    const projection = createRoomProjection('room-1');
+    projection.turnOrder.push('root-1');
+    projection.turnsById['root-1'] = {
+      id: 'root-1',
+      rootId: 'root-1',
+      status: 'running',
+      messageIds: ['alignment'],
+      activityIds: ['failed-attempt', 'aligned-attempt', 'active-attempt'],
+      participantIds: ['participant-1'],
+      dispatchIds: ['dispatch-a', 'dispatch-b', 'dispatch-c'],
+      dispatchParticipantIds: {
+        'dispatch-a': 'participant-1',
+        'dispatch-b': 'participant-1',
+        'dispatch-c': 'participant-1',
+      },
+      createdAtMs: 1,
+      updatedAtMs: 4,
+    };
+    projection.activitiesById['failed-attempt'] = activity(
+      'failed-attempt', 'dispatch-a', 'failed', 1,
+    );
+    projection.activitiesById['aligned-attempt'] = activity(
+      'aligned-attempt', 'dispatch-b', 'completed', 2,
+    );
+    projection.activitiesById['active-attempt'] = activity(
+      'active-attempt', 'dispatch-c', 'running', 4,
+    );
+    projection.messagesById.alignment = {
+      id: 'alignment',
+      roomId: 'room-1',
+      turnId: 'root-1',
+      participantId: 'participant-1',
+      sourceSessionId: 'session-1',
+      role: 'assistant',
+      status: 'completed',
+      text: '需求已经对齐',
+      projectionKind: 'post',
+      postKind: 'alignment',
+      rootId: 'root-1',
+      dispatchId: 'dispatch-b',
+      createdAtMs: 3,
+    };
+
+    const selected = selectRoomTurnExecution(projection, 'root-1');
+
+    expect(selected.lanes.map((lane) => lane.dispatchId)).toEqual([
+      'dispatch-b',
+      'dispatch-c',
+    ]);
+  });
+
   it('keeps a bounded Provider failure visible in its dispatch lane', () => {
     const projection = createRoomProjection('room-1');
     projection.turnOrder.push('root-1');
@@ -461,3 +516,26 @@ describe('selectRoomTurnExecution', () => {
 
 
 });
+
+function activity(
+  id: string,
+  dispatchId: string,
+  status: RoomActivityProjection['status'],
+  createdAtMs: number,
+): RoomActivityProjection {
+  return {
+    id,
+    turnId: 'root-1',
+    participantId: 'participant-1',
+    sourceSessionId: 'session-1',
+    kind: 'participant_activity',
+    status,
+    summary: id,
+    payload: {
+      rootId: 'root-1',
+      dispatchId,
+      sourceEventType: status === 'running' ? 'current_progress' : 'tool_finished',
+    },
+    createdAtMs,
+  };
+}

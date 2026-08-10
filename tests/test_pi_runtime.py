@@ -298,6 +298,23 @@ class PiRuntimePermissionSelectionTests(unittest.TestCase):
             ("memory", "todo", "workspace_lsp"),
         )
 
+    def test_read_only_coordinator_gets_foreground_shell_but_not_background_jobs(self) -> None:
+        selected = _tools_for_session(
+            (
+                "workspace_read",
+                "workspace_shell",
+                "workspace_job",
+                "workspace_write",
+            ),
+            {
+                "mode": "coordinator",
+                "toolProfileVersion": "subagent-readonly-v1",
+                "executionMode": "read_only",
+            },
+        )
+
+        self.assertEqual(selected, ("workspace_read", "workspace_shell"))
+
 
 class PiRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -1283,6 +1300,50 @@ class PiRuntimeTests(unittest.TestCase):
             ["file", "text"],
         )
         self.assertEqual(completed[-1]["blocks"][0]["data"]["fileName"], "handoff.md")
+
+    def test_legacy_bash_projection_uses_the_structured_exit_receipt(self) -> None:
+        session_id = str(self.session["id"])
+        self.runtime.ensure(session_id)
+        with self.runtime._lock:
+            client = self.runtime._client
+            self.runtime._active_turn_id = "turn:legacy-bash-status"
+        assert client is not None
+
+        for label, exit_code in (("success", 0), ("failed", 1)):
+            self.runtime._handle_pi_event(
+                client,
+                session_id,
+                {
+                    "type": "tool_execution_end",
+                    "toolCallId": f"call-legacy-bash-{label}",
+                    "toolName": "bash",
+                    "result": {
+                        "content": [{
+                            "type": "text",
+                            "text": "FAILED is ordinary command output",
+                        }],
+                        "details": {
+                            "receipt": {
+                                "exitCode": exit_code,
+                                "timedOut": False,
+                            }
+                        },
+                    },
+                    "isError": False,
+                },
+            )
+
+        events = {
+            str(item.payload.get("toolCallId")): item.payload
+            for item in self.events.replay(session_id)[0]
+            if item.event_type == "tool_finished"
+        }
+        self.assertFalse(events["call-legacy-bash-success"]["isError"])
+        self.assertTrue(events["call-legacy-bash-failed"]["isError"])
+        self.assertEqual(
+            events["call-legacy-bash-failed"]["publicResult"]["error"],
+            "FAILED is ordinary command output",
+        )
 
     def test_runtime_prompt_forwards_rpc_image_content(self) -> None:
         session_id = str(self.session["id"])

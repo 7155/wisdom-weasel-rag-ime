@@ -273,6 +273,18 @@ describe('control route policy', () => {
     ).toThrow(/body field/);
   });
 
+  it('allows the bounded recent view without changing full Session snapshot callers', () => {
+    expect(() => assertControlRequest({
+      pathId: 'agent.session.snapshot',
+      params: { sessionId: 'session-1' },
+      query: { view: 'recent' },
+    })).not.toThrow();
+    expect(() => assertControlRequest({
+      pathId: 'agent.session.snapshot',
+      params: { sessionId: 'session-1' },
+    })).not.toThrow();
+  });
+
   it('keeps configuration file paths behind the five local migration contracts', () => {
     expect(() => assertControlRequest({
       pathId: 'configuration.import.preview',

@@ -59,21 +59,62 @@ class AgentApprovalApplicationService:
         payload: Mapping[str, object],
     ) -> dict[str, object]:
         session_id = _required_text(payload, "sessionId")
+        requested_state = str(payload.get("state") or "").strip()
+        requested_limit = _integer(
+            payload.get("limit"),
+            default=100,
+            minimum=1,
+            maximum=500,
+        )
+        recent = self.host.sessions.list_approvals(
+            session_id=session_id,
+            limit=500,
+        )
+        self._reconcile_runtime_terminal_approvals(recent)
+        items = (
+            recent[:requested_limit]
+            if not requested_state
+            else self.host.sessions.list_approvals(
+                session_id=session_id,
+                state=requested_state,
+                limit=requested_limit,
+            )
+        )
         return {
             "schemaVersion": "rag-ime.agent-approval-list.v1",
             "ok": True,
             "sessionId": session_id,
-            "items": self.host.sessions.list_approvals(
-                session_id=session_id,
-                state=str(payload.get("state") or "").strip(),
-                limit=_integer(
-                    payload.get("limit"),
-                    default=100,
-                    minimum=1,
-                    maximum=500,
-                ),
-            ),
+            "items": items,
         }
+
+    def _reconcile_runtime_terminal_approvals(
+        self,
+        approvals: list[Mapping[str, object]],
+    ) -> None:
+        """Deliver durable approval terminal states to a waiting Pi Tool call."""
+
+        for approval in approvals:
+            state = str(approval.get("state") or "")
+            if state not in {
+                "applied",
+                "external_pending",
+                "rejected",
+                "expired",
+                "stale",
+                "failed",
+            }:
+                continue
+            session_id = str(approval.get("sessionId") or "")
+            approval_id = str(approval.get("approvalId") or "")
+            if not self.host.runtime.has_pending_approval(
+                session_id,
+                approval_id,
+            ):
+                continue
+            if state in {"applied", "external_pending"}:
+                self.finish_decision(approval, pending_in_pi=True)
+            else:
+                self.finish_terminal(approval, pending_in_pi=True)
 
     def resolve_review(
         self,
@@ -306,12 +347,36 @@ class AgentApprovalApplicationService:
 
         if approved and self.host._approval_executor is None:
             raise ValueError("approval executor is unavailable")
-        decided = self.host.sessions.decide_approval(
-            approval_id,
-            approved=approved,
-            payload_sha256=str(current["payloadSha256"]),
-            decided_by=decided_by,
-        )
+        try:
+            decided = self.host.sessions.decide_approval(
+                approval_id,
+                approved=approved,
+                payload_sha256=str(current["payloadSha256"]),
+                decided_by=decided_by,
+            )
+        except ValueError:
+            terminal = self.host.sessions.get_approval(approval_id)
+            if terminal.get("state") not in {"expired", "stale"}:
+                raise
+            decision_result = self.finish_terminal(
+                terminal,
+                pending_in_pi=self.host.runtime.has_pending_approval(
+                    session_id,
+                    approval_id,
+                ),
+            )
+            result = self._automatic_terminal_result(terminal)
+            result["runtimeNotified"] = bool(
+                decision_result.get("runtimeNotified")
+            )
+            result["runtimeWarning"] = str(
+                decision_result.get("runtimeWarning") or ""
+            )
+            if model_decision is not None:
+                result["decisionMode"] = "model"
+                result["modelDecided"] = True
+                result["approvalModelDecision"] = dict(model_decision)
+            return result
         final = self.execute_approved(decided) if approved else dict(decided)
         memory_checkpoint = (
             self.checkpoint_applied(final)

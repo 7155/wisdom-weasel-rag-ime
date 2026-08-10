@@ -29,6 +29,8 @@ AGENT_APPROVAL_MODEL_DECISION_SCHEMA_VERSION = (
 # stamp it; keeping it in the application layer forced the domain to import
 # upward for a constant.
 DEFAULT_RUNTIME_PROFILE_REVISION = "room-runtime-profile:interactive-v1"
+REVIEW_AXES = ("technical", "requirements")
+REVIEW_AXIS_SET = frozenset(REVIEW_AXES)
 
 CONTRACT_FILES = {
     "rootExecution": "room-root-execution.v3.json",

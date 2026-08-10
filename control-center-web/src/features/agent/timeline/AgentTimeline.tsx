@@ -25,10 +25,38 @@ import { conversationMarkerIndexes } from './conversation-markers';
 import { useAgentLiveStore } from '../state/live-store';
 import { publicAgentErrorText } from '../public-error';
 
+export function isRoomPublicPostMessage(message: AgentMessageProjection): boolean {
+  if (message.id.startsWith('room-post:')) return true;
+  return message.blocks.some((block) => (
+    block.source?.kind === 'room_post'
+    || (
+      message.role === 'assistant'
+      && message.turnId.startsWith('room-root:')
+      && block.visibility === 'room_post'
+    )
+  ));
+}
+
+/** Room Posts remain in the durable transcript for audit/recovery, but their
+ * public rendering belongs to the Room task card. A Session timeline only
+ * owns direct user/assistant turns and their Runtime activities. */
+export function visibleAgentTurnIds(projection: AgentProjectionState): string[] {
+  return projection.turnOrder.filter((turnId) => {
+    const turn = projection.turnsById[turnId];
+    if (!turn) return false;
+    const hasVisibleMessage = turn.messageIds.some((messageId) => {
+      const message = projection.messagesById[messageId];
+      return Boolean(message && !isRoomPublicPostMessage(message));
+    });
+    return hasVisibleMessage || turn.activityIds.length > 0;
+  });
+}
+
 export function AgentTimeline({
   assistantName = '澄',
   sessionId,
   persona,
+  loading = false,
   modelSelectionAvailable,
   turnRecoveryDisabled = false,
   onSuggestion,
@@ -48,6 +76,7 @@ export function AgentTimeline({
   assistantName?: string;
   sessionId: string;
   persona?: AgentPersonaV1;
+  loading?: boolean;
   modelSelectionAvailable: boolean;
   turnRecoveryDisabled?: boolean;
   onSuggestion: (value: string) => void;
@@ -78,10 +107,7 @@ export function AgentTimeline({
   const turnOrder = useAgentLiveStore(useShallow((state) => {
     const projection = state.projections[sessionId];
     if (!projection) return emptyIds;
-    return projection.turnOrder.filter((turnId) => {
-      const turn = projection.turnsById[turnId];
-      return Boolean(turn && (turn.messageIds.length > 0 || turn.activityIds.length > 0));
-    });
+    return visibleAgentTurnIds(projection);
   }));
   const activeTurnIndex = Math.floor(
     (visibleRange.startIndex + visibleRange.endIndex) / 2,
@@ -97,7 +123,10 @@ export function AgentTimeline({
     if (!turn) return 'complete';
     if (turn.status === 'failed') return 'failed';
     if (turn.status === 'queued' || turn.status === 'running' || turn.status === 'waiting') return 'active';
-    const hasAssistant = turn.messageIds.some((messageId) => projection?.messagesById[messageId]?.role === 'assistant');
+    const hasAssistant = turn.messageIds.some((messageId) => {
+      const message = projection?.messagesById[messageId];
+      return message?.role === 'assistant' && !isRoomPublicPostMessage(message);
+    });
     return hasAssistant ? 'complete' : 'user';
   })));
   const markerUserPreviews = useAgentLiveStore(useShallow((state) => markerIndexes.map((index) => {
@@ -116,7 +145,9 @@ export function AgentTimeline({
     const messages = turn?.messageIds
       .map((messageId) => projection?.messagesById[messageId])
       .filter((item): item is AgentMessageProjection => (
-        item?.role === 'assistant' && item.status !== 'streaming'
+        item?.role === 'assistant'
+        && item.status !== 'streaming'
+        && !isRoomPublicPostMessage(item)
       )) ?? [];
     return messagePreview(messages.at(-1));
   })));
@@ -252,6 +283,14 @@ export function AgentTimeline({
     };
   }, [jumpRequest?.messageId, jumpRequest?.requestId, sessionId]);
   if (turnOrder.length === 0) {
+    if (loading) {
+      return (
+        <div className="agent-timeline-loading" role="status" aria-label="正在打开对话" aria-live="polite">
+          <CircleDashed aria-hidden="true" size={18} />
+          <span><strong>正在打开对话</strong><small>先恢复最近内容，完整记录会继续载入。</small></span>
+        </div>
+      );
+    }
     return <AgentWelcome assistantName={assistantName} persona={persona} onSuggestion={onSuggestion} />;
   }
   return (
@@ -444,7 +483,9 @@ export function AgentTurn({
     const projection = state.projections[sessionId];
     return (projection?.turnsById[turnId]?.messageIds ?? [])
       .map((id) => projection?.messagesById[id])
-      .filter((message): message is AgentMessageProjection => message?.role === 'assistant');
+      .filter((message): message is AgentMessageProjection => (
+        message?.role === 'assistant' && !isRoomPublicPostMessage(message)
+      ));
   }));
   const activities = useAgentLiveStore(useShallow((state) => {
     const projection = state.projections[sessionId];
@@ -475,7 +516,7 @@ export function AgentTurn({
     const messageIds = projection?.turnsById[turnId]?.messageIds ?? [];
     for (const messageId of messageIds) {
       const message = projection?.messagesById[messageId];
-      if (message?.role !== 'assistant') continue;
+      if (message?.role !== 'assistant' || isRoomPublicPostMessage(message)) continue;
       const errorBlock = message.blocks.find((block) => block.type === 'error');
       const messageText = text(errorBlock?.data.message ?? errorBlock?.data.summary);
       if (messageText) return messageText;

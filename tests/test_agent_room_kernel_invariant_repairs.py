@@ -9,6 +9,7 @@ from rag_ime.agent_room_context import RoomContextLedgerStore
 from rag_ime.agent_room_kernel import (
     RoomKernelFenceError,
     RoomKernelStore,
+    _room_commit_post_id,
     _stable_id,
 )
 from rag_ime.agent_room_kernel_contracts import ROOM_POST_SCHEMA_VERSION
@@ -114,7 +115,7 @@ class RoomKernelInvariantRepairTests(unittest.TestCase):
             now_ms=3,
         )
         commit_id = "commit:user-wait"
-        question_post_id = _stable_id("room-post", commit_id)
+        question_post_id = _room_commit_post_id(commit_id)
         proposal = {
             **post_proposal(
                 commit_id,
@@ -302,7 +303,7 @@ class RoomKernelInvariantRepairTests(unittest.TestCase):
                     acceptance_criteria=("criterion:definition",),
                     independent_review_required=False,
                     execute_dispatch_payload=execute,
-                    details={"requiresStartAction": True},
+                    details={"requiresStartAction": False},
                     now_ms=4,
                 )
 

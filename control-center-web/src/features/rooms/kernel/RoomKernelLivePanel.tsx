@@ -18,7 +18,9 @@ import {
 import { parseContract } from '@/contracts/validators';
 import { useOptionalControlTransport } from '@/app/control-transport';
 import type { ControlTransport } from '@/platform/transport';
+import { usePageVisibility } from '@/platform/use-page-visibility';
 import { RoomKernelControlPlane } from './RoomKernelControlPlane';
+import type { RoomTaskConversationTarget } from './RoomTaskFlowGraph';
 import type { RoomTaskSubagentRun } from './RoomTaskFlowGraph';
 import { parseRoomRequirementsReadProjection, type RoomRequirementsReadProjection } from '../requirements/room-requirements-read-model';
 import type { RoomCollaborationRole, RoomWorkItem } from '../room-types';
@@ -54,17 +56,23 @@ export type RoomTaskSubagentLineage = {
 };
 
 export function RoomKernelLivePanel({
+  navigableRootIds = new Set<string>(),
+  onNavigateToTask,
   participantLabels = {},
   participantSessionIds = [],
   participantRoles = {},
+  refreshRevision = 0,
   roomId,
   subagentsByTaskId: providedSubagentsByTaskId,
   visible = true,
   workItems = [],
 }: {
+  navigableRootIds?: ReadonlySet<string>;
+  onNavigateToTask?: (target: RoomTaskConversationTarget) => void;
   participantLabels?: Record<string, string>;
   participantSessionIds?: readonly string[];
   participantRoles?: Record<string, RoomCollaborationRole>;
+  refreshRevision?: number;
   roomId: string;
   subagentsByTaskId?: Record<string, RoomTaskSubagentRun[]>;
   visible?: boolean;
@@ -313,7 +321,7 @@ export function RoomKernelLivePanel({
       snapshotController?.abort();
       unsubscribe?.();
     };
-  }, [recoveryRequest, roomId, transport]);
+  }, [recoveryRequest, refreshRevision, roomId, transport]);
 
   if (!visible) return null;
 
@@ -350,6 +358,8 @@ export function RoomKernelLivePanel({
       capabilityReceiptsByRootId={capabilityReceipts(projection)}
       commandTransport={controlGate?.commandEnabled && commandTransport ? commandTransport : undefined}
       commandDisabledReason={kernelCommandDisabledReason(controlGate)}
+      navigableRootIds={navigableRootIds}
+      onNavigateToTask={onNavigateToTask}
       panicEnabled={controlGate?.panicEnabled === true}
       participantLabels={participantLabels}
       participantRoles={participantRoles}
@@ -385,6 +395,7 @@ export function useRoomTaskSubagents({
   roomId: string;
   transport: ControlTransport | null;
 }): Record<string, RoomTaskSubagentRun[]> {
+  const pageVisible = usePageVisibility();
   const sessionIds = uniqueRoomParticipantSessionIds(participantSessionIds);
   const lineageByTaskId = roomTaskSubagentLineage(projection);
   const lineageKey = roomTaskSubagentLineageKey(lineageByTaskId);
@@ -409,7 +420,7 @@ export function useRoomTaskSubagents({
       readModelRef.current = next;
       setReadModel(next);
     };
-    if (!enabled || !transport || !roomId || !sessionIds.length || !taskIds.length) {
+    if (!enabled || !pageVisible || !transport || !roomId || !sessionIds.length || !taskIds.length) {
       if (current.scopeKey !== scopeKey || Object.keys(current.sessions).length) {
         retained = {};
         publish();
@@ -472,7 +483,7 @@ export function useRoomTaskSubagents({
       for (const timer of timers) window.clearTimeout(timer);
       for (const controller of controllers) controller.abort();
     };
-  }, [enabled, lineageKey, potentiallyActive, roomId, scopeKey, sessionKey, transport]);
+  }, [enabled, lineageKey, pageVisible, potentiallyActive, roomId, scopeKey, sessionKey, transport]);
 
   if (readModel.scopeKey !== scopeKey) return {};
   return mergeRoomTaskSubagentSessions(readModel.sessions, new Set(taskIds));

@@ -450,6 +450,7 @@ export function selectRoomParticipantPublicProgress(
   for (const activityId of state.activityOrder) {
     const activity = state.activitiesById[activityId];
     if (!activity) continue;
+    if (!roomActivityHasPublicInformation(activity)) continue;
     const sourceEventType = text(activity.payload.sourceEventType);
     const activityKind = text(activity.payload.activityKind);
     retainLatest({
@@ -499,6 +500,20 @@ export function selectRoomParticipantPublicProgress(
       right.participantId || right.sourceSessionId,
     )
   ));
+}
+
+export function roomActivityHasPublicInformation(
+  activity: RoomActivityProjection,
+): boolean {
+  if (['failed', 'waiting', 'aborted'].includes(activity.status)) return true;
+  const sourceEventType = text(activity.payload.sourceEventType);
+  const activityKind = text(activity.payload.activityKind);
+  const isProgress = ['current_progress', 'progress'].includes(sourceEventType)
+    || activityKind === 'work';
+  if (!isProgress) return true;
+  const summary = activity.summary.trim().replace(/[\s。.!！]+$/gu, '');
+  if (!summary || summary === sourceEventType || summary === activity.kind) return false;
+  return !/^(?:公开|伙伴|协作|工作|任务)?(?:进度|状态)(?:已经|已)?(?:同步|更新|完成)$/u.test(summary);
 }
 
 export function applyRoomSnapshot(

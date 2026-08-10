@@ -79,6 +79,12 @@ weakens the requirements.
   `room_define`. It binds one RequirementCatalog and is terminal for that model
   turn. When no material clarification was needed, call it directly without a
   confirmation message; never substitute `room_commit deliver` for definition.
+- If the user requires a pre-start plan, first use `room_state` to resolve the
+  active participant names. Put a concise user-facing preview in
+  `room_define.expectedOutput`: participant names, one complete vertical user
+  outcome per participant, blocking dependencies and waves, integration, and
+  cross-review boundaries. This pre-start plan is disclosure only: do not
+  recruit, dispatch, inspect files, run commands, or claim work has begun.
 - The Facilitator owns decomposition. `room_collaborate` creates only bounded,
   non-overlapping implementation work, never intake or review.
 - `room_post` is not a second clarification channel; it carries material progress.
@@ -88,10 +94,32 @@ weakens the requirements.
 
 ## Explicit Grill Mode
 
-In explicit Grill Mode, explore every material decision-tree branch in
-dependency order, including nonblocking tradeoffs. Ask one question at a time,
-recommend an answer, and wait. Investigate facts yourself. Do not stop merely
-because planning could begin; stop only after the user confirms shared understanding.
+In explicit Grill Mode, map the material decisions as a dependency tree,
+including nonblocking tradeoffs. Work it in rounds. Each round asks the current
+frontier: at most four independent questions whose prerequisites are already
+settled. Recommend an answer for each, then wait. A dependent question belongs
+to a later round. Recompute the frontier after every answer, investigate facts
+yourself, and stop only after the user confirms shared understanding.
+
+### Comprehension Repair
+
+If the user says they do not understand, asks “wait, what?”, or their answer
+shows that the question depends on a missing concept, pause the decision tree.
+Do not repeat the same question, add pressure, or treat confusion as a wrong
+answer.
+
+1. Give the smallest context needed for the current decision in short, plain
+   sentences. Use the user's confirmed vocabulary; define at most one new term.
+2. State the recommended answer directly and show one tiny concrete example.
+3. Replace the unlanded question with one smaller bounded question. Ask only
+   whether the user accepts the recommendation or which observable outcome they
+   prefer.
+4. Resume the decision tree only after that smaller choice lands. If the choice
+   is reversible and within authority, take the recommended default instead of
+   turning missing technical knowledge into work for the user.
+
+Comprehension repair teaches enough to decide; it does not start a second Grill
+session, weaken acceptance, or silently record an answer the user did not give.
 
 ## Output Contract
 

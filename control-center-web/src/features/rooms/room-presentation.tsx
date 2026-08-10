@@ -58,14 +58,11 @@ export function roomExecutionModeLabel(value: RoomExecutionMode | undefined): st
 
 export function recommendedCreateRole(
   roleId: string,
-  selectedRoleIds: string[],
+  _selectedRoleIds: string[],
   coordinatorRoleId: string,
 ): RoomCollaborationRole {
   if (roleId === coordinatorRoleId) return 'coordinator';
-  const collaboratorIndex = selectedRoleIds
-    .filter((selectedRoleId) => selectedRoleId !== coordinatorRoleId)
-    .indexOf(roleId);
-  return (['implementer', 'reviewer', 'researcher'] as const)[collaboratorIndex] ?? 'implementer';
+  return 'implementer';
 }
 
 export function roomCreateParticipantLabel(

@@ -9,6 +9,7 @@ import { useRoomLiveSession } from './use-room-live-session';
 afterEach(() => {
   cleanup();
   useRoomLiveStore.getState().reset();
+  vi.useRealTimers();
 });
 
 describe('useRoomLiveSession snapshot recovery', () => {
@@ -51,13 +52,18 @@ describe('useRoomLiveSession snapshot recovery', () => {
     unmount();
   });
 
-  it('clears a transient stream error only after the reconnect opens', async () => {
+  it('recovers a transient stream error without requiring a click', async () => {
+    vi.useFakeTimers();
     const onConnectionRestored = vi.fn();
     const onConnectionError = vi.fn();
     const onRecoveryState = vi.fn();
+    let snapshotCalls = 0;
     const transport = new ReconnectableMockControlTransport({
       routes: {
-        'agent.room.snapshot': roomSnapshot([]),
+        'agent.room.snapshot': () => {
+          snapshotCalls += 1;
+          return roomSnapshot([]);
+        },
       },
     });
 
@@ -73,17 +79,220 @@ describe('useRoomLiveSession snapshot recovery', () => {
       onEvents: vi.fn(),
     }));
 
-    await waitFor(() => expect(onConnectionRestored).toHaveBeenCalledTimes(1));
+    await flushAsyncWork();
+    expect(onConnectionRestored).toHaveBeenCalledTimes(1);
     expect(onRecoveryState).toHaveBeenLastCalledWith('room-1', 'synced');
 
     act(() => transport.disconnect(new Error('stream interrupted')));
     expect(onConnectionError).toHaveBeenCalledTimes(1);
     expect(onConnectionRestored).toHaveBeenCalledTimes(1);
-    expect(onRecoveryState).toHaveBeenLastCalledWith('room-1', 'failed');
+    expect(onRecoveryState).toHaveBeenLastCalledWith('room-1', 'recovering');
 
-    act(() => transport.reopen('room-1:0'));
+    await act(async () => vi.advanceTimersByTimeAsync(999));
+    expect(snapshotCalls).toBe(1);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    await flushAsyncWork();
+    expect(snapshotCalls).toBe(2);
     expect(onConnectionRestored).toHaveBeenCalledTimes(2);
     expect(onRecoveryState).toHaveBeenLastCalledWith('room-1', 'synced');
+    unmount();
+  });
+
+  it('automatically retries a failed snapshot after a bounded delay', async () => {
+    vi.useFakeTimers();
+    let snapshotCalls = 0;
+    const onConnectionRestored = vi.fn();
+    const onRecoveryState = vi.fn();
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.room.snapshot': () => {
+          snapshotCalls += 1;
+          if (snapshotCalls === 1) throw new Error('gateway restarting');
+          return roomSnapshot([]);
+        },
+      },
+    });
+
+    const { unmount } = renderHook(() => useRoomLiveSession({
+      roomId: 'room-1',
+      transport,
+      onLoadingChange: vi.fn(),
+      onSnapshot: vi.fn(),
+      onMetadata: vi.fn(),
+      onConnectionRestored,
+      onConnectionError: vi.fn(),
+      onRecoveryState,
+      onEvents: vi.fn(),
+    }));
+
+    await flushAsyncWork();
+    expect(snapshotCalls).toBe(1);
+    expect(onRecoveryState).toHaveBeenLastCalledWith('room-1', 'recovering');
+    await act(async () => vi.advanceTimersByTimeAsync(999));
+    expect(snapshotCalls).toBe(1);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    await flushAsyncWork();
+    expect(snapshotCalls).toBe(2);
+    expect(onConnectionRestored).toHaveBeenCalledTimes(1);
+    expect(onRecoveryState).toHaveBeenLastCalledWith('room-1', 'synced');
+    unmount();
+  });
+
+  it('cancels a scheduled recovery when the Room unmounts', async () => {
+    vi.useFakeTimers();
+    let snapshotCalls = 0;
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.room.snapshot': () => {
+          snapshotCalls += 1;
+          throw new Error('gateway unavailable');
+        },
+      },
+    });
+
+    const { unmount } = renderHook(() => useRoomLiveSession({
+      roomId: 'room-1',
+      transport,
+      onLoadingChange: vi.fn(),
+      onSnapshot: vi.fn(),
+      onMetadata: vi.fn(),
+      onConnectionRestored: vi.fn(),
+      onConnectionError: vi.fn(),
+      onRecoveryState: vi.fn(),
+      onEvents: vi.fn(),
+    }));
+
+    await flushAsyncWork();
+    expect(snapshotCalls).toBe(1);
+    unmount();
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(snapshotCalls).toBe(1);
+  });
+
+  it('resets the recovery delay after a successful open', async () => {
+    vi.useFakeTimers();
+    let snapshotCalls = 0;
+    const transport = new ReconnectableMockControlTransport({
+      routes: {
+        'agent.room.snapshot': () => {
+          snapshotCalls += 1;
+          return roomSnapshot([]);
+        },
+      },
+    });
+
+    const { unmount } = renderHook(() => useRoomLiveSession({
+      roomId: 'room-1',
+      transport,
+      onLoadingChange: vi.fn(),
+      onSnapshot: vi.fn(),
+      onMetadata: vi.fn(),
+      onConnectionRestored: vi.fn(),
+      onConnectionError: vi.fn(),
+      onRecoveryState: vi.fn(),
+      onEvents: vi.fn(),
+    }));
+
+    await flushAsyncWork();
+    act(() => transport.disconnect(new Error('first interruption')));
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    await flushAsyncWork();
+    expect(snapshotCalls).toBe(2);
+
+    act(() => transport.disconnect(new Error('second interruption')));
+    await act(async () => vi.advanceTimersByTimeAsync(999));
+    expect(snapshotCalls).toBe(2);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    await flushAsyncWork();
+    expect(snapshotCalls).toBe(3);
+    unmount();
+  });
+
+  it('coalesces repeated manual retries while a snapshot request is active', async () => {
+    let snapshotCalls = 0;
+    let resolveFirstSnapshot: ((value: ReturnType<typeof roomSnapshot>) => void) | undefined;
+    const firstSnapshot = new Promise<ReturnType<typeof roomSnapshot>>((resolve) => {
+      resolveFirstSnapshot = resolve;
+    });
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.room.snapshot': () => {
+          snapshotCalls += 1;
+          return snapshotCalls === 1 ? firstSnapshot : roomSnapshot([]);
+        },
+      },
+    });
+
+    const { result, unmount } = renderHook(() => useRoomLiveSession({
+      roomId: 'room-1',
+      transport,
+      onLoadingChange: vi.fn(),
+      onSnapshot: vi.fn(),
+      onMetadata: vi.fn(),
+      onConnectionRestored: vi.fn(),
+      onConnectionError: vi.fn(),
+      onRecoveryState: vi.fn(),
+      onEvents: vi.fn(),
+    }));
+
+    expect(snapshotCalls).toBe(1);
+    act(() => {
+      result.current();
+      result.current();
+      result.current();
+    });
+    expect(snapshotCalls).toBe(1);
+    await act(async () => {
+      resolveFirstSnapshot?.(roomSnapshot([]));
+      await firstSnapshot;
+    });
+    await flushAsyncWork();
+    expect(snapshotCalls).toBe(2);
+    unmount();
+  });
+
+  it('offers manual recovery after sustained failures and resets the pending backoff', async () => {
+    vi.useFakeTimers();
+    let snapshotCalls = 0;
+    let gatewayReady = false;
+    const onRecoveryState = vi.fn();
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.room.snapshot': () => {
+          snapshotCalls += 1;
+          if (!gatewayReady) throw new Error('gateway unavailable');
+          return roomSnapshot([]);
+        },
+      },
+    });
+
+    const { result, unmount } = renderHook(() => useRoomLiveSession({
+      roomId: 'room-1',
+      transport,
+      onLoadingChange: vi.fn(),
+      onSnapshot: vi.fn(),
+      onMetadata: vi.fn(),
+      onConnectionRestored: vi.fn(),
+      onConnectionError: vi.fn(),
+      onRecoveryState,
+      onEvents: vi.fn(),
+    }));
+
+    await flushAsyncWork();
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    await flushAsyncWork();
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    await flushAsyncWork();
+    expect(snapshotCalls).toBe(3);
+    expect(onRecoveryState).toHaveBeenLastCalledWith('room-1', 'failed');
+
+    gatewayReady = true;
+    act(() => result.current());
+    await flushAsyncWork();
+    expect(snapshotCalls).toBe(4);
+    expect(onRecoveryState).toHaveBeenLastCalledWith('room-1', 'synced');
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    expect(snapshotCalls).toBe(4);
     unmount();
   });
 });
@@ -103,11 +312,14 @@ class ReconnectableMockControlTransport extends MockControlTransport {
     this.roomObserver?.error?.(error);
   }
 
-  reopen(lastEventId: string): void {
-    this.roomObserver?.open?.(lastEventId);
-  }
 }
 
+async function flushAsyncWork(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
 
 
 function roomSnapshot(events: ReturnType<typeof roomEventFixture>[]) {

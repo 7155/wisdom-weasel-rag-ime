@@ -9,6 +9,10 @@ import type { UiRoomEvent } from '@/contracts/ui-events';
 import type { ControlTransport } from '@/platform/transport';
 import { useRoomLiveStore } from '../state/live-store';
 
+const ROOM_RECOVERY_BASE_DELAY_MS = 1_000;
+const ROOM_RECOVERY_MAX_DELAY_MS = 15_000;
+const ROOM_RECOVERY_VISIBLE_RETRY_ATTEMPT = 3;
+
 interface RoomLiveSessionCallbacks {
   onLoadingChange(loading: boolean): void;
   onSnapshot(roomId: string, snapshot: RoomEventSnapshot): void;
@@ -42,6 +46,10 @@ export function useRoomLiveSession({
     let active = true;
     let generation = 0;
     let reloadQueued = false;
+    let snapshotRunning = false;
+    let snapshotReloadPending = false;
+    let recoveryAttempt = 0;
+    let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
     let metadataRefreshQueued = false;
     let metadataRefreshRunning = false;
     let metadataRefreshPending = false;
@@ -51,7 +59,22 @@ export function useRoomLiveSession({
     useRoomLiveStore.getState().ensure(roomId);
     callbacksRef.current.onLoadingChange(true);
 
-    const scheduleSnapshotReload = () => {
+    const clearRecoveryTimer = () => {
+      if (recoveryTimer === undefined) return;
+      clearTimeout(recoveryTimer);
+      recoveryTimer = undefined;
+    };
+    const resetRecoveryBackoff = () => {
+      recoveryAttempt = 0;
+      clearRecoveryTimer();
+    };
+    const scheduleSnapshotReload = (resetBackoff = false) => {
+      if (resetBackoff) resetRecoveryBackoff();
+      else clearRecoveryTimer();
+      if (snapshotRunning) {
+        snapshotReloadPending = true;
+        return;
+      }
       if (!active || reloadQueued) return;
       reloadQueued = true;
       queueMicrotask(() => {
@@ -59,7 +82,29 @@ export function useRoomLiveSession({
         if (active) void loadSnapshotAndSubscribe();
       });
     };
-    retrySnapshotRef.current = scheduleSnapshotReload;
+    const retrySnapshot = () => {
+      if (!active) return;
+      callbacksRef.current.onRecoveryState(roomId, 'recovering');
+      scheduleSnapshotReload(true);
+    };
+    const scheduleAutomaticRecovery = () => {
+      if (!active || recoveryTimer !== undefined || reloadQueued || snapshotReloadPending) return;
+      const attempt = recoveryAttempt + 1;
+      const delayMs = Math.min(
+        ROOM_RECOVERY_BASE_DELAY_MS * (2 ** recoveryAttempt),
+        ROOM_RECOVERY_MAX_DELAY_MS,
+      );
+      recoveryAttempt = attempt;
+      callbacksRef.current.onRecoveryState(
+        roomId,
+        attempt >= ROOM_RECOVERY_VISIBLE_RETRY_ATTEMPT ? 'failed' : 'recovering',
+      );
+      recoveryTimer = setTimeout(() => {
+        recoveryTimer = undefined;
+        if (active) scheduleSnapshotReload();
+      }, delayMs);
+    };
+    retrySnapshotRef.current = retrySnapshot;
     const scheduleMetadataRefresh = () => {
       if (!active) return;
       metadataRefreshPending = true;
@@ -107,13 +152,17 @@ export function useRoomLiveSession({
     }
 
     async function loadSnapshotAndSubscribe(): Promise<void> {
+      if (snapshotRunning) {
+        snapshotReloadPending = true;
+        return;
+      }
+      snapshotRunning = true;
       callbacksRef.current.onRecoveryState(roomId, 'recovering');
       callbacksRef.current.onLoadingChange(true);
       const requestGeneration = ++generation;
       batcher.clear();
       unsubscribe?.();
       unsubscribe = undefined;
-      snapshotController?.abort();
       snapshotController = new AbortController();
       try {
         const value = await transport.request({
@@ -138,6 +187,7 @@ export function useRoomLiveSession({
           {
             open: () => {
               if (!active || subscriptionGeneration !== generation) return;
+              resetRecoveryBackoff();
               callbacksRef.current.onRecoveryState(roomId, 'synced');
               callbacksRef.current.onConnectionRestored(roomId);
             },
@@ -158,12 +208,16 @@ export function useRoomLiveSession({
             },
             error: (error) => {
               if (active && subscriptionGeneration === generation) {
+                unsubscribe?.();
+                unsubscribe = undefined;
+                generation += 1;
                 callbacksRef.current.onRecoveryState(roomId, 'failed');
                 callbacksRef.current.onConnectionError(
                   roomId,
                   error,
                   'Room 实时连接暂时中断，请稍后重试。',
                 );
+                scheduleAutomaticRecovery();
               }
             },
             snapshotRequired: () => {
@@ -188,17 +242,26 @@ export function useRoomLiveSession({
             '暂时无法同步 Room 对话；已显示的历史消息会保留，实时更新已暂停。',
           );
           callbacksRef.current.onLoadingChange(false);
+          scheduleAutomaticRecovery();
+        }
+      } finally {
+        snapshotRunning = false;
+        snapshotController = undefined;
+        if (active && snapshotReloadPending) {
+          snapshotReloadPending = false;
+          scheduleSnapshotReload();
         }
       }
     }
 
     void loadSnapshotAndSubscribe();
     return () => {
-      if (retrySnapshotRef.current === scheduleSnapshotReload) {
+      if (retrySnapshotRef.current === retrySnapshot) {
         retrySnapshotRef.current = () => undefined;
       }
       active = false;
       generation += 1;
+      clearRecoveryTimer();
       snapshotController?.abort();
       metadataController?.abort();
       batcher.clear();

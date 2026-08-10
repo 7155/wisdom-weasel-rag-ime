@@ -11,8 +11,9 @@ PUBLIC_ROOM_REPORT_MAX_CHARS = 8_000
 _PUBLIC_ROOM_REPORT_INTERNAL_MARKER = re.compile(
     r"(?:"
     r"\b[A-Za-z][A-Za-z0-9_]*(?:Id|Ref|Hash|Receipt)\b"
-    r"|(?i:\b(?:kernel|root|dispatch|task|ac|receipt(?:\s+id)?)\b)"
-    r"|(?i:\b(?:sha256|AC-\d+)\b)"
+    r"|(?i:\b(?:kernel|root|dispatch|task|receipt(?:\s+id)?)\b)"
+    r"|(?i:\bAC\b(?!-\d))"
+    r"|(?i:\bsha256\b)"
     r"|(?i:(?:room-(?:root|work|task|dispatch|commit|post|receipt)|"
     r"execution:invoke|invoke|participant|agent|dispatch|task|root|"
     r"receipt|evidence|proof|criterion|commit):[^\s`]+)"
@@ -63,6 +64,16 @@ _PUBLIC_ROOM_REPORT_VERIFICATION_CLAIM = re.compile(
     r"|(?:全部|所有|各项)(?:测试|检查|验证|验收|标准).{0,12}"
     r"(?:通过|完成|满足)"
     r"|(?:测试|检查|验证|验收|标准).{0,8}(?:全部|均|都|已经|已)"
+    r"(?:通过|完成|满足)"
+    r")"
+)
+_PUBLIC_ROOM_REPORT_ACCEPTANCE_CLAIM = re.compile(
+    r"(?i)(?:"
+    r"\b(?:all|every)\b.{0,20}\b(?:criteria|requirements?)\b"
+    r".{0,12}\b(?:passed|verified|complete(?:d)?|satisfied)\b"
+    r"|(?:全部|所有|各项)(?:验收|标准|需求).{0,12}"
+    r"(?:通过|完成|满足)"
+    r"|(?:验收|标准|需求).{0,8}(?:全部|均|都|已经|已)"
     r"(?:通过|完成|满足)"
     r")"
 )
@@ -186,6 +197,10 @@ def assert_public_room_report_claims(
         decision != "deliver"
         and not all_criteria_verified
         and _PUBLIC_ROOM_REPORT_VERIFICATION_CLAIM.search(content)
+        and (
+            decision != "handoff"
+            or _PUBLIC_ROOM_REPORT_ACCEPTANCE_CLAIM.search(content)
+        )
     ):
         raise ValueError(
             f"{field_name} must not claim completed verification without "

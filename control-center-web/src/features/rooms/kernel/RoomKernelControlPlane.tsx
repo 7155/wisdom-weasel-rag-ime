@@ -1,5 +1,4 @@
 import {
-  ArrowRight,
   CircleCheck,
   Clock3,
   FileText,
@@ -31,14 +30,19 @@ import type { RoomCollaborationRole, RoomWorkItem } from '../room-types';
 import { roomPublicActivityText } from '../timeline/room-tool-presentation';
 import {
   buildCancelRootCommand,
+  buildCancelTargetCommand,
   buildPanicCommand,
   buildRetryRootCommand,
   type RoomKernelCommandTransport,
 } from './room-kernel-command-transport';
 import {
   roomTaskIsVisibleWork,
+  roomRootVisualState,
   RoomTaskFlowGraph,
   RoomTaskWorkList,
+  type FlowVisualState,
+  type RoomTaskConversationTarget,
+  type RoomTaskDispatchStopTarget,
   type RoomTaskSubagentRun,
 } from './RoomTaskFlowGraph';
 import './room-kernel-control-plane.css';
@@ -70,6 +74,8 @@ export function RoomKernelControlPlane({
   contextReceiptsByRootId,
   commandTransport,
   commandDisabledReason,
+  navigableRootIds = new Set<string>(),
+  onNavigateToTask,
   panicEnabled = false,
   participantLabels = {},
   participantRoles = {},
@@ -86,6 +92,8 @@ export function RoomKernelControlPlane({
   capabilityReceiptsByRootId: Record<string, RuntimeReceiptSummary>;
   commandTransport?: RoomKernelCommandTransport;
   commandDisabledReason?: string;
+  navigableRootIds?: ReadonlySet<string>;
+  onNavigateToTask?: (target: RoomTaskConversationTarget) => void;
   panicEnabled?: boolean;
   participantLabels?: Record<string, string>;
   participantRoles?: Record<string, RoomCollaborationRole>;
@@ -94,22 +102,24 @@ export function RoomKernelControlPlane({
   requirementsByRootId?: Record<string, RoomRequirementsReadProjection>;
   workItems?: RoomWorkItem[];
 }) {
-  const roots = Object.values(projection.rootsById).sort((left, right) => {
-    const recency = roomRootRecency(right) - roomRootRecency(left);
-    return recency || left.rootId.localeCompare(right.rootId);
-  });
-  const tasks = Object.values(projection.tasksById).filter(roomTaskIsVisibleWork);
+  const latestRoot = latestAuthoritativeRoomRoot(Object.values(projection.rootsById));
+  const roots = latestRoot ? [latestRoot] : [];
+  const tasks = Object.values(projection.tasksById).filter((task) => (
+    task.rootId === latestRoot?.rootId && roomTaskIsVisibleWork(task)
+  ));
+  const rootDispatches = Object.values(projection.dispatchesById).filter((dispatch) => (
+    dispatch.rootId === latestRoot?.rootId
+  ));
   const completedTasks = tasks.filter((task) => task.state === 'completed').length;
   const activeTasks = tasks.filter((task) => ['active', 'review'].includes(task.state)).length;
   const waitingTasks = tasks.filter((task) => ['pending', 'waiting'].includes(task.state)).length;
   const attentionTasks = tasks.filter((task) => (
     ['blocked', 'failed', 'cancelled'].includes(task.state)
   )).length;
-  const attentionRoots = roots.filter((root) => (
-    ['waiting', 'blocked', 'cancelling', 'cancelled_with_unknowns', 'failed'].includes(
-      root.state,
-    )
-  )).length;
+  const attentionRoots = latestRoot
+    && roomRootVisualState(latestRoot, tasks, rootDispatches) === 'attention'
+    ? 1
+    : 0;
   const [panicPending, setPanicPending] = useState(false);
   const [panicConfirming, setPanicConfirming] = useState(false);
   const [panicReceipt, setPanicReceipt] = useState<RoomKernelReceiptV1 | null>(null);
@@ -189,6 +199,8 @@ export function RoomKernelControlPlane({
         capabilityReceipt={capabilityReceiptsByRootId[root.rootId]}
         commandTransport={commandTransport}
         commandDisabledReason={commandDisabledReason}
+        navigableRootIds={navigableRootIds}
+        onNavigateToTask={onNavigateToTask}
         participantLabels={participantLabels}
         participantRoles={participantRoles}
         requirements={requirementsByRootId[root.rootId]}
@@ -209,6 +221,8 @@ function RootControlSection({
   contextReceipt,
   commandTransport,
   commandDisabledReason,
+  navigableRootIds,
+  onNavigateToTask,
   projection,
   participantLabels,
   participantRoles,
@@ -226,6 +240,8 @@ function RootControlSection({
   capabilityReceipt?: RuntimeReceiptSummary;
   commandTransport?: RoomKernelCommandTransport;
   commandDisabledReason?: string;
+  navigableRootIds: ReadonlySet<string>;
+  onNavigateToTask?: (target: RoomTaskConversationTarget) => void;
   participantLabels: Record<string, string>;
   participantRoles: Record<string, RoomCollaborationRole>;
   participantProgress: RoomParticipantPublicProgressProjection[];
@@ -237,7 +253,14 @@ function RootControlSection({
     .map((postId) => projection.postsById[postId])
     .filter((post): post is RoomPostV2 => post?.rootId === root.rootId)
     .sort((left, right) => right!.createdAtMs - left!.createdAtMs);
-  const terminal = roomRootIsTerminal(root);
+  const rootVisualState = roomRootVisualState(
+    root,
+    Object.values(projection.tasksById).filter((task) => task.rootId === root.rootId),
+    Object.values(projection.dispatchesById).filter((dispatch) => dispatch.rootId === root.rootId),
+  );
+  const terminal = roomRootIsTerminal(root)
+    && rootVisualState !== 'active'
+    && rootVisualState !== 'waiting';
   const terminalReporterPosts = posts.filter((post) => (
     post?.kind === 'result'
     && post.publicationSource.kind === 'room_commit'
@@ -259,6 +282,10 @@ function RootControlSection({
   const tasks = Object.values(projection.tasksById)
     .filter((task) => task.rootId === root.rootId && roomTaskIsVisibleWork(task))
     .sort((left, right) => left.taskId.localeCompare(right.taskId));
+  const taskWorkItemIds = new Set(tasks.map((task) => task.workItemId).filter(Boolean));
+  const rootWorkItems = workItems.filter((item) => taskWorkItemIds.has(item.id));
+  const rootParticipantProgress = participantProgress.filter((item) => item.rootId === root.rootId);
+  const rootActivities = activities.filter((item) => item.turnId === root.rootId);
   const dispatches = Object.values(projection.dispatchesById)
     .filter((dispatch) => dispatch.rootId === root.rootId);
   const completedTasks = tasks.filter((task) => task.state === 'completed').length;
@@ -284,7 +311,11 @@ function RootControlSection({
     item.rootId === root.rootId && item.state !== 'terminated'
   ));
   const [pending, setPending] = useState(false);
+  const [stoppingDispatchIds, setStoppingDispatchIds] = useState<ReadonlySet<string>>(
+    new Set<string>(),
+  );
   const [commandReceipt, setCommandReceipt] = useState<RoomKernelReceiptV1 | null>(null);
+  const [targetCommandReceipt, setTargetCommandReceipt] = useState<RoomKernelReceiptV1 | null>(null);
   const [commandError, setCommandError] = useState('');
   const commandAwaitingProjection = Boolean(commandReceipt && commandReceipt.status !== 'rejected');
   const requestStop = async () => {
@@ -323,12 +354,46 @@ function RootControlSection({
       setPending(false);
     }
   };
+  const requestStopDispatch = async (target: RoomTaskDispatchStopTarget) => {
+    if (!commandTransport || stoppingDispatchIds.has(target.dispatchId)) return;
+    setStoppingDispatchIds((current) => new Set(current).add(target.dispatchId));
+    setTargetCommandReceipt(null);
+    setCommandError('');
+    const commandId = `ui-cancel-dispatch:${target.dispatchId}:${root.generation}:${Date.now()}`;
+    try {
+      const nextReceipt = await commandTransport.execute(buildCancelTargetCommand(
+        {
+          roomId: projection.roomId,
+          rootId: target.rootId,
+          generation: root.generation,
+          targetKind: 'dispatch',
+          targetId: target.dispatchId,
+        },
+        { commandId, sourceId: 'room-kernel-control-plane', createdAtMs: Date.now() },
+      ));
+      setTargetCommandReceipt(nextReceipt);
+      if (nextReceipt.status === 'rejected') {
+        setStoppingDispatchIds((current) => {
+          const next = new Set(current);
+          next.delete(target.dispatchId);
+          return next;
+        });
+      }
+    } catch (error) {
+      setStoppingDispatchIds((current) => {
+        const next = new Set(current);
+        next.delete(target.dispatchId);
+        return next;
+      });
+      setCommandError(roomCommandError(error, 'stop'));
+    }
+  };
   const taskTitle = rootTaskTitle(root, requirements);
-  return <article className="room-kernel-root" data-root-state={root.state}>
+  return <article className="room-kernel-root" data-root-state={rootVisualState}>
     <header className="room-kernel-root__header">
-      <span><small title={`第 ${root.generation} 次尝试`}>共同工作</small><strong>{taskTitle}</strong><i data-state={root.state}>{rootStateLabel(root, receipt)}</i></span>
+      <span><small title={`第 ${root.generation} 次尝试`}>共同工作</small><strong>{taskTitle}</strong><i data-state={rootVisualState}>{rootVisualStateLabel(root, receipt, rootVisualState)}</i></span>
       {!terminal || root.state === 'cancelled_with_unknowns' ? <span className="room-kernel-root__actions">
-        {root.state === 'blocked' ? <Button variant="secondary" size="small" leadingIcon={<RotateCcw size={13} />} disabled={!commandTransport || pending || commandAwaitingProjection} title={commandTransport ? '重新分派失败的部分，保留已经完成的工作' : commandDisabledReason || '当前连接没有继续任务的权限'} onClick={() => void requestRetry()}>{pending ? '正在继续' : commandAwaitingProjection ? '已请求继续' : '继续此任务'}</Button> : null}
+        {root.state === 'blocked' && rootVisualState === 'attention' ? <Button variant="secondary" size="small" leadingIcon={<RotateCcw size={13} />} disabled={!commandTransport || pending || commandAwaitingProjection} title={commandTransport ? '重新分派失败的部分，保留已经完成的工作' : commandDisabledReason || '当前连接没有继续任务的权限'} onClick={() => void requestRetry()}>{pending ? '正在继续' : commandAwaitingProjection ? '已请求继续' : '继续此任务'}</Button> : null}
         <Button variant="quiet" size="small" leadingIcon={<Square size={13} />} disabled={!commandTransport || pending || commandAwaitingProjection} title={commandTransport ? commandAwaitingProjection ? '正在等待任务控制结果' : '停止这个任务及其伙伴、工具和后续任务' : commandDisabledReason || '当前连接没有停止任务的权限'} onClick={() => void requestStop()}>{pending ? '正在处理' : commandAwaitingProjection ? '已发送请求' : root.state === 'cancelled_with_unknowns' ? '再次确认停止' : '停止此任务'}</Button>
       </span> : <span className="room-kernel-root__terminal" data-state={root.state}>{root.state === 'completed' ? <CircleCheck size={15} /> : root.state === 'failed' ? <TriangleAlert size={15} /> : <Square size={15} />}{terminalRootLabel(root)}</span>}
     </header>
@@ -344,26 +409,35 @@ function RootControlSection({
       dispatches={dispatches}
       finalPostCount={terminal ? visiblePosts.length : 0}
       goal={taskTitle}
+      navigableRootIds={navigableRootIds}
+      onNavigateToTask={onNavigateToTask}
+      onStopDispatch={commandTransport ? requestStopDispatch : undefined}
       participantLabels={participantLabels}
-      participantProgress={participantProgress}
+      participantProgress={rootParticipantProgress}
       posts={posts}
       root={root}
+      sessionsById={projection.sessionsById}
       tasks={tasks}
       subagentsByTaskId={subagentsByTaskId}
       terminalReceipt={receipt}
+      stoppingDispatchIds={stoppingDispatchIds}
+      workItems={rootWorkItems}
     />
+    {targetCommandReceipt ? <p className="room-kernel-control__target-receipt" role="status">
+      {receiptStatusLabel(targetCommandReceipt)}
+    </p> : null}
     <RoomTaskWorkList
-      activities={activities}
+      activities={rootActivities}
       dispatches={dispatches}
       participantLabels={participantLabels}
-      participantProgress={participantProgress}
+      participantProgress={rootParticipantProgress}
       posts={posts}
       root={root}
       subagentsByTaskId={subagentsByTaskId}
       taskUpdatedAtMsById={projection.taskUpdatedAtMsById}
       tasks={tasks}
       sessionsById={projection.sessionsById}
-      workItems={workItems}
+      workItems={rootWorkItems}
     />
     <details className="room-kernel-root__work-details">
       <summary>
@@ -377,7 +451,7 @@ function RootControlSection({
         dispatches={dispatches}
         participantLabels={participantLabels}
         participantRoles={participantRoles}
-        participantProgress={participantProgress}
+        participantProgress={rootParticipantProgress}
         root={root}
         tasks={tasks}
       />
@@ -791,7 +865,7 @@ function TaskOwnershipFlow({
             <strong>交接记录</strong>
             {transfers.length ? transfers.map((receipt) => <p key={receipt.receiptId}>
               <span>{participantLabel(textDetail(receipt, 'fromParticipantId'), participantLabels)}</span>
-              <ArrowRight size={13} aria-hidden="true" />
+              <GitBranch size={13} aria-hidden="true" />
               <span>{participantLabel(textDetail(receipt, 'toParticipantId'), participantLabels)}</span>
               <small>第 {integerDetail(receipt, 'ownershipRevision')} 版</small>
             </p>) : <small>尚未发生交接</small>}
@@ -862,6 +936,16 @@ function rootTaskTitle(
   return firstLine.length > 120 ? `${firstLine.slice(0, 117)}...` : firstLine;
 }
 
+function rootVisualStateLabel(
+  root: RootProjection,
+  receipt: RoomKernelReceiptV1 | undefined,
+  state: FlowVisualState,
+): string {
+  if (state === 'active') return root.state === 'cancelling' ? '正在停止' : '执行中';
+  if (state === 'waiting') return root.state === 'pending' ? '排队中' : '等待中';
+  return rootStateLabel(root, receipt);
+}
+
 function rootStateLabel(root: RootProjection, receipt?: RoomKernelReceiptV1): string {
   if (root.state === 'failed') return '未完成';
   if (root.state === 'cancelled') return '已停止';
@@ -909,8 +993,15 @@ function runtimeReceiptStatusLabel(value: RuntimeReceiptSummary['status']): stri
   return ({ pending: '待封存', sealed: '已封存', rejected: '已拒绝', missing: '缺失' } as const)[value];
 }
 
-function roomRootRecency(root: RootProjection): number {
-  return Math.max(root.updatedAtMs ?? 0, root.createdAtMs ?? 0);
+export function latestAuthoritativeRoomRoot(roots: RootProjection[]): RootProjection | undefined {
+  let latest: RootProjection | undefined;
+  for (const root of roots) {
+    // Kernel snapshots insert Roots in creation order. Live upserts preserve
+    // that object identity, so a delayed update from an older Root must never
+    // move it ahead of a newer user task.
+    if (!latest || (root.createdAtMs ?? 0) >= (latest.createdAtMs ?? 0)) latest = root;
+  }
+  return latest;
 }
 
 function roomRootIsTerminal(root: RootProjection): boolean {

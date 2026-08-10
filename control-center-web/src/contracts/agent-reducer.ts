@@ -8,7 +8,7 @@ import type {
   Todo as AgentTodoContract,
 } from './generated/agent-workflow-state.v1';
 import { parseAgentEvent, tryParseAgentMessage, validateContract } from './validators';
-import { approvalDecisionView } from './approval-decision';
+import { approvalDecisionView, approvalNeedsHumanDecision } from './approval-decision';
 
 export type AgentTurnStatus =
   | 'queued'
@@ -120,6 +120,8 @@ export interface AgentSnapshot {
   liveEvents: unknown[];
   lastSequence: number;
   resumeToken: string;
+  snapshotScope?: 'recent';
+  partial?: boolean;
   status?: string;
   telemetry?: unknown;
   messageQueue?: unknown;
@@ -368,12 +370,11 @@ export function reduceAgentEvent(
       break;
     }
     case 'memory_checkpointed':
-      // Older journals may contain a bookkeeping event for every captured
-      // user message. Capturing a source is not memory recall or context
-      // injection, so keep those legacy events out of the visible activity
-      // trail while preserving explicit tool-receipt checkpoints.
-      if (text(payload.sourceRole) === 'user') break;
-      upsertActivity(next, event, payload, 'completed');
+      // This is a derived source-capture receipt, not a new Agent run. The
+      // owning Tool is already visible in its authoritative turn and Memory
+      // maintenance has its own typed event/status surface. Projecting this
+      // unscoped bookkeeping event used to create another completed avatar
+      // underneath the still-running Tool card.
       break;
     case 'memory_maintenance_updated':
       upsertActivity(next, event, payload, 'completed');
@@ -719,15 +720,40 @@ export function applyAgentSnapshot(
   // active-but-quiescent snapshot as terminal so reopening an old conversation
   // cannot turn its last completed answer into a multi-day "thinking" turn.
   const replayStatus = next.status;
-  if (snapshot.status && ['idle', 'ready', 'stopped', 'active'].includes(snapshot.status)) {
+  if (
+    !snapshot.partial
+    && snapshot.status
+    && ['idle', 'ready', 'stopped', 'active'].includes(snapshot.status)
+  ) {
     next.status = snapshot.status;
-    const lastTurn = next.turnsById[next.turnOrder[next.turnOrder.length - 1] ?? ''];
-    if (lastTurn && ['queued', 'running', 'waiting'].includes(lastTurn.status)) {
+    // `status` is the Runtime's authoritative process boundary. A bounded
+    // event journal can end after `message_completed` without retaining the
+    // matching `turn_completed`, or can retain an old Tool start after its
+    // final receipt rolled out of the window. Once the Session is quiescent,
+    // no restored turn may keep a spinner alive. Settle every such snapshot
+    // turn here, before local optimistic admissions are restored below.
+    for (const turnId of next.turnOrder) {
+      const turn = next.turnsById[turnId];
+      if (!turn) continue;
+      const hasPendingHumanApproval = turn.activityIds.some((activityId) => {
+        const activity = next.activitiesById[activityId];
+        return activity?.kind === 'approval_required'
+          && activity.status === 'waiting'
+          && approvalNeedsHumanDecision(activity.payload);
+      });
+      if (hasPendingHumanApproval) continue;
+      const hasLiveActivity = turn.activityIds.some((activityId) => {
+        const activity = next.activitiesById[activityId];
+        return activity?.status === 'running' || activity?.status === 'waiting';
+      });
+      if (!hasLiveActivity && !['queued', 'running', 'waiting'].includes(turn.status)) continue;
       completeTurn(
         next,
-        lastTurn.id,
+        turn.id,
         replayStatus === 'aborting' ? 'aborted' : 'completed',
-        lastTurn.updatedAtMs,
+        turn.updatedAtMs,
+        '',
+        true,
       );
     }
   }
@@ -940,6 +966,8 @@ export function agentSnapshotFromResponse(value: unknown): AgentSnapshot {
     liveEvents: Array.isArray(payload.liveEvents) ? payload.liveEvents : [],
     lastSequence: integer(payload.lastSequence ?? payload.lastEventSequence),
     resumeToken: text(payload.resumeToken ?? payload.lastEventId),
+    ...(payload.snapshotScope === 'recent' ? { snapshotScope: 'recent' as const } : {}),
+    ...(payload.partial === true ? { partial: true } : {}),
     ...(typeof payload.status === 'string' ? { status: payload.status } : {}),
     ...(payload.telemetry === undefined ? {} : { telemetry: payload.telemetry }),
     ...(payload.messageQueue === undefined ? {} : { messageQueue: payload.messageQueue }),
@@ -1251,6 +1279,17 @@ function upsertApprovalActivity(
     return;
   }
   const owner = state.activitiesById[toolCallId];
+  if (
+    !owner
+    && payload.automatic === true
+    && status === 'completed'
+  ) {
+    // A bounded journal may retain the policy receipt after its Tool owner has
+    // fallen out of the window. The successful automatic receipt adds no
+    // user action or result of its own, so do not manufacture a Room-root
+    // conversation turn for it. Failed/denied receipts remain visible.
+    return;
+  }
   upsertActivity(
     state,
     {
@@ -1489,6 +1528,7 @@ function completeTurn(
   status: Extract<AgentTurnStatus, 'completed' | 'failed' | 'aborted'>,
   nowMs: number,
   failure = '',
+  settleCompletedActivities = false,
 ): void {
   const turn = ensureTurn(state, turnId, nowMs);
   turn.status = status;
@@ -1501,13 +1541,13 @@ function completeTurn(
    * 进行中, and its elapsed timer keeps counting. A completed turn is left
    * alone — a tool that is genuinely still running there is real state.
    */
-  if (status !== 'completed') {
+  if (status !== 'completed' || settleCompletedActivities) {
     for (const activityId of turn.activityIds) {
       const activity = state.activitiesById[activityId];
       if (!activity || !['running', 'waiting'].includes(activity.status)) continue;
       state.activitiesById[activityId] = {
         ...activity,
-        status: status === 'aborted' ? 'completed' : 'failed',
+        status: status === 'failed' ? 'failed' : 'completed',
         updatedAtMs: nowMs,
       };
     }

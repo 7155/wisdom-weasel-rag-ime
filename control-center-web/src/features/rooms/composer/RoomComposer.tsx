@@ -59,7 +59,7 @@ export function RoomComposer({
   draft: string;
   attachments: RoomAttachmentReceipt[];
   sending: boolean;
-  taskBusyState?: 'running' | 'blocked';
+  taskBusyState?: 'running' | 'blocked' | 'awaiting_start';
   pendingUserAnswer?: boolean;
   inputRef?: { current: HTMLTextAreaElement | null };
   onDraftChange: (value: string) => void;
@@ -250,9 +250,11 @@ export function RoomComposer({
       {taskBusyState || pendingAnswerMode ? <p className="room-composer__task-lock" role="status">
         {pendingAnswerMode
           ? '当前任务正在等待你的回答。这里只发送文字回答；点名和附件不会随回答发送。'
-          : taskBusyState === 'blocked'
-            ? '当前任务已暂停。请在上方继续或停止任务；你可以先在这里准备下一条消息。'
-            : '当前任务仍在执行。完成或停止后才能发送下一项任务；你可以先在这里起草。'}
+          : taskBusyState === 'awaiting_start'
+            ? '当前任务正在等待你点击“开始行动”。确认后才会开始执行；你可以先在这里起草。'
+            : taskBusyState === 'blocked'
+              ? '当前任务已暂停。请在上方继续或停止任务；你可以先在这里准备下一条消息。'
+              : '当前任务仍在执行。完成或停止后才能发送下一项任务；你可以先在这里起草。'}
       </p> : null}
       <div className="room-composer">
         <textarea
@@ -348,11 +350,13 @@ export function RoomComposer({
             className="room-composer__send"
             label={pendingAnswerMode
               ? '发送问题回答'
-              : taskBusyState === 'blocked'
-                ? '先继续或停止当前任务'
-                : taskBusyState
-                  ? '等待当前任务完成'
-                  : '发送消息'}
+              : taskBusyState === 'awaiting_start'
+                ? '先开始或停止当前任务'
+                : taskBusyState === 'blocked'
+                  ? '先继续或停止当前任务'
+                  : taskBusyState
+                    ? '等待当前任务完成'
+                    : '发送消息'}
             icon={<Send size={17} />}
             disabled={!canSend}
             onClick={submit}

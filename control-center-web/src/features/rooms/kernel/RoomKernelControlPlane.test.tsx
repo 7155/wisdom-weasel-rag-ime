@@ -138,13 +138,21 @@ describe('RoomKernelControlPlane', () => {
     const graph = screen.getAllByRole('region', { name: '任务依赖图' })[0]!;
     expect(graph.querySelectorAll('.room-task-flow__task-node')).toHaveLength(3);
     expect(graph.querySelectorAll('.room-task-flow__edges g')).toHaveLength(4);
-    expect(graph).toHaveTextContent('3 项 · 1 已完成 · 1 执行中 · 1 等待中');
+    expect(within(graph).getByRole('progressbar', { name: /3 项任务/ })).toHaveAttribute(
+      'aria-valuenow',
+      '1',
+    );
     expect(graph.querySelector('.room-task-flow__dispatch-node')).not.toBeInTheDocument();
     const completed = within(graph).getByRole('article', { name: /索引证据已经核对完成/ });
     expect(completed).toHaveTextContent('任务结果');
     expect(completed).toHaveTextContent('索引证据已经核对完成');
     expect(completed).toHaveTextContent('负责人研究员');
-    expect(completed).toHaveTextContent('当前状态已完成');
+    expect(within(completed).getByRole('progressbar', { name: /任务已完成/ })).toHaveAttribute(
+      'aria-valuenow',
+      '1',
+    );
+    expect(completed).toHaveTextContent('最近提交：索引证据已经核对完成');
+    expect(completed).not.toHaveTextContent('当前状态');
     expect(completed).not.toHaveTextContent(/下一步|验证状态/);
     expect(completed).toHaveAttribute('title', expect.not.stringMatching(/Dispatch|dispatch/));
     const integration = within(graph).getByRole('article', { name: /整合证据与实现结果/ });
@@ -152,8 +160,14 @@ describe('RoomKernelControlPlane', () => {
     expect(integration).toHaveAttribute('title', expect.stringMatching(/等待 1 项真实前置任务/));
     const review = within(graph).getByRole('article', { name: /独立复核整合结果/ });
     expect(review).toHaveTextContent('审查员');
-    expect(review).toHaveTextContent('等待前置任务');
+    expect(within(review).getByRole('progressbar', { name: /前置 0 \/ 1 已完成/ })).toHaveAttribute(
+      'aria-valuenow',
+      '0',
+    );
     expect(graph).not.toHaveTextContent(/运行尝试|dispatch-a|dispatch:outside-snapshot|receipt:/);
+    expect(screen.getByRole('region', { name: '协作任务进展' }).querySelector(
+      '.lucide-arrow-right, .lucide-chevron-right',
+    )).toBeNull();
     const workList = screen.getAllByRole('region', { name: '每项工作的详细进展' })[0]!;
     const completedCard = [...workList.querySelectorAll('.room-task-work-card')].find((card) => (
       card.textContent?.includes('索引证据已经核对完成')
@@ -161,6 +175,46 @@ describe('RoomKernelControlPlane', () => {
     fireEvent.click(completedCard.querySelector('summary')!);
     expect(completedCard).toHaveTextContent(/下一步交给\s*研究员\s*接续/);
     expect(completedCard).toHaveTextContent('已记录 1 项验证证据，等待验收');
+  });
+
+  it('projects only the newest authoritative Root into one task graph', () => {
+    const state = projection();
+    state.rootsById['root-a'] = {
+      ...state.rootsById['root-a']!,
+      state: 'cancelled_with_unknowns',
+      createdAtMs: 1,
+      updatedAtMs: 10_000,
+    };
+    state.tasksById['task-a'] = {
+      ...state.tasksById['task-a']!,
+      objective: '旧轮次任务不应继续占据任务图',
+      state: 'active',
+    };
+    state.rootsById['root-b'] = {
+      ...root('root-b', 1, 'reviewer', 'running', 2),
+      state: 'running',
+      createdAtMs: 2,
+      updatedAtMs: 2,
+    };
+    state.tasksById['task-new-root'] = {
+      ...state.tasksById['task-a']!,
+      taskId: 'task-new-root',
+      rootId: 'root-b',
+      ownershipReceiptId: null,
+      objective: '新一轮客户导入正在执行',
+      expectedOutput: '新 Root 的可复核结果',
+      state: 'active',
+    };
+
+    renderPlane(state);
+
+    expect(screen.getAllByRole('region', { name: '任务依赖图' })).toHaveLength(1);
+    const graph = screen.getByRole('region', { name: '任务依赖图' });
+    expect(graph).toHaveTextContent('新一轮客户导入正在执行');
+    expect(graph).toHaveTextContent('等待共同结果');
+    expect(graph).not.toHaveTextContent('旧轮次任务不应继续占据任务图');
+    expect(screen.queryByText('任务已停止')).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '协作任务进展' })).toHaveTextContent('1 个共同目标 · 1 项工作');
   });
 
   it('shows privacy-bounded task collaborators with human labels, budget, public result, generic failure, and timing', () => {
@@ -573,6 +627,69 @@ describe('RoomKernelControlPlane', () => {
     expect(await screen.findByText('停止请求已接受')).toBeInTheDocument();
   });
 
+  it('stops only the exact active dispatch while keeping its Root and sibling task available', async () => {
+    const state = projection();
+    state.tasksById['task-b'] = {
+      ...state.tasksById['task-a']!,
+      taskId: 'task-b',
+      currentOwnerParticipantId: 'researcher',
+      ownershipReceiptId: null,
+      objective: '继续整理索引结果',
+      expectedOutput: '第二份证据回执',
+    };
+    state.dispatchesById['dispatch-a'] = {
+      schemaVersion: 'wisdom-weasel.room-dispatch-envelope.v2',
+      dispatchId: 'dispatch-a',
+      rootId: 'root-a',
+      taskId: 'task-a',
+      parentDispatchId: null,
+      generation: 3,
+      hopCount: 0,
+      depth: 0,
+      budgetCost: 1,
+      targetSessionId: 'session-review',
+      targetParticipantId: 'reviewer',
+      triggerId: 'trigger-a',
+      intentKind: 'execute',
+      idempotencyKey: 'dispatch-a',
+      attempt: 1,
+      capabilityEpoch: 1,
+      runtimeProfileRevision: 'runtime-1',
+      state: 'running',
+    };
+    state.dispatchesById['dispatch-b'] = {
+      ...state.dispatchesById['dispatch-a']!,
+      dispatchId: 'dispatch-b',
+      taskId: 'task-b',
+      targetSessionId: 'session-research',
+      targetParticipantId: 'researcher',
+      triggerId: 'trigger-b',
+      idempotencyKey: 'dispatch-b',
+    };
+    const handler = vi.fn((command) => receipt({
+      receiptId: `cancel-${command.targetId}`,
+      commandId: command.commandId,
+      rootId: command.rootId,
+      generation: command.generation,
+      receiptKind: 'target_cancelled',
+    }));
+    renderPlane(state, createFixtureRoomKernelCommandTransport(handler));
+
+    fireEvent.click(screen.getByRole('button', { name: '停止审查员的这次运行' }));
+
+    await waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    expect(handler.mock.calls[0]?.[0]).toMatchObject({
+      roomId: 'room-a',
+      rootId: 'root-a',
+      generation: 3,
+      commandKind: 'cancel_target',
+      targetKind: 'dispatch',
+      targetId: 'dispatch-a',
+    });
+    expect(screen.getByRole('button', { name: '停止此任务' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '停止研究员的这次运行' })).toBeEnabled();
+  });
+
   it('continues only failed work from a blocked Root through the typed command path', async () => {
     const state = projection();
     state.rootsById['root-a'] = {
@@ -609,16 +726,21 @@ describe('RoomKernelControlPlane', () => {
     expect(await screen.findByText('继续请求已接受')).toBeInTheDocument();
   });
 
-  it('targets the keyboard-selected concurrent Root only', async () => {
+  it('targets only the newest authoritative Root', async () => {
+    const state = projection();
+    state.rootsById['root-b'] = {
+      ...root('root-b', 1, 'reviewer', 'running', 2),
+      createdAtMs: 2,
+    };
     const handler = vi.fn((command) => receipt({
       receiptId: `cancel-${command.rootId}`, commandId: command.commandId, rootId: command.rootId,
       generation: command.generation + 1, receiptKind: 'root_cancelled',
     }));
-    renderPlane(projection(), createFixtureRoomKernelCommandTransport(handler));
-    const buttons = screen.getAllByRole('button', { name: '停止此任务' });
-    buttons[1]!.focus();
-    fireEvent.keyDown(buttons[1]!, { key: 'Enter' });
-    fireEvent.click(buttons[1]!);
+    renderPlane(state, createFixtureRoomKernelCommandTransport(handler));
+    const button = screen.getByRole('button', { name: '停止此任务' });
+    button.focus();
+    fireEvent.keyDown(button, { key: 'Enter' });
+    fireEvent.click(button);
     await waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
     expect(handler.mock.calls[0]?.[0]).toMatchObject({ rootId: 'root-b', generation: 1 });
   });
@@ -642,7 +764,7 @@ describe('RoomKernelControlPlane', () => {
     expect(screen.getByText('全部验收项已有有效证据')).toBeInTheDocument();
     expect(screen.getByText('发现阻塞或未知项')).toBeInTheDocument();
     expect(screen.queryByText('已完成并通过检查')).not.toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: '停止此任务' })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: '停止此任务' })).not.toBeInTheDocument();
   });
 
   it('exposes Room panic only for an admin gate and requires explicit inline confirmation', async () => {
@@ -690,7 +812,7 @@ describe('RoomKernelControlPlane', () => {
 
     const controlPlane = screen.getByRole('region', { name: '协作任务进展' });
     const overview = within(controlPlane).getByRole('region', { name: '共同目标与工作总进度' });
-    expect(controlPlane).toHaveTextContent('2 个共同目标 · 1 项工作');
+    expect(controlPlane).toHaveTextContent('1 个共同目标 · 1 项工作');
     expect(overview).toHaveTextContent('0 / 1 已完成');
     expect(overview).toHaveTextContent('1 项正在做 · 0 项等待');
     expect(overview).not.toHaveTextContent('1 / 2 已完成');
@@ -726,7 +848,6 @@ function projection(): RoomKernelProjection {
   const state = createRoomKernelProjection('room-a');
   state.lastSequence = 12;
   state.rootsById['root-a'] = root('root-a', 3, 'researcher', 'running', 12);
-  state.rootsById['root-b'] = root('root-b', 1, '审查员', 'running', 11);
   state.tasksById['task-a'] = {
     schemaVersion: 'wisdom-weasel.room-task.v3', taskId: 'task-a', rootId: 'root-a', parentTaskId: null,
     taskKind: 'work', currentOwnerParticipantId: 'reviewer', ownershipRevision: 1,

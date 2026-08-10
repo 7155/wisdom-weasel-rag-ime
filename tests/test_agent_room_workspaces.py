@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import io
 import json
+import os
 import re
+import shlex
 import sqlite3
 import subprocess
 import tempfile
@@ -110,6 +113,32 @@ class RoomWorkspaceIdentityTests(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+
+    def _integrate_with_cleanup_deferred(
+        self,
+        identity: str,
+    ) -> tuple[dict[str, object], Path]:
+        prepared = self.coordinator.prepare(
+            root_id=f"root:{identity}",
+            task_id=f"task:{identity}",
+            target_session_id=str(self.owner_a["id"]),
+            base_roots=[str(self.root)],
+            policy="isolated_writable",
+        )
+        worktree = Path(str(prepared["workspaceRoot"]))
+        (worktree / "README.md").write_text(f"{identity}\n", encoding="utf-8")
+        task = {"taskId": f"task:{identity}", "state": "completed", **prepared}
+        self.coordinator.record_delivery(task, now_ms=10)
+        provider = self.coordinator._writer_quiescence_provider
+        self.coordinator._writer_quiescence_provider = None
+        try:
+            integrated = self.coordinator.integrate(task, now_ms=11)
+        finally:
+            self.coordinator._writer_quiescence_provider = provider
+        self.assertTrue(integrated["integrated"])
+        self.assertEqual(integrated["workspaceLifecycleState"], "cleanup_failed")
+        self.assertTrue(worktree.is_dir())
+        return prepared, worktree
 
     def test_snapshot_identity_changes_for_head_and_dirty_bytes(self) -> None:
         clean_a = self.coordinator.snapshot_digest([self.root])
@@ -291,6 +320,57 @@ class RoomWorkspaceIdentityTests(unittest.TestCase):
             "handoff\n",
         )
 
+    def test_isolated_handoff_recovers_from_stale_session_root_projection(
+        self,
+    ) -> None:
+        prepared = self.coordinator.prepare(
+            root_id="root:handoff-recovery",
+            task_id="task:handoff-recovery",
+            target_session_id=str(self.owner_a["id"]),
+            base_roots=[str(self.root)],
+            policy="isolated_writable",
+            participant_id="participant:a",
+        )
+        worktree = Path(str(prepared["workspaceRoot"]))
+        self.coordinator.restore(
+            session_id=str(self.owner_a["id"]),
+            base_roots=[str(self.root)],
+            restore_policy=prepared["workspaceRestorePolicy"],
+        )
+        self.assertEqual(
+            self.sessions.get(str(self.owner_a["id"]))["workspaceRoots"],
+            [str(self.root.resolve())],
+        )
+
+        transferred = self.coordinator.transfer_isolated_ownership(
+            task={
+                "taskId": "task:handoff-recovery",
+                "state": "active",
+                "currentOwnerParticipantId": "participant:b",
+                **prepared,
+            },
+            source_session_id=str(self.owner_a["id"]),
+            target_session_id=str(self.owner_b["id"]),
+            base_roots=[str(self.root)],
+        )
+
+        self.assertEqual(transferred["workspaceRoot"], str(worktree))
+        self.assertEqual(
+            self.sessions.get(str(self.owner_b["id"]))["workspaceRoots"],
+            [str(worktree.resolve())],
+        )
+        binding = self.coordinator.ledger.binding(
+            str(prepared["workspaceBindingId"])
+        )
+        self.assertEqual(
+            binding["currentOwnerSessionId"],
+            str(self.owner_b["id"]),
+        )
+        self.assertEqual(
+            binding["currentOwnerParticipantId"],
+            "participant:b",
+        )
+
     def test_active_isolated_task_cannot_remove_its_worktree(self) -> None:
         prepared = self.coordinator.prepare(
             root_id="root:active",
@@ -318,6 +398,29 @@ class RoomWorkspaceIdentityTests(unittest.TestCase):
             "A\n",
         )
         self.coordinator.discard(prepared)
+
+    def test_discard_of_replayed_binding_does_not_orphan_live_workspace(self) -> None:
+        prepared = self.coordinator.prepare(
+            root_id="root:replayed-discard",
+            task_id="task:replayed-discard",
+            target_session_id=str(self.owner_a["id"]),
+            base_roots=[str(self.root)],
+            policy="isolated_writable",
+        )
+        replayed = self.coordinator.prepare(
+            root_id="root:replayed-discard",
+            task_id="task:replayed-discard",
+            target_session_id=str(self.owner_a["id"]),
+            base_roots=[str(self.root)],
+            policy="isolated_writable",
+        )
+
+        self.assertEqual(replayed["workspaceBindingId"], prepared["workspaceBindingId"])
+        self.coordinator.discard(replayed)
+
+        binding = self.coordinator.ledger.binding(str(prepared["workspaceBindingId"]))
+        self.assertEqual(binding["workspaceLifecycleState"], "materialized")
+        self.assertFalse(bool(binding["attentionRequired"]))
 
     def test_empty_delivery_uses_sealed_artifact_and_exact_target_receipt(
         self,
@@ -567,6 +670,73 @@ class RoomWorkspaceIdentityTests(unittest.TestCase):
             str(worktree.resolve()),
             self.sessions.get(str(self.owner_a["id"]))["workspaceRoots"],
         )
+
+    def test_same_settlement_reuses_legacy_sealed_delivery_after_outer_failure(
+        self,
+    ) -> None:
+        prepared = self.coordinator.prepare(
+            root_id="root:settlement-replay",
+            task_id="task:settlement-replay",
+            target_session_id=str(self.owner_a["id"]),
+            base_roots=[str(self.root)],
+            policy="isolated_writable",
+            now_ms=1,
+        )
+        worktree = Path(str(prepared["workspaceRoot"]))
+        (worktree / "README.md").write_text(
+            "settlement delivery\n",
+            encoding="utf-8",
+        )
+        task = {
+            "taskId": "task:settlement-replay",
+            "state": "completed",
+            **prepared,
+        }
+        first = self.coordinator.record_delivery(
+            task,
+            verification_refs=["execution:verified"],
+            residual_risks=["follow-up recorded"],
+            result_summary="",
+            now_ms=10,
+        )
+
+        replay = self.coordinator.record_delivery(
+            task,
+            verification_refs=["execution:verified"],
+            residual_risks=["follow-up recorded"],
+            result_summary="public summary added by the current projector",
+            settlement_invocation_created_at_ms=5,
+            now_ms=20,
+        )
+
+        self.assertEqual(
+            replay["deliveryRevision"],
+            first["deliveryRevision"],
+        )
+        self.assertEqual(
+            replay["workspaceDelivery"]["resultSummary"],
+            "",
+        )
+        binding_id = str(prepared["workspaceBindingId"])
+        self.assertEqual(
+            sum(
+                event["eventKind"] == "delivered"
+                for event in self.coordinator.ledger.events(binding_id)
+            ),
+            1,
+        )
+
+        with self.assertRaisesRegex(
+            RoomWorkspaceError,
+            "sealed|delivery|delivered",
+        ):
+            self.coordinator.record_delivery(
+                task,
+                verification_refs=["execution:different"],
+                residual_risks=["follow-up recorded"],
+                settlement_invocation_created_at_ms=5,
+                now_ms=21,
+            )
 
     def test_concurrent_prepare_replay_cannot_orphan_live_materialization(self) -> None:
         original_run = self.coordinator._run
@@ -1259,7 +1429,10 @@ class RoomWorkspaceIdentityTests(unittest.TestCase):
             normalized = list(command)
             if (
                 normalized[-4:-2] == ["worktree", "remove"]
-                or "rag_ime.agent_room_workspace_cleanup" in normalized
+                or any(
+                    Path(value).name == "agent_room_workspace_cleanup.py"
+                    for value in normalized
+                )
             ):
                 injected = True
                 (self.root / "external-runner-drift.txt").write_text(
@@ -1524,7 +1697,10 @@ class RoomWorkspaceIdentityTests(unittest.TestCase):
             check: bool = True,
         ) -> subprocess.CompletedProcess[bytes]:
             normalized = list(command)
-            if "rag_ime.agent_room_workspace_cleanup" not in normalized:
+            if not any(
+                Path(value).name == "agent_room_workspace_cleanup.py"
+                for value in normalized
+            ):
                 return original_run(
                     command,
                     input_bytes=input_bytes,
@@ -1742,6 +1918,32 @@ class RoomWorkspaceIdentityTests(unittest.TestCase):
         cleanup = recovered.recover_integrated_cleanups(now_ms=12)
         self.assertEqual(len(cleanup), 1)
         self.assertEqual(cleanup[0]["cleanupState"], "cleaned")
+        self.assertTrue(cleanup[0]["integrated"])
+        self.assertEqual(
+            cleanup[0]["integrationRef"],
+            cleanup[0]["workspaceIntegrationRef"],
+        )
+        self.assertTrue(cleanup[0]["workspaceCleanupReceiptId"])
+        self.assertTrue(cleanup[0]["workspaceCleanupReceiptSha256"])
+        self.assertEqual(recovered.ledger.recovery_candidates(), [])
+        projection_candidates = (
+            recovered.cleaned_integration_projection_candidates()
+        )
+        self.assertEqual(len(projection_candidates), 1)
+        self.assertEqual(
+            projection_candidates[0]["workspaceBindingId"],
+            binding_id,
+        )
+        with sqlite3.connect(recovered.ledger.db_path) as conn:
+            conn.execute(
+                "DELETE FROM room_workspace_events "
+                "WHERE binding_id=? AND event_kind='vaulted'",
+                (binding_id,),
+            )
+        self.assertEqual(
+            recovered.cleaned_integration_projection_candidates(),
+            [],
+        )
 
     def test_startup_receipts_missing_after_crash_post_remove(self) -> None:
         prepared = self.coordinator.prepare(
@@ -1851,6 +2053,477 @@ class RoomWorkspaceIdentityTests(unittest.TestCase):
         self.assertEqual(cleaned["workspaceLifecycleState"], "cleaned")
         self.assertEqual(cleaned["cleanupState"], "cleaned")
         self.assertFalse(worktree.exists())
+
+    def test_startup_cleanup_allows_target_to_advance_after_integration(self) -> None:
+        prepared = self.coordinator.prepare(
+            root_id="root:cleanup-after-target-advance",
+            task_id="task:cleanup-after-target-advance",
+            target_session_id=str(self.owner_a["id"]),
+            base_roots=[str(self.root)],
+            policy="isolated_writable",
+        )
+        worktree = Path(str(prepared["workspaceRoot"]))
+        (worktree / "README.md").write_text("integrated\n", encoding="utf-8")
+        task = {
+            "taskId": "task:cleanup-after-target-advance",
+            "state": "completed",
+            **prepared,
+        }
+        self.coordinator.record_delivery(task, now_ms=10)
+
+        original_remove_worktree = self.coordinator._remove_worktree
+        self.coordinator._remove_worktree = (  # type: ignore[method-assign]
+            lambda base, source: subprocess.CompletedProcess(
+                args=[str(base), str(source)],
+                returncode=1,
+                stdout=b"",
+                stderr=b"injected cleanup failure",
+            )
+        )
+        try:
+            integrated = self.coordinator.integrate(task, now_ms=11)
+        finally:
+            self.coordinator._remove_worktree = original_remove_worktree  # type: ignore[method-assign]
+        self.assertEqual(integrated["workspaceLifecycleState"], "cleanup_failed")
+
+        later_target = self.root / "LATER.md"
+        later_target.write_text("independent later integration\n", encoding="utf-8")
+        target_receipt = self.coordinator.ledger.target_applied_receipt(
+            str(prepared["workspaceBindingId"])
+        )
+        self.assertIsNotNone(target_receipt)
+        assert target_receipt is not None
+        self.assertNotEqual(
+            self.coordinator.snapshot_digest([self.root]),
+            target_receipt["payload"]["targetAfterSnapshotSha256"],
+        )
+
+        recovered = RoomWorkspaceCoordinator(
+            root_dir=Path(self.tmp.name) / "room-workspaces",
+            sessions=self.sessions,
+            writer_quiescence_provider=self._writer_quiescence_receipt,
+        )
+        cleanup = recovered.recover_integrated_cleanups(now_ms=12)
+
+        self.assertEqual(len(cleanup), 1)
+        self.assertEqual(
+            cleanup[0]["workspaceLifecycleState"],
+            "cleaned",
+            cleanup,
+        )
+        self.assertEqual(cleanup[0]["cleanupState"], "cleaned")
+        self.assertEqual(
+            later_target.read_text(encoding="utf-8"),
+            "independent later integration\n",
+        )
+
+    def test_deferred_cleanup_requires_target_applied_receipt(self) -> None:
+        prepared, worktree = self._integrate_with_cleanup_deferred(
+            "cleanup-missing-target-receipt"
+        )
+        recovered = RoomWorkspaceCoordinator(
+            root_dir=Path(self.tmp.name) / "room-workspaces",
+            sessions=self.sessions,
+            writer_quiescence_provider=self._writer_quiescence_receipt,
+        )
+        with mock.patch.object(
+            recovered.ledger,
+            "target_applied_receipt",
+            return_value=None,
+        ):
+            cleanup = recovered.recover_integrated_cleanups(now_ms=12)
+
+        self.assertEqual(len(cleanup), 1)
+        self.assertEqual(cleanup[0]["cleanupState"], "failed")
+        self.assertIn("target-applied authority", cleanup[0]["terminalReason"])
+        self.assertTrue(worktree.is_dir())
+        self.assertIsNone(
+            recovered.ledger.vault_receipt(str(prepared["workspaceBindingId"]))
+        )
+
+    def test_deferred_cleanup_rejects_child_digest_drift(self) -> None:
+        prepared, worktree = self._integrate_with_cleanup_deferred(
+            "cleanup-child-digest-drift"
+        )
+        (worktree / "late.txt").write_text("unreceipted write\n", encoding="utf-8")
+        recovered = RoomWorkspaceCoordinator(
+            root_dir=Path(self.tmp.name) / "room-workspaces",
+            sessions=self.sessions,
+            writer_quiescence_provider=self._writer_quiescence_receipt,
+        )
+        cleanup = recovered.recover_integrated_cleanups(now_ms=12)
+
+        self.assertEqual(len(cleanup), 1)
+        self.assertEqual(cleanup[0]["cleanupState"], "failed")
+        self.assertIn("source changed", cleanup[0]["terminalReason"])
+        self.assertTrue(worktree.is_dir())
+        self.assertIsNone(
+            recovered.ledger.vault_receipt(str(prepared["workspaceBindingId"]))
+        )
+
+    def test_deferred_cleanup_rejects_active_unmanaged_writer(self) -> None:
+        prepared, worktree = self._integrate_with_cleanup_deferred(
+            "cleanup-active-writer"
+        )
+
+        def active_writer_receipt(
+            request: Mapping[str, object],
+        ) -> Mapping[str, object]:
+            receipt = dict(self._writer_quiescence_receipt(request))
+            receipt["foregroundMutatingInvocations"] = {
+                "known": True,
+                "activeCount": 1,
+                "registryRevision": "test:external-writer-active",
+            }
+            return receipt
+
+        recovered = RoomWorkspaceCoordinator(
+            root_dir=Path(self.tmp.name) / "room-workspaces",
+            sessions=self.sessions,
+            writer_quiescence_provider=active_writer_receipt,
+        )
+        cleanup = recovered.recover_integrated_cleanups(now_ms=12)
+
+        self.assertEqual(len(cleanup), 1)
+        self.assertEqual(cleanup[0]["cleanupState"], "failed")
+        self.assertIn("not quiescent", cleanup[0]["terminalReason"])
+        self.assertTrue(worktree.is_dir())
+        self.assertIsNone(
+            recovered.ledger.vault_receipt(str(prepared["workspaceBindingId"]))
+        )
+
+    def test_guarded_cleanup_loads_from_an_isolated_installed_interpreter(
+        self,
+    ) -> None:
+        prepared = self.coordinator.prepare(
+            root_id="root:isolated-cleanup-launch",
+            task_id="task:isolated-cleanup-launch",
+            target_session_id=str(self.owner_a["id"]),
+            base_roots=[str(self.root)],
+            policy="isolated_writable",
+        )
+        worktree = Path(str(prepared["workspaceRoot"]))
+        (worktree / "README.md").write_text("integrated\n", encoding="utf-8")
+        task = {
+            "taskId": "task:isolated-cleanup-launch",
+            "state": "completed",
+            **prepared,
+        }
+        self.coordinator.record_delivery(task, now_ms=10)
+
+        unrelated_cwd = Path(self.tmp.name) / "isolated-python-cwd"
+        unrelated_cwd.mkdir()
+        isolated_python = Path(self.tmp.name) / "isolated-python"
+        real_python = workspace_cleanup.sys.executable
+        isolated_python.write_text(
+            "#!/bin/sh\n"
+            f"exec {shlex.quote(real_python)} -I \"$@\"\n",
+            encoding="utf-8",
+        )
+        isolated_python.chmod(0o700)
+        original_run = self.coordinator._run
+
+        def run_cleanup_without_product_import_path(
+            command: list[str] | tuple[str, ...],
+            *,
+            input_bytes: bytes | None = None,
+            check: bool = True,
+        ) -> subprocess.CompletedProcess[bytes]:
+            normalized = list(command)
+            if not any(
+                Path(value).name == "agent_room_workspace_cleanup.py"
+                for value in normalized
+            ):
+                return original_run(
+                    command,
+                    input_bytes=input_bytes,
+                    check=check,
+                )
+            result = subprocess.run(
+                normalized,
+                cwd=unrelated_cwd,
+                env={"PATH": "/usr/bin:/bin"},
+                input=input_bytes,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=30,
+            )
+            if check and result.returncode != 0:
+                raise RoomWorkspaceError(
+                    result.stderr.decode("utf-8", errors="replace")
+                )
+            return result
+
+        self.coordinator._run = run_cleanup_without_product_import_path  # type: ignore[method-assign]
+        try:
+            with mock.patch.object(
+                workspace_cleanup.sys,
+                "executable",
+                str(isolated_python),
+            ):
+                result = self.coordinator.integrate(
+                    task,
+                    integration_ref="integration:isolated-cleanup-launch",
+                    now_ms=11,
+                )
+        finally:
+            self.coordinator._run = original_run  # type: ignore[method-assign]
+
+        cleanup_binding = self.coordinator.ledger.binding(
+            str(prepared["workspaceBindingId"])
+        )
+        self.assertEqual(
+            result["cleanupState"],
+            "cleaned",
+            str(cleanup_binding.get("terminalReason") or ""),
+        )
+        self.assertEqual(result["workspaceLifecycleState"], "cleaned")
+        self.assertFalse(worktree.exists())
+        self.assertTrue(Path(str(result["retainedWorkspaceRoot"])).is_dir())
+
+    def test_guarded_cleanup_archives_git_admin_across_filesystems(self) -> None:
+        repository_parent = Path(__file__).resolve().parents[1]
+        with (
+            tempfile.TemporaryDirectory(
+                prefix=".room-cross-volume-repository-",
+                dir=repository_parent,
+            ) as repository_name,
+            tempfile.TemporaryDirectory(
+                prefix="rag-ime-cross-volume-workspaces-",
+            ) as workspace_name,
+        ):
+            repository = Path(repository_name)
+            workspace_parent = Path(workspace_name)
+            if os.stat(repository).st_dev == os.stat(workspace_parent).st_dev:
+                self.skipTest("test host does not expose two filesystem devices")
+            subprocess.run(
+                ["git", "-C", str(repository), "init", "-q"],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repository),
+                    "config",
+                    "user.email",
+                    "room-tests@example.invalid",
+                ],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repository),
+                    "config",
+                    "user.name",
+                    "Room Tests",
+                ],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            (repository / "README.md").write_text("before\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(repository), "add", "README.md"],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            subprocess.run(
+                ["git", "-C", str(repository), "commit", "-qm", "initial"],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            sessions = AgentSessionStore(workspace_parent / "sessions.sqlite")
+            sessions.initialize()
+            owner = sessions.create(
+                title="Cross-volume owner",
+                mode="coordinator",
+                execution_mode="workspace_managed",
+                tool_profile_version="control-center-v1",
+                workspace_roots=[str(repository)],
+                created_at_ms=1,
+            )
+            coordinator = RoomWorkspaceCoordinator(
+                root_dir=workspace_parent / "room-workspaces",
+                sessions=sessions,
+                writer_quiescence_provider=self._writer_quiescence_receipt,
+            )
+            prepared = coordinator.prepare(
+                root_id="root:cross-volume-cleanup",
+                task_id="task:cross-volume-cleanup",
+                target_session_id=str(owner["id"]),
+                base_roots=[str(repository)],
+                policy="isolated_writable",
+            )
+            worktree = Path(str(prepared["workspaceRoot"]))
+            git_pointer = (worktree / ".git").read_text(encoding="utf-8").strip()
+            self.assertTrue(git_pointer.startswith("gitdir: "))
+            git_admin = Path(git_pointer.removeprefix("gitdir: ")).resolve()
+            (worktree / "README.md").write_text("integrated\n", encoding="utf-8")
+            task = {
+                "taskId": "task:cross-volume-cleanup",
+                "state": "completed",
+                **prepared,
+            }
+            coordinator.record_delivery(task, now_ms=10)
+
+            cleaned = coordinator.integrate(task, now_ms=11)
+
+            cleanup_binding = coordinator.ledger.binding(
+                str(prepared["workspaceBindingId"])
+            )
+            self.assertEqual(
+                cleaned["cleanupState"],
+                "cleaned",
+                str(cleanup_binding.get("terminalReason") or ""),
+            )
+            vault = Path(str(cleaned["retainedWorkspaceRoot"]))
+            self.assertTrue(vault.is_dir())
+            self.assertTrue((vault / ".room-git-admin").is_dir())
+            self.assertFalse(git_admin.exists())
+            self.assertIsNotNone(
+                coordinator.ledger.vault_receipt(
+                    str(prepared["workspaceBindingId"])
+                )
+            )
+            self.assertEqual(
+                (repository / "README.md").read_text(encoding="utf-8"),
+                "integrated\n",
+            )
+
+    def test_cross_device_git_admin_copy_failure_preserves_exact_source(self) -> None:
+        root = Path(self.tmp.name) / "copy-failure"
+        admin = root / "git-admin"
+        vault = root / "vault"
+        admin.mkdir(parents=True)
+        vault.mkdir()
+        (admin / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        archived = vault / ".room-git-admin"
+        partial = workspace_cleanup._git_admin_partial_path(
+            vault,
+            binding_id="binding:copy-failure",
+            receipt_id="receipt:copy-failure",
+            receipt_sha256="sha256:copy-failure",
+        )
+        source_digest = workspace_cleanup._git_admin_digest(admin)
+        real_rename = os.rename
+
+        def force_cross_device(source: object, destination: object) -> None:
+            if Path(source) == admin and Path(destination) == archived:
+                raise OSError(errno.EXDEV, "injected cross-device link")
+            real_rename(source, destination)
+
+        def fail_during_copy(source: Path, destination: Path) -> None:
+            destination.mkdir(mode=0o700)
+            (destination / "incomplete").write_text("partial\n", encoding="utf-8")
+            raise OSError("injected copy failure")
+
+        with (
+            mock.patch.object(
+                workspace_cleanup.os,
+                "rename",
+                side_effect=force_cross_device,
+            ),
+            mock.patch.object(
+                workspace_cleanup,
+                "_copy_git_admin_tree",
+                side_effect=fail_during_copy,
+            ),
+        ):
+            with self.assertRaisesRegex(RoomWorkspaceError, "copy failed"):
+                workspace_cleanup._archive_git_admin(
+                    admin=admin,
+                    archived_admin=archived,
+                    vault=vault,
+                    binding_id="binding:copy-failure",
+                    receipt_id="receipt:copy-failure",
+                    receipt_sha256="sha256:copy-failure",
+                )
+
+        self.assertTrue(admin.is_dir())
+        self.assertEqual(workspace_cleanup._git_admin_digest(admin), source_digest)
+        self.assertFalse(archived.exists())
+        self.assertTrue(partial.is_dir())
+
+        with mock.patch.object(
+            workspace_cleanup.os,
+            "rename",
+            side_effect=force_cross_device,
+        ):
+            workspace_cleanup._archive_git_admin(
+                admin=admin,
+                archived_admin=archived,
+                vault=vault,
+                binding_id="binding:copy-failure",
+                receipt_id="receipt:copy-failure",
+                receipt_sha256="sha256:copy-failure",
+            )
+
+        self.assertFalse(admin.exists())
+        self.assertFalse(partial.exists())
+        self.assertEqual(workspace_cleanup._git_admin_digest(archived), source_digest)
+
+    def test_cross_device_git_admin_source_drift_refuses_publish(self) -> None:
+        root = Path(self.tmp.name) / "source-drift"
+        admin = root / "git-admin"
+        vault = root / "vault"
+        admin.mkdir(parents=True)
+        vault.mkdir()
+        head = admin / "HEAD"
+        head.write_text("ref: refs/heads/main\n", encoding="utf-8")
+        archived = vault / ".room-git-admin"
+        partial = workspace_cleanup._git_admin_partial_path(
+            vault,
+            binding_id="binding:source-drift",
+            receipt_id="receipt:source-drift",
+            receipt_sha256="sha256:source-drift",
+        )
+        real_rename = os.rename
+        real_copy = workspace_cleanup._copy_git_admin_tree
+
+        def force_cross_device(source: object, destination: object) -> None:
+            if Path(source) == admin and Path(destination) == archived:
+                raise OSError(errno.EXDEV, "injected cross-device link")
+            real_rename(source, destination)
+
+        def copy_then_drift(source: Path, destination: Path) -> None:
+            real_copy(source, destination)
+            head.write_text("ref: refs/heads/drifted\n", encoding="utf-8")
+
+        with (
+            mock.patch.object(
+                workspace_cleanup.os,
+                "rename",
+                side_effect=force_cross_device,
+            ),
+            mock.patch.object(
+                workspace_cleanup,
+                "_copy_git_admin_tree",
+                side_effect=copy_then_drift,
+            ),
+        ):
+            with self.assertRaisesRegex(RoomWorkspaceError, "source changed"):
+                workspace_cleanup._archive_git_admin(
+                    admin=admin,
+                    archived_admin=archived,
+                    vault=vault,
+                    binding_id="binding:source-drift",
+                    receipt_id="receipt:source-drift",
+                    receipt_sha256="sha256:source-drift",
+                )
+
+        self.assertTrue(admin.is_dir())
+        self.assertFalse(archived.exists())
+        self.assertTrue(partial.is_dir())
 
     def test_integrated_cleanup_failure_cannot_be_rebound_for_retry(self) -> None:
         prepared = self.coordinator.prepare(

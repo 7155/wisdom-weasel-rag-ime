@@ -17,7 +17,12 @@ import { SessionRail } from './sessions/SessionRail';
 import { useAgentLiveStore } from './state/live-store';
 import { projectStatusPanel } from './status/AgentStatusPanel';
 import { AgentTurn } from './timeline/AgentTimeline';
-import { sessionItems, type ModelCatalog, type ThinkingLevel } from './types';
+import {
+  sessionItems,
+  type ModelCatalog,
+  type SessionSummary,
+  type ThinkingLevel,
+} from './types';
 import type { UiAgentMessage } from '@/contracts/ui-events';
 
 const virtuosoMock = vi.hoisted(() => ({
@@ -78,6 +83,7 @@ vi.mock('react-virtuoso', async () => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  setDocumentVisibility('visible');
   virtuosoMock.scrollToIndex.mockReset();
   virtuosoMock.atBottomStateChange = undefined;
   virtuosoMock.followOutput = undefined;
@@ -87,6 +93,101 @@ afterEach(() => {
 });
 
 describe('Agent experience', () => {
+  it('renders a recent deep-link snapshot before idempotently replacing it with full history', async () => {
+    const pendingFull = deferred<unknown>();
+    const complete = previewAgentSnapshot('session-preview');
+    const recentMessages = complete.messages.slice(-2);
+    const transport = productionTransport({
+      'agent.session.snapshot': (request: ControlRequest) => (
+        request.query?.view === 'recent'
+          ? {
+              ...complete,
+              items: recentMessages,
+              messages: undefined,
+              liveEvents: [],
+              snapshotScope: 'recent',
+              partial: true,
+              recentFromSequence: 12,
+            }
+          : pendingFull.promise
+      ),
+    });
+
+    const { container } = renderAgent(transport, '/agent?session=session-preview');
+
+    expect(await screen.findByText(
+      '读取输入法工具书，并把结果作为可展开卡片保留。',
+    )).toBeInTheDocument();
+    expect(transport.requests.filter((request) => (
+      request.pathId === 'agent.session.snapshot'
+      && request.query?.view === 'recent'
+    ))).toHaveLength(1);
+    expect(transport.requests.filter((request) => (
+      request.pathId === 'agent.session.snapshot'
+      && request.query?.view === undefined
+    ))).toHaveLength(1);
+
+    await act(async () => pendingFull.resolve(complete));
+    await waitFor(() => expect(
+      useAgentLiveStore.getState().projections['session-preview']?.messageOrder,
+    ).toHaveLength(4));
+    expect(new Set(
+      useAgentLiveStore.getState().projections['session-preview']?.messageOrder,
+    ).size).toBe(4);
+    expect(useAgentLiveStore.getState().projections['session-preview']?.turnOrder).toHaveLength(2);
+    expect(container.querySelectorAll('.agent-turn')).toHaveLength(2);
+  });
+
+  it('falls back to the compatible full snapshot when the recent window fails', async () => {
+    const complete = previewAgentSnapshot('session-preview');
+    const transport = productionTransport({
+      'agent.session.snapshot': (request: ControlRequest) => {
+        if (request.query?.view === 'recent') throw new Error('recent unavailable');
+        return complete;
+      },
+    });
+
+    renderAgent(transport, '/agent?session=session-preview');
+
+    await waitFor(() => expect(
+      useAgentLiveStore.getState().projections['session-preview']?.messageOrder,
+    ).toHaveLength(4));
+    expect(screen.queryByText(/recent unavailable/)).not.toBeInTheDocument();
+    expect(transport.requests.filter((request) => (
+      request.pathId === 'agent.session.snapshot'
+    ))).toHaveLength(2);
+  });
+
+  it('starts restoring a deep-linked conversation before the session rail finishes loading', async () => {
+    const pendingSessions = deferred<unknown>();
+    const pendingSnapshot = deferred<unknown>();
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      () => pendingSessions.promise,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => pendingSnapshot.promise,
+    );
+
+    renderAgent(transport, '/agent?session=session-preview');
+
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.snapshot',
+        params: { sessionId: 'session-preview' },
+      }),
+    })));
+    expect(screen.getByRole('status', { name: '正在打开对话' })).toBeInTheDocument();
+
+    pendingSessions.resolve({ ok: true, items: previewSessions });
+    pendingSnapshot.resolve(previewAgentSnapshot('session-preview'));
+    expect(await screen.findByRole('textbox', { name: '消息' })).toBeInTheDocument();
+  });
+
   it('makes the full session row clickable', async () => {
     const onSelect = vi.fn();
     const user = userEvent.setup();
@@ -775,6 +876,8 @@ describe('Agent experience', () => {
     renderAgent(transport);
 
     expect(await screen.findAllByText('联调 Room · 澄')).toHaveLength(2);
+    expect(document.querySelector('.room-task-flow')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: '任务依赖图' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '更多“联调 Room · 澄”操作' })).not.toBeInTheDocument();
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
       request: expect.objectContaining({ pathId: 'agent.session.snapshot' }),
@@ -877,6 +980,30 @@ describe('Agent experience', () => {
     await waitFor(() => expect(attempts).toBe(2));
     expect(within(section).queryByRole('alert')).not.toBeInTheDocument();
     expect(within(section).getByText('当前会话没有委派任务')).toBeVisible();
+  });
+
+  it('does not poll subagents from an open task center in a background tab', async () => {
+    setDocumentVisibility('hidden');
+    let attempts = 0;
+    const transport = productionTransport({
+      'agent.subagents.list': () => {
+        attempts += 1;
+        return { ok: true, items: [] };
+      },
+    });
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '展开任务中心' }));
+    expect(await screen.findByLabelText('当前对话任务中心')).toBeInTheDocument();
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 20));
+    });
+    expect(attempts).toBe(0);
+
+    setDocumentVisibility('visible');
+    fireEvent(document, new Event('visibilitychange'));
+    await waitFor(() => expect(attempts).toBe(1));
   });
 
   it('shows the full capability catalog while keeping Runtime authorization and native Skills distinct', async () => {
@@ -2911,6 +3038,61 @@ describe('Agent experience', () => {
     expect(await screen.findByRole('button', { name: '对话权限：工作区托管' })).toBeInTheDocument();
   });
 
+  it('does not infer a workspace grant when the update receipt omits its Session', async () => {
+    const initialSession = {
+      ...previewSessions[0]!,
+      mode: 'assistant' as const,
+      workspaceRoots: [],
+      workspaceScopeGranted: false,
+      toolProfileVersion: 'control-center-v1',
+    };
+    const reloadedSession = {
+      ...initialSession,
+      mode: 'coordinator' as const,
+      executionMode: 'workspace_managed' as const,
+      workspaceScopeGranted: false,
+    };
+    let sessionReads = 0;
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      () => ({
+        ok: true,
+        items: [sessionReads++ === 0 ? initialSession : reloadedSession],
+      }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { ok: true },
+    );
+    const pickFiles = vi.spyOn(transport, 'pickFiles').mockResolvedValue([{
+      id: 'workspace-directory-no-receipt',
+      name: 'learnA',
+      mimeType: 'application/octet-stream',
+      byteSize: 0,
+      path: '/Users/example/Projects/personal-agent-workbench',
+    }]);
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '对话权限：写入与命令确认' }));
+    const permissionPicker = document.querySelector('.agent-picker-popover');
+    expect(permissionPicker).not.toBeNull();
+    await user.click(within(permissionPicker as HTMLElement).getByRole('radio', { name: /工作区托管/ }));
+
+    await waitFor(() => expect(pickFiles).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(sessionReads).toBe(2));
+    await user.click(screen.getByRole('button', { name: '对话权限：工作区托管' }));
+    expect(await screen.findByText('尚未授权目录，工作区工具无法运行')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('权限更新未返回确认结果');
+  });
+
   it('requires explicit confirmation before enabling Luna-arbitrated full automation', async () => {
     const assistantSession = {
       ...previewSessions[0]!,
@@ -4084,6 +4266,13 @@ function renderAgent(transport: ControlTransport, initialEntry = '/agent') {
   );
 }
 
+function setDocumentVisibility(state: DocumentVisibilityState): void {
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    value: state,
+  });
+}
+
 function testQueryClient(): QueryClient {
   return new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
 }
@@ -4139,7 +4328,36 @@ function featureTransport(
   },
   modelSelectRoute: unknown = { ok: true },
   thinkingSelectRoute: unknown = { ok: true },
-  modeUpdateRoute: unknown = { ok: true },
+  modeUpdateRoute: unknown = (request: ControlRequest) => {
+    const body = request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+      ? request.body as Record<string, unknown>
+      : {};
+    const workspaceRoots = Array.isArray(body.workspaceRoots)
+      ? body.workspaceRoots.filter((value): value is string => typeof value === 'string')
+      : previewSessions[0]!.workspaceRoots;
+    const executionMode = typeof body.executionMode === 'string'
+      ? body.executionMode as SessionSummary['executionMode']
+      : previewSessions[0]!.executionMode;
+    return {
+      ok: true,
+      session: {
+        ...previewSessions[0]!,
+        ...(body.mode === 'assistant' || body.mode === 'coordinator'
+          ? { mode: body.mode }
+          : {}),
+        ...(typeof body.toolProfileVersion === 'string'
+          ? { toolProfileVersion: body.toolProfileVersion }
+          : {}),
+        ...(executionMode ? { executionMode } : {}),
+        projectContextEnabled: body.projectContextEnabled === true,
+        piSkillsEnabled: body.piSkillsEnabled === true,
+        codexSkillsEnabled: body.codexSkillsEnabled === true,
+        workspaceRoots,
+        workspaceScopeGranted: workspaceRoots.length > 0
+          && (executionMode === 'workspace_managed' || executionMode === 'full_trust'),
+      },
+    };
+  },
   forkListRoute: unknown = forkListFixture(),
   rewriteRoute: unknown = { ok: true },
 ): MockControlTransport {

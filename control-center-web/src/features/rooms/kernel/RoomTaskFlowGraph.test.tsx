@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   previewRoomKernelSnapshot,
@@ -158,10 +159,12 @@ describe('RoomTaskFlowGraph dependency proof', () => {
     const graph = screen.getByRole('region', { name: '任务依赖图' });
     expect(graph.querySelectorAll('.room-task-flow__task-node')).toHaveLength(4);
     expect(graph.querySelectorAll('.room-task-flow__edges g')).toHaveLength(6);
-    expect(graph).toHaveTextContent('4 项 · 2 已完成 · 1 执行中 · 1 等待中');
+    expect(within(graph).getByRole('progressbar', { name: /4 项任务/ })).toHaveAttribute(
+      'aria-valuenow',
+      '2',
+    );
     expect(graph).toHaveTextContent('并行实现 Room 任务图，整合后交给独立伙伴复核');
-    expect(graph).toHaveTextContent('接续 / 汇总');
-    expect(graph).toHaveTextContent('复核');
+    expect(graph).toHaveTextContent('接续 / 复核');
 
     const dataNode = within(graph).getByRole('article', { name: /接通 Room 依赖数据/ });
     const interfaceNode = within(graph).getByRole('article', { name: /实现 Room 任务图交互/ });
@@ -177,11 +180,20 @@ describe('RoomTaskFlowGraph dependency proof', () => {
     expect(integrationNode).toHaveAttribute('data-task-stage', '接续 / 整合任务');
     expect((integrationNode as HTMLElement).style.gridColumn).toBe('3');
     expect(reviewNode).toHaveAttribute('data-task-stage', '复核任务');
-    expect((reviewNode as HTMLElement).style.gridColumn).toBe('4');
+    expect((reviewNode as HTMLElement).style.gridColumn).toBe('3');
+    expect(graph.querySelector('.room-task-flow__canvas')).toHaveStyle({
+      '--room-task-flow-height': '224px',
+    });
     expect(reviewNode).toHaveAttribute('title', expect.stringContaining('等待 1 项真实前置任务'));
     expect(reviewNode).toHaveTextContent('负责人澄·远');
-    expect(reviewNode).toHaveTextContent('等待前置任务');
+    expect(within(reviewNode).getByRole('progressbar', { name: /前置 0 \/ 1 已完成/ })).toHaveAttribute(
+      'aria-valuenow',
+      '0',
+    );
     expect(graph).not.toHaveTextContent(/当前动作|下一步|验证状态|临时协作者/);
+    expect(document.querySelector('.lucide-arrow-right, .lucide-chevron-right')).toBeNull();
+    expect(graph.querySelector('marker, [marker-end], [marker-start]')).toBeNull();
+    expect(graph).not.toHaveTextContent(/[→←➜➝➞➟➠➡]/);
 
     const workList = screen.getByRole('region', { name: '每项工作的详细进展' });
     const interfaceCard = [...workList.querySelectorAll('.room-task-work-card')].find((card) => (
@@ -220,6 +232,127 @@ describe('RoomTaskFlowGraph dependency proof', () => {
     );
     expect(userFacingLabels).not.toMatch(/dispatch-private-card|root-private-card|receipt-private-card|\{"rootId"/);
     expect(graph.querySelector('.room-task-flow__dispatch-node')).not.toBeInTheDocument();
+  });
+
+  it('uses an indeterminate status ring when active work has no authoritative denominator', () => {
+    const task = workspaceTask({ state: 'active', verifications: [], verificationCount: 0 });
+    render(<RoomTaskFlowGraph
+      dispatches={[]}
+      finalPostCount={0}
+      goal="验证没有伪百分比的执行态"
+      participantLabels={{ 'participant-owner': '澄·今' }}
+      participantProgress={[]}
+      posts={[]}
+      root={workspaceRoot()}
+      tasks={[task]}
+    />);
+
+    const progress = screen.getByRole('status', { name: /暂无可计算的完成分母/ });
+    expect(progress).toHaveAttribute('data-mode', 'indeterminate');
+    expect(progress).not.toHaveAttribute('aria-valuenow');
+  });
+
+  it('keeps an active frontier in progress when an older blocker is still present on the Root', () => {
+    const task = workspaceTask({ state: 'active', verifications: [], verificationCount: 0 });
+    const dispatch = { ...authorityDispatch(), state: 'running' as const };
+    render(<RoomTaskFlowGraph
+      dispatches={[dispatch]}
+      finalPostCount={0}
+      goal="恢复仍在推进的任务"
+      participantLabels={{ 'participant-owner': '澄·今' }}
+      participantProgress={[]}
+      posts={[]}
+      root={{ ...workspaceRoot(), state: 'blocked' }}
+      tasks={[task]}
+    />);
+
+    const graph = screen.getByRole('region', { name: '任务依赖图' });
+    expect(graph).toHaveAttribute('data-root-state', 'active');
+    expect(graph.querySelector('.room-task-flow__result-node')).toHaveAttribute('data-state', 'active');
+    expect(graph).not.toHaveTextContent('已阻塞');
+  });
+
+  it('opens the mapped task turn from the whole card and the exact owner Session only from its own link', async () => {
+    const task = workspaceTask({ state: 'active', verifications: [], verificationCount: 0 });
+    const dispatch = { ...authorityDispatch(), state: 'running' as const };
+    const session: PrivateSessionProjection = {
+      sessionId: 'session-owner',
+      participantId: 'participant-owner',
+      rootId: task.rootId,
+      taskId: task.taskId,
+      taskKind: task.taskKind,
+      workItemId: null,
+      dispatchId: dispatch.dispatchId,
+      generation: 1,
+      state: 'running',
+      updatedAtMs: 10,
+    };
+    const onNavigateToTask = vi.fn();
+    const onStopDispatch = vi.fn();
+    const user = userEvent.setup();
+    render(<RoomTaskFlowGraph
+      dispatches={[dispatch]}
+      finalPostCount={0}
+      goal="跳到任务对应的逻辑轮"
+      navigableRootIds={new Set([task.rootId])}
+      onNavigateToTask={onNavigateToTask}
+      onStopDispatch={onStopDispatch}
+      participantLabels={{ 'participant-owner': '澄·今' }}
+      participantProgress={[]}
+      posts={[]}
+      root={workspaceRoot()}
+      sessionsById={{ 'session-owner': session }}
+      tasks={[task]}
+    />);
+
+    const taskButton = screen.getByRole('button', { name: /查看完成隔离工作区交付对应的协作对话/ });
+    await user.click(taskButton);
+    expect(onNavigateToTask).toHaveBeenCalledWith({
+      dispatchId: 'dispatch-owner',
+      rootId: 'root-workspace',
+      taskId: 'task-workspace',
+    });
+    taskButton.focus();
+    await user.keyboard('{Enter}');
+    expect(onNavigateToTask).toHaveBeenCalledTimes(2);
+
+    const ownerLink = screen.getByRole('link', { name: '打开澄·今的伙伴对话' });
+    expect(ownerLink).toHaveAttribute('href', '#/agent?session=session-owner');
+    await user.click(ownerLink);
+    expect(onNavigateToTask).toHaveBeenCalledTimes(2);
+
+    const stopButton = screen.getByRole('button', { name: '停止澄·今的这次运行' });
+    await user.click(stopButton);
+    expect(onStopDispatch).toHaveBeenCalledWith({
+      dispatchId: 'dispatch-owner',
+      participantId: 'participant-owner',
+      rootId: 'root-workspace',
+      taskId: 'task-workspace',
+    });
+    expect(onNavigateToTask).toHaveBeenCalledTimes(2);
+  });
+
+  it('disables task and participant navigation when their exact mappings are absent', () => {
+    const task = workspaceTask({ state: 'active', verifications: [], verificationCount: 0 });
+    const onNavigateToTask = vi.fn();
+    render(<RoomTaskFlowGraph
+      dispatches={[]}
+      finalPostCount={0}
+      goal="缺少映射时不猜测"
+      navigableRootIds={new Set()}
+      onNavigateToTask={onNavigateToTask}
+      participantLabels={{ 'participant-owner': '澄·今' }}
+      participantProgress={[]}
+      posts={[]}
+      root={workspaceRoot()}
+      tasks={[task]}
+    />);
+
+    expect(screen.getByRole('button', { name: /暂时无法定位完成隔离工作区交付的协作对话/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '暂无澄·今的可用伙伴对话' })).toBeDisabled();
+    expect(screen.queryByRole('link', { name: /澄·今的伙伴对话/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /停止.*这次运行/ })).not.toBeInTheDocument();
+    expect(onNavigateToTask).not.toHaveBeenCalled();
   });
 
   it('projects the internal report task only through the single result stage', () => {
@@ -553,17 +686,38 @@ describe('RoomTaskWorkList participant authority projection', () => {
       completedAtMs: 5_000,
     };
 
-    render(<RoomTaskWorkList
-      activities={[]}
-      dispatches={[dispatch]}
-      participantLabels={{ 'participant-owner': '澄·今' }}
-      participantProgress={[]}
-      posts={[]}
-      root={workspaceRoot()}
-      sessionsById={{ 'session-owner': session }}
-      tasks={[task]}
-      workItems={[workItem]}
-    />);
+    render(<>
+      <RoomTaskFlowGraph
+        dispatches={[dispatch]}
+        finalPostCount={0}
+        goal="从权威 Todo 投影任务进度"
+        participantLabels={{ 'participant-owner': '澄·今' }}
+        participantProgress={[]}
+        posts={[]}
+        root={workspaceRoot()}
+        sessionsById={{ 'session-owner': session }}
+        tasks={[task]}
+        workItems={[workItem]}
+      />
+      <RoomTaskWorkList
+        activities={[]}
+        dispatches={[dispatch]}
+        participantLabels={{ 'participant-owner': '澄·今' }}
+        participantProgress={[]}
+        posts={[]}
+        root={workspaceRoot()}
+        sessionsById={{ 'session-owner': session }}
+        tasks={[task]}
+        workItems={[workItem]}
+      />
+    </>);
+
+    const graph = screen.getByRole('region', { name: '任务依赖图' });
+    const taskProgress = within(graph).getByRole('progressbar', { name: /Todo 1 \/ 2 已完成/ });
+    expect(taskProgress).toHaveAttribute('aria-valuemin', '0');
+    expect(taskProgress).toHaveAttribute('aria-valuemax', '2');
+    expect(taskProgress).toHaveAttribute('aria-valuenow', '1');
+    expect(taskProgress).toHaveAttribute('data-source', 'todo');
 
     const card = document.querySelector<HTMLDetailsElement>('.room-task-work-card')!;
     fireEvent.click(card.querySelector('summary')!);

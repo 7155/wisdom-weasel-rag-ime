@@ -3385,7 +3385,9 @@ class DebugImeService:
                         minimum=1,
                         maximum=MAX_PERSONAL_V2_SOURCES,
                     ),
-                    auto_apply=not manual,
+                    # Scheduled maintenance may prepare the next bounded draft,
+                    # but only the review/apply path can promote semantic writes.
+                    auto_apply=False,
                     include_agent_dialogue=managed.include_agent_dialogue,
                     daily_interval_ms=max(
                         60,
@@ -3867,7 +3869,7 @@ class DebugImeService:
                 daily_interval_ms=automatic_interval_ms,
                 owner_kind="" if owner_filter is None else owner_filter[0],
                 owner_id="" if owner_filter is None else owner_filter[1],
-                auto_apply=automatic_enabled,
+                auto_apply=False,
                 include_agent_dialogue=managed.include_agent_dialogue,
                 canonical_personal=True,
             )
@@ -3936,8 +3938,8 @@ class DebugImeService:
             "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
             "ok": True,
             "policy": "auto_governed" if automatic_enabled else "disabled",
-            "autoApply": automatic_enabled,
-            "scheduledDraftOnly": False,
+            "autoApply": False,
+            "scheduledDraftOnly": automatic_enabled,
             # The owner-scoped evidence curator is the authoritative scheduled
             # lane. Legacy compile state remains diagnostic only.
             "due": automatic_enabled and bool(owner_curation.get("due")),
@@ -3973,7 +3975,7 @@ class DebugImeService:
                 "model": managed.automatic_organization_model,
                 "thinkingLevel": managed.automatic_organization_thinking_level,
                 "runsPerDay": managed.automatic_organization_runs_per_day,
-                "autoApply": automatic_enabled,
+                "autoApply": False,
                 "curationProtocol": MEMORY_CURATION_ARCHITECTURE,
                 "targetSourceCount": DEFAULT_MAX_SOURCES,
                 "maximumSourceCount": MAX_PERSONAL_V2_SOURCES,
@@ -7221,7 +7223,23 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             )
             return
         if agent_session_id and agent_action == "messages":
-            self._write_json(HTTPStatus.OK, self.service.agent.messages(agent_session_id))
+            query = parse_qs(parsed.query or "", keep_blank_values=True)
+            view_values = query.get("view", [])
+            if view_values and view_values != ["recent"]:
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"ok": False, "error": "unsupported Session snapshot view"},
+                )
+                return
+            response = (
+                self.service.agent.message_snapshot.messages(
+                    agent_session_id,
+                    view="recent",
+                )
+                if view_values
+                else self.service.agent.messages(agent_session_id)
+            )
+            self._write_json(HTTPStatus.OK, response)
             return
         if agent_session_id and agent_action == "forks":
             try:

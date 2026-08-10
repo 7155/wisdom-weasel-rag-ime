@@ -182,6 +182,7 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
           <RoomParticipantPublicLanes
             progress={participantProgress}
             room={room}
+            tasks={currentRootTasks}
             workItems={workItems}
           />
         </RoomStatusSection>
@@ -543,10 +544,12 @@ function RoomFinalPublicReply({
 function RoomParticipantPublicLanes({
   progress,
   room,
+  tasks,
   workItems,
 }: {
   progress: RoomParticipantPublicProgressProjection[];
   room?: RoomSummary;
+  tasks: RoomTaskV3[];
   workItems: RoomWorkItem[];
 }) {
   const feedRef = useRef<HTMLDivElement>(null);
@@ -591,7 +594,7 @@ function RoomParticipantPublicLanes({
   }
 
   return <div
-    aria-label="伙伴自述与运行记录"
+    aria-label="工作进展与运行记录"
     aria-live="polite"
     aria-relevant="additions text"
     className="room-status-public-lanes"
@@ -631,11 +634,28 @@ function RoomParticipantPublicLanes({
         work.currentOwnerParticipantId === participant?.id
         || work.offeredToParticipantId === participant?.id
       ));
-      const state = latestUpdate?.status ?? (participant?.status === 'active' ? 'idle' : 'waiting');
+      const ownedTasks = tasks.filter((task) => (
+        task.currentOwnerParticipantId === participant?.id
+        && task.taskKind !== 'report'
+      ));
+      const responsibilities = tasks.length
+        ? ownedTasks.map((task) => ({
+            id: task.taskId,
+            objective: task.objective,
+            state: roomTaskStateLabel(task.state),
+          }))
+        : ownedWork.map((work) => ({
+            id: work.id,
+            objective: work.objective,
+            state: roomWorkStateLabel(work.state),
+          }));
+      const state = roomParticipantTaskState(ownedTasks)
+        ?? latestUpdate?.status
+        ?? (participant?.status === 'active' ? 'idle' : 'waiting');
       const role = participant
         ? roomCollaborationRoleLabel(participant.collaborationRole)
         : '角色信息同步中';
-      const hasPublicWork = ownedWork.length > 0 || latestUpdate !== undefined;
+      const hasPublicWork = responsibilities.length > 0 || latestUpdate !== undefined;
       const roleSummary = participant
         ? `${role} · ${hasPublicWork
           ? roomCollaborationRoleDescription(participant.collaborationRole)
@@ -660,9 +680,9 @@ function RoomParticipantPublicLanes({
         </header>
         <div className="room-status-public-lane__work">
           <strong>当前分工</strong>
-          {ownedWork.length ? <ul>{ownedWork.map((work) => <li key={work.id}>
+          {responsibilities.length ? <ul>{responsibilities.map((work) => <li key={work.id}>
             <span>{work.objective}</span>
-            <small>{roomWorkStateLabel(work.state)}</small>
+            <small>{work.state}</small>
           </li>)}</ul> : <p>这位伙伴暂时没有单独分到的部分</p>}
         </div>
         <div className="room-status-public-lane__updates">
@@ -683,6 +703,17 @@ function RoomParticipantPublicLanes({
       </article>;
     })}
   </div>;
+}
+
+function roomParticipantTaskState(
+  tasks: RoomTaskV3[],
+): RoomParticipantPublicProgressProjection['status'] | undefined {
+  if (tasks.some((task) => task.state === 'active')) return 'running';
+  if (tasks.some((task) => ['pending', 'review', 'waiting'].includes(task.state))) return 'waiting';
+  if (tasks.some((task) => ['blocked', 'failed'].includes(task.state))) return 'failed';
+  if (tasks.some((task) => task.state === 'cancelled')) return 'aborted';
+  if (tasks.length && tasks.every((task) => task.state === 'completed')) return 'completed';
+  return undefined;
 }
 
 function RoomParticipantTelemetry({ participant }: { participant: NonNullable<RoomSummary['participants']>[number] }) {
@@ -1023,6 +1054,19 @@ function roomWorkStateLabel(state: RoomWorkItem['state']): string {
     review: '一起检查',
     blocked: '已阻塞',
     done: '已完成',
+    failed: '未完成',
+    cancelled: '已取消',
+  }[state];
+}
+
+function roomTaskStateLabel(state: RoomTaskV3['state']): string {
+  return {
+    pending: '等待开始',
+    active: '执行中',
+    review: '正在复核',
+    waiting: '等待前置',
+    blocked: '已阻塞',
+    completed: '已完成',
     failed: '未完成',
     cancelled: '已取消',
   }[state];

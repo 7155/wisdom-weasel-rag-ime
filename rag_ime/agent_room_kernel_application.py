@@ -24,11 +24,17 @@ from .agent_room_continuations import (
     RoomContinuationFactory,
     RoomContinuationProposalError,
 )
-from .agent_room_kernel import RoomKernelFenceError, RoomKernelStore
+from .agent_room_kernel import (
+    RoomKernelFenceError,
+    RoomKernelStore,
+    pending_review_acceptance_criteria,
+)
 from .agent_room_kernel import kernel_owns_room_execution
 from .agent_room_kernel_contracts import (
     DEFAULT_RUNTIME_PROFILE_REVISION,
     DISPATCH_ENVELOPE_SCHEMA_VERSION,
+    REVIEW_AXES,
+    REVIEW_AXIS_SET,
     validate_kernel_contract,
 )
 from .agent_room_kernel_projection import RoomKernelProjection
@@ -48,6 +54,50 @@ from .agent_room_references import (
 from .agent_room_requirements import RequirementGovernanceStore
 from .agent_room_workspaces import RoomWorkspaceCoordinator, RoomWorkspaceError
 from .agent_rooms import AgentRoomStore
+
+
+def _scoped_review_tasks(
+    *,
+    tasks: Sequence[Mapping[str, object]],
+    requested_criterion_ids: Sequence[str],
+) -> tuple[list[str], set[str]]:
+    """Select every authored Task that can affect the integrated delivery."""
+
+    # A final independent review is not a criterion-scoped spot check.  Both
+    # review axes must cover every authored/integrated Task that can change the
+    # delivered result; the aliases remain part of the handoff context only.
+    del requested_criterion_ids
+    selected_ids: list[str] = []
+    author_ids: set[str] = set()
+    for task in tasks:
+        task_id = str(task.get("taskId") or "").strip()
+        if not task_id:
+            continue
+        selected_ids.append(task_id)
+        owner_id = str(task.get("currentOwnerParticipantId") or "").strip()
+        if owner_id:
+            author_ids.add(owner_id)
+    return list(dict.fromkeys(selected_ids)), author_ids
+
+
+_FACILITATOR_PRE_COLLABORATION_MUTATIONS = frozenset(
+    {
+        ("workspace_edit", "apply"),
+        ("workspace_patch", "apply"),
+        ("workspace_write", "apply"),
+        ("workspace_lsp", "rename"),
+        ("workspace_lsp", "code_action_apply"),
+        ("workspace_job", "start"),
+        ("workspace_job", "cancel"),
+        # Native Pi projections are included so an alternate adapter cannot
+        # bypass the same product capability fence.
+        ("edit", "apply"),
+        ("write", "apply"),
+        ("apply_patch", "apply"),
+    }
+)
+
+_IMPLEMENTATION_AUTHOR_ROLES = frozenset({"implementer", "researcher"})
 
 
 class RoomKernelApplicationService:
@@ -150,7 +200,6 @@ class RoomKernelApplicationService:
 
     def snapshot(self, room_id: str) -> dict[str, object]:
         self.rooms.get(room_id)
-        self.projection.sync_room(room_id)
         snapshot = self.projection.snapshot(room_id)
         snapshot["requirementsByRootId"] = {
             root_id: self.peer_review.read_projection(root_id)
@@ -478,7 +527,7 @@ class RoomKernelApplicationService:
             },
             "acceptanceAliases": acceptance,
             "canSettle": (
-                root.get("state") == "running"
+                root.get("state") in {"running", "waiting"}
                 and dispatch.get("state") == "running"
             ),
             "participants": participants,
@@ -554,7 +603,7 @@ class RoomKernelApplicationService:
         )
         if authorized is None:
             return None
-        live, invocation, created = authorized
+        live, invocation, created, _workspace_access = authorized
         canonical = str(invocation["canonicalCommand"]["tool"])
         if canonical not in ROOM_PUBLIC_TOOLS:
             raise ToolAuthorizationError(
@@ -828,8 +877,10 @@ class RoomKernelApplicationService:
         evidence_refs: Sequence[str],
         child_task: Mapping[str, object],
         pending_parent_task: Mapping[str, object],
+        pending_parent_quality_gate_receipt: Mapping[str, object],
         now_ms: int,
         parent_commit_id: str,
+        review_axis: str | None = None,
     ) -> dict[str, object]:
         """Bind one post-integration Reviewer Task to the authoritative workspace."""
 
@@ -855,40 +906,104 @@ class RoomKernelApplicationService:
             raise RoomKernelFenceError(
                 "final independent review target has no active Session"
             )
-        if str(target.get("collaborationRole") or "") != "reviewer":
-            raise RoomKernelFenceError(
-                "final independent review requires a Reviewer participant"
-            )
-
-        children = self.kernel.collaboration_children(str(root["rootId"]))
         active_states = {"pending", "leased", "running", "waiting"}
         if any(
-            str(dispatch.get("intentKind") or "") == "review"
-            and str(dispatch.get("state") or "") in active_states
-            for dispatch in children
+            isinstance(attempt.get("dispatch"), Mapping)
+            and str(attempt["dispatch"].get("state") or "") in active_states
+            for attempt in self.kernel.latest_review_attempts(
+                str(root["rootId"])
+            )
         ):
             raise RoomKernelFenceError(
                 "an independent review is already active; wait for it"
             )
-        review_task_ids = [str(parent_task["taskId"])]
-        review_author_ids = {facilitator_id}
-        for dispatch in children:
-            intent = str(dispatch.get("intentKind") or "")
-            if intent not in {"execute", "revise"}:
-                continue
-            task = self.kernel.task(str(dispatch["taskId"]))
-            if str(dispatch.get("state") or "") != "committed" or (
-                dispatch.get("resultPublic") is not True
+        requested_axis = str(review_axis or "").strip()
+        if requested_axis and requested_axis not in REVIEW_AXIS_SET:
+            raise RoomKernelFenceError("reviewAxis is invalid")
+        satisfied_axes: set[str] = set()
+        for attempt in self.kernel.latest_review_attempts(
+            str(root["rootId"])
+        ):
+            payload = attempt.get("payload")
+            dispatch = attempt.get("dispatch")
+            if not isinstance(payload, Mapping) or not isinstance(
+                dispatch,
+                Mapping,
             ):
-                raise RoomKernelFenceError(
-                    "all implementation and inspection Tasks must publish results "
-                    "before final review"
-                )
-            policy = str(task.get("workspacePolicy") or "")
-            if policy not in {"shared_single_writer", "isolated_writable"}:
                 continue
-            review_task_ids.append(str(task["taskId"]))
-            review_author_ids.add(str(task["currentOwnerParticipantId"]))
+            axis = str(payload.get("reviewAxis") or "").strip()
+            if axis not in REVIEW_AXIS_SET:
+                continue
+            if (
+                attempt.get("taskState") != "completed"
+                or payload.get("reviewState")
+                not in {"accepted", "accepted_with_notes"}
+                or dispatch.get("state") != "committed"
+            ):
+                continue
+            target_ids = [
+                str(value)
+                for value in payload.get("reviewOfTaskIds", ())
+                if str(value or "").strip()
+            ]
+            try:
+                current_revision = self.kernel.review_target_revision(
+                    root_id=str(root["rootId"]),
+                    task_ids=target_ids,
+                    review_snapshot=payload,
+                )
+            except (KeyError, TypeError, ValueError, RoomKernelFenceError):
+                continue
+            if current_revision == str(
+                payload.get("reviewTargetRevision") or ""
+            ):
+                satisfied_axes.add(axis)
+        resolved_axis = requested_axis or next(
+            (
+                axis
+                for axis in REVIEW_AXES
+                if axis not in satisfied_axes
+            ),
+            "",
+        )
+        if not resolved_axis:
+            raise RoomKernelFenceError(
+                "both independent review axes already cover the current revision"
+            )
+        if resolved_axis in satisfied_axes:
+            raise RoomKernelFenceError(
+                f"reviewAxis {resolved_axis} already covers the current revision"
+            )
+        parent_task_id = str(parent_task["taskId"])
+        required_task_ids = self.kernel.required_review_task_ids(
+            str(root["rootId"])
+        )
+        if parent_task_id not in required_task_ids:
+            raise RoomKernelFenceError(
+                "final review parent is outside the authored delivery scope"
+            )
+        review_tasks: list[dict[str, object]] = []
+        for task_id in required_task_ids:
+            if task_id == parent_task_id:
+                task = dict(pending_parent_task)
+            else:
+                task = self.kernel.task(task_id)
+                latest_commit = self.kernel.latest_task_commit(task_id)
+                dispatch_id = (
+                    str(latest_commit.get("dispatchId") or "")
+                    if isinstance(latest_commit, Mapping)
+                    else ""
+                )
+                if (
+                    task.get("state") != "completed"
+                    or not dispatch_id
+                    or self.kernel.post_for_dispatch(dispatch_id) is None
+                ):
+                    raise RoomKernelFenceError(
+                        "all implementation and inspection Tasks must publish "
+                        "results before final review"
+                    )
+            policy = str(task.get("workspacePolicy") or "")
             if (
                 policy == "isolated_writable"
                 and task.get("workspaceIntegrationState") != "applied"
@@ -896,9 +1011,18 @@ class RoomKernelApplicationService:
                 raise RoomKernelFenceError(
                     "all isolated writable Tasks must be integrated before review"
                 )
+            review_tasks.append(dict(task))
+        review_task_ids, review_author_ids = _scoped_review_tasks(
+            tasks=review_tasks,
+            requested_criterion_ids=[
+                str(value)
+                for value in child_task.get("acceptanceCriterionIds") or ()
+                if str(value or "").strip()
+            ],
+        )
         if target_participant_id in review_author_ids:
             raise RoomKernelFenceError(
-                "final Reviewer must not have authored or integrated the deliverable"
+                "Reviewer must not have authored or integrated the selected review scope"
             )
         evidence_tools = self.capabilities.runtime_evidence_tools(
             session_id=str(parent_dispatch["targetSessionId"]),
@@ -939,6 +1063,29 @@ class RoomKernelApplicationService:
             raise RoomKernelFenceError(str(exc)) from exc
         prepared = {
             **dict(child_task),
+            "acceptanceCriterionIds": pending_review_acceptance_criteria(
+                child_task.get("acceptanceCriterionIds") or (),
+                {
+                    **self.kernel.accepted_review_evidence_by_criterion(
+                        str(root["rootId"])
+                    ),
+                    **{
+                        str(item.get("criterionId") or "").strip(): [
+                            str(value).strip()
+                            for value in item.get("evidenceRefs") or ()
+                            if str(value or "").strip()
+                        ]
+                        for item in pending_parent_quality_gate_receipt.get(
+                            "items"
+                        )
+                        or ()
+                        if isinstance(item, Mapping)
+                        and item.get("status") == "pass"
+                        and str(item.get("criterionId") or "").strip()
+                    },
+                },
+            ),
+            "reviewAxis": resolved_axis,
             "reviewOfTaskIds": list(dict.fromkeys(review_task_ids)),
             "reviewAuthorParticipantIds": sorted(review_author_ids),
             "reviewState": "required",
@@ -947,15 +1094,22 @@ class RoomKernelApplicationService:
             "reviewFindings": [],
             **prepared_workspace,
         }
+        parent_intent = str(parent_dispatch.get("intentKind") or "")
+        pending_commit_ids = (
+            {str(parent_task["taskId"]): parent_commit_id}
+            if parent_intent in {"execute", "revise", "retry"}
+            else None
+        )
+        pending_task_snapshots = (
+            {str(parent_task["taskId"]): pending_parent_task}
+            if pending_commit_ids is not None
+            else None
+        )
         prepared["reviewTargetRevision"] = self.kernel.review_target_revision(
             root_id=str(root["rootId"]),
             task_ids=review_task_ids,
-            pending_commit_ids={
-                str(parent_task["taskId"]): parent_commit_id
-            },
-            pending_task_snapshots={
-                str(parent_task["taskId"]): pending_parent_task
-            },
+            pending_commit_ids=pending_commit_ids,
+            pending_task_snapshots=pending_task_snapshots,
             review_snapshot=prepared,
         )
         validate_kernel_contract("roomTask", prepared)
@@ -989,12 +1143,8 @@ class RoomKernelApplicationService:
             ),
             None,
         )
-        if (
-            caller is None
-            or canonical_collaboration_role_id(
-                caller.get("collaborationRole")
-            )
-            != "reviewer"
+        if caller is None or caller_id != str(
+            parent_task.get("currentOwnerParticipantId") or ""
         ):
             raise RoomKernelFenceError(
                 "only the active Reviewer may return a revision handoff"
@@ -1115,6 +1265,19 @@ class RoomKernelApplicationService:
                 except RoomWorkspaceError as exc:
                     raise RoomKernelFenceError(str(exc)) from exc
             result["workspaceRoot"] = child_task.get("workspaceRoot")
+            actual_workspace_policy = str(
+                child_task.get("workspacePolicy") or result.get("workspacePolicy") or ""
+            )
+            requested_workspace_policy = str(result.get("workspacePolicy") or "")
+            result["workspacePolicy"] = actual_workspace_policy
+            if actual_workspace_policy != requested_workspace_policy:
+                result.update(
+                    {
+                        "requestedWorkspacePolicy": requested_workspace_policy,
+                        "workspacePolicyDefaulted": True,
+                        "workspacePolicyReason": "full_trust_implementation_default",
+                    }
+                )
             if prior_execution is None:
                 prior_execution, _ = self.capabilities.record_runtime_execution(
                     session_id=session_id,
@@ -1179,13 +1342,6 @@ class RoomKernelApplicationService:
             raise RoomKernelFenceError(
                 "Room collaboration target has no active Session"
             )
-        if canonical_collaboration_role_id(
-            target.get("collaborationRole")
-        ) == "reviewer":
-            raise RoomKernelFenceError(
-                "Reviewer cannot receive implementation work through "
-                "room_collaborate; use the post-integration review handoff"
-            )
         evidence_refs = arguments.get("evidenceRefs") or []
         if not isinstance(evidence_refs, list):
             raise RoomKernelFenceError(
@@ -1197,7 +1353,8 @@ class RoomKernelApplicationService:
             if str(value or "").strip()
         ]
         intent = str(arguments.get("intent") or "execute")
-        workspace_policy = str(arguments.get("workspacePolicy") or "")
+        requested_workspace_policy = str(arguments.get("workspacePolicy") or "")
+        workspace_policy = requested_workspace_policy
         if workspace_policy not in {
             "read_only",
             "shared_single_writer",
@@ -1206,6 +1363,18 @@ class RoomKernelApplicationService:
             raise RoomKernelFenceError(
                 "Room collaboration requires an explicit workspacePolicy"
             )
+        # A full-trust Room is an explicit user authorization to execute the
+        # accepted implementation without per-action approval. Room peers are
+        # implementation lanes; read-only independent review is created later
+        # through the governed review handoff. Do not let a model-selected
+        # read_only value recreate the observed review/handoff loop after the
+        # user clicked Start.
+        if (
+            str(room.get("executionMode") or "") == "full_trust"
+            and intent == "execute"
+            and workspace_policy == "read_only"
+        ):
+            workspace_policy = "isolated_writable"
         if workspace_policy == "shared_single_writer":
             raise RoomKernelFenceError(
                 "room_collaborate keeps the parent active; writable child work "
@@ -1380,6 +1549,14 @@ class RoomKernelApplicationService:
             "workspacePolicy": workspace_policy,
             "workspaceRoot": prepared_workspace.get("workspaceRoot"),
         }
+        if workspace_policy != requested_workspace_policy:
+            result.update(
+                {
+                    "requestedWorkspacePolicy": requested_workspace_policy,
+                    "workspacePolicyDefaulted": True,
+                    "workspacePolicyReason": "full_trust_implementation_default",
+                }
+            )
         execution_receipt, _ = self.capabilities.record_runtime_execution(
             session_id=session_id,
             invocation_receipt_id=invocation_receipt_id,
@@ -1889,7 +2066,7 @@ class RoomKernelApplicationService:
         )
         if authorized is None:
             return None
-        _live, invocation, created = authorized
+        _live, invocation, created, workspace_access = authorized
         canonical = str(invocation["canonicalCommand"]["tool"])
         if canonical in ROOM_PUBLIC_TOOLS:
             raise ToolAuthorizationError(
@@ -1941,6 +2118,11 @@ class RoomKernelApplicationService:
             "ok": True,
             "created": created,
             "invocationReceipt": invocation,
+            **(
+                {"workspaceAccess": workspace_access}
+                if workspace_access != "read_write"
+                else {}
+            ),
         }
 
     def record_product_tool_execution(
@@ -2026,7 +2208,7 @@ class RoomKernelApplicationService:
         *,
         tool_call_id: str,
         load_receipt_id: str,
-    ) -> tuple[dict[str, object], dict[str, object], bool] | None:
+    ) -> tuple[dict[str, object], dict[str, object], bool, str] | None:
         active = self._active_capability_binding(session_id)
         if active is None:
             return None
@@ -2039,6 +2221,11 @@ class RoomKernelApplicationService:
             args=args,
             receipt_provider=self.media_receipt_provider,
         )
+        workspace_access = self._facilitator_workspace_access(
+            live=live,
+            tool_name=tool_name,
+            args=verified_args,
+        )
         invocation, created = self.capabilities.authorize_runtime_invocation(
             session_id=session_id,
             receipt_id=f"invoke:{tool_call_id}",
@@ -2048,7 +2235,88 @@ class RoomKernelApplicationService:
             arguments=verified_args,
             created_at_ms=int(time.time() * 1000),
         )
-        return dict(live), invocation, created
+        return dict(live), invocation, created, workspace_access
+
+    def _facilitator_workspace_access(
+        self,
+        *,
+        live: Mapping[str, object],
+        tool_name: str,
+        args: Mapping[str, object],
+    ) -> str:
+        """Fence shared-workspace writes until the declared peer wave exists."""
+
+        dispatch = self.kernel.dispatch(str(live["dispatchId"]))
+        root = self.kernel.root(str(live["rootId"]))
+        task = self.kernel.task(str(dispatch["taskId"]))
+        facilitator_id = str(root.get("facilitatorParticipantId") or "")
+        if (
+            str(dispatch.get("targetParticipantId") or "") != facilitator_id
+            or str(task.get("parentTaskId") or "").strip()
+        ):
+            return "read_write"
+        definition = self.kernel.definition_fence(
+            root_id=str(root["rootId"])
+        )
+        if definition is None:
+            # Typed compatibility Roots predate the product definition gate.
+            return "read_write"
+        implementation_id = str(
+            definition.get("implementationParticipantId") or ""
+        ).strip()
+        if not implementation_id or implementation_id == facilitator_id:
+            # room_define explicitly selected the Facilitator-only path.
+            return "read_write"
+
+        room = self.rooms.get(str(root["roomId"]))
+        required_peer_ids = {
+            str(participant.get("id") or "")
+            for participant in room.get("participants", ())
+            if isinstance(participant, Mapping)
+            and participant.get("status") == "active"
+            and str(participant.get("id") or "") != facilitator_id
+            and str(participant.get("sessionId") or "").strip()
+            and canonical_collaboration_role_id(
+                participant.get("collaborationRole")
+            )
+            in _IMPLEMENTATION_AUTHOR_ROLES
+        }
+        established_peer_ids: set[str] = set()
+        for child in self.kernel.collaboration_children(str(root["rootId"])):
+            child_generation = child.get("generation")
+            if (
+                child_generation is None
+                or int(child_generation) != int(live["generation"])
+            ):
+                continue
+            peer_id = str(child.get("targetParticipantId") or "")
+            if peer_id not in required_peer_ids:
+                continue
+            child_task = self.kernel.task(str(child["taskId"]))
+            if (
+                str(child_task.get("parentTaskId") or "")
+                != str(task["taskId"])
+                or child_task.get("workspacePolicy") != "isolated_writable"
+            ):
+                continue
+            established_peer_ids.add(peer_id)
+        missing_peer_ids = required_peer_ids - established_peer_ids
+        if not missing_peer_ids:
+            return "read_write"
+
+        operation = str(args.get("op") or "")
+        if (tool_name, operation) in {
+            ("workspace_shell", "run"),
+            ("bash", "run"),
+        }:
+            return "source_read_only"
+        if (tool_name, operation) in _FACILITATOR_PRE_COLLABORATION_MUTATIONS:
+            raise RoomKernelFenceError(
+                "Facilitator must establish isolated Room work for every active "
+                "peer before mutating the shared workspace "
+                f"({len(missing_peer_ids)} peer lanes remain)"
+            )
+        return "read_write"
 
     def _active_capability_binding(
         self,
@@ -2291,12 +2559,17 @@ class RoomKernelApplicationService:
             guard_reason = str(
                 payload.get("guardReason") or "missing_room_commit"
             )
-            # Settlement validation is staged: peer review, evidence shape,
-            # lifecycle state, and the public summary can each become
-            # actionable only after the preceding repair. Match the product's
-            # bounded Goal settlement budget so those independent repairs get
-            # a turn without allowing an unbounded continuation loop.
-            max_attempts = 5
+            # One settle guard attempt is the terminal block; every preceding
+            # attempt schedules one repair continuation.  Bound that count by
+            # the Root's *remaining* repair budget, not a per-Dispatch constant,
+            # because earlier Dispatches may already have consumed repairs.
+            limits = self.kernel.resource_limits(str(root["rootId"]))
+            repairs_remaining = max(
+                0,
+                int(limits["repair_limit"])
+                - int(limits["repair_used"]),
+            )
+            max_attempts = max(1, min(5, repairs_remaining + 1))
             receipt = self.kernel.record_uncommitted_settle(
                 dispatch_id,
                 generation=int(settle["generation"]),
@@ -2421,6 +2694,15 @@ class RoomKernelApplicationService:
                 if isinstance(quality_gate, Mapping)
                 else []
             )
+            invocation_created_at_ms = (
+                int(
+                    self.capabilities.invocation_receipt(
+                        invocation_receipt_id
+                    )["createdAtMs"]
+                )
+                if invocation_receipt_id
+                else None
+            )
             try:
                 workspace_delivery = self.workspaces.record_delivery(
                     settling_task,
@@ -2458,6 +2740,9 @@ class RoomKernelApplicationService:
                         or ""
                     ),
                     actor_ref=str(dispatch["targetParticipantId"]),
+                    settlement_invocation_created_at_ms=(
+                        invocation_created_at_ms
+                    ),
                     now_ms=int(commit.get("createdAtMs") or 0),
                 )
                 self.kernel.record_workspace_delivery(

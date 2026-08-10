@@ -640,6 +640,24 @@ class ControlRoutePolicyTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ControlApiError):
                 self.policy.authorize(request, ControlAccessContext.native())
 
+    def test_session_snapshot_accepts_optional_recent_view(self) -> None:
+        for query in ({}, {"view": "recent"}):
+            with self.subTest(query=query):
+                request = ControlRequest(
+                    request_id="request-session-snapshot",
+                    path_id=ControlPathId.AGENT_SESSION_SNAPSHOT.value,
+                    params={"sessionId": "session-1"},
+                    query=query,
+                )
+                route = self.policy.authorize(
+                    request,
+                    ControlAccessContext.native(),
+                )
+                self.assertEqual(
+                    route.path_id,
+                    ControlPathId.AGENT_SESSION_SNAPSHOT,
+                )
+
     def test_memory_page_kind_is_an_enum_not_an_arbitrary_path(self) -> None:
         for kind in ("apps", "books", "timelines"):
             allowed = ControlRequest(

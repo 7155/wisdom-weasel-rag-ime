@@ -67,6 +67,7 @@ __all__ = [
     "public_usage",
     "public_usage_evidence",
     "redact_mapping",
+    "runtime_tool_result_is_error",
     "safe_scalar",
     "supported_thinking_levels",
     "ui_confirmation_value",
@@ -807,6 +808,54 @@ def public_code_tool_activity(
         result["automatic"] = True
 
     return result
+
+
+def runtime_tool_result_is_error(
+    tool_name: str,
+    raw_result: object,
+    *,
+    reported_is_error: bool = False,
+) -> bool:
+    """Return the authoritative terminal error state for a coding Tool.
+
+    Pi marks a Tool invocation as failed when its implementation raises. The
+    PAW backend command bridge instead returns a normal ToolResult containing
+    the durable workspace receipt, including ``exitCode`` and ``timedOut``.
+    For command aliases only, that structured receipt is therefore more
+    authoritative than Pi's transport-level ``isError`` bit. Output text is
+    deliberately ignored: tests and programs may print words such as
+    ``FAILED`` while still exiting successfully.
+    """
+
+    if reported_is_error:
+        return True
+    if str(tool_name or "").strip().lower() not in {
+        "bash",
+        "workspace_shell",
+    }:
+        return False
+
+    root = as_mapping(raw_result)
+    details = as_mapping(root.get("details"))
+    approval = as_mapping(details.get("approval"))
+    candidates = (
+        as_mapping(details.get("receipt")),
+        as_mapping(approval.get("receipt")),
+        as_mapping(root.get("receipt")),
+        details,
+        root,
+    )
+    for receipt in candidates:
+        if any(
+            receipt.get(key) is True
+            for key in ("timedOut", "cancelled", "aborted")
+        ):
+            return True
+        exit_code = receipt.get("exitCode")
+        if isinstance(exit_code, int) and not isinstance(exit_code, bool):
+            return exit_code != 0
+    return False
+
 
 def _public_approval_model_decision(
     raw_result: object,

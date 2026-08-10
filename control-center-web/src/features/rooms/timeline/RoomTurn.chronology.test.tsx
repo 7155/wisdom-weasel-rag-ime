@@ -61,6 +61,18 @@ describe('RoomTurn canonical conversation chronology', () => {
       'b-middle',
       'a-last',
     ]);
+    const committedPosts = [...view.container.querySelectorAll<HTMLElement>('.room-agent-lane__post')];
+    expect(committedPosts.every((post) => post.closest('.room-agent-lane'))).toBe(true);
+    const lanes = [...view.container.querySelectorAll<HTMLDetailsElement>('.room-agent-lane')];
+    expect(lanes.every((lane) => !lane.open)).toBe(true);
+    expect(lanes.map((lane) => lane.querySelector('summary')?.textContent)).toEqual([
+      expect.stringContaining('澄·今先确认边界'),
+      expect.stringContaining('澄·初补充独立检查'),
+      expect.stringContaining('澄·今完成最终整合'),
+    ]);
+    expect(lanes.map((lane) => (
+      lane.querySelector('[data-room-message-id]')?.getAttribute('data-room-message-id')
+    ))).toEqual(['a-first', 'b-middle', 'a-last']);
   });
 
   it('renders live reduction and reconnect replay with the same canonical order', () => {
@@ -127,6 +139,63 @@ describe('RoomTurn canonical conversation chronology', () => {
 
     expect(alignment.compareDocumentPosition(gate) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(gate).toHaveTextContent('现在开始行动吗？');
+    expect(gate.closest('details')).toBeNull();
+  });
+
+  it('places the start action after direct alignment without inventing a clarification', () => {
+    const projection = liveProjection(alignmentEvents().slice(0, -1));
+    render(roomTurn(projection, {
+      kernelRootsById: { 'root-a': root('waiting') },
+      kernelReceiptsById: Object.fromEntries([
+        receipt(1, { operation: 'room_define', requiresStartAction: true }),
+        receipt(2, {
+          purpose: 'intake_phase',
+          phase: 'awaiting_start',
+          clarificationOccurred: false,
+        }),
+      ].map((item) => [item.receiptId, item])),
+      onStartExecution: () => undefined,
+    }));
+
+    expect(screen.getByRole('button', { name: '开始行动' })).toBeInTheDocument();
+  });
+
+  it('keeps the confirmed alignment as the only public lane while awaiting Start', () => {
+    const projection = liveProjection([
+      userEvent(1, 'opening', '我想把客户目录做得更顺手'),
+      postEvent(2, 'alignment', 'alignment', '已经对齐：导入、筛选、合并和历史会分别完成。'),
+      event(3, 'participant_activity', {
+        activityKind: 'work',
+        phase: 'blocked',
+        status: 'blocked',
+        work: {
+          workId: 'room-work:awaiting-start',
+          rootWorkId: 'room-work:awaiting-start',
+          objective: '整理客户目录需求',
+          state: 'blocked',
+          blocker: {
+            kernelRootState: 'waiting',
+            reason: 'Room 正在等待继续条件',
+          },
+        },
+      }, 'participant-a', ''),
+    ]);
+    const view = render(roomTurn(projection, {
+      kernelRootsById: { 'root-a': root('waiting') },
+      kernelReceiptsById: Object.fromEntries([
+        receipt(1, { operation: 'room_define', requiresStartAction: true }),
+        receipt(2, { purpose: 'intake_phase', phase: 'awaiting_start' }),
+      ].map((item) => [item.receiptId, item])),
+      onStartExecution: () => undefined,
+    }));
+
+    const lanes = view.container.querySelectorAll('.room-agent-lane');
+    expect(lanes).toHaveLength(1);
+    expect(lanes[0]).toHaveTextContent('已确认');
+    expect(lanes[0]).not.toHaveTextContent('等待新进展');
+    expect(screen.getByRole('button', { name: '开始行动' })).toBeInTheDocument();
+    expect(screen.queryByText('正在准备任务')).not.toBeInTheDocument();
+    expect(screen.queryByText('尚未收到公开工作进度')).not.toBeInTheDocument();
   });
 
   it('does not render an unanchored start action before the canonical alignment post arrives', () => {

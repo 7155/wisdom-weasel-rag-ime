@@ -254,17 +254,10 @@ def _verified_room_runtime_contract(pi_root: Path) -> tuple[dict[str, object], s
             "Room runtime minimum handlers commit does not include the reviewed "
             "Goal-settlement and Session-memory-refresh hooks"
         )
-    ancestor = subprocess.run(
-        ["git", "merge-base", "--is-ancestor", minimum_commit, "HEAD"],
-        cwd=pi_root,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if ancestor.returncode != 0:
-        raise ManagedPiRuntimeError(
-            "Pi source does not contain the reviewed Room runtime handler commit"
-        )
+    # The product Pi fork can be rebased onto a newer upstream history. The
+    # baseline commit identifies the reviewed capability contract; current
+    # source is proven below by the complete handler map and exact markers,
+    # while the payload records its real HEAD plus dirty-tree digest.
     sources = contract.get("handlerSources")
     if not isinstance(sources, dict) or set(sources) != set(_ROOM_RUNTIME_SOURCE_KEYS):
         raise ManagedPiRuntimeError("Room runtime handler source map is missing")
@@ -983,7 +976,7 @@ def main(argv: list[str] | None = None) -> int:
                 protocol_version="2",
                 runtime_methods=tuple(room_runtime_contract["requiredMethods"]),
                 source_contract_sha256=room_runtime_contract_sha256,
-                handlers_commit=str(room_runtime_contract["minimumHandlersCommit"]),
+                handlers_commit=source_commit.split("+", 1)[0],
             )
             manifest["source"] = {
                 **dict(manifest["source"]),

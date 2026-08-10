@@ -192,6 +192,7 @@ class AgentRoomWorkTests(unittest.TestCase):
             ),
             [],
         )
+
         resumed = self.work.project_kernel_root(
             {
                 "rootId": root_id,
@@ -248,6 +249,54 @@ class AgentRoomWorkTests(unittest.TestCase):
                 }
             ),
             [],
+        )
+
+    def test_terminal_cancel_with_unknown_surfaces_releases_claimed_work(self) -> None:
+        assigned, _ = self.work.assign(
+            str(self.coordinator["id"]),
+            self._assignment(
+                "kernel-root-unknown-cancel",
+                self.worker_participant["id"],
+            ),
+            created_at_ms=10,
+        )
+        active = self.work.accept_assignment(
+            str(assigned["id"]),
+            target_participant_id=str(self.worker_participant["id"]),
+            accepted_turn_id="turn:worker",
+            updated_at_ms=20,
+        )
+        root_id = "room-root:kernel-unknown-cancel"
+        self.work.claim_dispatch(
+            str(active["id"]),
+            room_id=str(self.room["id"]),
+            owner_participant_id=str(self.worker_participant["id"]),
+            assignment_key=str(active["assignmentKey"]),
+            previous_accepted_turn_id=str(active["acceptedTurnId"]),
+            room_turn_id=root_id,
+            claimed_at_ms=30,
+        )
+
+        settled = self.work.project_kernel_root(
+            {
+                "rootId": root_id,
+                "roomId": self.room["id"],
+                "state": "cancelled_with_unknowns",
+                "terminalReceiptId": "room-receipt:unknown-cancel",
+                "updatedAtMs": 40,
+            }
+        )
+
+        self.assertEqual(len(settled), 1)
+        self.assertEqual(settled[0]["state"], "cancelled")
+        self.assertEqual(settled[0]["completedAtMs"], 40)
+        self.assertEqual(
+            settled[0]["blocker"]["kernelRootState"],
+            "cancelled_with_unknowns",
+        )
+        self.assertEqual(
+            settled[0]["evidenceRefs"],
+            ["room-receipt:unknown-cancel"],
         )
 
     def test_assignment_is_idempotent_and_rejects_ancestor_bounce(self) -> None:

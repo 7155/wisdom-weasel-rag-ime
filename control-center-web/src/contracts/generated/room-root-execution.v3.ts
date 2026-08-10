@@ -28,5 +28,6 @@ export interface RoomRootExecutionV3 {
   activeProfileRef: string | null;
   budgetPolicyRef: string;
   independentReviewRequired: boolean;
+  requiredReviewAxes?: ('technical' | 'requirements')[];
   createdAtMs?: number;
 }

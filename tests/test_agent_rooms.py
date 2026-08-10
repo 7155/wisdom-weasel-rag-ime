@@ -136,7 +136,7 @@ class AgentRoomTests(unittest.TestCase):
             )
 
 
-    def test_parallel_managed_routing_reserves_reviewer_for_final_handoff(
+    def test_parallel_managed_routing_treats_review_as_a_task_duty_not_a_rank(
         self,
     ) -> None:
         room = self.store.create(
@@ -166,27 +166,17 @@ class AgentRoomTests(unittest.TestCase):
         )
         self.assertEqual(
             [decision["targetParticipantId"] for decision in decisions],
-            [facilitator["id"], implementer["id"]],
+            [facilitator["id"], implementer["id"], reviewer["id"]],
         )
-        with self.assertRaisesRegex(
-            ValueError,
-            "Reviewer cannot own managed implementation ingress",
-        ):
-            self.store.plan_routes(
-                str(room["id"]),
-                "直接开始工作。",
-                authoritative_participant_id=str(reviewer["id"]),
-            )
-        with self.assertRaisesRegex(
-            ValueError,
-            "Reviewer cannot enter the implementation wave",
-        ):
-            self.store.plan_routes(
-                str(room["id"]),
-                "@审查者 直接实现。",
-                requested_participant_ids=[str(reviewer["id"])],
-                authoritative_participant_id=str(facilitator["id"]),
-            )
+        reviewer_owned = self.store.plan_routes(
+            str(room["id"]),
+            "直接开始自己负责的功能切片。",
+            authoritative_participant_id=str(reviewer["id"]),
+        )
+        self.assertEqual(
+            [decision["targetParticipantId"] for decision in reviewer_owned],
+            [reviewer["id"], facilitator["id"], implementer["id"]],
+        )
 
     def test_parallel_unaddressed_conversation_selects_one_responder(
         self,
@@ -1052,6 +1042,123 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(session["toolAllowlistMode"], "profile")
         self.assertEqual(session["allowedTools"], [])
         self.assertEqual(session["workspaceRoots"], [str(self.root.resolve())])
+
+    def test_room_snapshot_does_not_revoke_an_active_task_workspace(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "Room 进度轮询不改变任务授权",
+                "routingPolicy": "parallel",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        session_id = str(room["participants"][1]["sessionId"])
+        task_workspace = self.root / "managed-room-task-worktree"
+        task_workspace.mkdir()
+        session = self.service.sessions.get(session_id)
+        self.service.sessions.set_runtime_policy(
+            session_id,
+            mode=str(session["mode"]),
+            tool_profile_version=str(session["toolProfileVersion"]),
+            execution_mode=str(session["executionMode"]),
+            grant_workspace_scope=True,
+            allowed_tools=None,
+            workspace_roots=[str(task_workspace)],
+        )
+        self.service.room_turns.pending_turn_by_session[session_id] = (
+            "room-turn:active-task"
+        )
+
+        snapshot = self.service.room_snapshot(str(room["id"]))
+
+        self.assertTrue(snapshot["ok"])
+        self.assertEqual(
+            self.service.sessions.get(session_id)["workspaceRoots"],
+            [str(task_workspace.resolve())],
+        )
+
+    def test_room_snapshot_preserves_materialized_isolated_workspace_before_runtime_busy(
+        self,
+    ) -> None:
+        room = self.service.create_room(
+            {
+                "title": "Room materialized workspace polling fence",
+                "routingPolicy": "parallel",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        participant = room["participants"][1]
+        session_id = str(participant["sessionId"])
+        task_workspace = self.root / "isolated-before-runtime-busy"
+        task_workspace.mkdir()
+        session = self.service.sessions.get(session_id)
+        self.service.sessions.set_runtime_policy(
+            session_id,
+            mode=str(session["mode"]),
+            tool_profile_version=str(session["toolProfileVersion"]),
+            execution_mode=str(session["executionMode"]),
+            grant_workspace_scope=True,
+            allowed_tools=None,
+            workspace_roots=[str(task_workspace)],
+        )
+        binding, _ = self.service.room_workspaces.ledger.reserve_binding(
+            room_id=str(room["id"]),
+            root_id="room-root:materialized-before-busy",
+            task_id="room-task:materialized-before-busy",
+            work_item_id="room-work:materialized-before-busy",
+            dispatch_id="room-dispatch:materialized-before-busy",
+            requirement_revision="requirement-catalog:test",
+            acceptance_aliases=["AC-1"],
+            participant_id=str(participant["id"]),
+            session_id=session_id,
+            repository_id="a" * 64,
+            base_root=str(self.root.resolve()),
+            base_commit="baseline",
+            workspace_root=str(task_workspace.resolve()),
+            workspace_policy="isolated_writable",
+            creation_reason="test materialized-to-runtime window",
+            now_ms=10,
+        )
+        self.service.room_workspaces.ledger.mark_materialized(
+            str(binding["workspaceBindingId"]),
+            workspace_snapshot_sha256="b" * 64,
+            actor_ref=str(participant["id"]),
+            now_ms=11,
+        )
+        self.assertNotIn(
+            session_id,
+            self.service.room_turns.pending_turn_by_session,
+        )
+
+        snapshot = self.service.room_snapshot(str(room["id"]))
+
+        self.assertTrue(snapshot["ok"])
+        self.assertEqual(
+            self.service.sessions.get(session_id)["workspaceRoots"],
+            [str(task_workspace.resolve())],
+        )
+        session = self.service.sessions.get(session_id)
+        self.service.sessions.set_runtime_policy(
+            session_id,
+            mode=str(session["mode"]),
+            tool_profile_version=str(session["toolProfileVersion"]),
+            execution_mode=str(session["executionMode"]),
+            grant_workspace_scope=True,
+            allowed_tools=None,
+            workspace_roots=[str(self.root)],
+        )
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "active isolated workspace binding does not match its Session lease",
+        ):
+            self.service.room_snapshot(str(room["id"]))
 
     def test_archived_room_releases_policy_and_restore_reclaims_it(self) -> None:
         room = self.service.create_room(

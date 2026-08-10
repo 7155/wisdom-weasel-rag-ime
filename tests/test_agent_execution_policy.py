@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from rag_ime.agent_execution_policy import (
     APPROVAL_ASK,
@@ -18,6 +20,7 @@ from rag_ime.agent_execution_policy import (
     workspace_scope_is_granted,
     workspace_scope_sha256,
 )
+from rag_ime.agent_workspace import WorkspaceHarness
 
 
 class AgentExecutionPolicyTests(unittest.TestCase):
@@ -157,7 +160,10 @@ class AgentExecutionPolicyTests(unittest.TestCase):
             "workspaceScopeSha256": workspace_scope_sha256(roots),
             "workspaceScopeGrantedAtMs": 100,
         }
-        base_state = {"workspaceRootsSha256": session["workspaceScopeSha256"]}
+        base_state = {
+            "workspaceRootsSha256": "f" * 64,
+            "workspaceScopeSha256": session["workspaceScopeSha256"],
+        }
         self.assertEqual(
             approval_strategy(
                 session,
@@ -214,6 +220,193 @@ class AgentExecutionPolicyTests(unittest.TestCase):
             ),
             APPROVAL_MODEL,
         )
+
+    def test_full_auto_skips_model_review_for_scoped_prepared_text_edits(self) -> None:
+        roots = ["/workspace/project"]
+        session = {
+            "executionMode": FULL_TRUST_EXECUTION_MODE,
+            "toolProfileVersion": "control-center-v1",
+            "workspaceRoots": roots,
+            "workspaceScopeSha256": workspace_scope_sha256(roots),
+            "workspaceScopeGrantedAtMs": 100,
+        }
+        preview = {
+            "actionPayload": {
+                "path": "/workspace/project/customer_directory/import_preview.py",
+                "edits": [{"oldText": "old", "newText": "new"}],
+            },
+            "baseState": {
+                "workspaceRootSha256": "f" * 64,
+                "workspaceScopeSha256": session["workspaceScopeSha256"],
+                "preimageSha256": "a" * 64,
+                "postimageSha256": "b" * 64,
+            },
+        }
+
+        self.assertEqual(
+            approval_strategy(
+                session,
+                tool="workspace_edit",
+                operation="apply",
+                preview=preview,
+                risk_level="R2",
+            ),
+            APPROVAL_AUTO,
+        )
+        self.assertEqual(
+            approval_strategy(
+                session,
+                tool="workspace_edit",
+                operation="apply",
+                preview=preview,
+                risk_level="R3",
+            ),
+            APPROVAL_MODEL,
+        )
+        self.assertEqual(
+            approval_strategy(
+                session,
+                tool="workspace_edit",
+                operation="apply",
+                preview={
+                    **preview,
+                    "actionPayload": {
+                        **preview["actionPayload"],
+                        "path": "/workspace/project/.env",
+                    },
+                },
+                risk_level="R2",
+            ),
+            APPROVAL_MODEL,
+        )
+
+    def test_full_trust_uses_only_the_scoped_prepared_command_preview(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="room-full-trust-commit-") as directory:
+            root = Path(directory).resolve()
+            roots = [str(root)]
+            session = {
+                "mode": "coordinator",
+                "executionMode": FULL_TRUST_EXECUTION_MODE,
+                "toolProfileVersion": "control-center-v1",
+                "workspaceRoots": roots,
+                "workspaceScopeSha256": workspace_scope_sha256(roots),
+                "workspaceScopeGrantedAtMs": 100,
+            }
+            args = {
+                "command": 'git commit -m "room acceptance"',
+                "cwd": str(root),
+                "allowNetwork": False,
+            }
+
+            # Raw model arguments have not crossed the workspace harness and
+            # therefore do not contain a server-generated scope/fence preview.
+            self.assertEqual(
+                approval_strategy(
+                    session,
+                    tool="workspace_shell",
+                    operation="run",
+                    preview=args,
+                    risk_level="R2",
+                ),
+                APPROVAL_MODEL,
+            )
+
+            prepared = WorkspaceHarness(executor=lambda _prepared: {}).prepare_command(
+                session,
+                args,
+            )
+            preview = WorkspaceHarness(executor=lambda _prepared: {}).preview(prepared)
+
+            self.assertEqual(
+                approval_strategy(
+                    session,
+                    tool="workspace_shell",
+                    operation="run",
+                    preview=preview,
+                    risk_level="R2",
+                ),
+                APPROVAL_AUTO,
+            )
+            ordinary = {
+                **preview,
+                "actionPayload": {
+                    **preview["actionPayload"],
+                    "command": "python3 -m unittest tests.test_customers",
+                },
+            }
+            self.assertEqual(
+                approval_strategy(
+                    session,
+                    tool="workspace_shell",
+                    operation="run",
+                    preview=ordinary,
+                    risk_level="R2",
+                ),
+                APPROVAL_AUTO,
+            )
+
+            for command in (
+                "git push origin main",
+                'git commit -m "ok" && git push origin main',
+                "rm -rf build",
+            ):
+                unsafe = {
+                    **preview,
+                    "actionPayload": {
+                        **preview["actionPayload"],
+                        "command": command,
+                    },
+                }
+                with self.subTest(command=command):
+                    self.assertEqual(
+                        approval_strategy(
+                            session,
+                            tool="workspace_shell",
+                            operation="run",
+                            preview=unsafe,
+                            risk_level="R2",
+                        ),
+                        APPROVAL_MODEL,
+                    )
+
+            networked = {
+                **preview,
+                "actionPayload": {
+                    **preview["actionPayload"],
+                    "allowNetwork": True,
+                },
+            }
+            self.assertEqual(
+                approval_strategy(
+                    session,
+                    tool="workspace_shell",
+                    operation="run",
+                    preview=networked,
+                    risk_level="R2",
+                ),
+                APPROVAL_MODEL,
+            )
+            self.assertEqual(
+                approval_strategy(
+                    session,
+                    tool="workspace_shell",
+                    operation="run",
+                    preview=preview,
+                    risk_level="R3",
+                ),
+                APPROVAL_MODEL,
+            )
+
+            self.assertEqual(
+                approval_strategy(
+                    {**session, "executionMode": PER_ACTION_EXECUTION_MODE},
+                    tool="workspace_shell",
+                    operation="run",
+                    preview=preview,
+                    risk_level="R2",
+                ),
+                APPROVAL_ASK,
+            )
 
     def test_full_trust_routes_every_approval_gate_to_the_model_arbiter(self) -> None:
         session = {

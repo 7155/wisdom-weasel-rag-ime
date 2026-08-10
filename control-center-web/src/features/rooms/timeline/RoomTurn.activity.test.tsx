@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RoomDispatchEnvelopeV2 } from '@/contracts/generated/room-dispatch-envelope.v2';
@@ -17,9 +17,7 @@ describe('RoomTurn public activity detail', () => {
   it('shows activity time, wait recovery, tool output, and nested helpers from the shared task', () => {
     const projection = roomProjection();
     const view = render(roomTurn(projection));
-    const activityRows = view.container.querySelectorAll(
-      '.room-agent-activity, .room-reasoning-summary',
-    );
+    const activityRows = view.container.querySelectorAll('.room-agent-activity');
 
     expect(activityRows).toHaveLength(3);
     expect([...activityRows].every((row) => row.querySelector('time[datetime]'))).toBe(true);
@@ -40,6 +38,224 @@ describe('RoomTurn public activity detail', () => {
     expect(view.container.textContent).not.toMatch(
       /Kernel|Root|Dispatch|Receipt|schemaVersion|root-a|dispatch-a|task-a/,
     );
+  });
+
+  it('renders provider work summaries as flat incremental rows in the user language', () => {
+    const projection = roomProjection();
+    projection.activitiesById['reasoning-a'] = {
+      id: 'reasoning-a',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'completed',
+      summary: 'Identifying room_state tool details',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'reasoning_summary',
+        source: 'provider_reasoning_summary',
+        items: [
+          'Identifying room_state tool details',
+          'Designing non-overlapping parallel workwaves',
+        ],
+      },
+      createdAtMs: 3_200,
+      updatedAtMs: 3_200,
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: [...projection.turnsById['turn-a']!.activityIds, 'reasoning-a'],
+      updatedAtMs: 3_200,
+    };
+
+    const view = render(roomTurn(projection));
+    const update = view.container.querySelector('.room-agent-activity--reasoning');
+
+    expect(update).toBeInTheDocument();
+    expect(update?.tagName).toBe('DIV');
+    expect(update).toHaveTextContent('正在检查相关代码和信息');
+    expect(update).toHaveTextContent('正在整理分工和下一步');
+    expect(update).not.toHaveTextContent('Identifying');
+    expect(update).not.toHaveTextContent('Designing non-overlapping parallel workwaves');
+    expect(view.container.querySelector('.room-reasoning-summary')).not.toBeInTheDocument();
+  });
+
+  it('pins the latest public thinking summary above the chronological tool feed', () => {
+    const projection = roomProjection();
+    projection.activitiesById['reasoning-a'] = {
+      id: 'reasoning-a',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'completed',
+      summary: '正在整理持久化边界和下一步',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'reasoning_summary',
+        source: 'provider_reasoning_summary',
+      },
+      createdAtMs: 3_200,
+      updatedAtMs: 3_200,
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: [...projection.turnsById['turn-a']!.activityIds, 'reasoning-a'],
+      updatedAtMs: 3_200,
+    };
+
+    const view = render(roomTurn(projection));
+    const activity = view.container.querySelector('.room-agent-lane__activity')!;
+    const thinking = activity.querySelector('.room-agent-activity--reasoning')!;
+    const firstTool = activity.querySelector('.room-agent-activity--tool')!;
+
+    expect(thinking).toHaveTextContent('最新思考摘要');
+    expect(thinking.compareDocumentPosition(firstTool) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it.each([
+    ['skill_load', '读取技能说明 已返回'],
+    ['tool_search', '查找可用工具 已返回'],
+    ['opaque_internal_helper', '工具操作 已返回'],
+  ])('uses a public Room headline for the internal %s tool id', (toolId, expected) => {
+    const projection = roomProjection();
+    projection.activitiesById['tool-a'] = {
+      ...projection.activitiesById['tool-a']!,
+      payload: {
+        ...projection.activitiesById['tool-a']!.payload,
+        displayName: toolId,
+        toolName: toolId,
+      },
+    };
+
+    const view = render(roomTurn(projection));
+
+    expect(view.container.querySelector('.room-agent-lane__task')).toHaveTextContent(expected);
+    expect(view.container.querySelector('.room-agent-lane__task')).not.toHaveTextContent(toolId);
+  });
+
+  it('shows evidence-backed returned-step progress without claiming task completion', () => {
+    const view = render(roomTurn(roomProjection()));
+    const progress = view.container.querySelector<HTMLElement>('.room-agent-lane__meter')!;
+
+    expect(progress).toHaveAttribute('role', 'progressbar');
+    expect(progress).toHaveAttribute('aria-label', '运行记录已返回 2 / 3');
+    expect(progress).toHaveAttribute('aria-valuenow', '2');
+    expect(progress).toHaveAttribute('aria-valuemax', '3');
+    expect(progress).toHaveTextContent('2 / 3');
+  });
+
+  it('keeps a recovered tool miss in the feed without promoting it to the whole task headline', () => {
+    const projection = roomProjection();
+    projection.activitiesById['read-failed'] = {
+      id: 'read-failed',
+      turnId: 'turn-a',
+      participantId: 'participant-a',
+      sourceSessionId: 'session-a',
+      kind: 'participant_activity',
+      status: 'failed',
+      summary: '第一次路径没有找到',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'tool_finished',
+        toolName: 'read',
+        toolCallId: 'call-failed',
+        arguments: { path: 'missing.py' },
+        error: '文件不存在',
+      },
+      createdAtMs: 2_900,
+      updatedAtMs: 2_900,
+    };
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: ['route-a', 'wait-a', 'read-failed', 'tool-a'],
+    };
+
+    const view = render(roomTurn(projection));
+    const lane = view.container.querySelector('.room-agent-lane')!;
+    const failed = lane.querySelector('[data-state="failed"]')!;
+
+    expect(lane.querySelector('.room-agent-lane__task')).not.toHaveTextContent('执行失败');
+    expect(failed).toHaveTextContent('这次没有完成');
+    expect(failed).toHaveTextContent('后续读取已经成功');
+  });
+
+  it('drops repeated progress records that contain no new information', () => {
+    const projection = roomProjection();
+    for (const [index, id] of ['progress-empty-a', 'progress-empty-b'].entries()) {
+      projection.activitiesById[id] = {
+        id,
+        turnId: 'turn-a',
+        participantId: 'participant-a',
+        sourceSessionId: 'session-a',
+        kind: 'participant_activity',
+        status: 'completed',
+        summary: '协作进度已经同步',
+        payload: {
+          rootId: 'root-a',
+          dispatchId: 'dispatch-a',
+          activityKind: 'work',
+          phase: 'completed',
+        },
+        createdAtMs: 3_300 + index,
+        updatedAtMs: 3_300 + index,
+      };
+    }
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: [
+        ...projection.turnsById['turn-a']!.activityIds,
+        'progress-empty-a',
+        'progress-empty-b',
+      ],
+      updatedAtMs: 3_301,
+    };
+
+    const view = render(roomTurn(projection));
+
+    expect(view.container).not.toHaveTextContent('完成了一步');
+    expect(view.container).not.toHaveTextContent('协作进度已经同步');
+    expect(view.container).not.toHaveTextContent('伙伴自述');
+  });
+
+  it('keeps distinct authoritative events even when their public text matches', () => {
+    const projection = roomProjection();
+    for (const [index, id] of ['progress-distinct-a', 'progress-distinct-b'].entries()) {
+      projection.activitiesById[id] = {
+        id,
+        turnId: 'turn-a',
+        participantId: 'participant-a',
+        sourceSessionId: 'session-a',
+        kind: 'participant_activity',
+        status: 'completed',
+        summary: '已核对用户路径',
+        payload: {
+          rootId: 'root-a',
+          dispatchId: 'dispatch-a',
+          sourceEventType: 'current_progress',
+        },
+        createdAtMs: 3_400 + index,
+        updatedAtMs: 3_400 + index,
+      };
+    }
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: [
+        ...projection.turnsById['turn-a']!.activityIds,
+        'progress-distinct-a',
+        'progress-distinct-b',
+      ],
+      updatedAtMs: 3_401,
+    };
+
+    const view = render(roomTurn(projection));
+
+    expect([...view.container.querySelectorAll('.room-agent-activity')].filter((row) => (
+      row.textContent?.includes('已核对用户路径')
+    ))).toHaveLength(2);
   });
 
   it('marks a changed public event once and does not replay arrival on a fresh snapshot', () => {
@@ -228,7 +444,8 @@ describe('RoomTurn public activity detail', () => {
 
     act(() => vi.advanceTimersByTime(14_000));
     expect(lane).toHaveAttribute('data-motion', 'stale');
-    expect(lane).toHaveTextContent('状态可能过期');
+    expect(lane).toHaveTextContent('正在等待下一条进展');
+    expect(lane).not.toHaveTextContent('状态可能过期');
     expect(lane.querySelector('.agent-persona-avatar')).not.toHaveAttribute('data-presence', 'thinking');
     expect(lane.querySelector('.room-agent-lane__activity')).toHaveAttribute('data-state', 'running');
     expect(lane.querySelector('.room-agent-lane__activity')).toHaveAttribute('data-motion', 'paused');
@@ -300,6 +517,66 @@ describe('RoomTurn public activity detail', () => {
     view.rerender(roomTurn(projection, {}, undefined, syncedKernel, 'synced'));
     expect(lane).toHaveAttribute('data-motion', 'fresh');
     expect(lane.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'thinking');
+  });
+
+  it('opens and focuses only the exact task dispatch requested by the Room graph', async () => {
+    const projection = roomProjection();
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      activityIds: [...projection.turnsById['turn-a']!.activityIds, 'route-b', 'tool-b'],
+      participantIds: ['participant-a', 'participant-b'],
+      dispatchIds: ['dispatch-a', 'dispatch-b'],
+      dispatchParticipantIds: {
+        'dispatch-a': 'participant-a',
+        'dispatch-b': 'participant-b',
+      },
+    };
+    projection.activitiesById['route-b'] = {
+      ...projection.activitiesById['route-a']!,
+      id: 'route-b',
+      participantId: 'participant-b',
+      sourceSessionId: 'session-b',
+      summary: '澄·初已接手',
+      payload: { rootId: 'root-a', dispatchId: 'dispatch-b' },
+    };
+    projection.activitiesById['tool-b'] = {
+      ...projection.activitiesById['tool-a']!,
+      id: 'tool-b',
+      participantId: 'participant-b',
+      sourceSessionId: 'session-b',
+      payload: {
+        ...projection.activitiesById['tool-a']!.payload,
+        rootId: 'root-a',
+        dispatchId: 'dispatch-b',
+        toolCallId: 'call-b',
+      },
+    };
+    const handled = vi.fn();
+
+    const view = render(<RoomTurn
+      focusTarget={{ rootId: 'root-a', taskId: 'task-b', dispatchId: 'dispatch-b' }}
+      kernelDispatchesById={{
+        'dispatch-a': { taskId: 'task-a' } as RoomDispatchEnvelopeV2,
+        'dispatch-b': { taskId: 'task-b' } as RoomDispatchEnvelopeV2,
+      }}
+      onFocusTargetHandled={handled}
+      personas={[]}
+      projection={projection}
+      room={{
+        participants: [
+          { id: 'participant-a', sessionId: 'session-a', roleId: 'a', roleVersion: '1', displayName: '澄·今' },
+          { id: 'participant-b', sessionId: 'session-b', roleId: 'b', roleVersion: '1', displayName: '澄·初' },
+        ],
+      }}
+      turnId="turn-a"
+    />);
+
+    const first = view.container.querySelector<HTMLDetailsElement>('[data-dispatch-id="dispatch-a"]')!;
+    const focused = view.container.querySelector<HTMLDetailsElement>('[data-dispatch-id="dispatch-b"]')!;
+    await waitFor(() => expect(focused).toHaveAttribute('open'));
+    expect(first).not.toHaveAttribute('open');
+    await waitFor(() => expect(document.activeElement).toBe(focused.querySelector('summary')));
+    expect(handled).toHaveBeenCalledTimes(1);
   });
 });
 

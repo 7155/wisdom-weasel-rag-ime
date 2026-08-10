@@ -4,9 +4,9 @@ description: Review a fixed delivery diff on separate requirement-fidelity and c
 when:
   - A code change has passed its quality gate
   - 共享契约、安全、迁移或发布需要独立复核
-does: 从原始需求和项目标准分别复核固定差异与真实路径。
+does: 从原始需求和项目标准分别复核差异与真实路径。
 input: 原始需求、验收、交付物、差异、证据和范围。
-output: 两轴结论、分级发现、证据、必修项和风险。
+output: 单一复核轴的结论、P0、建议项、证据和风险。
 notFor:
   - 没有固定差异的作者自述、开放讨论或纯风格偏好
 ---
@@ -32,18 +32,45 @@ authority.
    commit list. Missing or empty scope stops review without a verdict.
 3. Trace the actual owner, call path, state changes, downstream consumer, and
    side effects.
-4. Run a **Requirement Fidelity** pass for omissions, partial or wrong
-   behavior, scope creep, and unrequested work.
-5. Run a separate **Code Standards** pass using nearest repository guidance,
+4. Each managed Review Task owns exactly one Runtime-supplied `reviewAxis`.
+   For `requirements`, run a **Requirement Fidelity** pass for omissions,
+   partial or wrong behavior, scope creep, and unrequested work. Do not inspect
+   unrelated code quality or invent acceptance beyond the verbatim request.
+5. For `technical`, run a **Code Standards** pass using nearest repository guidance,
    architecture decisions, and tooling boundaries. Inspect concrete-impact
    smells such as duplication, data clumps, shotgun surgery, speculative generality,
-   message chains, middle men, and refused bequest. Skip mechanically enforced rules.
+   message chains, middle men, and refused bequest. Skip mechanically enforced rules
+   and do not re-judge product scope already owned by the requirements axis.
 6. Independently reproduce critical evidence and probe risk-shaped negative
    paths: cancellation, duplicate operation, permission, recovery,
    compatibility, rollback, and observable completion.
-7. Report findings under their original axes and order only by severity within
-   each axis. Do not merge or rerank findings across axes.
+   `workspace_shell` may run bounded foreground tests or builds: the Runtime
+   keeps reviewed source and Git metadata read-only, disables network access,
+   and discards its command-owned temporary caches. Background jobs remain
+   unavailable. Treat a command that requires writing generated output into
+   the reviewed tree as unsupported; do not work around the sandbox.
+7. Report only the current axis. The Kernel preserves the two Review Tasks and
+   their receipts independently. Do not merge or rerank findings across axes,
+   or collapse them into one prose verdict.
 8. Separate required fixes, residual risk, test gaps, and optional improvement.
+
+## P0-Only Return Rule
+
+- Only a reproducible `critical` defect may be `blocking`: security or
+  authorization bypass, privacy/data loss, destructive behavior, unavailable
+  core runtime, material acceptance failure, or a regression that makes the
+  requested product path unusable.
+- P1/P2/P3 correctness, test, performance, UX, maintainability,
+  documentation, and optional improvements remain `advisory`. Keep them in
+  the Review result, residual risks, and project documentation; they do not
+  return work to implementation and may stay open under
+  `accepted_with_notes`.
+- A repair rechecks only the affected axis and changed scope. A later review
+  cannot introduce a new blocker unless it is a newly evidenced P0 in the
+  narrow safety/data/core-runtime exception set.
+- Do not repeat a passed axis for an unchanged `reviewTargetRevision`. Review
+  retry and repair budgets are bounded; exhausting them reports the residual
+  P0 truthfully instead of looping.
 
 ## Managed Room Boundary
 
@@ -81,10 +108,11 @@ remains unprotected.
 
 ## Output Contract
 
-Return `review_clear`, `review_clear_with_risk`, or `changes_required`, then
-separate Requirement Fidelity and Code Standards findings, evidence, affected
-acceptance, required fixes, residual risks, questions, and per-axis counts.
-These are findings, not the Kernel verdict.
+Return `review_clear`, `review_clear_with_risk`, or `changes_required` for the
+current `reviewAxis`, then findings, evidence, affected acceptance, required
+P0 fixes, residual risks, questions, and counts. `changes_required` is valid
+only when at least one open P0 remains. These are findings, not the Kernel
+verdict.
 
 A clear result recommends `candidate_done`; no later workflow Skill owns that
 transition. `changes_required` returns to `implementation-execution`. Use
@@ -93,7 +121,8 @@ transition. `changes_required` returns to `implementation-execution`. Use
 ## Self-Check
 
 - Did I pin one valid fixed point and inspect its complete downstream effect?
-- Are Requirement Fidelity and Code Standards still separate?
+- Did I inspect only the Runtime-supplied review axis?
+- Is every blocking item a reproducible P0 rather than a preference or P1+?
 - Did I independently reproduce critical evidence?
 - Are defects evidence-backed and optional ideas kept optional?
 - Will an independent owner re-review required fixes?

@@ -163,7 +163,10 @@ class RoomKernelRuntimeCoordinator:
         role_book_prompt = self.role_book_prompt_resolver(session_id)
         session = self.session_resolver(session_id)
         intent_kind = str(dispatch.get("intentKind") or "")
-        is_alignment = intent_kind == "align"
+        is_alignment = self.kernel.dispatch_is_active_alignment(
+            dispatch_id,
+            allow_pending=True,
+        )
         is_report = intent_kind == "close"
         is_root_coordinator = (
             not is_alignment
@@ -171,8 +174,23 @@ class RoomKernelRuntimeCoordinator:
             == str(root.get("facilitatorParticipantId") or "")
             and not task.get("parentTaskId")
         )
-        role_id = canonical_collaboration_role_id(
-            participant.get("collaborationRole")
+        role_id = (
+            "reviewer"
+            if str(task.get("taskKind") or "") == "review"
+            or intent_kind == "review"
+            else (
+                "coordinator"
+                if is_root_coordinator or is_report
+                else (
+                    "implementer"
+                    if canonical_collaboration_role_id(
+                        participant.get("collaborationRole")
+                    ) == "reviewer"
+                    else canonical_collaboration_role_id(
+                        participant.get("collaborationRole")
+                    )
+                )
+            )
         )
         role = collaboration_role(role_id)
         template_id = (
@@ -312,7 +330,16 @@ class RoomKernelRuntimeCoordinator:
             replay,
             current_entry_id=str(context_entry["entryId"]),
         )
-        if omission:
+        existing_omission_audit = next(
+            (
+                entry
+                for entry in replay
+                if entry.get("sourceRef") == dispatch_id
+                and _is_provider_context_omission_audit(entry)
+            ),
+            None,
+        )
+        if omission and existing_omission_audit is None:
             self.context_ledger.append_entry(
                 root_id=str(dispatch["rootId"]),
                 room_id=room_id,
@@ -420,6 +447,11 @@ class RoomKernelRuntimeCoordinator:
                 name: tool_plan.runtime_registry[name]
                 for name in report_tools
             }
+        self.runtime_capabilities.retire_terminal_binding_for_dispatch(
+            session_id=session_id,
+            dispatch_id=dispatch_id,
+            now_ms=prepared_at_ms,
+        )
         bound = self.bind_capability_runtime(
             room_binding=room_binding,
             participant_binding=participant_binding,
@@ -832,6 +864,7 @@ def _bounded_provider_context_entries(
         for entry in entries
         if entry.get("entryId") != current_entry_id
         and str(entry.get("entryId") or "") not in chosen_ids
+        and not _is_provider_context_omission_audit(entry)
     ]
     omission = None
     if omitted_entries:
@@ -848,6 +881,16 @@ def _bounded_provider_context_entries(
             ),
         }
     return [*chosen, current], omission
+
+
+def _is_provider_context_omission_audit(
+    entry: Mapping[str, object],
+) -> bool:
+    return (
+        entry.get("entryKind") == "recovery_packet"
+        and '"schemaVersion":"wisdom-weasel.room-context-omission.v1"'
+        in str(entry.get("content") or "")
+    )
 
 
 def _original_requirement_texts(

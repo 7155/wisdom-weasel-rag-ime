@@ -20,6 +20,7 @@ from .agent_execution_policy import (
     WORKSPACE_MANAGED_EXECUTION_MODE,
     canonical_tool_profile,
     normalize_execution_mode,
+    workspace_scope_is_granted,
     workspace_scope_sha256,
 )
 from .agent_tool_ids import SUPPORTED_AGENT_TOOL_PROFILES
@@ -929,6 +930,39 @@ class AgentSessionStore:
                 (session_id,),
             ).fetchone()
         return int(row[0] if row else 0)
+
+    def runtime_turn_terminal_event(
+        self,
+        session_id: str,
+        turn_id: str,
+    ) -> dict[str, object] | None:
+        """Return the durable terminal event for one exact Provider turn."""
+
+        normalized_turn_id = str(turn_id).strip()
+        if not normalized_turn_id:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT event_id, sequence, event_type, created_at_ms
+                FROM agent_runtime_events
+                WHERE session_id = ? AND turn_id = ?
+                  AND event_type IN ('turn_completed', 'turn_failed')
+                ORDER BY sequence DESC
+                LIMIT 1
+                """,
+                (session_id, normalized_turn_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "eventId": str(row["event_id"]),
+            "sessionId": str(session_id),
+            "turnId": normalized_turn_id,
+            "sequence": int(row["sequence"]),
+            "eventType": str(row["event_type"]),
+            "createdAtMs": int(row["created_at_ms"]),
+        }
 
     def latest_runtime_turn_id(self, session_id: str) -> str:
         self.get(session_id)
@@ -2770,9 +2804,17 @@ def _session_payload(
             row["execution_mode"],
             tool_profile_version=row["tool_profile_version"],
         ),
-        "workspaceScopeGranted": bool(
-            str(row["workspace_scope_sha256"] or "")
-            and int(row["workspace_scope_granted_at_ms"] or 0) > 0
+        # The durable grant is only valid for the exact roots it authorized.
+        # Older rows can retain a grant hash after their roots were cleared;
+        # never project that stale metadata as an active capability.
+        "workspaceScopeGranted": workspace_scope_is_granted(
+            {
+                "workspaceRoots": [str(value) for value in roots if str(value).strip()],
+                "workspaceScopeSha256": str(row["workspace_scope_sha256"] or ""),
+                "workspaceScopeGrantedAtMs": int(
+                    row["workspace_scope_granted_at_ms"] or 0
+                ),
+            }
         ),
         "workspaceScopeSha256": str(row["workspace_scope_sha256"] or ""),
         "workspaceScopeGrantedAtMs": int(
@@ -2845,6 +2887,7 @@ def _active_room_todo_lineage(
             d.dispatch_id,
             d.root_id,
             d.task_id,
+            d.state AS dispatch_state,
             d.generation,
             d.target_session_id,
             d.target_participant_id,
@@ -2857,9 +2900,10 @@ def _active_room_todo_lineage(
             participant.participant_status,
             work_item.id AS work_item_id,
             work_item.room_id AS work_item_room_id,
-            work_item.current_owner_participant_id AS work_item_owner_id,
             work_item.state AS work_item_state,
-            work_item.revision AS work_item_revision
+            work_item.revision AS work_item_revision,
+            runtime_effect.state AS runtime_effect_state,
+            runtime_effect.runtime_receipt_json
         FROM room_kernel_dispatches AS d
         JOIN room_kernel_roots AS r ON r.root_id = d.root_id
         JOIN room_kernel_tasks AS t ON t.task_id = d.task_id
@@ -2869,6 +2913,8 @@ def _active_room_todo_lineage(
          AND participant.id = d.target_participant_id
         LEFT JOIN agent_room_work_items AS work_item
           ON work_item.id = json_extract(t.payload_json, '$.workItemId')
+        LEFT JOIN room_kernel_runtime_effects AS runtime_effect
+          ON runtime_effect.dispatch_id = d.dispatch_id
         WHERE d.target_session_id = ?
           AND r.state NOT IN (
               'cancelled', 'cancelled_with_unknowns', 'completed', 'failed'
@@ -2901,6 +2947,14 @@ def _active_room_todo_lineage(
         raise ValueError("active Room Todo authority contains invalid payloads")
     if str(task.get("taskKind") or "") == "report":
         raise ValueError("ReportDispatch does not own a Room Todo")
+    try:
+        runtime_receipt = json.loads(
+            str(row["runtime_receipt_json"] or "{}")
+        )
+    except json.JSONDecodeError as exc:
+        raise ValueError("active Room Todo runtime receipt is invalid") from exc
+    if not isinstance(runtime_receipt, Mapping):
+        raise ValueError("active Room Todo runtime receipt is invalid")
 
     room_id = str(row["room_id"] or "")
     root_id = str(row["root_id"] or "")
@@ -2908,6 +2962,36 @@ def _active_room_todo_lineage(
     dispatch_id = str(row["dispatch_id"] or "")
     participant_id = str(row["target_participant_id"] or "")
     work_item_id = str(task.get("workItemId") or "")
+    runtime_turn_id = str(runtime_receipt.get("turnId") or "").strip()
+    runtime_generation = runtime_receipt.get("generation")
+    runtime_capability_epoch = runtime_receipt.get("capabilityEpoch")
+    runtime_attempt = runtime_receipt.get("dispatchAttempt")
+    runtime_matches = (
+        str(row["dispatch_state"] or "") == "running",
+        str(row["runtime_effect_state"] or "") == "accepted",
+        runtime_receipt.get("schemaVersion")
+        == "wisdom-weasel.room-runtime-receipt.v1",
+        runtime_receipt.get("receiptKind") == "dispatch_accepted",
+        runtime_receipt.get("status") == "accepted",
+        str(runtime_receipt.get("rootId") or "") == root_id,
+        str(runtime_receipt.get("dispatchId") or "") == dispatch_id,
+        str(runtime_receipt.get("sessionId") or "") == session_id,
+        isinstance(runtime_generation, int)
+        and not isinstance(runtime_generation, bool)
+        and runtime_generation == int(row["generation"]),
+        isinstance(runtime_capability_epoch, int)
+        and not isinstance(runtime_capability_epoch, bool)
+        and runtime_capability_epoch
+        == int(dispatch.get("capabilityEpoch") or 0),
+        isinstance(runtime_attempt, int)
+        and not isinstance(runtime_attempt, bool)
+        and runtime_attempt == int(dispatch.get("attempt") or 0),
+        bool(runtime_turn_id),
+    )
+    if not all(runtime_matches):
+        raise ValueError(
+            "active Room Todo runtime Turn is incomplete or no longer authoritative"
+        )
     exact_matches = (
         str(dispatch.get("rootId") or "") == root_id,
         str(dispatch.get("taskId") or "") == task_id,
@@ -2924,7 +3008,6 @@ def _active_room_todo_lineage(
         bool(work_item_id),
         str(row["work_item_id"] or "") == work_item_id,
         str(row["work_item_room_id"] or "") == room_id,
-        str(row["work_item_owner_id"] or "") == participant_id,
         str(row["task_state"] or "") not in {
             "completed",
             "failed",

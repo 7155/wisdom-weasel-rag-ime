@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import tempfile
 import unittest
-from threading import Event
+from threading import Event, Lock
 from pathlib import Path
 
 from rag_ime.agent_room_kernel import RoomKernelStore
@@ -22,11 +24,13 @@ class FakeRoomRuntime:
         preflight_failures: int = 0,
         fail_cancel: bool = False,
         surface_state: str = "terminated",
+        host_terminated: bool = False,
     ) -> None:
         self.fail_dispatch = fail_dispatch
         self.preflight_failures = preflight_failures
         self.fail_cancel = fail_cancel
         self.surface_state = surface_state
+        self.host_terminated = host_terminated
         self.dispatches: list[tuple[dict[str, object], str, str]] = []
         self.cancellations: list[dict[str, object]] = []
 
@@ -92,6 +96,19 @@ class FakeRoomRuntime:
                 "branch_summary", "timer", "continuation", "session"
             ] if self.surface_state in {"requested", "acknowledged", "unknown"} else []),
         }
+        if self.host_terminated:
+            receipt["runtimeHostTermination"] = {
+                "schemaVersion": "wisdom-weasel.runtime-host-kill-receipt.v1",
+                "killReceiptId": "runtime-kill:sidecar-writer",
+                "hostIdentity": "runtime-host:accepted",
+                "requestKind": "cancel_timeout",
+                "requestedBy": f"session:{session_id}",
+                "state": "terminated",
+                "pendingTargets": [],
+                "requestedAtMs": 10,
+                "acknowledgedAtMs": 10,
+                "terminatedAtMs": 10,
+            }
         self.cancellations.append(receipt)
         return receipt
 
@@ -276,6 +293,40 @@ class RoomKernelWorkerTests(unittest.TestCase):
         self.assertEqual(self.store.root("root:1")["state"], "blocked")
         self.assertEqual(runtime.cancellations, [])
 
+    def test_cancelled_root_keeps_preflight_failure_as_a_noop_receipt(self) -> None:
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:cancelled-preflight", key="worker:cancelled-preflight"),
+            now_ms=3,
+        )
+        runtime = FakeRoomRuntime()
+
+        def cancel_then_fail(
+            payload,
+            *,
+            message: str,
+            lease_token: str,
+            record_intent,
+        ):
+            del payload, message, lease_token, record_intent
+            self.store.cancel_root("root:1", now_ms=self.clock())
+            raise ConnectionError("runtime preflight unavailable after cancellation")
+
+        runtime.dispatch_room = cancel_then_fail  # type: ignore[method-assign]
+        worker = RoomKernelWorker(self.store, runtime, clock_ms=self.clock)
+
+        receipt = worker.run_once(lease_ttl_ms=5)
+
+        self.assertEqual(receipt["receiptKind"], "runtime_failed")
+        self.assertEqual(receipt["status"], "noop")
+        self.assertFalse(receipt["details"]["hadRuntimeIntent"])
+        self.assertEqual(receipt["details"]["previousState"], "cancelled")
+        self.assertEqual(
+            self.store.dispatch("dispatch:cancelled-preflight")["state"],
+            "cancelled",
+        )
+        self.assertEqual(self.store.root("root:1")["state"], "cancelled")
+        self.assertEqual(self.store.counts("root:1")["deadLetters"], 0)
+
     def test_post_ack_context_failure_cancels_root_without_unknown_lease(self) -> None:
         self.store.enqueue_dispatch(
             dispatch("dispatch:context-failure", key="worker:context-failure"),
@@ -327,6 +378,84 @@ class RoomKernelWorkerTests(unittest.TestCase):
         self.assertEqual(runtime.cancellations[0]["generation"], 1)
         self.assertEqual(self.store.root("root:1")["state"], "cancelled")
         self.assertEqual(self.store.abort_scope("dispatch:cancel")["state"], "cancelled")
+
+    def test_runtime_host_kill_waits_for_exact_sidecar_execution_receipt(
+        self,
+    ) -> None:
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:sidecar-writer", key="worker:sidecar-writer"),
+            now_ms=3,
+        )
+        runtime = FakeRoomRuntime(host_terminated=True)
+        writer_active = True
+        quiescence_calls: list[dict[str, object]] = []
+
+        def foreground_quiescence(
+            request: dict[str, object],
+        ) -> dict[str, object]:
+            quiescence_calls.append(dict(request))
+            pending = ["invoke:workspace-shell"] if writer_active else []
+            receipt = {
+                "schemaVersion": (
+                    "wisdom-weasel.room-workspace-writer-quiescence.v1"
+                ),
+                **dict(request),
+                "foregroundMutatingInvocations": {
+                    "known": True,
+                    "activeCount": len(pending),
+                    "pendingInvocationReceiptIds": pending,
+                    "hostTerminatedInvocationReceiptIds": [],
+                    "invalidExecutionReceiptIds": [],
+                },
+                "backgroundWork": {
+                    "known": True,
+                    "activeCount": 0,
+                },
+                "managedPiTurn": {
+                    "known": True,
+                    "settled": False,
+                },
+            }
+            receipt["receiptRevision"] = hashlib.sha256(
+                json.dumps(
+                    receipt,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            return receipt
+
+        worker = RoomKernelWorker(
+            self.store,
+            runtime,
+            foreground_invocation_quiescence=foreground_quiescence,
+            clock_ms=self.clock,
+        )
+        worker.run_once()
+
+        first = worker.cancel_root("root:1")
+
+        self.assertEqual(
+            self.store.root("root:1")["state"],
+            "cancelled_with_unknowns",
+        )
+        self.assertEqual(
+            first["runtimeReceipts"][0]["pendingTargets"],
+            ["tool", "exec"],
+        )
+        self.assertEqual(len(quiescence_calls), 1)
+        self.assertEqual(len(runtime.cancellations), 1)
+
+        writer_active = False
+        self.now_ms = 510
+        retried = worker.drain_cancel_outbox()
+
+        self.assertEqual(retried[0]["pendingTargets"], [])
+        self.assertEqual(self.store.root("root:1")["state"], "cancelled")
+        # The retry re-checks the persisted Host-kill proof plus Sidecar
+        # receipt; it must not call the already-dead Runtime Host again.
+        self.assertEqual(len(runtime.cancellations), 1)
+        self.assertEqual(len(quiescence_calls), 2)
 
     def test_passive_command_bus_defers_runtime_cancel_to_effect_owner(self) -> None:
         self.store.enqueue_dispatch(
@@ -561,7 +690,11 @@ class RoomKernelWorkerTests(unittest.TestCase):
                 return False
 
             @staticmethod
-            def run_once() -> dict[str, bool]:
+            def run_once(
+                *,
+                on_claim=None,
+            ) -> dict[str, bool]:
+                del on_claim
                 return {"changed": True}
 
         def on_change() -> None:
@@ -581,6 +714,226 @@ class RoomKernelWorkerTests(unittest.TestCase):
             self.assertTrue(recovered.wait(1.0))
             self.assertTrue(loop.running)
         finally:
+            loop.close()
+
+    def test_loop_does_not_let_one_slow_runtime_ack_block_another_dispatch(
+        self,
+    ) -> None:
+        self.store.create_task(task("task:2"), now_ms=2)
+        self.store.enqueue_dispatch(
+            dispatch(
+                "dispatch:slow-ack",
+                key="worker:slow-ack",
+                session_id="session:slow-ack",
+            ),
+            now_ms=3,
+        )
+        self.store.enqueue_dispatch(
+            dispatch(
+                "dispatch:ready-behind-slow-ack",
+                key="worker:ready-behind-slow-ack",
+                task_id="task:2",
+                session_id="session:ready-behind-slow-ack",
+            ),
+            now_ms=4,
+        )
+        slow_started = Event()
+        ready_started = Event()
+        release_slow = Event()
+
+        class SlowAckRuntime(FakeRoomRuntime):
+            @staticmethod
+            def runtime_status() -> dict[str, object]:
+                return {"capabilities": {"maxSessions": 2}}
+
+            def dispatch_room(
+                self,
+                payload,
+                *,
+                message: str,
+                lease_token: str,
+                record_intent,
+            ):
+                self.dispatches.append((dict(payload), message, lease_token))
+                record_intent()
+                if payload["dispatchId"] == "dispatch:slow-ack":
+                    slow_started.set()
+                    if not release_slow.wait(1.0):
+                        raise TimeoutError("test did not release slow runtime ACK")
+                else:
+                    ready_started.set()
+                return {
+                    "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
+                    "receiptKind": "dispatch_accepted",
+                    "status": "accepted",
+                    "rootId": payload["rootId"],
+                    "dispatchId": payload["dispatchId"],
+                    "generation": payload["generation"],
+                    "sessionId": payload["targetSessionId"],
+                    "capabilityEpoch": payload["capabilityEpoch"],
+                    "turnId": f"turn:{payload['dispatchId']}",
+                }
+
+        cohort_store = RoomKernelStore(self.db_path, mode="cohort")
+        loop = RoomKernelWorkerLoop(
+            RoomKernelWorker(
+                cohort_store,
+                SlowAckRuntime(),
+                clock_ms=self.clock,
+            ),
+            poll_seconds=0.01,
+        )
+        try:
+            self.assertTrue(loop.start())
+            self.assertTrue(slow_started.wait(0.5))
+            self.assertTrue(
+                ready_started.wait(0.25),
+                "one slow runtime ACK blocked a different ready Dispatch",
+            )
+        finally:
+            release_slow.set()
+            loop.close()
+
+    def test_loop_never_exceeds_the_runtime_session_budget(self) -> None:
+        self.store.create_task(task("task:2"), now_ms=2)
+        self.store.create_task(task("task:3"), now_ms=2)
+        for ordinal in range(1, 4):
+            self.store.enqueue_dispatch(
+                dispatch(
+                    f"dispatch:bounded-{ordinal}",
+                    key=f"worker:bounded-{ordinal}",
+                    task_id=f"task:{ordinal}",
+                    session_id=f"session:bounded-{ordinal}",
+                ),
+                now_ms=2 + ordinal,
+            )
+        two_started = Event()
+        third_started = Event()
+        release = Event()
+        started: list[str] = []
+        started_lock = Lock()
+
+        class BoundedRuntime(FakeRoomRuntime):
+            @staticmethod
+            def runtime_status() -> dict[str, object]:
+                return {"capabilities": {"maxSessions": 2}}
+
+            def dispatch_room(
+                self,
+                payload,
+                *,
+                message: str,
+                lease_token: str,
+                record_intent,
+            ):
+                self.dispatches.append((dict(payload), message, lease_token))
+                record_intent()
+                with started_lock:
+                    started.append(str(payload["dispatchId"]))
+                    if len(started) >= 2:
+                        two_started.set()
+                    if len(started) >= 3:
+                        third_started.set()
+                if not release.wait(1.0):
+                    raise TimeoutError("test did not release Runtime ACKs")
+                return {
+                    "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
+                    "receiptKind": "dispatch_accepted",
+                    "status": "accepted",
+                    "rootId": payload["rootId"],
+                    "dispatchId": payload["dispatchId"],
+                    "generation": payload["generation"],
+                    "sessionId": payload["targetSessionId"],
+                    "capabilityEpoch": payload["capabilityEpoch"],
+                    "turnId": f"turn:{payload['dispatchId']}",
+                }
+
+        cohort_store = RoomKernelStore(self.db_path, mode="cohort")
+        loop = RoomKernelWorkerLoop(
+            RoomKernelWorker(
+                cohort_store,
+                BoundedRuntime(),
+                clock_ms=self.clock,
+            ),
+            poll_seconds=0.01,
+        )
+        try:
+            self.assertEqual(loop.max_concurrent_dispatches, 2)
+            self.assertTrue(loop.start())
+            self.assertTrue(two_started.wait(0.5))
+            self.assertFalse(
+                third_started.wait(0.1),
+                "Room delivery exceeded the Runtime maxSessions budget",
+            )
+            self.assertEqual(
+                cohort_store.dispatch("dispatch:bounded-3")["state"],
+                "pending",
+            )
+        finally:
+            release.set()
+            loop.close()
+
+    def test_loop_does_not_expire_a_lease_while_its_runtime_ack_is_in_flight(
+        self,
+    ) -> None:
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:ack-in-flight", key="worker:ack-in-flight"),
+            now_ms=3,
+        )
+        ack_started = Event()
+        release_ack = Event()
+
+        class InFlightRuntime(FakeRoomRuntime):
+            @staticmethod
+            def runtime_status() -> dict[str, object]:
+                return {"capabilities": {"maxSessions": 2}}
+
+            def dispatch_room(
+                self,
+                payload,
+                *,
+                message: str,
+                lease_token: str,
+                record_intent,
+            ):
+                self.dispatches.append((dict(payload), message, lease_token))
+                record_intent()
+                ack_started.set()
+                if not release_ack.wait(1.0):
+                    raise TimeoutError("test did not release Runtime ACK")
+                return {
+                    "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
+                    "receiptKind": "dispatch_accepted",
+                    "status": "accepted",
+                    "rootId": payload["rootId"],
+                    "dispatchId": payload["dispatchId"],
+                    "generation": payload["generation"],
+                    "sessionId": payload["targetSessionId"],
+                    "capabilityEpoch": payload["capabilityEpoch"],
+                    "turnId": "turn:ack-in-flight",
+                }
+
+        cohort_store = RoomKernelStore(self.db_path, mode="cohort")
+        loop = RoomKernelWorkerLoop(
+            RoomKernelWorker(
+                cohort_store,
+                InFlightRuntime(),
+                clock_ms=self.clock,
+            ),
+            poll_seconds=0.01,
+        )
+        try:
+            self.assertTrue(loop.start())
+            self.assertTrue(ack_started.wait(0.5))
+            self.now_ms = 40_010
+            self.assertFalse(release_ack.wait(0.05))
+            self.assertEqual(
+                cohort_store.dispatch("dispatch:ack-in-flight")["state"],
+                "leased",
+            )
+            self.assertEqual(cohort_store.root("root:1")["state"], "running")
+        finally:
+            release_ack.set()
             loop.close()
 
     def test_shadow_worker_never_leases_or_calls_runtime(self) -> None:

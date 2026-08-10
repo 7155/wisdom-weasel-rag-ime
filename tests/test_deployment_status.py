@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import plistlib
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -56,6 +58,68 @@ class InstalledProductAuditTests(unittest.TestCase):
         component = report["components"]["memoryBookMaintenance"]
         self.assertEqual(component["code"], "commit_mismatch")
         self.assertIn("expected", component["detail"])
+
+    def test_require_current_cli_accepts_current_required_components_and_reports_optional_drift(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-product-audit-required-") as tmp:
+            root, home, support = self._layout(Path(tmp))
+            commit = "b" * 40
+            self._write_control(home, commit)
+            self._write_component(support / "app", "sidecar-runtime", commit)
+            self._write_component(
+                support / "components" / "memory-book-maintenance",
+                "memory-maintenance-trigger",
+                "c" * 40,
+            )
+            self._write_squirrel(root, home)
+
+            command = [
+                sys.executable,
+                str(
+                    Path(__file__).resolve().parents[1]
+                    / "scripts"
+                    / "check_installed_product_components.py"
+                ),
+                "--repo-root",
+                str(root),
+                "--home",
+                str(home),
+                "--app-support",
+                str(support),
+                "--expected-commit",
+                commit,
+                "--require",
+                "control",
+                "--require",
+                "sidecar",
+                "--require",
+                "piSkills",
+                "--require",
+                "roomKernelMode",
+                "--require",
+                "squirrel",
+                "--fast",
+                "--require-current",
+            ]
+            result = subprocess.run(
+                command,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["ok"])
+        self.assertTrue(report["requiredOk"])
+        self.assertEqual(report["components"]["memoryBookMaintenance"]["code"], "commit_mismatch")
+        self.assertFalse(report["components"]["memoryBookMaintenance"]["required"])
+        self.assertIn(
+            "memoryBookMaintenance",
+            {issue["component"] for issue in report["issues"]},
+        )
 
     def test_detects_shared_sidecar_marker_overwritten_by_another_component(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-product-audit-overwrite-") as tmp:

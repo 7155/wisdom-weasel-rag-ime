@@ -99,9 +99,46 @@ class RoomRuntimeCapabilityService:
             "bindingCreated": binding_created,
         }
 
+    def retire_terminal_binding_for_dispatch(
+        self,
+        *,
+        session_id: str,
+        dispatch_id: str,
+        now_ms: int,
+    ) -> bool:
+        """Retire authority left by a proven-terminal earlier Dispatch."""
+
+        binding = self.capabilities.runtime_binding(
+            session_id,
+            active_only=False,
+        )
+        if binding is None or binding.get("state") == "revoked":
+            return False
+        manifest_id = str(binding.get("manifestId") or "")
+        current_manifest_id = f"capability-manifest:{dispatch_id}"
+        if manifest_id == current_manifest_id:
+            return False
+        if not manifest_id.startswith("capability-manifest:"):
+            raise RoomKernelFenceError(
+                "Room capability binding has no Dispatch lineage"
+            )
+        previous_dispatch = self.kernel.dispatch(
+            manifest_id.removeprefix("capability-manifest:")
+        )
+        previous_state = str(previous_dispatch.get("state") or "")
+        if previous_state not in {"committed", "failed", "cancelled"}:
+            raise RoomKernelFenceError(
+                "Room Session still belongs to a non-terminal Dispatch"
+            )
+        self.revoke(session_id, now_ms)
+        return True
+
     def revoke(self, session_id: str, now_ms: int) -> None:
-        binding = self.capabilities.runtime_binding(session_id)
-        if binding is None:
+        binding = self.capabilities.runtime_binding(
+            session_id,
+            active_only=False,
+        )
+        if binding is None or binding.get("state") == "revoked":
             return
         manifest_id = str(binding["manifestId"])
         if not manifest_id.startswith("capability-manifest:"):

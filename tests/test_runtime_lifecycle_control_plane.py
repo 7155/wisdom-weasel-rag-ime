@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import subprocess
@@ -326,6 +327,84 @@ class RuntimeLifecycleControlPlaneTests(unittest.TestCase):
 
         self.assertFalse(component["ok"])
         self.assertEqual(component["detail"], "voice was installed from another product commit")
+
+    def test_candidate_delivery_separates_source_install_connection_production_and_render(self) -> None:
+        now_ms = int(time.time() * 1000)
+        trace_path = Path(self.tmp.name) / "squirrel-frontend.jsonl"
+        trace_path.write_text(
+            json.dumps(
+                {
+                    "event": "assistant_overlay_candidate_visible",
+                    "timestampMs": now_ms,
+                    "frontendBuild": "rag-ime.foreground-trace.v2",
+                    "frontendRevision": 17,
+                    "candidateText": "private candidate must not escape diagnostics",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        self.management.frontend_trace_path = trace_path
+        expected_id = "im.rime.inputmethod.Squirrel.Hans"
+        self.management.input_source_provider = lambda: {
+            "inputSourceId": expected_id,
+            "current": expected_id,
+        }
+        self.management.predictor_provider = lambda: {
+            "predictor": {
+                "configured": True,
+                "capabilityProbe": {"ok": True, "modelLoaded": True},
+            }
+        }
+        self.management.last_prediction_provider = lambda: {
+            "visibleCandidate": "candidate",
+            "createdAtMs": now_ms,
+        }
+        self.management.deployment_provider = lambda: {
+            "ok": True,
+            "components": {
+                "squirrel": {
+                    "installed": True,
+                    "current": True,
+                    "code": "ready",
+                }
+            },
+        }
+
+        component = self.management.runtime_status()["components"]["assistantCandidateDelivery"]
+
+        self.assertTrue(component["ok"])
+        stages = component["metadata"]["stages"]
+        self.assertTrue(stages["sourcePresent"]["ok"])
+        self.assertTrue(stages["installedProvenance"]["ok"])
+        self.assertTrue(stages["sidecarConnected"]["ok"])
+        self.assertTrue(stages["candidateProduced"]["ok"])
+        self.assertTrue(stages["foregroundRendered"]["ok"])
+        self.assertNotIn("private candidate", json.dumps(component, ensure_ascii=False))
+
+        trace_path.write_text(
+            json.dumps(
+                {
+                    "event": "input_segment_recorded",
+                    "timestampMs": now_ms - 3_600_000,
+                    "frontendBuild": "rag-ime.foreground-trace.v2",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        self.management.last_prediction_provider = lambda: {}
+
+        missing = self.management.runtime_status()["components"]["assistantCandidateDelivery"]
+
+        self.assertFalse(missing["ok"])
+        self.assertFalse(missing["metadata"]["stages"]["candidateProduced"]["ok"])
+        self.assertFalse(missing["metadata"]["stages"]["foregroundRendered"]["ok"])
+        self.assertIn("候选生成", missing["detail"])
+        self.assertIn(
+            "没有候选框显示事件",
+            missing["metadata"]["stages"]["foregroundRendered"]["detail"],
+        )
 
 
 class SettingsValidationTests(unittest.TestCase):

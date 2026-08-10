@@ -154,7 +154,7 @@ describe('generated-contract Room Kernel projection', () => {
     expect(state.rootsById['root-a']?.isFinal).toBe(false);
   });
 
-  it('rejects stale generation for receipt dispatch session and post', () => {
+  it('ignores stale generation for receipt dispatch session and post', () => {
     let state = createRoomKernelProjection('room-a');
     state = apply(state, envelope(1, 'root', 'root-a', 'upserted', { root: root() }));
     state = apply(state, envelope(2, 'root', 'root-a', 'kernel_receipt', {
@@ -174,8 +174,8 @@ describe('generated-contract Room Kernel projection', () => {
     expect(state.dispatchesById['dispatch-stale']).toBeUndefined();
     expect(state.sessionsById['session-a']).toBeUndefined();
     expect(state.postsById['post-stale']).toBeUndefined();
-    expect(state.diagnostics.filter((item) => item.kind === 'stale-generation')).toHaveLength(3);
-    expect(state.diagnostics.at(-1)?.kind).toBe('invalid-event');
+    expect(state.diagnostics.filter((item) => item.kind === 'stale-generation')).toHaveLength(4);
+    expect(state.diagnostics.at(-1)?.kind).toBe('stale-generation');
   });
 
   it('detects gap, ignores duplicate and freezes until snapshot', () => {
@@ -219,6 +219,20 @@ describe('generated-contract Room Kernel projection', () => {
     expect(state.sessionsById['session-b']?.capabilityManifest?.manifestHash).toBe('b'.repeat(64));
     expect(state.snapshotHash).toBe(snapshot.snapshotHash);
     expect(state.taskUpdatedAtMsById).toEqual({ 'task-a': 12_345 });
+    expect(state.postOrder).toEqual(['post-a']);
+  });
+
+  it('keeps historical posts when a cancelled Root advances its generation', () => {
+    const snapshot: RoomKernelSnapshot = {
+      roomId: 'room-a', lastSequence: 21, snapshotHash: `sha256:${'b'.repeat(64)}`,
+      roots: [root({ generation: 4, state: 'cancelled' })], tasks: [], dispatches: [],
+      posts: [post({ generation: 3 })], taskUpdatedAtMsById: {}, sessions: [], receipts: [],
+      cancellationSurfaces: [],
+    };
+
+    const state = applyRoomKernelSnapshot(createRoomKernelProjection('room-a'), snapshot);
+
+    expect(state.postsById['post-a']?.generation).toBe(3);
     expect(state.postOrder).toEqual(['post-a']);
   });
 });

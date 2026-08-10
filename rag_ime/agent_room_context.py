@@ -152,7 +152,7 @@ class RoomContextLedgerStore:
                     or str(live_row["dispatch_root_id"]) != root_id
                     or int(live_row["root_generation"]) != generation
                     or int(live_row["dispatch_generation"]) != generation
-                    or str(live_row["root_state"]) != "running"
+                    or str(live_row["root_state"]) not in {"running", "waiting"}
                     or str(live_row["dispatch_state"]) != "running"
                     or str(live_row["task_id"])
                     != str(normalized.get("taskId") or "")

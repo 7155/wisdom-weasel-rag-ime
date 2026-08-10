@@ -11,7 +11,6 @@ import {
   RotateCcw,
   ShieldAlert,
   Sparkles,
-  Wrench,
   X,
 } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState } from 'react';
@@ -23,6 +22,7 @@ import {
   approvalNeedsHumanDecision,
 } from '@/contracts/approval-decision';
 import {
+  roomActivityHasPublicInformation,
   type RoomActivityProjection,
   type RoomMessageProjection,
   type RoomProjectionState,
@@ -42,7 +42,6 @@ import {
 import {
   toggleDisclosureOnKeyPreservingAnchor,
   toggleDisclosurePreservingAnchor,
-  useAutoFollowScroll,
 } from '@/features/agent/timeline/disclosure-anchor';
 import { publicToolResultView } from '@/features/agent/timeline/public-tool-result';
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
@@ -55,6 +54,7 @@ import {
 import {
   roomTaskWorkspaceLifecycleView,
   RoomTaskSubagentRuns,
+  type RoomTaskConversationTarget,
   type RoomTaskSubagentRun,
 } from '../kernel/RoomTaskFlowGraph';
 import { RoomTaskUpdatedAt, useRoomTaskUpdateClock } from '../kernel/RoomTaskUpdatedAt';
@@ -65,8 +65,15 @@ import {
   useRoomLiveStore,
   type RoomKernelSyncProjection,
 } from '../state/live-store';
-import { RoomStartActionGate, roomRootRequiresStartAction } from './RoomStartActionGate';
-import { roomPublicToolResultView } from './room-tool-presentation';
+import {
+  RoomStartActionGate,
+  roomRootIntakePhase,
+  roomRootRequiresStartAction,
+} from './RoomStartActionGate';
+import {
+  roomPublicActivityText,
+  roomPublicToolResultView,
+} from './room-tool-presentation';
 
 interface TimelineParticipant {
   id: string;
@@ -82,6 +89,7 @@ interface TimelineRoom {
 
 interface RoomTurnProps {
   turnId: string;
+  focusTarget?: RoomTaskConversationTarget;
   roomId?: string;
   room?: TimelineRoom;
   projection?: RoomProjectionState;
@@ -106,6 +114,7 @@ interface RoomTurnProps {
     question: PendingRoomQuestion,
     value: string,
   ) => Promise<boolean>;
+  onFocusTargetHandled?: () => void;
 }
 
 const roomTerminalPostLabels: Readonly<Record<string, string>> = {
@@ -142,6 +151,7 @@ function roomVisibleConversationMessages(
 }
 
 const roomActiveEventFreshnessMs = 15_000;
+const emptyExpandedLaneKeys: ReadonlySet<string> = new Set();
 
 function roomPostReportLabel(message: RoomMessageProjection): string {
   if (message.projectionKind === 'execution') return '';
@@ -159,6 +169,7 @@ function roomPostReportLabel(message: RoomMessageProjection): string {
 /** Render one Root as independent participant/dispatch execution lanes. */
 export function RoomTurn({
   turnId,
+  focusTarget,
   roomId = '',
   room,
   projection: providedProjection,
@@ -180,12 +191,48 @@ export function RoomTurn({
   onRetryTurn,
   onRetryRoot,
   onAnswerQuestion,
+  onFocusTargetHandled,
 }: RoomTurnProps) {
   useRoomLiveStore((state) => (
     providedProjection ? 0 : state.turnRevisions[roomId]?.[turnId] ?? 0
   ));
   const projection = providedProjection ?? roomProjection(roomId);
+  const laneDisclosureScope = `${projection.roomId}\u001f${turnId}`;
+  const [laneDisclosure, setLaneDisclosure] = useState<{
+    expandedLaneKeys: ReadonlySet<string>;
+    scope: string;
+  }>(() => ({ expandedLaneKeys: new Set(), scope: laneDisclosureScope }));
+  const expandedLaneKeys = laneDisclosure.scope === laneDisclosureScope
+    ? laneDisclosure.expandedLaneKeys
+    : emptyExpandedLaneKeys;
+  const focusedLaneRef = useRef<HTMLDetailsElement>(null);
   const turn = projection.turnsById[turnId];
+  const focusRootId = turn?.rootId || turnId;
+  useEffect(() => {
+    if (!focusTarget || focusTarget.rootId !== focusRootId) return;
+    const lane = focusedLaneRef.current;
+    const laneEntryKey = lane?.dataset.laneEntryKey;
+    if (!lane || !laneEntryKey) return;
+    setLaneDisclosure((current) => {
+      const next = new Set(
+        current.scope === laneDisclosureScope
+          ? current.expandedLaneKeys
+          : emptyExpandedLaneKeys,
+      );
+      next.add(laneEntryKey);
+      return { expandedLaneKeys: next, scope: laneDisclosureScope };
+    });
+    const frame = window.requestAnimationFrame(() => {
+      const target = focusedLaneRef.current;
+      if (!target) return;
+      if (typeof target.scrollIntoView === 'function') {
+        target.scrollIntoView({ behavior: 'auto', block: 'center' });
+      }
+      target.querySelector<HTMLElement>('summary')?.focus({ preventScroll: true });
+      onFocusTargetHandled?.();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusRootId, focusTarget, laneDisclosureScope, onFocusTargetHandled]);
   const previousTurnStatus = usePrevious(turn?.status);
   const nowMs = useRoomTaskUpdateClock(Boolean(
     turn && ['queued', 'running'].includes(turn.status),
@@ -220,6 +267,14 @@ export function RoomTurn({
   const requiresStartAction = roomRootRequiresStartAction(
     kernelRoot,
     Object.values(kernelReceiptsById ?? {}),
+  );
+  const intakePhase = roomRootIntakePhase(
+    kernelRoot,
+    Object.values(kernelReceiptsById ?? {}),
+  );
+  const rootIntakeAligning = Boolean(
+    kernelRoot?.state === 'running'
+    && ['aligning', 'clarifying'].includes(intakePhase),
   );
   const pendingQuestion = projection.pendingUserQuestion?.rootId === rootId
     ? projection.pendingUserQuestion
@@ -292,81 +347,65 @@ export function RoomTurn({
         starting={startingRootIds.has(rootId)}
       />
     : null;
+  type TimelineEntry =
+    | { key: string; kind: 'user'; message: RoomMessageProjection }
+    | { key: string; kind: 'lane'; lane: RoomExecutionLane; includeDetails: boolean };
+  const timelineEntries: TimelineEntry[] = [];
+  const laneSegmentCounts = new Map<string, number>();
+  for (const message of conversationMessages) {
+    if (message.role === 'user') {
+      timelineEntries.push({ key: `message:${message.id}`, kind: 'user', message });
+      continue;
+    }
+    const sourceLane = lanes.find((lane) => lane.messageIds.includes(message.id));
+    if (!sourceLane) continue;
+    const previous = timelineEntries.at(-1);
+    if (previous?.kind === 'lane' && previous.lane.key === sourceLane.key) {
+      previous.lane = {
+        ...previous.lane,
+        messageIds: [...previous.lane.messageIds, message.id],
+      };
+      continue;
+    }
+    const segment = (laneSegmentCounts.get(sourceLane.key) ?? 0) + 1;
+    laneSegmentCounts.set(sourceLane.key, segment);
+    timelineEntries.push({
+      key: `lane:${sourceLane.key}:${segment}`,
+      kind: 'lane',
+      lane: { ...sourceLane, messageIds: [message.id] },
+      includeDetails: false,
+    });
+  }
+  for (const lane of lanes) {
+    const laneEntries = timelineEntries.filter((entry): entry is Extract<TimelineEntry, { kind: 'lane' }> => (
+      entry.kind === 'lane' && entry.lane.key === lane.key
+    ));
+    const finalEntry = laneEntries.at(-1);
+    if (finalEntry) {
+      finalEntry.includeDetails = true;
+    } else if (!(
+      requiresStartAction
+      && finalAlignmentId
+      && roomVisibleIncrementalActivities(lane.activities).length === 0
+    )) {
+      timelineEntries.push({
+        key: `lane:${lane.key}:activity`,
+        kind: 'lane',
+        lane,
+        includeDetails: true,
+      });
+    }
+  }
   return <article className="room-turn" data-turn-status={turn.status}>
-    {conversationMessages.map((message) => {
-      if (message.role === 'user') {
-        return <RoomUserPost key={message.id} message={message} roomId={projection.roomId} />;
+    {timelineEntries.map((entry) => {
+      if (entry.kind === 'user') {
+        return <RoomUserPost
+          key={entry.key}
+          message={entry.message}
+          roomId={projection.roomId}
+        />;
       }
-      const lane = lanes.find((candidate) => candidate.messageIds.includes(message.id));
-      const participant = room?.participants.find((item) => item.id === message.participantId);
-      const persona = personas.find((item) => (
-        item.roleId === participant?.roleId && item.version === participant.roleVersion
-      ));
-      const taskId = lane?.dispatchId
-        ? kernelDispatchesById?.[lane.dispatchId]?.taskId ?? ''
-        : '';
-      const freshness = lane
-        ? roomLaneFreshness(
-            lane,
-            projection,
-            turn,
-            nowMs,
-            kernelSync,
-            roomSyncState,
-            taskId ? kernelTaskUpdatedAtMsById?.[taskId] : undefined,
-          )
-        : roomFallbackFreshness(message.createdAtMs, nowMs, kernelSync, roomSyncState);
-      return <Fragment key={message.id}>
-        <RoomParticipantPost
-          activeWait={
-            message.postKind === 'wait'
-            && !rootTerminal
-            && (!message.question || pendingQuestion?.postId === message.id)
-          }
-          evidence={roomResponseEvidenceForPost(message, responseUsageActivities)}
-          message={message}
-          motionFresh={freshness.state === 'fresh'}
-          onAnswerQuestion={onAnswerQuestion}
-          participant={participant}
-          participants={room?.participants ?? []}
-          pendingQuestion={pendingQuestion?.postId === message.id ? pendingQuestion : undefined}
-          persona={persona}
-          showEvidence={Boolean(roomTerminalPostLabels[message.postKind ?? ''])}
-          turnStartedAtMs={turn.createdAtMs}
-        />
-        {message.id === finalAlignmentId ? startActionGate : null}
-      </Fragment>;
-    })}
-    {rootBlocked ? <div className="room-turn__root-control" data-state="blocked" role="alert">
-      <span><CircleAlert size={14} /><small>这轮协作因伙伴运行失败而暂停；继续会只重做失败的部分，并保留已完成的工作。</small></span>
-      <div className="room-turn__root-actions">
-        {onRetryRoot ? <Button
-          variant="secondary"
-          size="small"
-          leadingIcon={rootRetrying ? <LoaderCircle className="ui-spin" size={14} /> : <RotateCcw size={14} />}
-          disabled={rootRetrying || rootStopping}
-          onClick={() => onRetryRoot(rootId)}
-        >{rootRetrying ? '正在继续' : '继续任务'}</Button> : null}
-        {onAbortTurn ? <Button
-          variant="danger"
-          size="small"
-          leadingIcon={rootStopping ? <LoaderCircle className="ui-spin" size={14} /> : <CircleStop size={14} />}
-          disabled={rootRetrying || rootStopping}
-          onClick={() => onAbortTurn(rootId)}
-        >{rootStopping ? '正在停止' : '停止任务'}</Button> : null}
-      </div>
-    </div> : null}
-    {rootActive && onAbortTurn ? <div className="room-turn__root-control" role="status">
-      <span><CircleStop size={14} /><small>{rootStopping ? '正在停止本轮的伙伴、工具和后续任务' : '会一起停止本轮的所有伙伴、工具和后续任务'}</small></span>
-      <Button
-        variant="danger"
-        size="small"
-        leadingIcon={rootStopping ? <LoaderCircle className="ui-spin" size={14} /> : <CircleStop size={14} />}
-        disabled={rootStopping}
-        onClick={() => onAbortTurn(rootId)}
-      >{rootStopping ? '正在停止' : '停止本轮任务'}</Button>
-    </div> : null}
-    {lanes.map((lane) => {
+      const { includeDetails, lane } = entry;
       const participant = room?.participants.find((item) => item.id === lane.participantId);
       const persona = personas.find((item) => (
         item.roleId === participant?.roleId && item.version === participant.roleVersion
@@ -409,6 +448,13 @@ export function RoomTurn({
       const laneTaskId = lane.dispatchId
         ? kernelDispatchesById?.[lane.dispatchId]?.taskId ?? ''
         : '';
+      const focusesLane = Boolean(
+        includeDetails
+        && focusTarget
+        && focusTarget.rootId === rootId
+        && focusTarget.taskId === laneTaskId
+        && (!focusTarget.dispatchId || focusTarget.dispatchId === lane.dispatchId),
+      );
       const laneFreshness = roomLaneFreshness(
         lane,
         projection,
@@ -418,15 +464,16 @@ export function RoomTurn({
         roomSyncState,
         laneTaskId ? kernelTaskUpdatedAtMsById?.[laneTaskId] : undefined,
       );
-      const laneMotionActive = laneActive
-        && !laneAction
-        && laneFreshness.state === 'fresh';
       const laneOutcome = visibleMessages.reduce((outcome, message) => (
         roomTerminalPostLabels[message.postKind ?? '']
           ? message.postKind ?? outcome
           : outcome
       ), '');
       const laneComplete = (laneTerminal || Boolean(laneOutcome)) && !laneFailed && !laneAborted;
+      const laneStillActive = laneActive && !laneComplete;
+      const laneMotionActive = laneStillActive
+        && !laneAction
+        && laneFreshness.state === 'fresh';
       const authoritativeStatusLabel = laneAction
         ? roomInteractionStatusLabel(laneAction)
         : laneOutcome === 'blocked'
@@ -437,12 +484,12 @@ export function RoomTurn({
               ? '已停止'
               : laneComplete
                 ? roomTerminalPostLabels[laneOutcome] ?? '已完成'
-                : laneActive
-                  ? '执行中'
+                : laneStillActive
+                  ? rootIntakeAligning ? '正在整理确认结果' : '执行中'
                   : '等待后续';
-      const statusLabel = laneActive && !laneAction && laneFreshness.state === 'disconnected'
+      const statusLabel = laneStillActive && !laneAction && laneFreshness.state === 'disconnected'
         ? '状态可能过期'
-        : laneActive && !laneAction && laneFreshness.state === 'stale'
+        : laneStillActive && !laneAction && laneFreshness.state === 'stale'
           ? '等待新进展'
           : authoritativeStatusLabel;
       const laneState = laneFailed
@@ -455,26 +502,64 @@ export function RoomTurn({
               ? 'waiting'
               : laneOutcome === 'blocked'
                 ? 'failed'
-                : laneActive
-                  ? 'running'
-                  : laneComplete
-                    ? 'completed'
+                : laneComplete
+                  ? 'completed'
+                  : laneStillActive
+                    ? 'running'
                     : 'waiting';
       const laneWork = roomLaneWorkSummary(
         lane.activities,
         participant?.displayName,
         laneState,
       );
+      const latestPublicResult = [...visibleMessages].reverse().find((message) => (
+        message.projectionKind === 'post' && Boolean(message.text.trim())
+      ));
+      const carriesStartAction = Boolean(
+        startActionGate
+        && finalAlignmentId
+        && visibleMessages.some((message) => message.id === finalAlignmentId),
+      );
+      const laneHeadline = latestPublicResult
+        ? `${roomPostReportLabel(latestPublicResult) || '公开结果'}：${roomReportPreview(latestPublicResult.text)}`
+        : laneWork.title;
+      const laneDetail = latestPublicResult
+        ? `${roomPostReportLabel(latestPublicResult) || '公开结果'} · ${laneWork.detail}`
+        : laneWork.detail;
       const laneTask = laneTaskId ? kernelTasksById?.[laneTaskId] : undefined;
       const laneSubagents = laneTaskId ? subagentsByTaskId[laneTaskId] ?? [] : [];
-      return <section
+      return <Fragment key={entry.key}><details
         className="room-agent-lane"
-        data-motion={laneActive && !laneAction ? laneFreshness.state : 'settled'}
+        data-dispatch-id={lane.dispatchId || undefined}
+        data-has-result={latestPublicResult ? true : undefined}
+        data-motion={laneStillActive && !laneAction ? laneFreshness.state : 'settled'}
         data-outcome={laneOutcome || undefined}
+        data-root-id={rootId}
         data-state={laneState}
-        key={lane.key}
+        data-task-id={laneTaskId || undefined}
+        data-lane-entry-key={entry.key}
+        ref={focusesLane ? focusedLaneRef : undefined}
+        onToggle={(event) => {
+          const expanded = event.currentTarget.open;
+          setLaneDisclosure((current) => {
+            const next = new Set(
+              current.scope === laneDisclosureScope
+                ? current.expandedLaneKeys
+                : emptyExpandedLaneKeys,
+            );
+            if (expanded === next.has(entry.key)) {
+              return current.scope === laneDisclosureScope
+                ? current
+                : { expandedLaneKeys: next, scope: laneDisclosureScope };
+            }
+            if (expanded) next.add(entry.key);
+            else next.delete(entry.key);
+            return { expandedLaneKeys: next, scope: laneDisclosureScope };
+          });
+        }}
+        open={expandedLaneKeys.has(entry.key)}
       >
-        <header>
+        <summary>
           {participant
             ? <PersonaAvatar
                 persona={persona}
@@ -492,19 +577,42 @@ export function RoomTurn({
               <strong>{participant?.displayName ?? '正在选择伙伴'}</strong>
               <small>{statusLabel}</small>
             </span>
-            <strong className="room-agent-lane__task">{laneWork.title}</strong>
-            <small className="room-agent-lane__progress">{laneWork.detail}</small>
+            <strong className="room-agent-lane__task">{laneHeadline}</strong>
+            <small className="room-agent-lane__progress">{laneDetail}</small>
+            <RoomLaneProgress
+              active={laneStillActive && !laneAction && laneFreshness.state !== 'disconnected'}
+              activities={lane.activities}
+            />
           </span>
           <RoomLaneTiming
             freshness={laneFreshness}
             nowMs={nowMs}
             startedAtMs={turn.createdAtMs}
-            endedAtMs={laneActive && !laneAction ? undefined : turn.updatedAtMs}
+            endedAtMs={laneStillActive && !laneAction ? undefined : turn.updatedAtMs}
           />
-        </header>
-        {lane.activities.length || (laneTask && roomTaskWorkspaceLifecycleView(laneTask)) ? <ActivityLog
+        </summary>
+        {visibleMessages.length ? <div className="room-agent-lane__posts">
+          {visibleMessages.map((message) => <Fragment key={message.id}>
+            <RoomLanePost
+              activeWait={
+                message.postKind === 'wait'
+                && !rootTerminal
+                && (!message.question || pendingQuestion?.postId === message.id)
+              }
+              evidence={roomResponseEvidenceForPost(message, responseUsageActivities)}
+              message={message}
+              onAnswerQuestion={onAnswerQuestion}
+              participants={room?.participants ?? []}
+              pendingQuestion={pendingQuestion?.postId === message.id ? pendingQuestion : undefined}
+              showEvidence={Boolean(roomTerminalPostLabels[message.postKind ?? ''])}
+              streamingMotion={laneFreshness.state === 'fresh'}
+              turnStartedAtMs={turn.createdAtMs}
+            />
+          </Fragment>)}
+        </div> : null}
+        {includeDetails && (lane.activities.length || (laneTask && roomTaskWorkspaceLifecycleView(laneTask))) ? <ActivityLog
           activities={lane.activities}
-          active={laneActive && !laneAction}
+          active={laneStillActive && !laneAction}
           motionActive={laneMotionActive}
           participantName={participant?.displayName}
           attention={laneState === 'failed' || laneState === 'aborted'}
@@ -513,11 +621,11 @@ export function RoomTurn({
             ? kernelTaskUpdatedAtMsById?.[laneTaskId]
             : undefined}
         /> : null}
-        {laneSubagents.length ? <RoomTaskSubagentRuns
+        {includeDetails && laneSubagents.length ? <RoomTaskSubagentRuns
           heading={laneTask?.objective || `${participant?.displayName ?? '这位伙伴'}的临时协作者`}
           runs={laneSubagents}
         /> : null}
-        {!lane.activities.length && laneActive && !messages.length ? <div className="room-agent-lane__waiting">
+        {includeDetails && !lane.activities.length && laneStillActive && !messages.length ? <div className="room-agent-lane__waiting">
           {laneMotionActive ? <LoaderCircle size={14} /> : <Clock3 size={14} />}
           <span>{laneMotionActive
             ? participant
@@ -526,15 +634,44 @@ export function RoomTurn({
             : laneFreshness.detail}
           </span>
         </div> : null}
-        {!terminalIssue && (laneFailed || laneAborted) && !visibleMessages.length ? (
+        {includeDetails && !terminalIssue && (laneFailed || laneAborted) && !visibleMessages.length ? (
           <p className="room-agent-lane__failure">
             {laneFailed
               ? publicFailure
               : '这位伙伴的任务已经停止。'}
           </p>
         ) : null}
-      </section>;
+      </details>{carriesStartAction ? startActionGate : null}</Fragment>;
     })}
+    {rootBlocked ? <div className="room-turn__root-control" data-state="blocked" role="alert">
+      <span><CircleAlert size={14} /><small>这轮协作因伙伴运行失败而暂停；继续会只重做失败的部分，并保留已完成的工作。</small></span>
+      <div className="room-turn__root-actions">
+        {onRetryRoot ? <Button
+          variant="secondary"
+          size="small"
+          leadingIcon={rootRetrying ? <LoaderCircle className="ui-spin" size={14} /> : <RotateCcw size={14} />}
+          disabled={rootRetrying || rootStopping}
+          onClick={() => onRetryRoot(rootId)}
+        >{rootRetrying ? '正在继续' : '继续任务'}</Button> : null}
+        {onAbortTurn ? <Button
+          variant="danger"
+          size="small"
+          leadingIcon={rootStopping ? <LoaderCircle className="ui-spin" size={14} /> : <CircleStop size={14} />}
+          disabled={rootRetrying || rootStopping}
+          onClick={() => onAbortTurn(rootId)}
+        >{rootStopping ? '正在停止' : '停止任务'}</Button> : null}
+      </div>
+    </div> : null}
+    {rootActive && onAbortTurn ? <div className="room-turn__root-control" role="status">
+      <span><CircleStop size={14} /><small>{rootStopping ? '正在停止本轮的伙伴、工具和后续任务' : '会一起停止本轮的所有伙伴、工具和后续任务'}</small></span>
+      <Button
+        variant="danger"
+        size="small"
+        leadingIcon={rootStopping ? <LoaderCircle className="ui-spin" size={14} /> : <CircleStop size={14} />}
+        disabled={rootStopping}
+        onClick={() => onAbortTurn(rootId)}
+      >{rootStopping ? '正在停止' : '停止本轮任务'}</Button>
+    </div> : null}
     {outcome ? <section
       className="room-turn__terminal"
       data-arriving={outcomeArriving || undefined}
@@ -566,62 +703,6 @@ export function RoomTurn({
       >{retryingTurn ? '正在重试' : '再试一次'}</Button> : null}
     </section> : null}
     {pendingAction ? <SessionActionLink action={pendingAction} /> : null}
-  </article>;
-}
-
-function RoomParticipantPost({
-  message,
-  participant,
-  persona,
-  motionFresh,
-  ...postProps
-}: {
-  message: RoomMessageProjection;
-  participant?: TimelineParticipant;
-  persona?: AgentPersonaV1;
-  motionFresh: boolean;
-  evidence?: RoomResponseEvidence;
-  showEvidence: boolean;
-  participants: readonly TimelineParticipant[];
-  turnStartedAtMs: number;
-  activeWait: boolean;
-  pendingQuestion?: PendingRoomQuestion;
-  onAnswerQuestion?: (
-    question: PendingRoomQuestion,
-    value: string,
-  ) => Promise<boolean>;
-}) {
-  const displayName = participant?.displayName ?? persona?.displayName ?? '协作伙伴';
-  const presence = message.status === 'streaming'
-    ? motionFresh ? 'thinking' : 'listening'
-    : message.status === 'failed' || message.status === 'aborted'
-      ? 'warning'
-      : 'done';
-  return <article
-    className="room-participant-message room-conversation-post"
-    data-motion={motionFresh ? 'fresh' : 'paused'}
-    data-room-message-id={message.id}
-    data-status={message.status}
-  >
-    <PersonaAvatar
-      fallbackName={displayName}
-      persona={persona}
-      presence={presence}
-      size="small"
-    />
-    <div>
-      <header>
-        <strong>{displayName}</strong>
-        {message.status === 'streaming'
-          ? <small>{motionFresh ? '正在回复' : '状态可能过期'}</small>
-          : null}
-      </header>
-      <RoomLanePost
-        {...postProps}
-        message={message}
-        streamingMotion={motionFresh}
-      />
-    </div>
   </article>;
 }
 
@@ -685,17 +766,15 @@ function roomLaneWorkSummary(
   participantName = '协作成员',
   laneState: string,
 ): { title: string; detail: string } {
-  const digest = roomActivityDigest(activities);
-  let focus = activities.at(-1);
-  for (let index = activities.length - 1; index >= 0; index -= 1) {
-    const candidate = activities[index];
-    if (candidate && ['running', 'waiting', 'failed', 'aborted'].includes(
-      roomActivityDisplayStatus(candidate),
-    )) {
-      focus = candidate;
-      break;
-    }
-  }
+  const informativeActivities = roomVisibleIncrementalActivities(activities);
+  const digest = roomActivityDigest(informativeActivities);
+  const attentionRequired = laneState === 'failed' || laneState === 'aborted';
+  const focus = [...informativeActivities].reverse().find((candidate) => {
+    const status = roomActivityDisplayStatus(candidate);
+    return attentionRequired
+      ? ['failed', 'aborted'].includes(status)
+      : !['failed', 'aborted'].includes(status);
+  });
   if (focus) {
     return {
       title: describeRoomActivity(focus, participantName).title,
@@ -735,132 +814,64 @@ function ActivityLog({
     ? roomTaskWorkspaceLifecycleView(workspaceTask)
     : undefined;
   const effectiveAttention = attention || workspaceView?.attention === true;
-  const [open, setOpen] = useState(active || effectiveAttention);
   const [arrivingActivityIds, setArrivingActivityIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const previousActive = useRef(active);
-  const previousActivitySignatures = useRef<Map<string, string> | null>(null);
-  const publicActivities = activities.filter((activity) => {
-    if (textValue(activity.payload.sourceEventType) !== 'reasoning_summary') return true;
-    return textValue(activity.payload.source) === 'provider_reasoning_summary';
-  });
-  const activityContentKey = publicActivities.map((activity) => (
-    `${activity.id}:${activity.status}:${activity.updatedAtMs ?? activity.createdAtMs}:${activity.summary}`
-  )).join('\u001f');
-  const workspaceContentKey = workspaceTask && workspaceView
-    ? `workspace:${workspaceTask.taskId}:${workspaceTask.revision}:${workspaceTask.workspaceLifecycleState}:${workspaceTask.workspaceAttentionRequired ?? ''}`
-    : '';
-  const contentKey = `${activityContentKey}\u001f${workspaceContentKey}`;
-  const { onScroll, scrollRef } = useAutoFollowScroll<HTMLDivElement>(
-    contentKey,
-    motionActive && open,
-  );
+  const previousActivityIds = useRef<ReadonlySet<string> | null>(null);
+  const publicActivities = roomVisibleIncrementalActivities(activities);
+  const latestReasoning = [...publicActivities].reverse().find((activity) => (
+    textValue(activity.payload.sourceEventType) === 'reasoning_summary'
+  ));
+  const chronologicalActivities = publicActivities.filter((activity) => (
+    textValue(activity.payload.sourceEventType) !== 'reasoning_summary'
+  ));
+  const activityIdentityKey = publicActivities.map((activity) => activity.id).join('\u001f');
   useEffect(() => {
-    const nextSignatures = new Map(publicActivities.map((activity) => [
-      activity.id,
-      `${activity.status}:${activity.updatedAtMs ?? activity.createdAtMs}:${activity.summary}`,
-    ]));
-    if (workspaceTask && workspaceView) {
-      nextSignatures.set(
-        `workspace:${workspaceTask.taskId}`,
-        `${workspaceTask.revision}:${workspaceTask.workspaceLifecycleState}:${workspaceTask.workspaceAttentionRequired ?? ''}`,
-      );
-    }
-    const previousSignatures = previousActivitySignatures.current;
-    previousActivitySignatures.current = nextSignatures;
-    if (!previousSignatures) return;
-    const arrivingIds = new Set(
-      [...nextSignatures].flatMap(([activityId, signature]) => (
-        previousSignatures.get(activityId) === signature ? [] : [activityId]
-      )),
-    );
+    const nextIds = new Set(publicActivities.map((activity) => activity.id));
+    const previousIds = previousActivityIds.current;
+    previousActivityIds.current = nextIds;
+    if (!previousIds) return;
+    const arrivingIds = new Set([...nextIds].filter((activityId) => !previousIds.has(activityId)));
     if (!arrivingIds.size) return;
     setArrivingActivityIds(arrivingIds);
-    const timer = window.setTimeout(() => setArrivingActivityIds(new Set()), 280);
+    const timer = window.setTimeout(() => setArrivingActivityIds(new Set()), 220);
     return () => window.clearTimeout(timer);
-  }, [contentKey]);
-  useEffect(() => {
-    const wasActive = previousActive.current;
-    previousActive.current = active;
-    if (active && !wasActive) {
-      setOpen(true);
-    } else if (!active && wasActive) {
-      setOpen(effectiveAttention);
-    } else if (effectiveAttention) {
-      setOpen(true);
-    }
-  }, [active, effectiveAttention]);
+  }, [activityIdentityKey]);
   if (!publicActivities.length && !workspaceView) return null;
-  const digest = publicActivities.length
-    ? roomActivityDigest(publicActivities)
-    : {
-        title: workspaceView?.title ?? '工作区进展',
-        detail: '1 条权威任务更新',
-      };
-  return <details
+  return <div
     className="room-agent-lane__activity"
     data-motion={motionActive ? 'fresh' : 'paused'}
     data-state={effectiveAttention ? 'attention' : active ? 'running' : 'settled'}
-    open={open}
   >
-    <summary
-      aria-expanded={open}
-      onClick={(event) => toggleDisclosurePreservingAnchor(event, setOpen)}
-      onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setOpen)}
-    >
-      <Wrench size={14} />
-      <span>
-        <strong>{digest.title}</strong>
-        <small>{digest.detail}</small>
-      </span>
-      <ChevronRight aria-hidden="true" size={14} />
-    </summary>
     <div
-      aria-label={`伙伴自述与运行记录：${participantName ?? '协作成员'}`}
+      aria-label={`工作进展与运行记录：${participantName ?? '协作成员'}`}
       aria-live={motionActive ? 'polite' : 'off'}
       className="room-agent-lane__activity-feed"
-      onScroll={onScroll}
-      ref={scrollRef}
       role="log"
-      tabIndex={0}
-    >{publicActivities.map((activity) => {
+    >{latestReasoning ? <RoomReasoningActivity
+      activity={latestReasoning}
+      arriving={motionActive && arrivingActivityIds.has(latestReasoning.id)}
+      pinned
+    /> : null}
+    {chronologicalActivities.map((activity, activityIndex) => {
       const displayStatus = roomActivityDisplayStatus(activity);
       const sourceEventType = textValue(activity.payload.sourceEventType);
       const arriving = motionActive && arrivingActivityIds.has(activity.id);
       if (['tool_started', 'tool_progress', 'tool_finished'].includes(sourceEventType)) {
-        return <RoomToolActivity activity={activity} arriving={arriving} key={activity.id} />;
-      }
-      if (sourceEventType === 'reasoning_summary') {
-        const reasoningItems = Array.isArray(activity.payload.items)
-          ? activity.payload.items
-              .filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
-              .slice(0, 12)
-          : [];
-        const summary = publicActivitySummary(activity.summary, activity.kind)
-          || reasoningItems.at(-1)
-          || '';
-        if (!summary) return null;
-        return <article
-          className="room-reasoning-summary"
-          data-arriving={arriving || undefined}
-          data-state={displayStatus}
+        const toolName = textValue(activity.payload.toolName);
+        const recovered = displayStatus === 'failed' && chronologicalActivities
+          .slice(activityIndex + 1)
+          .some((candidate) => (
+            textValue(candidate.payload.sourceEventType) === 'tool_finished'
+            && textValue(candidate.payload.toolName) === toolName
+            && roomActivityDisplayStatus(candidate) === 'completed'
+          ));
+        return <RoomToolActivity
+          activity={activity}
+          arriving={arriving}
           key={activity.id}
-        >
-          <Sparkles aria-hidden="true" size={14} />
-          <span>
-            <small><span className="room-activity-provenance">伙伴自述</span> · 工作摘要 · <RoomActivityTimestamp activity={activity} /></small>
-            <strong>{summary}</strong>
-            {reasoningItems.length ? <details className="room-reasoning-summary__details">
-              <summary>查看工作要点</summary>
-              <ol>
-                {reasoningItems.map((item, index) => (
-                  <li key={`${activity.id}:reasoning:${index}`}>{item}</li>
-                ))}
-              </ol>
-            </details> : null}
-          </span>
-        </article>;
+          recovered={recovered}
+        />;
       }
       const description = describeRoomActivity(activity, participantName);
       const waitDetails = displayStatus === 'waiting'
@@ -892,12 +903,95 @@ function ActivityLog({
       </div>;
     })}
     {workspaceTask && workspaceView ? <RoomTaskWorkspaceActivity
-      arriving={arrivingActivityIds.has(`workspace:${workspaceTask.taskId}`)}
+      arriving={false}
       task={workspaceTask}
       updatedAtMs={workspaceUpdatedAtMs}
       view={workspaceView}
     /> : null}</div>
-  </details>;
+  </div>;
+}
+
+function RoomReasoningActivity({
+  activity,
+  arriving,
+  pinned,
+}: {
+  activity: RoomActivityProjection;
+  arriving: boolean;
+  pinned?: boolean;
+}) {
+  const displayStatus = roomActivityDisplayStatus(activity);
+  const rawReasoningItems = Array.isArray(activity.payload.items)
+    ? activity.payload.items
+        .filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
+        .slice(0, 12)
+    : [];
+  const summary = publicReasoningSummary(
+    publicActivitySummary(activity.summary, activity.kind)
+      || rawReasoningItems.at(-1)
+      || '',
+    displayStatus,
+  );
+  if (!summary) return null;
+  const reasoningItems = [...new Set(rawReasoningItems
+    .map((item) => publicReasoningSummary(item, displayStatus))
+    .filter((item) => Boolean(item) && item !== summary))];
+  return <div
+    className="room-agent-activity room-agent-activity--reasoning"
+    data-arriving={arriving || undefined}
+    data-pinned={pinned || undefined}
+    data-state={displayStatus}
+  >
+    <Sparkles aria-hidden="true" size={14} />
+    <span>
+      <small className="room-agent-activity__reasoning-label">
+        {pinned ? '最新思考摘要' : '工作摘要'} · <RoomActivityTimestamp activity={activity} />
+      </small>
+      <strong>{summary}</strong>
+      {reasoningItems.length ? <details className="room-agent-activity__reasoning-details">
+        <summary>查看工作要点</summary>
+        <ol>
+          {reasoningItems.map((item, index) => (
+            <li key={`${activity.id}:reasoning:${index}`}>{item}</li>
+          ))}
+        </ol>
+      </details> : null}
+    </span>
+  </div>;
+}
+
+function roomVisibleIncrementalActivities(
+  activities: RoomActivityProjection[],
+): RoomActivityProjection[] {
+  const seen = new Set<string>();
+  const visible: RoomActivityProjection[] = [];
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const activity = activities[index];
+    if (!activity || !roomActivityHasPublicInformation(activity)) continue;
+    const sourceEventType = textValue(activity.payload.sourceEventType);
+    if (sourceEventType === 'reasoning_summary') {
+      if (textValue(activity.payload.source) !== 'provider_reasoning_summary') continue;
+      const rawItems = Array.isArray(activity.payload.items)
+        ? activity.payload.items.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
+        : [];
+      const summary = publicReasoningSummary(
+        publicActivitySummary(activity.summary, activity.kind) || rawItems.at(-1) || '',
+        roomActivityDisplayStatus(activity),
+      );
+      if (!summary) continue;
+    } else if (
+      ['current_progress', 'progress'].includes(sourceEventType)
+      || textValue(activity.payload.activityKind) === 'work'
+    ) {
+      const summary = publicActivitySummary(activity.summary, activity.kind);
+      if (!summary) continue;
+    }
+    const identity = activity.id;
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    visible.push(activity);
+  }
+  return visible.reverse();
 }
 
 function RoomTaskWorkspaceActivity({
@@ -1042,6 +1136,7 @@ function RoomLanePost({
         : null;
   return <div
     className="room-agent-lane__post"
+    data-room-message-id={message.id}
     data-projection={message.projectionKind ?? 'post'}
     data-status={message.status}
     data-kind={reportLabel ? message.postKind ?? 'progress' : undefined}
@@ -1441,13 +1536,13 @@ function usePrevious<T>(value: T): T | undefined {
   return current.current;
 }
 
-function roomActivityProvenanceLabel(activity: RoomActivityProjection): '伙伴自述' | '运行记录' {
+function roomActivityProvenanceLabel(activity: RoomActivityProjection): '进度更新' | '伙伴沟通' | '运行记录' {
   const sourceEventType = textValue(activity.payload.sourceEventType);
   const activityKind = textValue(activity.payload.activityKind);
-  if (
-    ['reasoning_summary', 'current_progress', 'progress'].includes(sourceEventType)
-    || ['intercom', 'work'].includes(activityKind)
-  ) return '伙伴自述';
+  if (activityKind === 'intercom') return '伙伴沟通';
+  if (['current_progress', 'progress'].includes(sourceEventType) || activityKind === 'work') {
+    return '进度更新';
+  }
   return '运行记录';
 }
 
@@ -1458,7 +1553,7 @@ function roomActivityDigest(
     const sourceEventType = textValue(activity.payload.sourceEventType);
     if (sourceEventType.startsWith('tool_')) {
       const toolId = textValue(activity.payload.toolName);
-      return [publicToolName(toolId, textValue(activity.payload.displayName))];
+      return [roomPublicToolName(toolId, textValue(activity.payload.displayName))];
     }
     if (sourceEventType === 'reasoning_summary') return ['工作摘要'];
     if (['current_progress', 'progress'].includes(sourceEventType)) return ['任务进度'];
@@ -1498,9 +1593,11 @@ function roomActivityDigest(
 function RoomToolActivity({
   activity,
   arriving,
+  recovered,
 }: {
   activity: RoomActivityProjection;
   arriving: boolean;
+  recovered?: boolean;
 }) {
   const payload = activity.payload;
   const approvalId = textValue(payload.approvalId);
@@ -1511,6 +1608,10 @@ function RoomToolActivity({
     if (approvalId) setOpen(true);
   }, [approvalId]);
   const sourceEventType = textValue(payload.sourceEventType);
+  const toolLabel = roomPublicToolName(
+    textValue(payload.toolName),
+    textValue(payload.displayName),
+  );
   const safeResult = payload.result;
   const publicResult = safeResult && typeof safeResult === 'object' && !Array.isArray(safeResult)
     ? safeResult as Record<string, unknown>
@@ -1524,6 +1625,7 @@ function RoomToolActivity({
     status: activity.status,
     payload: {
       ...payload,
+      displayName: toolLabel,
       args: projectedArguments,
       publicResult: error && !publicResult.error
         ? { ...publicResult, error }
@@ -1547,6 +1649,7 @@ function RoomToolActivity({
     <details
       className="room-agent-activity room-agent-activity--tool"
       data-arriving={arriving || undefined}
+      data-recovered={recovered || undefined}
       data-state={activity.status}
       open={open}
     >
@@ -1568,11 +1671,13 @@ function RoomToolActivity({
         </span>
         <span>
           <strong>{activity.status === 'failed'
-            ? `${detailView.toolLabel}执行失败`
+            ? recovered
+              ? `${detailView.toolLabel}这次没有完成`
+              : `${detailView.toolLabel}执行失败`
             : activity.status === 'aborted'
               ? `${detailView.toolLabel}已停止`
               : detailView.summary}</strong>
-          <small><span className="room-activity-provenance">运行记录</span> · {detailView.toolLabel} · {roomToolStatusLabel(activity.status)}{roomToolProgressCount(payload) > 1 ? ` · ${roomToolProgressCount(payload)} 次更新` : ''} · <RoomActivityTimestamp activity={activity} /></small>
+          <small><span className="room-activity-provenance">运行记录</span> · {detailView.toolLabel} · {roomToolStatusLabel(activity.status)}{recovered ? ` · 后续${detailView.toolLabel.replace(/文件$/, '')}已经成功` : ''}{roomToolProgressCount(payload) > 1 ? ` · ${roomToolProgressCount(payload)} 次更新` : ''} · <RoomActivityTimestamp activity={activity} /></small>
         </span>
         <ChevronRight aria-hidden="true" size={14} />
       </summary>
@@ -1778,10 +1883,44 @@ function roomFallbackFreshness(
     return {
       state: 'stale',
       updatedAtMs,
-      detail: '最近没有新的权威进展，状态可能过期',
+      detail: '正在等待下一条进展',
     };
   }
   return { state: 'fresh', updatedAtMs, detail: '实时进展已同步' };
+}
+
+function RoomLaneProgress({
+  active,
+  activities,
+}: {
+  active: boolean;
+  activities: RoomActivityProjection[];
+}) {
+  const visible = roomVisibleIncrementalActivities(activities);
+  const total = visible.length;
+  if (!total && !active) return null;
+  const returned = visible.filter((activity) => (
+    ['completed', 'failed', 'aborted'].includes(roomActivityDisplayStatus(activity))
+  )).length;
+  const ratio = total ? returned / total : 0;
+  const label = total
+    ? `运行记录已返回 ${returned} / ${total}`
+    : '伙伴仍在工作';
+  return <span
+    aria-label={label}
+    aria-valuemax={total || undefined}
+    aria-valuemin={total ? 0 : undefined}
+    aria-valuenow={total ? returned : undefined}
+    className="room-agent-lane__meter"
+    data-active={active || undefined}
+    data-indeterminate={!total || undefined}
+    role="progressbar"
+  >
+    <span aria-hidden="true" className="room-agent-lane__meter-track">
+      <i style={{ transform: `scaleX(${ratio})` }} />
+    </span>
+    <small>{total ? `${returned} / ${total}` : '进行中'}</small>
+  </span>;
 }
 
 function RoomLaneTiming({
@@ -1876,7 +2015,10 @@ function describeRoomActivity(
   const payload = activity.payload;
   const status = textValue(payload.status);
   const sourceEventType = textValue(payload.sourceEventType);
-  const toolName = textValue(payload.displayName) || textValue(payload.toolName) || '工具';
+  const toolName = roomPublicToolName(
+    textValue(payload.toolName),
+    textValue(payload.displayName),
+  );
   const approvalDecision = approvalDecisionView(payload);
   if (activity.status === 'aborted') {
     return sourceEventType.startsWith('tool_')
@@ -2019,6 +2161,18 @@ function describeRoomActivity(
   return { title: `${participantName} 完成了一步`, detail: '协作进度已经同步' };
 }
 
+function roomPublicToolName(toolId: string, displayName = ''): string {
+  const normalizedId = toolId.trim().toLowerCase();
+  if (normalizedId === 'tool_search') return '查找可用工具';
+  const normalizedDisplayName = displayName.trim();
+  return publicToolName(
+    normalizedId,
+    normalizedDisplayName && normalizedDisplayName !== normalizedId
+      ? normalizedDisplayName
+      : '',
+  );
+}
+
 function roomApprovalModelLabel(model: string): string {
   if (!model || /(?:^|[./_-])luna(?:$|[./_-])/i.test(model)) return 'Luna Max';
   return model.split('/').at(-1)?.slice(0, 80) || '审批模型';
@@ -2108,6 +2262,39 @@ function publicActivitySummary(summary: string, kind: string): string {
   if (/control-center-(?:safe-)?v\d/i.test(value)) return '';
   if (value.includes('内部工具步骤')) return '准备工作已经完成';
   return value;
+}
+
+function publicReasoningSummary(
+  value: string,
+  status: RoomActivityProjection['status'],
+): string {
+  const safe = roomPublicActivityText(value);
+  if (!safe) return status === 'running' ? '正在推进当前工作' : '';
+  const normalized = safe.toLocaleLowerCase('en-US');
+  if (/\b(?:plan|planning|design|designing|coordinate|coordinating|assign|assigning|define|defining|phase|phases|wave|workwave)\b/u.test(normalized)) {
+    return '正在整理分工和下一步';
+  }
+  if (/\b(?:assess|assessing|search|searching|locate|locating|identify|identifying|inspect|inspecting|check|checking|review|reviewing)\b/u.test(normalized)) {
+    return '正在检查相关代码和信息';
+  }
+  if (/\b(?:test|testing|verify|verifying|validate|validating)\b/u.test(normalized)) {
+    return '正在验证当前结果';
+  }
+  if (/\b(?:fix|fixing|implement|implementing|update|updating|edit|editing)\b/u.test(normalized)) {
+    return '正在修改并核对结果';
+  }
+  if (/\b(?:finalize|finalizing|summarize|summarizing|prepare|preparing)\b/u.test(normalized)) {
+    return '正在整理本轮结果';
+  }
+  if (/\b(?:request|requesting|load|loading|read|reading)\b/u.test(normalized)) {
+    return '正在读取所需信息';
+  }
+  if (/\b(?:continue|continuing|resume|resuming|proceed|proceeding)\b/u.test(normalized)) {
+    return '正在推进当前工作';
+  }
+  const latinWords = safe.match(/[A-Za-z][A-Za-z0-9_-]*/g) ?? [];
+  if (/\p{Script=Han}/u.test(safe) && latinWords.length <= 1) return safe;
+  return status === 'running' ? '正在推进当前工作' : '';
 }
 
 function textValue(value: unknown): string {

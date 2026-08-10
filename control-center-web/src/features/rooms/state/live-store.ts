@@ -204,8 +204,10 @@ export const useRoomLiveStore = create<RoomLiveStore>((set, get) => ({
       !window.firstSequence
       || page.lastSequence !== window.firstSequence - 1
     ) return false;
+    // The server bounds the initial live snapshot. Pages explicitly requested
+    // by the reader are durable UI history and must not be discarded merely
+    // because they extend beyond that live snapshot window.
     const events = [...page.items, ...window.events];
-    if (events.length > roomEventWindowLimit) return false;
     const mergedSnapshot: RoomEventSnapshot = {
       ...snapshot,
       events,
@@ -305,8 +307,6 @@ export const useRoomLiveStore = create<RoomLiveStore>((set, get) => ({
   },
 }));
 
-const roomEventWindowLimit = 2_000;
-
 function mergeSnapshotWindow(
   snapshot: RoomEventSnapshot,
   existing?: RoomHistoryWindow,
@@ -318,12 +318,7 @@ function mergeSnapshotWindow(
     const older = existing.events.filter((event) => event.sequence < snapshot.firstSequence);
     if (older.at(-1)?.sequence === snapshot.firstSequence - 1) {
       events = [...older, ...events];
-      if (events.length > roomEventWindowLimit) {
-        events = events.slice(-roomEventWindowLimit);
-        hasMore = true;
-      } else {
-        hasMore = existing.hasMore;
-      }
+      hasMore = existing.hasMore;
       retainedPrefixTruncated = existing.retainedPrefixTruncated;
     }
   }
@@ -352,10 +347,7 @@ function appendLiveEvents(
   const lastSequence = current.at(-1)?.sequence ?? 0;
   const additions = incoming.filter((event) => event.sequence > lastSequence);
   if (!additions.length) return [...current];
-  const combined = [...current, ...additions];
-  return combined.length > roomEventWindowLimit
-    ? combined.slice(-roomEventWindowLimit)
-    : combined;
+  return [...current, ...additions];
 }
 
 export function roomProjection(roomId: string): RoomProjectionState {

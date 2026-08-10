@@ -5,6 +5,7 @@ import {
   appendOptimisticAgentMessage,
   applyAgentBackgroundJobReceipt,
   applyAgentSnapshot,
+  agentSnapshotFromResponse,
   createAgentProjection,
   discardOptimisticAgentMessage,
   failOptimisticAgentMessage,
@@ -20,6 +21,41 @@ import type { AgentBackgroundJobV1 } from './generated/agent-background-job.v1';
 import type { AgentLifecycleCancellationAuditV1 } from './generated/agent-lifecycle-cancellation-audit.v1';
 
 describe('AgentEventReducer', () => {
+  it('does not treat a partial recent snapshot as terminal history', () => {
+    const sessionId = 'session-recent-partial';
+    const turnId = 'turn:recent-running';
+    const state = applyAgentSnapshot(
+      createAgentProjection(sessionId),
+      agentSnapshotFromResponse({
+        messages: [],
+        liveEvents: [{
+          schemaVersion: 'rag-ime.agent-event.v1',
+          eventId: `${sessionId}:40`,
+          sessionId,
+          turnId,
+          sequence: 40,
+          createdAtMs: 1_000,
+          eventType: 'tool_started',
+          payload: {
+            toolCallId: 'tool:recent-running',
+            toolName: 'workspace_read',
+            summary: '正在读取当前文件',
+            args: { path: 'README.md' },
+          },
+          resumeToken: `${sessionId}:40`,
+        }],
+        lastSequence: 40,
+        resumeToken: `${sessionId}:40`,
+        snapshotScope: 'recent',
+        partial: true,
+        status: 'active',
+      }),
+    );
+
+    expect(state.turnsById[turnId]?.status).toBe('running');
+    expect(state.activitiesById['tool:recent-running']?.status).toBe('running');
+  });
+
   it('applies ordered deltas and ignores replayed duplicates', () => {
     const initial = createAgentProjection('session-1');
     const first = reduceAgentEvent(initial, agentEvent(1, 'text_delta', { delta: '你' }));
@@ -1364,7 +1400,50 @@ describe('AgentEventReducer', () => {
       .toMatchObject({ status: 'running', updatedAtMs: 51 });
   });
 
-  it('hides legacy per-turn user source checkpoints but keeps explicit memory work', () => {
+  it('keeps ancillary receipts inside their authoritative run instead of creating avatar-only turns', () => {
+    const running = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      {
+        ...agentEvent(1, 'tool_started', {
+          toolCallId: 'tool-current-run',
+          toolName: 'workspace_search',
+          runId: 'run-current',
+        }),
+        turnId: 'turn-current',
+      },
+    ).state;
+    const checkpointed = reduceAgentEvent(
+      running,
+      {
+        ...agentEvent(2, 'memory_checkpointed', {
+          sourceRole: 'tool_receipt',
+          status: 'checkpointed',
+          summary: '已应用工具回执已保存为记忆来源，等待异步整理',
+        }),
+        turnId: '',
+      },
+    ).state;
+    const approved = reduceAgentEvent(
+      checkpointed,
+      {
+        ...agentEvent(3, 'approval_resolved', {
+          approvalId: 'approval-truncated-owner',
+          toolCallId: 'tool-outside-bounded-journal',
+          state: 'applied',
+          automatic: true,
+          decisionMode: 'policy',
+          runId: 'run-current',
+        }),
+        turnId: 'room-root:current',
+      },
+    ).state;
+
+    expect(approved.turnOrder).toEqual(['turn-current']);
+    expect(approved.turnsById['turn-current']).toMatchObject({ status: 'running' });
+    expect(approved.activityOrder).toEqual(['tool-current-run']);
+  });
+
+  it('hides source-capture bookkeeping from the conversation timeline', () => {
     const captured = reduceAgentEvent(
       createAgentProjection('session-1'),
       agentEvent(1, 'memory_checkpointed', {
@@ -1384,9 +1463,41 @@ describe('AgentEventReducer', () => {
         summary: '已应用工具回执已保存为记忆来源，等待异步整理',
       }),
     ).state;
-    expect(receipt.activityOrder).toHaveLength(1);
-    expect(receipt.activitiesById[receipt.activityOrder[0]]).toMatchObject({
-      kind: 'memory_checkpointed',
+    expect(receipt.activityOrder).toEqual([]);
+    expect(receipt.turnOrder).toEqual([]);
+  });
+
+  it('settles live tool state when an authoritative restored session is idle', () => {
+    const turnId = '831ba902-637d-48aa-b92f-2b1c32c4c969';
+    const completedMessage = {
+      ...serverMessage('assistant-current', 'assistant', turnId, '本轮已经完成。'),
+      completedAtMs: 1_101,
+    };
+    const restored = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [completedMessage],
+      liveEvents: [
+        {
+          ...rawAgentEvent(1_100, 'tool_started', {
+            toolCallId: 'tool-current-run',
+            toolName: 'edit',
+          }),
+          turnId,
+        },
+        {
+          ...rawAgentEvent(1_101, 'message_completed', {
+            message: completedMessage,
+          }),
+          turnId,
+        },
+      ],
+      lastSequence: 1_101,
+      resumeToken: 'session-1:1101',
+      status: 'idle',
+    });
+
+    expect(restored.status).toBe('idle');
+    expect(restored.turnsById[turnId]).toMatchObject({ status: 'completed' });
+    expect(restored.activitiesById['tool-current-run']).toMatchObject({
       status: 'completed',
     });
   });

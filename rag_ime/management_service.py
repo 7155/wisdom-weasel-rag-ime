@@ -37,6 +37,7 @@ from .daily_planner import (
     task_action,
     undo_task_event,
 )
+from .deployment_status import assistant_overlay_sha256
 from .memory_actions import execute_memory_action
 from .memory_book_lifecycle import archive_inactive_memory_books, set_memory_book_archive_status
 from .memory_graph_read import read_memory_entity, read_memory_graph
@@ -147,6 +148,7 @@ class ManagementService:
         deployment_provider: Callable[[], Mapping[str, object]] | None = None,
         cache_invalidator: Callable[[], object] | None = None,
         voice_support_directory: str | Path | None = None,
+        frontend_trace_path: str | Path | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self.project = project
@@ -158,6 +160,11 @@ class ManagementService:
         self.runtime_config_provider = runtime_config_provider
         self.last_prediction_provider = last_prediction_provider or (lambda: {})
         self.deployment_provider = deployment_provider
+        self.frontend_trace_path = (
+            Path(frontend_trace_path).expanduser()
+            if frontend_trace_path is not None
+            else Path.home() / "Library" / "Logs" / "RagIme" / "squirrel-frontend.jsonl"
+        )
         self.cache_invalidator = cache_invalidator
         self.voice_support_directory = (
             Path(voice_support_directory).expanduser()
@@ -833,6 +840,13 @@ class ManagementService:
                        event.context_group_level, state.accepted_count,
                        state.skipped_count, state.pinned, state.downranked,
                        state.deleted, state.updated_at_ms,
+                       capture.channel AS capture_receipt_channel,
+                       capture.boundary_kind AS capture_receipt_boundary_kind,
+                       capture.boundary_confidence AS capture_receipt_boundary_confidence,
+                       capture.outcome AS capture_receipt_outcome,
+                       capture.reason_code AS capture_receipt_reason,
+                       capture.evidence_state AS capture_receipt_evidence_state,
+                       capture.evidence_reason AS capture_receipt_evidence_reason,
                        EXISTS (
                            SELECT 1
                            FROM memory_tombstones tombstone
@@ -846,6 +860,14 @@ class ManagementService:
                        ) AS hidden
                 FROM input_events event
                 LEFT JOIN memory_state state ON state.event_id = event.id
+                LEFT JOIN input_capture_receipts capture
+                  ON capture.capture_id = (
+                      SELECT receipt.capture_id
+                      FROM input_capture_receipts receipt
+                      WHERE receipt.input_event_id = event.id
+                      ORDER BY receipt.created_at_ms DESC, receipt.capture_id DESC
+                      LIMIT 1
+                  )
                 WHERE event.id = ?
                   AND NOT EXISTS (
                       SELECT 1
@@ -901,6 +923,17 @@ class ManagementService:
             committed_text=str(row["committed_text"]),
             recent_context=str(row["recent_context"]),
             capture_metadata=_json_mapping(row["capture_metadata_json"]),
+            source=str(row["source"]),
+            provider=str(row["provider_name"]),
+            capture_receipt={
+                "channel": row["capture_receipt_channel"],
+                "boundaryKind": row["capture_receipt_boundary_kind"],
+                "boundaryConfidence": row["capture_receipt_boundary_confidence"],
+                "outcome": row["capture_receipt_outcome"],
+                "reason": row["capture_receipt_reason"],
+                "evidenceState": row["capture_receipt_evidence_state"],
+                "evidenceReason": row["capture_receipt_evidence_reason"],
+            },
         )
         return {
             **self.revision().payload(),
@@ -2404,6 +2437,15 @@ class ManagementService:
         foreground = _foreground_context_component(sidecar_ok=sidecar_ok, last_prediction=last_prediction)
         compiler = self._compiler_component()
         deployment = _safe_mapping(self.deployment_provider) if self.deployment_provider else {}
+        candidate_delivery = _assistant_candidate_delivery_component(
+            repo_root=self.repo_root,
+            trace_path=self.frontend_trace_path,
+            deployment=deployment,
+            input_source_selected=selected,
+            sidecar_ok=sidecar_ok,
+            predictor_ok=predictor_ok,
+            last_prediction=last_prediction,
+        )
         voice = read_voice_control_status(self.voice_support_directory)
         voice_agent = _mapping(voice.get("agent"))
         recognition = _mapping(voice.get("recognition"))
@@ -2437,6 +2479,7 @@ class ManagementService:
             "sidecar": _component("sidecar", sidecar_ok, "运行中" if sidecar_ok else "不可用", health),
             "predictor": _component("predictor", predictor_ok, predictor_detail, predictor_payload),
             "foregroundContext": foreground,
+            "assistantCandidateDelivery": candidate_delivery,
             "hybridRag": _component(
                 "hybridRag",
                 runtime_config.hybrid_rag.enabled,
@@ -2519,6 +2562,23 @@ class ManagementService:
                     )
                 last_run_ms = int(row["last_run_ms"] or 0)
                 bundle_hash = str(row["last_bundle_hash"] or "")
+                governed_pending = -1
+                governed_needs_review = -1
+                if "agent_memory_evidence" in tables:
+                    governed_row = conn.execute(
+                        """
+                        SELECT
+                            SUM(CASE WHEN admission_state = 'candidate' THEN 1 ELSE 0 END),
+                            SUM(CASE WHEN admission_state = 'needs_review' THEN 1 ELSE 0 END)
+                        FROM agent_memory_evidence
+                        WHERE evidence_domain = 'personal_memory'
+                          AND status = 'active'
+                          AND (? = '' OR project IN ('', ?))
+                        """,
+                        (self.project, self.project),
+                    ).fetchone()
+                    governed_pending = int(governed_row[0] or 0)
+                    governed_needs_review = int(governed_row[1] or 0)
         except Exception as exc:
             return _component("memoryCompiler", False, "读取编译状态失败", {**metadata, "error": str(exc)})
         metadata.update(
@@ -2527,11 +2587,20 @@ class ManagementService:
                 "lastRunMs": last_run_ms,
                 "lastRunAgeMs": max(0, _now_ms() - last_run_ms) if last_run_ms else None,
                 "pendingEventCount": pending,
+                "legacyPendingEventCount": pending,
+                "pendingGovernedEvidenceCount": governed_pending,
+                "governedNeedsReviewEvidenceCount": governed_needs_review,
                 "lastBundleHash": bundle_hash,
             }
         )
         ok = bool(last_run_ms and bundle_hash)
-        detail = f"待整理 {pending} 条" if ok else "编译记录不完整"
+        detail = (
+            f"待整理证据 {governed_pending} 条 · 需人工判定 {governed_needs_review} 条"
+            if ok and governed_pending >= 0
+            else f"旧编译游标待处理 {pending} 条"
+            if ok
+            else "编译记录不完整"
+        )
         return _component("memoryCompiler", ok, detail, metadata)
 
     def _summary_counts(self) -> dict[str, object]:
@@ -2629,6 +2698,10 @@ class ManagementService:
                             THEN 1 ELSE 0 END) AS forgotten_count,
                         SUM(CASE WHEN admission_state IN ('candidate', 'needs_review')
                             THEN 1 ELSE 0 END) AS needs_review_count,
+                        SUM(CASE WHEN admission_state = 'candidate' AND status = 'active'
+                            THEN 1 ELSE 0 END) AS pending_governed_count,
+                        SUM(CASE WHEN admission_state = 'needs_review' AND status = 'active'
+                            THEN 1 ELSE 0 END) AS governed_needs_review_count,
                         SUM(CASE WHEN status = 'tombstoned'
                             THEN 1 ELSE 0 END) AS tombstoned_count
                     FROM agent_memory_evidence
@@ -2655,6 +2728,12 @@ class ManagementService:
                 result["needsReviewSourceCount"] = int(
                     capture_history["needs_review_count"] or 0
                 )
+                result["pendingGovernedEvidenceCount"] = int(
+                    capture_history["pending_governed_count"] or 0
+                )
+                result["governedNeedsReviewEvidenceCount"] = int(
+                    capture_history["governed_needs_review_count"] or 0
+                )
                 result["agentEvidenceCount"] = 0
                 result["agentEvidenceTombstonedCount"] = int(
                     capture_history["tombstoned_count"] or 0
@@ -2668,6 +2747,8 @@ class ManagementService:
                 result["agentCapturedSourceCount"] = 0
                 result["forgottenSourceCount"] = 0
                 result["needsReviewSourceCount"] = 0
+                result["pendingGovernedEvidenceCount"] = 0
+                result["governedNeedsReviewEvidenceCount"] = 0
                 result["agentEvidenceCount"] = 0
                 result["agentEvidenceTombstonedCount"] = 0
                 result["agentCapturedEvidenceCount"] = 0
@@ -4755,6 +4836,9 @@ def _history_auxiliary_context(
     committed_text: str,
     recent_context: str,
     capture_metadata: Mapping[str, object],
+    source: str,
+    provider: str,
+    capture_receipt: Mapping[str, object],
 ) -> dict[str, object]:
     stored_text = str(recent_context or "").replace("\x00", "")
     visible_text = stored_text[:8_000]
@@ -4766,6 +4850,37 @@ def _history_auxiliary_context(
             return max(0, min(int(capture_metadata.get(key) or 0), 1_000_000))
         except (TypeError, ValueError):
             return 0
+
+    capture_channel = _safe_reference_identifier(capture_receipt.get("channel"))
+    source_category = _history_source_category(source, provider)
+    if capture_channel == "voice" or source_category == "voice":
+        model_request_association = "not_applicable"
+        model_request_reason = "voice_capture_does_not_request_assistant_candidates"
+    elif source_category == "assistant_candidate":
+        model_request_association = "intrinsic_candidate"
+        model_request_reason = "record_is_an_assistant_candidate"
+    else:
+        model_request_association = "not_recorded"
+        model_request_reason = "input_capture_contract_has_no_model_request_id"
+
+    capture_receipt_payload = {
+        "available": bool(capture_channel),
+        "channel": capture_channel,
+        "boundaryKind": _safe_reference_identifier(
+            capture_receipt.get("boundaryKind")
+        ),
+        "boundaryConfidence": _safe_reference_identifier(
+            capture_receipt.get("boundaryConfidence")
+        ),
+        "outcome": _safe_reference_identifier(capture_receipt.get("outcome")),
+        "reason": _safe_reference_identifier(capture_receipt.get("reason")),
+        "evidenceState": _safe_reference_identifier(
+            capture_receipt.get("evidenceState")
+        ),
+        "evidenceReason": _safe_reference_identifier(
+            capture_receipt.get("evidenceReason")
+        ),
+    }
 
     return {
         "available": bool(stored_text),
@@ -4786,8 +4901,13 @@ def _history_auxiliary_context(
         "fallbackReason": _safe_reference_identifier(
             capture_metadata.get("fallbackReason")
         ),
+        "fieldContextRecorded": "fieldContextChars" in capture_metadata,
         "fieldContextChars": metadata_count("fieldContextChars"),
+        "imeBufferRecorded": "imeBufferChars" in capture_metadata,
         "imeBufferChars": metadata_count("imeBufferChars"),
+        "captureReceipt": capture_receipt_payload,
+        "modelRequestAssociation": model_request_association,
+        "modelRequestReason": model_request_reason,
         # Ordinary input events do not carry a stable Active RAG session ID.
         # Never guess a model request by app and timestamp.
         "modelRequestLinked": False,
@@ -5257,6 +5377,229 @@ def _foreground_context_component(
         component["status"] = "degraded"
         return component
     return _component("foregroundContext", True, "最近前台上下文已采集并注入", metadata)
+
+
+def _assistant_candidate_delivery_component(
+    *,
+    repo_root: Path,
+    trace_path: Path,
+    deployment: Mapping[str, object],
+    input_source_selected: bool,
+    sidecar_ok: bool,
+    predictor_ok: bool,
+    last_prediction: Mapping[str, object],
+) -> dict[str, object]:
+    """Project candidate delivery as five independent evidence gates.
+
+    A healthy sidecar or a source checkout cannot prove that Squirrel rendered
+    an assistant surface.  This projection intentionally exposes no candidate
+    text; it only reports bounded provenance and event timestamps.
+    """
+
+    overlay_fingerprint = assistant_overlay_sha256(repo_root)
+    patch_present = (repo_root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").is_file()
+    source_ok = bool(overlay_fingerprint and patch_present)
+
+    deployment_components = _mapping(deployment.get("components"))
+    squirrel = _mapping(deployment_components.get("squirrel"))
+    installed = squirrel.get("installed") is True
+    installed_current = installed and squirrel.get("current") is True
+
+    candidate_text_present = bool(_string_value(last_prediction.get("visibleCandidate")))
+    candidate_at_ms = _integer_value(last_prediction.get("createdAtMs"), default=0)
+    now_ms = _now_ms()
+    freshness_limit_ms = max(
+        10_000,
+        _integer_value(
+            os.environ.get("RAG_IME_MANAGEMENT_CANDIDATE_EVIDENCE_FRESH_MS"),
+            default=5 * 60 * 1000,
+        ),
+    )
+    candidate_age_ms = max(0, now_ms - candidate_at_ms) if candidate_at_ms > 0 else -1
+    candidate_fresh = bool(
+        candidate_text_present
+        and candidate_age_ms >= 0
+        and candidate_age_ms <= freshness_limit_ms
+    )
+
+    trace = _read_frontend_delivery_trace(
+        trace_path,
+        current_ms=now_ms,
+        freshness_limit_ms=freshness_limit_ms,
+    )
+    rendered = trace.get("renderFresh") is True
+    connected = bool(sidecar_ok and input_source_selected)
+
+    stages: dict[str, dict[str, object]] = {
+        "sourcePresent": {
+            "ok": source_ok,
+            "detail": "候选框源码与 Squirrel 补丁存在" if source_ok else "候选框源码或 Squirrel 补丁缺失",
+            "fingerprint": f"sha256:{overlay_fingerprint}" if overlay_fingerprint else "",
+        },
+        "installedProvenance": {
+            "ok": installed_current,
+            "detail": (
+                "已安装前端与当前补丁、候选框源码一致"
+                if installed_current
+                else "已安装前端缺失，或与当前补丁、候选框源码不一致"
+            ),
+            "installed": installed,
+            "current": squirrel.get("current") is True,
+            "code": _string_value(squirrel.get("code")),
+            "fingerprint": _string_value(
+                squirrel.get("currentOverlaySha256")
+                or _mapping(squirrel.get("marker")).get("overlaySha256")
+            ),
+        },
+        "sidecarConnected": {
+            "ok": connected,
+            "detail": (
+                "当前输入法已选中，Sidecar 已响应"
+                if connected
+                else "Sidecar 未响应" if not sidecar_ok else "Sidecar 已响应，但当前未选中澄输入法"
+            ),
+            "sidecarHealthy": bool(sidecar_ok),
+            "inputSourceSelected": bool(input_source_selected),
+        },
+        "candidateProduced": {
+            "ok": candidate_fresh,
+            "detail": (
+                "最近真实输入请求已生成候选"
+                if candidate_fresh
+                else "候选生成凭证已过期"
+                if candidate_text_present
+                else "尚无最近真实输入请求的候选生成凭证"
+            ),
+            "predictorReady": bool(predictor_ok),
+            "producedAtMs": candidate_at_ms,
+            "freshnessMs": candidate_age_ms,
+            "freshnessLimitMs": freshness_limit_ms,
+            "triggerReason": _string_value(last_prediction.get("triggerReason")),
+            "sourceTypeCount": len(last_prediction.get("sourceTypes") or [])
+            if isinstance(last_prediction.get("sourceTypes"), list)
+            else 0,
+        },
+        "foregroundRendered": {
+            "ok": rendered,
+            "detail": _foreground_render_detail(trace),
+            **trace,
+        },
+    }
+    ordered = (
+        "sourcePresent",
+        "installedProvenance",
+        "sidecarConnected",
+        "candidateProduced",
+        "foregroundRendered",
+    )
+    failed = next((key for key in ordered if stages[key]["ok"] is not True), "")
+    detail = {
+        "sourcePresent": "候选框源码能力不完整",
+        "installedProvenance": "已安装 Squirrel 前端与当前源码不一致",
+        "sidecarConnected": "输入法前端尚未与 Sidecar 建立可验证连接",
+        "candidateProduced": "尚无近期真实输入请求的候选生成凭证",
+        "foregroundRendered": "候选已生成，但尚无近期前台显示凭证",
+    }.get(failed, "最近智能候选已生成并在真实前台显示")
+    component = _component(
+        "assistantCandidateDelivery",
+        not failed,
+        detail,
+        {"stages": stages},
+    )
+    if failed and all(stages[key]["ok"] is True for key in ordered[: ordered.index(failed)]):
+        component["status"] = "degraded"
+    return component
+
+
+def _read_frontend_delivery_trace(
+    path: Path,
+    *,
+    current_ms: int,
+    freshness_limit_ms: int,
+    maximum_bytes: int = 4 * 1024 * 1024,
+) -> dict[str, object]:
+    result: dict[str, object] = {
+        "tracePresent": False,
+        "lastTraceAtMs": 0,
+        "lastTraceEvent": "",
+        "lastRenderAtMs": 0,
+        "lastRenderEvent": "",
+        "lastLifecycleAtMs": 0,
+        "lastLifecycleEvent": "",
+        "renderFreshnessMs": -1,
+        "freshnessLimitMs": freshness_limit_ms,
+        "renderFresh": False,
+        "frontendBuild": "",
+        "frontendRevision": 0,
+    }
+    try:
+        size = path.stat().st_size
+        offset = max(0, size - max(1, int(maximum_bytes)))
+        with path.open("rb") as handle:
+            handle.seek(offset)
+            raw = handle.read(max(1, int(maximum_bytes)))
+        if offset:
+            newline = raw.find(b"\n")
+            raw = raw[newline + 1 :] if newline >= 0 else b""
+    except OSError:
+        return result
+
+    render_events = {"assistant_overlay_candidate_visible", "assistant_overlay_updated"}
+    for raw_line in raw.splitlines():
+        try:
+            item = json.loads(raw_line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(item, dict):
+            continue
+        event = _string_value(item.get("event"))
+        timestamp_ms = _integer_value(
+            item.get("timestampMs") or item.get("createdAtMs") or item.get("atMs"),
+            default=0,
+        )
+        if not event or timestamp_ms <= 0:
+            continue
+        if timestamp_ms >= int(result["lastTraceAtMs"]):
+            result.update(
+                {
+                    "tracePresent": True,
+                    "lastTraceAtMs": timestamp_ms,
+                    "lastTraceEvent": event,
+                    "frontendBuild": _string_value(item.get("frontendBuild")),
+                    "frontendRevision": _integer_value(item.get("frontendRevision"), default=0),
+                }
+            )
+        if event.startswith("assistant_overlay_") and timestamp_ms >= int(result["lastLifecycleAtMs"]):
+            result["lastLifecycleAtMs"] = timestamp_ms
+            result["lastLifecycleEvent"] = event
+        if event in render_events and timestamp_ms >= int(result["lastRenderAtMs"]):
+            result["lastRenderAtMs"] = timestamp_ms
+            result["lastRenderEvent"] = event
+
+    last_render_at_ms = int(result["lastRenderAtMs"])
+    if last_render_at_ms > 0:
+        age_ms = max(0, current_ms - last_render_at_ms)
+        result["renderFreshnessMs"] = age_ms
+        result["renderFresh"] = age_ms <= freshness_limit_ms
+    return result
+
+
+def _foreground_render_detail(trace: Mapping[str, object]) -> str:
+    if trace.get("renderFresh") is True:
+        last_render_at = _integer_value(trace.get("lastRenderAtMs"), default=0)
+        last_lifecycle_at = _integer_value(trace.get("lastLifecycleAtMs"), default=0)
+        last_lifecycle = _string_value(trace.get("lastLifecycleEvent"))
+        if last_lifecycle_at > last_render_at and any(
+            token in last_lifecycle
+            for token in ("dismiss", "ttl_expired", "suppressed", "rejected_stale")
+        ):
+            return "最近已有真实前台显示凭证，随后按焦点或陈旧策略收起"
+        return "最近已有真实前台候选框显示凭证"
+    if _integer_value(trace.get("lastRenderAtMs"), default=0) > 0:
+        return "前台候选框显示凭证已过期"
+    if trace.get("tracePresent") is True:
+        return "输入法 trace 有活动，但没有候选框显示事件"
+    return "尚未记录输入法前台 trace"
 
 
 def _safe_mapping(provider: Callable[[], Mapping[str, object]]) -> dict[str, object]:

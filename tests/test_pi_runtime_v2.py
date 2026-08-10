@@ -25,6 +25,7 @@ from rag_ime.pi_runtime_v2 import (
     PiRuntimeHostManager,
     _pi_durable_branch_messages,
     _pi_tool_history_events,
+    _runtime_primitive_capabilities,
 )
 
 
@@ -74,7 +75,8 @@ for line in sys.stdin:
                          "statelessCompletion": True,
                          "conversationFork": True,
                          "runtimePrimitives": {
-                             "continuationEnvelope": "1", "cancelScope": "1",
+                             "continuationEnvelope": os.environ.get("TEST_CONTINUATION_ENVELOPE", "2"),
+                             "cancelScope": "1",
                              "sessionContinuationQueue": True,
                              "sessionCancelOperationRegistry": True,
                              "sessionCancelOperations": {
@@ -727,7 +729,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn("images", params)
         self.assertTrue(self.runtime.runtime_status()["capabilities"]["statelessCompletion"])
 
-    def test_stateless_completion_timeout_retires_host_before_retry(self) -> None:
+    def test_stateless_completion_timeout_cancels_only_that_request(self) -> None:
         first_client = self.runtime._host()
         first_host_identity = first_client.host_identity
         original_send = first_client.send
@@ -760,14 +762,9 @@ class PiRuntimeV2Tests(unittest.TestCase):
 
         timed_out_status = self.runtime.runtime_status()
         receipt = timed_out_status["runtimeHostKillGate"]["lastKillReceipt"]
-        self.assertIsNotNone(receipt)
-        assert receipt is not None
-        self.assertEqual(receipt["hostIdentity"], first_host_identity)
-        self.assertEqual(receipt["requestKind"], "cancel_timeout")
-        self.assertEqual(receipt["requestedBy"], "completion:surface-timeout-1")
-        self.assertEqual(receipt["state"], "terminated")
-        self.assertEqual(timed_out_status["status"], "faulted")
-        self.assertFalse(first_client.running)
+        self.assertIsNone(receipt)
+        self.assertEqual(timed_out_status["status"], "ready")
+        self.assertTrue(first_client.running)
 
         retried = self.runtime.complete_once(
             request_id="surface-timeout-retry",
@@ -779,12 +776,15 @@ class PiRuntimeV2Tests(unittest.TestCase):
         )
 
         self.assertEqual(retried["text"], "one-shot reply")
-        self.assertIsNot(self.runtime._client, first_client)
-        assert self.runtime._client is not None
-        self.assertNotEqual(
-            self.runtime._client.host_identity,
-            first_host_identity,
-        )
+        self.assertIs(self.runtime._client, first_client)
+        self.assertEqual(self.runtime._client.host_identity, first_host_identity)
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        self.assertIn("completion.cancel", [request["method"] for request in requests])
 
     def test_plugin_mutations_use_a_dedicated_approval_capability(self) -> None:
         self.runtime.stop()
@@ -1005,6 +1005,236 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 lease_token="lease-token:crashed-host",
             )
         self.assertEqual(self.runtime.runtime_status()["status"], "faulted")
+
+    def test_room_cancel_timeout_keeps_sidecar_surfaces_unknown_after_host_proof(
+        self,
+    ) -> None:
+        self.runtime.stop()
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                provider_environment={"TEST_ROOM_TYPES": "1"},
+            ),
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=lambda _session: {
+                "sessionContext": "generic-agent-rag",
+                "providerContext": "governed-room-task",
+            },
+            tool_manifest_provider=lambda _session: [],
+        )
+        session_id = str(self.first["id"])
+        payload = {
+            "targetSessionId": session_id,
+            "rootId": "root:cancel-timeout",
+            "dispatchId": "dispatch:cancel-timeout",
+            "generation": 0,
+            "capabilityEpoch": 2,
+            "attempt": 0,
+            "idempotencyKey": "cancel-timeout",
+        }
+        accepted = self.runtime.dispatch_room(
+            payload,
+            message="Run until the exact Room cancellation arrives.",
+            lease_token="lease:cancel-timeout",
+        )
+        client = self.runtime._require_client()
+        original_send = client.send
+
+        def timeout_room_cancel(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+        ) -> dict[str, object]:
+            if method == "room.cancel":
+                raise PiRuntimeError(
+                    "Pi Runtime Host command timed out: room.cancel"
+                )
+            return original_send(method, params, timeout=timeout)
+
+        with patch.object(client, "send", side_effect=timeout_room_cancel):
+            cancelled = self.runtime.cancel_room(
+                cancel_id="cancel:timeout",
+                session_id=session_id,
+                root_id="root:cancel-timeout",
+                dispatch_id="dispatch:cancel-timeout",
+                generation=1,
+                turn_id=str(accepted["turnId"]),
+                capability_epoch=2,
+            )
+
+        termination = cancelled["runtimeHostTermination"]
+        self.assertEqual(cancelled["receiptKind"], "cancel_applied")
+        self.assertEqual(cancelled["pendingTargets"], ["tool", "exec"])
+        self.assertEqual(termination["state"], "terminated")
+        self.assertEqual(termination["hostIdentity"], client.host_identity)
+        self.assertEqual(
+            {
+                surface: proof["state"]
+                for surface, proof in cancelled[
+                    "cancellationSurfaces"
+                ].items()
+            },
+            {
+                "provider": "terminated",
+                "tool": "unknown",
+                "exec": "unknown",
+                "retry": "terminated",
+                "compaction": "terminated",
+                "branch_summary": "terminated",
+                "timer": "terminated",
+                "continuation": "terminated",
+                "session": "terminated",
+            },
+        )
+
+    def test_room_cancel_timeout_keeps_unknown_host_proof_fail_closed(self) -> None:
+        self.runtime.stop()
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                provider_environment={"TEST_ROOM_TYPES": "1"},
+            ),
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=lambda _session: {
+                "sessionContext": "generic-agent-rag",
+                "providerContext": "governed-room-task",
+            },
+            tool_manifest_provider=lambda _session: [],
+        )
+        session_id = str(self.first["id"])
+        accepted = self.runtime.dispatch_room(
+            {
+                "targetSessionId": session_id,
+                "rootId": "root:cancel-unknown",
+                "dispatchId": "dispatch:cancel-unknown",
+                "generation": 0,
+                "capabilityEpoch": 2,
+                "attempt": 0,
+                "idempotencyKey": "cancel-unknown",
+            },
+            message="Retain unknown cancellation proof.",
+            lease_token="lease:cancel-unknown",
+        )
+        client = self.runtime._require_client()
+        unknown_kill = {
+            "schemaVersion": "wisdom-weasel.runtime-host-kill-receipt.v1",
+            "killReceiptId": "runtime-kill:unknown",
+            "hostIdentity": client.host_identity,
+            "requestKind": "cancel_timeout",
+            "requestedBy": f"session:{session_id}",
+            "state": "unknown",
+            "pendingTargets": [{"hostIdentity": client.host_identity}],
+            "errorCode": "process_identity_mismatch",
+            "requestedAtMs": 100,
+            "acknowledgedAtMs": 0,
+            "terminatedAtMs": 0,
+        }
+        with (
+            patch.object(
+                client,
+                "send",
+                side_effect=PiRuntimeError(
+                    "Pi Runtime Host command timed out: room.cancel"
+                ),
+            ),
+            patch.object(
+                self.runtime._kill_gate,
+                "request_kill",
+                return_value=unknown_kill,
+            ),
+            self.assertRaisesRegex(PiRuntimeError, "timed out: room.cancel"),
+        ):
+            self.runtime.cancel_room(
+                cancel_id="cancel:unknown",
+                session_id=session_id,
+                root_id="root:cancel-unknown",
+                dispatch_id="dispatch:cancel-unknown",
+                generation=1,
+                turn_id=str(accepted["turnId"]),
+                capability_epoch=2,
+            )
+
+        self.assertEqual(self.runtime._last_kill_receipt["state"], "unknown")
+
+    def test_room_cancel_timeout_does_not_kill_a_host_with_a_sibling_turn(
+        self,
+    ) -> None:
+        self.runtime.stop()
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                provider_environment={"TEST_ROOM_TYPES": "1"},
+            ),
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=lambda _session: {
+                "sessionContext": "generic-agent-rag",
+                "providerContext": "governed-room-task",
+            },
+            tool_manifest_provider=lambda _session: [],
+        )
+        session_id = str(self.first["id"])
+        accepted = self.runtime.dispatch_room(
+            {
+                "targetSessionId": session_id,
+                "rootId": "root:cancel-shared-host",
+                "dispatchId": "dispatch:cancel-shared-host",
+                "generation": 0,
+                "capabilityEpoch": 2,
+                "attempt": 0,
+                "idempotencyKey": "cancel-shared-host",
+            },
+            message="Keep the sibling turn alive.",
+            lease_token="lease:cancel-shared-host",
+        )
+        sibling_session_id = str(self.second["id"])
+        self.runtime.ensure(sibling_session_id)
+        with self.runtime._lock:
+            self.runtime._states[sibling_session_id].turn_id = "turn:sibling"
+        client = self.runtime._require_client()
+        terminated = {
+            "schemaVersion": "wisdom-weasel.runtime-host-kill-receipt.v1",
+            "killReceiptId": "runtime-kill:must-not-run",
+            "hostIdentity": client.host_identity,
+            "requestKind": "cancel_timeout",
+            "requestedBy": f"session:{session_id}",
+            "state": "terminated",
+            "pendingTargets": [],
+            "requestedAtMs": 100,
+            "acknowledgedAtMs": 100,
+            "terminatedAtMs": 100,
+        }
+
+        with (
+            patch.object(
+                client,
+                "send",
+                side_effect=PiRuntimeError(
+                    "Pi Runtime Host command timed out: room.cancel"
+                ),
+            ),
+            patch.object(
+                self.runtime._kill_gate,
+                "request_kill",
+                return_value=terminated,
+            ) as kill,
+            self.assertRaisesRegex(PiRuntimeError, "timed out: room.cancel"),
+        ):
+            self.runtime.cancel_room(
+                cancel_id="cancel:shared-host",
+                session_id=session_id,
+                root_id="root:cancel-shared-host",
+                dispatch_id="dispatch:cancel-shared-host",
+                generation=1,
+                turn_id=str(accepted["turnId"]),
+                capability_epoch=2,
+            )
+
+        kill.assert_not_called()
+        self.assertTrue(client.running)
 
     def test_room_cancel_rejects_forged_runtime_receipt_lineage(self) -> None:
         self.runtime.stop()
@@ -1238,6 +1468,81 @@ class PiRuntimeV2Tests(unittest.TestCase):
             release_observer.set()
             remove_observer()
 
+    def test_distinct_room_session_opens_have_independent_ack_lanes(self) -> None:
+        self.runtime.stop()
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                provider_environment={"TEST_ROOM_TYPES": "1"},
+            ),
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=lambda _session: {
+                "providerContext": "bounded-room-context",
+            },
+            tool_manifest_provider=lambda _session: [],
+        )
+        client = self.runtime._host()
+        original_send = client.send
+        first_session_id = str(self.first["id"])
+        second_session_id = str(self.second["id"])
+        first_open_started = threading.Event()
+        second_open_started = threading.Event()
+        release_first_open = threading.Event()
+        failures: list[BaseException] = []
+
+        def delayed_send(
+            method: str,
+            params: dict[str, object] | None = None,
+            **kwargs,
+        ) -> dict[str, object]:
+            session_id = str((params or {}).get("sessionId") or "")
+            if method == "session.open" and session_id == first_session_id:
+                first_open_started.set()
+                if not release_first_open.wait(1.0):
+                    raise TimeoutError("test did not release first Session open")
+            elif method == "session.open" and session_id == second_session_id:
+                second_open_started.set()
+            return original_send(method, params, **kwargs)
+
+        def dispatch(session_id: str, ordinal: int) -> None:
+            try:
+                self.runtime.dispatch_room(
+                    {
+                        "targetSessionId": session_id,
+                        "rootId": "root:parallel-open",
+                        "dispatchId": f"dispatch:parallel-open:{ordinal}",
+                        "generation": 0,
+                        "capabilityEpoch": 1,
+                        "attempt": 0,
+                        "idempotencyKey": f"parallel-open:{ordinal}",
+                    },
+                    message=f"parallel Room task {ordinal}",
+                    lease_token=f"lease:parallel-open:{ordinal}",
+                )
+            except BaseException as exc:
+                failures.append(exc)
+
+        threads = [
+            threading.Thread(target=dispatch, args=(first_session_id, 1)),
+            threading.Thread(target=dispatch, args=(second_session_id, 2)),
+        ]
+        try:
+            with patch.object(client, "send", side_effect=delayed_send):
+                threads[0].start()
+                self.assertTrue(first_open_started.wait(0.5))
+                threads[1].start()
+                self.assertTrue(
+                    second_open_started.wait(0.25),
+                    "one Session open ACK blocked a different Room Session",
+                )
+        finally:
+            release_first_open.set()
+            for thread in threads:
+                thread.join(timeout=2.0)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(failures, [])
+
     def test_room_handoff_uses_control_state_instead_of_full_snapshot(
         self,
     ) -> None:
@@ -1423,6 +1728,55 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(retried["receiptKind"], "dispatch_accepted")
         self.assertEqual(intent_calls, ["intent"])
 
+    def test_room_control_state_timeout_does_not_retire_shared_host(self) -> None:
+        session_id = str(self.first["id"])
+        sibling_session_id = str(self.second["id"])
+        self.runtime.ensure(session_id)
+        self.runtime.ensure(sibling_session_id)
+        with self.runtime._lock:
+            self.runtime._states[sibling_session_id].turn_id = "turn:sibling"
+        client = self.runtime._require_client()
+        payload = {
+            "targetSessionId": session_id,
+            "rootId": "root:shared-control-timeout",
+            "dispatchId": "dispatch:shared-control-timeout",
+            "generation": 0,
+            "capabilityEpoch": 2,
+            "attempt": 0,
+            "idempotencyKey": "shared-control-timeout:1",
+        }
+
+        with (
+            patch.object(
+                self.runtime,
+                "_ensure_room_dispatch",
+                side_effect=PiRuntimeError(
+                    "Pi Runtime Host command timed out: session.control_state"
+                ),
+            ),
+            patch.object(
+                self.runtime,
+                "_retire_timed_out_host",
+            ) as retire,
+            self.assertRaisesRegex(
+                PiRuntimeError,
+                "command timed out: session.control_state",
+            ),
+        ):
+            self.runtime.dispatch_room(
+                payload,
+                message="Do not interrupt the sibling Room turn.",
+                lease_token="lease:shared-control-timeout",
+            )
+
+        retire.assert_not_called()
+        self.assertTrue(client.running)
+        with self.runtime._lock:
+            self.assertEqual(
+                self.runtime._states[sibling_session_id].turn_id,
+                "turn:sibling",
+            )
+
     def test_room_dispatch_reuses_session_for_delta_and_task_switch_epoch(self) -> None:
         self.runtime.stop()
         context_revision = {"value": 1}
@@ -1450,9 +1804,10 @@ class PiRuntimeV2Tests(unittest.TestCase):
                     "contextEpochReason": (
                         "session_open" if revision < 3 else "task_switch"
                     ),
-                    "runtimeBindingHash": (
-                        "e" if revision == 1 else "8" if revision == 2 else "9"
-                    ) * 64,
+                    # Provider task deltas and a context-epoch transition may
+                    # reuse the resident Session only while its static Tool /
+                    # Skill surface remains identical.
+                    "runtimeBindingHash": "e" * 64,
                 },
                 "managedSystemPrompt": "stable-room-prefix",
                 "sessionContext": f"generic-agent-rag-{revision}",
@@ -1548,6 +1903,109 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(delivered[2]["params"]["roomContext"], "room-bootstrap-3")
         self.assertEqual(delivered[2]["params"]["roomCapability"]["contextEpoch"], 2)
         self.assertEqual(third["providerContextReceipt"]["journalId"], "journal:3")
+
+    def test_room_dispatch_reopens_when_runtime_tool_surface_changes(self) -> None:
+        self.runtime.stop()
+        revision = {"value": 1}
+
+        def tool(name: str) -> dict[str, object]:
+            return {
+                "name": name,
+                "description": f"Run {name}.",
+                "parameters": {"type": "object", "properties": {}},
+            }
+
+        def context_provider(_session):
+            current = revision["value"]
+            tools = [tool("room_state")]
+            if current == 2:
+                tools.append(tool("room_collaborate"))
+            return {
+                "roomCapability": {
+                    "manifestId": f"manifest:tool-surface:{current}",
+                    "manifestHash": ("a" if current == 1 else "b") * 64,
+                    "promptCompileReceiptId": f"prompt:tool-surface:{current}",
+                    "promptPlanHash": ("c" if current == 1 else "d") * 64,
+                    "compiledRuntimeProfileRef": {
+                        "profileId": "profile:tool-surface",
+                        "revision": "1",
+                        "contentHash": "sha256:abcdef",
+                    },
+                    "capabilityEpoch": current,
+                    "rootId": "root:tool-surface",
+                    "dispatchId": f"dispatch:tool-surface:{current}",
+                    "generation": 0,
+                    "contextEpoch": 1,
+                    "contextEpochReason": "session_open",
+                    "runtimeBindingHash": ("e" if current == 1 else "f") * 64,
+                },
+                "managedSystemPrompt": "stable-room-prefix",
+                "providerContext": f"room-context-{current}",
+                "providerContextDelta": f"room-delta-{current}",
+                "roomRecoveryContext": f"room-recovery-{current}",
+                "runtimeToolManifest": tools,
+            }
+
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                provider_environment={"TEST_ROOM_TYPES": "1"},
+            ),
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=context_provider,
+            tool_manifest_provider=lambda _session: [],
+        )
+        session_id = str(self.first["id"])
+
+        self.runtime.dispatch_room(
+            {
+                "targetSessionId": session_id,
+                "rootId": "root:tool-surface",
+                "dispatchId": "dispatch:tool-surface:1",
+                "generation": 0,
+                "capabilityEpoch": 1,
+                "attempt": 0,
+                "idempotencyKey": "tool-surface:1",
+            },
+            message="Run the alignment-only turn.",
+            lease_token="lease:tool-surface:1",
+        )
+        revision["value"] = 2
+        self.runtime.dispatch_room(
+            {
+                "targetSessionId": session_id,
+                "rootId": "root:tool-surface",
+                "dispatchId": "dispatch:tool-surface:2",
+                "generation": 0,
+                "capabilityEpoch": 2,
+                "attempt": 0,
+                "idempotencyKey": "tool-surface:2",
+            },
+            message="Start the execution turn with collaboration enabled.",
+            lease_token="lease:tool-surface:2",
+        )
+
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        opened = [
+            item["params"]
+            for item in requests
+            if item["method"] == "session.open"
+        ]
+        self.assertEqual(len(opened), 2)
+        self.assertEqual(
+            [tool["name"] for tool in opened[1]["toolManifest"]],
+            ["room_state", "room_collaborate"],
+        )
+        self.assertEqual(
+            sum(item["method"] == "session.close" for item in requests),
+            1,
+        )
 
     def test_room_retry_reuses_sealed_context_when_no_delta_remains(
         self,
@@ -2585,6 +3043,84 @@ class PiRuntimeV2Tests(unittest.TestCase):
         )
         self.assertNotIn("result", event.payload)
 
+    def test_host_bash_receipt_exit_status_is_the_authoritative_tool_result(self) -> None:
+        session_id = str(self.first["id"])
+        turn_id = "turn-bash-exit-status"
+
+        cases = (
+            ("success", {"exitCode": 0, "timedOut": False}, False),
+            ("failed", {"exitCode": 1, "timedOut": False}, True),
+            ("timeout", {"exitCode": -15, "timedOut": True}, True),
+        )
+        for label, receipt, expected_error in cases:
+            self.runtime._handle_host_event(  # noqa: SLF001 - protocol boundary
+                {
+                    "protocolVersion": "2",
+                    "event": "agent.event",
+                    "sessionId": session_id,
+                    "turnId": turn_id,
+                    "payload": {
+                        "type": "tool_execution_end",
+                        "toolCallId": f"call-bash-{label}",
+                        "toolName": "bash",
+                        "args": {},
+                        "result": {
+                            "content": [{
+                                "type": "text",
+                                "text": (
+                                    "FAILED is ordinary command output"
+                                    if label == "success"
+                                    else f"command {label}"
+                                ),
+                            }],
+                            "details": {"receipt": receipt},
+                        },
+                        # Backend coding tools currently return a normal Pi
+                        # ToolResult even when their structured command receipt
+                        # records a non-zero exit. The receipt, not output text,
+                        # is the command's terminal authority.
+                        "isError": False,
+                    },
+                }
+            )
+
+        # Pi-originated interruption already carries isError and must remain a
+        # failure even when there is no command receipt to inspect.
+        self.runtime._handle_host_event(  # noqa: SLF001 - protocol boundary
+            {
+                "protocolVersion": "2",
+                "event": "agent.event",
+                "sessionId": session_id,
+                "turnId": turn_id,
+                "payload": {
+                    "type": "tool_execution_end",
+                    "toolCallId": "call-bash-aborted",
+                    "toolName": "bash",
+                    "args": {},
+                    "result": {
+                        "content": [{"type": "text", "text": "Command aborted"}],
+                    },
+                    "isError": True,
+                },
+            }
+        )
+
+        events = {
+            str(item.payload.get("toolCallId")): item
+            for item in self.events.replay(session_id)[0]
+            if item.event_type == "tool_finished"
+            and item.turn_id == turn_id
+        }
+        self.assertFalse(events["call-bash-success"].payload["isError"])
+        for label in ("failed", "timeout", "aborted"):
+            with self.subTest(label=label):
+                payload = events[f"call-bash-{label}"].payload
+                self.assertTrue(payload["isError"])
+                self.assertEqual(
+                    payload["publicResult"]["error"],
+                    payload["publicResult"]["outputPreview"],
+                )
+
     def test_host_projects_codex_thinking_end_as_public_work_summary(self) -> None:
         session_id = str(self.first["id"])
         turn_id = "turn-codex-reasoning"
@@ -3010,6 +3546,51 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn("/Users/private", serialized)
         self.assertIn("[REDACTED_SECRET]", serialized)
 
+    def test_transcript_bash_failure_uses_the_structured_exit_receipt(self) -> None:
+        raw_messages = [
+            {
+                "id": "user-bash",
+                "role": "user",
+                "timestamp": 100,
+                "content": [{"type": "text", "text": "运行测试"}],
+            },
+            {
+                "id": "assistant-bash",
+                "role": "assistant",
+                "timestamp": 101,
+                "content": [{
+                    "type": "toolCall",
+                    "id": "tool-bash-failed",
+                    "name": "bash",
+                    "arguments": {"command": "python3 -m unittest"},
+                }],
+            },
+            {
+                "role": "toolResult",
+                "timestamp": 102,
+                "toolCallId": "tool-bash-failed",
+                "toolName": "bash",
+                "isError": False,
+                "content": [{"type": "text", "text": "FAILED"}],
+                "details": {
+                    "receipt": {
+                        "exitCode": 1,
+                        "timedOut": False,
+                    }
+                },
+            },
+        ]
+
+        events = _pi_tool_history_events(
+            raw_messages,
+            session_id="session-bash-history",
+        )
+
+        finished = next(
+            event for event in events if event["eventType"] == "tool_finished"
+        )
+        self.assertTrue(finished["payload"]["isError"])
+
     def test_host_tool_artifact_is_carried_to_the_final_assistant_message(self) -> None:
         session_id = str(self.first["id"])
         self.runtime.ensure(session_id)
@@ -3133,7 +3714,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertTrue(status["capabilities"]["multiSession"])
         self.assertEqual(
             status["capabilities"]["runtimePrimitives"]["continuationEnvelope"],
-            "1",
+            "2",
         )
         self.assertTrue(
             status["capabilities"]["runtimePrimitives"][
@@ -3169,6 +3750,28 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(len(opened), 2)
         self.assertEqual(opened[0]["params"]["toolManifest"][0]["name"], "memory")
         self.assertEqual(opened[0]["params"]["thinkingLevel"], "max")
+
+    def test_runtime_primitives_accept_only_supported_continuation_envelopes(self) -> None:
+        self.assertEqual(
+            _runtime_primitive_capabilities({"continuationEnvelope": "1"})[
+                "continuationEnvelope"
+            ],
+            "1",
+        )
+        self.assertEqual(
+            _runtime_primitive_capabilities({"continuationEnvelope": "2"})[
+                "continuationEnvelope"
+            ],
+            "2",
+        )
+        for unsupported in ("3", 2, True, None):
+            with self.subTest(unsupported=unsupported):
+                self.assertEqual(
+                    _runtime_primitive_capabilities(
+                        {"continuationEnvelope": unsupported}
+                    )["continuationEnvelope"],
+                    "",
+                )
 
     def test_live_peer_runtime_manager_cannot_kill_the_active_host(self) -> None:
         session_id = str(self.first["id"])
@@ -3402,6 +4005,83 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(completed[-1].payload["terminalEvent"], "agent_settled")
         messages = self.runtime.messages(session_id)
         self.assertEqual([item["role"] for item in messages], ["user", "assistant"])
+
+    def test_room_settlement_terminal_wins_over_late_shared_host_failure(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        turn_id = "turn:room-child:committed"
+        self.runtime.ensure(session_id)
+        with self.runtime._lock:
+            state = self.runtime._states[session_id]
+            state.turn_id = turn_id
+            state.last_agent_messages = [
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "工作已提交"}],
+                }
+            ]
+        self.store.set_status(session_id, "busy")
+
+        failure_recorded = self.runtime._turn_failed_once(
+            session_id,
+            turn_id,
+            PiRuntimeError(
+                "invalid Pi Runtime Host JSONL: Unterminated record"
+            ),
+        )
+        self.assertEqual(self.store.get(session_id)["status"], "faulted")
+
+        first = self.runtime.record_room_turn_settled(
+            session_id,
+            turn_id,
+            "dispatch:room-child:committed",
+            500,
+        )
+        replay = self.runtime.record_room_turn_settled(
+            session_id,
+            turn_id,
+            "dispatch:room-child:committed",
+            501,
+        )
+        # Once Kernel commit is authoritative, both the earlier shared-Host
+        # truncation and later replay remain audit history, not the final
+        # state of this exact Provider turn.
+        late_failure_recorded = self.runtime._turn_failed_once(
+            session_id,
+            turn_id,
+            PiRuntimeError("invalid Pi Runtime Host JSONL: Unterminated record"),
+        )
+        self.runtime._handle_host_exit(
+            -9,
+            "invalid Pi Runtime Host JSONL: Unterminated record",
+        )
+
+        terminal_events = [
+            event
+            for event in self.events.replay(session_id)[0]
+            if event.turn_id == turn_id
+            and event.event_type in {"turn_completed", "turn_failed"}
+        ]
+        self.assertTrue(failure_recorded)
+        self.assertFalse(first["replayed"])
+        self.assertTrue(replay["replayed"])
+        self.assertFalse(late_failure_recorded)
+        self.assertEqual(
+            [event.event_type for event in terminal_events],
+            ["turn_failed", "turn_completed"],
+        )
+        self.assertEqual(
+            terminal_events[-1].payload["terminalEvent"],
+            "room_commit_settlement",
+        )
+        self.assertTrue(terminal_events[-1].payload["terminalCorrection"])
+        self.assertEqual(
+            terminal_events[-1].payload["correctsTerminalEventId"],
+            terminal_events[0].event_id,
+        )
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
+        self.assertEqual(self.runtime._states, {})
 
     def test_provider_retry_events_are_projected_without_raw_diagnostics(self) -> None:
         session_id = str(self.first["id"])
@@ -4008,16 +4688,17 @@ class PiRuntimeV2Tests(unittest.TestCase):
             })
             self.runtime._settle_fallback_probe(session_id, turn_id)
 
-        completed = [
+        failed = [
             item
             for item in self.events.replay(session_id)[0]
-            if item.event_type == "turn_completed"
+            if item.event_type == "turn_failed"
             and item.turn_id == turn_id
         ]
         self.assertEqual(
-            completed[-1].payload["terminalEvent"],
+            failed[-1].payload["terminalEvent"],
             "idle_control_reconciliation",
         )
+        self.assertIn("HTTP 400", failed[-1].payload["error"])
         warnings = [
             item
             for item in self.events.replay(session_id)[0]
@@ -4025,8 +4706,140 @@ class PiRuntimeV2Tests(unittest.TestCase):
             and item.payload.get("phase") == "settlement_warning"
         ]
         self.assertIn("HTTP 400", warnings[-1].payload["warning"])
-        self.assertEqual(self.store.get(session_id)["status"], "idle")
+        self.assertEqual(self.store.get(session_id)["status"], "faulted")
         self.assertEqual(self.runtime._states[session_id].turn_id, "")
+
+    def test_terminal_agent_settle_failed_receipt_fails_the_turn_once(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-terminal-settle-failed"
+        with self.runtime._lock:
+            state = self.runtime._states[session_id]
+            state.turn_id = turn_id
+            state.had_tool_activity = True
+        self.store.set_status(session_id, "busy")
+        envelope = {
+            "protocolVersion": "2",
+            "event": "agent.event",
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "payload": {
+                "type": "agent_settle_failed",
+                "error": "Root repairCount usage exceeds hard limit",
+                "receipt": {
+                    "schemaVersion": "pi.agent-settled.v2",
+                    "receiptId": "pi-settled:terminal-failure",
+                    "disposition": "failed",
+                    "stopReason": "settlement_rejected",
+                    "pendingOperations": 0,
+                    "operations": {"pending": 0},
+                    "finalMessage": {
+                        "errorMessage": (
+                            "Root repairCount usage exceeds hard limit"
+                        ),
+                    },
+                },
+            },
+        }
+
+        self.runtime._handle_host_event(envelope)
+        self.runtime._handle_host_event(envelope)
+
+        failed = [
+            item
+            for item in self.events.replay(session_id)[0]
+            if item.event_type == "turn_failed" and item.turn_id == turn_id
+        ]
+        self.assertEqual(len(failed), 1)
+        self.assertIn("repairCount", failed[0].payload["error"])
+        self.assertTrue(failed[0].payload["hadToolActivity"])
+        self.assertEqual(self.store.get(session_id)["status"], "faulted")
+        self.assertEqual(self.runtime._states[session_id].turn_id, "")
+
+    def test_failed_agent_settled_receipt_is_never_completed(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-failed-settled-receipt"
+        with self.runtime._lock:
+            state = self.runtime._states[session_id]
+            state.turn_id = turn_id
+            state.last_agent_messages = [{
+                "role": "assistant",
+                "content": [{"type": "text", "text": "review complete"}],
+            }]
+        self.store.set_status(session_id, "busy")
+
+        self.runtime._handle_host_event({
+            "protocolVersion": "2",
+            "event": "agent.event",
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "payload": {
+                "type": "agent_settled",
+                "receipt": {
+                    "schemaVersion": "pi.agent-settled.v2",
+                    "receiptId": "pi-settled:failed-agent-settled",
+                    "disposition": "failed",
+                    "stopReason": "settlement_rejected",
+                    "pendingOperations": 0,
+                    "operations": {"pending": 0},
+                    "finalMessage": {
+                        "errorMessage": "Room settlement was rejected",
+                    },
+                },
+            },
+        })
+
+        events = self.events.replay(session_id)[0]
+        failed = [
+            item
+            for item in events
+            if item.event_type == "turn_failed" and item.turn_id == turn_id
+        ]
+        completed = [
+            item
+            for item in events
+            if item.event_type == "turn_completed" and item.turn_id == turn_id
+        ]
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(completed, [])
+        self.assertIn("settlement was rejected", failed[0].payload["error"])
+        self.assertEqual(self.store.get(session_id)["status"], "faulted")
+
+    def test_terminal_aborted_agent_settle_failed_receipt_is_turn_failed(self) -> None:
+        session_id = str(self.second["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-terminal-settle-aborted"
+        with self.runtime._lock:
+            self.runtime._states[session_id].turn_id = turn_id
+        self.store.set_status(session_id, "busy")
+
+        self.runtime._handle_host_event({
+            "protocolVersion": "2",
+            "event": "agent.event",
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "payload": {
+                "type": "agent_settle_failed",
+                "error": "Room settlement was aborted",
+                "receipt": {
+                    "schemaVersion": "pi.agent-settled.v2",
+                    "receiptId": "pi-settled:aborted-settlement",
+                    "disposition": "aborted",
+                    "stopReason": "cancelled",
+                    "pendingOperations": 0,
+                    "operations": {"pending": 0},
+                },
+            },
+        })
+
+        failed = [
+            item
+            for item in self.events.replay(session_id)[0]
+            if item.event_type == "turn_failed" and item.turn_id == turn_id
+        ]
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(self.store.get(session_id)["status"], "faulted")
 
     def test_abort_ack_without_agent_settled_escalates_to_durable_host_tree_kill(self) -> None:
         session_id = str(self.first["id"])
@@ -4083,6 +4896,63 @@ class PiRuntimeV2Tests(unittest.TestCase):
             completed_count,
         )
         self.assertNotIn(session_id, self.runtime._states)
+
+    def test_abort_accepts_host_idle_receipt_after_turn_already_settled(self) -> None:
+        session_id = str(self.first["id"])
+        accepted = self.runtime.prompt(session_id, "host-settled-before-abort-ack")
+        turn_id = str(accepted["turnId"])
+        client = self.runtime._require_client()
+        original_send = client.send
+
+        def idle_abort_receipt(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+        ) -> dict[str, object]:
+            if method != "session.abort":
+                return original_send(method, params, timeout=timeout)
+            return {
+                "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
+                "sessionId": session_id,
+                "turnId": "",
+                "cancelledDecisionIds": [],
+                "cancelledUIRequestIds": [],
+                "lifecycle": {
+                    "schemaVersion": "pi.agent-abort-receipt.v1",
+                    "scopeId": session_id,
+                    "generation": 2,
+                    "reason": "user_abort",
+                    "cancelledContinuationIds": [],
+                    "cancelledOperationIds": [],
+                    "failedOperationIds": [],
+                    "operations": [],
+                    "pendingOperations": [],
+                    "drained": True,
+                    "idle": True,
+                },
+            }
+
+        with patch.object(client, "send", side_effect=idle_abort_receipt):
+            receipt = self.runtime.abort(session_id)
+
+        self.assertEqual(receipt["turnId"], turn_id)
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
+        self.assertEqual(self.runtime._states[session_id].turn_id, "")
+        completed = [
+            item
+            for item in self.events.replay(session_id)[0]
+            if item.event_type == "turn_completed" and item.turn_id == turn_id
+        ]
+        self.assertEqual(completed[-1].payload["status"], "aborted")
+        self.assertEqual(
+            completed[-1].payload["terminalEvent"],
+            "idle_abort_receipt",
+        )
+        time.sleep(1.1)
+        self.assertIsNone(
+            self.runtime.runtime_status()["runtimeHostKillGate"]["lastKillReceipt"]
+        )
 
     def test_abort_settled_error_is_terminal_aborted_not_faulted(self) -> None:
         session_id = str(self.first["id"])

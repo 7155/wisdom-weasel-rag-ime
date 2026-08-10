@@ -1057,7 +1057,10 @@ class AgentRoomWorkStore:
             "waiting": "blocked",
             "blocked": "blocked",
             "cancelling": "blocked",
-            "cancelled_with_unknowns": "blocked",
+            # The Kernel already treats this as a terminal, fenced generation.
+            # Preserve the unresolved-surface warning in blocker/evidence, but
+            # release the claimed WorkItem so a later Root can start.
+            "cancelled_with_unknowns": "cancelled",
             "completed": "done",
             "failed": "failed",
             "cancelled": "cancelled",

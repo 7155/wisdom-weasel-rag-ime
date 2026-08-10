@@ -18874,6 +18874,17 @@ export const contractSchemas = {
       "independentReviewRequired": {
         "type": "boolean"
       },
+      "requiredReviewAxes": {
+        "type": "array",
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "technical",
+            "requirements"
+          ]
+        }
+      },
       "createdAtMs": {
         "type": "integer",
         "minimum": 0
@@ -19443,6 +19454,13 @@ export const contractSchemas = {
           "type": "string",
           "minLength": 1
         }
+      },
+      "reviewAxis": {
+        "type": "string",
+        "enum": [
+          "technical",
+          "requirements"
+        ]
       },
       "reviewState": {
         "type": "string",

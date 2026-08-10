@@ -59,6 +59,22 @@ _DELIVERY_GENERATED_PARTS = frozenset(
 _REPOSITORY_LOCKS_GUARD = threading.Lock()
 _REPOSITORY_LOCKS: dict[str, threading.RLock] = {}
 _SYSTEM_GIT = "/usr/bin/git"
+_GUARDED_CLEANUP_SCRIPT = Path(__file__).resolve(strict=True).with_name(
+    "agent_room_workspace_cleanup.py"
+)
+
+
+class _PreparedWorkspace(dict[str, object]):
+    """Keep per-attempt ownership without adding it to the Task contract."""
+
+    def __init__(
+        self,
+        values: Mapping[str, object],
+        *,
+        created_by_attempt: bool,
+    ) -> None:
+        super().__init__(values)
+        self.created_by_attempt = created_by_attempt
 
 
 class RoomWorkspaceCoordinator:
@@ -313,7 +329,11 @@ class RoomWorkspaceCoordinator:
                         "delivered workspace is sealed with uncertain writer state; "
                         "an explicit delivery-seal resume is required"
                     )
-                return self._prepared_payload(binding, restore_policy)
+                return self._prepared_payload(
+                    binding,
+                    restore_policy,
+                    created_by_attempt=False,
+                )
             if lifecycle_state == "retry_bound":
                 raise RoomWorkspaceError(
                     "workspace retry lease can only be used by its token-fenced owner"
@@ -325,7 +345,11 @@ class RoomWorkspaceCoordinator:
                     policy=policy,
                     grant_workspace_scope=True,
                 )
-                return self._prepared_payload(binding, restore_policy)
+                return self._prepared_payload(
+                    binding,
+                    restore_policy,
+                    created_by_attempt=False,
+                )
             self._retain_binding(
                 binding,
                 state="orphaned",
@@ -384,7 +408,11 @@ class RoomWorkspaceCoordinator:
                 now_ms=timestamp,
             )
             raise
-        return self._prepared_payload(binding, restore_policy)
+        return self._prepared_payload(
+            binding,
+            restore_policy,
+            created_by_attempt=True,
+        )
 
     def restore(
         self,
@@ -457,28 +485,34 @@ class RoomWorkspaceCoordinator:
         target_session = self.sessions.get(target_session_id)
         source_restore_policy = task.get("workspaceRestorePolicy")
         target_restore_policy = self._restore_policy(target_session)
-        source_roots = [
-            str(value)
-            for value in source_session.get("workspaceRoots") or []
-            if str(value).strip()
-        ]
         target_roots = [
             str(value)
             for value in target_session.get("workspaceRoots") or []
             if str(value).strip()
         ]
-        if str(source) not in source_roots:
-            if str(source) in target_roots:
-                return {
-                    "workspaceRoot": str(source),
-                    "workspaceBaseRoot": str(base),
-                    "workspaceBaseCommit": expected_commit,
-                    "sourceSessionId": source_session_id,
-                    "targetSessionId": target_session_id,
-                    "idempotent": True,
-                }
+        binding_owner_session_id = str(
+            binding.get("currentOwnerSessionId") or ""
+        )
+        if binding_owner_session_id == target_session_id:
+            if str(source) not in target_roots:
+                self._set_session_roots(
+                    target_session_id,
+                    [source],
+                    policy="isolated_writable",
+                    grant_workspace_scope=True,
+                )
+            return {
+                "workspaceRoot": str(source),
+                "workspaceBaseRoot": str(base),
+                "workspaceBaseCommit": expected_commit,
+                "sourceSessionId": source_session_id,
+                "targetSessionId": target_session_id,
+                "idempotent": True,
+            }
+        if binding_owner_session_id != source_session_id:
             raise RoomWorkspaceError(
-                "ownership transfer source Session does not own the Task workspace"
+                "ownership transfer source Session does not match the durable "
+                "Task workspace owner"
             )
         with self._lock:
             self._set_session_roots(
@@ -589,6 +623,7 @@ class RoomWorkspaceCoordinator:
         residual_risks: Sequence[str] = (),
         result_summary: str = "",
         actor_ref: str = "",
+        settlement_invocation_created_at_ms: int | None = None,
         now_ms: int | None = None,
     ) -> dict[str, object]:
         source, base, expected_commit = self._isolated_task_roots(task)
@@ -668,6 +703,37 @@ class RoomWorkspaceCoordinator:
             "verificationRefs": normalized_verification,
             "residualRisks": normalized_risks,
         }
+        if str(binding.get("workspaceLifecycleState") or "") == "delivered":
+            prior_event = self.ledger.delivery_payload(binding_id)
+            prior_delivery = (
+                prior_event.get("workspaceDelivery")
+                if isinstance(prior_event, Mapping)
+                else None
+            )
+            if (
+                isinstance(prior_delivery, Mapping)
+                and self.ledger.source_lease_receipt(binding_id) is not None
+                and self._sealed_delivery_matches_settlement_replay(
+                    prior_delivery,
+                    workspace_delivery,
+                    invocation_created_at_ms=(
+                        int(settlement_invocation_created_at_ms)
+                        if settlement_invocation_created_at_ms is not None
+                        else None
+                    ),
+                )
+            ):
+                return {
+                    "workspaceBindingId": binding_id,
+                    "deliveryRevision": prior_event["deliveryRevision"],
+                    "deliveryHead": prior_event["deliveryHead"],
+                    "deliverySnapshotSha256": prior_event[
+                        "workspaceSnapshotSha256"
+                    ],
+                    "workspaceLifecycleState": "delivered",
+                    "workspaceDelivery": prior_delivery,
+                    "sourceWriteLeaseRevoked": True,
+                }
         patch_artifact = self._seal_patch_artifact(
             binding_id=binding_id,
             delivery_revision=delivery_revision,
@@ -1386,6 +1452,8 @@ class RoomWorkspaceCoordinator:
 
         if prepared.get("workspacePolicy") != "isolated_writable":
             return
+        if isinstance(prepared, _PreparedWorkspace) and not prepared.created_by_attempt:
+            return
         binding_id = str(prepared.get("workspaceBindingId") or "").strip()
         if not binding_id:
             raise RoomWorkspaceError(
@@ -1822,16 +1890,125 @@ class RoomWorkspaceCoordinator:
                     ),
                 ):
                     current = self.ledger.binding(binding_id)
-                    recovered.append(
-                        self._cleanup_receipted_worktree(
-                            current,
-                            actor_ref="system:workspace-recovery",
-                            now_ms=timestamp,
-                        )
+                    cleanup = self._cleanup_receipted_worktree(
+                        current,
+                        actor_ref="system:workspace-recovery",
+                        now_ms=timestamp,
                     )
+                    if str(cleanup.get("cleanupState") or "") in {
+                        "cleaned",
+                        "missing",
+                    }:
+                        cleanup = {
+                            **cleanup,
+                            "integrated": True,
+                            "idempotent": True,
+                            "changedFiles": [],
+                            "integrationRef": cleanup.get(
+                                "workspaceIntegrationRef"
+                            ),
+                            **self._integration_receipt_refs(binding_id),
+                        }
+                    recovered.append(cleanup)
             except RoomWorkspaceError:
                 continue
         return recovered
+
+    def cleaned_integration_projection_candidates(
+        self,
+    ) -> list[dict[str, object]]:
+        """Project only complete terminal cleanup chains from older releases."""
+
+        candidates: list[dict[str, object]] = []
+        for binding in self.ledger.cleaned_integration_projection_candidates():
+            binding_id = str(binding.get("workspaceBindingId") or "")
+            receipts = {
+                "delivery": self.ledger.delivery_receipt(binding_id),
+                "source": self.ledger.source_lease_receipt(binding_id),
+                "target": self.ledger.target_applied_receipt(binding_id),
+                "integrated": self.ledger.integrated_receipt(binding_id),
+                "writer": self.ledger.writer_quiescence_receipt(binding_id),
+                "quarantine": self.ledger.quarantine_receipt(binding_id),
+                "removal": self.ledger.cleanup_removal_authorization_receipt(
+                    binding_id
+                ),
+                "vault": self.ledger.vault_receipt(binding_id),
+                "cleanup": self.ledger.cleanup_receipt(binding_id),
+            }
+            if any(receipt is None for receipt in receipts.values()):
+                continue
+            target = receipts["target"]
+            integrated = receipts["integrated"]
+            vault = receipts["vault"]
+            cleanup = receipts["cleanup"]
+            assert target is not None
+            assert integrated is not None
+            assert vault is not None
+            assert cleanup is not None
+            target_payload = target.get("payload")
+            integrated_payload = integrated.get("payload")
+            vault_payload = vault.get("payload")
+            cleanup_payload = cleanup.get("payload")
+            if not all(
+                isinstance(payload, Mapping)
+                for payload in (
+                    target_payload,
+                    integrated_payload,
+                    vault_payload,
+                    cleanup_payload,
+                )
+            ):
+                continue
+            assert isinstance(target_payload, Mapping)
+            assert isinstance(integrated_payload, Mapping)
+            assert isinstance(vault_payload, Mapping)
+            assert isinstance(cleanup_payload, Mapping)
+            if (
+                str(cleanup.get("eventKind") or "") != "cleaned"
+                or str(cleanup_payload.get("result") or "") != "cleaned"
+                or str(integrated_payload.get("integrationRef") or "")
+                != str(binding.get("workspaceIntegrationRef") or "")
+                or str(integrated_payload.get("patchSha256") or "")
+                != str(binding.get("integrationPatchSha256") or "")
+                or str(integrated_payload.get("integratedRevision") or "")
+                != str(binding.get("integratedRevision") or "")
+                or str(
+                    integrated_payload.get("integratedSnapshotSha256") or ""
+                )
+                != str(binding.get("integratedSnapshotSha256") or "")
+                or str(integrated_payload.get("targetAppliedReceiptId") or "")
+                != str(target.get("eventId") or "")
+                or str(
+                    integrated_payload.get("targetAppliedReceiptSha256") or ""
+                )
+                != str(target.get("payloadSha256") or "")
+                or str(target_payload.get("integrationRef") or "")
+                != str(binding.get("workspaceIntegrationRef") or "")
+                or str(target_payload.get("targetAfterSnapshotSha256") or "")
+                != str(binding.get("integratedSnapshotSha256") or "")
+                or str(cleanup_payload.get("vaultReceiptId") or "")
+                != str(vault.get("eventId") or "")
+                or str(cleanup_payload.get("vaultReceiptSha256") or "")
+                != str(vault.get("payloadSha256") or "")
+                or str(cleanup_payload.get("vaultWorkspaceRoot") or "")
+                != str(vault_payload.get("vaultWorkspaceRoot") or "")
+            ):
+                continue
+            candidates.append(
+                {
+                    **binding,
+                    "integrated": True,
+                    "idempotent": True,
+                    "changedFiles": list(
+                        integrated_payload.get("changedFiles") or []
+                    ),
+                    "integrationRef": binding.get(
+                        "workspaceIntegrationRef"
+                    ),
+                    **self._integration_receipt_refs(binding_id),
+                }
+            )
+        return candidates
 
     def _recover_binding_on_startup(
         self,
@@ -2173,7 +2350,12 @@ class RoomWorkspaceCoordinator:
             )
         else:
             expected_source_content = self._workspace_content_digest(retained)
-        expected_target = self.snapshot_digest([base])
+        observed_cleanup_target = self.snapshot_digest([base])
+        expected_target = (
+            str(binding.get("integratedSnapshotSha256") or "")
+            if integrated_receipt is not None
+            else observed_cleanup_target
+        )
         if terminal_authority is not None and quarantine_receipt is None:
             try:
                 self.ledger.record_quarantined(
@@ -2222,6 +2404,7 @@ class RoomWorkspaceCoordinator:
             "workspaceBindingId": binding_id,
             "workspaceContentSha256": expected_source_content,
             "targetSnapshotSha256": expected_target,
+            "observedCleanupTargetSnapshotSha256": observed_cleanup_target,
             "vaultWorkspaceRoot": str(vault),
             "removalAuthorizationReceiptId": removal_authorization["eventId"],
             "removalAuthorizationReceiptSha256": removal_authorization[
@@ -2259,7 +2442,7 @@ class RoomWorkspaceCoordinator:
                 actor_ref=actor_ref,
                 now_ms=now_ms,
             )
-        if integrated_receipt is not None and self.snapshot_digest([base]) != expected_target:
+        if self.snapshot_digest([base]) != observed_cleanup_target:
             return self._cleanup_failed(
                 binding_id,
                 reason="integration target changed during final cleanup",
@@ -2477,13 +2660,10 @@ class RoomWorkspaceCoordinator:
             return "recoverable vault receipt is outside its exact cleanup lineage"
         try:
             vaulted_content = self._vault_content_digest(vault)
-            target_snapshot = self.snapshot_digest([base])
         except (OSError, RoomWorkspaceError) as exc:
             return f"recoverable vault evidence could not be verified: {exc}"
         if vaulted_content != str(payload.get("vaultContentSha256") or ""):
             return "recoverable vault bytes changed after their durable receipt"
-        if target_snapshot != str(payload.get("targetSnapshotSha256") or ""):
-            return "integration target changed after recoverable vault receipt"
         return ""
 
     def _integration_cleanup_evidence_error(
@@ -2548,7 +2728,6 @@ class RoomWorkspaceCoordinator:
         try:
             self._read_patch_artifact(source_payload)
             source_snapshot = self._workspace_content_digest(source)
-            target_snapshot = self.snapshot_digest([base])
         except (OSError, RoomWorkspaceError) as exc:
             return f"integration cleanup evidence could not be verified: {exc}"
         if source_snapshot != str(
@@ -2558,15 +2737,8 @@ class RoomWorkspaceCoordinator:
                 "source changed after its durable write-lease revocation; child was "
                 "retained"
             )
-        if target_snapshot != str(
+        if str(binding.get("integratedSnapshotSha256") or "") != str(
             target_payload.get("targetAfterSnapshotSha256") or ""
-        ):
-            return (
-                "integration target changed after its exact target-after receipt; "
-                "child was retained"
-            )
-        if target_snapshot != str(
-            binding.get("integratedSnapshotSha256") or ""
         ):
             return (
                 "binding projection does not match the exact target-after receipt; "
@@ -3105,6 +3277,63 @@ class RoomWorkspaceCoordinator:
         }
 
     @staticmethod
+    def _sealed_delivery_matches_settlement_replay(
+        prior: Mapping[str, object],
+        candidate: Mapping[str, object],
+        *,
+        invocation_created_at_ms: int | None,
+    ) -> bool:
+        """Recognize only the crash replay of the invocation that sealed it.
+
+        A delivery is written before the enclosing Room settle transaction.
+        If the latter fails, retrying the same tool invocation must reuse that
+        sealed generation instead of asking for a new writer lease.  A later
+        invocation cannot match because its creation time is after the sealed
+        delivery; changed bytes or evidence are rejected independently.
+        """
+
+        if invocation_created_at_ms is None or invocation_created_at_ms < 0:
+            return False
+        try:
+            delivered_at_ms = int(prior.get("deliveredAtMs") or -1)
+        except (TypeError, ValueError):
+            return False
+        if not (
+            invocation_created_at_ms
+            <= delivered_at_ms
+            <= invocation_created_at_ms + 60_000
+        ):
+            return False
+        stable_fields = (
+            "schemaVersion",
+            "workItemId",
+            "taskId",
+            "baseCommit",
+            "workspaceSnapshotSha256",
+            "patchSha256",
+            "manifestSha256",
+            "files",
+            "totals",
+            "artifactRefs",
+            "verificationCount",
+            "verifications",
+            "verificationRefs",
+            "residualRisks",
+        )
+        if any(prior.get(key) != candidate.get(key) for key in stable_fields):
+            return False
+        prior_summary = " ".join(str(prior.get("resultSummary") or "").split())
+        candidate_summary = " ".join(
+            str(candidate.get("resultSummary") or "").split()
+        )
+        if prior_summary and (
+            prior_summary != candidate_summary
+            or prior.get("deliveryRevision") != candidate.get("deliveryRevision")
+        ):
+            return False
+        return True
+
+    @staticmethod
     def _delivery_refs(values: Sequence[str]) -> list[str]:
         result: list[str] = []
         for value in values:
@@ -3141,8 +3370,11 @@ class RoomWorkspaceCoordinator:
     def _prepared_payload(
         binding: Mapping[str, object],
         restore_policy: Mapping[str, object],
+        *,
+        created_by_attempt: bool,
     ) -> dict[str, object]:
-        return {
+        return _PreparedWorkspace(
+            {
             "workspaceBindingId": binding["workspaceBindingId"],
             "workspaceRepositoryId": binding["repositoryId"],
             "workspacePolicy": binding["workspacePolicy"],
@@ -3155,7 +3387,9 @@ class RoomWorkspaceCoordinator:
             "workspaceCleanupState": binding["cleanupState"],
             "workspaceAttentionRequired": bool(binding["attentionRequired"]),
             "workspaceRestorePolicy": dict(restore_policy),
-        }
+            },
+            created_by_attempt=created_by_attempt,
+        )
 
     def task_snapshot_digest(self, task: Mapping[str, object]) -> str:
         raw_root = str(
@@ -3657,8 +3891,8 @@ class RoomWorkspaceCoordinator:
         return self._run(
             [
                 sys.executable,
-                "-m",
-                "rag_ime.agent_room_workspace_cleanup",
+                "-I",
+                str(_GUARDED_CLEANUP_SCRIPT),
                 str(self.ledger.db_path),
                 str(guard.get("workspaceBindingId") or ""),
                 str(base),
@@ -3666,6 +3900,7 @@ class RoomWorkspaceCoordinator:
                 str(guard.get("vaultWorkspaceRoot") or ""),
                 str(guard.get("workspaceContentSha256") or ""),
                 str(guard.get("targetSnapshotSha256") or ""),
+                str(guard.get("observedCleanupTargetSnapshotSha256") or ""),
                 str(guard.get("removalAuthorizationReceiptId") or ""),
                 str(guard.get("removalAuthorizationReceiptSha256") or ""),
             ],

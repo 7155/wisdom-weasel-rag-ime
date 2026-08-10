@@ -328,6 +328,23 @@ class RoomPeerReviewTests(unittest.TestCase):
             defined["receipt"]["details"]["operation"],
             "room_define",
         )
+        definition_settled = kernel.record_definition_runtime_settled(
+            root_id=root_id,
+            dispatch_id=alignment_dispatch_id,
+            session_id="session:author",
+            generation=0,
+            capability_epoch=1,
+            runtime_turn_id=f"turn:{alignment_dispatch_id}",
+            now_ms=4,
+        )
+        self.assertFalse(definition_settled["released"])
+        started = kernel.start_defined_execution(
+            root_id=root_id,
+            client_action_id=f"action:start:{root_id}",
+            user_post_id=f"post:start:{root_id}",
+            now_ms=4,
+        )
+        self.assertTrue(started["created"])
         lease = kernel.lease_next(
             now_ms=5,
             ttl_ms=30_000,

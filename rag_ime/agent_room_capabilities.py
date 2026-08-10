@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
+from .agent_room_kernel_contracts import REVIEW_AXES
 
 
 ROOM_PUBLIC_TOOLS = (
@@ -93,6 +94,16 @@ REVIEW_FINDING_RE_REVIEW_EXCEPTION_CATEGORIES = frozenset(
         "security",
     }
 )
+
+
+def review_finding_is_p0(finding: Mapping[str, object]) -> bool:
+    """Only a concrete critical product failure may block Room delivery."""
+
+    return (
+        finding.get("gateEffect") == "blocking"
+        and finding.get("impact") == "critical"
+        and finding.get("category") in REVIEW_FINDING_BLOCKING_CATEGORIES
+    )
 
 
 def canonical_review_finding_fingerprint(
@@ -324,7 +335,9 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
             "description": (
                 "自己保留当前责任，请另一位平级伙伴完成一个明确子任务。子任务只能"
                 "只读检查或使用独立 Git worktree 写入；父任务继续运行时禁止共享工作区"
-                "写入。acceptance 只能使用当前工作卡片的验收短名。"
+                "写入。用户已授权实现且任务有修改可能时必须直接选择 isolated_writable；"
+                "read_only 发现缺陷后交回证据，由 Facilitator 新建可写切片。"
+                "acceptance 只能使用当前工作卡片的验收短名。"
             ),
             "when": (
                 "Facilitator/Reporter 把明确、互不重叠的实现或调查交给一位伙伴",
@@ -334,6 +347,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                 "最终独立复核；集成后用 room_commit 的 review handoff",
                 "把整个 Root 和最终回复责任交出去",
                 "两个伙伴同时修改同一共享工作区",
+                "用普通 handoff 把 read_only 子任务升级成可写任务",
                 "只想公开说一句话或私下自言自语",
             ),
             "input": (
@@ -370,6 +384,13 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     "expectedOutput": {"type": "string", "minLength": 1},
                     "intent": {"enum": ["execute", "revise"]},
                     "workspacePolicy": {
+                        "description": (
+                            "read_only 只用于取证或复核，任务有修改可能就选 "
+                            "isolated_writable；既有只读任务不能升级，发现缺陷后"
+                            "必须交回 Facilitator 新建可写切片。全自动 Room 中的 "
+                            "execute 分工默认使用 isolated_writable；独立复核仍走"
+                            "集成后的受管 review handoff。"
+                        ),
                         "enum": [
                             "read_only",
                             "isolated_writable",
@@ -520,7 +541,15 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
         ],
         "properties": {
             "objective": {"type": "string", "minLength": 1, "maxLength": 8000},
-            "expectedOutput": {"type": "string", "minLength": 1, "maxLength": 8000},
+            "expectedOutput": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8000,
+                "description": (
+                    "用户要求开始前查看计划时，逐位写明伙伴姓名、完整纵向功能、"
+                    "阻塞依赖、波次、集成与交叉复核边界；只做公开预览，不提前执行"
+                ),
+            },
             "requirements": {
                 "type": "array",
                 "minItems": 1,
@@ -592,7 +621,8 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                 "完成声明必须把 evidence 中的 acceptance 绑定到当前工作卡片的验收"
                 "短名；同一次普通工具执行不能直接证明多个验收项，需逐项运行对应验证"
                 "或使用已绑定的正式验证回执。acceptanceAliases 只用于 handoff 定义"
-                "下一位伙伴的验收，deliver 不填写它。服务端会核对实际结果和验收覆盖。"
+                "下一位伙伴的验收，deliver 不填写它。resumeCondition 只用于 wait，"
+                "handoff 必须省略 resumeCondition。服务端会核对实际结果和验收覆盖。"
             ),
             "when": (
                 "已经完成实现或修复，并且要提交验收证据",
@@ -603,6 +633,8 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
             ),
             "notFor": (
                 "发布一条公开 Room 消息、私下进度、仍有能直接推进的下一步，或没有证据的完成声明",
+                "通过 handoff 改变当前 Task 的 workspacePolicy；只读检查应交回证据，"
+                "由 Facilitator 用 room_collaborate 新建可写实现切片",
             ),
             "input": (
                 "decision、私有 summary、用户可见 publicSummary、按验收短名绑定的 "
@@ -692,6 +724,14 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                         "type": "string",
                         "minLength": 1,
                     },
+                    "reviewAxis": {
+                        "description": (
+                            "仅 intent=review：本次独立复核的唯一轴。technical "
+                            "检查可复现 P0、测试与运行时风险；requirements 逐项核对"
+                            "最初需求与验收。省略时服务端选择尚未完成的下一轴。"
+                        ),
+                        "enum": list(REVIEW_AXES),
+                    },
                     "intent": {
                         "description": (
                             "仅 handoff：下一位伙伴要做什么。若对方负责最终验收或最终"
@@ -746,7 +786,8 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     },
                     "resumeCondition": {
                         "description": (
-                            "说明出现什么可观察信号后可以继续；不得只写稍后再试。"
+                            "仅 wait：说明出现什么可观察信号后可以继续；不得只写稍后再试。"
+                            "handoff 必须省略本字段，下一位伙伴要做什么应写入 nextTask。"
                         ),
                         "type": "string",
                         "minLength": 1,
@@ -1231,14 +1272,18 @@ class RoomCapabilityManifestStore:
     ) -> tuple[dict[str, object], bool]:
         manifest = self._manifest(manifest_id, manifest_hash)
         normalized_query = str(query or "").strip()
-        ranked = [
-            (
-                _tool_routing_score(normalized_query, _mapping(tool)),
-                index,
-                _mapping(tool),
+        ranked: list[tuple[int, int, Mapping[str, object]]] = []
+        for index, raw_tool in enumerate(manifest["tools"]):
+            tool = _mapping(raw_tool)
+            if tool.get("modelVisible") is False:
+                continue
+            ranked.append(
+                (
+                    _tool_routing_score(normalized_query, tool),
+                    index,
+                    tool,
+                )
             )
-            for index, tool in enumerate(manifest["tools"])
-        ]
         if normalized_query:
             ranked = [item for item in ranked if item[0] > 0]
             ranked.sort(
@@ -1582,7 +1627,7 @@ class RoomCapabilityManifestStore:
         with self._connect(immediate=True) as conn:
             row = conn.execute(
                 """SELECT manifest_id, capability_epoch FROM room_v2_capability_runtime_bindings
-                   WHERE session_id = ? AND state = 'active'""",
+                   WHERE session_id = ? AND state IN ('prepared','active')""",
                 (_required(session_id, "session_id"),),
             ).fetchone()
             if row is None:
@@ -1592,7 +1637,8 @@ class RoomCapabilityManifestStore:
             conn.execute(
                 """UPDATE room_v2_capability_runtime_bindings
                    SET state = 'revoked', capability_epoch = ?, updated_at_ms = ?
-                   WHERE session_id = ? AND manifest_id = ?""",
+                   WHERE session_id = ? AND manifest_id = ?
+                     AND state IN ('prepared','active')""",
                 (int(capability_epoch), _non_negative(now_ms, "now_ms"), session_id, row["manifest_id"]),
             )
 

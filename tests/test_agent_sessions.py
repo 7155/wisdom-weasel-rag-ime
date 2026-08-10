@@ -222,6 +222,27 @@ class AgentSessionStoreTests(unittest.TestCase):
         self.assertFalse(per_action["workspaceScopeGranted"])
         self.assertEqual(per_action["workspaceScopeSha256"], "")
 
+    def test_workspace_scope_projection_does_not_claim_authorization_after_roots_drift(self) -> None:
+        session = self.store.create(
+            title="目录授权漂移",
+            mode="coordinator",
+            execution_mode="workspace_managed",
+            workspace_roots=[self.tmp.name],
+            created_at_ms=100,
+        )
+        session_id = str(session["id"])
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.execute(
+                "UPDATE agent_sessions SET workspace_roots_json = '[]' WHERE id = ?",
+                (session_id,),
+            )
+            conn.commit()
+
+        projected = self.store.get(session_id)
+
+        self.assertEqual(projected["workspaceRoots"], [])
+        self.assertFalse(projected["workspaceScopeGranted"])
+
     def test_legacy_auto_approve_profile_is_not_persisted_as_new_policy(self) -> None:
         session = self.store.create(
             title="旧策略兼容",

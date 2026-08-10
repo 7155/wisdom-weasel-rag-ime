@@ -82,7 +82,7 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         self.assertIn("inputSchema", loaded["items"][0])
         self.assertNotIn("room_commit", str(loaded["items"][0]["inputSchema"]))
 
-    def test_runtime_projection_metadata_is_pinned_but_not_added_to_route_cards(self) -> None:
+    def test_runtime_projection_source_hidden_from_governed_search(self) -> None:
         room, participant = self._bindings()
         memory = self._product_tool(
             "Govern long-term memory",
@@ -129,10 +129,10 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             query="memory",
             created_at_ms=2,
         )
-        route = next(
-            item for item in searched["items"] if item["name"] == "memory"
+        self.assertNotIn(
+            "memory",
+            {item["name"] for item in searched["items"]},
         )
-        self.assertNotIn("runtimeProjections", route)
 
     def test_governed_search_matches_exact_name_tokens_and_verbose_intent(self) -> None:
         room, participant = self._bindings()
@@ -283,6 +283,18 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             set(schema["properties"]["workspacePolicy"]["enum"]),
             {"read_only", "isolated_writable"},
         )
+        self.assertIn(
+            "有修改可能",
+            schema["properties"]["workspacePolicy"]["description"],
+        )
+        self.assertIn(
+            "不能升级",
+            schema["properties"]["workspacePolicy"]["description"],
+        )
+        self.assertIn(
+            "全自动 Room",
+            schema["properties"]["workspacePolicy"]["description"],
+        )
         base = {
             "targetParticipantRef": "P-2",
             "objective": "实现明确且互不重叠的子任务",
@@ -375,6 +387,17 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             "稳定的 Tool 活动面",
             room_runtime_registry()["room_post"]["description"],
         )
+
+    def test_room_commit_handoff_explains_wait_only_fields_before_validation(
+        self,
+    ) -> None:
+        tool = room_runtime_registry()["room_commit"]
+        schema = tool["inputSchema"]
+
+        self.assertIn("handoff 必须省略 resumeCondition", tool["description"])
+        resume_condition = schema["properties"]["resumeCondition"]["description"]
+        self.assertIn("仅 wait", resume_condition)
+        self.assertIn("handoff 必须省略", resume_condition)
 
     def test_room_post_cannot_publish_a_nonterminal_user_question(self) -> None:
         tool = room_runtime_registry()["room_post"]

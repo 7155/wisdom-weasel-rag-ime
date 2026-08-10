@@ -299,8 +299,14 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
             {"session.control_state", "room.dispatch", "room.cancel"},
         )
         build = (REPO / "scripts/build_managed_pi_runtime_v2.py").read_text(encoding="utf-8")
-        self.assertIn('"git", "merge-base", "--is-ancestor"', build)
-        self.assertIn("Pi source does not contain the reviewed Room runtime handler commit", build)
+        self.assertIn(
+            "if minimum_commit != REQUIRED_PI_RUNTIME_BASE_COMMIT:",
+            build,
+        )
+        self.assertIn(
+            "marker not in source_texts[key]",
+            build,
+        )
 
     def test_cancel_dead_letter_finalizes_with_visible_unknown_surfaces(self) -> None:
         """Exhausted runtime cancellation is terminal without hiding uncertainty."""
@@ -329,7 +335,13 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         terminal = self.store.receipt(str(root["terminalReceiptId"]))
         self.assertEqual(
             terminal["details"],
-            {"terminalState": "cancelled_with_unknowns", "quiescent": True},
+            {
+                "terminalState": "cancelled_with_unknowns",
+                "quiescent": True,
+                "capabilityBindingsRevoked": 0,
+                "skillReceiptsRevoked": 0,
+                "requirementBindingsTerminal": 0,
+            },
         )
         self.assertEqual(self.store.abort_scope("dispatch:1")["state"], "unknown")
         self.assertEqual(
@@ -367,7 +379,13 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         terminal = self.store.receipt(str(root["terminalReceiptId"]))
         self.assertEqual(
             terminal["details"],
-            {"terminalState": "cancelled_with_unknowns", "quiescent": True},
+            {
+                "terminalState": "cancelled_with_unknowns",
+                "quiescent": True,
+                "capabilityBindingsRevoked": 0,
+                "skillReceiptsRevoked": 0,
+                "requirementBindingsTerminal": 0,
+            },
         )
         self.assertEqual(self.store.abort_scope("dispatch:1")["state"], "unknown")
 

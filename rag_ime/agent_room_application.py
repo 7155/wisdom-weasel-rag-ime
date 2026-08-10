@@ -225,53 +225,64 @@ class RoomApplicationService:
                 dispatch.get("dependsOnDispatchIds") or []
             ),
         }
-        timeline_events = self.public_timeline.publish_ingress(
-            room=room,
-            post=user_post,
-            client_message_id=effective_client_action_id,
-            route_decisions=[route_decision],
-            dispatches=[dispatch_result],
-            chronology_after_post_id=chronology_after_post_id,
-        )
-        existing_post = next(
-            (
-                item
-                for item in self.projection.snapshot(room_id)["posts"]
-                if str(item.get("postId") or "") == post_id
-            ),
-            None,
-        )
-        if existing_post is not None:
-            user_post = dict(existing_post)
-        else:
-            user_event = next(
+        timeline_events: list[dict[str, object]] = []
+        projection_pending = False
+        try:
+            timeline_events = self.public_timeline.publish_ingress(
+                room=room,
+                post=user_post,
+                client_message_id=effective_client_action_id,
+                route_decisions=[route_decision],
+                dispatches=[dispatch_result],
+                chronology_after_post_id=chronology_after_post_id,
+            )
+            existing_post = next(
                 (
-                    event
-                    for event in timeline_events
-                    if event.get("eventType") == "user_message"
-                    and isinstance(event.get("payload"), Mapping)
-                    and str(event["payload"].get("postId") or "") == post_id
+                    item
+                    for item in self.projection.snapshot(room_id)["posts"]
+                    if str(item.get("postId") or "") == post_id
                 ),
                 None,
             )
-            if user_event is None:
-                raise RoomKernelFenceError(
-                    "typed start has no authoritative Room event order"
+            if existing_post is not None:
+                user_post = dict(existing_post)
+            else:
+                user_event = next(
+                    (
+                        event
+                        for event in timeline_events
+                        if event.get("eventType") == "user_message"
+                        and isinstance(event.get("payload"), Mapping)
+                        and str(event["payload"].get("postId") or "") == post_id
+                    ),
+                    None,
                 )
-            event_sequence = int(user_event["sequence"])
-            user_post["chronology"] = {
-                "schemaVersion": "wisdom-weasel.room-post-chronology.v1",
-                "roomEventId": str(user_event["eventId"]),
-                "roomEventSequence": event_sequence,
-                "createdAtMs": timestamp,
-                "afterPostId": chronology_after_post_id or None,
-                "orderKey": f"room-event:{event_sequence:020d}",
-            }
-            self.projection.publish_post(user_post)
-        self.context.publish_post(user_post)
-        self.projection.sync_room(room_id, now_ms=timestamp)
-        if started["created"]:
-            self.wake_worker()
+                if user_event is None:
+                    raise RoomKernelFenceError(
+                        "typed start has no authoritative Room event order"
+                    )
+                event_sequence = int(user_event["sequence"])
+                user_post["chronology"] = {
+                    "schemaVersion": "wisdom-weasel.room-post-chronology.v1",
+                    "roomEventId": str(user_event["eventId"]),
+                    "roomEventSequence": event_sequence,
+                    "createdAtMs": timestamp,
+                    "afterPostId": chronology_after_post_id or None,
+                    "orderKey": f"room-event:{event_sequence:020d}",
+                }
+                self.projection.publish_post(user_post)
+            self.context.publish_post(user_post)
+            self.projection.sync_room(room_id, now_ms=timestamp)
+        except Exception:
+            # The Kernel start transaction is already durable.  A read-model or
+            # timeline failure is recoverable state, never a rejected command.
+            projection_pending = True
+        finally:
+            if started["created"]:
+                try:
+                    self.wake_worker()
+                except Exception:
+                    projection_pending = True
         return {
             "schemaVersion": "rag-ime.room-start-execution.v1",
             "ok": True,
@@ -286,6 +297,8 @@ class RoomApplicationService:
             "intake": started["intake"],
             "receipt": started["receipt"],
             "timelineEvents": timeline_events,
+            "projectionPending": projection_pending,
+            "recoveryState": "recovering" if projection_pending else "synced",
         }
 
     def define_room(
@@ -346,14 +359,6 @@ class RoomApplicationService:
             raise RoomKernelFenceError(
                 "room_define implementation participant is not active"
             )
-        if canonical_collaboration_role_id(
-            target.get("collaborationRole")
-        ) == "reviewer":
-            raise RoomKernelFenceError(
-                "room_define implementation participant cannot be the Reviewer; "
-                "Reviewer enters only after integration"
-            )
-
         objective = str(arguments.get("objective") or "").strip()
         expected_output = str(arguments.get("expectedOutput") or "").strip()
         raw_requirements = arguments.get("requirements")
@@ -667,39 +672,36 @@ class RoomApplicationService:
                 str(root["rootId"]),
                 conn=transaction,
             )
-            if intake_before_definition.get("clarificationOccurred") is True:
-                alignment_post = {
-                    "schemaVersion": ROOM_POST_SCHEMA_VERSION,
-                    "postId": alignment_post_id,
-                    "roomId": room_id,
-                    "rootId": str(root["rootId"]),
-                    "generation": int(root["generation"]),
-                    "taskId": str(task_payload["taskId"]),
-                    "dispatchId": dispatch_id,
-                    "authorActorRef": str(
-                        root["facilitatorParticipantId"]
-                    ),
-                    "kind": "alignment",
-                    "visibility": "room",
-                    "content": canonical_room_alignment_content(
-                        objective=objective,
-                        expected_output=expected_output,
-                    ),
-                    "idempotencyKey": alignment_idempotency_key,
-                    "publicationSource": {
-                        "kind": "room_post",
-                        "ref": fence_id,
-                    },
-                    "createdAtMs": timestamp,
-                }
-                self.projection.publish_post_in_transaction(
-                    transaction,
-                    alignment_post,
-                )
-                self.context.publish_post_in_transaction(
-                    transaction,
-                    alignment_post,
-                )
+            alignment_post = {
+                "schemaVersion": ROOM_POST_SCHEMA_VERSION,
+                "postId": alignment_post_id,
+                "roomId": room_id,
+                "rootId": str(root["rootId"]),
+                "generation": int(root["generation"]),
+                "taskId": str(task_payload["taskId"]),
+                "dispatchId": dispatch_id,
+                "authorActorRef": str(root["facilitatorParticipantId"]),
+                "kind": "alignment",
+                "visibility": "room",
+                "content": canonical_room_alignment_content(
+                    objective=objective,
+                    expected_output=expected_output,
+                ),
+                "idempotencyKey": alignment_idempotency_key,
+                "publicationSource": {
+                    "kind": "room_post",
+                    "ref": fence_id,
+                },
+                "createdAtMs": timestamp,
+            }
+            self.projection.publish_post_in_transaction(
+                transaction,
+                alignment_post,
+            )
+            self.context.publish_post_in_transaction(
+                transaction,
+                alignment_post,
+            )
             revised = self.kernel.revise_definition_in_transaction(
                 transaction,
                 root_id=str(root["rootId"]),
@@ -1290,17 +1292,6 @@ class RoomApplicationService:
             self.rooms.participant(str(decision["targetParticipantId"]))
             for decision in decisions
         ]
-        if managed_work and any(
-            canonical_collaboration_role_id(
-                target.get("collaborationRole")
-            )
-            == "reviewer"
-            for target in targets
-        ):
-            raise RoomKernelFenceError(
-                "Reviewer cannot enter the implementation wave; "
-                "use the post-integration review handoff"
-            )
         if not targets:
             raise RoomKernelFenceError(
                 "managed Room execution requires an active response participant"
@@ -2127,12 +2118,16 @@ def _alignment_task(
             "有实质歧义时用 room_commit wait 一次只提出一个最小必要问题；每个"
             "用户回答按时间进入对话，问题全部收束后再调用 room_define。只有这条"
             "澄清路径会询问用户是否开始行动。不得把计划或执行结果冒充需求定义。"
+            "如果原始请求明确要求开始前展示分工，room_define 的 expectedOutput 必须"
+            "逐位写明伙伴姓名、完整用户功能、阻塞依赖和波次；这只是公开计划预览，"
+            "不得因此提前分派、读写文件或运行命令。"
             f" 原始请求：{message[:2_000]}"
         )[:4_000],
         "expectedOutput": (
             "一个已定义的可执行目标；仅在确有歧义时出现按时间追加的问题、回答、"
-            "对齐摘要和开始行动。定义后由 Facilitator 先执行，并只把真正独立的"
-            "工作通过 room_collaborate 分配给伙伴。"
+            "对齐摘要和开始行动。用户要求时还要包含开始行动前的公开分工预览，"
+            "明确每位伙伴的纵向结果、依赖和波次。定义后由 Facilitator 先执行，"
+            "并只把真正独立的工作通过 room_collaborate 分配给伙伴。"
         ),
         "acceptanceCriterionIds": [criterion_id],
         "revision": 0,

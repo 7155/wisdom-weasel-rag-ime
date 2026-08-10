@@ -50,7 +50,20 @@ notFor:
    authoritative workspace. For concurrent writable children, require a
    separate receipted workspace from the same Root baseline; read-only work
    may share a baseline.
-9. Keep the smallest plan covering all acceptance without widening scope.
+   Workspace policy is immutable for one Task. A delivery candidate that may
+   need to change the artifact is writable from the start. If a read-only
+   investigation finds a defect, it returns evidence and the next plan
+   revision creates a new writable implementation candidate; handoff never
+   upgrades the read-only Task.
+9. When alignment includes a pre-start plan preview, preserve its named
+   vertical outcomes, blocking edges, and waves. Detailed planning may refine
+   implementation seams after Start, but must not silently change the user's
+   public ownership or acceptance boundaries.
+10. When the user requires a living work document, use one canonical document.
+    After Start, update it when requirements or material progress change; record
+    the current evidence and next frontier, without copying private reasoning or
+    treating a public status line as the document update.
+11. Keep the smallest plan covering all acceptance without widening scope.
 
 ## Managed Room Boundary
 
@@ -60,6 +73,8 @@ Kernel handoff. Do not create another Root, Task, Dispatch, WorkItem, or task
 store. The Facilitator owns decomposition, assignment, reassignment,
 dependency handling, and integration; this Skill may describe candidate
 capabilities and owners, but must not silently recruit or create Dispatches.
+The pre-start plan preview is an accepted user-facing constraint, not evidence
+that its work has started.
 Candidate WorkItems remain non-overlapping and review is an optional,
 post-integration Kernel handoff to a distinct participant, never a planning
 child. Stale, foreign, or missing authority returns a governed wait or

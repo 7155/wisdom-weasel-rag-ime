@@ -39,6 +39,8 @@ def canonicalize_quality_gate(
     runtime_evidence_refs: Sequence[str],
     invocation_receipt_id: str,
     now_ms: int,
+    prune_unverifiable_refs: bool = False,
+    prefer_accepted_evidence: bool = False,
 ) -> CanonicalQualityGate:
     if not isinstance(evidence_proposal, list) or len(evidence_proposal) > 64:
         raise RoomQualityGateError(
@@ -69,6 +71,10 @@ def canonicalize_quality_gate(
         criterion_id: set()
         for criterion_id in canonical_criteria
     }
+    accepted_refs_by_criterion: dict[str, set[str]] = {
+        criterion_id: set()
+        for criterion_id in canonical_criteria
+    }
     for criterion in raw_criteria or []:
         if not isinstance(criterion, Mapping):
             continue
@@ -89,11 +95,13 @@ def canonicalize_quality_gate(
     ).items():
         if criterion_id not in authoritative_refs:
             continue
-        authoritative_refs[criterion_id].update(
+        accepted_refs = {
             str(value)
             for value in raw_refs
             if str(value or "").strip()
-        )
+        }
+        accepted_refs_by_criterion[criterion_id].update(accepted_refs)
+        authoritative_refs[criterion_id].update(accepted_refs)
     runtime_refs = {
         str(value)
         for value in runtime_evidence_refs
@@ -129,6 +137,32 @@ def canonicalize_quality_gate(
             raise RoomQualityGateError(
                 "每个提交的验收项都至少需要一个 evidenceRef"
             )
+        if (
+            prefer_accepted_evidence
+            and accepted_refs_by_criterion[criterion_id]
+        ):
+            # Final aggregation is not a second evidence-producing step.
+            # Once the Kernel already owns criterion-bound accepted proof,
+            # use those exact refs instead of asking the model to transcribe
+            # long opaque receipt IDs from room_state without alteration.
+            item_evidence = sorted(
+                accepted_refs_by_criterion[criterion_id]
+            )
+        if prune_unverifiable_refs:
+            verified_item_evidence = [
+                evidence_ref
+                for evidence_ref in item_evidence
+                if evidence_ref in authoritative_refs[criterion_id]
+            ]
+            # Independent review is allowed to ignore stale transcript refs
+            # only when the same criterion still has direct, current proof.
+            # A proposal with no verifiable proof remains fail-closed.
+            # A handoff is a continuation, not a delivery verdict.  Stale
+            # transcript refs must not prevent the next owner from doing the
+            # requested review; drop them and leave the criterion unverified.
+            # Final delivery remains fail-closed when no current proof exists.
+            if verified_item_evidence or decision == "handoff":
+                item_evidence = verified_item_evidence
         unknown_refs = set(item_evidence) - authoritative_refs[criterion_id]
         misassigned_refs = {
             evidence_ref
@@ -185,6 +219,26 @@ def canonicalize_quality_gate(
         for alias, criterion_id in acceptance_aliases.items()
     }
     runtime_ref_criteria: dict[str, set[str]] = {}
+    for criterion_id, refs in submitted.items():
+        for evidence_ref in refs:
+            if evidence_ref in runtime_refs:
+                runtime_ref_criteria.setdefault(evidence_ref, set()).add(
+                    criterion_id
+                )
+    # A current ``room_state`` receipt is useful for locating Kernel-owned
+    # evidence, but it is not itself three different proofs.  When the model
+    # repeats that one receipt across criteria that already have exact,
+    # criterion-bound accepted evidence, canonicalize to the accepted refs
+    # instead of making opaque ID transcription a second source of truth.
+    # Ordinary unaccepted tool results keep the one-result/one-criterion rule.
+    for criteria in runtime_ref_criteria.values():
+        if len(criteria) <= 1:
+            continue
+        for criterion_id in criteria:
+            accepted_refs = accepted_refs_by_criterion.get(criterion_id, set())
+            if accepted_refs:
+                submitted[criterion_id] = sorted(accepted_refs)
+    runtime_ref_criteria = {}
     for criterion_id, refs in submitted.items():
         for evidence_ref in refs:
             if evidence_ref in runtime_refs:

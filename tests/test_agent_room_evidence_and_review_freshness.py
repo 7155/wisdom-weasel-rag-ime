@@ -54,6 +54,7 @@ def _task(
     authors: tuple[str, ...] = (),
     findings: list[dict[str, object]] | None = None,
     revision: int = 0,
+    review_axis: str | None = None,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "schemaVersion": ROOM_TASK_SCHEMA_VERSION,
@@ -85,6 +86,8 @@ def _task(
                 "reviewFindings": findings or [],
             }
         )
+        if review_axis is not None:
+            payload["reviewAxis"] = review_axis
     return payload
 
 
@@ -218,7 +221,7 @@ def _finding(
         "findingId": "finding:shared",
         "fingerprint": fingerprint,
         "gateEffect": gate_effect,
-        "impact": "high" if gate_effect == "blocking" else "normal",
+        "impact": "critical" if gate_effect == "blocking" else "normal",
         "category": "correctness",
         "scope": scope,
         "observation": observation,
@@ -1615,6 +1618,164 @@ class RoomAcceptanceEvidenceFreshnessTests(unittest.TestCase):
             ],
         )
 
+    def test_receipted_abandoned_revise_restores_untouched_target_evidence(
+        self,
+    ) -> None:
+        original, now_ms = _dispatch(
+            "dispatch:original-before-abandon",
+            task_id="task:work",
+            owner="participant:facilitator",
+            intent="execute",
+        )
+        self._start(original, now_ms)
+        self.store.apply_commit(
+            _commit(
+                "dispatch:original-before-abandon",
+                task_id="task:work",
+                evidence_by_criterion={
+                    "ac:1": "evidence:original-before-abandon",
+                    "ac:2": "evidence:independent-before-abandon",
+                },
+            ),
+            generation=0,
+            now_ms=10,
+        )
+        revision_task = _task(
+            "task:abandoned-revision",
+            owner="participant:facilitator",
+            criteria=("ac:1",),
+            parent_task_id="task:work",
+            revision=1,
+        )
+        revision_task.update(
+            {
+                "workspacePolicy": "isolated_writable",
+                "workspaceRoot": "/tmp/abandoned-revision",
+                "workspaceBaseRoot": "/tmp/base",
+                "workspaceBaseCommit": "a" * 40,
+                "workspaceRepositoryId": "b" * 64,
+                "workspaceBindingId": "binding:abandoned-revision",
+                "workspaceLifecycleState": "blocked",
+                "workspaceCleanupState": "retained",
+                "workspaceAttentionRequired": True,
+                "workspaceIntegrationState": "pending",
+                "workspaceIntegrationRef": None,
+            }
+        )
+        self.store.create_task(revision_task, now_ms=11)
+        revision, revision_ms = _dispatch(
+            "dispatch:abandoned-revision",
+            task_id="task:abandoned-revision",
+            owner="participant:facilitator",
+            intent="revise",
+            created_at_ms=12,
+        )
+        self.store.enqueue_dispatch(revision, now_ms=revision_ms)
+        with self.store._connect(immediate=True) as conn:
+            conn.execute(
+                "UPDATE room_kernel_dispatches SET state='cancelled',"
+                "updated_at_ms=? WHERE dispatch_id=?",
+                (13, "dispatch:abandoned-revision"),
+            )
+            conn.execute(
+                "UPDATE room_kernel_tasks SET state='cancelled',updated_at_ms=? "
+                "WHERE task_id=?",
+                (13, "task:abandoned-revision"),
+            )
+        self.store.record_workspace_lifecycle(
+            "task:abandoned-revision",
+            operation="abandon",
+            workspace_result={
+                "workspaceBindingId": "binding:abandoned-revision",
+                "workspaceLifecycleState": "abandoned",
+                "cleanupState": "cleaned",
+                "attentionRequired": False,
+                "terminalReason": "receipted cleanup left target unchanged",
+                "abandonmentReceiptId": "workspace:abandon:receipt",
+                "abandonmentReceiptSha256": "c" * 64,
+                "abandonmentSnapshotSha256": "d" * 64,
+            },
+            now_ms=14,
+        )
+
+        self.assertEqual(
+            self.store.accepted_evidence_by_criterion("root:freshness"),
+            {
+                "ac:1": ["evidence:original-before-abandon"],
+                "ac:2": ["evidence:independent-before-abandon"],
+            },
+        )
+        self.assertTrue(
+            self.store.task_has_canonical_abandonment(
+                "task:abandoned-revision"
+            )
+        )
+
+    def test_facilitator_resume_does_not_hide_completed_child_evidence(
+        self,
+    ) -> None:
+        child_task = _task(
+            "task:completed-child",
+            owner="participant:worker",
+            criteria=("ac:1", "ac:2"),
+            parent_task_id="task:work",
+        )
+        self.store.create_task(child_task, now_ms=2)
+        child, child_ms = _dispatch(
+            "dispatch:completed-child",
+            task_id="task:completed-child",
+            owner="participant:worker",
+            intent="execute",
+            created_at_ms=3,
+        )
+        self._start(child, child_ms)
+        self.store.apply_commit(
+            _commit(
+                "dispatch:completed-child",
+                task_id="task:completed-child",
+                evidence_by_criterion={
+                    "ac:1": "evidence:completed-child-one",
+                    "ac:2": "evidence:completed-child-two",
+                },
+            ),
+            generation=0,
+            now_ms=10,
+        )
+        resume, resume_ms = _dispatch(
+            "dispatch:facilitator-resume",
+            task_id="task:work",
+            owner="participant:facilitator",
+            intent="resume",
+            attempt=11,
+            created_at_ms=11,
+        )
+        self._start(resume, resume_ms)
+
+        self.assertEqual(
+            self.store.accepted_evidence_by_criterion("root:freshness"),
+            {
+                "ac:1": ["evidence:completed-child-one"],
+                "ac:2": ["evidence:completed-child-two"],
+            },
+        )
+        committed = self.store.apply_commit(
+            _commit(
+                "dispatch:facilitator-resume",
+                task_id="task:work",
+                evidence_by_criterion={
+                    "ac:1": "evidence:completed-child-one",
+                    "ac:2": "evidence:completed-child-two",
+                },
+            ),
+            generation=0,
+            now_ms=13,
+        )
+        self.assertEqual(committed["status"], "applied")
+        self.assertEqual(
+            self.store.dispatch("dispatch:facilitator-resume")["state"],
+            "committed",
+        )
+
     def test_newer_revise_task_wins_even_with_lower_local_revision(
         self,
     ) -> None:
@@ -1784,6 +1945,7 @@ class RoomReviewCrossTaskFreshnessTests(unittest.TestCase):
         review_state: str,
         revision: int,
         now_ms: int,
+        review_axis: str | None = None,
     ) -> None:
         requested_payload = _task(
                 task_id,
@@ -1796,6 +1958,7 @@ class RoomReviewCrossTaskFreshnessTests(unittest.TestCase):
                 authors=authors,
                 findings=findings,
                 revision=revision,
+                review_axis=review_axis,
             )
         self.store.create_task(
             requested_payload,
@@ -1875,8 +2038,8 @@ class RoomReviewCrossTaskFreshnessTests(unittest.TestCase):
                     "capability:test-v1",
                     manifest_hash,
                     created_at_ms - 2,
-                ),
-            )
+                    ),
+                )
             conn.execute(
                 """INSERT INTO room_v2_capability_runtime_bindings(
                    session_id,manifest_id,manifest_hash,prompt_compile_receipt_id,
@@ -1927,6 +2090,217 @@ class RoomReviewCrossTaskFreshnessTests(unittest.TestCase):
                     created_at_ms,
                 ),
             )
+
+    def test_latest_review_attempts_preserve_both_review_axes(self) -> None:
+        self._create_review(
+            "task:review-technical",
+            "dispatch:review-technical",
+            reviewer="participant:reviewer",
+            reviewed_task_id="task:work",
+            authors=("participant:author",),
+            findings=[],
+            state="completed",
+            review_state="accepted",
+            revision=1,
+            now_ms=3,
+            review_axis="technical",
+        )
+        self._create_review(
+            "task:review-requirements",
+            "dispatch:review-requirements",
+            reviewer="participant:reviewer",
+            reviewed_task_id="task:work",
+            authors=("participant:author",),
+            findings=[],
+            state="completed",
+            review_state="accepted",
+            revision=1,
+            now_ms=10,
+            review_axis="requirements",
+        )
+
+        attempts = self.store.latest_review_attempts("root:freshness")
+
+        self.assertEqual(
+            {
+                str(attempt["payload"].get("reviewAxis") or "")
+                for attempt in attempts
+            },
+            {"technical", "requirements"},
+        )
+        self.assertEqual(len(attempts), 2)
+
+    def test_retry_may_reuse_exact_kernel_accepted_review_evidence(
+        self,
+    ) -> None:
+        evidence_ref = "evidence:accepted-review"
+        self._create_review(
+            "task:review",
+            "dispatch:review",
+            reviewer="participant:reviewer",
+            reviewed_task_id="task:work",
+            authors=("participant:author",),
+            findings=[],
+            state="active",
+            review_state="in_review",
+            revision=1,
+            now_ms=3,
+        )
+        self._record_review_evidence(
+            task_id="task:review",
+            dispatch_id="dispatch:review",
+            reviewer="participant:reviewer",
+            evidence_ref=evidence_ref,
+            created_at_ms=6,
+        )
+        self.store.apply_commit(
+            _commit(
+                "dispatch:review",
+                task_id="task:review",
+                evidence_by_criterion={"ac:1": evidence_ref},
+                review_findings=[],
+            ),
+            generation=0,
+            now_ms=7,
+        )
+        accepted_review = _task(
+            "task:review",
+            owner="participant:reviewer",
+            parent_task_id="task:work",
+            task_kind="review",
+            state="completed",
+            review_state="accepted",
+            review_of=("task:work",),
+            authors=("participant:author",),
+            revision=1,
+        )
+        with self.store._connect(immediate=True) as conn:
+            conn.execute(
+                """UPDATE room_kernel_tasks
+                   SET state='completed',review_state='accepted',payload_json=?,updated_at_ms=?
+                   WHERE task_id='task:review'""",
+                (
+                    json.dumps(
+                        accepted_review,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    8,
+                ),
+            )
+
+        retry, retry_ms = _dispatch(
+            "dispatch:retry",
+            task_id="task:work",
+            owner="participant:author",
+            intent="retry",
+            attempt=2,
+            created_at_ms=9,
+        )
+        self.store.enqueue_dispatch(retry, now_ms=retry_ms)
+        self.store.set_dispatch_wait_state(
+            "dispatch:retry",
+            "running",
+            now_ms=10,
+        )
+
+        receipt = self.store.apply_commit(
+            _commit(
+                "dispatch:retry",
+                task_id="task:work",
+                evidence_by_criterion={"ac:1": evidence_ref},
+            ),
+            generation=0,
+            now_ms=11,
+        )
+
+        self.assertEqual(receipt["status"], "applied")
+
+    def test_required_review_axes_fail_closed_until_both_are_present(
+        self,
+    ) -> None:
+        with self.store._connect(immediate=True) as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM room_kernel_roots WHERE root_id=?",
+                ("root:freshness",),
+            ).fetchone()
+            assert row is not None
+            payload = json.loads(str(row["payload_json"]))
+            payload["requiredReviewAxes"] = ["technical", "requirements"]
+            conn.execute(
+                "UPDATE room_kernel_roots SET payload_json=? WHERE root_id=?",
+                (
+                    json.dumps(
+                        payload,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    "root:freshness",
+                ),
+            )
+            self.store._record_review_policy_locked(
+                conn,
+                root_id="root:freshness",
+                required=True,
+                required_axes=("technical", "requirements"),
+                source="dual_review_test",
+                generation=0,
+                now_ms=2,
+            )
+        self._create_review(
+            "task:review-technical",
+            "dispatch:review-technical",
+            reviewer="participant:reviewer",
+            reviewed_task_id="task:work",
+            authors=("participant:author",),
+            findings=[],
+            state="completed",
+            review_state="accepted",
+            revision=1,
+            now_ms=3,
+            review_axis="technical",
+        )
+
+        with self.store._connect() as conn:
+            missing = self.store._terminal_governance_fences(
+                conn,
+                root_id="root:freshness",
+            )
+        self.assertIn(
+            {
+                "reason": "review_axis_uncovered",
+                "reviewAxis": "requirements",
+            },
+            missing["reviewFences"],
+        )
+
+        self._create_review(
+            "task:review-requirements",
+            "dispatch:review-requirements",
+            reviewer="participant:reviewer",
+            reviewed_task_id="task:work",
+            authors=("participant:author",),
+            findings=[],
+            state="completed",
+            review_state="accepted",
+            revision=1,
+            now_ms=10,
+            review_axis="requirements",
+        )
+        with self.store._connect() as conn:
+            complete = self.store._terminal_governance_fences(
+                conn,
+                root_id="root:freshness",
+            )
+        self.assertFalse(
+            any(
+                item.get("reason") == "review_axis_uncovered"
+                for item in complete["reviewFences"]
+            ),
+            complete["reviewFences"],
+        )
 
     def test_new_review_task_cannot_downgrade_prior_blocker(self) -> None:
         prior = _finding()

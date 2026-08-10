@@ -168,7 +168,7 @@ export function applyRoomKernelSnapshot(
     applyTask(next, task, snapshot.taskUpdatedAtMsById[task.taskId], 'snapshot');
   }
   for (const dispatch of snapshot.dispatches) applyDispatch(next, dispatch, 'snapshot');
-  for (const post of snapshot.posts) applyPost(next, post);
+  for (const post of snapshot.posts) applyPost(next, post, 'snapshot');
   for (const session of snapshot.sessions) applySession(next, session, 'snapshot');
   for (const receipt of snapshot.receipts) applyReceipt(next, receipt, 'snapshot');
   next.cancellationSurfaces = snapshot.cancellationSurfaces.map((item) => ({ ...item, detail: { ...item.detail } }));
@@ -201,7 +201,7 @@ function applyCanonicalEvent(state: RoomKernelProjection, event: RoomEventEnvelo
       applyDispatch(state, event.payload.dispatch, eventId);
       return;
     case 'post:published':
-      applyPost(state, event.payload.post);
+      applyPost(state, event.payload.post, eventId);
       return;
     case 'binding:session_projection':
       applySession(state, event.payload.session, eventId);
@@ -264,11 +264,25 @@ function applyDispatch(state: RoomKernelProjection, value: unknown, eventId: str
   state.dispatchesById[dispatch.dispatchId] = dispatch;
 }
 
-function applyPost(state: RoomKernelProjection, value: unknown): void {
+function applyPost(
+  state: RoomKernelProjection,
+  value: unknown,
+  eventId: string,
+): void {
   const post = parseContract('room-post.v2', value);
   if (post.roomId !== state.roomId) throw new TypeError('RoomPost belongs to another Room');
   const root = state.rootsById[post.rootId];
-  if (!root || post.generation !== root.generation) throw new TypeError('RoomPost generation does not match Root');
+  if (!root || post.generation > root.generation) {
+    throw new TypeError('RoomPost generation does not match Root');
+  }
+  if (eventId !== 'snapshot' && post.generation !== root.generation) {
+    appendDiagnostic(state, {
+      eventId,
+      kind: 'stale-generation',
+      summary: 'RoomPost generation does not match Root',
+    });
+    return;
+  }
   if (!state.postsById[post.postId]) state.postOrder.push(post.postId);
   state.postsById[post.postId] = post;
 }

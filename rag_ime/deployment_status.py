@@ -209,15 +209,22 @@ def audit_installed_product(
         for name, item in components.items()
         if not item["ok"]
     ]
+    required_issues = [
+        issue
+        for issue in issues
+        if components[issue["component"]]["required"]
+    ]
     return {
         "schemaVersion": "rag-ime.installed-product-audit.v1",
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "ok": not issues and bool(expected),
+        "requiredOk": not required_issues and bool(expected),
         "expectedCommit": expected,
         "repoRoot": str(repo_root),
         "appSupport": str(app_support),
         "components": components,
         "issues": issues,
+        "requiredIssues": required_issues,
         "summary": (
             "All installed product components are current and provenance-aligned."
             if not issues and expected

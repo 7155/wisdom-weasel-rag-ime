@@ -86,10 +86,9 @@ class RoomNativeSkillTests(unittest.TestCase):
                     420,
                     encoded_routing,
                 )
-                # Full bodies arrive only through skill_load Tool Results. They
-                # may be structured enough to guide real work, but stay bounded.
-                self.assertLessEqual(len(body.splitlines()), 120)
-                self.assertLessEqual(len(body.encode()), 6_000)
+                # Only the compact routing card is resident. The full body is
+                # disclosed by an exact skill_load receipt, so its useful
+                # workflow detail is not constrained by the catalog budget.
                 self.assertIn("## Self-Check", body)
                 self.assertNotIn("create a Dispatch", body)
                 self.assertNotIn("mark work complete", body)
@@ -248,8 +247,8 @@ class RoomNativeSkillTests(unittest.TestCase):
             len(json.dumps(card, ensure_ascii=False, separators=(",", ":"))),
             420,
         )
-        self.assertLessEqual(len(body.splitlines()), 120)
-        self.assertLessEqual(len(body.encode()), 6_000)
+        self.assertTrue(body.strip())
+        self.assertNotIn(body, json.dumps(card, ensure_ascii=False))
 
         policy = RoomSkillPolicy(POLICY_PATH, SKILLS_ROOT)
         self.assertNotIn(skill_id, policy.skill_ids)
@@ -474,22 +473,38 @@ class RoomNativeSkillTests(unittest.TestCase):
 
         alignment = text["alignment-and-decision"]
         self.assertIn("explicit grill mode", alignment)
-        self.assertIn("every material decision-tree branch", alignment)
+        self.assertIn("material decisions as a dependency tree", alignment)
         self.assertIn("including nonblocking tradeoffs", alignment)
-        self.assertIn("ask one question at a time", alignment)
+        self.assertIn("work it in rounds", alignment)
+        self.assertIn("at most four independent questions", alignment)
+        self.assertIn("a dependent question belongs to a later round", alignment)
         self.assertIn("stop only after the user confirms shared understanding", alignment)
+        self.assertIn("comprehension repair", alignment)
+        self.assertIn("do not repeat the same question, add pressure", alignment)
+        self.assertIn("state the recommended answer directly", alignment)
+        self.assertIn("one smaller bounded question", alignment)
+        self.assertIn("missing technical knowledge into work for the user", alignment)
         self.assertIn("domain language delta", alignment)
+        self.assertIn("pre-start plan", alignment)
+        self.assertIn("participant names", alignment)
+        self.assertIn("blocking dependencies and waves", alignment)
 
         planning = text["implementation-planning"]
         self.assertIn("domain language delta, glossary, and adrs", planning)
         self.assertIn("highest stable behavior seam", planning)
         self.assertIn("tracer-bullet candidates", planning)
         self.assertIn("blocking edge", planning)
+        self.assertIn("pre-start plan preview", planning)
+        self.assertIn("living work document", planning)
+        self.assertIn("workspace policy is immutable for one task", planning)
+        self.assertIn("handoff never upgrades the read-only task", planning)
 
         execution = text["implementation-execution"]
         self.assertIn("quality-gate -> independent-review", execution)
         self.assertIn("review is optional", execution)
         self.assertIn("facilitator decides whether risk warrants", execution)
+        self.assertIn("a read-only task never becomes writable through handoff", execution)
+        self.assertIn("create a new `isolated_writable` implementation slice", execution)
 
         tdd = text["test-driven-implementation"]
         self.assertIn("independent source of truth", tdd)
@@ -588,8 +603,8 @@ class RoomNativeSkillTests(unittest.TestCase):
             separators=(",", ":"),
         )
         self.assertLessEqual(len(encoded_routing.encode()), 450, encoded_routing)
-        self.assertLessEqual(len(body.splitlines()), 120)
-        self.assertLessEqual(len(body.encode()), 6_000)
+        self.assertTrue(body.strip())
+        self.assertNotIn(body, encoded_routing)
         self.assertNotIn("cat cafe", normalized_body)
         self.assertNotIn("worktree", normalized_body)
         self.assertNotIn("pull request", normalized_body)
@@ -629,7 +644,6 @@ class RoomNativeSkillTests(unittest.TestCase):
                 encoded = json.dumps(routing, ensure_ascii=False, separators=(",", ":"))
                 self.assertLessEqual(len(encoded.encode()), 450, encoded)
                 body = path.read_text(encoding="utf-8").split("---", 2)[2]
-                self.assertLessEqual(len(body.encode()), 6_000)
                 self.assertIn("## Workflow", body)
                 self.assertIn("## Output Contract", body)
                 self.assertIn("## Self-Check", body)

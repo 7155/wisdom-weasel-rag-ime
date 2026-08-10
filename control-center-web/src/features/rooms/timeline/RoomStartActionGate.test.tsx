@@ -5,12 +5,16 @@ import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-rece
 import type { RootProjection } from '@/contracts/room-kernel-reducer';
 import { createRoomProjection } from '@/contracts/room-reducer';
 import { RoomTurn } from './RoomTurn';
-import { RoomStartActionGate, roomRootRequiresStartAction } from './RoomStartActionGate';
+import {
+  RoomStartActionGate,
+  roomRootIntakePhase,
+  roomRootRequiresStartAction,
+} from './RoomStartActionGate';
 
 describe('RoomStartActionGate', () => {
   afterEach(cleanup);
 
-  it('only asks for a start confirmation after a real clarification gate', () => {
+  it('asks for a start confirmation whenever the canonical intake awaits it', () => {
     const waitingRoot = root('waiting');
     expect(roomRootRequiresStartAction(waitingRoot, [
       receipt(1, { operation: 'room_define', requiresStartAction: false }),
@@ -27,6 +31,15 @@ describe('RoomStartActionGate', () => {
         purpose: 'intake_phase',
         phase: 'awaiting_start',
         clarificationOccurred: true,
+      }),
+    ])).toBe(true);
+
+    expect(roomRootRequiresStartAction(waitingRoot, [
+      receipt(1, { operation: 'room_define', requiresStartAction: true }),
+      receipt(2, {
+        purpose: 'intake_phase',
+        phase: 'awaiting_start',
+        clarificationOccurred: false,
       }),
     ])).toBe(true);
 
@@ -62,6 +75,16 @@ describe('RoomStartActionGate', () => {
     ])).toBe(false);
   });
 
+  it('reads the latest applied intake phase only from the current Root generation', () => {
+    const runningRoot = root('running');
+    expect(roomRootIntakePhase(runningRoot, [
+      receipt(1, { purpose: 'intake_phase', phase: 'clarifying' }),
+      receipt(2, { purpose: 'intake_phase', phase: 'aligning' }),
+      { ...receipt(3, { purpose: 'intake_phase', phase: 'executing' }), generation: 1 },
+      { ...receipt(4, { purpose: 'intake_phase', phase: 'awaiting_start' }), status: 'rejected' },
+    ])).toBe('aligning');
+  });
+
   it('publishes one explicit human action without exposing protocol language', () => {
     const onStart = vi.fn();
     const { rerender } = render(<RoomStartActionGate onStart={onStart} starting={false} />);
@@ -76,7 +99,7 @@ describe('RoomStartActionGate', () => {
     expect(screen.getByRole('button', { name: '正在开始' })).toBeDisabled();
   });
 
-  it('renders the action in the real turn only for the clarified waiting state', () => {
+  it('renders the action in the real turn for a canonical waiting state', () => {
     const projection = createRoomProjection('room-a');
     projection.turnsById['turn-a'] = {
       id: 'turn-a',

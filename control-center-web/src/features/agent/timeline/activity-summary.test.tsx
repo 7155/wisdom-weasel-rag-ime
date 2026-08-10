@@ -973,7 +973,7 @@ describe('Agent tool activity details', () => {
     expect(screen.queryByRole('button', { name: '批准' })).not.toBeInTheDocument();
   });
 
-  it('auto-follows new public activity until the reader manually scrolls away', () => {
+  it('keeps the live preview to one latest thought and one latest Tool update', () => {
     const reasoning: AgentActivityProjection = {
       id: 'reasoning-public-feed',
       turnId: 'turn-public-feed',
@@ -982,29 +982,29 @@ describe('Agent tool activity details', () => {
       summary: '正在核对事件顺序',
       payload: {
         source: 'provider_reasoning_summary',
-        items: ['正在核对事件顺序'],
+        items: ['先检查旧路径', '正在核对事件顺序'],
       },
       createdAtMs: 1,
       updatedAtMs: 2,
     };
-    const activity = (summary: string) => toolActivity('tool_progress', 'running', {
-      toolCallId: 'call-public-feed',
+    const activity = (toolCallId: string, summary: string) => toolActivity('tool_progress', 'running', {
+      toolCallId,
       toolName: 'workspace_search',
       summary,
     });
-    const view = render(<PublicActivityFeed activities={[reasoning, activity('正在检索')]} />);
-    const feed = screen.getByRole('log', { name: '最新公开思考与工具活动' });
-    Object.defineProperty(feed, 'scrollHeight', { configurable: true, value: 300 });
-    Object.defineProperty(feed, 'clientHeight', { configurable: true, value: 100 });
-    feed.scrollTop = 200;
+    const { container } = render(<PublicActivityFeed activities={[
+      activity('call-public-feed-old', '旧的检索结果'),
+      reasoning,
+      activity('call-public-feed-latest', '正在核对第二批结果'),
+    ]} />);
 
-    view.rerender(<PublicActivityFeed activities={[reasoning, activity('已找到第一批结果')]} />);
-    expect(feed.scrollTop).toBe(300);
-
-    feed.scrollTop = 40;
-    fireEvent.scroll(feed);
-    view.rerender(<PublicActivityFeed activities={[reasoning, activity('正在核对第二批结果')]} />);
-    expect(feed.scrollTop).toBe(40);
+    expect(screen.getByRole('status', { name: '本轮最新进展' })).toBeInTheDocument();
+    expect(container.querySelectorAll('.agent-public-activity__feed > article')).toHaveLength(2);
+    expect(screen.getByText('正在核对事件顺序')).toBeInTheDocument();
+    expect(screen.getByText('正在核对第二批结果')).toBeInTheDocument();
+    expect(screen.queryByText('先检查旧路径')).not.toBeInTheDocument();
+    expect(screen.queryByText('旧的检索结果')).not.toBeInTheDocument();
+    expect(screen.queryByRole('log', { name: '最新公开思考与工具活动' })).not.toBeInTheDocument();
   });
 
 

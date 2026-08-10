@@ -618,7 +618,9 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "modelVisible": False,
         "domain": "workspace",
         "displayName": "受控命令",
-        "description": "经原生批准后，在授权工作区的 macOS 沙箱中运行有界命令",
+        "description": (
+            "在授权工作区的 macOS 沙箱中运行有界命令；只读复核命令不授予源码写权限"
+        ),
         "when": ("协调 Session 必须运行构建、测试或诊断命令",),
         "notFor": (
             "已知文本可由 workspace_read 或 workspace_patch 完成",
@@ -628,7 +630,10 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         ),
         "input": "命令、工作目录、超时和网络开关",
         "output": "退出状态、标准输出、错误输出和执行回执",
-        "does": "在授权工作区受控运行命令。",
+        "does": (
+            "在授权工作区受控运行命令；只读复核时源码强制只读，"
+            "仅本次临时缓存可写。"
+        ),
         "operations": ("run",),
         "operationRisks": {"run": "R2"},
         "sessionModes": ("coordinator",),
@@ -636,6 +641,19 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
     },
 )
 _TOOL_SPEC_BY_ID = {str(item["id"]): item for item in _TOOL_SPECS}
+_WORKSPACE_TOOLS = frozenset(
+    {
+        "workspace_list",
+        "workspace_read",
+        "workspace_search",
+        "workspace_lsp",
+        "workspace_edit",
+        "workspace_patch",
+        "workspace_write",
+        "workspace_shell",
+        "workspace_job",
+    }
+)
 if (
     len(_TOOL_SPEC_BY_ID) != len(_TOOL_SPECS)
     or tuple(_TOOL_SPEC_BY_ID) != CONTROL_TOOL_IDS
@@ -1917,11 +1935,16 @@ class ControlToolGateway:
 
     def manifests(self, *, session_id: str = "") -> dict[str, object]:
         session = self.sessions.get(session_id) if session_id else None
-        return build_capability_catalog(
-            tool_manifests=self._manifest_items(
+        public_manifests = [
+            manifest
+            for manifest in self._manifest_items(
                 session,
                 include_runtime_projection=session is not None,
-            ),
+            )
+            if _TOOL_SPEC_BY_ID[str(manifest["id"])].get("modelVisible") is not False
+        ]
+        return build_capability_catalog(
+            tool_manifests=public_manifests,
             session=session,
             configuration_store=self.configuration_store,
             governed_skills=self.governed_skills,
@@ -2078,6 +2101,14 @@ class ControlToolGateway:
                         spec=spec,
                     )
                 ]
+                # A coordinator without a selected directory must not expose
+                # filesystem tools to Pi. The control center still lists the
+                # capability and can prompt for a directory, but the runtime
+                # cannot turn a missing scope into a failing Tool call.
+                if str(spec["id"]) in _WORKSPACE_TOOLS and not session.get(
+                    "workspaceRoots"
+                ):
+                    effective_operations = []
                 if not available:
                     effective_operations = []
                 manifest["enabled"] = bool(effective_operations)
@@ -2257,6 +2288,15 @@ class ControlToolGateway:
             )
         if not _tool_profile_allows(session, tool=tool, operation=operation, spec=spec):
             raise ValueError("tool operation is not enabled for this session tool profile")
+        room_source_read_only = bool(
+            room_authorization is not None
+            and room_authorization.get("workspaceAccess")
+            == "source_read_only"
+        )
+        read_only_validation_command = (
+            (read_only_policy_active(session) or room_source_read_only)
+            and (tool, operation) == ("workspace_shell", "run")
+        )
         if (tool, operation) in {
             ("workspace_edit", "apply"),
             ("workspace_patch", "apply"),
@@ -2265,7 +2305,7 @@ class ControlToolGateway:
             ("workspace_write", "apply"),
             ("workspace_lsp", "rename"),
             ("workspace_lsp", "code_action_apply"),
-        }:
+        } and not read_only_validation_command:
             # A preview request is still planning. Prove Act is open here, but
             # transition to executing only when an approved write is applied.
             self.sessions.require_workspace_act(
@@ -2292,7 +2332,18 @@ class ControlToolGateway:
             "work_documents": self._work_documents,
         }
         risk_level = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
-        if tool == "work_documents":
+        if read_only_validation_command:
+            command_session = (
+                {**session, "executionMode": "read_only"}
+                if room_source_read_only
+                else session
+            )
+            prepared = self.workspace_harness.prepare_command(
+                command_session,
+                args,
+            )
+            result = self.workspace_harness.execute(prepared)
+        elif tool == "work_documents":
             handler_args = dict(args)
             handler_args["_sessionId"] = session_id
             result = handlers[tool](operation, handler_args)
@@ -8982,6 +9033,11 @@ def _tool_profile_allows(
     profile = str(session.get("toolProfileVersion") or "control-center-v1")
     if read_only_policy_active(session) and read_only_blocks_effect(tool, operation):
         return False
+    if (
+        read_only_policy_active(session)
+        and (tool, operation) == ("workspace_shell", "run")
+    ):
+        return True
     if profile in {"control-center-v1", "subagent-worker-v1"}:
         return True
     if profile != "subagent-readonly-v1":
@@ -9024,10 +9080,8 @@ def _tool_profile_allows(
         "agents": frozenset(
             {
                 "catalog",
-                "delegate",
                 "status",
                 "artifact",
-                "abort",
             }
         ),
         "agent_schedule": frozenset({"list", "runs"}),
@@ -9050,6 +9104,7 @@ def _tool_profile_allows(
             }
         ),
         "workspace_job": frozenset({"list", "status", "logs"}),
+        "workspace_shell": frozenset({"run"}),
         "desktop_semantic": frozenset({"status", "list", "inspect"}),
     }
     operation_risk = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")

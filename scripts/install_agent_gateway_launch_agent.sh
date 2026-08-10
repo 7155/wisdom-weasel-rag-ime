@@ -17,6 +17,7 @@ HOST="${RAG_IME_AGENT_GATEWAY_HOST:-127.0.0.1}"
 PORT="${RAG_IME_AGENT_GATEWAY_PORT:-8768}"
 PROJECT="${RAG_IME_PROJECT:-wisdom-weasel-rag-ime}"
 DRY_RUN="${RAG_IME_LAUNCH_AGENT_DRY_RUN:-0}"
+HEALTH_TIMEOUT_SECONDS="${RAG_IME_AGENT_GATEWAY_HEALTH_TIMEOUT_SECONDS:-120}"
 MANAGED_RUNTIME_POINTER="$APP_SUPPORT_DIR/PiRuntime/current.json"
 WEB_SOURCE_DIR="$ROOT/control-center-web/dist"
 WEB_INSTALL_DIR="$APP_CODE_DIR/control-center-web/dist"
@@ -26,6 +27,11 @@ DEBUG_CONTEXT_MAX_BYTES="${RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES:-5368709120}"
 DEBUG_CONTEXT_MAX_CALLS="${RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS:-128}"
 WEB_SOURCE_BACKUP=""
 WEB_SOURCE_PRESENT=0
+
+if [[ ! "$HEALTH_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || (( HEALTH_TIMEOUT_SECONDS < 1 )); then
+  echo "RAG_IME_AGENT_GATEWAY_HEALTH_TIMEOUT_SECONDS must be a positive integer" >&2
+  exit 2
+fi
 
 restore_web_source_dist() {
   [[ -n "$WEB_SOURCE_BACKUP" ]] || return 0
@@ -289,7 +295,7 @@ launchctl enable "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
 sleep 0.2
 bootstrap_launch_agent
 
-deadline=$((SECONDS + 45))
+deadline=$((SECONDS + HEALTH_TIMEOUT_SECONDS))
 while (( SECONDS < deadline )); do
   if "$PYTHON_EXECUTABLE" - "$HOST" "$PORT" >/dev/null 2>&1 <<'PY'
 import json
@@ -309,5 +315,5 @@ PY
   sleep 0.5
 done
 
-echo "Agent Gateway health did not become ready; inspect $LOG_DIR/agent-gateway.err.log" >&2
+echo "Agent Gateway health did not become ready after ${HEALTH_TIMEOUT_SECONDS}s; inspect $LOG_DIR/agent-gateway.err.log" >&2
 exit 1

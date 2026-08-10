@@ -910,6 +910,39 @@ describe('RoomEventReducer', () => {
     ]);
   });
 
+  it('omits progress events that add no public information', () => {
+    const state = reduceRoomEvents(
+      createRoomProjection('room-1'),
+      [
+        parseRoomEvent(wireRoomEvent(1, 'participant_activity', {
+          rootId: 'root-public',
+          dispatchId: 'dispatch-research',
+          participantId: 'participant-research',
+          sourceSessionId: 'session-research',
+          activityKind: 'work',
+          state: 'completed',
+          summary: '协作进度已经同步',
+        })),
+        parseRoomEvent(wireRoomEvent(2, 'participant_activity', {
+          rootId: 'root-public',
+          dispatchId: 'dispatch-research',
+          participantId: 'participant-research',
+          sourceSessionId: 'session-research',
+          sourceEventType: 'current_progress',
+          state: 'running',
+          summary: '已完成导入预览，正在核对错误行',
+        })),
+      ],
+    );
+
+    expect(selectRoomParticipantPublicProgress(state)).toEqual([
+      expect.objectContaining({
+        kind: 'progress',
+        summary: '已完成导入预览，正在核对错误行',
+      }),
+    ]);
+  });
+
   it('keeps one authoritative selectable request until its Session resolves it', () => {
     const waiting = reduceRoomEvent(
       createRoomProjection('room-1'),

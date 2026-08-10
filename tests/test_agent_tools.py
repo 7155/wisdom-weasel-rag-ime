@@ -1274,6 +1274,75 @@ class ControlToolGatewayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "archived"):
             self.gateway.execute(self._call("catalog"))
 
+    def test_coordinator_without_workspace_still_returns_tool_catalog(self) -> None:
+        coordinator = self.store.create(
+            title="尚未选择工作区",
+            mode="coordinator",
+            created_at_ms=2,
+        )
+
+        catalog = self.gateway.manifests(session_id=str(coordinator["id"]))
+
+        workspace_lsp = next(
+            item for item in catalog["items"] if item["id"] == "workspace_lsp"
+        )
+        self.assertIn("runtimeProjection", workspace_lsp)
+        projection = workspace_lsp["runtimeProjection"]
+        self.assertEqual(projection["state"], "unavailable")
+        self.assertEqual(projection["roots"], [])
+        self.assertIn("尚未授权工作区", projection["summary"])
+
+        manifests = {item["id"]: item for item in catalog["items"]}
+        self.assertTrue(
+            {
+                "workspace_list",
+                "workspace_read",
+                "workspace_search",
+            }.isdisjoint(manifests)
+        )
+        for tool_id in (
+            "workspace_lsp",
+        ):
+            self.assertFalse(manifests[tool_id]["enabled"])
+            self.assertEqual(manifests[tool_id]["effectiveOperations"], [])
+
+        with self.assertRaisesRegex(WorkspaceHarnessError, "尚未选择授权工作区"):
+            self.gateway.execute(
+                {
+                    **self._tool_call(
+                        "workspace_read",
+                        "read",
+                        path="mood.txt",
+                    ),
+                    "sessionId": coordinator["id"],
+                }
+            )
+
+    def test_public_catalog_hides_native_projection_sources_but_keeps_lsp(self) -> None:
+        coordinator = self.store.create(
+            title="只公开用户可选能力",
+            mode="coordinator",
+            workspace_roots=[self.tmp.name],
+            created_at_ms=2,
+        )
+
+        ids = {
+            str(item["id"])
+            for item in self.gateway.manifests(
+                session_id=str(coordinator["id"]),
+            )["items"]
+        }
+
+        self.assertTrue(
+            {
+                "workspace_list",
+                "workspace_read",
+                "workspace_search",
+                "workspace_shell",
+            }.isdisjoint(ids)
+        )
+        self.assertIn("workspace_lsp", ids)
+
     def test_explicit_tool_allowlist_filters_manifests_and_execution(self) -> None:
         self.session = self.store.set_runtime_policy(
             str(self.session["id"]),
@@ -1292,7 +1361,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "tool profile"):
             self.gateway.execute(self._call("catalog"))
 
-    def test_manifests_expose_workspace_shell_only_for_coordinator_sessions(self) -> None:
+    def test_public_manifests_exclude_internal_projection_sources(self) -> None:
         manifests = self.gateway.manifests()["items"]
         self.assertEqual(
             [manifest["id"] for manifest in manifests],
@@ -1313,17 +1382,9 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "todo",
                 "agent_goal",
                 "plugins",
-                "work_documents",
                 "desktop_semantic",
-                "workspace_list",
                 "workspace_lsp",
-                "workspace_read",
-                "workspace_search",
-                "workspace_patch",
-                "workspace_edit",
-                "workspace_write",
                 "workspace_job",
-                "workspace_shell",
                 "ask",
             ],
         )
@@ -1394,11 +1455,6 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(browser_tool["operationRisks"]["screenshot"], "R0")
         self.assertEqual(browser_tool["operationRisks"]["navigate"], "R1")
         self.assertEqual(browser_tool["operationRisks"]["type"], "R1")
-        workspace_shell = next(
-            manifest for manifest in manifests if manifest["id"] == "workspace_shell"
-        )
-        self.assertEqual(workspace_shell["sessionModes"], ["coordinator"])
-        self.assertEqual(workspace_shell["operationRisks"], {"run": "R2"})
         workspace_lsp = next(
             manifest for manifest in manifests if manifest["id"] == "workspace_lsp"
         )
@@ -1914,7 +1970,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         finally:
             background_jobs.close()
 
-    def test_read_only_keeps_workspace_reads_and_creates_no_write_approval(self) -> None:
+    def test_read_only_keeps_workspace_reads_and_runs_source_readonly_validation(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-read-only"
         workspace.mkdir()
         target = workspace / "README.md"
@@ -1926,8 +1982,30 @@ class ControlToolGatewayTests(unittest.TestCase):
             workspace_roots=[str(workspace)],
             created_at_ms=20,
         )
+        executed = []
 
-        read = self.gateway.execute(
+        def execute(prepared):
+            executed.append(prepared)
+            return {
+                "schemaVersion": "rag-ime.workspace-command-receipt.v1",
+                "mutationApplied": False,
+                "summary": "命令执行完成，退出码 0",
+                "exitCode": 0,
+                "output": "validation ok\n",
+                "sourceReadOnly": prepared.source_read_only,
+                "undoAvailable": False,
+            }
+
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=_Facade(),
+            workspace_harness=WorkspaceHarness(executor=execute),
+        )
+
+        read = gateway.execute(
             {
                 **self._tool_call("workspace_read", "read", path=str(target)),
                 "sessionId": session["id"],
@@ -1935,23 +2013,35 @@ class ControlToolGatewayTests(unittest.TestCase):
         )["result"]
         self.assertEqual(read["content"], "只读证据\n")
 
-        for call in (
-            self._tool_call(
-                "workspace_patch",
-                "apply",
-                path=str(target),
-                oldText="只读证据",
-                newText="不得写入",
-            ),
-            self._tool_call(
-                "workspace_shell",
-                "run",
-                command="pwd",
-                cwd=str(workspace),
-            ),
-        ):
-            with self.assertRaisesRegex(ValueError, "not enabled|read-only"):
-                self.gateway.execute({**call, "sessionId": session["id"]})
+        with self.assertRaisesRegex(ValueError, "not enabled|read-only"):
+            gateway.execute(
+                {
+                    **self._tool_call(
+                        "workspace_patch",
+                        "apply",
+                        path=str(target),
+                        oldText="只读证据",
+                        newText="不得写入",
+                    ),
+                    "sessionId": session["id"],
+                }
+            )
+        shell = gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_shell",
+                    "run",
+                    command="python3 -m unittest",
+                    cwd=str(workspace),
+                ),
+                "sessionId": session["id"],
+            }
+        )["result"]
+
+        self.assertEqual(shell["exitCode"], 0)
+        self.assertEqual(len(executed), 1)
+        self.assertTrue(executed[0].source_read_only)
+        self.assertFalse(executed[0].allow_network)
         self.assertEqual(target.read_text(encoding="utf-8"), "只读证据\n")
         self.assertEqual(
             self.store.list_approvals(session_id=str(session["id"])),

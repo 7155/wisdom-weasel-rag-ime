@@ -22,6 +22,7 @@ export interface RoomTaskV3 {
   invitationId: string | null;
   reviewOfTaskIds: string[];
   reviewAuthorParticipantIds: string[];
+  reviewAxis?: 'technical' | 'requirements';
   reviewState:
     | 'not_required'
     | 'required'

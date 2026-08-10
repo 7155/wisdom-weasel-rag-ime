@@ -58,11 +58,13 @@ _WORKSPACE_EFFECTS = frozenset(
     }
 )
 
-# Room read-only work may inspect an authorized workspace, but it must never
-# mutate it, start or cancel a background job, run a command, or apply an LSP
-# edit. Keep this predicate shared by manifest disclosure and both execution
-# paths so a stale workspace-managed grant cannot widen the live policy.
-READ_ONLY_BLOCKED_EFFECTS = _WORKSPACE_EFFECTS
+# Room read-only work may inspect an authorized workspace and run a foreground
+# validation command in the source-read-only workspace sandbox. It must never
+# mutate source, start or cancel a background job, or apply an LSP edit. The
+# harness, rather than command text, is the write boundary for workspace_shell.
+READ_ONLY_BLOCKED_EFFECTS = _WORKSPACE_EFFECTS - {
+    ("workspace_shell", "run"),
+}
 
 
 def read_only_blocks_effect(tool: object, operation: object) -> bool:
@@ -90,10 +92,21 @@ _ALWAYS_MANUAL_EFFECTS = frozenset(
     }
 )
 
-# Full automation may skip the model only for a command whose concrete
-# hash-bound preview proves that it remains an ordinary, in-scope command.
-# The workspace harness remains the authoritative executor-side hard fence.
+# Full automation may skip the model for an ordinary command whose concrete,
+# server-created preview proves the exact user-authorized workspace scope and
+# excludes network, destructive, sensitive, and R3 effects. The workspace
+# harness remains the authoritative executor-side hard fence.
 _SAFE_FULL_AUTO_EFFECT = ("workspace_shell", "run")
+_SAFE_FULL_AUTO_TEXT_MUTATIONS = frozenset(
+    {
+        ("workspace_edit", "apply"),
+        ("workspace_patch", "apply"),
+        ("workspace_write", "apply"),
+        ("edit", "apply"),
+        ("write", "apply"),
+        ("apply_patch", "apply"),
+    }
+)
 _DESTRUCTIVE_PREVIEW = re.compile(
     r"(?i)(?:\brm\s+[^\n]*(?:-[^\n]*r|--recursive)|"
     r"\bgit\s+(?:reset\s+--hard|clean\s+-[^\n]*f)|"
@@ -108,6 +121,9 @@ _SENSITIVE_PREVIEW = re.compile(
 _NETWORK_PREVIEW = re.compile(
     r"(?i)(?:\b(?:curl|wget|ssh|scp|sftp|rsync|ftp|telnet|ncat|nc)\b|"
     r"https?://)"
+)
+_REMOTE_GIT_PREVIEW = re.compile(
+    r"(?i)\bgit\s+(?:push|fetch|pull|clone|ls-remote)\b"
 )
 
 
@@ -221,19 +237,18 @@ def _safe_full_auto_command(
     workspace_roots = list(session.get("workspaceRoots") or [])
     expected_scope = workspace_scope_sha256(workspace_roots)
     cwd = str(action.get("cwd") or "").strip()
-    preview_scope = str(
-        base_state.get("workspaceRootsSha256")
-        or base_state.get("workspaceRootSha256")
-        or ""
-    ).strip().lower()
+    preview_scope = str(base_state.get("workspaceScopeSha256") or "").strip().lower()
+    execution_fence = str(base_state.get("workspaceRootsSha256") or "").strip().lower()
     if (
         not expected_scope
         or preview_scope != expected_scope
+        or not execution_fence
         or not _path_is_within_workspace_scope(cwd, workspace_roots)
         or _strict_preview_bool(action.get("allowNetwork"))
         or _DESTRUCTIVE_PREVIEW.search(command)
         or _SENSITIVE_PREVIEW.search(command)
         or _NETWORK_PREVIEW.search(command)
+        or _REMOTE_GIT_PREVIEW.search(command)
     ):
         return False
     return True
@@ -251,6 +266,33 @@ def safe_full_auto_command(
         session,
         preview,
         risk_level=risk_level,
+    )
+
+
+def _safe_full_auto_text_mutation(
+    session: Mapping[str, object],
+    preview: Mapping[str, object] | None,
+    *,
+    risk_level: object,
+) -> bool:
+    """Allow a server-prepared ordinary text mutation without model review."""
+
+    if str(risk_level or "").strip().upper() == "R3":
+        return False
+    action = _preview_mapping(preview, "actionPayload")
+    base_state = _preview_mapping(preview, "baseState")
+    path = str(action.get("path") or "").strip()
+    workspace_roots = list(session.get("workspaceRoots") or [])
+    expected_scope = workspace_scope_sha256(workspace_roots)
+    preview_scope = str(base_state.get("workspaceScopeSha256") or "").strip().lower()
+    execution_fence = str(base_state.get("workspaceRootSha256") or "").strip().lower()
+    return bool(
+        expected_scope
+        and preview_scope == expected_scope
+        and execution_fence
+        and path
+        and _path_is_within_workspace_scope(path, workspace_roots)
+        and not _SENSITIVE_PREVIEW.search(path)
     )
 
 
@@ -286,6 +328,12 @@ def approval_strategy(
             )
         ):
             return APPROVAL_AUTO
+        if effect in _SAFE_FULL_AUTO_TEXT_MUTATIONS and _safe_full_auto_text_mutation(
+            session,
+            preview,
+            risk_level=risk_level,
+        ):
+            return APPROVAL_AUTO
         return APPROVAL_MODEL
     if effect in _ALWAYS_MANUAL_EFFECTS:
         return APPROVAL_ASK
@@ -316,7 +364,8 @@ def execution_policy_prompt(session: Mapping[str, object]) -> str:
     guidance = {
         READ_ONLY_EXECUTION_MODE: (
             "本轮是只读模式。可以直接查看、检索和分析；\n"
-            "文件写入、Shell 和其他外部改变不会执行。"
+            "可以在源码只读、网络关闭的沙箱中运行前台测试或构建命令，命令只能写入本次临时缓存；\n"
+            "文件写入、后台任务和其他外部改变不会执行。"
         ),
         PER_ACTION_EXECUTION_MODE: (
             "本轮是每次确认模式。查看、检索和分析可以直接进行；\n"

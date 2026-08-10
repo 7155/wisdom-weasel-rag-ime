@@ -76,7 +76,10 @@ function AgentWorkspace() {
   const requestedDraft = searchParams.get('draft')?.trim().slice(0, 4_000) ?? '';
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [personas, setPersonas] = useState(() => __CONTROL_PREVIEW__ && transport.kind === 'mock' ? previewPersonas : []);
-  const [selectedId, setSelectedId] = useState('');
+  // A Room task/owner deep link already carries the exact Session identity.
+  // Start its snapshot in parallel with the slower rail catalog instead of
+  // leaving the conversation blank until all projects and Sessions arrive.
+  const [selectedId, setSelectedId] = useState(requestedSessionId);
   const [catalog, setCatalog] = useState<ModelCatalog>();
   const [commands, setCommands] = useState<AgentCommand[]>([]);
   const [tools, setTools] = useState<ToolManifest[]>([]);
@@ -362,7 +365,12 @@ function AgentWorkspace() {
     }
   }, [showArchived, transport]);
 
-  useEffect(() => { void loadSessions(requestedSessionId); }, [loadSessions, requestedSessionId]);
+  useEffect(() => {
+    if (requestedSessionId && requestedSessionId !== selectedIdRef.current) {
+      selectSessionId(requestedSessionId);
+    }
+    void loadSessions(requestedSessionId);
+  }, [loadSessions, requestedSessionId]);
   useEffect(() => {
     setVisibleError(visibleSessionError(selectedId));
     // A Session's last Pi-confirmed catalog is safe to render while the
@@ -414,17 +422,47 @@ function AgentWorkspace() {
       const abort = new AbortController();
       snapshotAbort = abort;
       try {
-        const snapshotResponse = await transport.request({
-          pathId: 'agent.session.snapshot',
-          params: { sessionId: selectedId },
-          signal: abort.signal,
-        });
+        let snapshotResponse: unknown;
+        try {
+          snapshotResponse = await transport.request({
+            pathId: 'agent.session.snapshot',
+            params: { sessionId: selectedId },
+            query: { view: 'recent' },
+            signal: abort.signal,
+          });
+        } catch (recentError) {
+          if (abort.signal.aborted) throw recentError;
+          snapshotResponse = await transport.request({
+            pathId: 'agent.session.snapshot',
+            params: { sessionId: selectedId },
+            signal: abort.signal,
+          });
+        }
         if (!active || requestId !== snapshotRequestId) return false;
-        if (__CONTROL_PREVIEW__ && transport.kind === 'mock') {
-          useAgentLiveStore.getState().hydrateSnapshot(selectedId, previewAgentSnapshot(selectedId));
-          useAgentLiveStore.getState().applyEvents(selectedId, previewAgentEvents(selectedId));
-        } else {
-          useAgentLiveStore.getState().hydrate(selectedId, snapshotResponse);
+        const hydrateSnapshotResponse = (value: unknown) => {
+          if (__CONTROL_PREVIEW__ && transport.kind === 'mock') {
+            useAgentLiveStore.getState().hydrateSnapshot(selectedId, previewAgentSnapshot(selectedId));
+            useAgentLiveStore.getState().applyEvents(selectedId, previewAgentEvents(selectedId));
+          } else {
+            useAgentLiveStore.getState().hydrate(selectedId, value);
+          }
+        };
+        hydrateSnapshotResponse(snapshotResponse);
+        if (isRecentAgentSnapshot(snapshotResponse)) {
+          try {
+            const fullSnapshot = await transport.request({
+              pathId: 'agent.session.snapshot',
+              params: { sessionId: selectedId },
+              signal: abort.signal,
+            });
+            if (!active || requestId !== snapshotRequestId) return false;
+            hydrateSnapshotResponse(fullSnapshot);
+          } catch (fullError) {
+            if (abort.signal.aborted) throw fullError;
+            // The recent window is already authoritative and usable. Keep it
+            // visible and continue from its cursor; a later recovery snapshot
+            // can restore older transcript entries without duplicating turns.
+          }
         }
         const cursor = agentProjection(selectedId).resumeToken;
         unsubscribe();
@@ -1454,6 +1492,14 @@ function AgentWorkspace() {
     }
   }
 
+  async function reconcileUnconfirmedRuntimePolicy(sessionId: string): Promise<void> {
+    // Runtime policy is owned by the backend Session receipt. A success flag
+    // without that receipt must never become a locally inferred grant.
+    await loadSessions(sessionId);
+    if (selectedIdRef.current === sessionId) await retryCapabilityCatalog();
+    setSessionError(sessionId, '权限更新未返回确认结果，已重新读取对话状态。');
+  }
+
   async function changePermission(selection: AgentPermissionSelection): Promise<void> {
     if (!session) return;
     if (busy || stopping) {
@@ -1497,19 +1543,11 @@ function AgentWorkspace() {
             : {}),
         },
       });
-      const updated = isRecord(response.session)
-        ? response.session as unknown as SessionSummary
-        : {
-          ...session,
-          mode: selection.mode,
-          toolProfileVersion: selection.toolProfileVersion,
-          executionMode: selection.executionMode,
-          workspaceScopeGranted: selection.executionMode === 'workspace_managed'
-            || selection.executionMode === 'full_trust',
-          toolAllowlistMode: 'profile' as const,
-          allowedTools: [],
-          workspaceRoots,
-        };
+      if (!isRecord(response.session)) {
+        await reconcileUnconfirmedRuntimePolicy(session.id);
+        return;
+      }
+      const updated = response.session as unknown as SessionSummary;
       setSessions((current) => current.map((item) => item.id === session.id ? updated : item));
       if (selectedIdRef.current !== session.id) return;
       setToolCatalogStatus('loading');
@@ -1584,9 +1622,11 @@ function AgentWorkspace() {
             : {}),
         },
       });
-      const updated = isRecord(response.session)
-        ? response.session as unknown as SessionSummary
-        : { ...session, mode: 'coordinator' as const, workspaceRoots };
+      if (!isRecord(response.session)) {
+        await reconcileUnconfirmedRuntimePolicy(session.id);
+        return;
+      }
+      const updated = response.session as unknown as SessionSummary;
       setSessions((current) => current.map((item) => item.id === session.id ? updated : item));
       if (selectedIdRef.current !== session.id) return;
       const toolResponse = await transport.request({ pathId: 'agent.tools.list', query: { sessionId: session.id } });
@@ -1652,7 +1692,7 @@ function AgentWorkspace() {
             <IconButton ref={statusToggleRef} className="agent-status-toggle" aria-controls="agent-status-panel" aria-expanded={statusOpen} label={statusOpen ? '收起任务中心' : '展开任务中心'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} disabled={!session} onClick={toggleStatus} tooltip />
           </div>
         </header>
-        {selectedId ? <AgentTimeline assistantName={identity.assistantName} sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked && !isRoomParticipant} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} scrollToLatestRequest={scrollToLatestRequest} onAtBottomChange={setTimelineAtBottom} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setSelectedDraft} onRetryTurn={retryTurn} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
+        {selectedId ? <AgentTimeline assistantName={identity.assistantName} sessionId={selectedId} persona={persona} loading={loading && !session} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked && !isRoomParticipant} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} scrollToLatestRequest={scrollToLatestRequest} onAtBottomChange={setTimelineAtBottom} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setSelectedDraft} onRetryTurn={retryTurn} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
         {session ? (
           <div className="agent-composer-dock">
             {pendingGenericInput && !pendingApproval && !pendingMemoryReview ? (
@@ -1769,6 +1809,12 @@ function AgentWorkspace() {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
+
+function isRecentAgentSnapshot(value: unknown): boolean {
+  return isRecord(value)
+    && value.snapshotScope === 'recent'
+    && value.partial === true;
+}
 function conversationNodeText(blocks: Array<{ type: string; data: Record<string, unknown> }>): string {
   const value = blocks.map((block) => {
     const candidates = [block.data.text, block.data.markdown, block.data.code, block.data.message, block.data.summary];

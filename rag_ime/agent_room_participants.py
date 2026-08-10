@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from threading import RLock
 
 from .agent_personas import AgentPersonaStore
@@ -16,6 +17,7 @@ from .agent_rooms import (
     AgentRoomStore,
     normalize_collaboration_role,
 )
+from .agent_room_workspace_ledger import RoomWorkspaceLedgerStore
 from .agent_sessions import (
     AgentSessionNotFound,
     AgentSessionStore,
@@ -47,6 +49,7 @@ class RoomParticipantLifecycleService:
     ) -> None:
         self.rooms = rooms
         self.sessions = sessions
+        self.workspace_ledger = RoomWorkspaceLedgerStore(sessions.db_path)
         self.personas = personas
         self.events = events
         self.create_session = create_session
@@ -89,6 +92,7 @@ class RoomParticipantLifecycleService:
         if room.get("status") != "active":
             return
         with self.turn_lock:
+            active_session_ids = self.active_runtime_session_ids()
             for participant in room.get(
                 "participants",
                 [],
@@ -96,6 +100,24 @@ class RoomParticipantLifecycleService:
                 if (
                     not isinstance(participant, Mapping)
                     or participant.get("status") != "active"
+                ):
+                    continue
+                session_id = str(
+                    participant.get("sessionId") or ""
+                ).strip()
+                try:
+                    current = self.sessions.get(session_id)
+                except AgentSessionNotFound:
+                    current = None
+                # A running Room Task may hold a narrower, isolated worktree
+                # lease than the Room's base workspace.  Progress polling is
+                # not allowed to replace that live authority with the default
+                # participant policy.  Terminal settlement restores the base
+                # policy through the workspace coordinator.
+                if current is not None and self.session_is_busy(
+                    session_id,
+                    current,
+                    active_session_ids=active_session_ids,
                 ):
                     continue
                 session = self.repair_session(
@@ -388,6 +410,28 @@ class RoomParticipantLifecycleService:
         session: Mapping[str, object],
     ) -> dict[str, object]:
         """Keep Room responsibility separate from Agent capability."""
+
+        active_binding = self.workspace_ledger.active_binding_for_session(
+            str(session["id"])
+        )
+        if active_binding is not None:
+            expected_roots = [
+                str(
+                    Path(str(active_binding["workspaceRoot"]))
+                    .expanduser()
+                    .resolve(strict=False)
+                )
+            ]
+            actual_roots = [
+                str(Path(str(value)).expanduser().resolve(strict=False))
+                for value in session.get("workspaceRoots") or []
+                if str(value).strip()
+            ]
+            if actual_roots != expected_roots:
+                raise RuntimeError(
+                    "active isolated workspace binding does not match its Session lease"
+                )
+            return dict(session)
 
         mode = (
             "coordinator"

@@ -14,6 +14,25 @@ from rag_ime.agent_room_skills import RoomSkillPolicy
 
 
 class LaunchAgentScriptTests(unittest.TestCase):
+    def test_agent_gateway_installer_allows_room_recovery_to_finish_before_health_timeout(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        script_source = (
+            root / "scripts" / "install_agent_gateway_launch_agent.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            'RAG_IME_AGENT_GATEWAY_HEALTH_TIMEOUT_SECONDS:-120',
+            script_source,
+        )
+        self.assertIn(
+            'deadline=$((SECONDS + HEALTH_TIMEOUT_SECONDS))',
+            script_source,
+        )
+        self.assertIn(
+            'RAG_IME_AGENT_GATEWAY_HEALTH_TIMEOUT_SECONDS must be a positive integer',
+            script_source,
+        )
+
     def test_stop_runtime_proves_all_launch_agents_ports_and_processes_absent(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-stop-proof-") as tmp:

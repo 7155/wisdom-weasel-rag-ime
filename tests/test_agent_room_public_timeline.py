@@ -171,6 +171,13 @@ class RoomPublicTimelineProjectorTests(unittest.TestCase):
             ),
             "审查已经完成；主要风险与下一步均已向用户说明。",
         )
+        self.assertEqual(
+            public_room_report_content(
+                "AC-1、AC-2 和 AC-3 的验证均已通过。",
+                field_name="publicSummary",
+            ),
+            "AC-1、AC-2 和 AC-3 的验证均已通过。",
+        )
         internal_reports = (
             "检查完成，rootId 为 root:private。",
             "证据 evidenceRef 来自 proof:settle。",
@@ -306,6 +313,12 @@ class RoomPublicTimelineProjectorTests(unittest.TestCase):
                 "所有验收标准均已满足，但外部服务不可用。",
                 "authoritative evidence",
             ),
+            (
+                "handoff",
+                False,
+                "所有验收标准均已满足，现在只需伙伴复核。",
+                "authoritative evidence",
+            ),
         )
         for decision, all_verified, report, message in cases:
             with self.subTest(decision=decision), self.assertRaisesRegex(
@@ -324,6 +337,12 @@ class RoomPublicTimelineProjectorTests(unittest.TestCase):
             field_name="publicSummary",
             decision="handoff",
             all_criteria_verified=True,
+        )
+        assert_public_room_report_claims(
+            "已重新运行完整测试，11 项全部通过；现在交给伙伴独立复核。",
+            field_name="publicSummary",
+            decision="handoff",
+            all_criteria_verified=False,
         )
 
 if __name__ == "__main__":

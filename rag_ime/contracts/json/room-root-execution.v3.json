@@ -34,6 +34,11 @@
     "activeProfileRef": {"type": ["string", "null"]},
     "budgetPolicyRef": {"type": "string", "minLength": 1},
     "independentReviewRequired": {"type": "boolean"},
+    "requiredReviewAxes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "enum": ["technical", "requirements"]}
+    },
     "createdAtMs": {"type": "integer", "minimum": 0}
   }
 }

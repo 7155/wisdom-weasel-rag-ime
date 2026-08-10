@@ -401,7 +401,7 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         self.assertNotIn("delegate", effective["agents"])
         self.assertNotIn("abort", effective["agents"])
         self.assertNotIn("workspace_patch", effective)
-        self.assertNotIn("workspace_shell", effective)
+        self.assertEqual(effective["workspace_shell"], {"run"})
 
         for manifest in manifests:
             with self.subTest(tool=manifest["name"]):
@@ -412,6 +412,26 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
                 }
                 self.assertEqual(operations, effective[manifest["name"]])
                 self.assertTrue(operations)
+
+    def test_readonly_profile_projects_validation_shell_run(self) -> None:
+        catalog, manifests = self._runtime_contracts(
+            mode="coordinator",
+            profile="subagent-readonly-v1",
+        )
+        shell = next(item for item in catalog if item["id"] == "workspace_shell")
+        runtime_shell = next(
+            item for item in manifests if item["name"] == "workspace_shell"
+        )
+
+        self.assertTrue(shell["enabled"])
+        self.assertEqual(shell["effectiveOperations"], ["run"])
+        self.assertEqual(
+            {
+                branch["properties"]["op"]["const"]
+                for branch in runtime_shell["parameters"]["oneOf"]
+            },
+            {"run"},
+        )
 
 
 if __name__ == "__main__":

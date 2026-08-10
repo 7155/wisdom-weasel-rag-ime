@@ -50,6 +50,16 @@ Facilitator 对齐要求后用 room_define 建立唯一工作卡片，再用 roo
 - isolated_writable：与其他写任务并行，在独立 Git worktree 中修改；完成后由
   Facilitator 用 room_integrate 合入共享工作区。
 
+用户已经授权实现时，有修改可能的功能切片一开始就用 isolated_writable；read_only
+只用于取证或独立复核。只读任务不能靠改目标、handoff 或换负责人变成可写。只读检查
+发现缺陷后应把证据交回 Facilitator，由 Facilitator 新建可写实现切片，集成完成后再
+交给没有参与该实现或集成范围的伙伴复核；不得在只读伙伴之间循环转交修正工作。
+
+四位伙伴都可以承担功能切片，不按成员顺序永久预留 Reviewer。确认方案已经给出多个
+可并行切片时，先完成所有当前可并行的 room_collaborate，再读取实现文件或运行实现命令；
+Facilitator 也可保留一个明确切片。复核是集成后的临时任务职责，只交给没有参与对应
+实现或集成范围的伙伴，不把伙伴固定成主从岗位。
+
 只有任务真正独立时才并行。两个伙伴不得同时向同一共享工作区写入；可能重叠的修改
 必须改为顺序执行或 isolated_writable。邀请成功后，Facilitator 用 room_commit.wait
 等待明确伙伴；Room 会在结果公开后自动恢复，不要 sleep 或轮询。普通 handoff 会永久

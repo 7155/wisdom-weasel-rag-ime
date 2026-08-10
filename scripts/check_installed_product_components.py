@@ -40,7 +40,8 @@ def main() -> int:
     if args.report_path:
         args.report_path.expanduser().write_text(output, encoding="utf-8")
     print(output, end="")
-    return 1 if args.require_current and not report["ok"] else 0
+    acceptance_ok = report["requiredOk"] if args.required is not None else report["ok"]
+    return 1 if args.require_current and not acceptance_ok else 0
 
 
 if __name__ == "__main__":

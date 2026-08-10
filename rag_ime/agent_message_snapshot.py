@@ -15,6 +15,8 @@ RoomPublicMessageProvider: TypeAlias = Callable[
 _ROOM_CONTEXT_OPEN = "<room-context>"
 _ROOM_CONTEXT_CLOSE = "</room-context>"
 _TRANSIENT_CONTEXT_PREFIX = "RAG_IME_TRANSIENT_CONTEXT_V1\n"
+_RECENT_LIVE_EVENT_LIMIT = 48
+_RECENT_ROOM_MESSAGE_LIMIT = 12
 
 
 class AgentMessageSnapshotService:
@@ -31,6 +33,7 @@ class AgentMessageSnapshotService:
         events: Any,
         background_jobs: Any,
         room_public_messages: RoomPublicMessageProvider,
+        room_recent_public_messages: RoomPublicMessageProvider,
     ) -> None:
         self.sessions = sessions
         self._runtime_provider = runtime_provider
@@ -40,6 +43,7 @@ class AgentMessageSnapshotService:
         self.events = events
         self.background_jobs = background_jobs
         self._room_public_messages = room_public_messages
+        self._room_recent_public_messages = room_recent_public_messages
 
     @property
     def runtime(self) -> Any:
@@ -47,7 +51,19 @@ class AgentMessageSnapshotService:
 
         return self._runtime_provider()
 
-    def messages(self, session_id: str) -> dict[str, object]:
+    def messages(
+        self,
+        session_id: str,
+        *,
+        view: str = "",
+    ) -> dict[str, object]:
+        if view == "recent":
+            room_projection = self._room_recent_public_messages(session_id)
+            if room_projection is not None:
+                return self._recent_room_messages(
+                    session_id,
+                    room_projection=room_projection,
+                )
         session = self.sessions.get(session_id)
         last_sequence = self.sessions.max_event_sequence(session_id)
         snapshot_provider = getattr(
@@ -173,6 +189,79 @@ class AgentMessageSnapshotService:
             "actGate": workflow["actGate"],
             "backgroundJobs": list(background_jobs.get("items") or []),
             "lifecycleCancellationAudits": lifecycle_cancellation_audits,
+        }
+
+    def _recent_room_messages(
+        self,
+        session_id: str,
+        *,
+        room_projection: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Return the durable recent window without restoring Pi Runtime."""
+
+        session = self.sessions.get(session_id)
+        last_sequence = self.sessions.max_event_sequence(session_id)
+        replayed, _gap = self.events.replay(session_id)
+        live_events = [
+            event.to_payload()
+            for event in replayed
+            if event.sequence <= last_sequence
+        ][-_RECENT_LIVE_EVENT_LIMIT:]
+        self._append_pending_approvals(
+            session_id=session_id,
+            live_events=live_events,
+            last_sequence=last_sequence,
+        )
+        live_events = live_events[-_RECENT_LIVE_EVENT_LIMIT:]
+        messages = _recent_room_public_messages(
+            _project_room_public_messages(
+                session_id=session_id,
+                private_messages=[],
+                projection=room_projection,
+            )
+        )
+        workflow = self._workflow_projector(session_id)
+        background_jobs = self.background_jobs.list(
+            session_id,
+            limit=100,
+        )
+        lifecycle_cancellation_audits = (
+            self.sessions.lifecycle_cancellation_audits(
+                session_id,
+                limit=20,
+            )
+        )
+        recent_from_sequence = min(
+            (
+                int(event.get("sequence") or 0)
+                for event in live_events
+                if int(event.get("sequence") or 0) > 0
+            ),
+            default=last_sequence,
+        )
+        return {
+            "schemaVersion": "rag-ime.agent-message-list.v1",
+            "ok": True,
+            "sessionId": session_id,
+            "items": messages,
+            "status": str(session.get("status") or "idle"),
+            "liveEvents": live_events,
+            "lastSequence": last_sequence,
+            "resumeToken": (
+                f"{session_id}:{last_sequence}"
+                if last_sequence
+                else ""
+            ),
+            "telemetry": None,
+            "messageQueue": None,
+            "todo": workflow["todo"],
+            "goal": workflow["goal"],
+            "actGate": workflow["actGate"],
+            "backgroundJobs": list(background_jobs.get("items") or []),
+            "lifecycleCancellationAudits": lifecycle_cancellation_audits,
+            "snapshotScope": "recent",
+            "partial": True,
+            "recentFromSequence": recent_from_sequence,
         }
 
     def _append_pending_approvals(
@@ -422,6 +511,28 @@ def _project_room_public_messages(
         )
     projected.sort(key=lambda item: item[:4])
     return [item[4] for item in projected]
+
+
+def _recent_room_public_messages(
+    messages: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    recent = [
+        dict(message)
+        for message in messages[-_RECENT_ROOM_MESSAGE_LIMIT:]
+    ]
+    if any(str(message.get("role") or "") == "user" for message in recent):
+        return recent
+    latest_user = next(
+        (
+            dict(message)
+            for message in reversed(messages)
+            if str(message.get("role") or "") == "user"
+        ),
+        None,
+    )
+    if latest_user is None:
+        return recent
+    return [latest_user, *recent[-(_RECENT_ROOM_MESSAGE_LIMIT - 1):]]
 
 
 def _room_event_order(

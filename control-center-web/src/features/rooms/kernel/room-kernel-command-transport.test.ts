@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
 import type { ControlRequest } from '@/platform/transport';
 import { MockControlTransport } from '@/test/mock-transport';
-import { buildCancelRootCommand, buildPanicCommand, buildRetryRootCommand, createControlRoomKernelCommandTransport, createFixtureRoomKernelCommandTransport } from './room-kernel-command-transport';
+import { buildCancelRootCommand, buildCancelTargetCommand, buildPanicCommand, buildRetryRootCommand, createControlRoomKernelCommandTransport, createFixtureRoomKernelCommandTransport } from './room-kernel-command-transport';
 
 describe('Room kernel fixture command transport', () => {
   it('builds a generated typed cancel command bound to Room Root generation', () => {
@@ -27,6 +27,30 @@ describe('Room kernel fixture command transport', () => {
       roomId: 'room-a', rootId: 'root-a', generation: 7,
     });
     expect(command.idempotencyKey).toContain('room-a:root-a:7:retry-7');
+  });
+
+  it('builds a typed dispatch stop without cancelling its Root or sibling tasks', () => {
+    const command = buildCancelTargetCommand(
+      {
+        roomId: 'room-a',
+        rootId: 'root-a',
+        generation: 7,
+        targetKind: 'dispatch',
+        targetId: 'dispatch-active',
+      },
+      { commandId: 'stop-dispatch-7', sourceId: 'test', createdAtMs: 12 },
+    );
+    expect(command).toMatchObject({
+      commandKind: 'cancel_target',
+      targetKind: 'dispatch',
+      targetId: 'dispatch-active',
+      roomId: 'room-a',
+      rootId: 'root-a',
+      generation: 7,
+    });
+    expect(command.idempotencyKey).toContain(
+      'room-a:root-a:dispatch:dispatch-active:7:stop-dispatch-7',
+    );
   });
 
   it('builds a Room-wide panic command without pretending it targets one Root', () => {

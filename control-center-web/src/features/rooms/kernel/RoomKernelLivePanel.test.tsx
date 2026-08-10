@@ -21,6 +21,7 @@ describe('RoomKernelLivePanel production adapter', () => {
   afterEach(() => {
     cleanup();
     useRoomLiveStore.getState().reset();
+    setDocumentVisibility('visible');
     vi.useRealTimers();
   });
 
@@ -513,6 +514,42 @@ describe('RoomKernelLivePanel production adapter', () => {
     expect(calls).toBe(2);
   });
 
+  it('pauses participant polling while the Room page is in a background tab and resumes when visible', async () => {
+    setDocumentVisibility('hidden');
+    const transport = new MockControlTransport({
+      capabilities: capabilityValue(),
+      routes: {
+        'agent.room.kernel.snapshot': () => taskKernelSnapshot('room-a', 'running'),
+        'agent.room.kernel.command': () => kernelReceipt({}),
+        'agent.subagents.list': (request: ControlRequest) => ({
+          ok: true,
+          items: [roomSubagentBatch({
+            roomId: 'room-a',
+            parentSessionId: String(request.query?.sessionId ?? ''),
+            taskId: 'room-a:task',
+            task: '前台可见时继续更新的子任务',
+            state: 'running',
+          })],
+        }),
+      },
+    });
+    renderPanel(transport, true, ['session-current-a', 'session-current-b']);
+    await screen.findByText('进度已同步');
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(subagentRequests(transport)).toHaveLength(0);
+
+    setDocumentVisibility('visible');
+    fireEvent(document, new Event('visibilitychange'));
+    await waitFor(() => expect(subagentRequests(transport)).toHaveLength(2));
+    expect(subagentRequests(transport).map(({ request }) => request.query?.sessionId).sort()).toEqual([
+      'session-current-a',
+      'session-current-b',
+    ]);
+    expect(await screen.findAllByText('前台可见时继续更新的子任务')).toHaveLength(2);
+  });
+
   it('ignores a late participant response after switching Rooms', async () => {
     const stale = deferred<unknown>();
     const transport = new MockControlTransport({
@@ -621,6 +658,17 @@ function renderPanel(
       />
     </ControlTransportProvider>,
   );
+}
+
+function setDocumentVisibility(state: DocumentVisibilityState): void {
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    value: state,
+  });
+}
+
+function subagentRequests(transport: MockControlTransport) {
+  return transport.requests.filter(({ request }) => request.pathId === 'agent.subagents.list');
 }
 
 function mockTransport(options: {
