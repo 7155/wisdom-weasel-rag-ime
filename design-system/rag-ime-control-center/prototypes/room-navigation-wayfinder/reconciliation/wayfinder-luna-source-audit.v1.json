@@ -1,0 +1,940 @@
+{
+  "schemaVersion": "personal-agent.wayfinder-luna-source-audit.v1",
+  "status": "reviewed_with_open_user_acceptance",
+  "cutoff": "2026-08-04T23:59:59+08:00",
+  "reviewedAt": "2026-08-05T11:50:06+08:00",
+  "sourceSnapshot": {
+    "repository": "7155/personal-agent-workbench",
+    "branch": "main",
+    "commit": "8a50a6b21ced9edb1a46b1cb4dc2b004ba0ee771",
+    "workingTreeDirtyAtCuration": true,
+    "interpretation": "commit snapshot plus cutoff-bounded working documents; neither clean-main nor installed-product evidence"
+  },
+  "authorityOrder": [
+    "user-authored session intent",
+    "project documents present by cutoff",
+    "git implementation corroboration",
+    "current target draft for reconciliation only"
+  ],
+  "corpusReceipt": {
+    "historicalDocumentCount": 45,
+    "targetDraftCount": 15,
+    "primarySessionCount": 19,
+    "sessionAliasRefCount": 5,
+    "userMessageCount": 1338,
+    "boundedUserExcerptCount": 238,
+    "gitCommitCount": 9,
+    "sourcePacketBytes": 621882,
+    "sourcePacketSha256": "eb1071e8314e288e9b3abed15af1f0fb4a174facac2d611981bbf47191cc8ac8"
+  },
+  "lunaRun": {
+    "model": "gpt-5.6-luna",
+    "reasoningEffort": "max",
+    "elapsedSeconds": 612.835,
+    "promptSha256": "36522b9db7aa64be1de3f735a2dc143fc72f9b86e3ff2a113273f24f880a4c5d",
+    "schemaSha256": "6a57073abd4694e6a36cbe9ce4f598c0f63adeb6d2141559f4cfba5c597e3ee8",
+    "outputSha256": "37de7ae74aa6b62a6d11a9e1b04bd88e452d1a465baa742c0743cfdd67fad3b0",
+    "candidateSchemaValidated": true,
+    "candidateVerdict": "needs_human_resolution",
+    "role": "draft organizer only; never a fact or runtime owner"
+  },
+  "inventory": {
+    "historicalDocuments": [
+      {
+        "id": "doc-product-readme",
+        "ref": "README.md",
+        "snapshot": "git:8a50a6b21ced9edb1a46b1cb4dc2b004ba0ee771",
+        "sha256": "1e90414bce8ac21581389b857a343964b8517a204078ba46249681078cae6dd7",
+        "byteCount": 33225
+      },
+      {
+        "id": "doc-readme-fe77223b",
+        "ref": "docs/agent/audits/agent-prompt-system-current/README.md",
+        "snapshot": "2026-07-31T05:35:00.876563Z",
+        "sha256": "fe77223b3da87348fc2e270be9e7fca5a8a5e66e3ac215c33db3fc0ff510079d",
+        "byteCount": 3254
+      },
+      {
+        "id": "doc-prompts-5c7d7fc0",
+        "ref": "docs/agent/audits/agent-prompt-system-current/prompts.md",
+        "snapshot": "2026-07-31T05:35:00.875445Z",
+        "sha256": "5c7d7fc02e9148b1d3b00468a55b1eca60f8a249a35744de00e00c30e16a42dc",
+        "byteCount": 197763
+      },
+      {
+        "id": "doc-reference-comparison-340fe4d6",
+        "ref": "docs/agent/audits/agent-prompt-system-current/reference-comparison.md",
+        "snapshot": "2026-07-31T05:35:00.876256Z",
+        "sha256": "340fe4d6dbb5d8c2efedf32dca062163dba2e8d13c5ec7fd51a578889a8423ba",
+        "byteCount": 2394
+      },
+      {
+        "id": "doc-review-6e0c44d3",
+        "ref": "docs/agent/audits/agent-prompt-system-current/review.md",
+        "snapshot": "2026-07-31T05:35:00.876372Z",
+        "sha256": "6e0c44d305e2f1ca4de2a761c1f15df052e381764347a90f99a549bef833fedf",
+        "byteCount": 4162
+      },
+      {
+        "id": "doc-skills-bbd9b075",
+        "ref": "docs/agent/audits/agent-prompt-system-current/skills.md",
+        "snapshot": "2026-07-31T05:35:00.875658Z",
+        "sha256": "bbd9b075154e5af70083fe0b11e6506b30ba4131a3fbe21b2708a352345ed3ef",
+        "byteCount": 85001
+      },
+      {
+        "id": "doc-atom-first-memory-luna-evaluation-20260803-292061c1",
+        "ref": "docs/agent/audits/atom-first-memory-luna-evaluation-20260803.md",
+        "snapshot": "2026-08-03T18:40:59.949785Z",
+        "sha256": "292061c1e7b35e8d5ff6a3c48ce01c61c1799327b3a643813eb2111188876285",
+        "byteCount": 8768
+      },
+      {
+        "id": "doc-historical-memory-final-catalog-audit-20260803-ddff9490",
+        "ref": "docs/agent/audits/historical-memory-final-catalog-audit-20260803.md",
+        "snapshot": "2026-08-03T18:36:35.777311Z",
+        "sha256": "ddff9490ac6d60a14dc7023acedf9e82736141a8e9bec45934754c5cbebb0605",
+        "byteCount": 3721
+      },
+      {
+        "id": "doc-memory-activity-luna-evaluation-20260802-v3-7cce4850",
+        "ref": "docs/agent/audits/memory-activity-luna-evaluation-20260802-v3.md",
+        "snapshot": "2026-08-02T02:57:52.985818Z",
+        "sha256": "7cce4850ca8e016aa2a1082f8866f3b78cf9ad6922344531a7a03d5538f54f97",
+        "byteCount": 4714
+      },
+      {
+        "id": "doc-memory-activity-luna-evaluation-20260802-v4-7071ec0a",
+        "ref": "docs/agent/audits/memory-activity-luna-evaluation-20260802-v4.md",
+        "snapshot": "2026-08-02T04:14:24.830595Z",
+        "sha256": "7071ec0a02f1102c6f446798fff70621dad8747567bcd0cbafb73855f09341c1",
+        "byteCount": 4969
+      },
+      {
+        "id": "doc-memory-activity-luna-evaluation-20260802-80f0ed08",
+        "ref": "docs/agent/audits/memory-activity-luna-evaluation-20260802.md",
+        "snapshot": "2026-08-02T04:04:13.204889Z",
+        "sha256": "80f0ed08156161d091ca9d47a293541ddaf8939e6fc262b6eed1a9e4b5645da0",
+        "byteCount": 9957
+      },
+      {
+        "id": "doc-memory-long-context-luna-evaluation-20260802-237da243",
+        "ref": "docs/agent/audits/memory-long-context-luna-evaluation-20260802.md",
+        "snapshot": "2026-08-02T08:55:40.008928Z",
+        "sha256": "237da243bf2b0500f14b229de693e6fd1486a79f3ea4c55d83a356f11c4afebf",
+        "byteCount": 4103
+      },
+      {
+        "id": "doc-memory-near-budget-gateway-luna-20260802-c52937f3",
+        "ref": "docs/agent/audits/memory-near-budget-gateway-luna-20260802.md",
+        "snapshot": "2026-08-02T08:50:26.477907Z",
+        "sha256": "c52937f32a91656e3ab9eda2923d37f4be0be0a3149ec45a35a44386caf33a63",
+        "byteCount": 2153
+      },
+      {
+        "id": "doc-personal-context-dreaming-luna-evaluation-202608-5be84405",
+        "ref": "docs/agent/audits/personal-context-dreaming-luna-evaluation-20260803.md",
+        "snapshot": "2026-08-03T17:39:14.137916Z",
+        "sha256": "5be8440550fc150a437dcd1c49164b9ab5209f30df5161c1643df9f0b69006b8",
+        "byteCount": 515
+      },
+      {
+        "id": "doc-personal-memory-curator-prompt-optimization-2026-bcd0bca8",
+        "ref": "docs/agent/audits/personal-memory-curator-prompt-optimization-20260802.md",
+        "snapshot": "2026-08-02T14:12:45.925037Z",
+        "sha256": "bcd0bca8b8ba6a24e818b2006d8de17b899a02d298a7779d5244b8f87f08dd04",
+        "byteCount": 9427
+      },
+      {
+        "id": "doc-personal-memory-luna-evaluation-20260803-d6015dce",
+        "ref": "docs/agent/audits/personal-memory-luna-evaluation-20260803.md",
+        "snapshot": "2026-08-03T17:42:03.840458Z",
+        "sha256": "d6015dcee11fd199b45879e7a5268c2767d7de9a67af96cae1d2bbcb513b28a2",
+        "byteCount": 2837
+      },
+      {
+        "id": "doc-personal-memory-luna-rag-evaluation-20260802-ver-3b7c79ee",
+        "ref": "docs/agent/audits/personal-memory-luna-rag-evaluation-20260802-verified-clean.md",
+        "snapshot": "2026-08-02T06:49:16.583611Z",
+        "sha256": "3b7c79ee561020f9e4430da7c0069a8d19937404d67f7f682a1dd43ba10d2987",
+        "byteCount": 3211
+      },
+      {
+        "id": "doc-personal-memory-luna-rag-evaluation-20260802-ver-32455ce7",
+        "ref": "docs/agent/audits/personal-memory-luna-rag-evaluation-20260802-verified.md",
+        "snapshot": "2026-08-02T06:46:44.262701Z",
+        "sha256": "32455ce7af68bc06fc98b657aecec4d907bf3ef11ee9115facaaf9ce25a70128",
+        "byteCount": 2642
+      },
+      {
+        "id": "doc-personal-memory-luna-rag-evaluation-20260802-f4ff9606",
+        "ref": "docs/agent/audits/personal-memory-luna-rag-evaluation-20260802.md",
+        "snapshot": "2026-08-02T06:24:34.109196Z",
+        "sha256": "f4ff96067ad106549069a53aba31009e21a941fbf3a55e942cce0b5da7f16fb3",
+        "byteCount": 2278
+      },
+      {
+        "id": "doc-personal-memory-luna-semantic-evaluation-2026080-1f70ec77",
+        "ref": "docs/agent/audits/personal-memory-luna-semantic-evaluation-20260802-final.md",
+        "snapshot": "2026-08-02T05:44:48.994147Z",
+        "sha256": "1f70ec7763e200b5dd46fe1ba2d899026a530e58e12f520c79937dfd2d2c2903",
+        "byteCount": 1928
+      },
+      {
+        "id": "doc-personal-memory-luna-semantic-evaluation-2026080-5285c4b2",
+        "ref": "docs/agent/audits/personal-memory-luna-semantic-evaluation-20260802-verified.md",
+        "snapshot": "2026-08-02T05:46:02.353493Z",
+        "sha256": "5285c4b2696cdb4630fba00178a654c0241c11dadc190a411259bb280ddf57cb",
+        "byteCount": 1928
+      },
+      {
+        "id": "doc-personal-memory-luna-semantic-evaluation-2026080-a0891bb5",
+        "ref": "docs/agent/audits/personal-memory-luna-semantic-evaluation-20260802.md",
+        "snapshot": "2026-08-02T05:43:44.929935Z",
+        "sha256": "a0891bb59a86cbacd8f8c0790135d3574c5a657ee98b3fe301b618a07b6cbd78",
+        "byteCount": 1933
+      },
+      {
+        "id": "doc-personal-memory-luna-shadow-evaluation-20260802-f46b70dd",
+        "ref": "docs/agent/audits/personal-memory-luna-shadow-evaluation-20260802.md",
+        "snapshot": "2026-08-02T04:48:00.613332Z",
+        "sha256": "f46b70dd85caa12a6cb49004896aaeda6eea7bd9166bfcd024d79438bdf82bac",
+        "byteCount": 1176
+      },
+      {
+        "id": "doc-personal-memory-real-rag-evaluation-20260802-cur-5f46a84f",
+        "ref": "docs/agent/audits/personal-memory-real-rag-evaluation-20260802-current-prompt-verified.md",
+        "snapshot": "2026-08-02T08:12:19.433703Z",
+        "sha256": "5f46a84f310fdae6bc2600974f26bc31816837b3d99e86b7b26218981f604950",
+        "byteCount": 3417
+      },
+      {
+        "id": "doc-personal-memory-real-rag-evaluation-20260802-cur-eed27c66",
+        "ref": "docs/agent/audits/personal-memory-real-rag-evaluation-20260802-current-prompt.md",
+        "snapshot": "2026-08-02T08:09:47.256014Z",
+        "sha256": "eed27c66a5f1d02bd0de898cb89c2ef2c4f987e43e3e4c3b5f28908c8f163afc",
+        "byteCount": 2565
+      },
+      {
+        "id": "doc-personal-memory-real-rag-evaluation-20260802-mlx-eed27c66",
+        "ref": "docs/agent/audits/personal-memory-real-rag-evaluation-20260802-mlx-bge.md",
+        "snapshot": "2026-08-02T07:35:29.091413Z",
+        "sha256": "eed27c66a5f1d02bd0de898cb89c2ef2c4f987e43e3e4c3b5f28908c8f163afc",
+        "byteCount": 2565
+      },
+      {
+        "id": "doc-personal-memory-real-rag-evaluation-20260802-4c79ec13",
+        "ref": "docs/agent/audits/personal-memory-real-rag-evaluation-20260802.md",
+        "snapshot": "2026-08-02T07:10:09.395398Z",
+        "sha256": "4c79ec1378340f1e08135159b4fe1533f110f38041b6650da991525101b234f2",
+        "byteCount": 2383
+      },
+      {
+        "id": "doc-personal-memory-real-rag-evaluation-20260803-ful-12a1a22c",
+        "ref": "docs/agent/audits/personal-memory-real-rag-evaluation-20260803-full-history.md",
+        "snapshot": "2026-08-03T18:33:17.470249Z",
+        "sha256": "12a1a22c322ccc3fdd2f666227ce2f0335f7050988a1927f1f2280da152b032c",
+        "byteCount": 4350
+      },
+      {
+        "id": "doc-room-full-flow-failure-20260802-b8638752",
+        "ref": "docs/agent/audits/room-full-flow-failure-20260802.md",
+        "snapshot": "2026-08-02T03:22:03.916381Z",
+        "sha256": "b86387527c6a488d3ebd390b2bcb4faba47f600c82ce7f5d1f813c28f2433088",
+        "byteCount": 3279
+      },
+      {
+        "id": "doc-chat-summary-c4f0bf7d",
+        "ref": "docs/agent/chat-summary.md",
+        "snapshot": "2026-08-04T08:37:13.147941Z",
+        "sha256": "c4f0bf7d8c78aa26fe9c647518891c278a9e40ddcd316c3ef9011ba7caef48c1",
+        "byteCount": 40199
+      },
+      {
+        "id": "doc-handoff-goal",
+        "ref": "docs/agent/handoff-goal.md",
+        "snapshot": "2026-08-03T08:42:34.819585Z",
+        "sha256": "8aea34b14b20d2cd2163b2415f77b80464b35b11dc22ff8f91ab11820941abb4",
+        "byteCount": 115288
+      },
+      {
+        "id": "doc-ctx-20260730-1632-room-migration-live-defects-5573eb3f",
+        "ref": "docs/agent/memory/ctx-20260730-1632-room-migration-live-defects.md",
+        "snapshot": "2026-07-31T09:07:32.330210Z",
+        "sha256": "5573eb3f89bddab3be04abeb8aac44ffa4537a829a2815a7fe22180b0b5c2484",
+        "byteCount": 2463
+      },
+      {
+        "id": "doc-ctx-20260731-1904-room-recovery-and-frontend-def-3af7a7b5",
+        "ref": "docs/agent/memory/ctx-20260731-1904-room-recovery-and-frontend-defects.md",
+        "snapshot": "2026-07-31T11:04:44.790241Z",
+        "sha256": "3af7a7b5acdd9e3205424167cb7419923891cbf707e80e41b1fff258f3ce3c23",
+        "byteCount": 1837
+      },
+      {
+        "id": "doc-ctx-20260731-2136-room-cat-cafe-grouped-clarific-79e6d917",
+        "ref": "docs/agent/memory/ctx-20260731-2136-room-cat-cafe-grouped-clarification.md",
+        "snapshot": "2026-07-31T13:36:13.462762Z",
+        "sha256": "79e6d917f7017b54bbeb5a16483c63b1b7710eddc61d4d56bba29629faa5f1cb",
+        "byteCount": 1414
+      },
+      {
+        "id": "doc-ctx-20260801-0315-room-autonomous-acceptance-and-8827b294",
+        "ref": "docs/agent/memory/ctx-20260801-0315-room-autonomous-acceptance-and-regressions.md",
+        "snapshot": "2026-07-31T19:15:44.497560Z",
+        "sha256": "8827b294ec93f7043b3f32f57959ebdd48b493357c9a9c9de17000c19185dc67",
+        "byteCount": 3402
+      },
+      {
+        "id": "doc-ctx-20260802-1634-room-facilitated-workflow-alig-80242a92",
+        "ref": "docs/agent/memory/ctx-20260802-1634-room-facilitated-workflow-aligned.md",
+        "snapshot": "2026-08-02T08:37:00.607314Z",
+        "sha256": "80242a92bf8e628c37dba54609db420bb67d2e63dfcf50d96e0a0642c87d383e",
+        "byteCount": 2153
+      },
+      {
+        "id": "doc-ctx-20260803-0938-room-production-clarification--4654291f",
+        "ref": "docs/agent/memory/ctx-20260803-0938-room-production-clarification-observability.md",
+        "snapshot": "2026-08-03T01:38:54.902126Z",
+        "sha256": "4654291fc712aad393382ff9234e2c12a2349e93e710dfb1b301614478cf6a7b",
+        "byteCount": 1629
+      },
+      {
+        "id": "doc-index-c9685a7b",
+        "ref": "docs/agent/memory/index.md",
+        "snapshot": "2026-08-03T01:38:54.902327Z",
+        "sha256": "c9685a7bda9b58b4a2b9dd2569ffe74d939c7b2e65ae5cc28e0f55734770f814",
+        "byteCount": 698
+      },
+      {
+        "id": "doc-memory-pipeline-design-6257df13",
+        "ref": "docs/agent/memory-pipeline-design.md",
+        "snapshot": "2026-08-01T14:18:08.659893Z",
+        "sha256": "6257df1356a14fa2be3f084169f0adf1115a00f35d42935ba1bbbee711b90438",
+        "byteCount": 22984
+      },
+      {
+        "id": "doc-memory-pipeline-handoff-bfe7e004",
+        "ref": "docs/agent/memory-pipeline-handoff.md",
+        "snapshot": "2026-08-02T09:00:24.964889Z",
+        "sha256": "bfe7e0045d6d7c511e4463c86584dd46cc70e3a4b452d288a1ecad4231ab80f5",
+        "byteCount": 80528
+      },
+      {
+        "id": "doc-memory-pipeline",
+        "ref": "docs/agent/memory-pipeline-requirements.md",
+        "snapshot": "2026-08-01T14:18:37.685982Z",
+        "sha256": "15fbcbae8139826f66f33bff9f89ea6d7d66432072a511db8ca9c2b9bec9fc3b",
+        "byteCount": 14282
+      },
+      {
+        "id": "doc-notes-0f8699f5",
+        "ref": "docs/agent/notes.md",
+        "snapshot": "2026-08-03T01:38:21.345874Z",
+        "sha256": "0f8699f571a684734dcede1e685099cd9c6ef9e50d7469152008e86f165b1652",
+        "byteCount": 63865
+      },
+      {
+        "id": "doc-prompt-runtime-audit",
+        "ref": "docs/agent/prompt-runtime-reference-audit.md",
+        "snapshot": "2026-08-02T09:12:40.254920Z",
+        "sha256": "350136ab9ecaeaf934a3517ca94aa5f7e4f531f6ca803e2a0aeceebf80edbea6",
+        "byteCount": 11355
+      },
+      {
+        "id": "doc-room-workflow",
+        "ref": "docs/agent/room-facilitated-workflow-requirements.md",
+        "snapshot": "2026-08-03T16:32:04.747277Z",
+        "sha256": "bba907ed184956fc2be64b1f9c93d6eb92a0bd63197ebbe9479c67178c05b008",
+        "byteCount": 65007
+      },
+      {
+        "id": "doc-todo-02d0cc14",
+        "ref": "docs/agent/todo.md",
+        "snapshot": "2026-08-03T01:38:33.790460Z",
+        "sha256": "02d0cc14f8f21a9a70e106f90e87c73c00fb667bed8853840d8247472629c4b6",
+        "byteCount": 4375
+      }
+    ],
+    "targetDrafts": [
+      {
+        "id": "doc-project-field-contract",
+        "ref": "design-system/rag-ime-control-center/pages/project-field.md",
+        "snapshot": "current target draft; not historical proof",
+        "sha256": "05ec50c20aea23a185c554942c583ca35a17f24c98bc77bc70d0e4d6a3af3dbc",
+        "byteCount": 20675
+      },
+      {
+        "id": "target-75c75f0283",
+        "ref": "design-system/rag-ime-control-center/prototypes/room-navigation-wayfinder/00-map.md",
+        "snapshot": "current target draft; not historical proof",
+        "sha256": "8191d9be83ad7aff7ec98bf12d0bb6fdef21c768fd1e984f632b6e45648bab97",
+        "byteCount": 2411
+      },
+      {
+        "id": "target-0a7199cc5a",
+        "ref": "design-system/rag-ime-control-center/prototypes/room-navigation-wayfinder/01-alignment-decision-packet.md",
+        "snapshot": "current target draft; not historical proof",
+        "sha256": "61e3d25076c3d517f715c59f7647ad40b7bacaae18abec123dad445eccbd219a",
+        "byteCount": 1792
+      },
+      {
+        "id": "target-98f5d297c9",
+        "ref": "design-system/rag-ime-control-center/prototypes/room-navigation-wayfinder/02-implementation-plan.md",
+        "snapshot": "current target draft; not historical proof",
+        "sha256": "feacdc26b1f03910c1ca973d80c6547d40b1f6d6ffefe4e6574dcfb3b9bbf509",
+        "byteCount": 1854
+      },
+      {
+        "id": "target-4cdd152ed9",
+        "ref": "design-system/rag-ime-control-center/prototypes/room-navigation-wayfinder/03-work-document.md",
+        "snapshot": "current target draft; not historical proof",
+        "sha256": "74c8602029d6495ca606375976ca7de28220317d6a9d7bc6e444560e3d8f5d13",
+        "byteCount": 5756
+      },
+      {
+        "id": "target-4e7a1f101d",
+        "ref": "design-system/rag-ime-control-center/prototypes/room-navigation-wayfinder/04-quality-gate-pending.md",
+        "snapshot": "current target draft; not historical proof",
+        "sha256": "ce97e4e101cae4affcd36104cb5fbd854d067512eb743f911483f6e3cbddd927",
+        "byteCount": 1960
+      },
+      {
+        "id": "target-ff5245b97a",
+        "ref": "design-system/rag-ime-control-center/prototypes/room-navigation-wayfinder/05-independent-review-pending.md",
+        "snapshot": "current target draft; not historical proof",
+        "sha256": "15a44139c956c78307f1d7b6ce47a1379a90ec4dfd2ca5935158bfd116ac38b7",
+        "byteCount": 1208
+      },
+      {
+        "id": "target-acfb1774ae",
+        "ref": "design-system/rag-ime-control-center/prototypes/room-navigation-wayfinder/06-current-agent-handoff.md",
+        "snapshot": "current target draft; not historical proof",
+        "sha256": "8e88f9f9cfed7758d0aafcd6767c44620bc60e9538e65a206fa6b3e267804dc1",
+        "byteCount": 11832
+      },
+      {
+        "id": "target-d3abf5f15c",
+        "ref": "design-system/rag-ime-control-center/prototypes/room-navigation-wayfinder/README.md",
+        "snapshot": "current target draft; not historical proof",
+        "sha256": "989e27297ea1bf530e27e17b1a1f3463309138c1634307b974122945fc6f8741",
+        "byteCount": 3194
+      },
+      {
+        "id": "target-a822ba1f57",
+        "ref": "design-system/rag-ime-control-center/prototypes/room-navigation-wayfinder/decisions/01-project-is-a-space.md",
+        "snapshot": "current target draft; not historical proof",
+        "sha256": "53be2b921a1cbcb8c4f8c3cef2237acc22e6af443bae40b29a753af5e319d1e9",
+        "byteCount": 1234
+      },
+      {
+        "id": "target-07a2dd2e9f",
+        "ref": "design-system/rag-ime-control-center/prototypes/room-navigation-wayfinder/decisions/02-room-is-an-outcome.md",
+        "snapshot": "current target draft; not historical proof",
+        "sha256": "e02066c7c53a3bb9ec6e04372871f91891f123da374c7018a98f5e29c7aaaa63",
+        "byteCount": 1248
+      },
+      {
+        "id": "target-5aba5cd579",
+        "ref": "design-system/rag-ime-control-center/prototypes/room-navigation-wayfinder/decisions/03-focus-stays-in-project.md",
+        "snapshot": "current target draft; not historical proof",
+        "sha256": "22c669f6513261886a169a3b9536c31959fa591ea1ec1e721ce277ab5d6b9bdf",
+        "byteCount": 1406
+      },
+      {
+        "id": "target-e56569c2b8",
+        "ref": "design-system/rag-ime-control-center/prototypes/room-navigation-wayfinder/decisions/04-navigator-only-routes.md",
+        "snapshot": "current target draft; not historical proof",
+        "sha256": "b1177161249d09aadeb6f8aa56ea14fe7ffd56e5f11a0cf56682639ef06b6623",
+        "byteCount": 1195
+      },
+      {
+        "id": "target-b84f45dfd2",
+        "ref": "design-system/rag-ime-control-center/prototypes/room-navigation-wayfinder/frontier/01-validate-the-reconstructed-island.md",
+        "snapshot": "current target draft; not historical proof",
+        "sha256": "2007aeba30bc65d7944805b6a78a2794278c33ac8514bb3b11d473611ef217b0",
+        "byteCount": 1347
+      },
+      {
+        "id": "target-8fee07db1f",
+        "ref": "design-system/rag-ime-control-center/prototypes/room-navigation-wayfinder/real-project-reconstruction/README.md",
+        "snapshot": "current target draft; not historical proof",
+        "sha256": "0288e3023a7a79ad84ad47905968265cbd0d76c5a69c73c86adcf5cba4f5dd74",
+        "byteCount": 7551
+      }
+    ],
+    "primarySessions": [
+      {
+        "id": "session-claude-ui-redesign",
+        "provider": "claude-code",
+        "ref": "agent-session:claude-code:8bf790b9-6aa7-49c1-889f-cd32e1c9dabf",
+        "aliases": [],
+        "timestamp": "2026-07-26T09:42:50.035000Z",
+        "userMessageCount": 140,
+        "userMessagesSha256": "0ed648ded4ccf8db231d41a297a850407cabe71a1d96dcf491df5b8bc986729f"
+      },
+      {
+        "id": "session-claude-room-audit",
+        "provider": "claude-code",
+        "ref": "agent-session:claude-code:b70c871e-f5b4-49ea-8fc7-75ba82c7298c",
+        "aliases": [],
+        "timestamp": "2026-07-26T10:01:17.012000Z",
+        "userMessageCount": 99,
+        "userMessagesSha256": "e463e5ec3d401e38c6e95d6085c88a073913661bfd5deea1df584401f07269af"
+      },
+      {
+        "id": "session-claude-input-audit",
+        "provider": "claude-code",
+        "ref": "agent-session:claude-code:97e725a7-dc96-46b3-a847-c364334f2024",
+        "aliases": [],
+        "timestamp": "2026-07-26T12:31:50.295000Z",
+        "userMessageCount": 6,
+        "userMessagesSha256": "7c8f433b94ae8fb8be4edfbddba1747fd3f048d4c18f01682e74a9e37797cded"
+      },
+      {
+        "id": "session-pi-room-bootstrap",
+        "provider": "pi",
+        "ref": "agent-session:pi:019fabcb-b8a1-75ea-9ce6-392d017d4d8e",
+        "aliases": [],
+        "timestamp": "2026-07-29T02:54:42.850000Z",
+        "userMessageCount": 54,
+        "userMessagesSha256": "bf26e0c15aae41682bfbc11f9650ee6883ab7ebc0bacfae37e9340aa1b777a86"
+      },
+      {
+        "id": "session-omp-adaptation",
+        "provider": "omp",
+        "ref": "agent-session:omp:019fb064-adc9-7000-b041-f1c692165442",
+        "aliases": [],
+        "timestamp": "2026-07-30T00:20:15.945000Z",
+        "userMessageCount": 309,
+        "userMessagesSha256": "8a193910bbb6bc2a2478896b9ad11035eefb31405d9c9d281f880573eabe1c0d"
+      },
+      {
+        "id": "session-codex-omp-adaptation",
+        "provider": "codex",
+        "ref": "agent-session:codex:019fb0ae-118f-77b3-8686-83a5e071678f",
+        "aliases": [],
+        "timestamp": "2026-07-30T01:40:25Z",
+        "userMessageCount": 41,
+        "userMessagesSha256": "5c79960e33e8aefeee56853c6f37f1992d747569026e612bcdf361c033411807"
+      },
+      {
+        "id": "session-codex-room-recovery",
+        "provider": "codex",
+        "ref": "agent-session:codex:019fb600-6080-7510-a091-9d56add3e9ed",
+        "aliases": [],
+        "timestamp": "2026-07-31T02:28:25Z",
+        "userMessageCount": 251,
+        "userMessagesSha256": "b5e93b29add733d4a02733c83975613e052597e3dc6f2900299cd5831977508e"
+      },
+      {
+        "id": "session-pi-memory-pipeline",
+        "provider": "pi",
+        "ref": "agent-session:pi:019fbcc7-7564-72c7-aef4-7affb24a329d",
+        "aliases": [],
+        "timestamp": "2026-08-01T10:03:36.164000Z",
+        "userMessageCount": 30,
+        "userMessagesSha256": "fe4eec7ace578ec4b29d515e7198bd0f28b0a3ee696e06240eb853b04d77842f"
+      },
+      {
+        "id": "session-codex-project-field",
+        "provider": "codex",
+        "ref": "agent-session:codex:019fbdd9-3ce4-7413-a20c-6d5725d0b6ac",
+        "aliases": [],
+        "timestamp": "2026-08-01T15:02:38Z",
+        "userMessageCount": 175,
+        "userMessagesSha256": "85999432b9b52d4699c6372466142fcb27a48195a85141a6cc6be6ca729d7285"
+      },
+      {
+        "id": "session-omp-prompt-todo-lsp",
+        "provider": "omp",
+        "ref": "agent-session:omp:019fc09e-e243-7000-a43f-7648c45cbadf",
+        "aliases": [],
+        "timestamp": "2026-08-02T03:57:45.923000Z",
+        "userMessageCount": 33,
+        "userMessagesSha256": "6e767aa7ae545d29114097304d59700bdf724dfc1c9bd6f649e61e21159383fe"
+      },
+      {
+        "id": "session-codex-project-reconstruction",
+        "provider": "codex",
+        "ref": "agent-session:codex:019fc134-aae7-7160-9754-392db668fda1",
+        "aliases": [],
+        "timestamp": "2026-08-02T06:41:22Z",
+        "userMessageCount": 13,
+        "userMessagesSha256": "53953b4c1c48954b41febed5a9d029075f974b869378ca51a01523c0f8f08015"
+      },
+      {
+        "id": "session-codex-019fc62d",
+        "provider": "codex",
+        "ref": "agent-session:codex:019fc62d-bce7-7353-bd3c-8bc169a894fb",
+        "aliases": [],
+        "timestamp": "2026-08-03T05:51:54Z",
+        "userMessageCount": 102,
+        "userMessagesSha256": "d1aa68f0985a65559c9dcbfc0ed7cb0a1ca0660f3d17c28455c1ddf89b8e235b"
+      },
+      {
+        "id": "session-codex-019fc84f",
+        "provider": "codex",
+        "ref": "agent-session:codex:019fc84f-628f-7932-a5e4-514cc4932692",
+        "aliases": [],
+        "timestamp": "2026-08-03T15:47:53Z",
+        "userMessageCount": 4,
+        "userMessagesSha256": "777522c63d661874655a71a9218ec7df800bd09f10faafeca90a6aec6ef8dad4"
+      },
+      {
+        "id": "session-codex-019fc865",
+        "provider": "codex",
+        "ref": "agent-session:codex:019fc865-758c-7fe1-94cc-845eeda65391",
+        "aliases": [
+          "agent-session:codex:019fc86c-1d2f-76b1-af75-bb4ac3708d52"
+        ],
+        "timestamp": "2026-08-03T16:12:00Z",
+        "userMessageCount": 5,
+        "userMessagesSha256": "2bc85f3a1126c487c04f53eec6fefdd63dbaf8f39a07db53f877ea60868a8e48"
+      },
+      {
+        "id": "session-codex-019fc874",
+        "provider": "codex",
+        "ref": "agent-session:codex:019fc874-2fd8-7dd3-a5b5-4bb9b8cbafd6",
+        "aliases": [
+          "agent-session:codex:019fc877-7b52-7a53-8ace-1313095cea22",
+          "agent-session:codex:019fc880-b273-7612-a60f-cb56ebfc4fd8",
+          "agent-session:codex:019fc883-81e0-7bd2-8343-3201a1fd2161",
+          "agent-session:codex:019fc8a2-d4d8-7b32-a0a6-fdfb11ad4703"
+        ],
+        "timestamp": "2026-08-03T16:28:05Z",
+        "userMessageCount": 6,
+        "userMessagesSha256": "d515d45d704ccbe3b2605b37cec42c786127d5a0d10f889756b7cf7b7fcd5a47"
+      },
+      {
+        "id": "session-codex-019fcb20",
+        "provider": "codex",
+        "ref": "agent-session:codex:019fcb20-0783-7aa2-8aa0-7ad156f4f30f",
+        "aliases": [],
+        "timestamp": "2026-08-04T04:55:01Z",
+        "userMessageCount": 9,
+        "userMessagesSha256": "4aa3882951068b6e39680830fab940ce7983e06dbab250cd2b027283b384b190"
+      },
+      {
+        "id": "session-codex-019fcb2b",
+        "provider": "codex",
+        "ref": "agent-session:codex:019fcb2b-1ea8-7740-9c07-425427666dbf",
+        "aliases": [],
+        "timestamp": "2026-08-04T05:07:08Z",
+        "userMessageCount": 8,
+        "userMessagesSha256": "70d63be561fcbd707c9bd37b20eacde6ece35f773d749d40cee74dd312460d16"
+      },
+      {
+        "id": "session-codex-019fcb48",
+        "provider": "codex",
+        "ref": "agent-session:codex:019fcb48-7d28-73d3-b670-85ae47a5c44a",
+        "aliases": [],
+        "timestamp": "2026-08-04T05:39:13Z",
+        "userMessageCount": 50,
+        "userMessagesSha256": "a2c380ff3d8da670e5641170a1301a26f34ff96baa4755ff2ae8e4ffca6e16b2"
+      },
+      {
+        "id": "session-codex-019fcbe1",
+        "provider": "codex",
+        "ref": "agent-session:codex:019fcbe1-058b-7cf3-9564-0cd4a9d24502",
+        "aliases": [],
+        "timestamp": "2026-08-04T08:25:49Z",
+        "userMessageCount": 3,
+        "userMessagesSha256": "3a8a4b28aae9c412acef4b272b2c6b0040b59dd7929a7d830b2cf563cddb397b"
+      }
+    ],
+    "commits": [
+      {
+        "id": "commit-input-reliability",
+        "sha": "92e6a62557279850d1a02e752a59c88e1bbdeb3c",
+        "date": "2026-07-26T21:30:11+08:00",
+        "subject": "Fix IME context reliability: dedup shown feedback, drop dead stale-hit path, guard base-model prompts"
+      },
+      {
+        "id": "commit-product-identity",
+        "sha": "7e09954daf7f9b852a4fe417af04069cd64da72e",
+        "date": "2026-07-28T01:42:54+08:00",
+        "subject": "Present Personal Agent Workbench as one product"
+      },
+      {
+        "id": "commit-room-recovery",
+        "sha": "084fefb15901b12fc596bee3d301b68a959a70bd",
+        "date": "2026-08-01T12:20:47+08:00",
+        "subject": "feat: refine Room activity and recovery"
+      },
+      {
+        "id": "commit-room-autonomy",
+        "sha": "d94674eff8b9da6f66ab656c439e7ec281a54507",
+        "date": "2026-08-01T03:41:15+08:00",
+        "subject": "feat: complete autonomous Room collaboration"
+      },
+      {
+        "id": "commit-room-waves",
+        "sha": "3ffacd578acef7e99a9c5140ba482c78e7c5b183",
+        "date": "2026-08-01T12:34:39+08:00",
+        "subject": "fix: complete managed Room collaboration waves"
+      },
+      {
+        "id": "commit-governed-workflow",
+        "sha": "5f0f114ed71298151478059ce42ba2057639bcd6",
+        "date": "2026-08-01T09:54:03+08:00",
+        "subject": "feat: complete governed workflows and foreground proof"
+      },
+      {
+        "id": "commit-agent-room-runtime",
+        "sha": "923a9e143a82ba98c2e33cf1f5454c5203c9536a",
+        "date": "2026-07-31T17:04:16+08:00",
+        "subject": "feat: unify governed agent and room runtime"
+      },
+      {
+        "id": "commit-room-self-bootstrap",
+        "sha": "bf0f3d69c631380821a709e1db3e1aa4bb14101e",
+        "date": "2026-07-31T17:12:11+08:00",
+        "subject": "test: self-bootstrap TUI through Room"
+      },
+      {
+        "id": "commit-8a50a6b21c",
+        "sha": "8a50a6b21ced9edb1a46b1cb4dc2b004ba0ee771",
+        "date": "2026-08-04T03:49:13+08:00",
+        "subject": "feat: govern historical memory curation"
+      }
+    ]
+  },
+  "deduplication": {
+    "exactAliasGroups": [
+      {
+        "canonicalSourceId": "session-codex-019fc865",
+        "aliasRefs": [
+          "agent-session:codex:019fc86c-1d2f-76b1-af75-bb4ac3708d52"
+        ]
+      },
+      {
+        "canonicalSourceId": "session-codex-019fc874",
+        "aliasRefs": [
+          "agent-session:codex:019fc877-7b52-7a53-8ace-1313095cea22",
+          "agent-session:codex:019fc880-b273-7612-a60f-cb56ebfc4fd8",
+          "agent-session:codex:019fc883-81e0-7bd2-8343-3201a1fd2161",
+          "agent-session:codex:019fc8a2-d4d8-7b32-a0a6-fdfb11ad4703"
+        ]
+      }
+    ],
+    "semanticDuplicateGroups": [
+      {
+        "canonicalSourceId": "session-codex-019fcb20",
+        "duplicateSourceIds": [
+          "session-codex-019fcb2b"
+        ],
+        "treatment": "count both frozen source records in the inventory, but do not derive two independent user decisions from repeated Luna and recovery instructions"
+      }
+    ],
+    "lunaCandidateCorrection": "The Luna candidate swapped the canonical IDs of both exact alias groups. Human review restored the deterministic mappings from the frozen source packet."
+  },
+  "conflicts": [
+    {
+      "sourceIds": [
+        "doc-ctx-20260801-0315-room-autonomous-acceptance-and-8827b294",
+        "doc-room-full-flow-failure-20260802-b8638752",
+        "doc-room-workflow",
+        "doc-ctx-20260803-0938-room-production-clarification--4654291f"
+      ],
+      "statement": "Room 协作既有一个明确完成的隔离成功样本，也有 blocked 的安装失败样本，当前产品合同仍记录若干安装、复核和前台验收开放项。",
+      "treatment": "按具体运行样本分域保留；成功只证明指定成功场景，失败只证明指定失败场景，不汇总成全局完成。Room 协作维持 implementation-execution active。"
+    },
+    {
+      "sourceIds": [
+        "target-4cdd152ed9",
+        "target-4e7a1f101d",
+        "target-acfb1774ae",
+        "target-b84f45dfd2"
+      ],
+      "statement": "Project Field 自动测试和浏览器检查多项通过，但最新岛面视觉验收仍为 not_verified；早期 contour 动效版本还记录过用户拒绝。",
+      "treatment": "保留失败反馈和自动通过记录；不把截图、浏览器检查或测试转换成用户最终接受，Frontier 保持开放。"
+    },
+    {
+      "sourceIds": [
+        "doc-personal-memory-luna-rag-evaluation-20260802-f4ff9606",
+        "doc-personal-memory-luna-rag-evaluation-20260802-ver-32455ce7",
+        "doc-personal-memory-luna-rag-evaluation-20260802-ver-3b7c79ee",
+        "doc-personal-memory-luna-evaluation-20260803-d6015dce"
+      ],
+      "statement": "不同 Memory shadow 运行的 Atom 数、回放结果和状态不同，既有 iterate，也有 pass。",
+      "treatment": "保留为不同冻结候选或回放变体；只按数据快照和运行范围引用，不选取单个 pass 宣称全部安装态或生产态完成。"
+    },
+    {
+      "sourceIds": [
+        "doc-memory-activity-luna-evaluation-20260802-v3-7cce4850",
+        "doc-memory-activity-luna-evaluation-20260802-v4-7071ec0a",
+        "doc-memory-activity-luna-evaluation-20260802-80f0ed08"
+      ],
+      "statement": "Activity 整理在不同修复回放中出现不同 Activity 数和 verifier 状态，最终报告仍明确这是模型评测证据而非人工金标准。",
+      "treatment": "按 organizer/verifier 回放版本保留，不能合并为稳定产品指标；人工标注集和多次重放仍属于 Frontier。"
+    },
+    {
+      "sourceIds": [
+        "doc-personal-memory-real-rag-evaluation-20260802-cur-5f46a84f",
+        "doc-personal-memory-real-rag-evaluation-20260803-ful-12a1a22c"
+      ],
+      "statement": "小型有审计 lineage 的 RAG 集合报告 Hit@1 为 4/4，而完整历史报告为 10/12；数据量和快照不同。",
+      "treatment": "按 corpus、快照和评测协议分别报告；不得把两个 Hit@1 直接合并或作为同一基准。"
+    },
+    {
+      "sourceIds": [
+        "doc-todo-02d0cc14",
+        "doc-chat-summary-c4f0bf7d",
+        "doc-product-readme"
+      ],
+      "statement": "较早 Todo 文档记录 Room milestone 已提交并推送，较新的 chat summary 记录 canonical main 到 8a50a6b21ced 且保留大量 dirty entries；README 仍将产品定义为 local prototype。",
+      "treatment": "将较新 cutoff 状态按 source snapshot 和 dirty 状态处理；保留历史提交声明，但不输出 clean main、发布完成或安装完成结论。"
+    },
+    {
+      "sourceIds": [
+        "session-codex-room-recovery",
+        "doc-memory-pipeline",
+        "target-8fee07db1f"
+      ],
+      "statement": "Wayfinder 草案出现“地图与记忆联动”的表达，而用户会话和 Memory 需求明确 Memory 与项目文档是两个系统。",
+      "treatment": "解释为有出处的引用或导航关联，不共享状态 owner；项目 docs、Room 过程和 Map 投影不得进入个人 Memory Evidence、Atom 或 Book。"
+    }
+  ],
+  "sourceGaps": [
+    {
+      "description": "会话包只提供截断后的 bounded excerpts 和 message ledger；部分内容含 local-command caveat、codex_internal_context、task-notification、插件/技能推荐、问候和纯进度催问。上述环境注入和噪声未作为决定依据，但无法逐条重建全部原始会话。",
+      "impact": "部分用户选择和纠正只能以项目文档或回顾综合呈现，不能声称完成了全量聊天审计。",
+      "sourceIds": [
+        "session-claude-ui-redesign",
+        "session-claude-room-audit",
+        "session-omp-adaptation",
+        "session-codex-019fc62d",
+        "session-codex-019fcb20",
+        "session-codex-019fcb2b"
+      ]
+    },
+    {
+      "description": "Project Field 和 8-Room Wayfinder 文件属于 target-draft；它们是当前候选，不是历史上真实运行过的 Wayfinder，也不能单独证明当时的决定或实现。",
+      "impact": "project-field 只输出回顾候选；历史事实必须回到 user intent、project documents 和 Git 旁证。",
+      "sourceIds": [
+        "doc-project-field-contract",
+        "target-75c75f0283",
+        "target-8fee07db1f"
+      ]
+    },
+    {
+      "description": "packet 没有用户对最新 Project Field 岛面的最终视觉验收，只有自动检查、浏览器记录、早期拒绝反馈和 pending 文档。",
+      "impact": "quality-gate 和 independent-review 不能关闭；不能把截图、测试或构建写成用户接受。",
+      "sourceIds": [
+        "target-4e7a1f101d",
+        "target-acfb1774ae",
+        "target-b84f45dfd2",
+        "doc-handoff-goal"
+      ]
+    },
+    {
+      "description": "Git 旁证只给出 commit subject、日期和 SHA，没有完整 diff、同代运行时安装 receipt 或用户前台验收。",
+      "impact": "Git 只能支持“曾有实现提交”或“有实现方向”，不能单独证明 Room、输入法、Memory 或发布完成。",
+      "sourceIds": [
+        "commit-input-reliability",
+        "commit-room-autonomy",
+        "commit-room-recovery",
+        "commit-governed-workflow",
+        "commit-8a50a6b21c"
+      ]
+    },
+    {
+      "description": "没有生产 Project Registry、Project–Room binding、布局版本和实时事件流的可核验来源；当前 Project Field 仍是静态/生成投影候选。",
+      "impact": "不能把 8 个 Room 写成生产 Project 数据，也不能证明 Map 已接入真实 Runtime。",
+      "sourceIds": [
+        "target-8fee07db1f",
+        "doc-product-readme",
+        "doc-chat-summary-c4f0bf7d"
+      ]
+    },
+    {
+      "description": "Memory 的 source/shadow 报告明确排除了生产应用或安装态的完整接受，且 migration 0127 和 live database activity 仍影响生产 apply 边界。",
+      "impact": "Memory Room 只能写成 shadow/candidate quality evidence；不能写成生产 Memory 已迁移或已安装完成。",
+      "sourceIds": [
+        "doc-memory-pipeline-handoff-bfe7e004",
+        "doc-todo-02d0cc14",
+        "doc-atom-first-memory-luna-evaluation-20260803-292061c1"
+      ]
+    },
+    {
+      "description": "Activity 和 RAG 的 verifier 多为 Luna/model-based review，报告明确不是人工标注金标准；不同 corpus、provider、快照的分数不可直接合并。",
+      "impact": "面试展示必须标明数据集、快照、模型和评测边界，不能使用混合总分或泛化准确率。",
+      "sourceIds": [
+        "doc-memory-activity-luna-evaluation-20260802-80f0ed08",
+        "doc-personal-memory-curator-prompt-optimization-2026-bcd0bca8",
+        "doc-personal-memory-real-rag-evaluation-20260803-ful-12a1a22c",
+        "doc-personal-memory-real-rag-evaluation-20260802-cur-5f46a84f"
+      ]
+    }
+  ],
+  "humanReview": {
+    "resolutions": [
+      {
+        "id": "projection-status",
+        "decision": "The eight Rooms remain a real-source retrospective demonstration projection, not historical Wayfinder runtime or production Project data."
+      },
+      {
+        "id": "room-scenarios",
+        "decision": "Completed and blocked Room runs remain separate regression scenarios; neither represents the global Room state."
+      },
+      {
+        "id": "memory-owner",
+        "decision": "Project Field may link cited project sources, but project docs never enter personal Memory Evidence, Atom, or Book and do not share its state owner."
+      },
+      {
+        "id": "evaluation-corpora",
+        "decision": "The 4/4 and 10/12 RAG reports remain separate by corpus, snapshot, and protocol; no combined score is allowed."
+      },
+      {
+        "id": "canonical-snapshot",
+        "decision": "The cutoff state is main at 8a50a6b21ced plus dirty working documents; older clean or pushed claims are historical only."
+      },
+      {
+        "id": "current-room-decisions",
+        "decision": "The four Project Field decisions remain unchanged; the 2026-08-03 to 2026-08-04 material updates provenance and workflow status, not the settled decision set."
+      },
+      {
+        "id": "duplicate-canonical-ids",
+        "decision": "Use the deterministic exact-alias mappings recorded in deduplication, not the swapped Luna candidate mappings."
+      }
+    ],
+    "openQuestions": [
+      {
+        "id": "project-field-visual-acceptance",
+        "question": "Can the user identify why the current Room exists, what has been decided, and what comes next within three seconds?",
+        "status": "not_verified",
+        "requiredEvidence": "user inspection of the native visible Project Field; tests, screenshots, health checks, hidden browsers, APIs, or terminal state cannot close it"
+      }
+    ]
+  },
+  "resultingCurrentRoom": {
+    "roomId": "project-field",
+    "decisionTitles": [
+      "Project 是长期空间",
+      "Room 不是工单",
+      "聚焦不离开项目",
+      "导航只决定归属"
+    ],
+    "activeSkillStage": "implementation-execution",
+    "frontier": {
+      "label": "验证真实历史重建的 Room 岛",
+      "question": "当一座岛由原始愿景、已形成决定、开发轨迹和当前技能状态投影出来时，用户能否在三秒内说出：这个 Room 为什么存在、已经决定了什么、下一步是什么？",
+      "sourceIds": [
+        "target-b84f45dfd2",
+        "target-4e7a1f101d",
+        "target-acfb1774ae",
+        "doc-handoff-goal"
+      ]
+    }
+  },
+  "privacy": {
+    "rawChatIncluded": false,
+    "boundedExcerptsIncluded": false,
+    "userMessageLedgerIncluded": false,
+    "toolResultsIncluded": false,
+    "assistantReasoningIncluded": false,
+    "absolutePathsIncluded": false,
+    "sourceRefsAndDigestsIncluded": true
+  }
+}

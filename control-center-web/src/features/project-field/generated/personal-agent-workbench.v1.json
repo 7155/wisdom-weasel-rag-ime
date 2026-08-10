@@ -1,0 +1,2306 @@
+{
+  "schemaVersion": "personal-agent.project-field-projection.v1",
+  "generatedAt": "2026-08-04T23:59:59+08:00",
+  "sourceRevision": {
+    "gitHead": "8a50a6b21ced9edb1a46b1cb4dc2b004ba0ee771",
+    "sourceWorktreeDirtyAtCuration": true,
+    "manifestSha256": "04c184993e675b616f7b03a987d98713413266e413cc94032fdd9dba5fe9ab8a",
+    "documentsSha256": "35afeb95989988a4ed5777ae1ed7e8fa20840dc45e4617a37c5343e19b8b55ec",
+    "sessionsSha256": "4b1fecaede1d830d421d7ebd9a2539220725141f0d9e156a77ef078de5efd342",
+    "commitsSha256": "b6327a85ed7f75fa26d3245d524022aba0794f552e66b033ffc20c4a1af23980"
+  },
+  "sourceCounts": {
+    "projectDocuments": 7,
+    "agentSessions": 12,
+    "gitCommits": 16
+  },
+  "privacy": {
+    "rawChatIncluded": false,
+    "toolResultsIncluded": false,
+    "assistantReasoningIncluded": false,
+    "absolutePathsIncluded": false
+  },
+  "sourceReceipts": [
+    {
+      "id": "commit-agent-room-runtime",
+      "kind": "git-commit",
+      "ref": "git:923a9e1",
+      "observedAt": "2026-07-31",
+      "commit": "923a9e143a82ba98c2e33cf1f5454c5203c9536a",
+      "committedAt": "2026-07-31T17:04:16+08:00",
+      "subject": "feat: unify governed agent and room runtime"
+    },
+    {
+      "id": "commit-governed-workflow",
+      "kind": "git-commit",
+      "ref": "git:5f0f114",
+      "observedAt": "2026-08-01",
+      "commit": "5f0f114ed71298151478059ce42ba2057639bcd6",
+      "committedAt": "2026-08-01T09:54:03+08:00",
+      "subject": "feat: complete governed workflows and foreground proof"
+    },
+    {
+      "id": "commit-historical-memory",
+      "kind": "git-commit",
+      "ref": "git:8a50a6b",
+      "observedAt": "2026-08-04",
+      "commit": "8a50a6b21ced9edb1a46b1cb4dc2b004ba0ee771",
+      "committedAt": "2026-08-04T03:49:13+08:00",
+      "subject": "feat: govern historical memory curation"
+    },
+    {
+      "id": "commit-input-reliability",
+      "kind": "git-commit",
+      "ref": "git:92e6a62",
+      "observedAt": "2026-07-26",
+      "commit": "92e6a62557279850d1a02e752a59c88e1bbdeb3c",
+      "committedAt": "2026-07-26T21:30:11+08:00",
+      "subject": "Fix IME context reliability: dedup shown feedback, drop dead stale-hit path, guard base-model prompts"
+    },
+    {
+      "id": "commit-memory-database",
+      "kind": "git-commit",
+      "ref": "git:09b2cc7",
+      "observedAt": "2026-07-04",
+      "commit": "09b2cc77db6871a21c91a36fcaa7f8c917c96e5b",
+      "committedAt": "2026-07-04T19:59:01+08:00",
+      "subject": "Organize local RAG memory database"
+    },
+    {
+      "id": "commit-native-control-center",
+      "kind": "git-commit",
+      "ref": "git:a4bec68",
+      "observedAt": "2026-07-10",
+      "commit": "a4bec684ea08be381aea8a160688c5db43b3bbe2",
+      "committedAt": "2026-07-10T14:06:44+08:00",
+      "subject": "实现原生 RAG-IME 控制中心"
+    },
+    {
+      "id": "commit-personal-agent-identity",
+      "kind": "git-commit",
+      "ref": "git:d3e1b48",
+      "observedAt": "2026-07-27",
+      "commit": "d3e1b4866c6d51233ec8bb2298b288ba8f40489e",
+      "committedAt": "2026-07-27T19:52:03+08:00",
+      "subject": "Adopt Personal Agent Workbench identity"
+    },
+    {
+      "id": "commit-product-identity",
+      "kind": "git-commit",
+      "ref": "git:7e09954",
+      "observedAt": "2026-07-28",
+      "commit": "7e09954daf7f9b852a4fe417af04069cd64da72e",
+      "committedAt": "2026-07-28T01:42:54+08:00",
+      "subject": "Present Personal Agent Workbench as one product"
+    },
+    {
+      "id": "commit-room-autonomy",
+      "kind": "git-commit",
+      "ref": "git:d94674e",
+      "observedAt": "2026-08-01",
+      "commit": "d94674eff8b9da6f66ab656c439e7ec281a54507",
+      "committedAt": "2026-08-01T03:41:15+08:00",
+      "subject": "feat: complete autonomous Room collaboration"
+    },
+    {
+      "id": "commit-room-governance",
+      "kind": "git-commit",
+      "ref": "git:399d6a2",
+      "observedAt": "2026-07-20",
+      "commit": "399d6a271fb549ec78699858fdcf3c250bcee472",
+      "committedAt": "2026-07-20T11:55:09+08:00",
+      "subject": "Complete governed Room context and continuation"
+    },
+    {
+      "id": "commit-room-recovery",
+      "kind": "git-commit",
+      "ref": "git:084fefb",
+      "observedAt": "2026-08-01",
+      "commit": "084fefb15901b12fc596bee3d301b68a959a70bd",
+      "committedAt": "2026-08-01T12:20:47+08:00",
+      "subject": "feat: refine Room activity and recovery"
+    },
+    {
+      "id": "commit-room-self-bootstrap",
+      "kind": "git-commit",
+      "ref": "git:bf0f3d6",
+      "observedAt": "2026-07-31",
+      "commit": "bf0f3d69c631380821a709e1db3e1aa4bb14101e",
+      "committedAt": "2026-07-31T17:12:11+08:00",
+      "subject": "test: self-bootstrap TUI through Room"
+    },
+    {
+      "id": "commit-room-waves",
+      "kind": "git-commit",
+      "ref": "git:3ffacd5",
+      "observedAt": "2026-08-01",
+      "commit": "3ffacd578acef7e99a9c5140ba482c78e7c5b183",
+      "committedAt": "2026-08-01T12:34:39+08:00",
+      "subject": "fix: complete managed Room collaboration waves"
+    },
+    {
+      "id": "commit-room-web",
+      "kind": "git-commit",
+      "ref": "git:084c7a4",
+      "observedAt": "2026-07-14",
+      "commit": "084c7a445386bddd7b94c437d4d304345cad7e21",
+      "committedAt": "2026-07-14T19:27:27+08:00",
+      "subject": "Build Agent Room and Role web experiences"
+    },
+    {
+      "id": "commit-runtime-release-gates",
+      "kind": "git-commit",
+      "ref": "git:dc6fdb3",
+      "observedAt": "2026-07-11",
+      "commit": "dc6fdb32faa8548a0d6d00dd26b9ea4e2bdbb1b5",
+      "committedAt": "2026-07-11T13:16:33+08:00",
+      "subject": "Engineer RAG-IME runtime and release gates"
+    },
+    {
+      "id": "commit-squirrel-rag-ime",
+      "kind": "git-commit",
+      "ref": "git:ff58ada",
+      "observedAt": "2026-07-01",
+      "commit": "ff58ada4af06ccf5ed3a0bebde8241599ab71106",
+      "committedAt": "2026-07-01T23:29:55+08:00",
+      "subject": "Run RAG IME through patched Squirrel"
+    },
+    {
+      "id": "doc-chat-summary-c4f0bf7d",
+      "kind": "project-document",
+      "ref": "docs/agent/chat-summary.md",
+      "observedAt": "2026-08-04",
+      "root": "main-release",
+      "snapshotMode": "exact-working-file",
+      "sha256": "c4f0bf7d8c78aa26fe9c647518891c278a9e40ddcd316c3ef9011ba7caef48c1",
+      "byteCount": 40199
+    },
+    {
+      "id": "doc-handoff-goal",
+      "kind": "project-document",
+      "ref": "docs/agent/handoff-goal.md",
+      "observedAt": "2026-08-02",
+      "root": "main-release",
+      "snapshotMode": "exact-working-file",
+      "sha256": "8aea34b14b20d2cd2163b2415f77b80464b35b11dc22ff8f91ab11820941abb4",
+      "byteCount": 115288
+    },
+    {
+      "id": "doc-memory-pipeline",
+      "kind": "project-document",
+      "ref": "docs/agent/memory-pipeline-requirements.md",
+      "observedAt": "2026-08-02",
+      "root": "main-release",
+      "snapshotMode": "exact-working-file",
+      "sha256": "15fbcbae8139826f66f33bff9f89ea6d7d66432072a511db8ca9c2b9bec9fc3b",
+      "byteCount": 14282
+    },
+    {
+      "id": "doc-product-readme",
+      "kind": "project-document",
+      "ref": "README.md",
+      "observedAt": "2026-08-02",
+      "root": "main-release",
+      "snapshotMode": "git-head",
+      "sha256": "1e90414bce8ac21581389b857a343964b8517a204078ba46249681078cae6dd7",
+      "byteCount": 33225
+    },
+    {
+      "id": "doc-project-field-contract",
+      "kind": "project-document",
+      "ref": "design-system/rag-ime-control-center/pages/project-field.md",
+      "observedAt": "2026-08-04",
+      "root": "prototype-contract",
+      "snapshotMode": "exact-prototype-file",
+      "sha256": "b7a7b7fdba66e31d529bd731aa5198a58ccf7c6d19d1b6a029a811404d0ce546",
+      "byteCount": 20286
+    },
+    {
+      "id": "doc-prompt-runtime-audit",
+      "kind": "project-document",
+      "ref": "docs/agent/prompt-runtime-reference-audit.md",
+      "observedAt": "2026-08-02",
+      "root": "main-release",
+      "snapshotMode": "exact-working-file",
+      "sha256": "350136ab9ecaeaf934a3517ca94aa5f7e4f531f6ca803e2a0aeceebf80edbea6",
+      "byteCount": 11355
+    },
+    {
+      "id": "doc-room-workflow",
+      "kind": "project-document",
+      "ref": "docs/agent/room-facilitated-workflow-requirements.md",
+      "observedAt": "2026-08-02",
+      "root": "main-release",
+      "snapshotMode": "exact-working-file",
+      "sha256": "bba907ed184956fc2be64b1f9c93d6eb92a0bd63197ebbe9479c67178c05b008",
+      "byteCount": 65007
+    },
+    {
+      "id": "session-claude-input-audit",
+      "kind": "agent-session",
+      "provider": "claude-code",
+      "sessionId": "97e725a7-dc96-46b3-a847-c364334f2024",
+      "observedAt": "2026-07-26",
+      "userMessageCount": 6,
+      "userMessagesSha256": "6f29df3b179c607291e5d1c12d6b17c24b33cef550fc65c6b46f81514445128f"
+    },
+    {
+      "id": "session-claude-room-audit",
+      "kind": "agent-session",
+      "provider": "claude-code",
+      "sessionId": "b70c871e-f5b4-49ea-8fc7-75ba82c7298c",
+      "observedAt": "2026-07-26",
+      "userMessageCount": 99,
+      "userMessagesSha256": "9ac01cadd667c7618ca14b43059440e4dbb8c57a9e17de93e5c73614f8c6bb29"
+    },
+    {
+      "id": "session-claude-ui-redesign",
+      "kind": "agent-session",
+      "provider": "claude-code",
+      "sessionId": "8bf790b9-6aa7-49c1-889f-cd32e1c9dabf",
+      "observedAt": "2026-07-26",
+      "userMessageCount": 140,
+      "userMessagesSha256": "4369404e23e28d96cee0d2b878e1a26164130f6f67123b26c5f00fbf411a6888"
+    },
+    {
+      "id": "session-codex-019fc62d",
+      "kind": "agent-session",
+      "provider": "codex",
+      "sessionId": "019fc62d-bce7-7353-bd3c-8bc169a894fb",
+      "observedAt": "2026-08-03",
+      "userMessageCount": 137,
+      "userMessagesSha256": "c5d762c98ef22fa258ad6d065be718a5a140d8e46abffa6e96df6bb4d3f551eb"
+    },
+    {
+      "id": "session-codex-omp-adaptation",
+      "kind": "agent-session",
+      "provider": "codex",
+      "sessionId": "019fb0ae-118f-77b3-8686-83a5e071678f",
+      "observedAt": "2026-07-30",
+      "userMessageCount": 44,
+      "userMessagesSha256": "76d8c16972c55948fe09faf78d22c20235a9eea292fb5b853b6b2b6e8a4b1976"
+    },
+    {
+      "id": "session-codex-project-field",
+      "kind": "agent-session",
+      "provider": "codex",
+      "sessionId": "019fbdd9-3ce4-7413-a20c-6d5725d0b6ac",
+      "observedAt": "2026-08-01",
+      "userMessageCount": 147,
+      "userMessagesSha256": "4118ba0d5bdef29f10954bfa7df017f4dc41ca3132fb710cc0ec4745fd405059"
+    },
+    {
+      "id": "session-codex-project-reconstruction",
+      "kind": "agent-session",
+      "provider": "codex",
+      "sessionId": "019fc134-aae7-7160-9754-392db668fda1",
+      "observedAt": "2026-08-02",
+      "userMessageCount": 15,
+      "userMessagesSha256": "52ac3805078b9be8f785641d53d635bda9eacc9464196f23be94cf69eebdbb21"
+    },
+    {
+      "id": "session-codex-room-recovery",
+      "kind": "agent-session",
+      "provider": "codex",
+      "sessionId": "019fb600-6080-7510-a091-9d56add3e9ed",
+      "observedAt": "2026-07-31",
+      "userMessageCount": 217,
+      "userMessagesSha256": "a00887de5166eb36bd2e4d2e5e8d8305aceae21c6ab4012613a65a02803da851"
+    },
+    {
+      "id": "session-omp-adaptation",
+      "kind": "agent-session",
+      "provider": "omp",
+      "sessionId": "019fb064-adc9-7000-b041-f1c692165442",
+      "observedAt": "2026-07-30",
+      "userMessageCount": 312,
+      "userMessagesSha256": "28545bbaa5b95819fc7d0419038adc4cc1a7281b1ba5a2e0700a1af124e2a907"
+    },
+    {
+      "id": "session-omp-prompt-todo-lsp",
+      "kind": "agent-session",
+      "provider": "omp",
+      "sessionId": "019fc09e-e243-7000-a43f-7648c45cbadf",
+      "observedAt": "2026-08-02",
+      "userMessageCount": 33,
+      "userMessagesSha256": "ed3aaeb62f62fb576566d234d4ca1ee9b2fc9c478dcb9e3d6432007efdb2981d"
+    },
+    {
+      "id": "session-pi-memory-pipeline",
+      "kind": "agent-session",
+      "provider": "pi",
+      "sessionId": "019fbcc7-7564-72c7-aef4-7affb24a329d",
+      "observedAt": "2026-08-01",
+      "userMessageCount": 32,
+      "userMessagesSha256": "fcd718a3fc6927982da2e3fde7589ced9a5a37cb04f030aef5e3d15bd0ba1a37"
+    },
+    {
+      "id": "session-pi-room-bootstrap",
+      "kind": "agent-session",
+      "provider": "pi",
+      "sessionId": "019fabcb-b8a1-75ea-9ce6-392d017d4d8e",
+      "observedAt": "2026-07-29",
+      "userMessageCount": 65,
+      "userMessagesSha256": "4aa36231aff02da372bac6634a52d3251aaade026b102f2e7b1f8969782e4e17"
+    }
+  ],
+  "project": {
+    "id": "personal-agent-workbench",
+    "name": "Personal Agent Workbench",
+    "compactTitle": "个人助手工作台",
+    "shortName": "PA",
+    "subtitle": "真实项目航程重建",
+    "defaultRoomId": "project-field",
+    "routeCamera": {
+      "x": 0,
+      "y": 55,
+      "scale": 1
+    },
+    "reconstruction": {
+      "label": "真实资料回顾重建",
+      "sourceWindow": "2026-07-01 — 2026-08-04T23:59:59+08:00",
+      "snapshotRef": "main@8a50a6b21ced + cutoff-bounded working documents",
+      "method": "用户原话与项目文档优先；主 Agent 会话补足意图与过程；Git 只作实现旁证；Luna Max 只生成候选，7 月时间线由人工复核 Git 后补齐，最终由人工修改 docs。",
+      "sourceCounts": {
+        "projectDocuments": 7,
+        "agentSessions": 12,
+        "gitCommits": 16
+      }
+    },
+    "rooms": [
+      {
+        "id": "input-experience",
+        "title": "输入体验闭环",
+        "x": 500,
+        "y": 260,
+        "shape": 1,
+        "sources": [
+          {
+            "id": "doc-product-readme",
+            "kind": "project-document",
+            "role": "decision",
+            "label": "产品边界与能力现状",
+            "detail": "定义 Agent、Room、记忆、Control Center 与输入适配器属于同一产品。",
+            "ref": "README.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "session-claude-input-audit",
+            "kind": "agent-session",
+            "role": "acceptance",
+            "label": "输入链路与前台边界审计",
+            "detail": "沿 Squirrel、Rime、Sidecar、候选失效和真实前台验收追踪调用链。",
+            "ref": "agent-session:claude-code:97e725a7-dc96-46b3-a847-c364334f2024",
+            "observedAt": "2026-07-26",
+            "provider": "claude-code",
+            "authority": "primary"
+          },
+          {
+            "id": "doc-handoff-goal",
+            "kind": "project-document",
+            "role": "acceptance",
+            "label": "Agent / Room / 前端完成 Goal",
+            "detail": "保存真实验收、未完成项、Owner 边界与发布风险。",
+            "ref": "docs/agent/handoff-goal.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "commit-input-reliability",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "输入上下文可靠性修复",
+            "detail": "提交记录印证候选去重、旧结果失效与基础模型 Prompt 防线。",
+            "ref": "git:92e6a62",
+            "observedAt": "2026-07-26",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-squirrel-rag-ime",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "Squirrel 真实输入接入 RAG IME",
+            "detail": "提交记录印证项目从保留 Rime 权威、把 AI 辅助接入真实 macOS 输入前台开始。",
+            "ref": "git:ff58ada",
+            "observedAt": "2026-07-01",
+            "authority": "corroborating"
+          }
+        ],
+        "goal": "保留 Rime 输入权威，让助手候选在删除、切换、选择和真实前台使用中可靠。",
+        "phase": "attention",
+        "phaseLabel": "质量门",
+        "recentResult": "Rime 边界、候选代际和旧响应失效已进入同一输入链路，正在等待真实 Squirrel 组合验收。",
+        "unresolved": "原生输入、助手候选和异步响应存在上下文失效与前台证据缺口，旧候选可能在用户已经修改输入后再次出现。",
+        "nextStep": "在真实前台运行同代组合场景，并保存候选出现、失效与选择结果的可复查回执。",
+        "areas": [
+          {
+            "title": "Rime 始终负责拼音解析、原生候选和普通数字键，助手候选不会静默改写其顺序。",
+            "note": "已核验证据",
+            "state": "settled"
+          },
+          {
+            "title": "删除、焦点或上下文变化会使旧代助手候选失效。",
+            "note": "已核验证据",
+            "state": "settled"
+          },
+          {
+            "title": "在真实 Squirrel 中完成删除、应用切换、候选选择和持续输入的同代组合验收。",
+            "note": "待核验",
+            "state": "attention"
+          }
+        ],
+        "workflow": [
+          "需求对齐",
+          "实现规划",
+          "实现执行",
+          "质量门"
+        ],
+        "keywords": [
+          "输入体验闭环",
+          "保留 Rime 输入权威，让助手候选在删除、切换、选择和真实前台使用中可靠。",
+          "原生输入、助手候选和异步响应存在上下文失效与前台证据缺口，旧候选可能在用户已经修改输入后再次出现。"
+        ],
+        "retrospective": true
+      },
+      {
+        "id": "unified-workbench",
+        "title": "统一产品工作台",
+        "x": 900,
+        "y": 200,
+        "shape": 2,
+        "sources": [
+          {
+            "id": "doc-product-readme",
+            "kind": "project-document",
+            "role": "decision",
+            "label": "产品边界与能力现状",
+            "detail": "定义 Agent、Room、记忆、Control Center 与输入适配器属于同一产品。",
+            "ref": "README.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "session-claude-ui-redesign",
+            "kind": "agent-session",
+            "role": "intent",
+            "label": "统一纸张工作台 UI 重构",
+            "detail": "要求 Session 与 Room 共用一个内容优先、长期可读的工作台语言。",
+            "ref": "agent-session:claude-code:8bf790b9-6aa7-49c1-889f-cd32e1c9dabf",
+            "observedAt": "2026-07-26",
+            "provider": "claude-code",
+            "authority": "primary"
+          },
+          {
+            "id": "commit-product-identity",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "统一为一个 Personal Agent Workbench",
+            "detail": "提交记录印证输入、Agent、Room 与记忆被呈现为同一产品。",
+            "ref": "git:7e09954",
+            "observedAt": "2026-07-28",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-native-control-center",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "原生 RAG-IME Control Center",
+            "detail": "提交记录印证输入诊断、设置和记忆管理开始进入统一原生工作台。",
+            "ref": "git:a4bec68",
+            "observedAt": "2026-07-10",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-personal-agent-identity",
+            "kind": "git-commit",
+            "role": "decision",
+            "label": "采用 Personal Agent Workbench 身份",
+            "detail": "提交记录印证产品在 7 月 27 日正式从输入工具收敛为统一个人 Agent 工作台。",
+            "ref": "git:d3e1b48",
+            "observedAt": "2026-07-27",
+            "authority": "corroborating"
+          }
+        ],
+        "goal": "让输入、Agent、Room、记忆和工具在同一内容优先的 Control Center 中保持清晰所有权。",
+        "phase": "running",
+        "phaseLabel": "实现执行",
+        "recentResult": "产品身份、共享纸张工作区和单一前端投影边界已经统一，正在接入 Project Field 的结果型导航。",
+        "unresolved": "产品身份与共享工作区已有基线，但 Project / Room 导航尚未作为真实领域投影融入同一产品体验。",
+        "nextStep": "让 Project Field 复用现有设计系统和 Room 能力，并验证聚焦与返回仍处于同一产品上下文。",
+        "areas": [
+          {
+            "title": "输入、Agent、Room、记忆和工具位于同一工作台，不形成平行产品。",
+            "note": "已核验证据",
+            "state": "settled"
+          },
+          {
+            "title": "UI 只投影 Runtime、权限、取消和终态，不复制这些状态的 Owner。",
+            "note": "已核验证据",
+            "state": "settled"
+          },
+          {
+            "title": "Project Field 与已有 Session、Room、Tool 和记忆界面使用一致的导航与交互语言。",
+            "note": "待核验",
+            "state": "active"
+          }
+        ],
+        "workflow": [
+          "需求对齐",
+          "实现规划",
+          "实现执行"
+        ],
+        "keywords": [
+          "统一产品工作台",
+          "让输入、Agent、Room、记忆和工具在同一内容优先的 Control Center 中保持清晰所有权。",
+          "产品身份与共享工作区已有基线，但 Project / Room 导航尚未作为真实领域投影融入同一产品体验。"
+        ],
+        "retrospective": true
+      },
+      {
+        "id": "agent-continuity",
+        "title": "Agent 长任务连续性",
+        "x": 1300,
+        "y": 200,
+        "shape": 3,
+        "sources": [
+          {
+            "id": "doc-handoff-goal",
+            "kind": "project-document",
+            "role": "acceptance",
+            "label": "Agent / Room / 前端完成 Goal",
+            "detail": "保存真实验收、未完成项、Owner 边界与发布风险。",
+            "ref": "docs/agent/handoff-goal.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "session-codex-room-recovery",
+            "kind": "agent-session",
+            "role": "acceptance",
+            "label": "Room 活动、恢复与协作验收",
+            "detail": "覆盖 Room 连续性、后台活动、前端投影与真实验收边界。",
+            "ref": "agent-session:codex:019fb600-6080-7510-a091-9d56add3e9ed",
+            "observedAt": "2026-07-31",
+            "provider": "codex",
+            "authority": "primary"
+          },
+          {
+            "id": "doc-prompt-runtime-audit",
+            "kind": "project-document",
+            "role": "decision",
+            "label": "Prompt 与 Runtime 参考审计",
+            "detail": "区分当前状态 Owner、压缩恢复、Tool 披露与受限上下文。",
+            "ref": "docs/agent/prompt-runtime-reference-audit.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "commit-room-recovery",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "Room 活动与恢复收束",
+            "detail": "提交记录印证活动投影、连续性与恢复体验。",
+            "ref": "git:084fefb",
+            "observedAt": "2026-08-01",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-room-governance",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "Room 上下文与连续性治理",
+            "detail": "提交记录印证 7 月 20 日以后 Room 状态、恢复和同一目标连续性形成治理边界。",
+            "ref": "git:399d6a2",
+            "observedAt": "2026-07-20",
+            "authority": "corroborating"
+          }
+        ],
+        "goal": "让长任务跨 Tool、压缩、恢复、模型切换和重连后仍沿同一目标继续。",
+        "phase": "attention",
+        "phaseLabel": "质量门",
+        "recentResult": "Session、Tool 时间线、压缩恢复和当前状态 Owner 已完成分层收束，正在验证跨边界组合行为。",
+        "unresolved": "Provider 长时恢复、历史改写和多次重连的组合场景尚未形成同代闭环，目标与当前运行状态可能在边界处漂移。",
+        "nextStep": "用当前安装代际完成跨压缩、改写、模型切换与重连的同目标回放。",
+        "areas": [
+          {
+            "title": "同一个原始目标跨 Tool 循环、压缩、模型切换、重连和恢复后保持一致。",
+            "note": "已核验证据",
+            "state": "settled"
+          },
+          {
+            "title": "Session 历史与当前分支只有一个权威 Owner，恢复不会复制或倒退当前任务状态。",
+            "note": "已核验证据",
+            "state": "settled"
+          },
+          {
+            "title": "当前安装代际可以回放组合场景，并从回执定位任何中断或状态漂移。",
+            "note": "待核验",
+            "state": "attention"
+          }
+        ],
+        "workflow": [
+          "需求对齐",
+          "实现规划",
+          "实现执行",
+          "质量门"
+        ],
+        "keywords": [
+          "Agent 长任务连续性",
+          "让长任务跨 Tool、压缩、恢复、模型切换和重连后仍沿同一目标继续。",
+          "Provider 长时恢复、历史改写和多次重连的组合场景尚未形成同代闭环，目标与当前运行状态可能在边界处漂移。"
+        ],
+        "retrospective": true
+      },
+      {
+        "id": "room-delivery",
+        "title": "Room 协作交付",
+        "x": 1300,
+        "y": 520,
+        "shape": 2,
+        "sources": [
+          {
+            "id": "doc-room-workflow",
+            "kind": "project-document",
+            "role": "decision",
+            "label": "Room 协作工作流需求",
+            "detail": "固定 Room 角色、任务、交接、工作区、结算与用户介入边界。",
+            "ref": "docs/agent/room-facilitated-workflow-requirements.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "session-claude-room-audit",
+            "kind": "agent-session",
+            "role": "acceptance",
+            "label": "Agent / Room 角色与 Kernel 审计",
+            "detail": "核对角色元数据、Kernel 执行、真实多 Agent 任务与失败恢复。",
+            "ref": "agent-session:claude-code:b70c871e-f5b4-49ea-8fc7-75ba82c7298c",
+            "observedAt": "2026-07-26",
+            "provider": "claude-code",
+            "authority": "primary"
+          },
+          {
+            "id": "session-pi-room-bootstrap",
+            "kind": "agent-session",
+            "role": "acceptance",
+            "label": "Pi Agent / Room 自举与工作台实现",
+            "detail": "记录 Agent、Room、自举任务和前端连续工作的真实推进。",
+            "ref": "agent-session:pi:019fabcb-b8a1-75ea-9ce6-392d017d4d8e",
+            "observedAt": "2026-07-29",
+            "provider": "pi",
+            "authority": "primary"
+          },
+          {
+            "id": "session-omp-adaptation",
+            "kind": "agent-session",
+            "role": "acceptance",
+            "label": "OMP / Cat Cafe 大规模适配执行",
+            "detail": "覆盖 Room、Skill、Work Document、归档、并行 Agent 与前端验证。",
+            "ref": "agent-session:omp:019fb064-adc9-7000-b041-f1c692165442",
+            "observedAt": "2026-07-30",
+            "provider": "omp",
+            "authority": "primary"
+          },
+          {
+            "id": "commit-room-autonomy",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "自主 Room 协作闭环",
+            "detail": "提交记录印证任务、Dispatch、公开结果与终态回执。",
+            "ref": "git:d94674e",
+            "observedAt": "2026-08-01",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-room-waves",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "受管 Room 协作波次完成",
+            "detail": "提交记录印证后台协作、恢复与收敛修复。",
+            "ref": "git:3ffacd5",
+            "observedAt": "2026-08-01",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-room-web",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "Agent、Room 与角色工作台",
+            "detail": "提交记录印证 7 月 14 日开始以一个结果型 Room 组织 Agent、角色与 Web 协作。",
+            "ref": "git:084c7a4",
+            "observedAt": "2026-07-14",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-room-governance",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "Room 上下文与连续性治理",
+            "detail": "提交记录印证 7 月 20 日以后 Room 状态、恢复和同一目标连续性形成治理边界。",
+            "ref": "git:399d6a2",
+            "observedAt": "2026-07-20",
+            "authority": "corroborating"
+          }
+        ],
+        "goal": "让一个 Room 围绕一个用户结果组织多 Agent、工作区、交接、质量和终态。",
+        "phase": "running",
+        "phaseLabel": "实现执行",
+        "recentResult": "多成员任务、公开结果、共同复核和确定性终态已有真实实现，正在补齐高风险组合场景。",
+        "unresolved": "Room 容易退化成工单列表或聊天集合，真实文件修改、取消、重连、图片和破坏性审批的组合交付仍不完整。",
+        "nextStep": "把文件修改、取消、重连、图片和破坏性审批压进同一个可恢复、可审计的 Room 交付矩阵。",
+        "areas": [
+          {
+            "title": "一个 Room 能围绕同一用户结果组织并行任务、结构化交接、证据提交和确定性终态。",
+            "note": "已核验证据",
+            "state": "settled"
+          },
+          {
+            "title": "多个 Agent 保留私有 Session，不各自复制任务或工作区 Owner。",
+            "note": "已核验证据",
+            "state": "settled"
+          },
+          {
+            "title": "文件修改、取消、重连、冲突、图片和破坏性审批进入同一可恢复交付矩阵。",
+            "note": "待核验",
+            "state": "active"
+          }
+        ],
+        "workflow": [
+          "需求对齐",
+          "实现规划",
+          "实现执行"
+        ],
+        "keywords": [
+          "Room 协作交付",
+          "让一个 Room 围绕一个用户结果组织多 Agent、工作区、交接、质量和终态。",
+          "Room 容易退化成工单列表或聊天集合，真实文件修改、取消、重连、图片和破坏性审批的组合交付仍不完整。"
+        ],
+        "retrospective": true
+      },
+      {
+        "id": "governed-memory",
+        "title": "受控项目记忆",
+        "x": 900,
+        "y": 520,
+        "shape": 4,
+        "sources": [
+          {
+            "id": "doc-memory-pipeline",
+            "kind": "project-document",
+            "role": "decision",
+            "label": "记忆 Evidence → Atom → Book 需求",
+            "detail": "固定不可变用户来源、证据晋升、Book 层级与回滚边界。",
+            "ref": "docs/agent/memory-pipeline-requirements.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "session-pi-memory-pipeline",
+            "kind": "agent-session",
+            "role": "intent",
+            "label": "记忆三层恢复与治理",
+            "detail": "用户要求恢复 Evidence、Atom、Book，并保持来源与文档边界。",
+            "ref": "agent-session:pi:019fbcc7-7564-72c7-aef4-7affb24a329d",
+            "observedAt": "2026-08-01",
+            "provider": "pi",
+            "authority": "primary"
+          },
+          {
+            "id": "session-codex-project-field",
+            "kind": "agent-session",
+            "role": "intent",
+            "label": "Room 工作流与 Project Field 对齐",
+            "detail": "用户连续纠偏 Room 边界、Wayfinder、归档、记忆与全屏项目场。",
+            "ref": "agent-session:codex:019fbdd9-3ce4-7413-a20c-6d5725d0b6ac",
+            "observedAt": "2026-08-01",
+            "provider": "codex",
+            "authority": "primary"
+          },
+          {
+            "id": "commit-governed-workflow",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "受治理工作流与前台证据",
+            "detail": "提交记录印证 Skill、工作文档、记忆与真实前台门的组合。",
+            "ref": "git:5f0f114",
+            "observedAt": "2026-08-01",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-memory-database",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "本地 RAG 记忆数据库",
+            "detail": "提交记录印证输入历史在 7 月 4 日开始被整理为可查询的本地记忆来源。",
+            "ref": "git:09b2cc7",
+            "observedAt": "2026-07-04",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-historical-memory",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "受控历史记忆整理",
+            "detail": "提交记录印证 8 月 4 日历史资料通过可追溯、可撤销边界进入项目记忆。",
+            "ref": "git:8a50a6b",
+            "observedAt": "2026-08-04",
+            "authority": "corroborating"
+          }
+        ],
+        "goal": "从不可变用户来源形成 Evidence、Atom、Book，使知识可追溯、可晋升、可撤销。",
+        "phase": "running",
+        "phaseLabel": "实现执行",
+        "recentResult": "用户来源、证据账本、Atom、Book、回滚和文档边界已经对齐，正在实现地图与项目知识的受控适配。",
+        "unresolved": "用户来源、项目文档、Project Map 与正式记忆之间缺少自动但受控的适配边界，容易把整理结果误当作事实或静默写回个人记忆。",
+        "nextStep": "让文档投影自动更新且可撤销，并让跨 Room 知识候选经过证据审查后再晋升。",
+        "areas": [
+          {
+            "title": "每项知识都能从 Book 回溯到 Atom、Evidence 和不可变用户来源。",
+            "note": "已核验证据",
+            "state": "settled"
+          },
+          {
+            "title": "晋升、归档和回滚都有显式回执并可撤销。",
+            "note": "已核验证据",
+            "state": "settled"
+          },
+          {
+            "title": "Project Map 只引用项目来源，不静默写入或拥有个人 Memory。",
+            "note": "待核验",
+            "state": "active"
+          }
+        ],
+        "workflow": [
+          "需求对齐",
+          "实现规划",
+          "实现执行"
+        ],
+        "keywords": [
+          "受控项目记忆",
+          "从不可变用户来源形成 Evidence、Atom、Book，使知识可追溯、可晋升、可撤销。",
+          "用户来源、项目文档、Project Map 与正式记忆之间缺少自动但受控的适配边界，容易把整理结果误当作事实或静默写回个人记忆。"
+        ],
+        "retrospective": true
+      },
+      {
+        "id": "workflow-system",
+        "title": "工作流与能力收敛",
+        "x": 1700,
+        "y": 520,
+        "shape": 1,
+        "sources": [
+          {
+            "id": "session-codex-project-field",
+            "kind": "agent-session",
+            "role": "intent",
+            "label": "Room 工作流与 Project Field 对齐",
+            "detail": "用户连续纠偏 Room 边界、Wayfinder、归档、记忆与全屏项目场。",
+            "ref": "agent-session:codex:019fbdd9-3ce4-7413-a20c-6d5725d0b6ac",
+            "observedAt": "2026-08-01",
+            "provider": "codex",
+            "authority": "primary"
+          },
+          {
+            "id": "session-codex-omp-adaptation",
+            "kind": "agent-session",
+            "role": "decision",
+            "label": "OMP / Cat Cafe 机制适配",
+            "detail": "比较后台 Job、Plan、Goal、Skill、Work Document 与 Room Owner。",
+            "ref": "agent-session:codex:019fb0ae-118f-77b3-8686-83a5e071678f",
+            "observedAt": "2026-07-30",
+            "provider": "codex",
+            "authority": "primary"
+          },
+          {
+            "id": "session-omp-prompt-todo-lsp",
+            "kind": "agent-session",
+            "role": "decision",
+            "label": "Prompt、Ask、Todo 与 LSP 收敛",
+            "detail": "核对 Prompt 顺序、缓存、Ask、Todo、LSP 与工作文档的单一 Owner。",
+            "ref": "agent-session:omp:019fc09e-e243-7000-a43f-7648c45cbadf",
+            "observedAt": "2026-08-02",
+            "provider": "omp",
+            "authority": "primary"
+          },
+          {
+            "id": "doc-prompt-runtime-audit",
+            "kind": "project-document",
+            "role": "decision",
+            "label": "Prompt 与 Runtime 参考审计",
+            "detail": "区分当前状态 Owner、压缩恢复、Tool 披露与受限上下文。",
+            "ref": "docs/agent/prompt-runtime-reference-audit.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "commit-agent-room-runtime",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "统一受治理 Agent / Room Runtime",
+            "detail": "提交记录印证 Agent 与 Room 运行时、能力与状态 Owner 的收敛。",
+            "ref": "git:923a9e1",
+            "observedAt": "2026-07-31",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-governed-workflow",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "受治理工作流与前台证据",
+            "detail": "提交记录印证 Skill、工作文档、记忆与真实前台门的组合。",
+            "ref": "git:5f0f114",
+            "observedAt": "2026-08-01",
+            "authority": "corroborating"
+          }
+        ],
+        "goal": "用固定外层流程推进对齐、规划、执行、质量验证和独立复核，并保持 Tool、Todo、LSP 和文档单一 Owner。",
+        "phase": "running",
+        "phaseLabel": "实现执行",
+        "recentResult": "技能链、Prompt 顺序、能力披露和状态 Owner 已形成统一方向，正在接入真实 Room 交付状态。",
+        "unresolved": "技能、Prompt、测试驱动实现、质量门、归档和 Runtime 状态之间仍有适配缺口，容易形成第二套流程或状态源。",
+        "nextStep": "让执行、测试驱动实现、质量门、独立复核和文档归档按同一 Room 状态联动。",
+        "areas": [
+          {
+            "title": "外层阶段严格为需求对齐、实现规划、实现执行、质量门和独立复核五段。",
+            "note": "已核验证据",
+            "state": "settled"
+          },
+          {
+            "title": "测试驱动实现只属于 implementation-execution 内层，不成为第六个外层阶段。",
+            "note": "已核验证据",
+            "state": "settled"
+          },
+          {
+            "title": "Tool、Todo、LSP、文档和 Runtime 各自只有一个权威 Owner，并通过真实 Room 回执联动。",
+            "note": "待核验",
+            "state": "active"
+          }
+        ],
+        "workflow": [
+          "需求对齐",
+          "实现规划",
+          "实现执行"
+        ],
+        "keywords": [
+          "工作流与能力收敛",
+          "用固定外层流程推进对齐、规划、执行、质量验证和独立复核，并保持 Tool、Todo、LSP 和文档单一 Owner。",
+          "技能、Prompt、测试驱动实现、质量门、归档和 Runtime 状态之间仍有适配缺口，容易形成第二套流程或状态源。"
+        ],
+        "retrospective": true
+      },
+      {
+        "id": "project-field",
+        "title": "Room 导航与项目图谱",
+        "x": 2100,
+        "y": 260,
+        "shape": 1,
+        "sources": [
+          {
+            "id": "doc-project-field-contract",
+            "kind": "project-document",
+            "role": "intent",
+            "label": "Project Field 原始愿景与交互合同",
+            "detail": "逐字保存 Room 难找、一个 Room 覆盖多个方向与地图记忆的用户要求。",
+            "ref": "design-system/rag-ime-control-center/pages/project-field.md",
+            "observedAt": "2026-08-04",
+            "authority": "primary"
+          },
+          {
+            "id": "session-codex-project-field",
+            "kind": "agent-session",
+            "role": "intent",
+            "label": "Room 工作流与 Project Field 对齐",
+            "detail": "用户连续纠偏 Room 边界、Wayfinder、归档、记忆与全屏项目场。",
+            "ref": "agent-session:codex:019fbdd9-3ce4-7413-a20c-6d5725d0b6ac",
+            "observedAt": "2026-08-01",
+            "provider": "codex",
+            "authority": "primary"
+          },
+          {
+            "id": "session-codex-project-reconstruction",
+            "kind": "agent-session",
+            "role": "intent",
+            "label": "真实项目图谱重建",
+            "detail": "明确使用 main-release docs 与四类 Agent 主会话还原演示图。",
+            "ref": "agent-session:codex:019fc134-aae7-7160-9754-392db668fda1",
+            "observedAt": "2026-08-02",
+            "provider": "codex",
+            "authority": "primary"
+          },
+          {
+            "id": "doc-handoff-goal",
+            "kind": "project-document",
+            "role": "acceptance",
+            "label": "Agent / Room / 前端完成 Goal",
+            "detail": "保存真实验收、未完成项、Owner 边界与发布风险。",
+            "ref": "docs/agent/handoff-goal.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "doc-chat-summary-c4f0bf7d",
+            "kind": "project-document",
+            "role": "acceptance",
+            "label": "截至 8 月 4 日的项目状态总账",
+            "detail": "区分 source snapshot、dirty 工作文档、已验证事实和仍开放的原生验收。",
+            "ref": "docs/agent/chat-summary.md",
+            "observedAt": "2026-08-04",
+            "authority": "primary"
+          },
+          {
+            "id": "session-codex-019fc62d",
+            "kind": "agent-session",
+            "role": "decision",
+            "label": "Project Field 交接与 Room 生产边界复核",
+            "detail": "补足 8 月 3 日的 handoff、Wayfinder 演示边界与生产状态 owner 纠偏。",
+            "ref": "agent-session:codex:019fc62d-bce7-7353-bd3c-8bc169a894fb",
+            "observedAt": "2026-08-03",
+            "provider": "codex",
+            "authority": "primary"
+          },
+          {
+            "id": "commit-room-self-bootstrap",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "Room 自举 TUI 验证",
+            "detail": "提交记录印证 Room 可以承担完整代码交付航程，而不是一个聊天附件。",
+            "ref": "git:bf0f3d6",
+            "observedAt": "2026-07-31",
+            "authority": "corroborating"
+          }
+        ],
+        "goal": "让用户从 Project 初始愿景出发，找到、理解并继续八个正确的结果型 Room；纸张表面显示整理后的需求和阶段状态，点击后查看决定、问题、验收、交付与来源。",
+        "phase": "foreground",
+        "phaseLabel": "当前 Room",
+        "recentResult": "八个 Room 的边界和来源回执已固定。总览时间轴、卡片日期和发布检查点日期已移除，真实历史仍约束拓扑、连线和来源证据；同代自动检查已通过，但当前没有可连接的用户可见浏览器，因此仍处于实现执行。",
+        "unresolved": "长期项目经过多次讨论和实现后，需求、当前进度与验收结果散落在不同 Room 中，用户难以快速判断项目为何存在、现在应继续哪里以及离最终愿景还有什么差距。",
+        "nextStep": "重新连接用户可见浏览器，复现无时间轴纸张图；完成原生可见检查后，再请用户判断是否能快速读出起点、需求分化、当前位置、证据进度和下一步。",
+        "areas": [
+          {
+            "title": "每个 Room 在未展开时就能说明它解决什么用户问题和当前阶段；决定、问题、验收与来源在展开后读取。",
+            "note": "已核验证据",
+            "state": "settled"
+          },
+          {
+            "title": "docs、manifest 和生成投影保持单一权威边界，并对 Room、关系、阶段、来源与可观察验收做完整校验。",
+            "note": "已核验证据",
+            "state": "settled"
+          },
+          {
+            "title": "七张结果纸等宽等高、按历史拓扑形成稳定列，当前状态不改变卡片尺寸，岛面不显示日期。",
+            "note": "已核验证据",
+            "state": "settled"
+          },
+          {
+            "title": "真实使用与发布作为贯穿式轨道呈现；目的地在全部必需验收完成前保持未抵达。",
+            "note": "已核验证据",
+            "state": "settled"
+          },
+          {
+            "title": "点击纸张后看到同一 Room 的需求、决定、交付、证据进度和来源详情，关闭后回到原项目位置。",
+            "note": "已核验证据",
+            "state": "settled"
+          },
+          {
+            "title": "在用户原生可见浏览器中，三秒内读出起点、历史分化、当前位置、证据进度和下一步，并给出验收结论。",
+            "note": "待核验",
+            "state": "active"
+          }
+        ],
+        "workflow": [
+          "需求对齐",
+          "实现规划",
+          "实现执行"
+        ],
+        "keywords": [
+          "Room 导航与项目图谱",
+          "让用户从 Project 初始愿景出发，找到、理解并继续八个正确的结果型 Room；纸张表面显示整理后的需求和阶段状态，点击后查看决定、问题、验收、交付与来源。",
+          "长期项目经过多次讨论和实现后，需求、当前进度与验收结果散落在不同 Room 中，用户难以快速判断项目为何存在、现在应继续哪里以及离最终愿景还有什么差距。"
+        ],
+        "retrospective": true
+      },
+      {
+        "id": "release-journey",
+        "title": "真实使用与发布",
+        "x": 1250,
+        "y": 800,
+        "shape": 3,
+        "sources": [
+          {
+            "id": "doc-product-readme",
+            "kind": "project-document",
+            "role": "decision",
+            "label": "产品边界与能力现状",
+            "detail": "定义 Agent、Room、记忆、Control Center 与输入适配器属于同一产品。",
+            "ref": "README.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "doc-handoff-goal",
+            "kind": "project-document",
+            "role": "acceptance",
+            "label": "Agent / Room / 前端完成 Goal",
+            "detail": "保存真实验收、未完成项、Owner 边界与发布风险。",
+            "ref": "docs/agent/handoff-goal.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "commit-governed-workflow",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "受治理工作流与前台证据",
+            "detail": "提交记录印证 Skill、工作文档、记忆与真实前台门的组合。",
+            "ref": "git:5f0f114",
+            "observedAt": "2026-08-01",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-squirrel-rag-ime",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "Squirrel 真实输入接入 RAG IME",
+            "detail": "提交记录印证项目从保留 Rime 权威、把 AI 辅助接入真实 macOS 输入前台开始。",
+            "ref": "git:ff58ada",
+            "observedAt": "2026-07-01",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-runtime-release-gates",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "Runtime 与发布门",
+            "detail": "提交记录印证 7 月 11 日开始把实现、构建、真实前台和发布证据分开检核。",
+            "ref": "git:dc6fdb3",
+            "observedAt": "2026-07-11",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-historical-memory",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "受控历史记忆整理",
+            "detail": "提交记录印证 8 月 4 日历史资料通过可追溯、可撤销边界进入项目记忆。",
+            "ref": "git:8a50a6b",
+            "observedAt": "2026-08-04",
+            "authority": "corroborating"
+          }
+        ],
+        "goal": "把已实现能力推进成可安装、可验证、可恢复并能公开交付的真实产品。",
+        "phase": "planned",
+        "phaseLabel": "实现规划",
+        "recentResult": "源码、测试和部分安装态回执已经明确区分实现、构建与真实可用，发布航程等待核心体验收束。",
+        "unresolved": "源码、构建、局部检查和截图不能替代真实前台、正式安装、签名、公证、干净机器与公开分发验证。",
+        "nextStep": "核心 Room 完成质量门与独立复核后，冻结同代安装候选并执行前台与发布矩阵。",
+        "areas": [
+          {
+            "title": "源码、测试、构建和真实前台证据边界被明确区分，发布门有可追溯回执。",
+            "note": "已核验证据",
+            "state": "settled"
+          },
+          {
+            "title": "完成真实前台矩阵，并证明候选、Room、Tool 与恢复行为来自同一安装代际。",
+            "note": "待核验",
+            "state": "planned"
+          },
+          {
+            "title": "完成签名、公证、stapling、公开包与干净机器核心路径验证。",
+            "note": "待核验",
+            "state": "planned"
+          }
+        ],
+        "workflow": [
+          "需求对齐",
+          "实现规划"
+        ],
+        "keywords": [
+          "真实使用与发布",
+          "把已实现能力推进成可安装、可验证、可恢复并能公开交付的真实产品。",
+          "源码、构建、局部检查和截图不能替代真实前台、正式安装、签名、公证、干净机器与公开分发验证。"
+        ],
+        "retrospective": true
+      }
+    ],
+    "destination": "可持续交付的个人 Agent 工作台",
+    "heading": "Rime / 万象继续负责拼音解析、原生候选、翻页和普通数字键，助手能力不替换其解码路径。",
+    "origin": "可靠的 macOS AI 输入辅助",
+    "edges": [
+      {
+        "from": "input-experience",
+        "to": "governed-memory",
+        "kind": "course"
+      },
+      {
+        "from": "input-experience",
+        "to": "unified-workbench",
+        "kind": "course"
+      },
+      {
+        "from": "unified-workbench",
+        "to": "room-delivery",
+        "kind": "course"
+      },
+      {
+        "from": "room-delivery",
+        "to": "agent-continuity",
+        "kind": "course"
+      },
+      {
+        "from": "room-delivery",
+        "to": "workflow-system",
+        "kind": "course"
+      },
+      {
+        "from": "agent-continuity",
+        "to": "workflow-system",
+        "kind": "dependency"
+      },
+      {
+        "from": "unified-workbench",
+        "to": "project-field",
+        "kind": "dependency"
+      },
+      {
+        "from": "governed-memory",
+        "to": "project-field",
+        "kind": "dependency"
+      },
+      {
+        "from": "workflow-system",
+        "to": "project-field",
+        "kind": "course"
+      },
+      {
+        "from": "input-experience",
+        "to": "release-journey",
+        "kind": "dependency"
+      },
+      {
+        "from": "room-delivery",
+        "to": "release-journey",
+        "kind": "dependency"
+      },
+      {
+        "from": "workflow-system",
+        "to": "release-journey",
+        "kind": "dependency"
+      },
+      {
+        "from": "project-field",
+        "to": "release-journey",
+        "kind": "dependency"
+      }
+    ],
+    "wayfinder": {
+      "schemaVersion": "personal-agent.project-wayfinder.v2",
+      "projectId": "personal-agent-workbench",
+      "currentRoomId": "project-field",
+      "initialVision": {
+        "title": "可靠的 macOS AI 输入辅助",
+        "statement": "在保留 Rime / Squirrel 输入权威的前提下，让 AI 与 RAG 辅助候选真正进入 macOS 输入前台，并在删除、切换、选择和持续输入中保持可靠。",
+        "observableAnchors": [
+          "真实 Squirrel 前台可以显示、失效并选择与当前输入上下文一致的 AI / RAG 辅助候选。",
+          "Rime / 万象继续负责拼音解析、原生候选、翻页和普通数字键，助手能力不替换其解码路径。",
+          "后续记忆、Control Center、Agent、Room 与项目工作台都能追溯到这个真实输入需求如何逐步扩展。"
+        ],
+        "documentRef": "project/00-initial-vision.md",
+        "sourceRefs": [
+          "doc-product-readme",
+          "commit-squirrel-rag-ime"
+        ]
+      },
+      "destination": {
+        "title": "可持续交付的个人 Agent 工作台",
+        "statement": "让输入、Agent、Room、记忆和工具成为一个可长期推进的个人工作台：用户能从项目愿景找到正确 Room，理解每项需求为何存在，继续交付，并用真实可观察证据确认结果符合自己的要求。",
+        "state": "unreached",
+        "acceptanceObservations": [
+          "所有必需 Room 都完成质量门与独立复核，并保留新鲜的可观察验收证据。",
+          "涉及人类可见体验的 Room 都完成用户亲自验收，不能以截图、Mock、健康检查或终端状态替代。",
+          "Project 仍能从初始愿景追溯到每个 Room 的需求、交付结果和来源回执。"
+        ],
+        "documentRef": "project/01-destination.md",
+        "sourceRefs": [
+          "doc-product-readme",
+          "doc-handoff-goal",
+          "doc-project-field-contract"
+        ]
+      },
+      "deliveryEngine": {
+        "stages": [
+          {
+            "id": "alignment-and-decision",
+            "title": "需求对齐"
+          },
+          {
+            "id": "implementation-planning",
+            "title": "实现规划"
+          },
+          {
+            "id": "implementation-execution",
+            "title": "实现执行"
+          },
+          {
+            "id": "quality-gate",
+            "title": "质量门"
+          },
+          {
+            "id": "independent-review",
+            "title": "独立复核"
+          }
+        ],
+        "innerMethod": {
+          "id": "test-driven-implementation",
+          "parentStage": "implementation-execution",
+          "title": "测试驱动实现"
+        }
+      },
+      "evolution": {
+        "direction": "left-to-right",
+        "epochs": [
+          {
+            "id": "input-origin",
+            "range": "2026-07-01",
+            "label": "7 月 1 日",
+            "summary": "Rime / Squirrel AI 辅助进入真实输入前台。"
+          },
+          {
+            "id": "memory-control",
+            "range": "2026-07-04/2026-07-10",
+            "label": "7 月 4—10 日",
+            "summary": "本地记忆与原生 Control Center 从输入需求中分化。"
+          },
+          {
+            "id": "agent-room",
+            "range": "2026-07-14/2026-07-20",
+            "label": "7 月 14—20 日",
+            "summary": "Agent、Room、恢复与治理形成可交付协作结果。"
+          },
+          {
+            "id": "product-convergence",
+            "range": "2026-07-27/2026-08-01",
+            "label": "7 月 27 日—8 月 1 日",
+            "summary": "产品身份、Agent / Room Runtime 与受治理工作流收敛。"
+          },
+          {
+            "id": "project-field",
+            "range": "2026-08-04",
+            "label": "8 月 4 日以后",
+            "summary": "长期项目需要从真实历史找到正确 Room 并继续。"
+          }
+        ],
+        "releaseLane": {
+          "roomId": "release-journey",
+          "checkpoints": [
+            {
+              "observedAt": "2026-07-01",
+              "label": "Squirrel 真实输入",
+              "sourceRefs": [
+                "commit-squirrel-rag-ime"
+              ]
+            },
+            {
+              "observedAt": "2026-07-11",
+              "label": "Runtime 与发布门",
+              "sourceRefs": [
+                "commit-runtime-release-gates"
+              ]
+            },
+            {
+              "observedAt": "2026-07-20",
+              "label": "Room 治理与恢复",
+              "sourceRefs": [
+                "commit-room-governance"
+              ]
+            },
+            {
+              "observedAt": "2026-08-01",
+              "label": "工作流与前台证据",
+              "sourceRefs": [
+                "commit-governed-workflow"
+              ]
+            },
+            {
+              "observedAt": "2026-08-04",
+              "label": "历史记忆治理",
+              "sourceRefs": [
+                "commit-historical-memory"
+              ]
+            }
+          ]
+        }
+      },
+      "rooms": [
+        {
+          "roomId": "input-experience",
+          "title": "输入体验闭环",
+          "requirement": "保留 Rime 输入权威，让助手候选在删除、切换、选择和真实前台使用中可靠。",
+          "problem": "原生输入、助手候选和异步响应存在上下文失效与前台证据缺口，旧候选可能在用户已经修改输入后再次出现。",
+          "decisions": [
+            "Rime / 万象继续拥有拼音解析、原生候选、翻页与普通数字键；助手候选只做可区分的增量补充。",
+            "删除、组合、焦点、应用或上下文变化必须使旧代助手候选失效，真实 Squirrel 前台是最终验收边界。"
+          ],
+          "acceptanceObservations": [
+            "Rime 始终负责拼音解析、原生候选和普通数字键，助手候选不会静默改写其顺序。",
+            "删除、焦点或上下文变化会使旧代助手候选失效。",
+            "在真实 Squirrel 中完成删除、应用切换、候选选择和持续输入的同代组合验收。"
+          ],
+          "currentStage": "quality-gate",
+          "deliveryState": "active",
+          "emergedAt": "2026-07-01",
+          "epochId": "input-origin",
+          "topologyRole": "room",
+          "progress": {
+            "basis": "acceptance-evidence",
+            "completed": 2,
+            "total": 3,
+            "items": [
+              {
+                "label": "Rime 始终负责拼音解析、原生候选和普通数字键，助手候选不会静默改写其顺序。",
+                "state": "verified",
+                "sourceRefs": [
+                  "doc-product-readme",
+                  "commit-squirrel-rag-ime"
+                ]
+              },
+              {
+                "label": "删除、焦点或上下文变化会使旧代助手候选失效。",
+                "state": "verified",
+                "sourceRefs": [
+                  "session-claude-input-audit",
+                  "commit-input-reliability"
+                ]
+              },
+              {
+                "label": "在真实 Squirrel 中完成删除、应用切换、候选选择和持续输入的同代组合验收。",
+                "state": "pending",
+                "sourceRefs": [
+                  "doc-handoff-goal"
+                ]
+              }
+            ]
+          },
+          "currentDelivery": "Rime 边界、候选代际和旧响应失效已进入同一输入链路，正在等待真实 Squirrel 组合验收。",
+          "nextMove": "在真实前台运行同代组合场景，并保存候选出现、失效与选择结果的可复查回执。",
+          "documentRef": "rooms/input-experience.md",
+          "detailDocumentRefs": [],
+          "sourceRefs": [
+            "doc-product-readme",
+            "session-claude-input-audit",
+            "doc-handoff-goal",
+            "commit-squirrel-rag-ime",
+            "commit-input-reliability"
+          ]
+        },
+        {
+          "roomId": "governed-memory",
+          "title": "受控项目记忆",
+          "requirement": "从不可变用户来源形成 Evidence、Atom、Book，使知识可追溯、可晋升、可撤销。",
+          "problem": "用户来源、项目文档、Project Map 与正式记忆之间缺少自动但受控的适配边界，容易把整理结果误当作事实或静默写回个人记忆。",
+          "decisions": [
+            "不可变用户来源依次形成 Evidence、Atom 与 Book；每次晋升、归档和回滚都必须可追溯、可撤销。",
+            "Project Map 只引用项目来源，不拥有或静默写回个人记忆；整理结果不能自动升级为事实。"
+          ],
+          "acceptanceObservations": [
+            "每项知识都能从 Book 回溯到 Atom、Evidence 和不可变用户来源。",
+            "晋升、归档和回滚都有显式回执并可撤销。",
+            "Project Map 只引用项目来源，不静默写入或拥有个人 Memory。"
+          ],
+          "currentStage": "implementation-execution",
+          "deliveryState": "active",
+          "emergedAt": "2026-07-04",
+          "epochId": "memory-control",
+          "topologyRole": "room",
+          "progress": {
+            "basis": "acceptance-evidence",
+            "completed": 2,
+            "total": 3,
+            "items": [
+              {
+                "label": "每项知识都能从 Book 回溯到 Atom、Evidence 和不可变用户来源。",
+                "state": "verified",
+                "sourceRefs": [
+                  "doc-memory-pipeline",
+                  "commit-memory-database"
+                ]
+              },
+              {
+                "label": "晋升、归档和回滚都有显式回执并可撤销。",
+                "state": "verified",
+                "sourceRefs": [
+                  "doc-memory-pipeline",
+                  "commit-historical-memory"
+                ]
+              },
+              {
+                "label": "Project Map 只引用项目来源，不静默写入或拥有个人 Memory。",
+                "state": "pending",
+                "sourceRefs": [
+                  "session-codex-project-field"
+                ]
+              }
+            ]
+          },
+          "currentDelivery": "用户来源、证据账本、Atom、Book、回滚和文档边界已经对齐，正在实现地图与项目知识的受控适配。",
+          "nextMove": "让文档投影自动更新且可撤销，并让跨 Room 知识候选经过证据审查后再晋升。",
+          "documentRef": "rooms/governed-memory.md",
+          "detailDocumentRefs": [],
+          "sourceRefs": [
+            "doc-memory-pipeline",
+            "session-pi-memory-pipeline",
+            "session-codex-project-field",
+            "commit-memory-database",
+            "commit-historical-memory",
+            "commit-governed-workflow"
+          ]
+        },
+        {
+          "roomId": "unified-workbench",
+          "title": "统一产品工作台",
+          "requirement": "让输入、Agent、Room、记忆和工具在同一内容优先的 Control Center 中保持清晰所有权。",
+          "problem": "产品身份与共享工作区已有基线，但 Project / Room 导航尚未作为真实领域投影融入同一产品体验。",
+          "decisions": [
+            "输入、Agent、Room、记忆和工具属于同一个 Control Center，不建立平行产品或第二套主导航。",
+            "UI 只投影 Runtime、权限、取消与终态；这些状态继续由各自单一 Owner 管理。"
+          ],
+          "acceptanceObservations": [
+            "输入、Agent、Room、记忆和工具位于同一工作台，不形成平行产品。",
+            "UI 只投影 Runtime、权限、取消和终态，不复制这些状态的 Owner。",
+            "Project Field 与已有 Session、Room、Tool 和记忆界面使用一致的导航与交互语言。"
+          ],
+          "currentStage": "implementation-execution",
+          "deliveryState": "active",
+          "emergedAt": "2026-07-10",
+          "epochId": "memory-control",
+          "topologyRole": "room",
+          "progress": {
+            "basis": "acceptance-evidence",
+            "completed": 2,
+            "total": 3,
+            "items": [
+              {
+                "label": "输入、Agent、Room、记忆和工具位于同一工作台，不形成平行产品。",
+                "state": "verified",
+                "sourceRefs": [
+                  "commit-native-control-center",
+                  "commit-personal-agent-identity"
+                ]
+              },
+              {
+                "label": "UI 只投影 Runtime、权限、取消和终态，不复制这些状态的 Owner。",
+                "state": "verified",
+                "sourceRefs": [
+                  "doc-product-readme",
+                  "session-claude-ui-redesign"
+                ]
+              },
+              {
+                "label": "Project Field 与已有 Session、Room、Tool 和记忆界面使用一致的导航与交互语言。",
+                "state": "pending",
+                "sourceRefs": [
+                  "session-claude-ui-redesign"
+                ]
+              }
+            ]
+          },
+          "currentDelivery": "产品身份、共享纸张工作区和单一前端投影边界已经统一，正在接入 Project Field 的结果型导航。",
+          "nextMove": "让 Project Field 复用现有设计系统和 Room 能力，并验证聚焦与返回仍处于同一产品上下文。",
+          "documentRef": "rooms/unified-workbench.md",
+          "detailDocumentRefs": [],
+          "sourceRefs": [
+            "doc-product-readme",
+            "session-claude-ui-redesign",
+            "commit-native-control-center",
+            "commit-personal-agent-identity",
+            "commit-product-identity"
+          ]
+        },
+        {
+          "roomId": "room-delivery",
+          "title": "Room 协作交付",
+          "requirement": "让一个 Room 围绕一个用户结果组织多 Agent、工作区、交接、质量和终态。",
+          "problem": "Room 容易退化成工单列表或聊天集合，真实文件修改、取消、重连、图片和破坏性审批的组合交付仍不完整。",
+          "decisions": [
+            "一个 Room 围绕一个可验收的用户结果组织协作，而不是按前端、后端、聊天或工单拆分。",
+            "参与 Agent 保留私有 Session；交接、证据、审批与终态通过 Room 的受控回执协作。"
+          ],
+          "acceptanceObservations": [
+            "一个 Room 能围绕同一用户结果组织并行任务、结构化交接、证据提交和确定性终态。",
+            "多个 Agent 保留私有 Session，不各自复制任务或工作区 Owner。",
+            "文件修改、取消、重连、冲突、图片和破坏性审批进入同一可恢复交付矩阵。"
+          ],
+          "currentStage": "implementation-execution",
+          "deliveryState": "active",
+          "emergedAt": "2026-07-14",
+          "epochId": "agent-room",
+          "topologyRole": "room",
+          "progress": {
+            "basis": "acceptance-evidence",
+            "completed": 2,
+            "total": 3,
+            "items": [
+              {
+                "label": "一个 Room 能围绕同一用户结果组织并行任务、结构化交接、证据提交和确定性终态。",
+                "state": "verified",
+                "sourceRefs": [
+                  "doc-room-workflow",
+                  "commit-room-web",
+                  "commit-room-governance"
+                ]
+              },
+              {
+                "label": "多个 Agent 保留私有 Session，不各自复制任务或工作区 Owner。",
+                "state": "verified",
+                "sourceRefs": [
+                  "session-claude-room-audit",
+                  "commit-room-autonomy"
+                ]
+              },
+              {
+                "label": "文件修改、取消、重连、冲突、图片和破坏性审批进入同一可恢复交付矩阵。",
+                "state": "pending",
+                "sourceRefs": [
+                  "commit-room-waves"
+                ]
+              }
+            ]
+          },
+          "currentDelivery": "多成员任务、公开结果、共同复核和确定性终态已有真实实现，正在补齐高风险组合场景。",
+          "nextMove": "把文件修改、取消、重连、图片和破坏性审批压进同一个可恢复、可审计的 Room 交付矩阵。",
+          "documentRef": "rooms/room-delivery.md",
+          "detailDocumentRefs": [],
+          "sourceRefs": [
+            "doc-room-workflow",
+            "session-claude-room-audit",
+            "session-pi-room-bootstrap",
+            "session-omp-adaptation",
+            "commit-room-web",
+            "commit-room-governance",
+            "commit-room-autonomy",
+            "commit-room-waves"
+          ]
+        },
+        {
+          "roomId": "agent-continuity",
+          "title": "Agent 长任务连续性",
+          "requirement": "让长任务跨 Tool、压缩、恢复、模型切换和重连后仍沿同一目标继续。",
+          "problem": "Provider 长时恢复、历史改写和多次重连的组合场景尚未形成同代闭环，目标与当前运行状态可能在边界处漂移。",
+          "decisions": [
+            "Session 是目标、当前分支和恢复位置的单一 Owner；Tool、压缩、模型切换与重连不得复制任务状态。",
+            "恢复必须沿同一原始目标继续，并留下可定位中断、改写或状态漂移的回执。"
+          ],
+          "acceptanceObservations": [
+            "同一个原始目标跨 Tool 循环、压缩、模型切换、重连和恢复后保持一致。",
+            "Session 历史与当前分支只有一个权威 Owner，恢复不会复制或倒退当前任务状态。",
+            "当前安装代际可以回放组合场景，并从回执定位任何中断或状态漂移。"
+          ],
+          "currentStage": "quality-gate",
+          "deliveryState": "active",
+          "emergedAt": "2026-07-20",
+          "epochId": "agent-room",
+          "topologyRole": "room",
+          "progress": {
+            "basis": "acceptance-evidence",
+            "completed": 2,
+            "total": 3,
+            "items": [
+              {
+                "label": "同一个原始目标跨 Tool 循环、压缩、模型切换、重连和恢复后保持一致。",
+                "state": "verified",
+                "sourceRefs": [
+                  "doc-prompt-runtime-audit",
+                  "commit-room-governance"
+                ]
+              },
+              {
+                "label": "Session 历史与当前分支只有一个权威 Owner，恢复不会复制或倒退当前任务状态。",
+                "state": "verified",
+                "sourceRefs": [
+                  "session-codex-room-recovery",
+                  "commit-room-recovery"
+                ]
+              },
+              {
+                "label": "当前安装代际可以回放组合场景，并从回执定位任何中断或状态漂移。",
+                "state": "pending",
+                "sourceRefs": [
+                  "doc-handoff-goal"
+                ]
+              }
+            ]
+          },
+          "currentDelivery": "Session、Tool 时间线、压缩恢复和当前状态 Owner 已完成分层收束，正在验证跨边界组合行为。",
+          "nextMove": "用当前安装代际完成跨压缩、改写、模型切换与重连的同目标回放。",
+          "documentRef": "rooms/agent-continuity.md",
+          "detailDocumentRefs": [],
+          "sourceRefs": [
+            "doc-handoff-goal",
+            "session-codex-room-recovery",
+            "doc-prompt-runtime-audit",
+            "commit-room-governance",
+            "commit-room-recovery"
+          ]
+        },
+        {
+          "roomId": "workflow-system",
+          "title": "工作流与能力收敛",
+          "requirement": "用固定外层流程推进对齐、规划、执行、质量验证和独立复核，并保持 Tool、Todo、LSP 和文档单一 Owner。",
+          "problem": "技能、Prompt、测试驱动实现、质量门、归档和 Runtime 状态之间仍有适配缺口，容易形成第二套流程或状态源。",
+          "decisions": [
+            "外层交付固定为需求对齐、实现规划、实现执行、质量门和独立复核五段。",
+            "测试驱动实现只属于实现执行内层；Tool、Todo、LSP、文档和 Runtime 保持各自单一 Owner。"
+          ],
+          "acceptanceObservations": [
+            "外层阶段严格为需求对齐、实现规划、实现执行、质量门和独立复核五段。",
+            "测试驱动实现只属于 implementation-execution 内层，不成为第六个外层阶段。",
+            "Tool、Todo、LSP、文档和 Runtime 各自只有一个权威 Owner，并通过真实 Room 回执联动。"
+          ],
+          "currentStage": "implementation-execution",
+          "deliveryState": "active",
+          "emergedAt": "2026-07-31",
+          "epochId": "product-convergence",
+          "topologyRole": "room",
+          "progress": {
+            "basis": "acceptance-evidence",
+            "completed": 2,
+            "total": 3,
+            "items": [
+              {
+                "label": "外层阶段严格为需求对齐、实现规划、实现执行、质量门和独立复核五段。",
+                "state": "verified",
+                "sourceRefs": [
+                  "session-codex-project-field",
+                  "commit-governed-workflow"
+                ]
+              },
+              {
+                "label": "测试驱动实现只属于 implementation-execution 内层，不成为第六个外层阶段。",
+                "state": "verified",
+                "sourceRefs": [
+                  "session-codex-omp-adaptation",
+                  "session-omp-prompt-todo-lsp"
+                ]
+              },
+              {
+                "label": "Tool、Todo、LSP、文档和 Runtime 各自只有一个权威 Owner，并通过真实 Room 回执联动。",
+                "state": "pending",
+                "sourceRefs": [
+                  "doc-prompt-runtime-audit"
+                ]
+              }
+            ]
+          },
+          "currentDelivery": "技能链、Prompt 顺序、能力披露和状态 Owner 已形成统一方向，正在接入真实 Room 交付状态。",
+          "nextMove": "让执行、测试驱动实现、质量门、独立复核和文档归档按同一 Room 状态联动。",
+          "documentRef": "rooms/workflow-system.md",
+          "detailDocumentRefs": [],
+          "sourceRefs": [
+            "session-codex-project-field",
+            "session-codex-omp-adaptation",
+            "session-omp-prompt-todo-lsp",
+            "doc-prompt-runtime-audit",
+            "commit-agent-room-runtime",
+            "commit-governed-workflow"
+          ]
+        },
+        {
+          "roomId": "project-field",
+          "title": "Room 导航与项目图谱",
+          "requirement": "让用户从 Project 初始愿景出发，找到、理解并继续八个正确的结果型 Room；纸张表面显示整理后的需求和阶段状态，点击后查看决定、问题、验收、交付与来源。",
+          "problem": "长期项目经过多次讨论和实现后，需求、当前进度与验收结果散落在不同 Room 中，用户难以快速判断项目为何存在、现在应继续哪里以及离最终愿景还有什么差距。",
+          "decisions": [
+            "图谱只把初始愿景、结果型 Room、贯穿式真实验收轨道和最终愿景作为项目对象；共享架构是实现约束，不成为图上节点。",
+            "主图由真实历史决定从左到右的 DAG 拓扑；Room 可以分化、细化和依赖，但连线必须是有来源回执的 refines、led-to 或 requires，不能为视觉效果随意连接。总览不显示时间轴、日期刻度或卡片日期，日期只在详情和来源 receipts 中按需读取。",
+            "收起纸张只显示标题、整理后的需求和短阶段；决定、验收、来源与完整交付链在一次点击后直接读取。",
+            "七张结果型 Room 纸张使用统一尺寸与内部基线，并按历史阶段形成稳定列；真实使用与发布 不再伪装成项目末尾的一张卡，而是作为贯穿底部的长期验收轨道。",
+            "Room 之间保留足够行列空白；每张纸的进度显示已通过的可观察验收证据数量，而阶段标签只说明当前工作处于哪里，两者不得相互推算。",
+            "docs 拥有 Wayfinder 内容，manifest 只拥有 Room 分界、布局与来源 receipts，生成物由确定性构建器产生。"
+          ],
+          "acceptanceObservations": [
+            "每个 Room 在未展开时就能说明它解决什么用户问题和当前阶段；决定、问题、验收与来源在展开后读取。",
+            "docs、manifest 和生成投影保持单一权威边界，并对 Room、关系、阶段、来源与可观察验收做完整校验。",
+            "七张结果纸等宽等高、按历史拓扑形成稳定列，当前状态不改变卡片尺寸，岛面不显示日期。",
+            "真实使用与发布作为贯穿式轨道呈现；目的地在全部必需验收完成前保持未抵达。",
+            "点击纸张后看到同一 Room 的需求、决定、交付、证据进度和来源详情，关闭后回到原项目位置。",
+            "在用户原生可见浏览器中，三秒内读出起点、历史分化、当前位置、证据进度和下一步，并给出验收结论。"
+          ],
+          "currentStage": "implementation-execution",
+          "deliveryState": "active",
+          "emergedAt": "2026-08-04",
+          "epochId": "project-field",
+          "topologyRole": "room",
+          "progress": {
+            "basis": "acceptance-evidence",
+            "completed": 5,
+            "total": 6,
+            "items": [
+              {
+                "label": "每个 Room 在未展开时就能说明它解决什么用户问题和当前阶段；决定、问题、验收与来源在展开后读取。",
+                "state": "verified",
+                "sourceRefs": [
+                  "doc-project-field-contract",
+                  "session-codex-project-field"
+                ]
+              },
+              {
+                "label": "docs、manifest 和生成投影保持单一权威边界，并对 Room、关系、阶段、来源与可观察验收做完整校验。",
+                "state": "verified",
+                "sourceRefs": [
+                  "session-codex-project-reconstruction",
+                  "commit-room-self-bootstrap"
+                ]
+              },
+              {
+                "label": "七张结果纸等宽等高、按历史拓扑形成稳定列，当前状态不改变卡片尺寸，岛面不显示日期。",
+                "state": "verified",
+                "sourceRefs": [
+                  "doc-project-field-contract"
+                ]
+              },
+              {
+                "label": "真实使用与发布作为贯穿式轨道呈现；目的地在全部必需验收完成前保持未抵达。",
+                "state": "verified",
+                "sourceRefs": [
+                  "doc-handoff-goal",
+                  "session-codex-project-field"
+                ]
+              },
+              {
+                "label": "点击纸张后看到同一 Room 的需求、决定、交付、证据进度和来源详情，关闭后回到原项目位置。",
+                "state": "verified",
+                "sourceRefs": [
+                  "session-codex-project-field"
+                ]
+              },
+              {
+                "label": "在用户原生可见浏览器中，三秒内读出起点、历史分化、当前位置、证据进度和下一步，并给出验收结论。",
+                "state": "pending",
+                "sourceRefs": [
+                  "doc-handoff-goal"
+                ]
+              }
+            ]
+          },
+          "currentDelivery": "八个 Room 的边界和来源回执已固定。总览时间轴、卡片日期和发布检查点日期已移除，真实历史仍约束拓扑、连线和来源证据；同代自动检查已通过，但当前没有可连接的用户可见浏览器，因此仍处于实现执行。",
+          "nextMove": "重新连接用户可见浏览器，复现无时间轴纸张图；完成原生可见检查后，再请用户判断是否能快速读出起点、需求分化、当前位置、证据进度和下一步。",
+          "documentRef": "rooms/project-field.md",
+          "detailDocumentRefs": [
+            "01-alignment-decision-packet.md",
+            "02-implementation-plan.md",
+            "03-work-document.md",
+            "04-quality-gate-pending.md",
+            "05-independent-review-pending.md",
+            "06-current-agent-handoff.md"
+          ],
+          "sourceRefs": [
+            "doc-project-field-contract",
+            "session-codex-project-field",
+            "session-codex-project-reconstruction",
+            "doc-handoff-goal",
+            "doc-chat-summary-c4f0bf7d",
+            "session-codex-019fc62d",
+            "commit-room-self-bootstrap"
+          ]
+        },
+        {
+          "roomId": "release-journey",
+          "title": "真实使用与发布",
+          "requirement": "把已实现能力推进成可安装、可验证、可恢复并能公开交付的真实产品。",
+          "problem": "源码、构建、局部检查和截图不能替代真实前台、正式安装、签名、公证、干净机器与公开分发验证。",
+          "decisions": [
+            "构建、截图、Mock、health 与终端状态只能证明各自边界，不能替代真实前台和用户可见验收。",
+            "发布候选必须来自同一安装代际，并通过安装、回滚、签名、公证、stapling 与干净机器验证。"
+          ],
+          "acceptanceObservations": [
+            "源码、测试、构建和真实前台证据边界被明确区分，发布门有可追溯回执。",
+            "完成真实前台矩阵，并证明候选、Room、Tool 与恢复行为来自同一安装代际。",
+            "完成签名、公证、stapling、公开包与干净机器核心路径验证。"
+          ],
+          "currentStage": "implementation-planning",
+          "deliveryState": "queued",
+          "emergedAt": "2026-07-01",
+          "epochId": "input-origin",
+          "topologyRole": "release-lane",
+          "progress": {
+            "basis": "acceptance-evidence",
+            "completed": 1,
+            "total": 3,
+            "items": [
+              {
+                "label": "源码、测试、构建和真实前台证据边界被明确区分，发布门有可追溯回执。",
+                "state": "verified",
+                "sourceRefs": [
+                  "doc-product-readme",
+                  "commit-runtime-release-gates"
+                ]
+              },
+              {
+                "label": "完成真实前台矩阵，并证明候选、Room、Tool 与恢复行为来自同一安装代际。",
+                "state": "pending",
+                "sourceRefs": [
+                  "doc-handoff-goal"
+                ]
+              },
+              {
+                "label": "完成签名、公证、stapling、公开包与干净机器核心路径验证。",
+                "state": "pending",
+                "sourceRefs": [
+                  "doc-product-readme",
+                  "doc-handoff-goal"
+                ]
+              }
+            ]
+          },
+          "currentDelivery": "源码、测试和部分安装态回执已经明确区分实现、构建与真实可用，发布航程等待核心体验收束。",
+          "nextMove": "核心 Room 完成质量门与独立复核后，冻结同代安装候选并执行前台与发布矩阵。",
+          "documentRef": "rooms/release-journey.md",
+          "detailDocumentRefs": [],
+          "sourceRefs": [
+            "doc-product-readme",
+            "doc-handoff-goal",
+            "commit-squirrel-rag-ime",
+            "commit-runtime-release-gates",
+            "commit-governed-workflow",
+            "commit-historical-memory"
+          ]
+        }
+      ],
+      "relations": [
+        {
+          "from": "@origin",
+          "to": "input-experience",
+          "kind": "refines",
+          "label": "初始输入愿景先形成可靠候选这一可独立验收结果。",
+          "sourceRefs": [
+            "commit-squirrel-rag-ime"
+          ]
+        },
+        {
+          "from": "input-experience",
+          "to": "governed-memory",
+          "kind": "led-to",
+          "label": "输入历史与候选召回暴露出需要可整理、可追溯本地记忆。",
+          "sourceRefs": [
+            "commit-memory-database"
+          ]
+        },
+        {
+          "from": "input-experience",
+          "to": "unified-workbench",
+          "kind": "led-to",
+          "label": "输入设置、诊断与记忆管理逐步需要统一的原生 Control Center。",
+          "sourceRefs": [
+            "commit-native-control-center"
+          ]
+        },
+        {
+          "from": "unified-workbench",
+          "to": "room-delivery",
+          "kind": "led-to",
+          "label": "Control Center 从输入管理扩展为 Agent、Room 与角色协作工作区。",
+          "sourceRefs": [
+            "commit-room-web"
+          ]
+        },
+        {
+          "from": "room-delivery",
+          "to": "agent-continuity",
+          "kind": "led-to",
+          "label": "Room 协作把 Session、恢复、重连与同一目标连续性变成独立结果。",
+          "sourceRefs": [
+            "commit-room-governance",
+            "commit-room-recovery"
+          ]
+        },
+        {
+          "from": "room-delivery",
+          "to": "workflow-system",
+          "kind": "led-to",
+          "label": "多 Agent 交付需要对齐、执行、证据和终态使用同一受治理流程。",
+          "sourceRefs": [
+            "commit-agent-room-runtime",
+            "commit-governed-workflow"
+          ]
+        },
+        {
+          "from": "agent-continuity",
+          "to": "workflow-system",
+          "kind": "requires",
+          "label": "可恢复工作流必须沿同一目标与当前 Session 状态继续。",
+          "sourceRefs": [
+            "doc-prompt-runtime-audit",
+            "commit-agent-room-runtime"
+          ]
+        },
+        {
+          "from": "unified-workbench",
+          "to": "project-field",
+          "kind": "requires",
+          "label": "Project Field 必须留在同一产品壳层与工作台交互语言中。",
+          "sourceRefs": [
+            "doc-project-field-contract",
+            "commit-product-identity"
+          ]
+        },
+        {
+          "from": "governed-memory",
+          "to": "project-field",
+          "kind": "requires",
+          "label": "项目图谱需要可追溯来源，但不能复制或静默写回 Memory Owner。",
+          "sourceRefs": [
+            "doc-memory-pipeline",
+            "session-codex-project-field"
+          ]
+        },
+        {
+          "from": "workflow-system",
+          "to": "project-field",
+          "kind": "led-to",
+          "label": "Room 交付状态和来源分散后，产生了按真实演化理解并继续项目的需求。",
+          "sourceRefs": [
+            "session-codex-project-field",
+            "commit-room-self-bootstrap"
+          ]
+        },
+        {
+          "from": "input-experience",
+          "to": "release-journey",
+          "kind": "requires",
+          "label": "真实发布必须包含 Squirrel 前台与同代候选验收。",
+          "sourceRefs": [
+            "commit-runtime-release-gates"
+          ]
+        },
+        {
+          "from": "room-delivery",
+          "to": "release-journey",
+          "kind": "requires",
+          "label": "Room 的取消、恢复、审批和终态必须进入同代发布矩阵。",
+          "sourceRefs": [
+            "doc-handoff-goal",
+            "commit-room-waves"
+          ]
+        },
+        {
+          "from": "workflow-system",
+          "to": "release-journey",
+          "kind": "requires",
+          "label": "发布结论需要受治理工作流保存新鲜验证证据。",
+          "sourceRefs": [
+            "commit-governed-workflow"
+          ]
+        },
+        {
+          "from": "project-field",
+          "to": "release-journey",
+          "kind": "requires",
+          "label": "当前 Project Field 仍需用户原生可见验收后才能进入发布候选。",
+          "sourceRefs": [
+            "doc-project-field-contract",
+            "session-codex-project-reconstruction"
+          ]
+        }
+      ],
+      "documents": [
+        {
+          "role": "map",
+          "ref": "00-map.md",
+          "title": "Personal Agent Workbench Wayfinder",
+          "sha256": "4c41e53c7c594fa5c5f92ff88cc3d5ddd348ed64a0bfda39439b2619e92c9373",
+          "sourceRefs": [
+            "doc-project-field-contract",
+            "session-codex-project-field",
+            "session-codex-project-reconstruction",
+            "commit-squirrel-rag-ime",
+            "commit-memory-database",
+            "commit-native-control-center",
+            "commit-runtime-release-gates",
+            "commit-room-web",
+            "commit-room-governance",
+            "commit-personal-agent-identity",
+            "commit-historical-memory"
+          ]
+        },
+        {
+          "role": "initial-vision",
+          "ref": "project/00-initial-vision.md",
+          "title": "可靠的 macOS AI 输入辅助",
+          "sha256": "7c4c459d49f10ec1c2660ad520859b25f931d9734bbfa82570720111efeb54fc",
+          "sourceRefs": [
+            "doc-product-readme",
+            "commit-squirrel-rag-ime"
+          ]
+        },
+        {
+          "role": "destination",
+          "ref": "project/01-destination.md",
+          "title": "可持续交付的个人 Agent 工作台",
+          "sha256": "06441ef3ed53feb3da2276c5f3b71c1ce4290d7f54fc3cca0ea498f53a7b1478",
+          "sourceRefs": [
+            "doc-product-readme",
+            "doc-handoff-goal",
+            "doc-project-field-contract"
+          ]
+        },
+        {
+          "role": "room",
+          "ref": "rooms/input-experience.md",
+          "title": "输入体验闭环",
+          "sha256": "d2175e9decaa1c4fc4b5572a51d89002493903b797547b7ab6e627a489ab20c1",
+          "sourceRefs": [
+            "doc-product-readme",
+            "session-claude-input-audit",
+            "doc-handoff-goal",
+            "commit-squirrel-rag-ime",
+            "commit-input-reliability"
+          ],
+          "roomId": "input-experience"
+        },
+        {
+          "role": "room",
+          "ref": "rooms/governed-memory.md",
+          "title": "受控项目记忆",
+          "sha256": "0da80084c354917b178aea793fc5bbd41d48d132b8f580c78ff95dd7bfd4ed5c",
+          "sourceRefs": [
+            "doc-memory-pipeline",
+            "session-pi-memory-pipeline",
+            "session-codex-project-field",
+            "commit-memory-database",
+            "commit-historical-memory",
+            "commit-governed-workflow"
+          ],
+          "roomId": "governed-memory"
+        },
+        {
+          "role": "room",
+          "ref": "rooms/unified-workbench.md",
+          "title": "统一产品工作台",
+          "sha256": "14de802cd93422c07ccd785e3a243541c6aa9747d49889234d5b5fc84dcf7cd8",
+          "sourceRefs": [
+            "doc-product-readme",
+            "session-claude-ui-redesign",
+            "commit-native-control-center",
+            "commit-personal-agent-identity",
+            "commit-product-identity"
+          ],
+          "roomId": "unified-workbench"
+        },
+        {
+          "role": "room",
+          "ref": "rooms/room-delivery.md",
+          "title": "Room 协作交付",
+          "sha256": "83d223cafe4cd6fa352fb352da9c3764f26dab6313ec84626f01e4d86b09283b",
+          "sourceRefs": [
+            "doc-room-workflow",
+            "session-claude-room-audit",
+            "session-pi-room-bootstrap",
+            "session-omp-adaptation",
+            "commit-room-web",
+            "commit-room-governance",
+            "commit-room-autonomy",
+            "commit-room-waves"
+          ],
+          "roomId": "room-delivery"
+        },
+        {
+          "role": "room",
+          "ref": "rooms/agent-continuity.md",
+          "title": "Agent 长任务连续性",
+          "sha256": "1f6372c90b10940a96058fd91408052232c128f64c107dcfdf3a67245f250eec",
+          "sourceRefs": [
+            "doc-handoff-goal",
+            "session-codex-room-recovery",
+            "doc-prompt-runtime-audit",
+            "commit-room-governance",
+            "commit-room-recovery"
+          ],
+          "roomId": "agent-continuity"
+        },
+        {
+          "role": "room",
+          "ref": "rooms/workflow-system.md",
+          "title": "工作流与能力收敛",
+          "sha256": "5024d3404b35b33ef6dc75d1b12a24e7d803ef1ccf78a8ea885471485a412c43",
+          "sourceRefs": [
+            "session-codex-project-field",
+            "session-codex-omp-adaptation",
+            "session-omp-prompt-todo-lsp",
+            "doc-prompt-runtime-audit",
+            "commit-agent-room-runtime",
+            "commit-governed-workflow"
+          ],
+          "roomId": "workflow-system"
+        },
+        {
+          "role": "room",
+          "ref": "rooms/project-field.md",
+          "title": "Room 导航与项目图谱",
+          "sha256": "f694f6d6af2f2541a52d94d40cf4960a8965492e02a1a89daf863ec491783cc3",
+          "sourceRefs": [
+            "doc-project-field-contract",
+            "session-codex-project-field",
+            "session-codex-project-reconstruction",
+            "doc-handoff-goal",
+            "doc-chat-summary-c4f0bf7d",
+            "session-codex-019fc62d",
+            "commit-room-self-bootstrap"
+          ],
+          "roomId": "project-field"
+        },
+        {
+          "role": "room",
+          "ref": "rooms/release-journey.md",
+          "title": "真实使用与发布",
+          "sha256": "59b586b8a4b0a56ad49bc0de248ad2a4d825987a77a46c83bff36513ca432e58",
+          "sourceRefs": [
+            "doc-product-readme",
+            "doc-handoff-goal",
+            "commit-squirrel-rag-ime",
+            "commit-runtime-release-gates",
+            "commit-governed-workflow",
+            "commit-historical-memory"
+          ],
+          "roomId": "release-journey"
+        }
+      ],
+      "sourceRefs": [
+        "doc-project-field-contract",
+        "session-codex-project-field",
+        "session-codex-project-reconstruction",
+        "commit-squirrel-rag-ime",
+        "commit-memory-database",
+        "commit-native-control-center",
+        "commit-runtime-release-gates",
+        "commit-room-web",
+        "commit-room-governance",
+        "commit-personal-agent-identity",
+        "commit-historical-memory",
+        "doc-product-readme",
+        "doc-handoff-goal",
+        "session-claude-input-audit",
+        "commit-input-reliability",
+        "doc-memory-pipeline",
+        "session-pi-memory-pipeline",
+        "commit-governed-workflow",
+        "session-claude-ui-redesign",
+        "commit-product-identity",
+        "doc-room-workflow",
+        "session-claude-room-audit",
+        "session-pi-room-bootstrap",
+        "session-omp-adaptation",
+        "commit-room-autonomy",
+        "commit-room-waves",
+        "session-codex-room-recovery",
+        "doc-prompt-runtime-audit",
+        "commit-room-recovery",
+        "session-codex-omp-adaptation",
+        "session-omp-prompt-todo-lsp",
+        "commit-agent-room-runtime",
+        "doc-chat-summary-c4f0bf7d",
+        "session-codex-019fc62d",
+        "commit-room-self-bootstrap"
+      ]
+    }
+  }
+}

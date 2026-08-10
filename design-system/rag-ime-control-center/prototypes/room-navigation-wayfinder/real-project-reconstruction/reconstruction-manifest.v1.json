@@ -1,0 +1,710 @@
+{
+  "schemaVersion": "personal-agent.project-field-reconstruction-manifest.v1",
+  "curatedAt": "2026-08-04T23:59:59+08:00",
+  "factualSource": {
+    "repository": "7155/personal-agent-workbench",
+    "branch": "main",
+    "worktreeRole": "read-only-factual-source",
+    "gitHead": "8a50a6b21ced9edb1a46b1cb4dc2b004ba0ee771",
+    "workingTreeDirtyAtCuration": true
+  },
+  "curation": {
+    "method": "Human-reviewed reconstruction from project documents, primary Agent sessions, and corroborating Git history. Luna Max supplied the bounded draft grouping; the July timeline extension was resolved by human review of Git receipts.",
+    "modelOrganizer": {
+      "model": "gpt-5.6-luna",
+      "reasoningEffort": "max",
+      "role": "draft-only",
+      "candidateVerdict": "needs_human_resolution",
+      "auditRef": "design-system/rag-ime-control-center/prototypes/room-navigation-wayfinder/reconciliation/wayfinder-luna-source-audit.v1.json",
+      "sourcePacketSha256": "eb1071e8314e288e9b3abed15af1f0fb4a174facac2d611981bbf47191cc8ac8",
+      "outputSha256": "37de7ae74aa6b62a6d11a9e1b04bd88e452d1a465baa742c0743cfdd67fad3b0"
+    },
+    "humanReviewed": true,
+    "userApprovalRequired": true
+  },
+  "documentSnapshots": {
+    "doc-product-readme": {
+      "mode": "git-head",
+      "byteCount": 33225,
+      "sha256": "1e90414bce8ac21581389b857a343964b8517a204078ba46249681078cae6dd7"
+    },
+    "doc-handoff-goal": {
+      "mode": "exact-working-file",
+      "byteCount": 115288,
+      "sha256": "8aea34b14b20d2cd2163b2415f77b80464b35b11dc22ff8f91ab11820941abb4"
+    },
+    "doc-room-workflow": {
+      "mode": "exact-working-file",
+      "byteCount": 65007,
+      "sha256": "bba907ed184956fc2be64b1f9c93d6eb92a0bd63197ebbe9479c67178c05b008"
+    },
+    "doc-memory-pipeline": {
+      "mode": "exact-working-file",
+      "byteCount": 14282,
+      "sha256": "15fbcbae8139826f66f33bff9f89ea6d7d66432072a511db8ca9c2b9bec9fc3b"
+    },
+    "doc-prompt-runtime-audit": {
+      "mode": "exact-working-file",
+      "byteCount": 11355,
+      "sha256": "350136ab9ecaeaf934a3517ca94aa5f7e4f531f6ca803e2a0aeceebf80edbea6"
+    },
+    "doc-project-field-contract": {
+      "mode": "exact-prototype-file",
+      "byteCount": 20286,
+      "sha256": "b7a7b7fdba66e31d529bd731aa5198a58ccf7c6d19d1b6a029a811404d0ce546"
+    },
+    "doc-chat-summary-c4f0bf7d": {
+      "mode": "exact-working-file",
+      "byteCount": 40199,
+      "sha256": "c4f0bf7d8c78aa26fe9c647518891c278a9e40ddcd316c3ef9011ba7caef48c1"
+    }
+  },
+  "sessionSnapshots": {
+    "session-claude-input-audit": {
+      "userMessageCount": 6,
+      "userMessagesSha256": "6f29df3b179c607291e5d1c12d6b17c24b33cef550fc65c6b46f81514445128f"
+    },
+    "session-claude-room-audit": {
+      "userMessageCount": 99,
+      "userMessagesSha256": "9ac01cadd667c7618ca14b43059440e4dbb8c57a9e17de93e5c73614f8c6bb29"
+    },
+    "session-claude-ui-redesign": {
+      "userMessageCount": 140,
+      "userMessagesSha256": "4369404e23e28d96cee0d2b878e1a26164130f6f67123b26c5f00fbf411a6888"
+    },
+    "session-codex-omp-adaptation": {
+      "userMessageCount": 44,
+      "userMessagesSha256": "76d8c16972c55948fe09faf78d22c20235a9eea292fb5b853b6b2b6e8a4b1976"
+    },
+    "session-codex-project-field": {
+      "userMessageCount": 147,
+      "userMessagesSha256": "4118ba0d5bdef29f10954bfa7df017f4dc41ca3132fb710cc0ec4745fd405059"
+    },
+    "session-codex-project-reconstruction": {
+      "userMessageCount": 15,
+      "userMessagesSha256": "52ac3805078b9be8f785641d53d635bda9eacc9464196f23be94cf69eebdbb21"
+    },
+    "session-codex-019fc62d": {
+      "userMessageCount": 137,
+      "userMessagesSha256": "c5d762c98ef22fa258ad6d065be718a5a140d8e46abffa6e96df6bb4d3f551eb"
+    },
+    "session-codex-room-recovery": {
+      "userMessageCount": 217,
+      "userMessagesSha256": "a00887de5166eb36bd2e4d2e5e8d8305aceae21c6ab4012613a65a02803da851"
+    },
+    "session-omp-adaptation": {
+      "userMessageCount": 312,
+      "userMessagesSha256": "28545bbaa5b95819fc7d0419038adc4cc1a7281b1ba5a2e0700a1af124e2a907"
+    },
+    "session-omp-prompt-todo-lsp": {
+      "userMessageCount": 33,
+      "userMessagesSha256": "ed3aaeb62f62fb576566d234d4ca1ee9b2fc9c478dcb9e3d6432007efdb2981d"
+    },
+    "session-pi-memory-pipeline": {
+      "userMessageCount": 32,
+      "userMessagesSha256": "fcd718a3fc6927982da2e3fde7589ced9a5a37cb04f030aef5e3d15bd0ba1a37"
+    },
+    "session-pi-room-bootstrap": {
+      "userMessageCount": 65,
+      "userMessagesSha256": "4aa36231aff02da372bac6634a52d3251aaade026b102f2e7b1f8969782e4e17"
+    }
+  },
+  "privacy": {
+    "rawChatIncluded": false,
+    "toolResultsIncluded": false,
+    "assistantReasoningIncluded": false,
+    "absolutePathsIncluded": false
+  },
+  "project": {
+    "id": "personal-agent-workbench",
+    "name": "Personal Agent Workbench",
+    "compactTitle": "个人助手工作台",
+    "shortName": "PA",
+    "subtitle": "真实项目航程重建",
+    "defaultRoomId": "project-field",
+    "routeCamera": {
+      "x": 0,
+      "y": 55,
+      "scale": 1
+    },
+    "reconstruction": {
+      "label": "真实资料回顾重建",
+      "sourceWindow": "2026-07-01 — 2026-08-04T23:59:59+08:00",
+      "snapshotRef": "main@8a50a6b21ced + cutoff-bounded working documents",
+      "method": "用户原话与项目文档优先；主 Agent 会话补足意图与过程；Git 只作实现旁证；Luna Max 只生成候选，7 月时间线由人工复核 Git 后补齐，最终由人工修改 docs。",
+      "sourceCounts": {
+        "projectDocuments": 7,
+        "agentSessions": 12,
+        "gitCommits": 16
+      }
+    },
+    "rooms": [
+      {
+        "id": "input-experience",
+        "title": "输入体验闭环",
+        "x": 500,
+        "y": 260,
+        "shape": 1,
+        "sources": [
+          {
+            "id": "doc-product-readme",
+            "kind": "project-document",
+            "role": "decision",
+            "label": "产品边界与能力现状",
+            "detail": "定义 Agent、Room、记忆、Control Center 与输入适配器属于同一产品。",
+            "ref": "README.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "session-claude-input-audit",
+            "kind": "agent-session",
+            "role": "acceptance",
+            "label": "输入链路与前台边界审计",
+            "detail": "沿 Squirrel、Rime、Sidecar、候选失效和真实前台验收追踪调用链。",
+            "ref": "agent-session:claude-code:97e725a7-dc96-46b3-a847-c364334f2024",
+            "observedAt": "2026-07-26",
+            "provider": "claude-code",
+            "authority": "primary"
+          },
+          {
+            "id": "doc-handoff-goal",
+            "kind": "project-document",
+            "role": "acceptance",
+            "label": "Agent / Room / 前端完成 Goal",
+            "detail": "保存真实验收、未完成项、Owner 边界与发布风险。",
+            "ref": "docs/agent/handoff-goal.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "commit-input-reliability",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "输入上下文可靠性修复",
+            "detail": "提交记录印证候选去重、旧结果失效与基础模型 Prompt 防线。",
+            "ref": "git:92e6a62",
+            "observedAt": "2026-07-26",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-squirrel-rag-ime",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "Squirrel 真实输入接入 RAG IME",
+            "detail": "提交记录印证项目从保留 Rime 权威、把 AI 辅助接入真实 macOS 输入前台开始。",
+            "ref": "git:ff58ada",
+            "observedAt": "2026-07-01",
+            "authority": "corroborating"
+          }
+        ]
+      },
+      {
+        "id": "unified-workbench",
+        "title": "统一产品工作台",
+        "x": 900,
+        "y": 200,
+        "shape": 2,
+        "sources": [
+          {
+            "id": "doc-product-readme",
+            "kind": "project-document",
+            "role": "decision",
+            "label": "产品边界与能力现状",
+            "detail": "定义 Agent、Room、记忆、Control Center 与输入适配器属于同一产品。",
+            "ref": "README.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "session-claude-ui-redesign",
+            "kind": "agent-session",
+            "role": "intent",
+            "label": "统一纸张工作台 UI 重构",
+            "detail": "要求 Session 与 Room 共用一个内容优先、长期可读的工作台语言。",
+            "ref": "agent-session:claude-code:8bf790b9-6aa7-49c1-889f-cd32e1c9dabf",
+            "observedAt": "2026-07-26",
+            "provider": "claude-code",
+            "authority": "primary"
+          },
+          {
+            "id": "commit-product-identity",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "统一为一个 Personal Agent Workbench",
+            "detail": "提交记录印证输入、Agent、Room 与记忆被呈现为同一产品。",
+            "ref": "git:7e09954",
+            "observedAt": "2026-07-28",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-native-control-center",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "原生 RAG-IME Control Center",
+            "detail": "提交记录印证输入诊断、设置和记忆管理开始进入统一原生工作台。",
+            "ref": "git:a4bec68",
+            "observedAt": "2026-07-10",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-personal-agent-identity",
+            "kind": "git-commit",
+            "role": "decision",
+            "label": "采用 Personal Agent Workbench 身份",
+            "detail": "提交记录印证产品在 7 月 27 日正式从输入工具收敛为统一个人 Agent 工作台。",
+            "ref": "git:d3e1b48",
+            "observedAt": "2026-07-27",
+            "authority": "corroborating"
+          }
+        ]
+      },
+      {
+        "id": "agent-continuity",
+        "title": "Agent 长任务连续性",
+        "x": 1300,
+        "y": 200,
+        "shape": 3,
+        "sources": [
+          {
+            "id": "doc-handoff-goal",
+            "kind": "project-document",
+            "role": "acceptance",
+            "label": "Agent / Room / 前端完成 Goal",
+            "detail": "保存真实验收、未完成项、Owner 边界与发布风险。",
+            "ref": "docs/agent/handoff-goal.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "session-codex-room-recovery",
+            "kind": "agent-session",
+            "role": "acceptance",
+            "label": "Room 活动、恢复与协作验收",
+            "detail": "覆盖 Room 连续性、后台活动、前端投影与真实验收边界。",
+            "ref": "agent-session:codex:019fb600-6080-7510-a091-9d56add3e9ed",
+            "observedAt": "2026-07-31",
+            "provider": "codex",
+            "authority": "primary"
+          },
+          {
+            "id": "doc-prompt-runtime-audit",
+            "kind": "project-document",
+            "role": "decision",
+            "label": "Prompt 与 Runtime 参考审计",
+            "detail": "区分当前状态 Owner、压缩恢复、Tool 披露与受限上下文。",
+            "ref": "docs/agent/prompt-runtime-reference-audit.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "commit-room-recovery",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "Room 活动与恢复收束",
+            "detail": "提交记录印证活动投影、连续性与恢复体验。",
+            "ref": "git:084fefb",
+            "observedAt": "2026-08-01",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-room-governance",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "Room 上下文与连续性治理",
+            "detail": "提交记录印证 7 月 20 日以后 Room 状态、恢复和同一目标连续性形成治理边界。",
+            "ref": "git:399d6a2",
+            "observedAt": "2026-07-20",
+            "authority": "corroborating"
+          }
+        ]
+      },
+      {
+        "id": "room-delivery",
+        "title": "Room 协作交付",
+        "x": 1300,
+        "y": 520,
+        "shape": 2,
+        "sources": [
+          {
+            "id": "doc-room-workflow",
+            "kind": "project-document",
+            "role": "decision",
+            "label": "Room 协作工作流需求",
+            "detail": "固定 Room 角色、任务、交接、工作区、结算与用户介入边界。",
+            "ref": "docs/agent/room-facilitated-workflow-requirements.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "session-claude-room-audit",
+            "kind": "agent-session",
+            "role": "acceptance",
+            "label": "Agent / Room 角色与 Kernel 审计",
+            "detail": "核对角色元数据、Kernel 执行、真实多 Agent 任务与失败恢复。",
+            "ref": "agent-session:claude-code:b70c871e-f5b4-49ea-8fc7-75ba82c7298c",
+            "observedAt": "2026-07-26",
+            "provider": "claude-code",
+            "authority": "primary"
+          },
+          {
+            "id": "session-pi-room-bootstrap",
+            "kind": "agent-session",
+            "role": "acceptance",
+            "label": "Pi Agent / Room 自举与工作台实现",
+            "detail": "记录 Agent、Room、自举任务和前端连续工作的真实推进。",
+            "ref": "agent-session:pi:019fabcb-b8a1-75ea-9ce6-392d017d4d8e",
+            "observedAt": "2026-07-29",
+            "provider": "pi",
+            "authority": "primary"
+          },
+          {
+            "id": "session-omp-adaptation",
+            "kind": "agent-session",
+            "role": "acceptance",
+            "label": "OMP / Cat Cafe 大规模适配执行",
+            "detail": "覆盖 Room、Skill、Work Document、归档、并行 Agent 与前端验证。",
+            "ref": "agent-session:omp:019fb064-adc9-7000-b041-f1c692165442",
+            "observedAt": "2026-07-30",
+            "provider": "omp",
+            "authority": "primary"
+          },
+          {
+            "id": "commit-room-autonomy",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "自主 Room 协作闭环",
+            "detail": "提交记录印证任务、Dispatch、公开结果与终态回执。",
+            "ref": "git:d94674e",
+            "observedAt": "2026-08-01",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-room-waves",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "受管 Room 协作波次完成",
+            "detail": "提交记录印证后台协作、恢复与收敛修复。",
+            "ref": "git:3ffacd5",
+            "observedAt": "2026-08-01",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-room-web",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "Agent、Room 与角色工作台",
+            "detail": "提交记录印证 7 月 14 日开始以一个结果型 Room 组织 Agent、角色与 Web 协作。",
+            "ref": "git:084c7a4",
+            "observedAt": "2026-07-14",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-room-governance",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "Room 上下文与连续性治理",
+            "detail": "提交记录印证 7 月 20 日以后 Room 状态、恢复和同一目标连续性形成治理边界。",
+            "ref": "git:399d6a2",
+            "observedAt": "2026-07-20",
+            "authority": "corroborating"
+          }
+        ]
+      },
+      {
+        "id": "governed-memory",
+        "title": "受控项目记忆",
+        "x": 900,
+        "y": 520,
+        "shape": 4,
+        "sources": [
+          {
+            "id": "doc-memory-pipeline",
+            "kind": "project-document",
+            "role": "decision",
+            "label": "记忆 Evidence → Atom → Book 需求",
+            "detail": "固定不可变用户来源、证据晋升、Book 层级与回滚边界。",
+            "ref": "docs/agent/memory-pipeline-requirements.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "session-pi-memory-pipeline",
+            "kind": "agent-session",
+            "role": "intent",
+            "label": "记忆三层恢复与治理",
+            "detail": "用户要求恢复 Evidence、Atom、Book，并保持来源与文档边界。",
+            "ref": "agent-session:pi:019fbcc7-7564-72c7-aef4-7affb24a329d",
+            "observedAt": "2026-08-01",
+            "provider": "pi",
+            "authority": "primary"
+          },
+          {
+            "id": "session-codex-project-field",
+            "kind": "agent-session",
+            "role": "intent",
+            "label": "Room 工作流与 Project Field 对齐",
+            "detail": "用户连续纠偏 Room 边界、Wayfinder、归档、记忆与全屏项目场。",
+            "ref": "agent-session:codex:019fbdd9-3ce4-7413-a20c-6d5725d0b6ac",
+            "observedAt": "2026-08-01",
+            "provider": "codex",
+            "authority": "primary"
+          },
+          {
+            "id": "commit-governed-workflow",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "受治理工作流与前台证据",
+            "detail": "提交记录印证 Skill、工作文档、记忆与真实前台门的组合。",
+            "ref": "git:5f0f114",
+            "observedAt": "2026-08-01",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-memory-database",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "本地 RAG 记忆数据库",
+            "detail": "提交记录印证输入历史在 7 月 4 日开始被整理为可查询的本地记忆来源。",
+            "ref": "git:09b2cc7",
+            "observedAt": "2026-07-04",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-historical-memory",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "受控历史记忆整理",
+            "detail": "提交记录印证 8 月 4 日历史资料通过可追溯、可撤销边界进入项目记忆。",
+            "ref": "git:8a50a6b",
+            "observedAt": "2026-08-04",
+            "authority": "corroborating"
+          }
+        ]
+      },
+      {
+        "id": "workflow-system",
+        "title": "工作流与能力收敛",
+        "x": 1700,
+        "y": 520,
+        "shape": 1,
+        "sources": [
+          {
+            "id": "session-codex-project-field",
+            "kind": "agent-session",
+            "role": "intent",
+            "label": "Room 工作流与 Project Field 对齐",
+            "detail": "用户连续纠偏 Room 边界、Wayfinder、归档、记忆与全屏项目场。",
+            "ref": "agent-session:codex:019fbdd9-3ce4-7413-a20c-6d5725d0b6ac",
+            "observedAt": "2026-08-01",
+            "provider": "codex",
+            "authority": "primary"
+          },
+          {
+            "id": "session-codex-omp-adaptation",
+            "kind": "agent-session",
+            "role": "decision",
+            "label": "OMP / Cat Cafe 机制适配",
+            "detail": "比较后台 Job、Plan、Goal、Skill、Work Document 与 Room Owner。",
+            "ref": "agent-session:codex:019fb0ae-118f-77b3-8686-83a5e071678f",
+            "observedAt": "2026-07-30",
+            "provider": "codex",
+            "authority": "primary"
+          },
+          {
+            "id": "session-omp-prompt-todo-lsp",
+            "kind": "agent-session",
+            "role": "decision",
+            "label": "Prompt、Ask、Todo 与 LSP 收敛",
+            "detail": "核对 Prompt 顺序、缓存、Ask、Todo、LSP 与工作文档的单一 Owner。",
+            "ref": "agent-session:omp:019fc09e-e243-7000-a43f-7648c45cbadf",
+            "observedAt": "2026-08-02",
+            "provider": "omp",
+            "authority": "primary"
+          },
+          {
+            "id": "doc-prompt-runtime-audit",
+            "kind": "project-document",
+            "role": "decision",
+            "label": "Prompt 与 Runtime 参考审计",
+            "detail": "区分当前状态 Owner、压缩恢复、Tool 披露与受限上下文。",
+            "ref": "docs/agent/prompt-runtime-reference-audit.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "commit-agent-room-runtime",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "统一受治理 Agent / Room Runtime",
+            "detail": "提交记录印证 Agent 与 Room 运行时、能力与状态 Owner 的收敛。",
+            "ref": "git:923a9e1",
+            "observedAt": "2026-07-31",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-governed-workflow",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "受治理工作流与前台证据",
+            "detail": "提交记录印证 Skill、工作文档、记忆与真实前台门的组合。",
+            "ref": "git:5f0f114",
+            "observedAt": "2026-08-01",
+            "authority": "corroborating"
+          }
+        ]
+      },
+      {
+        "id": "project-field",
+        "title": "Room 导航与项目图谱",
+        "x": 2100,
+        "y": 260,
+        "shape": 1,
+        "sources": [
+          {
+            "id": "doc-project-field-contract",
+            "kind": "project-document",
+            "role": "intent",
+            "label": "Project Field 原始愿景与交互合同",
+            "detail": "逐字保存 Room 难找、一个 Room 覆盖多个方向与地图记忆的用户要求。",
+            "ref": "design-system/rag-ime-control-center/pages/project-field.md",
+            "observedAt": "2026-08-04",
+            "authority": "primary"
+          },
+          {
+            "id": "session-codex-project-field",
+            "kind": "agent-session",
+            "role": "intent",
+            "label": "Room 工作流与 Project Field 对齐",
+            "detail": "用户连续纠偏 Room 边界、Wayfinder、归档、记忆与全屏项目场。",
+            "ref": "agent-session:codex:019fbdd9-3ce4-7413-a20c-6d5725d0b6ac",
+            "observedAt": "2026-08-01",
+            "provider": "codex",
+            "authority": "primary"
+          },
+          {
+            "id": "session-codex-project-reconstruction",
+            "kind": "agent-session",
+            "role": "intent",
+            "label": "真实项目图谱重建",
+            "detail": "明确使用 main-release docs 与四类 Agent 主会话还原演示图。",
+            "ref": "agent-session:codex:019fc134-aae7-7160-9754-392db668fda1",
+            "observedAt": "2026-08-02",
+            "provider": "codex",
+            "authority": "primary"
+          },
+          {
+            "id": "doc-handoff-goal",
+            "kind": "project-document",
+            "role": "acceptance",
+            "label": "Agent / Room / 前端完成 Goal",
+            "detail": "保存真实验收、未完成项、Owner 边界与发布风险。",
+            "ref": "docs/agent/handoff-goal.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "doc-chat-summary-c4f0bf7d",
+            "kind": "project-document",
+            "role": "acceptance",
+            "label": "截至 8 月 4 日的项目状态总账",
+            "detail": "区分 source snapshot、dirty 工作文档、已验证事实和仍开放的原生验收。",
+            "ref": "docs/agent/chat-summary.md",
+            "observedAt": "2026-08-04",
+            "authority": "primary"
+          },
+          {
+            "id": "session-codex-019fc62d",
+            "kind": "agent-session",
+            "role": "decision",
+            "label": "Project Field 交接与 Room 生产边界复核",
+            "detail": "补足 8 月 3 日的 handoff、Wayfinder 演示边界与生产状态 owner 纠偏。",
+            "ref": "agent-session:codex:019fc62d-bce7-7353-bd3c-8bc169a894fb",
+            "observedAt": "2026-08-03",
+            "provider": "codex",
+            "authority": "primary"
+          },
+          {
+            "id": "commit-room-self-bootstrap",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "Room 自举 TUI 验证",
+            "detail": "提交记录印证 Room 可以承担完整代码交付航程，而不是一个聊天附件。",
+            "ref": "git:bf0f3d6",
+            "observedAt": "2026-07-31",
+            "authority": "corroborating"
+          }
+        ]
+      },
+      {
+        "id": "release-journey",
+        "title": "真实使用与发布",
+        "x": 1250,
+        "y": 800,
+        "shape": 3,
+        "sources": [
+          {
+            "id": "doc-product-readme",
+            "kind": "project-document",
+            "role": "decision",
+            "label": "产品边界与能力现状",
+            "detail": "定义 Agent、Room、记忆、Control Center 与输入适配器属于同一产品。",
+            "ref": "README.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "doc-handoff-goal",
+            "kind": "project-document",
+            "role": "acceptance",
+            "label": "Agent / Room / 前端完成 Goal",
+            "detail": "保存真实验收、未完成项、Owner 边界与发布风险。",
+            "ref": "docs/agent/handoff-goal.md",
+            "observedAt": "2026-08-02",
+            "authority": "primary"
+          },
+          {
+            "id": "commit-governed-workflow",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "受治理工作流与前台证据",
+            "detail": "提交记录印证 Skill、工作文档、记忆与真实前台门的组合。",
+            "ref": "git:5f0f114",
+            "observedAt": "2026-08-01",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-squirrel-rag-ime",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "Squirrel 真实输入接入 RAG IME",
+            "detail": "提交记录印证项目从保留 Rime 权威、把 AI 辅助接入真实 macOS 输入前台开始。",
+            "ref": "git:ff58ada",
+            "observedAt": "2026-07-01",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-runtime-release-gates",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "Runtime 与发布门",
+            "detail": "提交记录印证 7 月 11 日开始把实现、构建、真实前台和发布证据分开检核。",
+            "ref": "git:dc6fdb3",
+            "observedAt": "2026-07-11",
+            "authority": "corroborating"
+          },
+          {
+            "id": "commit-historical-memory",
+            "kind": "git-commit",
+            "role": "acceptance",
+            "label": "受控历史记忆整理",
+            "detail": "提交记录印证 8 月 4 日历史资料通过可追溯、可撤销边界进入项目记忆。",
+            "ref": "git:8a50a6b",
+            "observedAt": "2026-08-04",
+            "authority": "corroborating"
+          }
+        ]
+      }
+    ]
+  }
+}
