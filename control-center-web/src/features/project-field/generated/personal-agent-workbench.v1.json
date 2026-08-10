@@ -1890,8 +1890,7 @@
             "02-implementation-plan.md",
             "03-work-document.md",
             "04-quality-gate-pending.md",
-            "05-independent-review-pending.md",
-            "06-current-agent-handoff.md"
+            "05-independent-review-pending.md"
           ],
           "sourceRefs": [
             "doc-project-field-contract",
@@ -2236,7 +2235,7 @@
           "role": "room",
           "ref": "rooms/project-field.md",
           "title": "Room 导航与项目图谱",
-          "sha256": "f694f6d6af2f2541a52d94d40cf4960a8965492e02a1a89daf863ec491783cc3",
+          "sha256": "8d1ff38c3bb4bdf0633826ec3a8eb849db20f39ccd9f197df67fbc9997707dcc",
           "sourceRefs": [
             "doc-project-field-contract",
             "session-codex-project-field",

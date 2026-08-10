@@ -32,6 +32,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     () => 'idle',
   );
   const routePending = navigationState !== 'idle';
+  const immersive = activeRoute.id === 'project-field';
   const [collapsed, setCollapsedState] = useState(getInitialCollapsed);
   const previousRouteId = useRef(activeRoute.id);
   const routeStageRef = useRef<HTMLDivElement>(null);
@@ -54,7 +55,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className="control-shell" data-sidebar-collapsed={collapsed || undefined}>
+    <div
+      className="control-shell"
+      data-immersive={immersive || undefined}
+      data-sidebar-collapsed={collapsed || undefined}
+    >
       <a
         className="shell-skip-link"
         href="#workspace-main"
@@ -66,24 +71,28 @@ export function AppShell({ children }: { children: ReactNode }) {
       >
         跳到主工作区
       </a>
-      <DesktopNavigation
-        activeRouteId={activeRoute.id}
-        collapsed={collapsed}
-        identity={identity}
-        onCollapsedChange={setCollapsed}
-      />
-      <ShellSidebarResizer />
+      {!immersive ? (
+        <DesktopNavigation
+          activeRouteId={activeRoute.id}
+          collapsed={collapsed}
+          identity={identity}
+          onCollapsedChange={setCollapsed}
+        />
+      ) : null}
+      {!immersive ? <ShellSidebarResizer /> : null}
       <div className="shell-workspace">
-        <header className="shell-topbar">
-          <div className="shell-topbar__title" key={activeRoute.id}>
-            <h1>{activeRoute.label}</h1>
-            <span>{routeGroupLabels[activeRoute.group]}</span>
-          </div>
-          <div className="shell-topbar__actions">
-            <ConnectionIndicator />
-            <ThemeMenu />
-          </div>
-        </header>
+        {!immersive ? (
+          <header className="shell-topbar">
+            <div className="shell-topbar__title" key={activeRoute.id}>
+              <h1>{activeRoute.label}</h1>
+              <span>{routeGroupLabels[activeRoute.group]}</span>
+            </div>
+            <div className="shell-topbar__actions">
+              <ConnectionIndicator />
+              <ThemeMenu />
+            </div>
+          </header>
+        ) : null}
         <GlobalNoticeRegion />
         <div
           ref={routeStageRef}
@@ -102,7 +111,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           ) : null}
         </div>
-        <MobileBottomNavigation activeRouteId={activeRoute.id} />
+        {!immersive ? <MobileBottomNavigation activeRouteId={activeRoute.id} /> : null}
       </div>
     </div>
   );

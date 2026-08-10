@@ -4,6 +4,7 @@ import type { RouteId } from '@/app/route-registry';
 import { PlanningFeature } from '@/features/planning';
 
 const lazyRouteModules = {
+  'project-field': async () => ({ Component: (await import('@/features/project-field')).ProjectFieldFeature }),
   overview: async () => ({ Component: (await import('@/features/overview')).OverviewFeature }),
   input: async () => ({ Component: (await import('@/features/input-method')).InputMethodFeature }),
   agent: async () => ({ Component: (await import('@/features/agent')).AgentFeature }),
@@ -36,6 +37,7 @@ function isLazyRouteId(routeId: RouteId): routeId is LazyRouteId {
 
 export const router = createHashRouter([
   { path: '/', element: <Navigate replace to="/agent" /> },
+  { path: '/project-field', HydrateFallback: RouteLoading, lazy: lazyRouteModules['project-field'] },
   { path: '/overview', HydrateFallback: RouteLoading, lazy: lazyRouteModules.overview },
   { path: '/input', HydrateFallback: RouteLoading, lazy: lazyRouteModules.input },
   { path: '/agent', HydrateFallback: RouteLoading, lazy: lazyRouteModules.agent },

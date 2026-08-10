@@ -20,7 +20,7 @@ import {
 import type { ProductIdentity } from '@/features/identity/product-identity';
 import { routeIcons } from './route-icons';
 
-const mobilePrimaryRoutes: RouteId[] = ['agent', 'rooms', 'planning', 'memory'];
+const mobilePrimaryRoutes: RouteId[] = ['project-field', 'agent', 'rooms', 'memory'];
 
 function RouteLink({
   compact = false,

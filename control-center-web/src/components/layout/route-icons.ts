@@ -9,6 +9,7 @@ import {
   Keyboard,
   LayoutDashboard,
   ListTodo,
+  MapPinned,
   MessagesSquare,
   Mic2,
   MonitorDot,
@@ -22,6 +23,7 @@ import {
 import type { RouteId } from '@/app/route-registry';
 
 export const routeIcons: Record<RouteId, LucideIcon> = {
+  'project-field': MapPinned,
   overview: LayoutDashboard,
   input: Keyboard,
   agent: Bot,

@@ -48,7 +48,6 @@
 - [实现执行](03-work-document.md) — 保存已实施结果和验证回执。
 - [质量门](04-quality-gate-pending.md) — 保存进入质量门所需的可观察证据。
 - [独立复核](05-independent-review-pending.md) — 保存独立复核的进入条件与结论。
-- [交接](06-current-agent-handoff.md) — 保存当前状态、下一动作和未完成验证。
 
 ## Source refs
 

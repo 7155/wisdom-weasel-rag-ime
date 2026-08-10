@@ -31,7 +31,6 @@ project-field Room 的详细交付文档
   03-work-document.md
   04-quality-gate-pending.md
   05-independent-review-pending.md
-  06-current-agent-handoff.md
 
 real-project-reconstruction/
   reconstruction-manifest.v1.json  Room 身份、坐标与来源 receipts
@@ -71,4 +70,4 @@ Wayfinder 负责项目意义与空间定位；这条流程负责每个纵向 Roo
 
 ## 当前验收边界
 
-自动测试、构建和可见浏览器检查可以证明投影结构与交互没有明显回归；它们不能代替用户在原生可见页面上判断图谱是否符合自己的项目认知。当前接手入口见 [`06-current-agent-handoff.md`](06-current-agent-handoff.md)。
+自动测试、构建和可见浏览器检查可以证明投影结构与交互没有明显回归；它们不能代替用户在原生可见页面上判断图谱是否符合自己的项目认知。当前公开质量状态见 [`04-quality-gate-pending.md`](04-quality-gate-pending.md)。

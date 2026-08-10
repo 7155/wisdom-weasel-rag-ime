@@ -12,9 +12,9 @@ import { AppShell } from './AppShell';
 describe('control center shell', () => {
   afterEach(cleanup);
 
-  beforeEach(() => {
+  beforeEach(async () => {
     window.localStorage.clear();
-    window.location.hash = '#/';
+    await router.navigate('/agent');
     document.documentElement.dataset.controlTransport = 'mock';
   });
 
@@ -58,6 +58,7 @@ describe('control center shell', () => {
 
   it('persists theme, motion, and sidebar preferences', async () => {
     const user = userEvent.setup();
+    await router.navigate('/agent');
     render(
       <ThemeProvider>
         <MotionProvider>
@@ -86,6 +87,7 @@ describe('control center shell', () => {
 
   it('moves keyboard focus to the active workspace without changing routes', async () => {
     const user = userEvent.setup();
+    await router.navigate('/agent');
     render(
       <ThemeProvider>
         <MotionProvider>
@@ -104,7 +106,18 @@ describe('control center shell', () => {
 
     await user.click(skipLink);
 
-    expect(window.location.hash).toBe('#/');
+    expect(window.location.hash).toBe('#/agent');
     expect(document.activeElement).toHaveAttribute('id', 'workspace-main');
+  });
+
+  it('gives the Project Field an immersive shell without duplicate navigation chrome', async () => {
+    await router.navigate('/project-field');
+    render(<App />);
+
+    await waitFor(() => expect(document.querySelector('main.project-field')).toBeInTheDocument());
+    expect(document.querySelector('.control-shell')).toHaveAttribute('data-immersive', 'true');
+    expect(document.querySelector('.shell-sidebar')).not.toBeInTheDocument();
+    expect(document.querySelector('.shell-topbar')).not.toBeInTheDocument();
+    expect(document.querySelector('.shell-mobile-nav')).not.toBeInTheDocument();
   });
 });
