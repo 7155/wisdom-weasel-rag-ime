@@ -77,6 +77,7 @@ class RoomApplicationService:
         resolve_attachments: Callable[
             [str, Sequence[str], Sequence[str]], list[dict[str, object]]
         ],
+        deliver_steer: Callable[[str, str, str], Mapping[str, object]] | None = None,
         clock_ms: Callable[[], int] | None = None,
     ) -> None:
         self.rooms = rooms
@@ -95,6 +96,7 @@ class RoomApplicationService:
         self.wake_worker = wake_worker
         self.restore_participant_sessions = restore_participant_sessions
         self.resolve_attachments = resolve_attachments
+        self.deliver_steer = deliver_steer
         self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
 
     def post_message(
@@ -299,6 +301,131 @@ class RoomApplicationService:
             "timelineEvents": timeline_events,
             "projectionPending": projection_pending,
             "recoveryState": "recovering" if projection_pending else "synced",
+        }
+
+    def steer_participant(
+        self,
+        room_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Deliver one user supplement to one exact running Room turn.
+
+        This is intentionally neither a new Root nor a new Task.  Every
+        identity in the request is checked again against the current Kernel
+        binding immediately before the existing Pi ``steer`` delivery.
+        """
+
+        action = str(payload.get("action") or "").strip()
+        root_id = str(payload.get("rootId") or "").strip()
+        participant_id = str(payload.get("participantId") or "").strip()
+        client_action_id = str(payload.get("clientActionId") or "").strip()
+        message = str(payload.get("message") or "").strip()
+        raw_generation = payload.get("expectedGeneration")
+        if isinstance(raw_generation, bool):
+            raw_generation = None
+        try:
+            expected_generation = int(raw_generation)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "participant steer requires a non-negative expectedGeneration"
+            ) from exc
+        if (
+            action != "steer_participant"
+            or not root_id
+            or not participant_id
+            or not client_action_id
+            or not message
+            or expected_generation < 0
+        ):
+            raise ValueError(
+                "participant steer requires action=steer_participant, rootId, "
+                "expectedGeneration, participantId, clientActionId, and message"
+            )
+        if len(client_action_id) > 128 or len(message) > 8_000:
+            raise ValueError("participant steer action or message is too long")
+        if self.deliver_steer is None:
+            raise RuntimeError("participant steer delivery is not configured")
+
+        room = self.rooms.get(room_id)
+        if room.get("status") != "active":
+            raise RoomKernelFenceError("participant steer requires an active Room")
+        root = self.kernel.root(root_id)
+        if root.get("roomId") != room_id:
+            raise RoomKernelFenceError(
+                "participant steer Root does not belong to this Room"
+            )
+        if root.get("state") != "running":
+            raise RoomKernelFenceError("participant steer Root is terminal or inactive")
+        if int(root.get("generation", -1)) != expected_generation:
+            raise RoomKernelFenceError("participant steer generation is stale")
+        participant = self.rooms.participant(participant_id)
+        session_id = str(participant.get("sessionId") or "").strip()
+        if (
+            participant.get("roomId") != room_id
+            or participant.get("status") != "active"
+            or not session_id
+        ):
+            raise RoomKernelFenceError(
+                "participant steer participant is not active in this Room"
+            )
+        targets = self.kernel.active_runtime_targets(
+            room_id=room_id,
+            root_id=root_id,
+            participant_id=participant_id,
+        )
+        if len(targets) != 1:
+            raise RoomKernelFenceError(
+                "participant steer requires exactly one running target"
+            )
+        target = targets[0]
+        if (
+            target.get("sessionId") != session_id
+            or int(target.get("generation", -1)) != expected_generation
+            or target.get("participantId") != participant_id
+            or target.get("taskState") != "active"
+            or target.get("currentOwnerParticipantId") != participant_id
+        ):
+            raise RoomKernelFenceError(
+                "participant steer target no longer matches current Room ownership"
+            )
+        task = self.kernel.task(str(target["taskId"]))
+        if (
+            task.get("rootId") != root_id
+            or task.get("state") != "active"
+            or task.get("currentOwnerParticipantId") != participant_id
+        ):
+            raise RoomKernelFenceError("participant steer Task is no longer active")
+        session = self.sessions.get(session_id)
+        runtime_turn_id = str(target["runtimeTurnId"])
+        if session.get("status") == "archived":
+            raise RoomKernelFenceError("participant steer Session is archived")
+        if self.sessions.runtime_turn_terminal_event(session_id, runtime_turn_id):
+            raise RoomKernelFenceError("participant steer runtime turn is terminal")
+        if self.sessions.latest_runtime_turn_id(session_id) != runtime_turn_id:
+            raise RoomKernelFenceError("participant steer runtime turn is stale")
+
+        delivered = dict(self.deliver_steer(session_id, message, client_action_id))
+        if (
+            not delivered.get("accepted")
+            or str(delivered.get("turnId") or "") != runtime_turn_id
+        ):
+            raise RoomKernelFenceError(
+                "participant steer was not accepted by the bound runtime turn"
+            )
+        return {
+            "schemaVersion": "rag-ime.room-participant-steer.v1",
+            "ok": True,
+            "accepted": True,
+            "roomId": room_id,
+            "rootId": root_id,
+            "expectedGeneration": expected_generation,
+            "participantId": participant_id,
+            "sessionId": session_id,
+            "taskId": str(target["taskId"]),
+            "dispatchId": str(target["dispatchId"]),
+            "runtimeTurnId": runtime_turn_id,
+            "clientActionId": client_action_id,
+            "delivery": delivered,
         }
 
     def define_room(

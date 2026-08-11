@@ -1017,6 +1017,44 @@ class ControlRoutePolicyTests(unittest.TestCase):
                 remote,
             )
 
+    def test_running_participant_steer_requires_exact_binding_fields(self) -> None:
+        body = {
+            "action": "steer_participant",
+            "rootId": "room-root:1",
+            "expectedGeneration": 3,
+            "participantId": "participant:worker",
+            "clientActionId": "room-steer:1",
+            "message": "补充这一项验收。",
+        }
+        request = ControlRequest(
+            request_id="request-room-steer",
+            path_id=ControlPathId.AGENT_ROOM_PARTICIPANT_STEER.value,
+            params={"roomId": "room-1"},
+            body=body,
+        )
+        remote = ControlAccessContext.remote(
+            device_id="phone-1",
+            scopes={ControlScope.AGENT_WRITE.value},
+        )
+        self.policy.authorize(request, ControlAccessContext.native())
+        self.policy.authorize(request, remote)
+
+        for invalid in (
+            {key: value for key, value in body.items() if key != "participantId"},
+            {**body, "dispatchId": "client-must-not-select-dispatch"},
+            {**body, "action": "start_execution"},
+        ):
+            with self.subTest(body=invalid), self.assertRaises(ControlApiError):
+                self.policy.authorize(
+                    ControlRequest(
+                        request_id="request-room-steer-invalid",
+                        path_id=ControlPathId.AGENT_ROOM_PARTICIPANT_STEER.value,
+                        params={"roomId": "room-1"},
+                        body=invalid,
+                    ),
+                    remote,
+                )
+
     def test_room_root_abort_requires_a_root_and_idempotency_identity(self) -> None:
         request = ControlRequest(
             request_id="request-room-root-abort",

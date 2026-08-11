@@ -188,6 +188,7 @@ def agent_room_route(path: str) -> tuple[str, str]:
         "events",
         "messages",
         "start-execution",
+        "steer",
         "abort",
         "snapshot",
         "history",

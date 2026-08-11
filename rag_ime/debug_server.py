@@ -8055,6 +8055,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.ACCEPTED,
                     self.service.agent.start_room_execution(agent_room_id, payload),
                 )
+            elif agent_room_id and room_action == "steer":
+                self._write_json(
+                    HTTPStatus.ACCEPTED,
+                    self.service.agent.steer_room_participant(agent_room_id, payload),
+                )
             elif agent_room_id and room_action == "abort":
                 self._write_json(
                     HTTPStatus.OK,

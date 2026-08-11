@@ -2966,6 +2966,59 @@ class AgentService:
 
         return self.room_application.start_execution(room_id, payload)
 
+    def steer_room_participant(
+        self,
+        room_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Durably apply one typed supplement to a running Room participant."""
+
+        root_id = str(payload.get("rootId") or "").strip()
+        client_action_id = str(payload.get("clientActionId") or "").strip()
+        if not root_id or not client_action_id:
+            raise ValueError(
+                "participant steer requires rootId and clientActionId"
+            )
+        receipt_payload = {
+            "action": payload.get("action"),
+            "rootId": root_id,
+            "expectedGeneration": payload.get("expectedGeneration"),
+            "participantId": payload.get("participantId"),
+            "message": payload.get("message"),
+        }
+        scope_id = f"{room_id}:{root_id}"
+        claim = self.command_receipts.begin(
+            command_scope="room_participant_steer",
+            scope_id=scope_id,
+            client_message_id=client_action_id,
+            payload=receipt_payload,
+        )
+        if claim.replay_response is not None:
+            return {**claim.replay_response, "idempotentReplay": True}
+        try:
+            response = self.room_application.steer_participant(room_id, payload)
+        except Exception as exc:
+            self.command_receipts.fail(
+                claim,
+                command_scope="room_participant_steer",
+                scope_id=scope_id,
+                client_message_id=client_action_id,
+                error=exc,
+            )
+            raise
+        response["controlReceipt"] = {
+            "state": "accepted",
+            "scope": "room_participant_steer",
+            "clientActionId": client_action_id,
+        }
+        return self.command_receipts.complete(
+            claim,
+            command_scope="room_participant_steer",
+            scope_id=scope_id,
+            client_message_id=client_action_id,
+            response=response,
+        )
+
     def _resolve_room_attachments(
         self,
         room_id: str,
@@ -4730,6 +4783,14 @@ class AgentService:
             wake_worker=self.room_kernel_worker_loop.wake,
             restore_participant_sessions=self._restore_legacy_room_participant_sessions,
             resolve_attachments=self._resolve_room_attachments,
+            deliver_steer=lambda session_id, message, client_action_id: (
+                self.runtime.prompt(
+                    session_id,
+                    message,
+                    client_message_id=client_action_id,
+                    delivery="steer",
+                )
+            ),
         )
         self.room_kernel_application = RoomKernelApplicationService(
             rooms=self.rooms,

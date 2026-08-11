@@ -2844,6 +2844,92 @@ class RoomKernelStore:
                 for row in rows
             ]
 
+    def active_runtime_targets(
+        self,
+        *,
+        room_id: str,
+        root_id: str,
+        participant_id: str,
+    ) -> list[dict[str, object]]:
+        """Return every exact running runtime binding for one Room participant.
+
+        A typed running-room action must resolve this from the Kernel at the
+        moment it is applied.  Callers deliberately receive all matches so a
+        malformed concurrent ownership state is rejected rather than guessed.
+        """
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT d.dispatch_id,d.root_id,d.task_id,d.target_session_id,
+                          d.target_participant_id,d.generation,d.payload_json,
+                          t.state AS task_state,t.current_owner_participant_id,
+                          effects.runtime_receipt_json
+                   FROM room_kernel_dispatches d
+                   JOIN room_kernel_roots r ON r.root_id=d.root_id
+                   JOIN room_kernel_tasks t ON t.task_id=d.task_id
+                   JOIN room_kernel_runtime_effects effects
+                     ON effects.dispatch_id=d.dispatch_id
+                    AND effects.state='accepted'
+                   WHERE r.room_id=? AND d.root_id=?
+                     AND r.state='running' AND d.state='running'
+                     AND d.generation=r.generation
+                     AND d.target_participant_id=?
+                   ORDER BY d.dispatch_id""",
+                (room_id, root_id, participant_id),
+            ).fetchall()
+        targets: list[dict[str, object]] = []
+        for row in rows:
+            dispatch = json.loads(str(row["payload_json"]))
+            runtime_receipt = json.loads(
+                str(row["runtime_receipt_json"] or "{}")
+            )
+            if not isinstance(dispatch, Mapping) or not isinstance(
+                runtime_receipt, Mapping
+            ):
+                raise RoomKernelFenceError(
+                    "running Room target has a corrupt runtime binding"
+                )
+            generation = int(row["generation"])
+            runtime_turn_id = str(runtime_receipt.get("turnId") or "").strip()
+            if (
+                dispatch.get("rootId") != str(row["root_id"])
+                or dispatch.get("taskId") != str(row["task_id"])
+                or dispatch.get("dispatchId") != str(row["dispatch_id"])
+                or dispatch.get("targetSessionId")
+                != str(row["target_session_id"])
+                or dispatch.get("targetParticipantId")
+                != str(row["target_participant_id"])
+                or int(dispatch.get("generation", -1)) != generation
+                or runtime_receipt.get("schemaVersion")
+                != "wisdom-weasel.room-runtime-receipt.v1"
+                or runtime_receipt.get("receiptKind") != "dispatch_accepted"
+                or runtime_receipt.get("status") != "accepted"
+                or runtime_receipt.get("rootId") != str(row["root_id"])
+                or runtime_receipt.get("dispatchId") != str(row["dispatch_id"])
+                or runtime_receipt.get("sessionId")
+                != str(row["target_session_id"])
+                or int(runtime_receipt.get("generation", -1)) != generation
+                or not runtime_turn_id
+            ):
+                raise RoomKernelFenceError(
+                    "running Room target lost its exact runtime lineage"
+                )
+            targets.append({
+                "roomId": room_id,
+                "rootId": str(row["root_id"]),
+                "taskId": str(row["task_id"]),
+                "dispatchId": str(row["dispatch_id"]),
+                "participantId": str(row["target_participant_id"]),
+                "sessionId": str(row["target_session_id"]),
+                "generation": generation,
+                "taskState": str(row["task_state"]),
+                "currentOwnerParticipantId": str(
+                    row["current_owner_participant_id"]
+                ),
+                "runtimeTurnId": runtime_turn_id,
+            })
+        return targets
+
     def session_binding(self, session_id: str) -> dict[str, object] | None:
         with self._connect() as conn:
             row = conn.execute(
