@@ -46,6 +46,7 @@ class ControlRoutePolicyTests(unittest.TestCase):
                 "memory.book.archive.apply",
                 "memory.book.archive.rollback",
                 "memory.activityTimeline.get",
+                "memory.activityTimeline.calendar",
                 "memory.activityTimeline.build",
                 "memory.activityTimeline.approve",
                 "memory.activityTimeline.reject",
@@ -1215,6 +1216,23 @@ class ControlRoutePolicyTests(unittest.TestCase):
             )
 
         self.assertEqual(raised.exception.code, ControlErrorCode.ROUTE_NOT_ALLOWED)
+
+    def test_activity_timeline_catch_up_flag_is_allowed_by_remote_contract(self) -> None:
+        request = ControlRequest(
+            request_id="request-activity-catch-up",
+            path_id=ControlPathId.MEMORY_ACTIVITY_TIMELINE_BUILD.value,
+            body={"date": "2026-08-12", "throughToday": True},
+        )
+
+        route = self.policy.authorize(
+            request,
+            ControlAccessContext.remote(
+                device_id="phone-1",
+                scopes={ControlScope.MEMORY_WRITE.value},
+            ),
+        )
+
+        self.assertIn("throughToday", route.remote_body)
 
     def test_remote_body_allowlist_blocks_workspace_paths_and_privileged_modes(self) -> None:
         context = ControlAccessContext.remote(

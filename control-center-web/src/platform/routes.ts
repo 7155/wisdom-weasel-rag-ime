@@ -1090,10 +1090,16 @@ export const CONTROL_ROUTES = {
     path: '/api/memory/activity-timeline',
     query: ['timelineId', 'date', 'status'],
   },
+  'memory.activityTimeline.calendar': {
+    method: 'GET',
+    path: '/api/memory/activity-timeline/calendar',
+    query: ['month'],
+    requiredQuery: ['month'],
+  },
   'memory.activityTimeline.build': {
     method: 'POST',
     path: '/api/memory/activity-timeline/build',
-    body: ['date'],
+    body: ['date', 'throughToday'],
     requiredBody: ['date'],
   },
   'memory.activityTimeline.approve': {

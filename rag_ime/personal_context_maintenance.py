@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -158,15 +159,19 @@ class PersonalContextMaintenanceRunner:
         config: PersonalContextMaintenanceConfig | None = None,
         role_book_applier: object | None = None,
         role_book_organizer: object | None = None,
+        activity_organizer: object | None = None,
         consolidator_factory: ConsolidatorFactory = PersonalContextConsolidator,
     ) -> None:
         self.db_path = Path(db_path)
         self.config = (config or PersonalContextMaintenanceConfig()).normalized()
         self._provided_role_book_applier = role_book_applier
         self._provided_role_book_organizer = role_book_organizer
+        self._provided_activity_organizer = activity_organizer
         self._default_role_book_applier: AgentRoleBookStore | None = None
         self._default_role_book_organizer: object | None = None
         self._default_role_book_organizer_resolved = False
+        self._default_activity_organizer: object | None = None
+        self._default_activity_organizer_resolved = False
         self._consolidator_factory = consolidator_factory
 
     def initialize(self) -> None:
@@ -205,6 +210,7 @@ class PersonalContextMaintenanceRunner:
             for item in timeline_results
             if isinstance(item.get("timeline"), Mapping)
         }
+
         targets: list[dict[str, object]] = []
         for project, role_id in target_keys:
             before = self._safe_target_status(project, role_id, now_ms=timestamp)
@@ -323,6 +329,119 @@ class PersonalContextMaintenanceRunner:
             "targets": targets,
         }
 
+    def build_activity_timeline(
+        self,
+        timeline_date: str,
+        *,
+        now_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Run the same governed Activity path used by scheduled maintenance."""
+
+        timestamp = _timestamp(now_ms)
+        self.initialize()
+        return self._build_activity_timeline(
+            self.config.project,
+            timeline_date,
+            timestamp=timestamp,
+        )
+
+    def build_activity_timelines_through(
+        self,
+        through_date: str,
+        *,
+        now_ms: int | None = None,
+        progress: object | None = None,
+    ) -> dict[str, object]:
+        """Serially organize every pending source day through a target date."""
+
+        timestamp = _timestamp(now_ms)
+        self.initialize()
+        store = DailyActivityTimelineStore(
+            self.db_path,
+            project=self.config.project,
+        )
+        dates = store.dates_requiring_model_organization(through_date)
+        results: list[dict[str, object]] = []
+        callback = progress if callable(progress) else None
+        if callback is not None:
+            callback(
+                {
+                    "phase": "activity_timeline_catch_up",
+                    "throughDate": through_date,
+                    "totalDayCount": len(dates),
+                    "completedDayCount": 0,
+                    "currentDate": "",
+                }
+            )
+        for index, timeline_date in enumerate(dates):
+            if callback is not None:
+                callback(
+                    {
+                        "phase": "activity_timeline_catch_up",
+                        "throughDate": through_date,
+                        "totalDayCount": len(dates),
+                        "completedDayCount": len(results),
+                        "currentDate": timeline_date,
+                    }
+                )
+            result = self._build_activity_timeline(
+                self.config.project,
+                timeline_date,
+                timestamp=timestamp + index,
+            )
+            timeline = (
+                result.get("timeline")
+                if isinstance(result.get("timeline"), Mapping)
+                else {}
+            )
+            semantic = (
+                result.get("semanticOrganization")
+                if isinstance(result.get("semanticOrganization"), Mapping)
+                else {}
+            )
+            results.append(
+                {
+                    "ok": result.get("ok") is True,
+                    "date": timeline_date,
+                    "status": str(result.get("status") or ""),
+                    "timelineId": str(timeline.get("timelineId") or ""),
+                    "eventCount": int(timeline.get("eventCount") or 0),
+                    "activityCount": int(timeline.get("segmentCount") or 0),
+                    "semanticStatus": str(semantic.get("status") or ""),
+                    "receipt": dict(semantic.get("receipt") or {}),
+                    "error": str(result.get("error") or semantic.get("error") or ""),
+                }
+            )
+            if result.get("ok") is not True:
+                break
+        completed = sum(item.get("ok") is True for item in results)
+        failed = next(
+            (item for item in results if item.get("ok") is not True),
+            None,
+        )
+        if callback is not None:
+            callback(
+                {
+                    "phase": "activity_timeline_catch_up",
+                    "throughDate": through_date,
+                    "totalDayCount": len(dates),
+                    "completedDayCount": completed,
+                    "currentDate": str((failed or {}).get("date") or ""),
+                    "failedDate": str((failed or {}).get("date") or ""),
+                }
+            )
+        return {
+            "schemaVersion": "rag-ime.activity-timeline-catch-up.v1",
+            "ok": failed is None,
+            "throughDate": through_date,
+            "pendingDayCount": len(dates),
+            "completedDayCount": completed,
+            "remainingDayCount": max(0, len(dates) - completed),
+            "failedDate": str((failed or {}).get("date") or ""),
+            "error": str((failed or {}).get("error") or ""),
+            "activityTimelines": results,
+        }
+
     def _draft_activity_timelines(
         self,
         timeline_date: str,
@@ -393,6 +512,81 @@ class PersonalContextMaintenanceRunner:
             generated_at_ms=timestamp,
         )
         timeline = result.get("timeline")
+        organization: dict[str, object] = {}
+        organization_error = ""
+        needs_organization = bool(
+            self.config.auto_publish_timelines
+            and isinstance(timeline, Mapping)
+            and str(result.get("status") or "") in {"draft", "approved"}
+            and store.requires_model_organization(
+                str(timeline.get("timelineId") or "")
+            )
+        )
+        if (
+            needs_organization
+            and isinstance(timeline, Mapping)
+        ):
+            organizer = self._activity_organizer()
+            organize = getattr(organizer, "organize_activity_timeline", None)
+            if not callable(organize):
+                organization_error = "activity_organizer_unavailable"
+            else:
+                packet = store.organization_packet(
+                    str(timeline.get("timelineId") or "")
+                )
+                model_run_started = False
+                try:
+                    begin_model_run = getattr(organizer, "begin_run", None)
+                    if callable(begin_model_run):
+                        begin_model_run(
+                            f"activity-organization:{packet.membership_sha256}",
+                            frozen_input_sha256=hashlib.sha256(
+                                packet.json_text().encode("utf-8")
+                            ).hexdigest(),
+                        )
+                        model_run_started = True
+                    organization = dict(organize(packet=packet))
+                    organized_payload = organization.get("organization")
+                    receipt = organization.get("receipt")
+                    if not isinstance(organized_payload, Mapping) or not isinstance(
+                        receipt, Mapping
+                    ):
+                        raise ValueError(
+                            "Activity organizer returned an incomplete governed result"
+                        )
+                    timeline = store.apply_model_organization(
+                        str(timeline.get("timelineId") or ""),
+                        organization=organized_payload,
+                        receipt=receipt,
+                        organized_at_ms=timestamp,
+                    )
+                    result = {**result, "timeline": timeline}
+                    if model_run_started:
+                        finish_model_run = getattr(organizer, "finish_run", None)
+                        if callable(finish_model_run):
+                            finish_model_run()
+                        model_run_started = False
+                except Exception as exc:
+                    if model_run_started:
+                        fail_model_run = getattr(organizer, "fail_run", None)
+                        if callable(fail_model_run):
+                            try:
+                                fail_model_run(exc)
+                            except Exception:
+                                pass
+                    organization_error = _public_error(exc)
+                    organization = {}
+        if organization_error:
+            return {
+                **result,
+                "ok": False,
+                "status": "failed",
+                "autoPublished": False,
+                "semanticOrganization": {
+                    "status": "failed",
+                    "error": organization_error,
+                },
+            }
         if (
             self.config.auto_publish_timelines
             and str(result.get("status") or "") == "draft"
@@ -412,8 +606,29 @@ class PersonalContextMaintenanceRunner:
                 "status": "approved",
                 "timeline": approved,
                 "autoPublished": True,
+                "semanticOrganization": {
+                    "status": "completed",
+                    "receipt": dict(organization.get("receipt") or {}),
+                },
             }
-        return {**result, "autoPublished": False}
+        if needs_organization:
+            return {
+                **result,
+                "timeline": timeline,
+                "autoPublished": False,
+                "semanticOrganization": {
+                    "status": "completed",
+                    "receipt": dict(organization.get("receipt") or {}),
+                },
+            }
+        return {
+            **result,
+            "autoPublished": False,
+            "semanticOrganization": {
+                "status": "not_required",
+                "receipt": {},
+            },
+        }
 
     def _timeline_id_for_target(
         self,
@@ -751,6 +966,32 @@ class PersonalContextMaintenanceRunner:
         else:
             self._default_role_book_organizer = ManagedPiMemoryOrganizer(executor)
         return self._default_role_book_organizer
+
+    def _activity_organizer(self) -> object | None:
+        if self._provided_activity_organizer is not None:
+            return self._provided_activity_organizer
+        if self._provided_role_book_organizer is not None and callable(
+            getattr(
+                self._provided_role_book_organizer,
+                "organize_activity_timeline",
+                None,
+            )
+        ):
+            return self._provided_role_book_organizer
+        if self._default_activity_organizer_resolved:
+            return self._default_activity_organizer
+        self._default_activity_organizer_resolved = True
+        try:
+            executor = build_managed_pi_memory_model_executor(
+                self.db_path,
+                self.config.model,
+                self.config.thinking_level,
+            )
+        except MemoryModelUnavailable:
+            self._default_activity_organizer = None
+        else:
+            self._default_activity_organizer = ManagedPiMemoryOrganizer(executor)
+        return self._default_activity_organizer
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:

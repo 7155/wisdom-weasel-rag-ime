@@ -193,6 +193,7 @@ class ControlPathId(str, Enum):
     MEMORY_BOOK_ARCHIVE_APPLY = "memory.book.archive.apply"
     MEMORY_BOOK_ARCHIVE_ROLLBACK = "memory.book.archive.rollback"
     MEMORY_ACTIVITY_TIMELINE_GET = "memory.activityTimeline.get"
+    MEMORY_ACTIVITY_TIMELINE_CALENDAR = "memory.activityTimeline.calendar"
     MEMORY_ACTIVITY_TIMELINE_BUILD = "memory.activityTimeline.build"
     MEMORY_ACTIVITY_TIMELINE_APPROVE = "memory.activityTimeline.approve"
     MEMORY_ACTIVITY_TIMELINE_REJECT = "memory.activityTimeline.reject"
@@ -867,7 +868,8 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.MEMORY_BOOK_ARCHIVE_APPLY, ControlMethod.POST, "/api/memory/book/archive/apply", "/control/v1/memory/book/archive/apply", body={"bookId", "archived", "reason", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"}, required_body={"bookId", "archived", "reason", "expectedRuntimeRevision", "previewToken", "payloadSha256", "confirmText"}),
         _route(ControlPathId.MEMORY_BOOK_ARCHIVE_ROLLBACK, ControlMethod.POST, "/api/memory/book/archive/rollback", "/control/v1/memory/book/archive/rollback", body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}, required_body={"receiptId", "rollbackToken", "payloadSha256", "confirmText"}),
         _route(ControlPathId.MEMORY_ACTIVITY_TIMELINE_GET, ControlMethod.GET, "/api/memory/activity-timeline", "/control/v1/memory/activity-timeline", scopes=[ControlScope.MEMORY_READ], remote_safe=True, query={"timelineId", "date", "status"}),
-        _route(ControlPathId.MEMORY_ACTIVITY_TIMELINE_BUILD, ControlMethod.POST, "/api/memory/activity-timeline/build", "/control/v1/memory/activity-timeline/build", scopes=[ControlScope.MEMORY_WRITE], remote_safe=True, body={"date"}, required_body={"date"}, remote_body={"date"}),
+        _route(ControlPathId.MEMORY_ACTIVITY_TIMELINE_CALENDAR, ControlMethod.GET, "/api/memory/activity-timeline/calendar", "/control/v1/memory/activity-timeline/calendar", scopes=[ControlScope.MEMORY_READ], remote_safe=True, query={"month"}, required_query={"month"}),
+        _route(ControlPathId.MEMORY_ACTIVITY_TIMELINE_BUILD, ControlMethod.POST, "/api/memory/activity-timeline/build", "/control/v1/memory/activity-timeline/build", scopes=[ControlScope.MEMORY_WRITE], remote_safe=True, body={"date", "throughToday"}, required_body={"date"}, remote_body={"date", "throughToday"}),
         _route(ControlPathId.MEMORY_ACTIVITY_TIMELINE_APPROVE, ControlMethod.POST, "/api/memory/activity-timeline/approve", "/control/v1/memory/activity-timeline/approve", scopes=[ControlScope.MEMORY_WRITE], remote_safe=True, body={"timelineId", "expectedSourceEventHash", "confirmText"}, required_body={"timelineId", "expectedSourceEventHash", "confirmText"}, remote_body={"timelineId", "expectedSourceEventHash", "confirmText"}, remote_body_values={"confirmText": {"approve"}}),
         _route(ControlPathId.MEMORY_ACTIVITY_TIMELINE_REJECT, ControlMethod.POST, "/api/memory/activity-timeline/reject", "/control/v1/memory/activity-timeline/reject", scopes=[ControlScope.MEMORY_WRITE], remote_safe=True, body={"timelineId", "reason", "confirmText"}, required_body={"timelineId", "reason", "confirmText"}, remote_body={"timelineId", "reason", "confirmText"}, remote_body_values={"confirmText": {"reject"}}),
         _route(ControlPathId.HISTORY_PAGE, ControlMethod.GET, "/api/history/page", "/control/v1/history/page", scopes=[ControlScope.HISTORY_READ], remote_safe=True, query={"limit", "cursor", "query", "filter"}),

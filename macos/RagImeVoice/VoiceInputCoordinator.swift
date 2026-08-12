@@ -567,6 +567,7 @@ final class VoiceInputCoordinator {
         let captureID = voiceCommitCaptureID
         VoiceCommitRecorder.record(
             text: text,
+            recentContext: insertion.referenceContext,
             appBundleIdentifier: insertion.appBundleIdentifier,
             captureID: captureID,
             occurredStartMs: voiceCommitStartedAtMs

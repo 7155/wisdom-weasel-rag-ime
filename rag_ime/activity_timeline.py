@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 from collections.abc import Iterator, Mapping, Sequence
@@ -12,6 +13,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
+from .activity_timeline_curation import (
+    ActivityOrganizationPacket,
+    ActivityOrganizationResult,
+    build_activity_organization_packet,
+    validate_activity_organization_output,
+)
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 from .memory_ingest import normalize_text
@@ -168,6 +175,245 @@ class DailyActivityTimelineStore:
         if self.project:
             return tuple(value for value in projects if value == self.project)
         return projects
+
+    def calendar(self, timeline_month: str) -> dict[str, object]:
+        """Project one month of source coverage and current timeline state."""
+
+        first_day = _validated_month(timeline_month)
+        next_month = (
+            date(first_day.year + 1, 1, 1)
+            if first_day.month == 12
+            else date(first_day.year, first_day.month + 1, 1)
+        )
+        self.initialize()
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM daily_activity_timelines
+                WHERE project = ? AND timeline_date >= ? AND timeline_date < ?
+                  AND status <> 'superseded'
+                ORDER BY timeline_date ASC,
+                  CASE status
+                    WHEN 'draft' THEN 0
+                    WHEN 'approved' THEN 1
+                    WHEN 'rejected' THEN 2
+                    ELSE 3
+                  END,
+                  updated_at_ms DESC, timeline_id DESC
+                """,
+                (self.project, first_day.isoformat(), next_month.isoformat()),
+            ).fetchall()
+            latest_by_day: dict[str, sqlite3.Row] = {}
+            for row in rows:
+                latest_by_day.setdefault(str(row["timeline_date"]), row)
+
+            days: list[dict[str, object]] = []
+            source_event_count = 0
+            activity_day_count = 0
+            organized_day_count = 0
+            approved_day_count = 0
+            draft_day_count = 0
+            waiting_day_count = 0
+            outdated_day_count = 0
+            cursor = first_day
+            while cursor < next_month:
+                events = self._events(conn, cursor)
+                row = latest_by_day.get(cursor.isoformat())
+                if not events and row is None:
+                    cursor += timedelta(days=1)
+                    continue
+
+                event_count = len(events)
+                current_hash = _timeline_event_hash(events) if events else ""
+                status = str(row["status"] or "") if row is not None else "none"
+                timeline_hash = (
+                    str(row["source_event_hash"] or "") if row is not None else ""
+                )
+                metadata = (
+                    _json_mapping(row["metadata_json"])
+                    if row is not None
+                    else {}
+                )
+                is_current = bool(events and row is not None and timeline_hash == current_hash)
+                model_organized = bool(
+                    metadata.get("modelOrganized") is True
+                    and str(metadata.get("organizationMode") or "")
+                    == "luna_activity_v1"
+                )
+                organized = (
+                    status in {"draft", "approved"}
+                    and is_current
+                    and model_organized
+                )
+                needs_refresh = bool(
+                    events
+                    and row is not None
+                    and status in {"draft", "approved"}
+                    and not is_current
+                )
+                waiting = bool(events and not organized)
+
+                source_event_count += event_count
+                activity_day_count += int(bool(events))
+                organized_day_count += int(organized)
+                approved_day_count += int(status == "approved" and is_current)
+                draft_day_count += int(status == "draft" and is_current)
+                waiting_day_count += int(waiting)
+                outdated_day_count += int(needs_refresh)
+                days.append(
+                    {
+                        "date": cursor.isoformat(),
+                        "status": status,
+                        "organized": organized,
+                        "modelOrganized": model_organized,
+                        "needsRefresh": needs_refresh,
+                        "sourceEventCount": event_count,
+                        "timelineId": str(row["timeline_id"] or "") if row is not None else "",
+                        "timelineEventCount": int(row["event_count"] or 0) if row is not None else 0,
+                        "segmentCount": int(row["segment_count"] or 0) if row is not None else 0,
+                        "updatedAtMs": int(row["updated_at_ms"] or 0) if row is not None else 0,
+                    }
+                )
+                cursor += timedelta(days=1)
+
+        return {
+            "schemaVersion": "rag-ime.activity-timeline-calendar.v1",
+            "ok": True,
+            "project": self.project,
+            "timezone": self.timezone_name,
+            "month": first_day.strftime("%Y-%m"),
+            "summary": {
+                "sourceEventCount": source_event_count,
+                "activityDayCount": activity_day_count,
+                "organizedDayCount": organized_day_count,
+                "approvedDayCount": approved_day_count,
+                "draftDayCount": draft_day_count,
+                "waitingDayCount": waiting_day_count,
+                "outdatedDayCount": outdated_day_count,
+            },
+            "days": days,
+        }
+
+    def requires_model_organization(self, timeline_id: str) -> bool:
+        """Return whether the current projection still contains heuristic text."""
+
+        identifier = _required_text(timeline_id, "timeline_id")
+        self.initialize()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT status, metadata_json
+                FROM daily_activity_timelines
+                WHERE timeline_id = ? AND project = ?
+                """,
+                (identifier, self.project),
+            ).fetchone()
+        if row is None:
+            raise ValueError("daily activity timeline does not exist in this project")
+        if str(row["status"] or "") not in {"draft", "approved"}:
+            return False
+        metadata = _json_mapping(row["metadata_json"])
+        return not (
+            metadata.get("modelOrganized") is True
+            and str(metadata.get("organizationMode") or "")
+            == "luna_activity_v1"
+        )
+
+    def dates_requiring_model_organization(
+        self,
+        through_date: str,
+    ) -> tuple[str, ...]:
+        """List source days whose current projection lacks verified semantics."""
+
+        through = _validated_date(through_date)
+        self.initialize()
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT e.created_at_ms
+                FROM input_events e
+                LEFT JOIN memory_state s ON s.event_id = e.id
+                WHERE e.project = ?
+                  AND COALESCE(s.deleted, 0) = 0
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM memory_tombstones AS tombstone
+                      WHERE tombstone.active = 1
+                        AND (
+                             (tombstone.target_type = 'source_event_id'
+                              AND tombstone.target_value = CAST(e.id AS TEXT))
+                          OR (tombstone.target_type = 'memory_id'
+                              AND tombstone.target_value = ('event:' || e.id))
+                        )
+                  )
+                  AND e.source NOT IN ({_placeholders(_INTERNAL_EVENT_SOURCES)})
+                ORDER BY e.created_at_ms ASC
+                """,
+                (self.project, *sorted(_INTERNAL_EVENT_SOURCES)),
+            ).fetchall()
+        source_dates = sorted(
+            {
+                datetime.fromtimestamp(
+                    int(row["created_at_ms"] or 0) / 1_000,
+                    tz=self.timezone,
+                ).date()
+                for row in rows
+                if int(row["created_at_ms"] or 0) > 0
+            }
+        )
+        pending: list[str] = []
+        for day in source_dates:
+            if day > through:
+                break
+            latest = self.latest(day.isoformat())
+            if latest is None:
+                pending.append(day.isoformat())
+                continue
+            metadata = self._timeline_metadata(str(latest["timelineId"]))
+            calendar = self.calendar(day.strftime("%Y-%m"))
+            calendar_day = next(
+                (
+                    value
+                    for value in calendar["days"]
+                    if value["date"] == day.isoformat()
+                ),
+                None,
+            )
+            if (
+                str(latest.get("status") or "") == "rejected"
+                and isinstance(calendar_day, Mapping)
+                and int(calendar_day.get("sourceEventCount") or 0)
+                == int(latest.get("eventCount") or 0)
+            ):
+                # A current rejected projection is an explicit user decision,
+                # not unfinished model work. New evidence makes it pending
+                # again because build_draft will create a fresh membership.
+                continue
+            if not (
+                metadata.get("modelOrganized") is True
+                and str(metadata.get("organizationMode") or "")
+                == "luna_activity_v1"
+            ):
+                pending.append(day.isoformat())
+                continue
+            # A previously organized day becomes pending again when new source
+            # events change its immutable evidence membership.
+            if not isinstance(calendar_day, Mapping) or not bool(
+                calendar_day.get("organized")
+            ):
+                pending.append(day.isoformat())
+        return tuple(pending)
+
+    def _timeline_metadata(self, timeline_id: str) -> dict[str, object]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT metadata_json FROM daily_activity_timelines
+                WHERE timeline_id = ? AND project = ?
+                """,
+                (timeline_id, self.project),
+            ).fetchone()
+        return _json_mapping(row["metadata_json"]) if row is not None else {}
 
     def build_draft(
         self,
@@ -347,6 +593,157 @@ class DailyActivityTimelineStore:
         if row is None:
             raise ValueError("daily activity timeline does not exist in this project")
         payload = _timeline_payload(row)
+        validate_contract(payload, "daily-activity-timeline.v1.json")
+        return payload
+
+    def organization_packet(self, timeline_id: str) -> ActivityOrganizationPacket:
+        """Freeze the exact current source membership for semantic organization."""
+
+        identifier = _required_text(timeline_id, "timeline_id")
+        self.initialize()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM daily_activity_timelines
+                WHERE timeline_id = ? AND project = ?
+                """,
+                (identifier, self.project),
+            ).fetchone()
+            if row is None:
+                raise ValueError("daily activity timeline does not exist in this project")
+            day = _validated_date(str(row["timeline_date"]))
+            events = self._events(conn, day)
+            if not events or _timeline_event_hash(events) != str(row["source_event_hash"]):
+                raise StaleActivityTimelineError(
+                    "input events changed before semantic Activity organization"
+                )
+        return build_activity_organization_packet(
+            [_activity_event_row(event) for event in events],
+            timeline_id=identifier,
+            project=self.project,
+            timeline_date=day.isoformat(),
+            timezone_name=self.timezone_name,
+        )
+
+    def apply_model_organization(
+        self,
+        timeline_id: str,
+        *,
+        organization: Mapping[str, object],
+        receipt: Mapping[str, object],
+        organized_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Apply a verified model result to the derived Timeline projection.
+
+        The source event set remains authoritative. Model text can only replace
+        Activity boundaries, titles, and summaries after exact reference-ledger
+        validation against the current immutable membership.
+        """
+
+        identifier = _required_text(timeline_id, "timeline_id")
+        timestamp = now_ms() if organized_at_ms is None else max(0, int(organized_at_ms))
+        packet = self.organization_packet(identifier)
+        result = validate_activity_organization_output(
+            organization,
+            packet=packet,
+        )
+        self.initialize()
+        with self._connect(immediate=True) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM daily_activity_timelines
+                WHERE timeline_id = ? AND project = ?
+                """,
+                (identifier, self.project),
+            ).fetchone()
+            if row is None:
+                raise ValueError("daily activity timeline does not exist in this project")
+            if str(row["status"]) not in {"draft", "approved"}:
+                raise ValueError("only a current draft or approved timeline can be organized")
+            day = _validated_date(str(row["timeline_date"]))
+            events = self._events(conn, day)
+            if (
+                not events
+                or _timeline_event_hash(events) != str(row["source_event_hash"])
+                or packet.membership_sha256
+                != build_activity_organization_packet(
+                    [_activity_event_row(event) for event in events],
+                    timeline_id=identifier,
+                    project=self.project,
+                    timeline_date=day.isoformat(),
+                    timezone_name=self.timezone_name,
+                ).membership_sha256
+            ):
+                raise StaleActivityTimelineError(
+                    "input events changed before semantic Activity organization was applied"
+                )
+            segments = _organized_segments(
+                events,
+                packet=packet,
+                result=result,
+                timezone=self.timezone,
+            )
+            metadata = _json_mapping(row["metadata_json"])
+            metadata.update(
+                {
+                    "segmentationMode": _TIMELINE_SEGMENTATION_MODE,
+                    "organizationMode": "luna_activity_v1",
+                    "modelOrganized": True,
+                    "modelOrganization": _public_activity_organization_receipt(
+                        receipt,
+                        membership_sha256=packet.membership_sha256,
+                        organized_at_ms=timestamp,
+                    ),
+                }
+            )
+            conn.execute(
+                """
+                UPDATE daily_activity_timelines
+                SET segments_json = ?, summary_text = ?, segment_count = ?,
+                    metadata_json = ?, updated_at_ms = ?
+                WHERE timeline_id = ?
+                """,
+                (
+                    json.dumps(
+                        [segment.payload() for segment in segments],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    _timeline_summary(segments, timezone=self.timezone),
+                    len(segments),
+                    json.dumps(
+                        metadata,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    timestamp,
+                    identifier,
+                ),
+            )
+            if str(row["status"]) == "approved":
+                enqueue_memory_projection(
+                    conn,
+                    projection_kind=RETRIEVAL_DOCS_PROJECTION,
+                    aggregate_type="daily_activity_timeline",
+                    aggregate_id=identifier,
+                    operation="approve",
+                    project=self.project,
+                    revision=max(1, timestamp),
+                    payload={
+                        "timelineId": identifier,
+                        "sourceEventHash": str(row["source_event_hash"]),
+                    },
+                    available_at_ms=timestamp,
+                )
+            updated = conn.execute(
+                "SELECT * FROM daily_activity_timelines WHERE timeline_id = ?",
+                (identifier,),
+            ).fetchone()
+        if updated is None:  # pragma: no cover - protected by the transaction
+            raise RuntimeError("organized timeline disappeared")
+        payload = _timeline_payload(updated)
         validate_contract(payload, "daily-activity-timeline.v1.json")
         return payload
 
@@ -801,6 +1198,174 @@ def _timeline_summary(
             time_label = f"{time_label}-{end.strftime('%H:%M')}"
         parts.append(f"{time_label} {segment.summary}")
     return truncate_text("；".join(parts), 1_800)
+
+
+def _activity_event_row(event: _ActivityEvent) -> dict[str, object]:
+    return {
+        "id": event.event_id,
+        "created_at_ms": event.created_at_ms,
+        "source": event.source,
+        "committed_text": event.text,
+        "recent_context": event.recent_context,
+        "app": event.app,
+        "project": event.project,
+        "context_group_id": event.context_group_id,
+    }
+
+
+def _organized_segments(
+    events: Sequence[_ActivityEvent],
+    *,
+    packet: ActivityOrganizationPacket,
+    result: ActivityOrganizationResult,
+    timezone: tzinfo,
+) -> list[ActivityTimelineSegment]:
+    events_by_ref = {
+        record.ref: event
+        for record, event in zip(packet.records, events, strict=True)
+    }
+    groups: list[tuple[str, str, Sequence[str], str]] = [
+        (
+            activity.title,
+            activity.summary,
+            activity.event_refs,
+            activity.activity_id,
+        )
+        for activity in result.activities
+    ]
+    if result.unclassified:
+        groups.append(
+            (
+                "暂未归类的活动",
+                f"{len(result.unclassified)} 条输入缺少足够语义线索，已保留来源等待后续补充。",
+                tuple(item.event_ref for item in result.unclassified),
+                "unclassified",
+            )
+        )
+
+    segments: list[ActivityTimelineSegment] = []
+    for position, (title, summary, refs, activity_id) in enumerate(groups):
+        group = sorted(
+            (events_by_ref[ref] for ref in refs),
+            key=lambda event: (event.created_at_ms, event.event_id),
+        )
+        if not group:
+            continue
+        apps = tuple(
+            dict.fromkeys(
+                _safe_label(
+                    event.app,
+                    fallback=_safe_label(event.source, fallback="unknown-app"),
+                )
+                for event in group
+            )
+        )
+        source_kinds = tuple(
+            dict.fromkeys(
+                _safe_label(event.source, fallback="unknown-source")
+                for event in group
+            )
+        )
+        context_groups = tuple(
+            dict.fromkeys(
+                value
+                for event in group
+                if (value := _safe_optional_label(event.context_group_id))
+            )
+        )
+        source_event_ids = tuple(event.event_id for event in group)
+        source_hash = _event_hash(group)
+        evidence_refs = tuple(
+            {
+                "sourceType": "input_event",
+                "sourceId": f"event:{event.event_id}",
+                "eventId": event.event_id,
+                "app": _safe_label(
+                    event.app,
+                    fallback=_safe_label(event.source, fallback="unknown-app"),
+                ),
+                "sourceKind": _safe_label(event.source, fallback="unknown-source"),
+                "occurredAtMs": event.created_at_ms,
+                "redacted": contains_sensitive_content(event.text),
+            }
+            for event in group
+        )
+        segments.append(
+            ActivityTimelineSegment(
+                segment_id=(
+                    f"activity-segment:{_stable_digest(activity_id, source_hash)[:24]}"
+                ),
+                position=position,
+                app=apps[0] if len(apps) == 1 else "multiple",
+                source_kinds=source_kinds,
+                context_group_ids=context_groups,
+                start_ms=group[0].created_at_ms,
+                end_ms=group[-1].created_at_ms,
+                period=_activity_period(
+                    group[0].created_at_ms,
+                    group[-1].created_at_ms,
+                    timezone=timezone,
+                ),
+                event_count=len(group),
+                source_event_ids=source_event_ids,
+                source_event_hash=source_hash,
+                summary=truncate_text(summary, 760),
+                redacted_event_count=sum(
+                    contains_sensitive_content(event.text) for event in group
+                ),
+                title=truncate_text(title, 160),
+                apps=apps,
+                activity_kind=activity_timeline_kind(
+                    group[0].created_at_ms,
+                    group[-1].created_at_ms,
+                ),
+                evidence_refs=evidence_refs,
+            )
+        )
+    return segments
+
+
+def _public_activity_organization_receipt(
+    value: Mapping[str, object],
+    *,
+    membership_sha256: str,
+    organized_at_ms: int,
+) -> dict[str, object]:
+    scores = value.get("scores")
+    return {
+        "membershipSha256": membership_sha256,
+        "organizerPromptVersion": compact_whitespace(
+            str(value.get("organizerPromptVersion") or "")
+        )[:120],
+        "verifierPromptVersion": compact_whitespace(
+            str(value.get("verifierPromptVersion") or "")
+        )[:120],
+        "contractRepairPromptVersion": compact_whitespace(
+            str(value.get("contractRepairPromptVersion") or "")
+        )[:120],
+        "semanticRepairPromptVersion": compact_whitespace(
+            str(value.get("semanticRepairPromptVersion") or "")
+        )[:120],
+        "organizerOutputSha256": compact_whitespace(
+            str(value.get("organizerOutputSha256") or "")
+        )[:64],
+        "verifierOutputSha256": compact_whitespace(
+            str(value.get("verifierOutputSha256") or "")
+        )[:64],
+        "verdict": compact_whitespace(str(value.get("verdict") or ""))[:16],
+        "scores": (
+            {
+                compact_whitespace(str(key))[:80]: int(score)
+                for key, score in scores.items()
+                if isinstance(score, int) and not isinstance(score, bool)
+            }
+            if isinstance(scores, Mapping)
+            else {}
+        ),
+        "contractRepaired": value.get("contractRepaired") is True,
+        "semanticRepaired": value.get("semanticRepaired") is True,
+        "organizedAtMs": max(0, int(organized_at_ms)),
+    }
 
 
 def _event_hash(events: Sequence[_ActivityEvent]) -> str:
@@ -1584,6 +2149,16 @@ def _validated_date(value: str) -> date:
     return day
 
 
+def _validated_month(value: str) -> date:
+    text = compact_whitespace(value)
+    if not re.fullmatch(r"\d{4}-\d{2}", text):
+        raise ValueError("timeline_month must use YYYY-MM")
+    try:
+        return date.fromisoformat(f"{text}-01")
+    except ValueError as exc:
+        raise ValueError("timeline_month must use YYYY-MM") from exc
+
+
 def _resolve_timezone(value: str) -> tzinfo:
     name = compact_whitespace(value)
     if name:
@@ -1591,7 +2166,13 @@ def _resolve_timezone(value: str) -> tzinfo:
             return ZoneInfo(name)
         except Exception as exc:
             raise ValueError(f"unknown timezone: {name}") from exc
-    return datetime.now().astimezone().tzinfo or ZoneInfo("UTC")
+    local = datetime.now().astimezone().tzinfo
+    local_key = compact_whitespace(str(getattr(local, "key", "") or ""))
+    if local_key:
+        return local or ZoneInfo("UTC")
+    # macOS commonly exposes only the ambiguous abbreviation ``CST`` here.
+    # Persist an IANA name so semantic packets remain replayable and valid.
+    return ZoneInfo(os.environ.get("RAG_IME_TIMEZONE", "Asia/Shanghai"))
 
 
 def _timezone_name(value: tzinfo) -> str:

@@ -52,6 +52,7 @@ class GatewayMemoryMaintenanceJobs:
                 "state": "queued",
                 "request": dict(payload),
                 "result": {},
+                "progress": {},
                 "error": "",
                 "createdAtMs": timestamp,
                 "updatedAtMs": timestamp,
@@ -87,6 +88,10 @@ class GatewayMemoryMaintenanceJobs:
             job["state"] = "running"
             job["updatedAtMs"] = int(time.time() * 1_000)
             request = dict(job["request"])
+            request["_progressCallback"] = lambda value: self._set_progress(
+                job_id,
+                value,
+            )
         state = "failed"
         result: dict[str, object] = {}
         error = ""
@@ -109,6 +114,18 @@ class GatewayMemoryMaintenanceJobs:
             if self._active_job_id == job_id:
                 self._active_job_id = ""
             self._prune_locked()
+
+    def _set_progress(
+        self,
+        job_id: str,
+        value: Mapping[str, object],
+    ) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or str(job.get("state")) not in {"queued", "running"}:
+                return
+            job["progress"] = dict(value)
+            job["updatedAtMs"] = int(time.time() * 1_000)
 
     def _prune_locked(self) -> None:
         terminal = sorted(
@@ -138,6 +155,11 @@ class GatewayMemoryMaintenanceJobs:
             "result": (
                 dict(job.get("result") or {})
                 if isinstance(job.get("result"), Mapping)
+                else {}
+            ),
+            "progress": (
+                dict(job.get("progress") or {})
+                if isinstance(job.get("progress"), Mapping)
                 else {}
             ),
             "error": str(job.get("error") or ""),

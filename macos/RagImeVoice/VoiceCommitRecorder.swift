@@ -28,6 +28,7 @@ enum VoiceCommitRecorder {
 
     static func record(
         text: String,
+        recentContext: String,
         appBundleIdentifier: String,
         captureID: String,
         occurredStartMs: Int,
@@ -40,6 +41,7 @@ enum VoiceCommitRecorder {
         }
         let app = appBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedApp = app.isEmpty ? "unknown" : app
+        let boundedContext = String(compactWhitespace(recentContext).suffix(1_600))
         let nowMs = Int(Date().timeIntervalSince1970 * 1_000)
         let metadata = CaptureMetadata(
             schemaVersion: "rag-ime.input-capture.v2",
@@ -63,13 +65,16 @@ enum VoiceCommitRecorder {
             occurredEndMs: max(max(0, occurredStartMs), nowMs),
             contentSha256: sha256(value),
             captureSource: "voice_insertion",
-            fallbackReason: "",
-            fieldContextChars: value.count,
+            fallbackReason: boundedContext.isEmpty ? "ax_context_unavailable" : "",
+            fieldContextChars: boundedContext.count,
             imeBufferChars: 0,
-            selectionRule: "inserted_voice_final"
+            selectionRule: boundedContext.isEmpty
+                ? "inserted_voice_final_no_context"
+                : "inserted_voice_final_with_ax_context"
         )
         let payload = CommitPayload(
             text: value,
+            recentContext: boundedContext,
             project: "wisdom-weasel-rag-ime",
             app: resolvedApp,
             providerName: "voice_streaming_asr",
@@ -246,6 +251,9 @@ private struct PendingCommit: Codable {
 
 private struct CommitPayload: Codable {
     let text: String
+    // Optional keeps queued v2 commits written by an older build decodable.
+    // New captures always encode the bounded AX context when it is available.
+    let recentContext: String?
     let project: String
     let app: String
     let providerName: String

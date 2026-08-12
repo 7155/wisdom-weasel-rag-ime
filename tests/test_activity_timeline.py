@@ -13,6 +13,9 @@ from rag_ime.activity_timeline import (
     DailyActivityTimelineStore,
     StaleActivityTimelineError,
 )
+from rag_ime.activity_timeline_curation import (
+    ACTIVITY_ORGANIZATION_OUTPUT_VERSION,
+)
 from rag_ime.agent_role_book import AgentRoleBookStore
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.models import InputEvent
@@ -64,6 +67,118 @@ class DailyActivityTimelineTests(unittest.TestCase):
             side_effect=AssertionError("migration replayed"),
         ):
             store.initialize()
+
+    def test_calendar_reports_current_and_outdated_daily_coverage(self) -> None:
+        store = DailyActivityTimelineStore(
+            self.db_path,
+            project=self.project,
+            timezone_name="Asia/Shanghai",
+        )
+        self._record(
+            9,
+            0,
+            app="com.openai.codex",
+            source="squirrel_input_segment",
+            text="实现每日整理日历",
+        )
+        draft = store.build_draft(
+            "2026-07-17",
+            generated_at_ms=self._ms(9, 5),
+        )["timeline"]
+        packet = store.organization_packet(draft["timelineId"])
+        store.apply_model_organization(
+            draft["timelineId"],
+            organization={
+                "schemaVersion": ACTIVITY_ORGANIZATION_OUTPUT_VERSION,
+                "activities": [
+                    {
+                        "title": "完善每日整理日历",
+                        "summary": "实现月度整理状态与当天活动入口。",
+                        "eventRefs": ["e1"],
+                        "confidence": 0.96,
+                        "boundaryBasis": "当前输入明确描述同一项日历实现工作。",
+                    }
+                ],
+                "unclassified": [],
+            },
+            receipt={
+                "membershipSha256": packet.membership_sha256,
+                "verdict": "pass",
+            },
+            organized_at_ms=self._ms(9, 6),
+        )
+        store.approve(
+            draft["timelineId"],
+            expected_source_event_hash=draft["sourceEventHash"],
+            approved_by="user:test",
+            confirm_text="approve",
+            approved_at_ms=self._ms(9, 7),
+        )
+
+        current = store.calendar("2026-07")
+        current_day = next(
+            item for item in current["days"] if item["date"] == "2026-07-17"
+        )
+        self.assertEqual(current_day["status"], "approved")
+        self.assertTrue(current_day["organized"])
+        self.assertFalse(current_day["needsRefresh"])
+        self.assertEqual(current["summary"]["organizedDayCount"], 1)
+        self.assertEqual(current["summary"]["waitingDayCount"], 0)
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE daily_activity_timelines SET metadata_json = ? WHERE timeline_id = ?",
+                ('{"segmentationMode":"semantic_task_v5"}', draft["timelineId"]),
+            )
+        heuristic = store.calendar("2026-07")
+        heuristic_day = next(
+            item for item in heuristic["days"] if item["date"] == "2026-07-17"
+        )
+        self.assertFalse(heuristic_day["organized"])
+        self.assertEqual(heuristic["summary"]["organizedDayCount"], 0)
+        self.assertEqual(heuristic["summary"]["waitingDayCount"], 1)
+
+        store.apply_model_organization(
+            draft["timelineId"],
+            organization={
+                "schemaVersion": ACTIVITY_ORGANIZATION_OUTPUT_VERSION,
+                "activities": [
+                    {
+                        "title": "完善每日整理日历",
+                        "summary": "实现月度整理状态与当天活动入口。",
+                        "eventRefs": ["e1"],
+                        "confidence": 0.96,
+                        "boundaryBasis": "当前输入明确描述同一项日历实现工作。",
+                    }
+                ],
+                "unclassified": [],
+            },
+            receipt={
+                "membershipSha256": packet.membership_sha256,
+                "verdict": "pass",
+            },
+            organized_at_ms=self._ms(9, 8),
+        )
+
+        self._record(
+            9,
+            10,
+            app="com.openai.codex",
+            source="squirrel_input_segment",
+            text="当天新增一条尚未纳入时间线的输入",
+        )
+        outdated = store.calendar("2026-07")
+        outdated_day = next(
+            item for item in outdated["days"] if item["date"] == "2026-07-17"
+        )
+        self.assertFalse(outdated_day["organized"])
+        self.assertTrue(outdated_day["needsRefresh"])
+        self.assertEqual(outdated_day["sourceEventCount"], 2)
+        self.assertEqual(outdated["summary"]["outdatedDayCount"], 1)
+        self.assertEqual(outdated["summary"]["waitingDayCount"], 1)
+
+        with self.assertRaisesRegex(ValueError, "YYYY-MM"):
+            store.calendar("2026-7")
 
     def test_maintenance_draft_review_approve_and_bootstrap_form_closed_loop(
         self,
@@ -144,6 +259,7 @@ class DailyActivityTimelineTests(unittest.TestCase):
                 min_interval_ms=0,
                 auto_publish_timelines=True,
             ),
+            activity_organizer=_TwoBlockActivityOrganizer(),
         ).run_once(
             now_ms=self._ms(10, 0),
             force=True,
@@ -642,6 +758,123 @@ class DailyActivityTimelineTests(unittest.TestCase):
         self.assertEqual(sorted(flattened_ids), sorted(event_ids))
         self.assertEqual(len(flattened_ids), len(set(flattened_ids)))
 
+    def test_verified_model_organization_replaces_raw_sentence_titles(self) -> None:
+        first_id = self._record(
+            9,
+            0,
+            app="com.openai.codex",
+            source="voice_final",
+            text="这个页面为什么还是把原始句子放在这里",
+        )
+        second_id = self._record(
+            9,
+            6,
+            app="com.openai.codex",
+            source="voice_final",
+            text="时间线应该概括我在修复每日语义整理",
+        )
+        store = DailyActivityTimelineStore(
+            self.db_path,
+            project=self.project,
+            timezone_name="Asia/Shanghai",
+        )
+        draft = store.build_draft(
+            "2026-07-17",
+            generated_at_ms=self._ms(9, 10),
+        )["timeline"]
+        packet = store.organization_packet(draft["timelineId"])
+
+        organized = store.apply_model_organization(
+            draft["timelineId"],
+            organization={
+                "schemaVersion": ACTIVITY_ORGANIZATION_OUTPUT_VERSION,
+                "activities": [
+                    {
+                        "title": "修复时间线语义整理",
+                        "summary": "检查每日时间线直接展示原句的问题，并明确改为活动级概括。",
+                        "eventRefs": ["e1", "e2"],
+                        "confidence": 0.96,
+                        "boundaryBasis": "两条输入共同指向同一个时间线语义展示问题。",
+                    }
+                ],
+                "unclassified": [],
+            },
+            receipt={
+                "organizerPromptVersion": "activity-organizer-luna-v3",
+                "verifierPromptVersion": "activity-organizer-verifier-luna-v1",
+                "membershipSha256": packet.membership_sha256,
+                "organizerOutputSha256": "a" * 64,
+                "verifierOutputSha256": "b" * 64,
+                "verdict": "pass",
+                "scores": {"titleSummaryFidelity": 5},
+            },
+            organized_at_ms=self._ms(9, 11),
+        )
+
+        self.assertEqual(organized["segments"][0]["title"], "修复时间线语义整理")
+        self.assertEqual(
+            organized["segments"][0]["summary"],
+            "检查每日时间线直接展示原句的问题，并明确改为活动级概括。",
+        )
+        self.assertEqual(
+            organized["segments"][0]["sourceEventIds"],
+            [first_id, second_id],
+        )
+        self.assertNotIn("这个页面为什么", organized["summary"])
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT metadata_json FROM daily_activity_timelines WHERE timeline_id = ?",
+                (draft["timelineId"],),
+            ).fetchone()
+        metadata = json.loads(str(row[0]))
+        self.assertTrue(metadata["modelOrganized"])
+        self.assertEqual(metadata["organizationMode"], "luna_activity_v1")
+        self.assertEqual(
+            metadata["modelOrganization"]["membershipSha256"],
+            packet.membership_sha256,
+        )
+
+    def test_model_organization_fails_closed_on_missing_event_reference(self) -> None:
+        self._record(
+            10,
+            0,
+            app="com.openai.codex",
+            source="voice_final",
+            text="第一条活动输入",
+        )
+        self._record(
+            10,
+            3,
+            app="com.openai.codex",
+            source="voice_final",
+            text="第二条活动输入",
+        )
+        store = DailyActivityTimelineStore(
+            self.db_path,
+            project=self.project,
+            timezone_name="Asia/Shanghai",
+        )
+        draft = store.build_draft("2026-07-17")["timeline"]
+
+        with self.assertRaisesRegex(ValueError, "coverage mismatch"):
+            store.apply_model_organization(
+                draft["timelineId"],
+                organization={
+                    "schemaVersion": ACTIVITY_ORGANIZATION_OUTPUT_VERSION,
+                    "activities": [
+                        {
+                            "title": "不完整活动",
+                            "summary": "只引用了一条来源。",
+                            "eventRefs": ["e1"],
+                            "confidence": 0.9,
+                            "boundaryBasis": "测试缺失引用。",
+                        }
+                    ],
+                    "unclassified": [],
+                },
+                receipt={},
+            )
+
     def test_changed_input_events_make_reviewed_draft_stale(self) -> None:
         self._record(
             13,
@@ -1130,6 +1363,50 @@ class DailyActivityTimelineTests(unittest.TestCase):
             ).timestamp()
             * 1_000
         )
+
+
+class _TwoBlockActivityOrganizer:
+    provider_name = "fake-two-block-activity-organizer"
+
+    def begin_run(self, run_id: str, *, frozen_input_sha256: str = "") -> dict[str, object]:
+        del run_id, frozen_input_sha256
+        return {}
+
+    def organize_activity_timeline(self, *, packet: object) -> dict[str, object]:
+        refs = list(getattr(packet, "event_refs"))
+        return {
+            "organization": {
+                "schemaVersion": ACTIVITY_ORGANIZATION_OUTPUT_VERSION,
+                "activities": [
+                    {
+                        "title": "梳理个人记忆与评测方案",
+                        "summary": "讨论个人记忆重构、上下文注入与 LongMemEval 评测依据。",
+                        "eventRefs": refs[:3],
+                        "confidence": 0.95,
+                        "boundaryBasis": "前三条来源共同围绕个人记忆方案与评测依据。",
+                    },
+                    {
+                        "title": "实现跨应用活动时间线",
+                        "summary": "实现跨应用活动时间线，并保留一条已脱敏来源。",
+                        "eventRefs": refs[3:],
+                        "confidence": 0.94,
+                        "boundaryBasis": "后两条来源来自同一文档实现活动。",
+                    },
+                ],
+                "unclassified": [],
+            },
+            "receipt": {
+                "membershipSha256": getattr(packet, "membership_sha256"),
+                "verdict": "pass",
+            },
+        }
+
+    def finish_run(self) -> dict[str, object]:
+        return {}
+
+    def fail_run(self, error: BaseException) -> dict[str, object]:
+        del error
+        return {}
 
 
 if __name__ == "__main__":

@@ -22,7 +22,11 @@ class GatewayMemoryMaintenanceJobsTests(unittest.TestCase):
         calls: list[dict[str, object]] = []
 
         def execute(payload: Mapping[str, object]) -> dict[str, object]:
-            calls.append(dict(payload))
+            values = dict(payload)
+            progress = values.pop("_progressCallback")
+            self.assertTrue(callable(progress))
+            progress({"completedDayCount": 1, "totalDayCount": 2})
+            calls.append(values)
             started.set()
             self.assertTrue(release.wait(timeout=2))
             return {"ok": True, "ranScopeCount": 1}
@@ -34,6 +38,7 @@ class GatewayMemoryMaintenanceJobsTests(unittest.TestCase):
 
         self.assertEqual(second["jobId"], first["jobId"])
         self.assertTrue(second["reused"])
+        self.assertEqual(second["progress"]["completedDayCount"], 1)
         self.assertEqual(calls, [{"project": "project-a"}])
         release.set()
         terminal = self._wait_for_terminal(jobs, str(first["jobId"]))

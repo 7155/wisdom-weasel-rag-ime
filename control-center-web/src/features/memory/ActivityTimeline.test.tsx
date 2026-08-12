@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
@@ -14,6 +14,46 @@ import { ActivityTimeline } from './ActivityTimeline';
 afterEach(cleanup);
 
 describe('ActivityTimeline activity projection', () => {
+  it('keeps the daily journal directly below the calendar and opens a journal highlight', async () => {
+    const user = userEvent.setup();
+    renderTimeline(semanticTimeline());
+
+    const calendarHeading = await screen.findByText('月度整理轨迹');
+    const calendar = calendarHeading.closest('.activity-calendar');
+    expect(calendar?.nextElementSibling).toHaveClass('daily-journal');
+    expect(screen.getByRole('heading', { name: /的每日日记$/ })).toBeInTheDocument();
+    expect(await screen.findByText('上午完成账号切换与连续开发，下午验证记忆召回。')).toBeInTheDocument();
+    expect(screen.getByText('今日足迹')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '查看日记条目：验证三条记忆消费路径' }));
+    expect(await screen.findByRole('dialog', { name: '验证三条记忆消费路径' })).toBeInTheDocument();
+  });
+
+  it('uses the month calendar as the entry point to a daily timeline', async () => {
+    const user = userEvent.setup();
+    renderTimeline(semanticTimeline());
+
+    const calendar = (await screen.findByText('月度整理轨迹')).closest('.activity-calendar');
+    expect(calendar).not.toBeNull();
+    await waitFor(() => {
+      expect(calendar).toHaveTextContent('2 天有活动');
+      expect(calendar).toHaveTextContent('1 天已整理');
+    });
+    const waitingDay = screen.getByRole('button', { name: /待整理，12 条来源/ });
+    await user.click(waitingDay);
+    expect(waitingDay).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('点击日期，直接查看当天时间线和来源。')).toBeInTheDocument();
+  });
+
+  it('does not present a heuristic approved timeline as a semantic journal', async () => {
+    renderTimeline(semanticTimeline(), { organized: false });
+
+    expect(await screen.findByText('这一天还没有形成语义日记')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '语义整理这一天' })).toBeInTheDocument();
+    expect(screen.getByText('待语义整理')).toBeInTheDocument();
+    expect(screen.queryByText('上午完成账号切换与连续开发，下午验证记忆召回。')).not.toBeInTheDocument();
+  });
+
   it('keeps a cross-app morning activity together and reveals its evidence chain', async () => {
     const user = userEvent.setup();
     renderTimeline(semanticTimeline());
@@ -25,7 +65,7 @@ describe('ActivityTimeline activity projection', () => {
     const task = screen.getByRole('button', { name: '查看任务：切换 Codex 账号并继续开发' });
     expect(within(task).getByText('Terminal')).toBeInTheDocument();
     expect(within(task).getByText('Codex')).toBeInTheDocument();
-    expect(within(task).getByText('8 条证据')).toBeInTheDocument();
+    expect(within(task).getByText('8 条来源')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /查看任务：/ })).toHaveLength(2);
 
     await user.click(task);
@@ -38,7 +78,7 @@ describe('ActivityTimeline activity projection', () => {
     const eventDetails = eventSummary!.closest('details');
     expect(eventDetails).not.toBeNull();
 
-    const referenceSummary = within(eventDetails!).getByText('来源引用 · 1').closest('summary');
+    const referenceSummary = within(eventDetails!).getByText('相关来源 · 1').closest('summary');
     expect(referenceSummary).not.toBeNull();
     await user.click(referenceSummary!);
     expect(within(eventDetails!).getByText(/input_events\/101/)).toBeVisible();
@@ -64,8 +104,8 @@ describe('ActivityTimeline activity projection', () => {
     const eventSummary = within(dialog).getByText('事件 1').closest('summary');
     expect(eventSummary).not.toBeNull();
     await user.click(eventSummary!);
-    expect(within(dialog).getByText('原始事件 #201')).toBeInTheDocument();
-    expect(within(dialog).getByText('当前接口未返回这条事件的来源引用。')).toBeVisible();
+    expect(within(dialog).getByText('记录 #201')).toBeInTheDocument();
+    expect(within(dialog).getByText('这条记录暂时没有可打开的来源。')).toBeVisible();
     expect(dialog).toHaveTextContent('分类未标注');
   });
 
@@ -77,7 +117,7 @@ describe('ActivityTimeline activity projection', () => {
     const task = screen.getByRole('button', { name: '查看任务：切换账号并继续记忆系统开发' });
     expect(within(task).getByText('Terminal')).toBeInTheDocument();
     expect(within(task).getByText('Codex')).toBeInTheDocument();
-    expect(within(task).getByText('2 条证据')).toBeInTheDocument();
+    expect(within(task).getByText('2 条来源')).toBeInTheDocument();
     expect(within(task).getAllByText('普通活动').length).toBeGreaterThan(0);
     expect(within(task).queryByText('长时聚合')).not.toBeInTheDocument();
 
@@ -88,8 +128,8 @@ describe('ActivityTimeline activity projection', () => {
     await user.click(firstEvent!);
     const firstEventDetails = firstEvent!.closest('details');
     expect(firstEventDetails).not.toBeNull();
-    expect(within(firstEventDetails!).getByText('当前接口只提供事件身份，未返回可展示的事件摘要。')).toBeVisible();
-    expect(within(firstEventDetails!).getByRole('button', { name: '打开原始事件' })).toBeVisible();
+    expect(within(firstEventDetails!).getByText('这条记录暂时没有可展示的摘要。')).toBeVisible();
+    expect(within(firstEventDetails!).getByRole('button', { name: '打开来源记录' })).toBeVisible();
   });
 
   it('groups a legacy task crossing noon as all-day and labels duration as a span', async () => {
@@ -97,20 +137,23 @@ describe('ActivityTimeline activity projection', () => {
 
     expect(await screen.findByRole('heading', { name: '全天' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '上午' })).not.toBeInTheDocument();
-    expect(screen.getByText('首末证据跨度合计')).toBeInTheDocument();
+    expect(screen.getByText('记录时间范围合计')).toBeInTheDocument();
     expect(screen.queryByText('活跃时长')).not.toBeInTheDocument();
     const task = screen.getByRole('button', { name: '查看任务：持续优化输入法记忆召回' });
-    expect(within(task).getByText('长时聚合 · 首末证据跨度 6 小时')).toBeInTheDocument();
+    expect(within(task).getByText('长时聚合 · 记录时间范围 6 小时')).toBeInTheDocument();
   });
 });
 
-function renderTimeline(timeline: Record<string, unknown>) {
+function renderTimeline(
+  timeline: Record<string, unknown>,
+  options: { organized?: boolean } = {},
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   render(
     <TooltipProvider delayDuration={0}>
-      <ControlTransportProvider transport={timelineTransport(timeline)}>
+      <ControlTransportProvider transport={timelineTransport(timeline, options)}>
         <QueryClientProvider client={client}>
           <ActivityTimeline />
         </QueryClientProvider>
@@ -119,7 +162,10 @@ function renderTimeline(timeline: Record<string, unknown>) {
   );
 }
 
-function timelineTransport(timeline: Record<string, unknown>): ControlTransport {
+function timelineTransport(
+  timeline: Record<string, unknown>,
+  options: { organized?: boolean } = {},
+): ControlTransport {
   return {
     kind: 'mock',
     capabilities: async () => ({
@@ -127,10 +173,12 @@ function timelineTransport(timeline: Record<string, unknown>): ControlTransport 
       transport: 'mock',
       routeIds: [
         'memory.activityTimeline.get',
+        'memory.activityTimeline.calendar',
         'memory.activityTimeline.build',
         'memory.activityTimeline.approve',
         'memory.activityTimeline.reject',
         'memory.reference.get',
+        'agent.memoryMaintenance.run',
       ],
       features: {},
       native: {},
@@ -138,6 +186,29 @@ function timelineTransport(timeline: Record<string, unknown>): ControlTransport 
     request: async <Response,>(request: ControlRequest) => {
       if (request.pathId === 'memory.activityTimeline.get') {
         return { ok: true, timeline } as Response;
+      }
+      if (request.pathId === 'memory.activityTimeline.calendar') {
+        const month = String(request.query?.month ?? new Date().toISOString().slice(0, 7));
+        const today = localDateForTest();
+        const waitingDate = `${month}-01`;
+        return {
+          schemaVersion: 'rag-ime.activity-timeline-calendar.v1',
+          ok: true,
+          month,
+          summary: {
+            sourceEventCount: 24,
+            activityDayCount: 2,
+            organizedDayCount: 1,
+            approvedDayCount: 1,
+            draftDayCount: 0,
+            waitingDayCount: 1,
+            outdatedDayCount: 0,
+          },
+          days: [
+            { date: today, status: 'approved', organized: options.organized ?? true, modelOrganized: options.organized ?? true, needsRefresh: false, sourceEventCount: 12, segmentCount: 2 },
+            { date: waitingDate, status: 'none', organized: false, modelOrganized: false, needsRefresh: false, sourceEventCount: 12, segmentCount: 0 },
+          ],
+        } as Response;
       }
       if (request.pathId === 'memory.reference.get') {
         return {
@@ -161,10 +232,32 @@ function timelineTransport(timeline: Record<string, unknown>): ControlTransport 
           evidenceRefs: [],
         } as Response;
       }
+      if (request.pathId === 'memory.activityTimeline.build') {
+        return {
+          schemaVersion: 'rag-ime.gateway-memory-maintenance-job.v1',
+          ok: true,
+          jobId: 'memory-maintenance:test',
+          state: 'queued',
+        } as Response;
+      }
+      if (request.pathId === 'agent.memoryMaintenance.run') {
+        return {
+          schemaVersion: 'rag-ime.gateway-memory-maintenance-job.v1',
+          ok: true,
+          jobId: 'memory-maintenance:test',
+          state: 'completed',
+          result: { ok: true },
+        } as Response;
+      }
       throw new Error(`Unexpected request: ${request.pathId}`);
     },
     subscribe: (_request: ControlSubscription) => () => undefined,
   } as unknown as ControlTransport;
+}
+
+function localDateForTest() {
+  const value = new Date();
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
 }
 
 function semanticTimeline(): Record<string, unknown> {

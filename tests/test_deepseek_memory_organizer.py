@@ -16,9 +16,108 @@ from rag_ime.deepseek_memory_organizer import (
     _curation_repair_preserves_unflagged_actions,
     _owner_memory_model_bundle,
 )
+from rag_ime.activity_timeline_curation import (
+    ACTIVITY_ORGANIZATION_OUTPUT_VERSION,
+    ACTIVITY_ORGANIZATION_SCORE_FIELDS,
+    ACTIVITY_ORGANIZATION_VERDICT_VERSION,
+    build_activity_organization_packet,
+)
 
 
 class DeepSeekMemoryOrganizerTests(unittest.TestCase):
+    def test_managed_luna_activity_organization_requires_independent_pass(self) -> None:
+        phases: list[str] = []
+        test_case = self
+
+        class FakeExecutor:
+            provider = "openai-codex"
+            model_id = "gpt-5.6-luna"
+
+            def complete(
+                self,
+                *,
+                messages,
+                max_tokens=None,
+                phase="model-call",
+                isolated=False,
+            ):
+                del messages, max_tokens
+                phases.append(phase)
+                if phase == "activity-verifier":
+                    test_case.assertTrue(isolated)
+                    payload = {
+                        "schemaVersion": ACTIVITY_ORGANIZATION_VERDICT_VERSION,
+                        "verdict": "pass",
+                        "scores": {
+                            field: 5 for field in ACTIVITY_ORGANIZATION_SCORE_FIELDS
+                        },
+                        "issues": [],
+                        "strengths": ["标题与来源一致。"],
+                    }
+                else:
+                    payload = {
+                        "schemaVersion": ACTIVITY_ORGANIZATION_OUTPUT_VERSION,
+                        "activities": [
+                            {
+                                "title": "修复日记语义整理",
+                                "summary": "检查并修复每日日记直接展示原句的问题。",
+                                "eventRefs": ["e1", "e2"],
+                                "confidence": 0.96,
+                                "boundaryBasis": "两条输入指向同一项日记语义修复。",
+                            }
+                        ],
+                        "unclassified": [],
+                    }
+                return {
+                    "choices": [{"message": {"content": json.dumps(payload)}}],
+                    "requestId": f"request:{phase}",
+                    "turnId": f"turn:{phase}",
+                    "provider": self.provider,
+                    "model": self.model_id,
+                    "usage": {},
+                    "receipt": {},
+                }
+
+        packet = build_activity_organization_packet(
+            [
+                {
+                    "id": 1,
+                    "created_at_ms": 1_786_500_000_000,
+                    "source": "voice_final",
+                    "committed_text": "这个日记不要显示原句",
+                    "recent_context": "正在检查每日日记语义",
+                    "app": "RagImeControl",
+                    "project": "project-a",
+                    "context_group_id": "session:memory",
+                },
+                {
+                    "id": 2,
+                    "created_at_ms": 1_786_500_060_000,
+                    "source": "voice_final",
+                    "committed_text": "改成活动级概括",
+                    "recent_context": "这个日记不要显示原句，改成活动级概括",
+                    "app": "RagImeControl",
+                    "project": "project-a",
+                    "context_group_id": "session:memory",
+                },
+            ],
+            timeline_id="activity-timeline:test",
+            project="project-a",
+            timeline_date="2026-08-12",
+            timezone_name="Asia/Shanghai",
+        )
+
+        result = ManagedPiMemoryOrganizer(FakeExecutor()).organize_activity_timeline(
+            packet=packet
+        )
+
+        self.assertEqual(phases, ["activity-organizer", "activity-verifier"])
+        self.assertEqual(result["receipt"]["verdict"], "pass")
+        self.assertEqual(
+            result["organization"]["activities"][0]["title"],
+            "修复日记语义整理",
+        )
+
     def test_atom_first_binding_preserves_composite_reconstruction_evidence(self) -> None:
         result = _bind_atom_first_canonical_evidence(
             {

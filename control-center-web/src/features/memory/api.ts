@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import type {
   MemoryReferenceV1,
@@ -41,8 +41,10 @@ export const memoryQueryKeys = {
   entity: (kind: MemoryEntityKind, entityId: string) => [...memoryQueryKeys.root, 'entity', kind, entityId] as const,
   curationStatus: () => [...memoryQueryKeys.root, 'curation-status'] as const,
   curationRun: (runId: string) => [...memoryQueryKeys.root, 'curation-run', runId] as const,
+  curationJob: (jobId: string) => [...memoryQueryKeys.root, 'curation-job', jobId] as const,
   capabilities: () => [...memoryQueryKeys.root, 'capabilities'] as const,
   activityTimeline: (date: string) => [...memoryQueryKeys.root, 'activity-timeline', date] as const,
+  activityTimelineCalendar: (month: string) => [...memoryQueryKeys.root, 'activity-timeline-calendar', month] as const,
   roleCatalog: () => [...memoryQueryKeys.root, 'role-catalog'] as const,
   roleBook: (roleId: string, roleVersion: string) => [
     ...memoryQueryKeys.root,
@@ -148,7 +150,9 @@ export function useMemoryReference(
 export function useActivityTimeline(date: string, enabled: boolean) {
   const transport = useControlTransport();
   const queryClient = useQueryClient();
+  const [buildJobId, setBuildJobId] = useState('');
   const queryKey = memoryQueryKeys.activityTimeline(date);
+  const month = date.slice(0, 7);
   const capabilities = useQuery({
     queryKey: memoryQueryKeys.capabilities(),
     queryFn: () => transport.capabilities(),
@@ -156,10 +160,12 @@ export function useActivityTimeline(date: string, enabled: boolean) {
   });
   const routeIds = new Set((capabilities.data?.routeIds ?? []) as readonly string[]);
   const canRead = routeIds.has('memory.activityTimeline.get');
+  const canReadCalendar = routeIds.has('memory.activityTimeline.calendar');
   const canWrite = [
     'memory.activityTimeline.build',
     'memory.activityTimeline.approve',
     'memory.activityTimeline.reject',
+    'agent.memoryMaintenance.run',
   ].every((pathId) => routeIds.has(pathId));
   const timeline = useQuery({
     enabled: enabled && Boolean(date) && canRead,
@@ -167,6 +173,15 @@ export function useActivityTimeline(date: string, enabled: boolean) {
     queryFn: ({ signal }) => transport.request({
       pathId: 'memory.activityTimeline.get',
       query: { date },
+      signal,
+    }),
+  });
+  const calendar = useQuery({
+    enabled: enabled && Boolean(month) && canReadCalendar,
+    queryKey: memoryQueryKeys.activityTimelineCalendar(month),
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'memory.activityTimeline.calendar',
+      query: { month },
       signal,
     }),
   });
@@ -180,17 +195,56 @@ export function useActivityTimeline(date: string, enabled: boolean) {
         { ok: true, timeline: nextTimeline },
       );
     } else {
-      await queryClient.invalidateQueries({ queryKey });
+      await queryClient.invalidateQueries({
+        queryKey: [...memoryQueryKeys.root, 'activity-timeline'],
+      });
     }
+    await queryClient.invalidateQueries({
+      queryKey: [...memoryQueryKeys.root, 'activity-timeline-calendar'],
+    });
     await queryClient.invalidateQueries({ queryKey: memoryQueryKeys.summary() });
   };
   const build = useMutation({
-    mutationFn: (targetDate: string) => transport.request({
-      pathId: 'memory.activityTimeline.build',
-      body: { date: targetDate },
-    }),
-    onSuccess: settle,
+    mutationFn: async ({ targetDate, throughToday = false }: { targetDate: string; throughToday?: boolean }) => {
+      const payload = await transport.request({
+        pathId: 'memory.activityTimeline.build',
+        body: { date: targetDate, throughToday },
+      });
+      const response = asRecord(payload);
+      const nextJobId = stringValue(response.jobId);
+      if (!nextJobId) {
+        await settle(payload);
+      }
+      return payload;
+    },
+    onSuccess: (payload) => setBuildJobId(stringValue(asRecord(payload).jobId)),
   });
+  const buildJob = useQuery({
+    enabled: enabled && Boolean(buildJobId),
+    queryKey: memoryQueryKeys.curationJob(buildJobId),
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'agent.memoryMaintenance.run',
+      query: { jobId: buildJobId },
+      signal,
+    }),
+    refetchInterval: (query) => {
+      const state = stringValue(asRecord(query.state.data).state);
+      return state === 'completed' || state === 'failed' ? false : 1_200;
+    },
+  });
+  const buildJobPayload = useMemo(() => asRecord(buildJob.data), [buildJob.data]);
+  const buildJobState = stringValue(buildJobPayload.state);
+  const buildJobProgress = asRecord(buildJobPayload.progress);
+  const buildJobError = buildJob.error
+    ?? (buildJobState === 'failed'
+      ? new Error(stringValue(buildJobPayload.error, '当天语义整理未通过校验。'))
+      : null);
+  useEffect(() => {
+    if (buildJobState !== 'completed' && buildJobState !== 'failed') return;
+    if (buildJobState === 'completed') {
+      void settle(asRecord(buildJobPayload.result));
+    }
+  }, [buildJobPayload, buildJobState, date, queryClient]);
   const approve = useMutation({
     mutationFn: ({ timelineId, sourceEventHash }: { timelineId: string; sourceEventHash: string }) =>
       transport.request({
@@ -211,7 +265,21 @@ export function useActivityTimeline(date: string, enabled: boolean) {
       }),
     onSuccess: settle,
   });
-  return { approve, build, canRead, canWrite, capabilities, reject, timeline };
+  return {
+    approve,
+    build,
+    buildJob,
+    buildJobError,
+    buildJobProgress,
+    buildJobState,
+    calendar,
+    canRead,
+    canReadCalendar,
+    canWrite,
+    capabilities,
+    reject,
+    timeline,
+  };
 }
 
 export function useMemoryGraphQueries(
@@ -272,6 +340,8 @@ export function useMemoryGraphQueries(
 
 export function useMemoryCurationQueries(enabled: boolean) {
   const transport = useControlTransport();
+  const queryClient = useQueryClient();
+  const [jobId, setJobId] = useState('');
   const status = useQuery({
     enabled,
     queryKey: memoryQueryKeys.curationStatus(),
@@ -280,12 +350,13 @@ export function useMemoryCurationQueries(enabled: boolean) {
       query: { limit: 12 },
       signal,
     }),
+    refetchInterval: enabled ? 15_000 : false,
   });
   const statusPayload = asRecord(status.data);
   const runs = Array.isArray(statusPayload.runs)
     ? statusPayload.runs.map(asRecord)
     : [];
-  const latest = runs.find((item) => stringValue(item.status) === 'draft') ?? runs[0];
+  const latest = runs.find((item) => stringValue(item.status) === 'draft');
   const runId = stringValue(latest?.runId);
   const run = useQuery({
     enabled: enabled && Boolean(runId),
@@ -296,7 +367,44 @@ export function useMemoryCurationQueries(enabled: boolean) {
       signal,
     }),
   });
-  return { run, runId, status };
+  const trigger = useMutation({
+    mutationFn: async ({ maxSources, instruction }: { maxSources: number; instruction: string }) => {
+      const payload = await transport.request({
+        pathId: 'agent.memoryMaintenance.trigger',
+        body: {
+          ownerKind: 'user',
+          ownerId: 'default',
+          manual: true,
+          maxSources,
+          instruction,
+        },
+      });
+      if (!stringValue(asRecord(payload).jobId)) {
+        throw new Error('memory maintenance trigger did not return a job id');
+      }
+      return payload;
+    },
+    onSuccess: (payload) => setJobId(stringValue(asRecord(payload).jobId)),
+  });
+  const job = useQuery({
+    enabled: enabled && Boolean(jobId),
+    queryKey: memoryQueryKeys.curationJob(jobId),
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'agent.memoryMaintenance.run',
+      query: { jobId },
+      signal,
+    }),
+    refetchInterval: (query) => {
+      const state = stringValue(asRecord(query.state.data).state);
+      return state === 'completed' || state === 'failed' ? false : 1_200;
+    },
+  });
+  const jobState = stringValue(asRecord(job.data).state);
+  useEffect(() => {
+    if (jobState !== 'completed' && jobState !== 'failed') return;
+    void queryClient.invalidateQueries({ queryKey: memoryQueryKeys.curationStatus() });
+  }, [jobState, queryClient]);
+  return { job, jobId, jobState, run, runId, status, trigger };
 }
 
 export function useMemoryEntityQuery(

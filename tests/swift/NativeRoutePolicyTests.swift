@@ -461,6 +461,27 @@ struct NativeRoutePolicyTests {
         )
         expect(memoryEntity.request.url?.path == "/api/memory/entities/group/group:input-method", "bounded memory entity route")
 
+        let activityTimelineCalendar = try policy.resolveRequest(
+            pathId: "memory.activityTimeline.calendar",
+            parameters: [:],
+            query: ["month": "2026-08"],
+            body: nil,
+            scope: .remote
+        )
+        expect(activityTimelineCalendar.request.url?.path == "/api/memory/activity-timeline/calendar", "activity timeline calendar remote route")
+        expect(activityTimelineCalendar.request.url?.query?.contains("month=2026-08") == true, "activity timeline calendar month")
+
+        let activityTimelineCatchUp = try policy.resolveRequest(
+            pathId: "memory.activityTimeline.build",
+            parameters: [:],
+            query: [:],
+            body: ["date": "2026-08-12", "throughToday": true],
+            scope: .remote
+        )
+        expect(activityTimelineCatchUp.request.url?.path == "/api/memory/activity-timeline/build", "activity timeline catch-up route")
+        let activityTimelineCatchUpBody = try JSONSerialization.jsonObject(with: activityTimelineCatchUp.request.httpBody ?? Data()) as? [String: Any]
+        expect(activityTimelineCatchUpBody?["throughToday"] as? Bool == true, "activity timeline catch-up body")
+
         let memoryMaintenanceStatus = try policy.resolveRequest(
             pathId: "agent.memoryMaintenance.run",
             parameters: [:],

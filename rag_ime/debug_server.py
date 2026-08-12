@@ -781,33 +781,42 @@ class DebugImeService:
             "timeline": timeline or {},
         }
 
+    def activity_timeline_calendar(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        return self.activity_timelines.calendar(_string(payload.get("month")))
+
     def activity_timeline_build(
         self,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
-        result = self.activity_timelines.build_draft(
-            _string(payload.get("date")),
-        )
-        timeline = result.get("timeline")
         if (
-            str(result.get("status") or "") == "draft"
-            and isinstance(timeline, Mapping)
+            self.config.server_name != "agent gateway"
+            or not self._agent_runtime_execution_owner
         ):
-            published = self.activity_timelines.approve(
-                _string(timeline.get("timelineId")),
-                expected_source_event_hash=_string(
-                    timeline.get("sourceEventHash")
-                ),
-                approved_by="system:control-center-auto-publish",
-                confirm_text="approve",
+            raise ValueError(
+                "Activity organization must be triggered on the Agent Gateway"
             )
-            return {
-                **result,
-                "status": "approved",
-                "timeline": published,
-                "autoPublished": True,
+        timeline_date = _string(payload.get("date"))
+        if not timeline_date:
+            raise ValueError("date is required")
+        through_today = _bool(payload.get("throughToday"), default=False)
+        job = self.memory_maintenance_jobs.trigger(
+            {
+                "project": self.config.project,
+                "manual": True,
+                "maxSources": 1,
+                "timelineOnly": True,
+                "timelineDate": "" if through_today else timeline_date,
+                "timelineThroughDate": timeline_date if through_today else "",
             }
-        return {**result, "autoPublished": False}
+        )
+        if job.get("reused") is True:
+            raise RuntimeError(
+                "Another Memory organization job is active; retry this day after it settles"
+            )
+        return job
 
     def activity_timeline_approve(
         self,
@@ -3353,6 +3362,18 @@ class DebugImeService:
         project = _string(payload.get("project")) or self.config.project
         manual = bool(payload.get("manual"))
         managed = MemoryMaintenanceSettings.load(self.core.db_path)
+        if bool(payload.get("timelineOnly")):
+            return self._execute_gateway_memory_dreaming(
+                project=project,
+                manual=True,
+                managed=managed,
+                max_sources=1,
+                timeline_date=_string(payload.get("timelineDate")),
+                timeline_through_date=_string(
+                    payload.get("timelineThroughDate")
+                ),
+                progress=payload.get("_progressCallback"),
+            )
         lexicon = (
             run_due_lexicon_organization(
                 self.core.db_path,
@@ -3446,6 +3467,9 @@ class DebugImeService:
         manual: bool,
         managed: MemoryMaintenanceSettings,
         max_sources: object,
+        timeline_date: str = "",
+        timeline_through_date: str = "",
+        progress: object | None = None,
     ) -> dict[str, object]:
         if not managed.dreaming_enabled and not managed.automatic_organization_enabled:
             return {
@@ -3456,8 +3480,17 @@ class DebugImeService:
                 "targets": [],
             }
         role_book_organizer: ManagedPiMemoryOrganizer | None = None
+        activity_organizer: ManagedPiMemoryOrganizer | None = None
         try:
-            if managed.dreaming_enabled:
+            # A date-specific rebuild is an Activity-only operation. Do not
+            # allocate a second Role/Book executor whose model profile would
+            # never be used, and never make the Activity projection inherit a
+            # different dreaming profile by accident.
+            if (
+                managed.dreaming_enabled
+                and not timeline_date
+                and not timeline_through_date
+            ):
                 executor = build_governed_memory_model_executor(
                     self.agent.runtime,
                     managed.dreaming_model,
@@ -3465,6 +3498,14 @@ class DebugImeService:
                     db_path=self.core.db_path,  # type: ignore[union-attr]
                 )
                 role_book_organizer = ManagedPiMemoryOrganizer(executor)
+            if managed.automatic_organization_enabled:
+                activity_executor = build_governed_memory_model_executor(
+                    self.agent.runtime,
+                    managed.automatic_organization_model,
+                    managed.automatic_organization_thinking_level,
+                    db_path=self.core.db_path,  # type: ignore[union-attr]
+                )
+                activity_organizer = ManagedPiMemoryOrganizer(activity_executor)
             runner = PersonalContextMaintenanceRunner(
                 self.core.db_path,  # type: ignore[union-attr]
                 config=PersonalContextMaintenanceConfig(
@@ -3481,12 +3522,29 @@ class DebugImeService:
                         minimum=1,
                         maximum=1_000,
                     ),
-                    model=managed.dreaming_model,
-                    thinking_level=managed.dreaming_thinking_level,
+                    model=(
+                        managed.automatic_organization_model
+                        if timeline_date or timeline_through_date
+                        else managed.dreaming_model
+                    ),
+                    thinking_level=(
+                        managed.automatic_organization_thinking_level
+                        if timeline_date or timeline_through_date
+                        else managed.dreaming_thinking_level
+                    ),
                 ),
                 role_book_organizer=role_book_organizer,
+                activity_organizer=activity_organizer,
             )
-            result = runner.run_once(force=manual)
+            if timeline_through_date:
+                result = runner.build_activity_timelines_through(
+                    timeline_through_date,
+                    progress=progress,
+                )
+            elif timeline_date:
+                result = runner.build_activity_timeline(timeline_date)
+            else:
+                result = runner.run_once(force=manual)
             result["executionOwner"] = "agent_gateway"
             result["transport"] = "gateway_internal_session"
             return result
@@ -3503,6 +3561,11 @@ class DebugImeService:
         finally:
             if role_book_organizer is not None:
                 role_book_organizer.close()
+            if (
+                activity_organizer is not None
+                and activity_organizer is not role_book_organizer
+            ):
+                activity_organizer.close()
 
     def agent_memory_maintenance_prepare(self, payload: dict[str, Any]) -> dict[str, object]:
         instruction = compact_whitespace(_string(payload.get("instruction")))[:800] or (
@@ -7335,6 +7398,19 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 validate_contract(response, "memory-entity.v1.json")
             except ValueError as exc:
                 self._write_json(HTTPStatus.BAD_REQUEST, _memory_read_error(str(exc)))
+                return
+            self._write_json(HTTPStatus.OK, response)
+            return
+        if parsed.path == "/api/memory/activity-timeline/calendar":
+            try:
+                response = self.service.activity_timeline_calendar(
+                    {"month": _query_first(query, "month")}
+                )
+            except ValueError as exc:
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    _memory_read_error(str(exc)),
+                )
                 return
             self._write_json(HTTPStatus.OK, response)
             return

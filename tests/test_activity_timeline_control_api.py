@@ -59,6 +59,80 @@ class ActivityTimelineControlApiTests(unittest.TestCase):
             rejected_by="control-center-user",
         )
 
+        store.calendar.return_value = {"month": "2026-07", "days": []}
+        calendar = service.activity_timeline_calendar({"month": "2026-07"})
+        self.assertEqual(calendar["month"], "2026-07")
+        store.calendar.assert_called_once_with("2026-07")
+
+    def test_build_is_a_gateway_owned_background_organization_job(self) -> None:
+        jobs = Mock()
+        jobs.trigger.return_value = {
+            "ok": True,
+            "jobId": "memory-maintenance:timeline",
+            "state": "queued",
+        }
+        service = object.__new__(DebugImeService)
+        service.config = SimpleNamespace(
+            project="project-a",
+            server_name="agent gateway",
+        )
+        service._agent_runtime_execution_owner = True
+        service.memory_maintenance_jobs = jobs
+
+        result = service.activity_timeline_build({"date": "2026-07-17"})
+
+        self.assertEqual(result["state"], "queued")
+        jobs.trigger.assert_called_once_with(
+            {
+                "project": "project-a",
+                "manual": True,
+                "maxSources": 1,
+                "timelineOnly": True,
+                "timelineDate": "2026-07-17",
+                "timelineThroughDate": "",
+            }
+        )
+
+        jobs.reset_mock()
+        jobs.trigger.return_value = {
+            "ok": True,
+            "jobId": "memory-maintenance:catch-up",
+            "state": "queued",
+        }
+        service.activity_timeline_build(
+            {"date": "2026-08-12", "throughToday": True}
+        )
+        jobs.trigger.assert_called_once_with(
+            {
+                "project": "project-a",
+                "manual": True,
+                "maxSources": 1,
+                "timelineOnly": True,
+                "timelineDate": "",
+                "timelineThroughDate": "2026-08-12",
+            }
+        )
+
+        service.config = SimpleNamespace(
+            project="project-a",
+            server_name="sidecar server",
+        )
+        with self.assertRaisesRegex(ValueError, "Agent Gateway"):
+            service.activity_timeline_build({"date": "2026-07-17"})
+
+        service.config = SimpleNamespace(
+            project="project-a",
+            server_name="agent gateway",
+        )
+        jobs.trigger.return_value = {
+            "ok": True,
+            "jobId": "memory-maintenance:existing",
+            "state": "running",
+            "reused": True,
+        }
+        with self.assertRaisesRegex(RuntimeError, "Another Memory organization job"):
+            service.activity_timeline_build({"date": "2026-07-17"})
+
     def test_http_routes_expose_review_build_approve_and_reject(self) -> None:
         service = _TimelineHandlerService()
 
@@ -78,6 +152,13 @@ class ActivityTimelineControlApiTests(unittest.TestCase):
             ) as response:
                 review = json.load(response)
             self.assertEqual(review["operation"], "review")
+
+            with urlopen(
+                f"{base}/api/memory/activity-timeline/calendar?month=2026-07",
+                timeout=5,
+            ) as response:
+                calendar = json.load(response)
+            self.assertEqual(calendar["operation"], "calendar")
 
             for action, payload in (
                 ("build", {"date": "2026-07-17"}),
@@ -132,6 +213,12 @@ class _TimelineHandlerService:
         payload: dict[str, object],
     ) -> dict[str, object]:
         return {"ok": True, "operation": "build", "payload": payload}
+
+    def activity_timeline_calendar(
+        self,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        return {"ok": True, "operation": "calendar", "payload": payload}
 
     def activity_timeline_approve(
         self,

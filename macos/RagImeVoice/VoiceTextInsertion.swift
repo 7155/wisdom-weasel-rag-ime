@@ -6,6 +6,12 @@ import Foundation
 final class VoiceTextInsertionSession {
     let anchorPoint: NSPoint?
     let appBundleIdentifier: String
+    /// Privacy-checked text immediately before the insertion caret.
+    ///
+    /// This is captured once with the insertion target so the final voice
+    /// commit can use it for semantic disambiguation without reading a later,
+    /// potentially different focus target.
+    let referenceContext: String
 
     private let element: AXUIElement?
     private let origin: Int
@@ -21,7 +27,8 @@ final class VoiceTextInsertionSession {
         range: CFRange?,
         anchorPoint: NSPoint?,
         appBundleIdentifier: String,
-        insertionMode: VoiceInsertionTargetMode
+        insertionMode: VoiceInsertionTargetMode,
+        referenceContext: String = ""
     ) {
         self.element = element
         origin = range?.location ?? 0
@@ -29,6 +36,7 @@ final class VoiceTextInsertionSession {
         self.anchorPoint = anchorPoint
         self.appBundleIdentifier = appBundleIdentifier
         self.insertionMode = insertionMode
+        self.referenceContext = referenceContext
     }
 
     static func capture() throws -> VoiceTextInsertionSession {
@@ -46,13 +54,17 @@ final class VoiceTextInsertionSession {
         try validateApplicationPrivacy(application)
         try validatePrivacy(of: focused, fallbackApplication: application)
         let range = selectedRange(focused)
+        let referenceContext = range.map {
+            contextBeforeCaret(focused, range: $0, maximumUTF16Length: 1_600)
+        } ?? ""
         if VoiceInsertionTargetPolicy.mode(
             for: application,
             accessibilityWritable: true
         ) == .finalPaste {
             return finalPasteSession(
                 application: application,
-                anchorPoint: range.flatMap { caretPoint(focused, range: $0) }
+                anchorPoint: range.flatMap { caretPoint(focused, range: $0) },
+                referenceContext: referenceContext
             )
         }
         guard let range else {
@@ -65,7 +77,8 @@ final class VoiceTextInsertionSession {
         guard selectedTextSettable.boolValue, selectedRangeSettable.boolValue else {
             return finalPasteSession(
                 application: application,
-                anchorPoint: caretPoint(focused, range: range)
+                anchorPoint: caretPoint(focused, range: range),
+                referenceContext: referenceContext
             )
         }
         return VoiceTextInsertionSession(
@@ -73,7 +86,8 @@ final class VoiceTextInsertionSession {
             range: range,
             anchorPoint: caretPoint(focused, range: range),
             appBundleIdentifier: application.bundleIdentifier,
-            insertionMode: .accessibility
+            insertionMode: .accessibility,
+            referenceContext: referenceContext
         )
     }
 
@@ -128,15 +142,35 @@ final class VoiceTextInsertionSession {
 
     private static func finalPasteSession(
         application: VoiceInsertionApplicationIdentity,
-        anchorPoint: NSPoint? = nil
+        anchorPoint: NSPoint? = nil,
+        referenceContext: String = ""
     ) -> VoiceTextInsertionSession {
         VoiceTextInsertionSession(
             element: nil,
             range: nil,
             anchorPoint: anchorPoint,
             appBundleIdentifier: application.bundleIdentifier,
-            insertionMode: .finalPaste
+            insertionMode: .finalPaste,
+            referenceContext: referenceContext
         )
+    }
+
+    private static func contextBeforeCaret(
+        _ element: AXUIElement,
+        range: CFRange,
+        maximumUTF16Length: Int
+    ) -> String {
+        guard range.location > 0, maximumUTF16Length > 0 else { return "" }
+        let length = min(range.location, maximumUTF16Length)
+        let start = max(0, range.location - length)
+        let value = text(
+            in: CFRange(location: start, length: length),
+            element: element
+        ) ?? ""
+        return value
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     private static func focusedElement() -> AXUIElement? {

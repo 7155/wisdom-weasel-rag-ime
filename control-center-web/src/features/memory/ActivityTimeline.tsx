@@ -1,4 +1,5 @@
 import {
+  BookOpenText,
   CalendarClock,
   CalendarDays,
   Check,
@@ -8,7 +9,6 @@ import {
   Clock3,
   Database,
   ExternalLink,
-  FileClock,
   Fingerprint,
   ListTree,
   LockKeyhole,
@@ -17,7 +17,7 @@ import {
   Sparkles,
   X,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Button,
   Dialog,
@@ -26,7 +26,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  EmptyState,
   Field,
   IconButton,
   Input,
@@ -94,26 +93,58 @@ interface SemanticTimelineTask {
   events: TimelineEvidenceEvent[];
 }
 
-const PERIODS: TimelinePeriod[] = ['day', 'morning', 'afternoon', 'evening'];
+interface ActivityCalendarDay {
+  date: string;
+  status: string;
+  organized: boolean;
+  modelOrganized: boolean;
+  needsRefresh: boolean;
+  sourceEventCount: number;
+  segmentCount: number;
+}
 
-export function ActivityTimeline() {
+const PERIODS: TimelinePeriod[] = ['day', 'morning', 'afternoon', 'evening'];
+const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'] as const;
+
+export function ActivityTimeline({ initialDate = '' }: { initialDate?: string }) {
   const today = useMemo(localDate, []);
-  const [date, setDate] = useState(today);
-  const [approveOpen, setApproveOpen] = useState(false);
+  const [date, setDate] = useState(() => (
+    /^\d{4}-\d{2}-\d{2}$/u.test(initialDate) && initialDate <= today
+      ? initialDate
+      : today
+  ));
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [selectedTaskId, setSelectedTaskId] = useState('');
   const [selectedReference, setSelectedReference] = useState<MemoryReferenceSelection | null>(null);
+  useEffect(() => {
+    if (!/^\d{4}-\d{2}-\d{2}$/u.test(initialDate) || initialDate > today) return;
+    setDate(initialDate);
+    setRejectOpen(false);
+    setSelectedTaskId('');
+    setSelectedReference(null);
+  }, [initialDate, today]);
   const {
     approve,
     build,
+    buildJobError,
+    buildJobProgress,
+    buildJobState,
+    calendar,
     canRead,
+    canReadCalendar,
     canWrite,
     capabilities,
     reject,
     timeline,
   } = useActivityTimeline(date, true);
   const payload = asRecord(timeline.data);
+  const calendarPayload = asRecord(calendar.data);
+  const calendarSummary = asRecord(calendarPayload.summary);
+  const calendarDays = useMemo(
+    () => normalizeCalendarDays(calendarPayload),
+    [calendarPayload],
+  );
   const item = asRecord(payload.timeline);
   const tasks = useMemo(() => normalizeTimelineTasks(item), [item]);
   const taskGroups = useMemo(() => PERIODS.map((period) => ({
@@ -123,18 +154,24 @@ export function ActivityTimeline() {
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
   const timelineId = stringValue(item.timelineId);
   const status = stringValue(item.status);
-  const busy = build.isPending || approve.isPending || reject.isPending;
-  const error = timeline.error ?? build.error ?? approve.error ?? reject.error;
+  const buildRunning = Boolean(buildJobState) && buildJobState !== 'completed' && buildJobState !== 'failed';
+  const busy = build.isPending || buildRunning || approve.isPending || reject.isPending;
+  const error = timeline.error ?? build.error ?? buildJobError ?? approve.error ?? reject.error;
+  const semanticReady = timelineId
+    ? calendarDays.some((day) => (
+      day.date === date && day.organized && day.modelOrganized
+    ))
+    : false;
 
   const chooseDate = (nextDate: string) => {
     setDate(nextDate);
-    setApproveOpen(false);
     setRejectOpen(false);
     setSelectedTaskId('');
     setSelectedReference(null);
   };
 
   const moveDate = (offset: number) => chooseDate(shiftDate(date, offset));
+  const moveMonth = (offset: number) => chooseDate(shiftMonth(date, offset));
 
   return (
     <section className="activity-timeline activity-timeline--semantic" aria-labelledby="activity-timeline-title">
@@ -180,9 +217,52 @@ export function ActivityTimeline() {
         </div>
       </header>
 
+      <ActivityTimelineCalendar
+        busy={busy}
+        canWrite={canWrite}
+        date={date}
+        days={calendarDays}
+        error={calendar.error as Error | null}
+        isLoading={capabilities.isPending || calendar.isPending}
+        onMoveMonth={moveMonth}
+        onOrganizeThroughToday={() => build.mutate({ targetDate: today, throughToday: true })}
+        onSelect={chooseDate}
+        summary={calendarSummary}
+        today={today}
+        unavailable={!capabilities.isPending && !canReadCalendar}
+      />
+
+      <DailyJournal
+        canRead={canRead}
+        canWrite={canWrite}
+        date={date}
+        hasError={Boolean(timeline.error)}
+        isLoading={capabilities.isPending || calendar.isPending || (canRead && timeline.isPending)}
+        item={item}
+        semanticReady={semanticReady}
+        onBuild={() => build.mutate({ targetDate: date })}
+        onOpenSource={() => setSelectedReference({
+          kind: 'timeline',
+          referenceId: timelineId,
+          label: `${formatDateHeading(date)} 的活动时间线`,
+        })}
+        onSelectTask={setSelectedTaskId}
+        status={status}
+        tasks={tasks}
+        timelineId={timelineId}
+        busy={busy}
+      />
+
       {error ? (
         <InlineNotice title="时间线暂时不可用" tone="danger">
           {friendlyTimelineError(error)}
+        </InlineNotice>
+      ) : null}
+
+      {buildRunning && stringValue(buildJobProgress.phase) === 'activity_timeline_catch_up' ? (
+        <InlineNotice title="正在按日期整理历史日记" tone="info">
+          已完成 {numberValue(buildJobProgress.completedDayCount)} / {numberValue(buildJobProgress.totalDayCount)} 天
+          {stringValue(buildJobProgress.currentDate) ? `，当前 ${stringValue(buildJobProgress.currentDate)}` : ''}。
         </InlineNotice>
       ) : null}
 
@@ -196,54 +276,24 @@ export function ActivityTimeline() {
         </InlineNotice>
       ) : null}
 
-      {capabilities.isPending || (canRead && timeline.isPending) ? (
+      {capabilities.isPending || calendar.isPending || (canRead && timeline.isPending) ? (
         <div className="activity-timeline__loading" role="status">
           <RefreshCw aria-hidden="true" size={18} />
           <span>正在读取当天活动</span>
         </div>
-      ) : !canRead || timeline.error ? null : timelineId ? (
+      ) : !canRead || timeline.error ? null : timelineId && !semanticReady ? (
+        <div className="activity-timeline__semantic-empty">
+          <Sparkles aria-hidden="true" size={19} />
+          <span>当天来源已经收集；语义活动会在模型整理和独立校验通过后显示。</span>
+        </div>
+      ) : timelineId ? (
         <>
-          <div className="activity-timeline__summary-band activity-timeline__day-band">
-            <div className="activity-timeline__summary-copy">
-              <div>
-                <StatusBadge label={timelineStatusLabel(status)} tone={timelineStatusTone(status)} />
-                <span>{tasks.length} 项活动</span>
-                <span>
-                  {numberValue(item.ordinaryActivityCount)} 条普通活动 · {numberValue(item.consolidatedActivityCount)} 条长时聚合
-                </span>
-                <span>{numberValue(item.eventCount)} 条来源记录</span>
-              </div>
-              <p>{stringValue(item.summary, '当天活动已完成结构化整理。')}</p>
-              <button
-                className="activity-timeline__day-source"
-                onClick={() => setSelectedReference({
-                  kind: 'timeline',
-                  referenceId: timelineId,
-                  label: `${formatDateHeading(date)} 的活动时间线`,
-                })}
-                type="button"
-              >
-                <Fingerprint aria-hidden="true" size={13} />
-                <span>查看当天整理来源</span>
-                <ChevronRight aria-hidden="true" size={13} />
-              </button>
-            </div>
-            <dl className="activity-timeline__summary-metrics">
-              <div><dt>首末证据跨度合计</dt><dd>{formatDuration(sumTaskSpan(tasks))}</dd></div>
-              <div><dt>参与 APP</dt><dd>{uniqueAppCount(tasks)}</dd></div>
-              <div><dt>证据</dt><dd>{sumEvidenceCount(tasks)} 条</dd></div>
-              <div><dt>时区</dt><dd>{stringValue(item.timezone, '本地')}</dd></div>
-              <div><dt>来源版本</dt><dd>{shortHash(stringValue(item.sourceEventHash))}</dd></div>
-              <div><dt>更新时间</dt><dd>{formatTimestamp(numberValue(item.updatedAtMs))}</dd></div>
-            </dl>
-          </div>
-
           {tasks.length ? (
             <ActivityDayMap date={date} onSelect={setSelectedTaskId} tasks={tasks} />
           ) : null}
 
           {taskGroups.length ? (
-            <div className="activity-timeline__periods" aria-label={`${date} 活动投影`}>
+            <div className="activity-timeline__periods" aria-label={`${date} 活动分段`}>
               {taskGroups.map((group) => (
                 <TimelinePeriodBand
                   key={group.period}
@@ -256,7 +306,7 @@ export function ActivityTimeline() {
           ) : (
             <div className="activity-timeline__semantic-empty">
               <ListTree aria-hidden="true" size={19} />
-              <span>这份时间线还没有可显示的活动投影。</span>
+              <span>这份时间线还没有可显示的活动记录。</span>
             </div>
           )}
 
@@ -266,7 +316,7 @@ export function ActivityTimeline() {
               <span>{decisionCopy(status, stringValue(item.approvedBookId))}</span>
             </div>
             <div>
-              {status === 'draft' ? (
+              {status === 'draft' && semanticReady ? (
                 <>
                   <Button
                     disabled={busy || !canWrite}
@@ -280,7 +330,7 @@ export function ActivityTimeline() {
                   <Button
                     disabled={busy || !canWrite}
                     leadingIcon={<Check size={15} />}
-                    onClick={() => setApproveOpen(true)}
+                    onClick={() => approve.mutate({ timelineId, sourceEventHash: stringValue(item.sourceEventHash) })}
                     size="small"
                     variant="primary"
                   >
@@ -292,33 +342,16 @@ export function ActivityTimeline() {
                   disabled={busy || !canWrite}
                   leadingIcon={<Sparkles size={15} />}
                   loading={build.isPending}
-                  onClick={() => build.mutate(date)}
+                  onClick={() => build.mutate({ targetDate: date })}
                   size="small"
                 >
-                  重新整理
+                  {semanticReady ? '重新整理' : '语义整理'}
                 </Button>
               )}
             </div>
           </footer>
         </>
-      ) : (
-        <div className="activity-timeline__empty">
-          <EmptyState
-            description="当天还没有整理产物。"
-            icon={FileClock}
-            title="尚未生成时间线"
-          />
-          <Button
-            disabled={busy || !canWrite}
-            leadingIcon={<Sparkles size={15} />}
-            loading={build.isPending}
-            onClick={() => build.mutate(date)}
-            variant="primary"
-          >
-            整理当天活动
-          </Button>
-        </div>
-      )}
+      ) : null}
 
       <TaskDetailDialog
         onClose={() => setSelectedTaskId('')}
@@ -332,35 +365,6 @@ export function ActivityTimeline() {
           onOpenChange={(open) => { if (!open) setSelectedReference(null); }}
         />
       ) : null}
-
-      <Dialog onOpenChange={setApproveOpen} open={approveOpen}>
-        <DialogContent className="activity-timeline__dialog">
-          <DialogHeader>
-            <DialogTitle>发布 {formatDateHeading(date)} 的时间线</DialogTitle>
-            <DialogDescription>
-              当前来源哈希会在发布前再次校验；期间新增记录时会先重新整理。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="activity-timeline__review-line">
-            <Check aria-hidden="true" size={17} />
-            <span>{tasks.length} 项活动会进入独立时间线，不会自动归入长期主题。</span>
-          </div>
-          <DialogFooter>
-            <Button onClick={() => setApproveOpen(false)} variant="quiet">取消</Button>
-            <Button
-              disabled={!canWrite}
-              loading={approve.isPending}
-              onClick={() => approve.mutate(
-                { timelineId, sourceEventHash: stringValue(item.sourceEventHash) },
-                { onSuccess: () => setApproveOpen(false) },
-              )}
-              variant="primary"
-            >
-              发布到时间线
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog
         onOpenChange={(open) => {
@@ -403,6 +407,293 @@ export function ActivityTimeline() {
   );
 }
 
+function DailyJournal({
+  busy,
+  canRead,
+  canWrite,
+  date,
+  hasError,
+  isLoading,
+  item,
+  semanticReady,
+  onBuild,
+  onOpenSource,
+  onSelectTask,
+  status,
+  tasks,
+  timelineId,
+}: {
+  busy: boolean;
+  canRead: boolean;
+  canWrite: boolean;
+  date: string;
+  hasError: boolean;
+  isLoading: boolean;
+  item: Record<string, unknown>;
+  semanticReady: boolean;
+  onBuild: () => void;
+  onOpenSource: () => void;
+  onSelectTask: (taskId: string) => void;
+  status: string;
+  tasks: SemanticTimelineTask[];
+  timelineId: string;
+}) {
+  const highlights = tasks.slice(0, 3);
+  const apps = topJournalApps(tasks, 5);
+  return (
+    <section className="daily-journal" aria-labelledby="daily-journal-title" data-state={timelineId ? status : 'empty'}>
+      <header className="daily-journal__header">
+        <div className="daily-journal__identity">
+          <span className="daily-journal__mark" aria-hidden="true"><BookOpenText size={18} /></span>
+          <div>
+            <span>时间线日记</span>
+            <h3 id="daily-journal-title">{formatDateHeading(date)}的每日日记</h3>
+          </div>
+        </div>
+        {timelineId ? (
+          <StatusBadge
+            label={semanticReady ? timelineStatusLabel(status) : '待语义整理'}
+            tone={semanticReady ? timelineStatusTone(status) : 'info'}
+          />
+        ) : null}
+      </header>
+
+      {isLoading ? (
+        <div className="daily-journal__loading" role="status">
+          <RefreshCw aria-hidden="true" size={17} />
+          <span>正在展开这一天的记录…</span>
+        </div>
+      ) : !canRead || hasError ? (
+        <div className="daily-journal__empty-copy">
+          <strong>日记暂时无法读取</strong>
+          <span>日历仍保留整理状态；服务恢复后可继续查看当天内容。</span>
+        </div>
+      ) : !timelineId ? (
+        <div className="daily-journal__empty-copy">
+          <strong>这一天还没有日记</strong>
+          <span>整理当天时间线后，这里会形成可回看、可追溯的日记，而不是复制一份新数据。</span>
+          <Button
+            disabled={busy || !canWrite}
+            leadingIcon={<Sparkles size={15} />}
+            onClick={onBuild}
+            size="small"
+            variant="primary"
+          >
+            生成这天的日记
+          </Button>
+        </div>
+      ) : !semanticReady ? (
+        <div className="daily-journal__empty-copy">
+          <strong>这一天还没有形成语义日记</strong>
+          <span>现有时间线只完成了来源分组，尚未通过语义整理与独立校验，因此不再把原始输入句子当作日记正文。</span>
+          <Button
+            disabled={busy || !canWrite}
+            leadingIcon={<Sparkles size={15} />}
+            loading={busy}
+            onClick={onBuild}
+            size="small"
+            variant="primary"
+          >
+            语义整理这一天
+          </Button>
+        </div>
+      ) : (
+        <div className="daily-journal__body">
+          <article className="daily-journal__story">
+            <p>{stringValue(item.summary, '当天活动已完成结构化整理。')}</p>
+            {highlights.length ? (
+              <ol className="daily-journal__highlights" aria-label="日记重点">
+                {highlights.map((task) => (
+                  <li key={task.id}>
+                    <button
+                      aria-label={`查看日记条目：${task.title}`}
+                      onClick={() => onSelectTask(task.id)}
+                      type="button"
+                    >
+                      <time>{formatTimeRange(task.startMs, task.endMs)}</time>
+                      <span><strong>{task.title}</strong><small>{journalTaskCaption(task)}</small></span>
+                      <ChevronRight aria-hidden="true" size={15} />
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            ) : <span className="daily-journal__quiet">当天没有可展示的活动条目。</span>}
+            <button className="daily-journal__source" onClick={onOpenSource} type="button">
+              <Fingerprint aria-hidden="true" size={13} />
+              <span>查看日记与当天来源</span>
+              <ChevronRight aria-hidden="true" size={13} />
+            </button>
+          </article>
+
+          <aside className="daily-journal__facts" aria-label="今日日记摘要">
+            <dl>
+              <div><dt>活动</dt><dd>{tasks.length} 项活动</dd></div>
+              <div><dt>记录时间范围合计</dt><dd>{formatDuration(sumTaskSpan(tasks))}</dd></div>
+              <div><dt>来源</dt><dd>{sumEvidenceCount(tasks)} 条</dd></div>
+              <div><dt>更新时间</dt><dd>{formatTimestamp(numberValue(item.updatedAtMs))}</dd></div>
+            </dl>
+            {apps.length ? (
+              <div className="daily-journal__apps">
+                <span>今日足迹</span>
+                <ul>
+                  {apps.map((app) => (
+                    <li key={app.id}>
+                      <i aria-hidden="true" data-app-tone={appTone(app.id)} />
+                      <span>{app.name}</span>
+                      {app.eventCount ? <small>{app.eventCount} 条</small> : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </aside>
+        </div>
+      )}
+      <footer className="daily-journal__boundary">
+        日记由当天时间线维护；重新整理会更新它，来源记录不会被复制或改写。
+      </footer>
+    </section>
+  );
+}
+
+function ActivityTimelineCalendar({
+  busy,
+  canWrite,
+  date,
+  days,
+  error,
+  isLoading,
+  onMoveMonth,
+  onOrganizeThroughToday,
+  onSelect,
+  summary,
+  today,
+  unavailable,
+}: {
+  busy: boolean;
+  canWrite: boolean;
+  date: string;
+  days: readonly ActivityCalendarDay[];
+  error: Error | null;
+  isLoading: boolean;
+  onMoveMonth: (offset: number) => void;
+  onOrganizeThroughToday: () => void;
+  onSelect: (date: string) => void;
+  summary: Record<string, unknown>;
+  today: string;
+  unavailable: boolean;
+}) {
+  const month = date.slice(0, 7);
+  const cells = calendarCells(month);
+  const byDate = new Map(days.map((day) => [day.date, day]));
+  const canMoveForward = month < today.slice(0, 7);
+
+  return (
+    <section className="activity-calendar" aria-labelledby="activity-calendar-title">
+      <header className="activity-calendar__header">
+        <div>
+          <span className="activity-calendar__kicker">月度整理轨迹</span>
+          <h3 id="activity-calendar-title">{formatMonthHeading(month)}</h3>
+          <p>点击日期，直接查看当天时间线和来源。</p>
+        </div>
+        <div className="activity-calendar__month-controls">
+          <Button
+            disabled={busy || !canWrite}
+            leadingIcon={<Sparkles size={15} />}
+            onClick={onOrganizeThroughToday}
+            size="small"
+            variant="primary"
+          >
+            整理到今天
+          </Button>
+          <IconButton
+            icon={<ChevronLeft size={16} />}
+            label="上个月"
+            onClick={() => onMoveMonth(-1)}
+            size="small"
+            tooltip
+          />
+          <Button
+            disabled={month === today.slice(0, 7)}
+            onClick={() => onSelect(today)}
+            size="small"
+            variant="quiet"
+          >
+            本月
+          </Button>
+          <IconButton
+            disabled={!canMoveForward}
+            icon={<ChevronRight size={16} />}
+            label="下个月"
+            onClick={() => onMoveMonth(1)}
+            size="small"
+            tooltip
+          />
+        </div>
+      </header>
+
+      <div className="activity-calendar__summary" aria-live="polite">
+        <span><strong>{numberValue(summary.activityDayCount)}</strong> 天有活动</span>
+        <span data-tone="success"><strong>{numberValue(summary.organizedDayCount)}</strong> 天已整理</span>
+        <span data-tone="warning"><strong>{numberValue(summary.waitingDayCount)}</strong> 天待整理</span>
+        {numberValue(summary.outdatedDayCount) ? (
+          <span data-tone="info"><strong>{numberValue(summary.outdatedDayCount)}</strong> 天有新增</span>
+        ) : null}
+        <span><strong>{numberValue(summary.sourceEventCount)}</strong> 条来源</span>
+      </div>
+
+      {unavailable ? (
+        <div className="activity-calendar__message">当前服务暂未提供月度时间线状态，仍可按日期查看。</div>
+      ) : error ? (
+        <div className="activity-calendar__message" role="alert">月度整理状态读取失败；当天时间线仍可继续使用。</div>
+      ) : (
+        <>
+          <div className="activity-calendar__weekdays" aria-hidden="true">
+            {WEEKDAYS.map((weekday) => <span key={weekday}>周{weekday}</span>)}
+          </div>
+          <div className="activity-calendar__grid" aria-busy={isLoading || undefined}>
+            {cells.map((cell, index) => {
+              if (!cell) return <span aria-hidden="true" className="activity-calendar__blank" key={`blank:${index}`} />;
+              const day = byDate.get(cell);
+              const state = calendarDayState(day);
+              const disabled = cell > today;
+              return (
+                <button
+                  aria-label={calendarDayAriaLabel(cell, day)}
+                  aria-pressed={cell === date}
+                  className="activity-calendar__day"
+                  data-state={state}
+                  data-today={cell === today || undefined}
+                  disabled={disabled}
+                  key={cell}
+                  onClick={() => onSelect(cell)}
+                  type="button"
+                >
+                  <span className="activity-calendar__date">{Number(cell.slice(-2))}</span>
+                  <span className="activity-calendar__state">
+                    {calendarStateIcon(state)}
+                    <small>{calendarStateLabel(state)}</small>
+                  </span>
+                  {day?.sourceEventCount ? <b>{day.sourceEventCount} 条</b> : <b aria-hidden="true">—</b>}
+                </button>
+              );
+            })}
+          </div>
+          {isLoading ? <div className="activity-calendar__loading" role="status">正在读取本月整理轨迹…</div> : null}
+          <div className="activity-calendar__legend" aria-label="日历状态图例">
+            {(['approved', 'draft', 'waiting', 'refresh'] as const).map((state) => (
+              <span data-state={state} key={state}>{calendarStateIcon(state)}{calendarStateLabel(state)}</span>
+            ))}
+          </div>
+          <p className="activity-calendar__boundary">
+            “已整理”表示当天来源已形成当前有效时间线；不代表每条输入都已进入长期记忆。
+          </p>
+        </>
+      )}
+    </section>
+  );
+}
+
 function ActivityDayMap({
   date,
   onSelect,
@@ -420,7 +711,7 @@ function ActivityDayMap({
           <Clock3 aria-hidden="true" size={15} />
           <strong>一天的活动分布</strong>
         </div>
-        <span>位置与跨度均来自来源事件时间；跨度不表示持续活跃，点击可检查证据</span>
+        <span>时间范围按记录的首尾时间计算，不代表全程持续活跃；点击活动可查看来源</span>
       </header>
       <div className="activity-day-map__axis" aria-hidden="true">
         {[0, 6, 12, 18, 24].map((hour) => <span key={hour}>{String(hour).padStart(2, '0')}:00</span>)}
@@ -480,7 +771,7 @@ function TimelinePeriodBand({
             <p>{periodDescription(period)}</p>
           </div>
         </div>
-        <span>{tasks.length} 项 · 首末证据跨度 {formatDuration(sumTaskSpan(tasks))}</span>
+        <span>{tasks.length} 项 · 记录时间范围 {formatDuration(sumTaskSpan(tasks))}</span>
       </header>
       <div className="activity-timeline__task-list">
         {tasks.map((task) => (
@@ -495,12 +786,12 @@ function TimelinePeriodBand({
               <time dateTime={task.startMs ? new Date(task.startMs).toISOString() : undefined}>
                 {formatTimeRange(task.startMs, task.endMs)}
               </time>
-              <small>{activityKindLabel(task.activityKind)} · 首末证据跨度 {formatDuration(task.endMs - task.startMs)}</small>
+              <small>{activityKindLabel(task.activityKind)} · 记录时间范围 {formatDuration(task.endMs - task.startMs)}</small>
             </span>
             <span className="activity-timeline__task-main">
               <strong>{task.title}</strong>
               <span className="activity-timeline__task-summary">{task.summary}</span>
-              <span className="activity-timeline__task-apps" aria-label="参与 APP">
+              <span className="activity-timeline__task-apps" aria-label="参与应用">
                 <Monitor aria-hidden="true" size={13} />
                 {task.apps.map((app) => (
                   <span key={app.id}>
@@ -515,7 +806,7 @@ function TimelinePeriodBand({
                 label={activityKindLabel(task.activityKind)}
                 tone={activityKindTone(task.activityKind)}
               />
-              <span><Database aria-hidden="true" size={13} />{task.evidenceCount} 条证据</span>
+              <span><Database aria-hidden="true" size={13} />{task.evidenceCount} 条来源</span>
               <span><ListTree aria-hidden="true" size={13} />{task.eventCount} 条事件</span>
               {task.redactedEventCount ? <span data-tone="warning">{task.redactedEventCount} 条脱敏</span> : null}
             </span>
@@ -548,21 +839,21 @@ function TaskDetailDialog({
         <DialogHeader>
           <DialogTitle>{task.title}</DialogTitle>
           <DialogDescription>
-            {periodLabel(task.period)} · {formatTimeRange(task.startMs, task.endMs)} · {activityKindLabel(task.activityKind)} · 首末证据跨度 {formatDuration(task.endMs - task.startMs)}
+            {periodLabel(task.period)} · {formatTimeRange(task.startMs, task.endMs)} · {activityKindLabel(task.activityKind)} · 记录时间范围 {formatDuration(task.endMs - task.startMs)}
           </DialogDescription>
         </DialogHeader>
 
         <div className="activity-timeline__task-detail">
           <p className="activity-timeline__task-detail-summary">{task.summary}</p>
           <dl className="activity-timeline__task-detail-metrics">
-            <div><dt>参与 APP</dt><dd>{task.apps.length}</dd></div>
+            <div><dt>参与应用</dt><dd>{task.apps.length}</dd></div>
             <div><dt>事件</dt><dd>{task.eventCount}</dd></div>
-            <div><dt>证据</dt><dd>{task.evidenceCount}</dd></div>
+            <div><dt>来源</dt><dd>{task.evidenceCount}</dd></div>
             <div><dt>脱敏</dt><dd>{task.redactedEventCount}</dd></div>
           </dl>
 
           <section className="activity-timeline__detail-section">
-            <h3><Monitor aria-hidden="true" size={15} />参与 APP</h3>
+            <h3><Monitor aria-hidden="true" size={15} />参与应用</h3>
             <div className="activity-timeline__detail-apps">
               {task.apps.map((app) => (
                 <span key={app.id}>
@@ -575,13 +866,13 @@ function TaskDetailDialog({
           </section>
 
           <section className="activity-timeline__detail-section">
-            <h3><Database aria-hidden="true" size={15} />来源证据</h3>
-            <p>时间、分类和引用由活动账本投影。原始输入与当时上下文只在所属范围内按引用读取，不复制到时间线。</p>
+            <h3><Database aria-hidden="true" size={15} />相关来源</h3>
+            <p>时间、分类和来源来自本机活动记录。原始输入与当时上下文只在所属范围内按需读取，不会复制到时间线。</p>
             {taskLevelRefs.length ? (
               <SourceReferenceDetails
                 onOpenReference={onOpenReference}
                 refs={taskLevelRefs}
-                title="任务级来源引用"
+                title="活动相关来源"
               />
             ) : null}
             <div className="activity-timeline__event-list">
@@ -589,7 +880,7 @@ function TaskDetailDialog({
                 <details key={`${event.id}-${index}`} className="activity-timeline__event">
                   <summary>
                     <span>事件 {index + 1}</span>
-                    <strong>{event.summary || `原始事件 #${event.id}`}</strong>
+                    <strong>{event.summary || `记录 #${event.id}`}</strong>
                     <ChevronDown aria-hidden="true" size={15} />
                   </summary>
                   <div className="activity-timeline__event-body">
@@ -600,7 +891,7 @@ function TaskDetailDialog({
                       {event.redacted ? <span data-tone="warning">内容已脱敏</span> : null}
                     </div>
                     {event.summary ? <p>{event.summary}</p> : (
-                      <p>当前接口只提供事件身份，未返回可展示的事件摘要。</p>
+                      <p>这条记录暂时没有可展示的摘要。</p>
                     )}
                     {event.referenceId ? (
                       <button
@@ -608,12 +899,12 @@ function TaskDetailDialog({
                         onClick={() => onOpenReference({
                           kind: 'event',
                           referenceId: event.referenceId,
-                          label: event.summary || `原始事件 #${event.id}`,
+                          label: event.summary || `记录 #${event.id}`,
                         })}
                         type="button"
                       >
                         <ExternalLink aria-hidden="true" size={13} />
-                        <span>打开原始事件</span>
+                        <span>打开来源记录</span>
                         <ChevronRight aria-hidden="true" size={13} />
                       </button>
                     ) : null}
@@ -621,11 +912,11 @@ function TaskDetailDialog({
                       <SourceReferenceDetails
                         onOpenReference={onOpenReference}
                         refs={event.sourceRefs}
-                        title={`来源引用 · ${event.sourceRefs.length}`}
+                        title={`相关来源 · ${event.sourceRefs.length}`}
                       />
                     ) : (
                       <p className="activity-timeline__source-unavailable">
-                        当前接口未返回这条事件的来源引用。
+                        这条记录暂时没有可打开的来源。
                       </p>
                     )}
                   </div>
@@ -633,11 +924,11 @@ function TaskDetailDialog({
               ))}
             </div>
             {!visibleEvents.length ? (
-              <div className="activity-timeline__evidence-empty">没有可展开的事件证据。</div>
+              <div className="activity-timeline__evidence-empty">没有可展开的来源记录。</div>
             ) : null}
             {task.events.length > visibleEvents.length ? (
               <p className="activity-timeline__evidence-limit">
-                已显示前 {visibleEvents.length} 条，另有 {task.events.length - visibleEvents.length} 条保留在来源账本中。
+                已显示前 {visibleEvents.length} 条，另有 {task.events.length - visibleEvents.length} 条保留在原始记录中。
               </p>
             ) : null}
           </section>
@@ -1028,8 +1319,23 @@ function sumEvidenceCount(tasks: SemanticTimelineTask[]): number {
   return tasks.reduce((total, task) => total + task.evidenceCount, 0);
 }
 
-function uniqueAppCount(tasks: SemanticTimelineTask[]): number {
-  return new Set(tasks.flatMap((task) => task.apps.map((app) => app.id))).size;
+function topJournalApps(tasks: SemanticTimelineTask[], limit: number): TimelineApp[] {
+  const byId = new Map<string, TimelineApp>();
+  for (const app of tasks.flatMap((task) => task.apps)) {
+    const current = byId.get(app.id);
+    byId.set(app.id, current
+      ? { ...current, eventCount: current.eventCount + app.eventCount }
+      : app);
+  }
+  return [...byId.values()]
+    .sort((left, right) => right.eventCount - left.eventCount || left.name.localeCompare(right.name, 'zh-CN'))
+    .slice(0, Math.max(0, limit));
+}
+
+function journalTaskCaption(task: SemanticTimelineTask): string {
+  const appNames = task.apps.map((app) => app.name).filter(Boolean).slice(0, 3);
+  const appLabel = appNames.join(' · ');
+  return appLabel ? `${periodLabel(task.period)} · ${appLabel}` : periodLabel(task.period);
 }
 
 function localDate(): string {
@@ -1040,10 +1346,85 @@ function localDate(): string {
   return `${year}-${month}-${day}`;
 }
 
+function normalizeCalendarDays(payload: Record<string, unknown>): ActivityCalendarDay[] {
+  return arrayRecords(payload.days).map((value) => ({
+    date: stringValue(value.date),
+    status: stringValue(value.status, 'none'),
+    organized: value.organized === true,
+    modelOrganized: value.modelOrganized === true,
+    needsRefresh: value.needsRefresh === true,
+    sourceEventCount: numberValue(value.sourceEventCount),
+    segmentCount: numberValue(value.segmentCount),
+  })).filter((value) => /^\d{4}-\d{2}-\d{2}$/u.test(value.date));
+}
+
+type CalendarDayState = 'approved' | 'draft' | 'rejected' | 'waiting' | 'refresh' | 'empty';
+
+function calendarDayState(day: ActivityCalendarDay | undefined): CalendarDayState {
+  if (!day) return 'empty';
+  if (day.needsRefresh) return 'refresh';
+  if (day.organized && day.status === 'approved') return 'approved';
+  if (day.organized && day.status === 'draft') return 'draft';
+  if (day.status === 'rejected') return 'rejected';
+  return day.sourceEventCount ? 'waiting' : 'empty';
+}
+
+function calendarStateLabel(state: CalendarDayState): string {
+  return ({
+    approved: '已整理',
+    draft: '待发布',
+    rejected: '已驳回',
+    waiting: '待整理',
+    refresh: '有新增',
+    empty: '无活动',
+  } as const)[state];
+}
+
+function calendarStateIcon(state: CalendarDayState) {
+  if (state === 'approved') return <Check aria-hidden="true" size={12} />;
+  if (state === 'draft') return <Clock3 aria-hidden="true" size={12} />;
+  if (state === 'rejected') return <X aria-hidden="true" size={12} />;
+  if (state === 'refresh') return <RefreshCw aria-hidden="true" size={12} />;
+  if (state === 'waiting') return <Database aria-hidden="true" size={12} />;
+  return null;
+}
+
+function calendarDayAriaLabel(dateValue: string, day: ActivityCalendarDay | undefined): string {
+  const state = calendarDayState(day);
+  const detail = day?.sourceEventCount
+    ? `，${day.sourceEventCount} 条来源${day.modelOrganized && day.segmentCount ? `，${day.segmentCount} 项活动` : ''}`
+    : '';
+  return `${formatDateHeading(dateValue)}，${calendarStateLabel(state)}${detail}`;
+}
+
+function calendarCells(monthValue: string): Array<string | null> {
+  const [year, month] = monthValue.split('-').map(Number);
+  const firstWeekday = (new Date(year, month - 1, 1).getDay() + 6) % 7;
+  const dayCount = new Date(year, month, 0).getDate();
+  const cells: Array<string | null> = Array.from({ length: firstWeekday }, () => null);
+  for (let day = 1; day <= dayCount; day += 1) {
+    cells.push(`${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+  }
+  while (cells.length % 7) cells.push(null);
+  return cells;
+}
+
 function shiftDate(value: string, offset: number): string {
   const [year, month, day] = value.split('-').map(Number);
   const next = new Date(year, month - 1, day + offset);
   return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+}
+
+function shiftMonth(value: string, offset: number): string {
+  const [year, month, day] = value.split('-').map(Number);
+  const target = new Date(year, month - 1 + offset, 1);
+  const maxDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}-${String(Math.min(day, maxDay)).padStart(2, '0')}`;
+}
+
+function formatMonthHeading(value: string): string {
+  const [year, month] = value.split('-').map(Number);
+  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long' }).format(new Date(year, month - 1, 1));
 }
 
 function formatDateHeading(value: string): string {
@@ -1083,7 +1464,7 @@ function shortHash(value: string): string {
 }
 
 function timelineStatusLabel(status: string): string {
-  return ({ draft: '待自动发布', approved: '已发布', rejected: '已删除', superseded: '已更新' } as Record<string, string>)[status] ?? '未知';
+  return ({ draft: '待发布', approved: '已发布', rejected: '已驳回', superseded: '已更新' } as Record<string, string>)[status] ?? '未知';
 }
 
 function timelineStatusTone(status: string): 'success' | 'warning' | 'danger' | 'info' {
@@ -1094,10 +1475,10 @@ function timelineStatusTone(status: string): 'success' | 'warning' | 'danger' | 
 }
 
 function decisionCopy(status: string, approvedBookId: string): string {
-  if (status === 'approved') return approvedBookId ? '已迁移到独立时间线索引' : '已进入独立时间线索引';
+  if (status === 'approved') return approvedBookId ? '已加入活动时间线' : '已整理到活动时间线';
   if (status === 'rejected') return '本次整理未进入长期上下文';
   if (status === 'superseded') return '来源已经变化，可重新生成草案';
-  return '后台会自动发布；仅在时间类问题中按需召回';
+  return '整理完成后会自动更新；仅在时间相关问题中按需使用';
 }
 
 function friendlyAppName(value: string): string {
@@ -1126,9 +1507,9 @@ function sourceLabel(value: string): string {
     squirrel_input_segment: '完整输入',
     squirrel_rime_commit: '输入法提交',
     browser_extension: '浏览器',
-    pi_agent: 'Agent',
+    pi_agent: '伙伴',
     terminal: '终端',
-    reference: '来源引用',
+    reference: '相关来源',
   } as Record<string, string>)[value] ?? value.replaceAll('_', ' ');
 }
 

@@ -7,9 +7,17 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
+from rag_ime.activity_timeline import DailyActivityTimelineStore
+from rag_ime.activity_timeline_curation import (
+    ACTIVITY_ORGANIZATION_OUTPUT_VERSION,
+)
 from rag_ime.agent_role_book import AgentRoleBookStore
+from rag_ime.local_sqlite_core import LocalSqliteCoreClient
+from rag_ime.models import InputEvent
 from rag_ime.personal_context import (
     AgentMemoryEvidenceStore,
     PersonalContextConsolidator,
@@ -371,6 +379,170 @@ class PersonalContextMaintenanceRunnerTests(unittest.TestCase):
             [],
         )
 
+    def test_activity_maintenance_uses_verified_semantics_before_publish(self) -> None:
+        timestamp = int(
+            datetime(
+                2026,
+                8,
+                12,
+                10,
+                0,
+                tzinfo=ZoneInfo("Asia/Shanghai"),
+            ).timestamp()
+            * 1_000
+        )
+        LocalSqliteCoreClient(self.db_path).record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=timestamp,
+                source="voice_final",
+                committed_text="这个日记不要再直接显示原始句子",
+                recent_context="正在检查每日时间线的语义整理结果",
+                privacy_disposition="allowed",
+                app="RagImeControl",
+                project="project-a",
+            )
+        )
+        organizer = _MaintenanceActivityOrganizer()
+        runner = PersonalContextMaintenanceRunner(
+            self.db_path,
+            config=PersonalContextMaintenanceConfig(
+                project="project-a",
+                consolidate_roles=False,
+                build_timelines=True,
+                auto_publish_timelines=True,
+            ),
+            activity_organizer=organizer,
+        )
+
+        result = runner.build_activity_timeline(
+            "2026-08-12",
+            now_ms=timestamp + 60_000,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "approved")
+        self.assertEqual(result["semanticOrganization"]["status"], "completed")
+        self.assertEqual(
+            result["timeline"]["segments"][0]["title"],
+            "修复每日日记语义展示",
+        )
+        self.assertNotIn("不要再直接显示", result["timeline"]["summary"])
+        self.assertEqual(organizer.lifecycle, ["begin", "organize", "finish"])
+        calendar = DailyActivityTimelineStore(
+            self.db_path,
+            project="project-a",
+        ).calendar("2026-08")
+        self.assertTrue(calendar["days"][0]["organized"])
+
+    def test_activity_maintenance_fails_closed_when_semantics_fail(self) -> None:
+        timestamp = int(
+            datetime(
+                2026,
+                8,
+                12,
+                11,
+                0,
+                tzinfo=ZoneInfo("Asia/Shanghai"),
+            ).timestamp()
+            * 1_000
+        )
+        LocalSqliteCoreClient(self.db_path).record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=timestamp,
+                source="voice_final",
+                committed_text="需要整理这一条活动",
+                privacy_disposition="allowed",
+                app="RagImeControl",
+                project="project-a",
+            )
+        )
+        organizer = _MaintenanceActivityOrganizer(fail=True)
+        result = PersonalContextMaintenanceRunner(
+            self.db_path,
+            config=PersonalContextMaintenanceConfig(
+                project="project-a",
+                consolidate_roles=False,
+                build_timelines=True,
+                auto_publish_timelines=True,
+            ),
+            activity_organizer=organizer,
+        ).build_activity_timeline("2026-08-12", now_ms=timestamp + 60_000)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["semanticOrganization"]["status"], "failed")
+        self.assertEqual(organizer.lifecycle, ["begin", "organize", "fail"])
+        latest = DailyActivityTimelineStore(
+            self.db_path,
+            project="project-a",
+        ).latest("2026-08-12")
+        self.assertEqual(latest["status"], "draft")
+
+    def test_activity_catch_up_serially_organizes_every_pending_day(self) -> None:
+        for day, hour in ((10, 9), (11, 14)):
+            timestamp = int(
+                datetime(
+                    2026,
+                    8,
+                    day,
+                    hour,
+                    0,
+                    tzinfo=ZoneInfo("Asia/Shanghai"),
+                ).timestamp()
+                * 1_000
+            )
+            LocalSqliteCoreClient(self.db_path).record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=timestamp,
+                    source="voice_final",
+                    committed_text=f"整理 8 月 {day} 日的实际工作",
+                    recent_context="正在回补历史每日日记",
+                    privacy_disposition="allowed",
+                    app="RagImeControl",
+                    project="project-a",
+                )
+            )
+        organizer = _MaintenanceActivityOrganizer()
+        progress: list[dict[str, object]] = []
+        runner = PersonalContextMaintenanceRunner(
+            self.db_path,
+            config=PersonalContextMaintenanceConfig(
+                project="project-a",
+                consolidate_roles=False,
+                build_timelines=True,
+                auto_publish_timelines=True,
+            ),
+            activity_organizer=organizer,
+        )
+
+        report = runner.build_activity_timelines_through(
+            "2026-08-12",
+            progress=lambda value: progress.append(dict(value)),
+        )
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["pendingDayCount"], 2)
+        self.assertEqual(report["completedDayCount"], 2)
+        self.assertEqual(report["remainingDayCount"], 0)
+        self.assertEqual(
+            [item["date"] for item in report["activityTimelines"]],
+            ["2026-08-10", "2026-08-11"],
+        )
+        self.assertEqual(
+            organizer.lifecycle,
+            ["begin", "organize", "finish", "begin", "organize", "finish"],
+        )
+        self.assertEqual(progress[-1]["completedDayCount"], 2)
+        self.assertEqual(
+            DailyActivityTimelineStore(
+                self.db_path,
+                project="project-a",
+            ).dates_requiring_model_organization("2026-08-12"),
+            (),
+        )
+
     def test_cli_run_and_status_expose_the_background_maintenance_state(
         self,
     ) -> None:
@@ -540,6 +712,53 @@ class _MaintenanceRoleBookOrganizer:
                 }
             ],
         }
+
+
+class _MaintenanceActivityOrganizer:
+    provider_name = "fake-maintenance-activity-organizer"
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.lifecycle: list[str] = []
+
+    def begin_run(self, run_id: str, *, frozen_input_sha256: str = "") -> dict[str, object]:
+        del run_id, frozen_input_sha256
+        self.lifecycle.append("begin")
+        return {}
+
+    def organize_activity_timeline(self, *, packet: object) -> dict[str, object]:
+        self.lifecycle.append("organize")
+        if self.fail:
+            raise RuntimeError("synthetic Activity verifier failure")
+        refs = list(getattr(packet, "event_refs"))
+        return {
+            "organization": {
+                "schemaVersion": ACTIVITY_ORGANIZATION_OUTPUT_VERSION,
+                "activities": [
+                    {
+                        "title": "修复每日日记语义展示",
+                        "summary": "检查时间线的原句展示问题，并改为活动级语义概括。",
+                        "eventRefs": refs,
+                        "confidence": 0.96,
+                        "boundaryBasis": "所有来源都在讨论同一项日记语义修复。",
+                    }
+                ],
+                "unclassified": [],
+            },
+            "receipt": {
+                "membershipSha256": getattr(packet, "membership_sha256"),
+                "verdict": "pass",
+            },
+        }
+
+    def finish_run(self) -> dict[str, object]:
+        self.lifecycle.append("finish")
+        return {}
+
+    def fail_run(self, error: BaseException) -> dict[str, object]:
+        del error
+        self.lifecycle.append("fail")
+        return {}
 
 
 if __name__ == "__main__":
