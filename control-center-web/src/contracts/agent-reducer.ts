@@ -268,7 +268,11 @@ export function reduceAgentEvent(
       touchTurn(next, event.turnId, turnStatusFromRuntime(next.status), event.createdAtMs);
       break;
     case 'message_queue_updated':
-      next.messageQueue = parseMessageQueue(payload);
+      {
+        const previousQueue = next.messageQueue;
+        next.messageQueue = parseMessageQueue(payload);
+        reconcileMessageDeliveryQueue(next, previousQueue, next.messageQueue);
+      }
       break;
     case 'workflow_changed':
       next.todo = parseAgentTodo(payload.todo) ?? next.todo;
@@ -298,6 +302,17 @@ export function reduceAgentEvent(
     }
     case 'tool_started':
     case 'tool_progress':
+      // Delegation publishes detached lifecycle receipts so the dedicated
+      // subagent projection can refresh while a child runs. They are not a
+      // second parent Tool call: the real `agents` Tool already carries the
+      // parent's turn/call ids and receives its own terminal event. Projecting
+      // this synthetic receipt into the transcript creates an `unscoped` turn
+      // that can never finish.
+      if (
+        event.eventType === 'tool_progress'
+        && !event.turnId
+        && text(payload.toolCallId).startsWith('subagent:')
+      ) break;
       upsertActivity(next, event, payload, payload.isError === true ? 'failed' : 'running');
       next.status = payload.isError === true ? 'failed' : 'working';
       break;
@@ -538,6 +553,9 @@ export function appendOptimisticAgentMessage(
     createdAtMs: input.nowMs,
     completedAtMs: null,
     clientMessageId: input.clientMessageId,
+    ...(input.delivery && input.delivery !== 'prompt'
+      ? { deliveryState: 'sending' as const }
+      : {}),
     ...(input.retryOfClientMessageId
       ? { retryOfClientMessageId: input.retryOfClientMessageId }
       : {}),
@@ -548,6 +566,25 @@ export function appendOptimisticAgentMessage(
   attachMessageToTurn(next, message);
   if (!existingTurnStatus) touchTurn(next, turnId, 'queued', input.nowMs);
   next.status = 'busy';
+  return next;
+}
+
+export function acknowledgeOptimisticAgentMessage(
+  state: AgentProjectionState,
+  clientMessageId: string,
+  nowMs: number,
+): AgentProjectionState {
+  const messageId = state.optimisticByClientMessageId[clientMessageId]
+    ?? state.messageOrder.find((id) => state.messagesById[id]?.clientMessageId === clientMessageId);
+  if (!messageId) return state;
+  const message = state.messagesById[messageId];
+  if (!message || !messageDelivery(message) || message.deliveryState === 'applied') return state;
+  const next = cloneState(state);
+  next.messagesById[messageId] = {
+    ...message,
+    deliveryState: 'accepted',
+    deliveryAcceptedAtMs: nowMs,
+  };
   return next;
 }
 
@@ -747,10 +784,13 @@ export function applyAgentSnapshot(
         return activity?.status === 'running' || activity?.status === 'waiting';
       });
       if (!hasLiveActivity && !['queued', 'running', 'waiting'].includes(turn.status)) continue;
+      const hasAbortedTranscript = turn.messageIds.some(
+        (messageId) => next.messagesById[messageId]?.status === 'aborted',
+      );
       completeTurn(
         next,
         turn.id,
-        replayStatus === 'aborting' ? 'aborted' : 'completed',
+        replayStatus === 'aborting' || hasAbortedTranscript ? 'aborted' : 'completed',
         turn.updatedAtMs,
         '',
         true,
@@ -1080,7 +1120,11 @@ function applyCompletedMessage(
   touchTurn(
     state,
     parsed.value.turnId,
-    parsed.value.status === 'failed' ? 'failed' : 'running',
+    parsed.value.status === 'failed'
+      ? 'failed'
+      : parsed.value.status === 'aborted'
+        ? 'aborted'
+        : 'running',
     event.createdAtMs,
   );
 }
@@ -1212,9 +1256,13 @@ function upsertMessage(
     ? state.optimisticByClientMessageId[clientMessageId]
     : undefined;
   let replacedOptimistic = false;
+  let projectedMessage = message;
   if (optimisticId && optimisticId !== message.id) {
     const index = state.messageOrder.indexOf(optimisticId);
     const optimistic = state.messagesById[optimisticId];
+    if (optimistic && message.role === 'user') {
+      projectedMessage = inheritLocalDeliveryProjection(message, optimistic);
+    }
     delete state.messagesById[optimisticId];
     delete state.optimisticByClientMessageId[clientMessageId];
     if (index >= 0) state.messageOrder[index] = message.id;
@@ -1222,9 +1270,81 @@ function upsertMessage(
     replacedOptimistic = index >= 0;
   }
 
-  if (!state.messagesById[message.id] && !replacedOptimistic) state.messageOrder.push(message.id);
-  state.messagesById[message.id] = message;
-  attachMessageToTurn(state, message);
+  if (!state.messagesById[projectedMessage.id] && !replacedOptimistic) state.messageOrder.push(projectedMessage.id);
+  state.messagesById[projectedMessage.id] = projectedMessage;
+  attachMessageToTurn(state, projectedMessage);
+}
+
+function inheritLocalDeliveryProjection(
+  message: AgentMessageProjection,
+  optimistic: AgentMessageProjection,
+): AgentMessageProjection {
+  const delivery = messageDelivery(optimistic);
+  if (!delivery) return message;
+  let inherited = false;
+  const blocks = message.blocks.map((block) => {
+    if (inherited || block.type !== 'text') return block;
+    if (text(block.data.delivery)) {
+      inherited = true;
+      return block;
+    }
+    inherited = true;
+    return { ...block, data: { ...block.data, delivery } };
+  });
+  return {
+    ...message,
+    blocks,
+    ...(optimistic.deliveryState ? { deliveryState: optimistic.deliveryState } : {}),
+    ...(optimistic.deliveryAcceptedAtMs === undefined
+      ? {}
+      : { deliveryAcceptedAtMs: optimistic.deliveryAcceptedAtMs }),
+  };
+}
+
+function reconcileMessageDeliveryQueue(
+  state: AgentProjectionState,
+  previous: AgentMessageQueue,
+  current: AgentMessageQueue,
+): void {
+  const previousByDelivery = {
+    steer: new Set(previous.steering.map(normalizedQueueText)),
+    followUp: new Set(previous.followUp.map(normalizedQueueText)),
+  };
+  const currentByDelivery = {
+    steer: new Set(current.steering.map(normalizedQueueText)),
+    followUp: new Set(current.followUp.map(normalizedQueueText)),
+  };
+  for (const messageId of state.messageOrder) {
+    const message = state.messagesById[messageId];
+    const delivery = message ? messageDelivery(message) : '';
+    if (!message || (delivery !== 'steer' && delivery !== 'followUp')) continue;
+    const messageText = normalizedQueueText(message.blocks
+      .map((block) => text(block.data.text))
+      .filter(Boolean)
+      .join('\n'));
+    if (!messageText) continue;
+    const isQueued = currentByDelivery[delivery].has(messageText);
+    const wasQueued = previousByDelivery[delivery].has(messageText);
+    if (isQueued) {
+      if (message.deliveryState !== 'applied') {
+        state.messagesById[messageId] = { ...message, deliveryState: 'accepted' };
+      }
+    } else if (wasQueued || message.deliveryState === 'accepted') {
+      state.messagesById[messageId] = { ...message, deliveryState: 'applied' };
+    }
+  }
+}
+
+function messageDelivery(message: AgentMessageProjection): 'steer' | 'followUp' | '' {
+  const delivery = message.blocks
+    .filter((block) => block.type === 'text')
+    .map((block) => text(block.data.delivery))
+    .find((value) => value === 'steer' || value === 'followUp');
+  return delivery === 'steer' || delivery === 'followUp' ? delivery : '';
+}
+
+function normalizedQueueText(value: string): string {
+  return value.replace(/\s+/gu, ' ').trim();
 }
 
 function upsertActivity(
@@ -1534,6 +1654,18 @@ function completeTurn(
   turn.status = status;
   turn.updatedAtMs = nowMs;
   if (failure) turn.failure = failure;
+  else if (status !== 'failed') delete turn.failure;
+  if (status !== 'failed') {
+    const supersededFailureIds = turn.activityIds.filter(
+      (activityId) => state.activitiesById[activityId]?.kind === 'turn_failed',
+    );
+    if (supersededFailureIds.length > 0) {
+      const superseded = new Set(supersededFailureIds);
+      turn.activityIds = turn.activityIds.filter((activityId) => !superseded.has(activityId));
+      state.activityOrder = state.activityOrder.filter((activityId) => !superseded.has(activityId));
+      for (const activityId of supersededFailureIds) delete state.activitiesById[activityId];
+    }
+  }
   /*
    * Settle activities the turn never finished. Without this a stopped or
    * failed turn keeps rendering its in-flight tools as "running" forever:

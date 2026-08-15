@@ -36,9 +36,15 @@ describe('preview control transport', () => {
       expect.objectContaining({ id: 'overview', enabled: true }),
       expect.objectContaining({ id: 'ask', enabled: true, alwaysAvailable: true }),
       expect.objectContaining({ id: 'todo', enabled: true, alwaysAvailable: true }),
-      expect.objectContaining({ id: 'workspace_read', enabled: true }),
-      expect.objectContaining({ id: 'workspace_shell', enabled: true }),
+      expect.objectContaining({ id: 'workspace_lsp', enabled: true }),
+      expect.objectContaining({ id: 'workspace_job', enabled: true }),
     ]));
+    expect(tools.items.some((tool) => [
+      'workspace_read',
+      'workspace_search',
+      'workspace_edit',
+      'workspace_shell',
+    ].includes(String(tool.id)))).toBe(false);
     expect(tools.items.some((tool) => tool.id === 'control.overview')).toBe(false);
   });
 

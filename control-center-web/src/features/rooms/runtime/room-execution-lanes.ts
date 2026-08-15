@@ -23,11 +23,71 @@ export interface RoomTurnExecution {
   userMessageIds: string[];
 }
 
+export interface RoomExecutionOverviewItem {
+  id: string;
+  objective: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'aborted';
+  participantIds: string[];
+  laneCount: number;
+  toolCount: number;
+  lastSummary: string;
+  updatedAtMs: number;
+}
+
 /** Keep Room/session lifecycle records out of the virtualized public timeline. */
 export function selectPublicRoomTurnOrder(
   projection: RoomProjectionState,
 ): string[] {
   return projection.turnOrder.filter((turnId) => turnId !== 'unscoped');
+}
+
+/** Project real Pi Session dispatches into the Room task view.
+ *
+ * Explicit WorkItems are optional in the light Room architecture. The task
+ * view must therefore derive its primary state from the same Room event
+ * projection as the conversation timeline instead of presenting an active
+ * collaboration as empty.
+ */
+export function selectRoomExecutionOverview(
+  projection: RoomProjectionState,
+  limit = 8,
+): RoomExecutionOverviewItem[] {
+  return selectPublicRoomTurnOrder(projection)
+    .slice(-Math.max(1, limit))
+    .reverse()
+    .flatMap((turnId) => {
+      const turn = projection.turnsById[turnId];
+      if (!turn) return [];
+      const execution = selectRoomTurnExecution(projection, turnId);
+      const userMessages = execution.userMessageIds
+        .map((messageId) => projection.messagesById[messageId])
+        .filter((message): message is RoomMessageProjection => Boolean(message));
+      const objective = [...userMessages]
+        .reverse()
+        .map((message) => message.text.trim())
+        .find(Boolean) ?? '继续当前协作';
+      const participantIds = [...new Set(execution.lanes
+        .map((lane) => lane.participantId)
+        .filter((participantId): participantId is string => Boolean(participantId)))];
+      const toolActivities = execution.activities.filter((activity) => {
+        const sourceEventType = textValue(activity.payload.sourceEventType);
+        return activity.kind === 'tool' || sourceEventType.startsWith('tool_');
+      });
+      const lastSummary = [...execution.activities]
+        .reverse()
+        .map((activity) => activity.summary.trim())
+        .find(Boolean) ?? '';
+      return [{
+        id: turnId,
+        objective,
+        status: turn.status,
+        participantIds,
+        laneCount: execution.lanes.length,
+        toolCount: toolActivities.length,
+        lastSummary,
+        updatedAtMs: turn.updatedAtMs,
+      }];
+    });
 }
 
 /** Build stable root + participant + dispatch slots for one public Room turn. */

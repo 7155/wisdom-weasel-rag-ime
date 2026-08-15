@@ -48,8 +48,23 @@ struct NativeRoutePolicyTests {
             query: [:],
             body: ["entryId": "entry-user-1", "title": "新分支"]
         )
+        expect(fork.request.url?.port == 8768, "fork route always uses the dedicated Pi gateway")
         expect(fork.request.url?.absoluteString.contains("session:alpha/forks") == true, "fork route")
         expect(fork.request.httpMethod == "POST", "fork method")
+        let participantSteer = try policy.resolveRequest(
+            pathId: "agent.room.participant.steer",
+            parameters: ["roomId": "room:alpha"],
+            query: [:],
+            body: [
+                "action": "steer_participant",
+                "rootId": "root:alpha",
+                "participantId": "participant:alpha",
+                "clientActionId": "action:alpha",
+                "message": "请立即收敛并返回当前结果",
+            ]
+        )
+        expect(participantSteer.request.url?.path == "/api/agent/rooms/room:alpha/steer", "participant steer route")
+        expect(participantSteer.request.httpMethod == "POST", "participant steer method")
         let guidedGoal = try policy.resolveRequest(
             pathId: "agent.session.goal.mutate",
             parameters: ["sessionId": "session:alpha"],
@@ -271,30 +286,6 @@ struct NativeRoutePolicyTests {
             ]
         )
         expect(roomUpdate.request.url?.absoluteString.contains("room:alpha") == true, "room update accepts governed execution fields")
-
-        let roomStart = try policy.resolveRequest(
-            pathId: "agent.room.startExecution",
-            parameters: ["roomId": "room:alpha"],
-            query: [:],
-            body: [
-                "action": "start_execution",
-                "rootId": "room-root:alpha",
-                "clientActionId": "room-start:alpha",
-            ]
-        )
-        expect(roomStart.request.url?.path == "/api/agent/rooms/room:alpha/start-execution", "Room typed-start route")
-        expect(roomStart.request.httpMethod == "POST", "Room typed-start method")
-        expectThrows("Room typed-start requires a durable client action") {
-            _ = try policy.resolveRequest(
-                pathId: "agent.room.startExecution",
-                parameters: ["roomId": "room:alpha"],
-                query: [:],
-                body: [
-                    "action": "start_execution",
-                    "rootId": "room-root:alpha",
-                ]
-            )
-        }
 
         let personaCreate = try policy.resolveRequest(
             pathId: "agent.roles.create",
@@ -854,6 +845,26 @@ struct NativeRoutePolicyTests {
                     "content": "hello",
                     "sourceSessionId": "session-b",
                 ]
+            )
+        }
+        expectThrows("participant steer requires a user message") {
+            _ = try policy.resolveRequest(
+                pathId: "agent.room.participant.steer",
+                parameters: ["roomId": "room:alpha"],
+                query: [:],
+                body: [
+                    "action": "steer_participant",
+                    "rootId": "root:alpha",
+                    "clientActionId": "action:alpha",
+                ]
+            )
+        }
+        expectThrows("obsolete Room Kernel routes are unavailable") {
+            _ = try policy.resolveRequest(
+                pathId: "agent.room.kernel.snapshot",
+                parameters: ["roomId": "room:alpha"],
+                query: [:],
+                body: nil
             )
         }
         expectThrows("deep search is local only") {

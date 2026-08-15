@@ -120,30 +120,15 @@ import type { RimeSuggestResponseV1 } from './generated/rime-suggest-response.v1
 import type { RoleBookCurationV1 } from './generated/role-book-curation.v1';
 import type { RoleBookRevisionDraftV1 } from './generated/role-book-revision-draft.v1';
 import type { RoomBindingV2 } from './generated/room-binding.v2';
-import type { RoomCapabilityManifestV1 } from './generated/room-capability-manifest.v1';
 import type { RoomCommitV2 } from './generated/room-commit.v2';
 import type { RoomCommitV3 } from './generated/room-commit.v3';
-import type { RoomCommitV4 } from './generated/room-commit.v4';
-import type { RoomContextEntryV1 } from './generated/room-context-entry.v1';
 import type { RoomDispatchEnvelopeV2 } from './generated/room-dispatch-envelope.v2';
 import type { RoomEventEnvelopeV2 } from './generated/room-event-envelope.v2';
-import type { RoomKernelCommandV1 } from './generated/room-kernel-command.v1';
-import type { RoomKernelReceiptV1 } from './generated/room-kernel-receipt.v1';
-import type { RoomParticipantBindingV2 } from './generated/room-participant-binding.v2';
 import type { RoomPostV2 } from './generated/room-post.v2';
 import type { RoomQualityGateReceiptV1 } from './generated/room-quality-gate-receipt.v1';
-import type { RoomRootExecutionV2 } from './generated/room-root-execution.v2';
 import type { RoomRootExecutionV3 } from './generated/room-root-execution.v3';
-import type { RoomSettleReceiptV1 } from './generated/room-settle-receipt.v1';
-import type { RoomSettleResultV1 } from './generated/room-settle-result.v1';
 import type { RoomShadowObservationV1 } from './generated/room-shadow-observation.v1';
-import type { RoomSkillLoadReceiptV1 } from './generated/room-skill-load-receipt.v1';
-import type { RoomSkillPolicyV1 } from './generated/room-skill-policy.v1';
-import type { RoomSkillRecoveryV1 } from './generated/room-skill-recovery.v1';
-import type { RoomSkillSelectionV1 } from './generated/room-skill-selection.v1';
 import type { RoomTaskV3 } from './generated/room-task.v3';
-import type { RoomToolDisclosureReceiptV1 } from './generated/room-tool-disclosure-receipt.v1';
-import type { RoomToolInvocationReceiptV1 } from './generated/room-tool-invocation-receipt.v1';
 import type { RunnerVerificationReceiptV2 } from './generated/runner-verification-receipt.v2';
 import type { SessionMemoryRecallV1 } from './generated/session-memory-recall.v1';
 import type { SessionRecallEffectReceiptV1 } from './generated/session-recall-effect-receipt.v1';
@@ -274,30 +259,15 @@ export type {
   RoleBookCurationV1,
   RoleBookRevisionDraftV1,
   RoomBindingV2,
-  RoomCapabilityManifestV1,
   RoomCommitV2,
   RoomCommitV3,
-  RoomCommitV4,
-  RoomContextEntryV1,
   RoomDispatchEnvelopeV2,
   RoomEventEnvelopeV2,
-  RoomKernelCommandV1,
-  RoomKernelReceiptV1,
-  RoomParticipantBindingV2,
   RoomPostV2,
   RoomQualityGateReceiptV1,
-  RoomRootExecutionV2,
   RoomRootExecutionV3,
-  RoomSettleReceiptV1,
-  RoomSettleResultV1,
   RoomShadowObservationV1,
-  RoomSkillLoadReceiptV1,
-  RoomSkillPolicyV1,
-  RoomSkillRecoveryV1,
-  RoomSkillSelectionV1,
   RoomTaskV3,
-  RoomToolDisclosureReceiptV1,
-  RoomToolInvocationReceiptV1,
   RunnerVerificationReceiptV2,
   SessionMemoryRecallV1,
   SessionRecallEffectReceiptV1,
@@ -429,30 +399,15 @@ export interface ContractTypeMap {
   'role-book-curation.v1': RoleBookCurationV1;
   'role-book-revision-draft.v1': RoleBookRevisionDraftV1;
   'room-binding.v2': RoomBindingV2;
-  'room-capability-manifest.v1': RoomCapabilityManifestV1;
   'room-commit.v2': RoomCommitV2;
   'room-commit.v3': RoomCommitV3;
-  'room-commit.v4': RoomCommitV4;
-  'room-context-entry.v1': RoomContextEntryV1;
   'room-dispatch-envelope.v2': RoomDispatchEnvelopeV2;
   'room-event-envelope.v2': RoomEventEnvelopeV2;
-  'room-kernel-command.v1': RoomKernelCommandV1;
-  'room-kernel-receipt.v1': RoomKernelReceiptV1;
-  'room-participant-binding.v2': RoomParticipantBindingV2;
   'room-post.v2': RoomPostV2;
   'room-quality-gate-receipt.v1': RoomQualityGateReceiptV1;
-  'room-root-execution.v2': RoomRootExecutionV2;
   'room-root-execution.v3': RoomRootExecutionV3;
-  'room-settle-receipt.v1': RoomSettleReceiptV1;
-  'room-settle-result.v1': RoomSettleResultV1;
   'room-shadow-observation.v1': RoomShadowObservationV1;
-  'room-skill-load-receipt.v1': RoomSkillLoadReceiptV1;
-  'room-skill-policy.v1': RoomSkillPolicyV1;
-  'room-skill-recovery.v1': RoomSkillRecoveryV1;
-  'room-skill-selection.v1': RoomSkillSelectionV1;
   'room-task.v3': RoomTaskV3;
-  'room-tool-disclosure-receipt.v1': RoomToolDisclosureReceiptV1;
-  'room-tool-invocation-receipt.v1': RoomToolInvocationReceiptV1;
   'runner-verification-receipt.v2': RunnerVerificationReceiptV2;
   'session-memory-recall.v1': SessionMemoryRecallV1;
   'session-recall-effect-receipt.v1': SessionRecallEffectReceiptV1;

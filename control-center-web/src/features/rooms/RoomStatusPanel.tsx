@@ -15,7 +15,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { forwardRef, useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Button, IconButton } from '@/components/primitives';
+import { IconButton } from '@/components/primitives';
 import { selectRoomParticipantPublicProgress } from '@/contracts/room-reducer';
 import type {
   RoomActivityProjection,
@@ -23,14 +23,12 @@ import type {
   RoomProjectionState,
   RoomTurnProjection,
 } from '@/contracts/room-reducer';
-import type { RoomKernelProjection, RootProjection } from '@/contracts/room-kernel-reducer';
-import type { ReviewFinding, RoomTaskV3 } from '@/contracts/generated/room-task.v3';
 import type { RoomParticipantPublicProgressProjection } from '@/contracts/room-reducer';
 import type { RoomSummary, RoomWorkItem } from './room-types';
 import { useAgentLiveStore } from '../agent/state/live-store';
 import { ROOM_PUBLIC_PROGRESS_KIND_LABELS, roomCollaborationRoleDescription, roomCollaborationRoleLabel, roomParticipantPublicProgressSummary } from './room-copy';
 import { roomActivityNeedsSessionAction } from './runtime/room-execution-lanes';
-import { roomProjection, useRoomLiveStore, type RoomKernelSyncProjection } from './state/live-store';
+import { roomProjection, useRoomLiveStore } from './state/live-store';
 import { publicToolName } from '../agent/tool-presentation';
 import '../agent/agent.css';
 
@@ -41,7 +39,6 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
   open: boolean;
   modal?: boolean;
   onClose: () => void;
-  onOpenProgress?: () => void;
 }>(function RoomStatusPanel({
   room,
   roomId = '',
@@ -49,7 +46,6 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
   open,
   modal = false,
   onClose,
-  onOpenProgress,
 }, ref) {
   const effectiveRoomId = roomId || room?.id || '';
   useRoomLiveStore((state) => (
@@ -57,44 +53,8 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
       ? state.roomRevisions[effectiveRoomId] ?? 0
       : 0
   ));
-  const kernelProjection = useRoomLiveStore(
-    (state) => open ? state.kernelProjections[effectiveRoomId] ?? null : null,
-  );
-  const kernelSync = useRoomLiveStore(
-    (state) => open ? state.kernelSyncByRoomId[effectiveRoomId] : undefined,
-  );
   const projection = providedProjection ?? roomProjection(effectiveRoomId);
   const participantProgress = selectRoomParticipantPublicProgress(projection);
-  const currentRoot = kernelProjection
-    ? Object.values(kernelProjection.rootsById).sort((left, right) => (
-      Math.max(right.updatedAtMs ?? 0, right.createdAtMs ?? 0)
-        - Math.max(left.updatedAtMs ?? 0, left.createdAtMs ?? 0)
-      || left.rootId.localeCompare(right.rootId)
-    ))[0]
-    : undefined;
-  const currentRootTasks = currentRoot && kernelProjection
-    ? Object.values(kernelProjection.tasksById).filter((task) => (
-      task.rootId === currentRoot.rootId && task.taskKind !== 'report'
-    ))
-    : [];
-  const currentRootDispatches = currentRoot && kernelProjection
-    ? Object.values(kernelProjection.dispatchesById).filter((dispatch) => (
-      dispatch.rootId === currentRoot.rootId
-      && kernelProjection.tasksById[dispatch.taskId]?.taskKind !== 'report'
-    ))
-    : [];
-  const latestFinalPost = currentRoot && roomRootIsTerminal(currentRoot) && kernelProjection
-    ? kernelProjection.postOrder
-      .map((postId) => kernelProjection.postsById[postId])
-      .filter((post) => post?.rootId === currentRoot.rootId)
-      .sort((left, right) => right!.createdAtMs - left!.createdAtMs)[0]
-    : undefined;
-  const individualTasks = currentRootTasks.filter((task) => task.taskKind !== 'review');
-  const reviewTasks = currentRootTasks.filter((task) => task.taskKind === 'review');
-  const sharedCheckVisible = reviewTasks.length > 0 || (
-    individualTasks.length > 0
-    && individualTasks.every((task) => ['completed', 'failed', 'cancelled'].includes(task.state))
-  ) || Boolean(latestFinalPost);
   const turn = latestRoomTurn(projection);
   const activities = turn?.activityIds.map((id) => projection.activitiesById[id]).filter(Boolean) ?? [];
   const messages = turn?.messageIds.map((id) => projection.messagesById[id]).filter(Boolean) ?? [];
@@ -124,39 +84,10 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
       tabIndex={-1}
     >
       <header>
-        <span><strong>协作进展</strong><small>{currentRoot ? ROOM_STATUS_ROOT_STATE_LABELS[currentRoot.state] : turn ? roomProjectedStatusLabel(projectedStatus) : '等你开始新一轮'}</small></span>
+        <span><strong>协作进展</strong><small>{turn ? roomProjectedStatusLabel(projectedStatus) : '等你开始新一轮'}</small></span>
         <IconButton icon={<PanelRightClose size={17} />} label="收起进展面板" onClick={onClose} tooltip />
       </header>
       <div className="agent-status-panel__body">
-        {kernelSync && kernelSync.state !== 'idle' ? (
-          <RoomProgressFreshness sync={kernelSync} onOpenProgress={onOpenProgress} />
-        ) : null}
-        {currentRoot ? (
-          <RoomPhaseContinuity
-            dispatches={currentRootDispatches}
-            finalReplyVisible={Boolean(latestFinalPost)}
-            root={currentRoot}
-            sharedCheckVisible={sharedCheckVisible}
-            tasks={currentRootTasks}
-          />
-        ) : null}
-        {reviewTasks.length ? (
-          <RoomStatusSection
-            count={reviewTasks.reduce((count, task) => count + (task.reviewFindings?.length ?? 0), 0)}
-            defaultOpen={reviewTasks.some((task) => (
-              task.reviewState !== 'accepted'
-              || (task.reviewFindings ?? []).some((finding) => (
-                finding.gateEffect === 'blocking'
-                && ['open', 'contested', 'escalated'].includes(finding.state)
-              ))
-            ))}
-            icon={Radar}
-            title="独立复核"
-          >
-            <RoomReviewLedger room={room} tasks={reviewTasks} />
-          </RoomStatusSection>
-        ) : null}
-        {latestFinalPost ? <RoomFinalPublicReply post={latestFinalPost} room={room} /> : null}
         <RoomStatusSection count={turn ? 1 : 0} icon={ListChecks} title="当前回合">
           {turn ? (
             <div className="agent-status-turn" data-state={projectedStatus}>
@@ -182,7 +113,6 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
           <RoomParticipantPublicLanes
             progress={participantProgress}
             room={room}
-            tasks={currentRootTasks}
             workItems={workItems}
           />
         </RoomStatusSection>
@@ -259,56 +189,6 @@ const roomStatusTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
   minute: '2-digit',
 });
 
-const ROOM_PROGRESS_SYNC_LABELS: Record<RoomKernelSyncProjection['state'], string> = {
-  idle: '等待任务进度',
-  loading: '正在读取任务进度',
-  synced: '实时进度已连接',
-  reconnecting: '正在重新连接进度',
-  recovering: '正在恢复最新进度',
-  stale: '实时更新暂时中断',
-  denied: '当前不可查看任务进度',
-  error: '任务进度暂时无法读取',
-};
-
-function RoomProgressFreshness({
-  sync,
-  onOpenProgress,
-}: {
-  sync: RoomKernelSyncProjection;
-  onOpenProgress?: () => void;
-}) {
-  const failed = sync.state === 'denied' || sync.state === 'error';
-  const canOpenProgress = Boolean(onOpenProgress) && (
-    failed || sync.state === 'stale' || sync.state === 'recovering'
-  );
-  const reconnecting = ['loading', 'reconnecting', 'recovering'].includes(sync.state);
-  const StatusIcon = failed ? TriangleAlert : reconnecting ? LoaderCircle : Radar;
-  return (
-    <section
-      aria-label="任务进度连接"
-      className="room-status-freshness"
-      data-state={sync.state}
-      role={failed ? 'alert' : 'status'}
-    >
-      <StatusIcon aria-hidden="true" className={reconnecting ? 'ui-spin' : undefined} size={15} />
-      <span>
-        <strong>{ROOM_PROGRESS_SYNC_LABELS[sync.state]}</strong>
-        <small>{sync.detail || '新进展会自动显示，不需要手动刷新。'}</small>
-      </span>
-      {sync.updatedAtMs > 0 ? (
-        <time dateTime={new Date(sync.updatedAtMs).toISOString()}>
-          更新于 {roomStatusTimeFormatter.format(new Date(sync.updatedAtMs))}
-        </time>
-      ) : null}
-      {canOpenProgress ? (
-        <Button onClick={onOpenProgress} size="small" variant="quiet">
-          打开任务进度
-        </Button>
-      ) : null}
-    </section>
-  );
-}
-
 const ROOM_STATUS_PARTICIPANT_STATE_LABELS: Record<
   RoomParticipantPublicProgressProjection['status'] | 'idle',
   string
@@ -322,234 +202,13 @@ const ROOM_STATUS_PARTICIPANT_STATE_LABELS: Record<
 };
 
 
-function roomRootIsTerminal(root: RootProjection): boolean {
-  return ['completed', 'failed', 'cancelled', 'cancelled_with_unknowns'].includes(root.state);
-}
-
-const ROOM_STATUS_ROOT_STATE_LABELS: Record<RootProjection['state'], string> = {
-  pending: '等待开始',
-  running: '工作进行中',
-  waiting: '等待下一步',
-  blocked: '需要处理阻塞',
-  cancelling: '正在停止',
-  completed: '已完成',
-  failed: '未完成',
-  cancelled: '已停止',
-  cancelled_with_unknowns: '已停止，后台状态待确认',
-};
-
-function RoomPhaseContinuity({
-  dispatches,
-  finalReplyVisible,
-  root,
-  sharedCheckVisible,
-  tasks,
-}: {
-  dispatches: RoomKernelProjection['dispatchesById'][string][];
-  finalReplyVisible: boolean;
-  root: RootProjection;
-  sharedCheckVisible: boolean;
-  tasks: RoomTaskV3[];
-}) {
-  const individualTasks = tasks.filter((task) => task.taskKind !== 'review');
-  const reviewTasks = tasks.filter((task) => task.taskKind === 'review');
-  const completedTasks = individualTasks.filter((task) => task.state === 'completed').length;
-  const completedReviews = reviewTasks.filter((task) => task.state === 'completed').length;
-  const completedAllTasks = tasks.filter((task) => task.state === 'completed').length;
-  const settledDispatches = dispatches.filter((dispatch) => (
-    ['committed', 'dead_letter', 'failed', 'cancelled'].includes(dispatch.state)
-  )).length;
-  const activeDispatches = Math.max(0, dispatches.length - settledDispatches);
-  return <section
-    aria-label="当前协作阶段"
-    className="room-status-phase"
-    data-phase={finalReplyVisible ? 'final-reply' : sharedCheckVisible ? 'shared-check' : 'parallel-work'}
-  >
-    <header>
-      <span><small>当前阶段</small><strong>{finalReplyVisible
-        ? '最终回复已送达'
-        : sharedCheckVisible
-          ? '一起检查'
-          : '各自工作'}</strong></span>
-      <i>{finalReplyVisible ? '已结束' : ROOM_STATUS_ROOT_STATE_LABELS[root.state]}</i>
-    </header>
-    <dl className="room-status-phase__summary" aria-label="整体任务与分工进度">
-      <div><dt>整体任务</dt><dd>{ROOM_STATUS_ROOT_STATE_LABELS[root.state]}</dd></div>
-      <div><dt>分工完成</dt><dd>{tasks.length ? `${completedAllTasks} / ${tasks.length}` : '等待安排'}</dd></div>
-      <div><dt>伙伴执行</dt><dd>{dispatches.length
-        ? activeDispatches
-          ? `${activeDispatches} 项进行中`
-          : `${settledDispatches} 项已结束`
-        : '等待开始'}</dd></div>
-    </dl>
-    <ol>
-      <li data-state={sharedCheckVisible ? 'complete' : 'current'}>
-        <span>1</span><strong>各自工作</strong><small>{individualTasks.length
-          ? `${completedTasks} / ${individualTasks.length} 项完成`
-          : '等待具体分工'}</small>
-      </li>
-      {sharedCheckVisible ? <li data-state={finalReplyVisible ? 'complete' : 'current'}>
-        <span>2</span><strong>一起检查</strong><small>{finalReplyVisible
-          ? '检查已结束'
-          : reviewTasks.length
-            ? `${completedReviews} / ${reviewTasks.length} 位伙伴完成检查`
-            : '等待伙伴开始检查'}</small>
-      </li> : null}
-      {finalReplyVisible ? <li data-state="complete">
-        <span>3</span><strong>最终回复</strong><small>公开结果已送达</small>
-      </li> : null}
-    </ol>
-  </section>;
-}
-
-const ROOM_REVIEW_STATE_LABELS: Record<RoomTaskV3['reviewState'], string> = {
-  not_required: '无需复核',
-  required: '等待复核',
-  in_review: '复核中',
-  accepted: '已通过',
-  accepted_with_notes: '有建议，通过',
-  changes_requested: '需要修正',
-  disputed: '存在申诉',
-  escalated: '已升级',
-  stale: '结果已过期',
-};
-
-const ROOM_FINDING_STATE_LABELS: Record<ReviewFinding['state'], string> = {
-  open: '待处理',
-  resolved: '已修正',
-  dismissed: '已驳回',
-  accepted_risk: '已接受风险',
-  contested: '申诉中',
-  escalated: '已升级',
-};
-
-function RoomReviewLedger({
-  room,
-  tasks,
-}: {
-  room?: RoomSummary;
-  tasks: RoomTaskV3[];
-}) {
-  return <div className="room-review-ledger">
-    {tasks.map((task) => {
-      const reviewer = room?.participants.find((participant) => (
-        participant.id === task.currentOwnerParticipantId
-      ))?.displayName ?? '独立复核伙伴';
-      const findings = task.reviewFindings ?? [];
-      return <article
-        className="room-review-ledger__task"
-        data-state={task.reviewState}
-        key={task.taskId}
-      >
-        <header>
-          <span>
-            <strong>{reviewer}</strong>
-            <small>第 {task.reviewRound ?? 1} 轮 · 核对 {task.reviewOfTaskIds.length} 项结果</small>
-          </span>
-          <em>{roomReviewStateLabel(task)}</em>
-        </header>
-        {findings.length ? (
-          <div className="room-review-ledger__findings">
-            {findings.map((finding) => (
-              <RoomReviewFinding finding={finding} key={finding.findingId} />
-            ))}
-          </div>
-        ) : (
-          <p className="room-review-ledger__empty">
-            {task.reviewState === 'changes_requested' && task.state === 'active'
-              ? '负责人正在按复核意见返修，已有发现与回应继续保留。'
-              : task.reviewState === 'in_review' && (task.reviewRound ?? 1) > 1
-                ? '复核伙伴正在重新检查返修后的结果。'
-                : task.reviewState === 'accepted'
-                  ? '本轮没有需要记录的问题。'
-                  : '复核伙伴正在检查已集成结果。'}
-          </p>
-        )}
-      </article>;
-    })}
-  </div>;
-}
-
-function roomReviewStateLabel(task: RoomTaskV3): string {
-  if (task.reviewState === 'changes_requested' && task.state === 'active') return '返修中';
-  if (task.reviewState === 'in_review' && (task.reviewRound ?? 1) > 1) return '重新复核';
-  return ROOM_REVIEW_STATE_LABELS[task.reviewState];
-}
-
-function RoomReviewFinding({ finding }: { finding: ReviewFinding }) {
-  const criterionId = text(finding.scope.criterionId);
-  const invariantId = text(finding.scope.invariantId);
-  const scope = criterionId
-    ? `验收项 ${criterionId}`
-    : invariantId
-      ? `系统约束 ${invariantId}`
-      : '整体结果';
-  return <article
-    className="room-review-finding"
-    data-effect={finding.gateEffect}
-    data-state={finding.state}
-  >
-    <header>
-      <span>{finding.gateEffect === 'blocking' ? '阻断' : '建议'}</span>
-      <strong>{finding.findingId}</strong>
-      <i>{ROOM_FINDING_STATE_LABELS[finding.state]}</i>
-    </header>
-    <p>{finding.observation}</p>
-    <dl>
-      <div><dt>范围</dt><dd>{scope}</dd></div>
-      <div><dt>应该</dt><dd>{finding.expected}</dd></div>
-      <div><dt>影响</dt><dd>{finding.userImpact}</dd></div>
-    </dl>
-    {finding.dispositionRationale ? (
-      <p className="room-review-finding__disposition">
-        <strong>处理说明</strong>{finding.dispositionRationale}
-      </p>
-    ) : null}
-    {finding.response ? (
-      <p className="room-review-finding__response" data-action={finding.response.action}>
-        <strong>{finding.response.action === 'fixed' ? '修正回应' : '申诉回应'}</strong>
-        {finding.response.rationale}
-      </p>
-    ) : null}
-    <details>
-      <summary>查看复现与证据</summary>
-      <ol>{finding.reproduction.map((step, index) => <li key={`${finding.findingId}:step:${index}`}>{step}</li>)}</ol>
-      <ul>{finding.evidenceRefs.map((ref) => <li key={ref}><code>{ref}</code></li>)}</ul>
-    </details>
-  </article>;
-}
-
-function RoomFinalPublicReply({
-  post,
-  room,
-}: {
-  post: RoomKernelProjection['postsById'][string];
-  room?: RoomSummary;
-}) {
-  const author = room?.participants.find((participant) => (
-    participant.id === post.authorActorRef || participant.displayName === post.authorActorRef
-  ))?.displayName ?? (post.authorActorRef.includes(':') ? '协作伙伴' : post.authorActorRef);
-  return <section aria-live="polite" className="room-status-final-reply">
-    <header>
-      <CircleDashed size={16} />
-      <span><small>最终回复</small><strong>{author}</strong></span>
-      <time dateTime={new Date(post.createdAtMs).toISOString()}>
-        {roomStatusTimeFormatter.format(new Date(post.createdAtMs))}
-      </time>
-    </header>
-    <p>{post.content}</p>
-  </section>;
-}
-
 function RoomParticipantPublicLanes({
   progress,
   room,
-  tasks,
   workItems,
 }: {
   progress: RoomParticipantPublicProgressProjection[];
   room?: RoomSummary;
-  tasks: RoomTaskV3[];
   workItems: RoomWorkItem[];
 }) {
   const feedRef = useRef<HTMLDivElement>(null);
@@ -634,28 +293,11 @@ function RoomParticipantPublicLanes({
         work.currentOwnerParticipantId === participant?.id
         || work.offeredToParticipantId === participant?.id
       ));
-      const ownedTasks = tasks.filter((task) => (
-        task.currentOwnerParticipantId === participant?.id
-        && task.taskKind !== 'report'
-      ));
-      const responsibilities = tasks.length
-        ? ownedTasks.map((task) => ({
-            id: task.taskId,
-            objective: task.objective,
-            state: roomTaskStateLabel(task.state),
-          }))
-        : ownedWork.map((work) => ({
-            id: work.id,
-            objective: work.objective,
-            state: roomWorkStateLabel(work.state),
-          }));
-      const state = roomParticipantTaskState(ownedTasks)
-        ?? latestUpdate?.status
-        ?? (participant?.status === 'active' ? 'idle' : 'waiting');
+      const state = latestUpdate?.status ?? (participant?.status === 'active' ? 'idle' : 'waiting');
       const role = participant
         ? roomCollaborationRoleLabel(participant.collaborationRole)
         : '角色信息同步中';
-      const hasPublicWork = responsibilities.length > 0 || latestUpdate !== undefined;
+      const hasPublicWork = ownedWork.length > 0 || latestUpdate !== undefined;
       const roleSummary = participant
         ? `${role} · ${hasPublicWork
           ? roomCollaborationRoleDescription(participant.collaborationRole)
@@ -680,9 +322,9 @@ function RoomParticipantPublicLanes({
         </header>
         <div className="room-status-public-lane__work">
           <strong>当前分工</strong>
-          {responsibilities.length ? <ul>{responsibilities.map((work) => <li key={work.id}>
+          {ownedWork.length ? <ul>{ownedWork.map((work) => <li key={work.id}>
             <span>{work.objective}</span>
-            <small>{work.state}</small>
+            <small>{roomWorkStateLabel(work.state)}</small>
           </li>)}</ul> : <p>这位伙伴暂时没有单独分到的部分</p>}
         </div>
         <div className="room-status-public-lane__updates">
@@ -703,17 +345,6 @@ function RoomParticipantPublicLanes({
       </article>;
     })}
   </div>;
-}
-
-function roomParticipantTaskState(
-  tasks: RoomTaskV3[],
-): RoomParticipantPublicProgressProjection['status'] | undefined {
-  if (tasks.some((task) => task.state === 'active')) return 'running';
-  if (tasks.some((task) => ['pending', 'review', 'waiting'].includes(task.state))) return 'waiting';
-  if (tasks.some((task) => ['blocked', 'failed'].includes(task.state))) return 'failed';
-  if (tasks.some((task) => task.state === 'cancelled')) return 'aborted';
-  if (tasks.length && tasks.every((task) => task.state === 'completed')) return 'completed';
-  return undefined;
 }
 
 function RoomParticipantTelemetry({ participant }: { participant: NonNullable<RoomSummary['participants']>[number] }) {
@@ -1054,19 +685,6 @@ function roomWorkStateLabel(state: RoomWorkItem['state']): string {
     review: '一起检查',
     blocked: '已阻塞',
     done: '已完成',
-    failed: '未完成',
-    cancelled: '已取消',
-  }[state];
-}
-
-function roomTaskStateLabel(state: RoomTaskV3['state']): string {
-  return {
-    pending: '等待开始',
-    active: '执行中',
-    review: '正在复核',
-    waiting: '等待前置',
-    blocked: '已阻塞',
-    completed: '已完成',
     failed: '未完成',
     cancelled: '已取消',
   }[state];

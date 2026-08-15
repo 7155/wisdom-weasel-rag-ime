@@ -220,6 +220,18 @@ export function reduceRoomEvent(
   next.resumeToken = event.resumeToken;
   const payload = publicRoomPayload(event.payload);
 
+  if (isUnroutedParticipantSessionEvent(next, event, payload)) {
+    appendDiagnostic(next, {
+      id: `${event.eventId}:unrouted-session-event`,
+      streamKind: 'room',
+      eventType: 'unrouted_participant_session_event',
+      summary: 'An ordinary participant Session event was ignored because no Room dispatch owns it.',
+      sequence: event.sequence,
+      payload,
+    });
+    return { state: next, disposition: 'applied' };
+  }
+
   if (isExecutionEventAfterRootTerminal(next, event, payload)) {
     appendDiagnostic(next, {
       id: `${event.eventId}:after-root-terminal`,
@@ -248,6 +260,17 @@ export function reduceRoomEvent(
     case 'route_decision':
     case 'participant_status':
     case 'participant_activity':
+      // A temporary subagent also publishes detached lifecycle receipts so
+      // its own projection can refresh. The rooted `agents` Tool activity is
+      // already present in the Partner lane; turning this duplicate receipt
+      // into an `unscoped` Room turn leaves the Room permanently busy after a
+      // refresh.
+      if (
+        event.eventType === 'participant_activity'
+        && !event.turnId
+        && text(payload.sourceEventType) === 'tool_progress'
+        && text(payload.toolCallId).startsWith('subagent:')
+      ) break;
       upsertActivity(next, event, payload);
       break;
     case 'turn_completed':
@@ -1183,8 +1206,9 @@ function markPublishedDispatchTerminal(
       }
     }
   }
-  // Publishing settles one Dispatch lane. Only the participant-less Root
-  // terminal event may unlock the whole turn.
+  // Publishing settles one historical room_commit lane. Pi-composed Session
+  // terminals settle the Root only after every known Dispatch is terminal;
+  // publication alone never unlocks the whole turn.
   turn.updatedAtMs = Math.max(turn.updatedAtMs, post.createdAtMs);
 }
 
@@ -1457,6 +1481,24 @@ function upsertActivity(
   if (participantId && !turn.participantIds.includes(participantId)) {
     turn.participantIds.push(participantId);
   }
+  const childTerminalStatus = text(payload.phase || payload.status);
+  if (
+    text(payload.activityKind) === 'child'
+    && dispatchId
+    && ['completed', 'failed', 'aborted'].includes(childTerminalStatus)
+  ) {
+    completeParticipantTurn(
+      state,
+      event,
+      dispatchId,
+      childTerminalStatus as Extract<
+        RoomTurnProjection['status'],
+        'completed' | 'failed' | 'aborted'
+      >,
+      event.createdAtMs,
+      text(payload.error),
+    );
+  }
   if (isCompletedRoomLifecycle) {
     completeTurn(state, event.turnId, 'completed', event.createdAtMs);
   }
@@ -1706,9 +1748,31 @@ function completeParticipantTurn(
     };
   }
   settleTurnActivities(state, turn, status, nowMs, participantId, dispatchId);
-  // A participant/Dispatch terminal only settles its execution lane. The
-  // participant-less Root terminal remains the sole input-unlock authority.
-  turn.status = 'running';
+  settleRootWhenAllDispatchesTerminal(state, turn, nowMs);
+}
+
+function settleRootWhenAllDispatchesTerminal(
+  state: RoomProjectionState,
+  turn: RoomTurnProjection,
+  nowMs: number,
+): void {
+  const dispatchIds = turn.dispatchIds ?? [];
+  const terminalDispatchIds = new Set(turn.terminalDispatchIds ?? []);
+  if (
+    dispatchIds.length === 0
+    || !dispatchIds.every((dispatchId) => terminalDispatchIds.has(dispatchId))
+  ) {
+    turn.status = 'running';
+    return;
+  }
+  const failedDispatchIds = new Set(turn.failedDispatchIds ?? []);
+  const abortedDispatchIds = new Set(turn.abortedDispatchIds ?? []);
+  const status = dispatchIds.some((dispatchId) => failedDispatchIds.has(dispatchId))
+    ? 'failed'
+    : dispatchIds.some((dispatchId) => abortedDispatchIds.has(dispatchId))
+      ? 'aborted'
+      : 'completed';
+  completeTurn(state, turn.id, status, nowMs, turn.failure);
 }
 
 function completeTurn(
@@ -1951,6 +2015,25 @@ function isExecutionEventAfterRootTerminal(
   const post = record(payload.post);
   const rootId = text(payload.rootId) || text(post.rootId) || event.turnId;
   return state.turnsById[rootId]?.rootTerminalAtMs != null;
+}
+
+function isUnroutedParticipantSessionEvent(
+  state: RoomProjectionState,
+  event: UiRoomEvent,
+  payload: Record<string, unknown>,
+): boolean {
+  if (![
+    'participant_delta',
+    'participant_message',
+    'participant_status',
+    'participant_activity',
+    'turn_completed',
+    'turn_failed',
+  ].includes(event.eventType)) return false;
+  if (!event.participantId || !event.turnId) return false;
+  if (!text(payload.sourceEventId) || text(payload.dispatchId)) return false;
+  const rootId = text(payload.rootId) || event.turnId;
+  return state.turnsById[rootId] == null;
 }
 
 function publicRoomPayload(value: unknown): Record<string, unknown> {

@@ -965,64 +965,10 @@ class ControlRoutePolicyTests(unittest.TestCase):
             ),
         )
 
-    def test_room_typed_start_requires_root_and_idempotency_identity(self) -> None:
-        request = ControlRequest(
-            request_id="request-room-start",
-            path_id=ControlPathId.AGENT_ROOM_START_EXECUTION.value,
-            params={"roomId": "room-1"},
-            body={
-                "action": "start_execution",
-                "rootId": "room-root:1",
-                "clientActionId": "room-start:1",
-            },
-        )
-        self.policy.authorize(request, ControlAccessContext.native())
-        remote = ControlAccessContext.remote(
-            device_id="phone-1",
-            scopes={ControlScope.AGENT_WRITE.value},
-        )
-        self.policy.authorize(request, remote)
-
-        for body in (
-            {"action": "start_execution", "rootId": "room-root:1"},
-            {
-                "action": "start_execution",
-                "rootId": "room-root:1",
-                "clientActionId": "room-start:1",
-                "dispatchId": "must-not-be-client-selected",
-            },
-        ):
-            with self.subTest(body=body), self.assertRaises(ControlApiError):
-                self.policy.authorize(
-                    ControlRequest(
-                        request_id="request-room-start-invalid",
-                        path_id=ControlPathId.AGENT_ROOM_START_EXECUTION.value,
-                        params={"roomId": "room-1"},
-                        body=body,
-                    ),
-                    ControlAccessContext.native(),
-                )
-
-        with self.assertRaises(ControlApiError):
-            self.policy.authorize(
-                ControlRequest(
-                    request_id="request-room-start-wrong-action",
-                    path_id=ControlPathId.AGENT_ROOM_START_EXECUTION.value,
-                    params={"roomId": "room-1"},
-                    body={
-                        "action": "skip_alignment",
-                        "rootId": "room-root:1",
-                        "clientActionId": "room-start:1",
-                    },
-                ),
-                remote,
-            )
-
-    def test_running_participant_steer_requires_exact_binding_fields(self) -> None:
+    def test_running_participant_steer_requires_exact_control_fields(self) -> None:
         body = {
             "action": "steer_participant",
             "rootId": "room-root:1",
-            "expectedGeneration": 3,
             "participantId": "participant:worker",
             "clientActionId": "room-steer:1",
             "message": "补充这一项验收。",
@@ -1041,7 +987,8 @@ class ControlRoutePolicyTests(unittest.TestCase):
         self.policy.authorize(request, remote)
 
         for invalid in (
-            {key: value for key, value in body.items() if key != "participantId"},
+            {key: value for key, value in body.items() if key != "message"},
+            {key: value for key, value in body.items() if key != "clientActionId"},
             {**body, "dispatchId": "client-must-not-select-dispatch"},
             {**body, "action": "start_execution"},
         ):

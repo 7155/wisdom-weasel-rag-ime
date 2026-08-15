@@ -40,22 +40,11 @@ Agent path
     -> durable observations, receipts, and Session history
 
 Room path
-  opening user bytes
-    -> immutable RequirementAnchor + explicit-user RequirementItem with source span
-    -> default or opening-@ Facilitator -> align Dispatch
-    -> stage-resident alignment-and-decision Skill
-    -> no clarification: direct definition/action intent
-    -> clarification needed: one question/user-message resume at a time
-       -> aligned summary -> chronological 开始行动
-    -> room_define atomically fences intake and binds one catalog revision
-    -> new Facilitator ExecuteDispatch + implementation-execution Skill
-  -> Facilitator decomposition/assignment -> bounded peer Worker Dispatches
-  -> Facilitator integration -> optional distinct review -> Kernel settlement
-  -> one ReportDispatch -> facilitator/reporter-only public summary
-  -> reporter receipt + runtime quiescence -> completed
-
-Participant Session/Dispatch ownership is separate from filesystem roots. Each
-participant acts only through its bound workspace harness and evidence receipts.
+  user Room message -> coordinator Pi Session
+  -> optional room_partner -> partner Pi Session
+  -> optional agents -> private Tool Agent Session
+  -> child/partner event result -> coordinator integration
+  -> one coordinator final + Root terminal event
 
 optional input path
   keyboard
@@ -64,248 +53,98 @@ optional input path
     -> local sidecar /api/rime-suggest
     -> local completion + governed retrieval
     -> source-aware assistant overlay
-
-The Facilitator decides whether review is warranted; the Kernel owns any review
-handoff and delivery settlement. Model prose, a filesystem path, or a
-participant's private Session cannot settle a Root.
 ```
 
-### Room Collaboration
+### Light Room Collaboration
+
+Room composes existing Pi Sessions; it is not a second Agent loop and it does
+not put a document or Kernel quality gate between a participant and Pi.
 
 ```text
-opening user bytes
-  -> RequirementAnchor + explicit-user RequirementItem with source span
-  -> default/opening-@ Facilitator + align Dispatch
-  -> required alignment-and-decision Skill
-  -> no material choice: define directly
-  -> material choice: room_commit(wait) -> chronological user answer(s)
-     -> aligned summary -> 开始行动
-  -> room_define (idempotent catalog/work binding + intake fence)
-  -> new Facilitator ExecuteDispatch + implementation-execution Skill
-  -> Facilitator chooses one Worker or independent bounded children
-  -> Worker evidence -> Facilitator-owned integration workspace
-  -> optional distinct Reviewer handoff after integration
-  -> work quiescence -> one ReportDispatch -> facilitator-only final
-  -> reporter receipt + runtime quiescence -> completed
+user Room message
+  -> durable Room user event + one public Root
+  -> coordinator participant's Pi Session
+  -> optional room_partner dispatch
+     -> partner participant's Pi Session
+     -> optional agents Tool child Session
+        -> bounded child event/result back to the parent Session
+     -> partner terminal event back to the same Root
+  -> coordinator integrates the returned evidence
+  -> one coordinator final + one Root terminal event
 ```
 
-Personal Agent Workbench is the authority for this sequence: its Room Kernel,
-Room contracts, durable snapshots/events, and managed Pi Skills define the
-state transitions and public/private boundary. The sequence is intentionally
-not a model-only checklist. The opening user bytes remain immutable evidence,
-and later user answers append anchors/items under the same Root.
+Pi continues to own transcript persistence, model and Tool loops, context
+compaction, Steer, Stop, and Session recovery. Room adds only the collaboration
+facts that Pi does not own: Room and participant identity, topic, explicit
+dispatches, ordered public events, cancellation fan-out, and one terminal Root.
+`RoomTurnRegistry` is the small causal bridge between a private Pi turn and
+its public Room Root. It buffers events until the Pi turn id is acknowledged
+and rejects every participant Session event that has no accepted Room dispatch.
+Membership alone never makes an ordinary Session turn public.
 
-The align Dispatch requires the governed `alignment-and-decision` Skill. It
-first inspects reachable facts and may conclude that no material user choice is
-missing; in that branch the opening request authorizes action without another
-confirmation. During material clarification, `room_commit(wait,
-waitingFor=user)` publishes one structured question (and optional choices).
-While that wait is pending, the next ordinary user Room message is the answer:
-it appends one source anchor/item revision, publishes the chronological user
-post, and resumes at most once for `(rootId, questionId, answerRevision)`. The
-same Root may resume for later questions. After the final answer, the
-Facilitator summarizes the result and waits for the chronological user message
-`开始行动`. `room_post` is not a second clarification channel.
+#### Participant and child boundaries
 
-Only the active align authority may call `room_define`, after the existing Tool
-discovery path has disclosed and loaded it. The call is atomic and idempotent:
-it creates or confirms the immutable RequirementCatalog revision, binds final
-requirements and observable acceptance criteria to the existing Root/Task,
-creates or confirms one facilitator-accountable root WorkItem, completes and
-fences the intake Dispatch, and records the transition receipt. The Kernel then
-creates a new Facilitator ExecuteDispatch with a new lease/capability epoch. Its
-managed Pi Session requires `implementation-execution`; the old align Dispatch
-never gains execute Tools and late calls fail closed.
+- **Coordinator:** a normal Room participant Session. It decides whether to
+  delegate, integrates partner results, decides whether review is useful, and
+  produces the user-facing final.
+- **Partner:** another normal Room participant Session reached through
+  `room_partner`. It can read or write according to its Session/workspace
+  configuration and returns progress and a terminal result as Room events.
+- **Tool Agent:** a private child Session reached through `agents`. The parent
+  chooses read-only or write access, model profile, thinking level, tool
+  allowlist, and whether Pi/Codex skills are enabled. The child result returns
+  to the parent; it does not become a second Room participant.
+- **Optional reviewer:** either a Partner or Tool Agent selected by the
+  coordinator when risk warrants it. Review is not a mandatory Kernel gate.
 
-After that definition/ExecuteDispatch transition, the Facilitator owns decomposition, assignment,
-reassignment, dependency handling, integration, and the final report:
+Live children in the same delegation tree may call each other directly. The
+delegation coordinator verifies that both runs share the same tree and delivers
+the message through Pi Steer. Maximum child depth remains two. Child status,
+timeout, output budget, cancellation, and retained terminal result belong to
+`AgentDelegationCoordinator` and remain separate from Room terminal state.
 
-- Keep a small coherent change with one Implementer. Create multiple child
-  WorkItems only when at least two slices are genuinely independent, have no
-  unmet prerequisite, and parallel execution materially reduces waiting.
-  Dependencies remain explicit; dependent slices stay serial.
-- Use directed Kernel Dispatches for assignments to existing Room members.
-  Do not use round-robin selection, free-text `@` mentions, or an unannounced
-  roster expansion as assignment authority. A Worker may reject an assignment
-  with a structured reason; the Facilitator repairs or reassigns it.
-- `room_collaborate` is only the bounded, non-overlapping implementation-child
-  path after definition and handoff. It is never intake fanout, assignment
-  by mention, review, or a substitute for a Kernel handoff.
-- Read-only work may share a Root baseline. Concurrent writable Workers need
-  separately receipted isolated workspaces based on that baseline, while one
-  Facilitator-owned workspace is the authoritative integration point. Do not
-  infer isolation or automatic Git worktree cloning from a path.
-- Workers return artifacts and evidence to the Facilitator. The Facilitator
-  integrates accepted results before any review decision. Review is risk-based:
-  if warranted, the Kernel hands the existing WorkItem to a distinct
-  participant after integration; the reviewer cannot review its own or the
-  Integrator's work, and failure returns the WorkItem for repair. Review is not
-  mandatory for every task.
-- The Kernel validates evidence, permissions, terminal receipts, and work
-  quiescence before reporting. Integration evidence satisfies the delivery
-  gate when review is not chosen; a chosen review additionally requires the
-  distinct Reviewer's fresh evidence. The Kernel creates one read-only
-  ReportDispatch; only the facilitator/reporter emits the final public summary.
-  A reporter receipt and runtime quiescence are required before completion.
+#### Context harness and skills
 
-Root quiescence includes more than native Room Dispatches. The application
-aggregates every causal child keyed by `rootId`, `generation`, and optional
-`dispatchId`: nested delegation runs and governed `workspace_job` processes
-must both be terminal before finalization. An active or unknown child fails the
-terminal fence closed. Root cancellation fans out one idempotent request to
-each owner, preserves pending/unknown surfaces in the cancellation receipt, and
-generation-fences late output so it cannot revive stopped work.
-
-Managed Pi exposes the minimum responsibility loop (`room_state`, `room_post`,
-and `room_commit`) before the first Room model call. The Kernel Dispatch intent
-also selects exactly one required stage-resident Skill: alignment for align,
-implementation for execute/resume, independent review for review, quality gate
-for close, and structured handoff for handoff. The exact Skill hash and
-Root/Task/Dispatch/Session/capability epoch are pinned in a load receipt; an idle
-Session reopens when the required Skill changes, and compaction recovery verifies
-the same pin. Other product Tools,
-including `room_define`, `room_collaborate`, workspace operations, and
-`workspace_job`, stay behind the shared `tool_search`/`tool_load` registry and
-its policy receipts. Tool cards and Provider schemas are a source union:
-loading a Tool changes disclosure state but must not make sibling built-ins
-disappear.
-
-Participant Sessions and Dispatches are ownership records, not filesystem
-roots. Each participant may act only through its own bound workspace harness
-and disclosed workspace Tools, with accepted evidence receipts proving effects.
-Private Session reasoning, internal references, and participant details remain
-private; only eligible public receipts, material progress, and the final
-reporter summary enter the public Room timeline. A failed, stale, foreign,
-unauthorized, or duplicate Tool request must fail closed and must not create
-replacement Roots, Tasks, WorkItems, catalogs, or routes.
-
-#### Three-tier delegation boundaries
-
-The product has three deliberately different execution tiers:
-
-- **Facilitator/reporter:** a Room participant Session that coordinates the
-  current Root, keeps assignment, integration, review, and final-report
-  responsibility, and is the only Room owner of a user-facing question.
-- **Room partner Session:** a durable participant owned by the Room lifecycle
-  and Kernel Dispatch binding. It owns an accountable public subtask and may
-  publish eligible progress, evidence, and handoffs, but its Session transcript
-  and reasoning remain private.
-- **Nested subagent:** a bounded private child Session owned by the parent
-  delegation batch/run. It is not a Room participant, cannot own or settle a
-  Root/Task, and cannot publish private history. Its terminal result is handed
-  back to the parent as evidence; the parent must verify and integrate it.
-
-The bounded three-tier route is Facilitator -> Room partner (slice lead) ->
-a bounded nested batch when a smaller check is useful. Each batch accepts one
-or two tasks and depth is at most two; the selected role/profile determines
-read-only versus Worker capabilities, with Worker writes still subject to
-existing approval and workspace-isolation rules. This is distinct from the
-Room's own WorkItem graph: a partner can be reassigned or cancelled by the
-Kernel, whereas a child run is aborted through the delegation coordinator or
-its parent lifecycle. Late child output is fenced and cannot revive cancelled
-Room work; a retained stopped child can only be controlled by its parent
-Session.
-
-| Boundary | Authoritative owner | State exposed to the Room |
-| --- | --- | --- |
-| Facilitator/reporter Session | Room Kernel lifecycle plus the facilitator participant | Coordination decisions, accepted evidence, integration, review decision, and one final report |
-| Room partner Session | Room participant lifecycle, bound Dispatch, and the partner's workspace harness | Eligible progress, accepted evidence, handoffs, and terminal outcome; private transcript remains private |
-| Nested child Session | `AgentDelegationCoordinator`/`AgentDelegationStore` and the child runtime | Bounded task/result/error state returned to the parent; no private transcript or Room lifecycle authority |
-
-The delegation data flow is:
+A Tool Agent receives a bounded one-time brief, not the entire Room history:
 
 ```text
-parent Session
-  -> POST /api/agent/subagents/runs
-  -> AgentDelegationCoordinator
-  -> durable batch/run records + private child Session
-  -> managed Pi runtime
-  -> terminal result (inline or next-turn context)
-  -> AgentContextRuntime -> parent Session
-  -> explicit parent verification/integration
-  -> Room causal task projection when roomBound=true
+task + expected output + acceptance criteria
++ optional output schema
++ selected project/Room facts
++ access and allowed tools
++ model/thinking profile
++ contextMode=fresh|fork
++ Pi/Codex skill enablement
 ```
-`GET /api/agent/subagents/runs?sessionId=...` is a bounded status/list
-projection for the parent Session; it is not the delegation creation path.
 
-`fresh` is the independent-context choice, including an independent review.
-`fork` is permitted only when the parent's managed Pi transcript prefix
-materially helps and prefix/cache reuse is valuable. It uses the exact managed
-prefix and appends a bounded child brief; it must not reorder system, model, or
-Tool prompt layers merely to personalize a branch. Both modes preserve the
-private child boundary.
+`fresh` starts with the brief and selected facts. `fork` reuses the exact
+managed parent transcript prefix and appends the same bounded brief. Skills may
+shape how a child works, but their checklists are not Room terminal gates. The
+parent decides which requirements apply, verifies the returned evidence, and
+owns any real integration.
 
-Room partners and nested children do not open competing native Ask prompts. A
-Room partner uses `room_commit(wait)` for its assigned Room work; a nested
-child has no Room authority and returns only a structured blocker to its
-parent. The Facilitator/Reporter decides whether to publish a Room wait. A
-standalone parent Session outside a Room may merge one to four independent
-material questions into native Ask; dependent questions remain separate.
+Shared writable workspaces are allowed when the parent selects ordinary write
+access. An isolated worktree is optional for genuinely concurrent conflicting
+writes, not a requirement for every child. Durable Project/Outcome/Run
+documents, Boundary Revision, shared-resource leases, and automatic
+ChangeManifest remain deferred; none is required for Room to finish.
 
-`workspace_lsp` is constrained by Session role/profile and authorized
-workspace roots. Read-only templates may use status, symbols, hover,
-definition, references, and diagnostics. A writable Worker may request
-`rename` or `code_action_apply` only through the existing hash-bound approval
-path; the Worker must inspect references before an exported-symbol change. A
-read-only child profile does not acquire write operations.
+#### Public projection
 
-Managed nested delegation accepts one or two tasks per batch and enforces
-delegation depth at most two. Per-run budget, timeout, output, and cancellation
-state remain separate from Room settlement. These limits apply to the
-delegation batch, not to the number of Room participants or WorkItems.
+The public Room stream contains the user Root, route/dispatch receipts, bounded
+participant progress, public messages, and terminal events. Private reasoning,
+child transcripts, Tool arguments, raw Tool results, and direct participant
+Session turns stay in their owning Session.
 
-Room-bound delegated batches are not a second Room lifecycle. Their
-`causalMetadata` carries `roomBound`, `roomId`, `rootId`, `taskId`, and
-`dispatchId`; `taskId` is the grouping key for a nested-run projection under
-the existing Room task. A normal task view may expose template, ordinal, task,
-state, budget, result/error, and timing, but not protocol IDs, child transcript
-content, or private reasoning. The Web view contract names each row
-`RoomTaskSubagentRun` and groups rows under `subagentsByTaskId`.
-The Room Kernel snapshot/event stream remains
-authoritative for Room task and settlement state; the
-`AgentDelegationStore`/status API remains authoritative for nested run state.
-The UI joins the two read models by `taskId` and cannot infer, settle, or
-cancel Room lifecycle from a child result.
+The Control Center conversation and task views reduce the same ordered Room
+snapshot/SSE stream. The task view projects real public Roots and their
+participants/tool steps; explicit `workItems` are optional additive records.
+It must not show an empty task page while a Root is running, and it must not
+infer a running Root from an unrelated participant Session.
 
-#### Reference-only mechanism comparison: local Cat Cafe
-
-The local `clowder-ai` Cat Cafe reference checkout is a reference for
-mechanism-level lessons only. Personal Agent Workbench remains the authority.
-Cat Cafe is not a dependency, and none of its protocol names, IDs,
-reducer/source code, schemas, or routes are copied into this project.
-
-| Cat Cafe mechanism inspected | Useful lesson for Workbench | Explicit non-copy boundary |
-| --- | --- | --- |
-| `packages/api/src/domains/cats/services/agents/invocation/InvocationQueue.ts`: per-thread/per-user queue ownership, FIFO/priority ordering, replay idempotency, capacity and stale-processing handling | Make the Room wait/resume owner explicit, deduplicate a repeated answer or handoff by receipt, and keep bounded work from being mistaken for active work merely because text exists | Do not import its queue keys, entry IDs, source categories, limits, or queue implementation |
-| `packages/web/src/stores/bubble-reducer.ts`: event validation, stable semantic identity, deterministic fallback, monotonic upgrades, and quarantine when identity is ambiguous | Derive the Control Center from authoritative snapshots/events, preserve deterministic projection, and reject ambiguous or stale events instead of guessing a merge | Do not copy its reducer, bubble IDs, event schema, message kinds, or frontend source |
-| `docs/features/F123-bubble-runtime-correctness.md` and `F173-frontend-message-pipeline-unification.md`: one thread-runtime writer/truth source, replay fixtures, and explicit liveness reconciliation | Keep Room lifecycle state in the Kernel and make documentation fixtures exercise source/order/ownership invariants rather than model prose or duplicated client state | Do not transplant its thread protocol, dual-ID scheme, reducer helpers, or store architecture |
-| `docs/features/F225-cat-initiated-session-handoff.md`: typed handoff evidence before an irreversible seal, commit-point recovery-forward, idempotent continuation, and stale-note isolation | Treat handoff as a receipt-backed ownership transfer; preserve evidence before transfer, recover forward after accepted irreversible effects, and keep stale evidence from becoming current | Do not reuse its proposal shape, seal reasons, session IDs, continuation keys, or recovery code |
-| `docs/SOP.md` reviewer pairing and merge-gate rules: non-author reviewer, explicit availability/role checks, and review before close | When the Facilitator judges review warranted, require a distinct participant, route review through the Kernel after integration, and accept a delivery recommendation only from that reviewer's evidence; otherwise use integration evidence plus Kernel gates | Do not copy Cat Cafe family names, roster IDs, GitHub/PR workflow, or merge commands |
-
-These comparisons inform boundaries and fixtures only. They do not authorize
-Cat Cafe-derived lifecycle behavior, automatic worktree creation, or a second
-Room protocol.
-
-`rag_ime/agent_room_kernel.py` and its focused application services own the
-durable Root, Task, Dispatch, requirement-anchor/catalog, WorkItem, lease,
-dependency, generation, and settlement state. `RoomTurnRegistry` owns
-bookkeeping mutations and shares its turn-exclusion lock with lifecycle
-operations that must remain atomic with “no new turn may start.” Pi Runtime
-executes a leased Dispatch and reports bounded events and receipts; it does not
-decide that the Root is complete. Participant text is evidence for settlement,
-not a terminal-state write.
-
-The Facilitator may keep one coherent implementation path or decompose the
-governed WorkItem into child WorkItems. Parallel children are allowed only
-when their responsibilities are non-overlapping, no dependency is unfinished,
-and parallelism materially reduces waiting; this is the sole bounded
-`room_collaborate` use. One Facilitator-owned workspace integrates accepted
-Worker results. A Dispatch with `dependsOnDispatchIds` remains fenced until
-every required predecessor has an accepted result. The Facilitator decides
-whether post-integration review is warranted; if selected, the Kernel hands
-off to a distinct Reviewer and a failed review returns to repair. Generation,
-attempt, cancellation, stale receipt, and late-result fences prevent an old
-participant response from reviving a failed or cancelled Root.
+Historical `room_kernel_*` SQLite migrations remain append-only so existing
+local databases can still upgrade. They are compatibility history, not the
+current Room runtime or UI owner.
 
 | Layer | Primary source | Owns | Must not own |
 | --- | --- | --- | --- |
@@ -313,12 +152,12 @@ participant response from reviving a failed or cancelled Root.
 | Realtime sidecar | `rag_ime/rime_sidecar.py`, `rag_ime/mlx_predictor_server.py` | privacy/staleness/latency gates, local candidates, source labels, feedback | Rime decoding, remote passive generation |
 | Control transport | `rag_ime/debug_server.py`, `rag_ime/control_api/`, `control-center-web/src/platform/` | method/path matching, exposure policy, parsing, contracts, response projection | direct business-state mutation |
 | Application services | `rag_ime/management_service.py`, `rag_ime/*_application.py` | complete user use cases, preview/apply/rollback, revisions, receipts | HTTP presentation or UI state |
-| Agent runtime | `rag_ime/agent_service.py`, `rag_ime/agent_sessions.py`, `rag_ime/agent_runtime_driver.py` | Session history, prompt delivery, runtime-neutral execution | Pi private implementation details |
-| Pi adapters | `rag_ime/pi_runtime*.py` | protocol selection, Provider message projection, Pi process/host lifecycle | Room persistence or HTTP ownership |
-| Tool execution | `rag_ime/agent_tools.py`, `rag_ime/agent_room_capabilities.py` | schemas, disclosure, policy, approval, execution, terminal receipts | model-authored authority |
-| Room orchestration | `rag_ime/agent_room_kernel*.py`, `rag_ime/agent_room_turn_registry.py` | Root/Task/Dispatch, leases, settlement, evidence, turn exclusion | arbitrary transport or UI mutation |
-| Persistence | `rag_ime/local_sqlite_core.py` and focused stores | schema, transactions, outbox, authoritative local state | Provider or presentation policy |
-| UI projection | `control-center-web/src/` | queries, reducers, rendering, user intent | direct SQLite, filesystem, or Provider access |
+| Pi Session runtime | `rag_ime/agent_service.py`, `rag_ime/agent_sessions.py`, `rag_ime/pi_runtime*.py` | transcript, Agent/Tool loop, compaction, Steer, Stop, recovery | Room or Project semantics |
+| Delegation | `rag_ime/agent_delegation.py` | child Sessions, bounded context, A2A calls, child cancellation and results | Room membership or Root final |
+| Tool execution | `rag_ime/agent_tools.py` | tool schemas, policy, approval, execution, terminal receipts | model-authored authority |
+| Light Room | `rag_ime/agent_rooms.py`, `rag_ime/agent_room_turn_registry.py`, Room methods in `agent_service.py` | Room identity, participants, topics, explicit dispatch mapping, public event order, cancellation fan-out, one Root terminal | Pi loop, document quality gates, mandatory review |
+| Persistence | `rag_ime/local_sqlite_core.py` and focused stores | schema, transactions, authoritative local state | Provider or presentation policy |
+| UI projection | `control-center-web/src/contracts/room-reducer.ts`, `control-center-web/src/features/rooms/` | deterministic read model, rendering, user intent | runtime ownership or inferred completion |
 
 ## Primary Flows
 
@@ -340,42 +179,27 @@ The public Pi contract is owned by `pi_runtime_public.py` and
 `pi_runtime_values.py`. Import checks prevent protocol implementations from
 reaching into each other's private helpers.
 
-#### Control Center Room Task Projection
+#### Control Center Room Execution Projection
 
 ```text
 Room snapshot + ordered SSE events
-  -> createRoomKernelProjection
-  -> RootProjection + RoomTaskV3 + RoomDispatchEnvelopeV2
-  -> RoomTaskFlowGraph
-  -> Created -> Work item -> Participant execution -> Shared result
+  -> reduceRoomEvent
+  -> public Root, participant lanes, tools, messages and terminal fence
+  -> selectRoomExecutionOverview
+  -> conversation timeline + bounded task cards
 ```
 
-The reducer in
-`control-center-web/src/contracts/room-kernel-reducer.ts` is the sole Web read
-model. `RoomTaskFlowGraph.tsx` groups Dispatches by `taskId`, orders them by
-alignment ordinal, intent, attempt, and stable ID, and renders one lane per
-Task. An unlinked Dispatch is retained in a visible fallback lane rather than
-being dropped. Long public progress, review, receipt, and optional private
-Session details remain in disclosures below the graph.
+`control-center-web/src/contracts/room-reducer.ts` is the sole Web Room read
+model. It advances one sequence at a time, requests a snapshot on a gap,
+coalesces streaming deltas, fences late execution after the Root terminal, and
+ignores historical participant Session events that lack a Room dispatch.
+`selectRoomExecutionOverview` derives the task cards from those public Roots;
+it does not create or mutate lifecycle state.
 
-Visual state is derived, never written back:
-
-| Visual state | Task states | Dispatch states |
-| --- | --- | --- |
-| Waiting | `pending`, `waiting` | `pending`, `retry_wait`, `timer_wait` |
-| Active | `active`, `review` | `leased`, `running` |
-| Complete | `completed` | `committed` |
-| Needs attention | `blocked`, `failed` | `unknown`, `dead_letter`, `failed` |
-| Stopped | `cancelled` | `cancelled` |
-
-The shared-result node is complete only when the projected Root is both
-`completed` and final. Blocked, failed, cancelled, cancelling, and
-`cancelled_with_unknowns` Roots keep their distinct user-visible outcome; the
-graph cannot infer success from a post count or participant prose. Active
-connectors may animate to show real progress, while `prefers-reduced-motion`
-removes that motion. Icons and labels duplicate every color signal. Container
-and viewport breakpoints convert the four-stage graph to a vertical flow
-without horizontal scrolling.
+Running, stopping, completed, failed, and aborted labels come from the same
+Root projection used by the composer. Refresh therefore cannot show an empty
+task page or a busy composer when only an unrelated participant Session is
+active.
 
 ### Control Center Request
 

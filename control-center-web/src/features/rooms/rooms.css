@@ -130,7 +130,6 @@
 }
 .room-timeline-nav .ui-icon-button { width: 36px; height: 36px; }
 .room-execution-workspace, .room-session-workspace { min-height: 0; grid-row: 1; overflow: auto; padding: calc(var(--workspace-header-height) + 52px) 16px 24px; }
-.room-execution-workspace > .room-kernel-live { max-width: 1180px; margin: 0 auto; }
 .room-execution-workspace[hidden] { display: none; }
 .room-session-workspace { display: grid; align-content: start; gap: 14px; }
 .room-session-workspace > header { border-bottom: 1px solid var(--color-border); padding-bottom: 11px; }

@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { parseRoomRequirementsReadProjection } from '@/features/rooms/requirements/room-requirements-read-model';
-import {
-  buildCancelRootCommand,
-  createControlRoomKernelCommandTransport,
-} from '@/features/rooms/kernel/room-kernel-command-transport';
-import { evaluateRoomKernelControlGate } from '@/features/rooms/kernel/room-kernel-control-gate';
-import { parseSnapshot } from '@/features/rooms/kernel/RoomKernelLivePanel';
 import { createPreviewTransport } from './preview-control-transport';
 
 describe('preview control transport', () => {
@@ -77,57 +71,6 @@ describe('preview control transport', () => {
     expect(sessions.find((session) => session.id === 'session-preview')).not.toHaveProperty('roomParticipant');
   });
 
-  it('keeps the Room task view and its stop action on the production contracts', async () => {
-    const transport = createPreviewTransport();
-    const gate = await evaluateRoomKernelControlGate(await transport.capabilities());
-    expect(gate).toMatchObject({ readEnabled: true, commandEnabled: true, panicEnabled: false });
-
-    const raw = await transport.request({
-      pathId: 'agent.room.kernel.snapshot',
-      params: { roomId: 'room-preview' },
-    });
-    const snapshot = parseSnapshot(raw, 'room-preview');
-    expect(snapshot.roots).toHaveLength(1);
-    expect(snapshot.roots[0]).toMatchObject({ state: 'running', facilitatorParticipantId: 'participant-present' });
-    expect(snapshot.tasks).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        taskId: 'room-preview:root-preview:task-review',
-        currentOwnerParticipantId: 'participant-future',
-        ownershipRevision: 1,
-      }),
-    ]));
-    expect(snapshot.receipts).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        receiptId: 'room-preview:root-preview:receipt-owner-review',
-        details: expect.objectContaining({
-          fromParticipantId: 'participant-present',
-          toParticipantId: 'participant-future',
-        }),
-      }),
-    ]));
-
-    const requirement = parseRoomRequirementsReadProjection(
-      record(record(raw).requirementsByRootId)[snapshot.roots[0]!.rootId],
-    );
-    expect(requirement.anchors[0]?.originalText).toBe('并行实现 Room 任务图，整合后交给独立伙伴复核');
-
-    const receipt = await createControlRoomKernelCommandTransport(transport).execute(
-      buildCancelRootCommand(
-        {
-          roomId: 'room-preview',
-          rootId: snapshot.roots[0]!.rootId,
-          generation: snapshot.roots[0]!.generation,
-        },
-        { commandId: 'preview-stop', sourceId: 'preview-test', createdAtMs: 1 },
-      ),
-    );
-    expect(receipt).toMatchObject({
-      commandId: 'preview-stop',
-      receiptKind: 'root_cancelled',
-      status: 'applied',
-      generation: 2,
-    });
-  });
 
   it('returns verifiable Room projections for preview creation and topic mutations', async () => {
     const transport = createPreviewTransport();
@@ -182,15 +125,6 @@ describe('preview control transport', () => {
       room: { id: 'room-preview-1', title: '发布前检查' },
       events: [],
       lastSequence: 0,
-    });
-
-    const kernel = parseSnapshot(await transport.request({
-      pathId: 'agent.room.kernel.snapshot',
-      params: { roomId: 'room-preview-1' },
-    }), 'room-preview-1');
-    expect(kernel).toMatchObject({
-      roomId: 'room-preview-1',
-      roots: [expect.objectContaining({ roomId: 'room-preview-1' })],
     });
 
     const topicCreated = record(await transport.request({

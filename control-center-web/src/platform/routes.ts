@@ -151,6 +151,19 @@ export const CONTROL_ROUTES = {
     params: { sessionId: null },
     query: ['view'],
   },
+  'agent.session.workspace.list': {
+    method: 'GET',
+    path: '/api/agent/sessions/:sessionId/workspace',
+    params: { sessionId: null },
+    query: ['path', 'depth', 'limit'],
+  },
+  'agent.session.workspace.read': {
+    method: 'GET',
+    path: '/api/agent/sessions/:sessionId/workspace-file',
+    params: { sessionId: null },
+    query: ['path', 'offset', 'limit'],
+    requiredQuery: ['path'],
+  },
   'agent.session.rename': {
     method: 'PATCH',
     path: '/api/agent/sessions/:sessionId',
@@ -481,12 +494,12 @@ export const CONTROL_ROUTES = {
     ],
     requiredBody: ['message'],
   },
-  'agent.room.startExecution': {
+  'agent.room.participant.steer': {
     method: 'POST',
-    path: '/api/agent/rooms/:roomId/start-execution',
+    path: '/api/agent/rooms/:roomId/steer',
     params: { roomId: null },
-    body: ['action', 'rootId', 'clientActionId'],
-    requiredBody: ['action', 'rootId', 'clientActionId'],
+    body: ['action', 'rootId', 'participantId', 'clientActionId', 'message'],
+    requiredBody: ['action', 'rootId', 'clientActionId', 'message'],
   },
   'agent.room.abort': {
     method: 'POST',
@@ -502,49 +515,6 @@ export const CONTROL_ROUTES = {
     query: ['lastEventId'],
     requiredQuery: ['lastEventId'],
     subscription: 'room',
-  },
-  'agent.room.kernel.snapshot': {
-    method: 'GET',
-    path: '/api/agent/rooms/:roomId/kernel/snapshot',
-    params: { roomId: null },
-  },
-  'agent.room.kernel.events': {
-    method: 'GET',
-    path: '/api/agent/rooms/:roomId/kernel/events',
-    params: { roomId: null },
-    query: ['lastEventId'],
-    requiredQuery: ['lastEventId'],
-    subscription: 'kernel',
-  },
-  'agent.room.kernel.command': {
-    method: 'POST',
-    path: '/api/agent/rooms/:roomId/kernel/commands',
-    params: { roomId: null },
-    body: ['schemaVersion', 'commandId', 'rootId', 'roomId', 'commandKind', 'targetKind', 'targetId', 'sourceKind', 'sourceId', 'idempotencyKey', 'generation', 'payload', 'createdAtMs'],
-    requiredBody: ['schemaVersion', 'commandId', 'roomId', 'commandKind', 'sourceKind', 'sourceId', 'idempotencyKey', 'generation', 'payload', 'createdAtMs'],
-    responseContract: 'room-kernel-receipt.v1',
-  },
-  'agent.room.kernel.settle': {
-    method: 'POST',
-    path: '/api/agent/rooms/:roomId/kernel/settle',
-    params: { roomId: null },
-    body: ['settleReceipt', 'commit', 'invocationReceiptId'],
-    requiredBody: ['settleReceipt'],
-    responseContract: 'room-settle-result.v1',
-  },
-  'agent.room.kernel.create': {
-    method: 'POST', path: '/api/agent/rooms/:roomId/kernel/create', params: { roomId: null },
-    body: ['rootExecution', 'task', 'budget', 'maxHops', 'maxDepth', 'acceptanceCriteria'],
-    requiredBody: ['rootExecution', 'task', 'budget', 'maxHops', 'maxDepth'],
-  },
-  'agent.room.kernel.dispatch': {
-    method: 'POST', path: '/api/agent/rooms/:roomId/kernel/dispatch', params: { roomId: null },
-    body: ['schemaVersion', 'dispatchId', 'rootId', 'taskId', 'parentDispatchId', 'generation', 'hopCount', 'depth', 'budgetCost', 'targetSessionId', 'targetParticipantId', 'triggerId', 'intentKind', 'idempotencyKey', 'attempt', 'capabilityEpoch', 'runtimeProfileRevision', 'state'],
-    requiredBody: ['schemaVersion', 'dispatchId', 'rootId', 'taskId', 'generation', 'hopCount', 'depth', 'budgetCost', 'targetSessionId', 'targetParticipantId', 'triggerId', 'intentKind', 'idempotencyKey', 'attempt', 'capabilityEpoch', 'runtimeProfileRevision', 'state'],
-  },
-  'agent.room.kernel.finalize': {
-    method: 'POST', path: '/api/agent/rooms/:roomId/kernel/finalize', params: { roomId: null },
-    body: ['rootId', 'catalogRevisionId', 'targetCommit', 'blindReviewStatus', 'deliveryGatePreviewReceiptId'], requiredBody: ['rootId'],
   },
   'agent.collaborationProfile.get': {
     method: 'GET',

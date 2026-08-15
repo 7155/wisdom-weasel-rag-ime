@@ -42,7 +42,6 @@
     "invitationId": {"type": ["string", "null"]},
     "reviewOfTaskIds": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
     "reviewAuthorParticipantIds": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
-    "reviewAxis": {"type": "string", "enum": ["technical", "requirements"]},
     "reviewState": {"type": "string", "enum": ["not_required", "required", "in_review", "accepted", "accepted_with_notes", "changes_requested", "disputed", "escalated", "stale"]},
     "resultSummary": {"type": "string", "maxLength": 2000},
     "resultKind": {"type": "string", "enum": ["complete", "dispatch", "wait", "post", "block"]},

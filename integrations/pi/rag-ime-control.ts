@@ -180,6 +180,7 @@ type ToolParams = {
   path?: string;
   resourceRef?: string;
   resourceRevision?: string;
+  asArtifact?: boolean;
   selector?: string;
   selectorCursor?: number;
   root?: string;
@@ -1516,6 +1517,7 @@ const coordinatorToolSpecs: ToolSpec[] = [
       "Supported selectors: N, N-M, N-, N+COUNT, comma-separated ranges, raw, and conflicts.",
       "Managed artifact://, media://, room:// and skill:// references remain authorized by their backend owner.",
       "When a large tool result returns fullOutputRef, pass that tool-output:// reference as path and continue with nextOffset.",
+      "When the user asks to open, preview, or deliver a generated file, read it with asArtifact: true so the final response receives a managed preview card.",
       "Independent reads may be issued together in one response.",
     ],
     parameterSchema: {
@@ -1531,6 +1533,7 @@ const coordinatorToolSpecs: ToolSpec[] = [
         byteOffset: { type: "integer", minimum: 0, maximum: 50000000 },
         byteLimit: { type: "integer", minimum: 1, maximum: 65536 },
         limit: { type: "integer", minimum: 1, maximum: 2000 },
+        asArtifact: { type: "boolean" },
       },
     },
   },
@@ -1815,6 +1818,8 @@ const coordinatorToolSpecs: ToolSpec[] = [
     guidelines: [
       "An explicit user execution request may proceed to an in-scope command. Todo tracks progress but grants no authority; read-only mode, workspace scope, network policy, command risk, and the existing action approval policy remain authoritative.",
       "Use read, grep, find and ls for ordinary inspection; use bash for builds, tests and diagnostics.",
+      "Use edit, write, or workspace_patch for file changes; do not wrap edits in shell commands.",
+      "Do not use sleep or polling to wait for another Session or Room participant; use Agent events and status instead.",
       "Run an exact project command when one is provided. Do not include credentials or privilege commands.",
       "Network is denied unless allowNetwork is explicitly true and approved.",
     ],
@@ -1859,7 +1864,13 @@ function gatewayParamsFor(spec: ToolSpec, params: ToolParams): ToolParams {
         lineLimit: params.limit,
       };
     }
-    return { op, path: params.path, lineOffset: params.offset, lineLimit: params.limit };
+    return {
+      op,
+      path: params.path,
+      lineOffset: params.offset,
+      lineLimit: params.limit,
+      asArtifact: params.asArtifact,
+    };
   }
   if (spec.name === "grep") {
     return {
@@ -2459,7 +2470,6 @@ const readOnlyHiddenNativeTools: Record<string, true> = {
   write: true,
   workspace_patch: true,
   workspace_job: true,
-  bash: true,
   apply_patch: true,
 };
 
@@ -2467,6 +2477,11 @@ function specsForToolProfile(specs: ToolSpec[]) {
   const selectedSpecs = toolProfileVersion === "subagent-readonly-v1"
     ? (() => {
       const allowed: Record<string, string[]> = {
+        ls: ["list"],
+        read: ["read"],
+        grep: ["search"],
+        find: ["search"],
+        bash: ["run"],
         ask: ["ask"],
         overview: ["status", "capabilities", "recent_activity"],
         memory: [

@@ -26,9 +26,6 @@ import {
   previewTimelineDate,
 } from './preview-memory-data';
 import {
-  previewRoomKernelReceipt,
-  previewRoomKernelRouteManifest,
-  previewRoomKernelSnapshot,
   previewRoomSnapshot,
 } from './preview-room-data';
 import {
@@ -81,8 +78,8 @@ export function createPreviewTransport(): MockControlTransport {
     'session-states': previewBackgroundJobs('session-states'),
   };
   const sessions: Record<string, unknown>[] = [
-    previewSession('session-preview', '控制中心迁移', 'companion-present-v1', Date.now(), '1', { messageCount: 4, lastMessagePreview: '三条工作线已经收束到同一个控制入口。' }),
-    previewSession('session-input', '等待你的回答', 'companion-present-v1', Date.now() - 30_000, '1', { messageCount: 1, lastMessagePreview: '请把待审问答做成更清楚的协作界面。' }),
+    previewSession('session-preview', '控制中心迁移', 'companion-present-v1', Date.now(), '1', { messageCount: 4, lastMessagePreview: '三条工作线已经收束到同一个控制入口。', workspaceRoots: ['/Users/example/Projects/personal-agent-workbench'] }),
+    previewSession('session-input', '等待你的回答', 'companion-present-v1', Date.now() - 30_000, '1', { messageCount: 1, lastMessagePreview: '请把待审问答做成更清楚的协作界面。', workspaceRoots: ['/Users/example/Projects/personal-agent-workbench'] }),
     // Genuinely empty so the preview can exercise the welcome state.
     previewSession('session-fresh', '新对话', 'companion-present-v1', Date.now() - 120_000),
     // Long transcript: gives the timeline a real scroll extent so follow and
@@ -863,10 +860,6 @@ export function createPreviewTransport(): MockControlTransport {
     const topics = record(snapshot.room).topics;
     return { ok: true, topics: Array.isArray(topics) ? topics : [] };
   };
-  routes['agent.room.kernel.snapshot'] = (request: ControlRequest) =>
-    previewRoomKernelSnapshot(stringValue(record(request.params).roomId) || 'room-preview');
-  routes['agent.room.kernel.command'] = (request: ControlRequest) =>
-    previewRoomKernelReceipt(record(request.body));
   routes['agent.media.preview'] = (request: ControlRequest) => previewManagedFile(request);
   routes['knowledgeBases.list'] = () => ({
     ok: true,
@@ -998,10 +991,9 @@ export function createPreviewTransport(): MockControlTransport {
         .map((job) => ({ ...job })),
     };
   };
-  const routeIds = Array.from(new Set<ControlPathId>([
-    ...(Object.keys(routes) as ControlPathId[]),
-    'agent.room.kernel.events',
-  ]));
+  const routeIds = Array.from(new Set<ControlPathId>(
+    Object.keys(routes) as ControlPathId[],
+  ));
   previewTransport = new MockControlTransport({
     routes,
     capabilities: {
@@ -1020,7 +1012,7 @@ export function createPreviewTransport(): MockControlTransport {
           managementWorkContract: true,
           workDocuments: true,
         },
-        routes: previewRoomKernelRouteManifest(),
+        routes: [],
       },
     },
     imagePaste: previewImagePaste,
@@ -1249,6 +1241,14 @@ function previewResponse(pathId: ControlPathId): unknown {
       return (request: ControlRequest) => previewDebugContext(
         stringValue(record(request.params).sessionId) || 'session-preview',
         stringValue(record(request.query).turnId) || 'turn-recovered',
+      );
+    case 'agent.session.workspace.list':
+      return (request: ControlRequest) => previewWorkspaceList(
+        stringValue(record(request.query).path) || '/Volumes/work/wisdom-weasel-rag-ime',
+      );
+    case 'agent.session.workspace.read':
+      return (request: ControlRequest) => previewWorkspaceRead(
+        stringValue(record(request.query).path) || '/Volumes/work/wisdom-weasel-rag-ime/README.md',
       );
     case 'agent.rooms.list':
       return { ok: true, rooms: [previewRoomSnapshot('room-preview').room] };
@@ -2598,7 +2598,7 @@ function previewSession(
   /* Rail summaries were hardcoded to zero, so every preview session claimed
      "0 条消息" while rendering a full transcript. Optional so existing call
      sites keep their exact shape. */
-  summary: { messageCount?: number; lastMessagePreview?: string } = {},
+  summary: { messageCount?: number; lastMessagePreview?: string; workspaceRoots?: string[] } = {},
 ): Record<string, unknown> {
   return {
     id,
@@ -2615,7 +2615,7 @@ function previewSession(
     piSkillsEnabled: false,
     codexSkillsEnabled: false,
     updatedAtMs,
-    workspaceRoots: [],
+    workspaceRoots: summary.workspaceRoots ?? [],
     modelProfile: 'session-selected',
     messageCount: summary.messageCount ?? 0,
     lastMessagePreview: summary.lastMessagePreview ?? '',
@@ -2695,8 +2695,6 @@ function previewCapabilityCatalog(
     previewTool('memory', '个人上下文记忆', '查询已治理的长期记忆与来源链路', 'memory', 'R1', ['catalog', 'read', 'recent', 'trace', 'search']),
     previewTool('knowledge', '文档知识库', '检索用户明确启用的独立文档知识库', 'knowledge', 'R0', ['list_bases', 'search', 'find', 'open', 'status']),
     previewTool('browser', '浏览器共驾', '读取已配对浏览器的页面，并在批准后执行可追踪操作', 'browser', 'R1', ['status', 'tabs', 'snapshot', 'navigate', 'click', 'type', 'stop']),
-    previewTool('workspace_read', '读取文件', '读取已授权项目目录中的文件内容', 'workspace', 'R0', ['read']),
-    previewTool('workspace_search', '搜索项目', '在已授权项目目录中检索文件与内容', 'workspace', 'R0', ['search']),
     {
       ...previewTool(
         'workspace_lsp',
@@ -2727,8 +2725,6 @@ function previewCapabilityCatalog(
         }],
       },
     },
-    previewTool('workspace_edit', '修改文件', '通过快照保护修改已授权项目文件', 'workspace', 'R2', ['edit']),
-    previewTool('workspace_shell', '运行命令', '在审批与已授权工作区边界内运行命令', 'workspace', 'R2', ['run']),
     previewTool('workspace_job', '后台任务', '启动并观察有界后台命令', 'workspace', 'R2', ['start', 'status', 'cancel']),
   ];
   const items = manifests.map((manifest) => {
@@ -3018,6 +3014,49 @@ function previewRoomTopicMutation(
       activeTopicId,
       updatedAtMs: now,
     },
+  };
+}
+
+function previewWorkspaceList(path: string): Record<string, unknown> {
+  const root = '/Users/example/Projects/personal-agent-workbench';
+  const items = path.endsWith('/control-center-web')
+    ? [
+        { path: `${path}/src`, name: 'src', kind: 'directory' },
+        { path: `${path}/package.json`, name: 'package.json', kind: 'file', byteSize: 3_842 },
+      ]
+    : [
+        { path: `${path}/control-center-web`, name: 'control-center-web', kind: 'directory' },
+        { path: `${path}/rag_ime`, name: 'rag_ime', kind: 'directory' },
+        { path: `${path}/README.md`, name: 'README.md', kind: 'file', byteSize: 12_480 },
+      ];
+  return {
+    schemaVersion: 'rag-ime.agent-workspace-list.v1',
+    ok: true,
+    sessionId: 'session-preview',
+    root,
+    path,
+    items,
+    truncated: false,
+  };
+}
+
+function previewWorkspaceRead(path: string): Record<string, unknown> {
+  const content = path.endsWith('.md')
+    ? '# Personal Agent Workbench\n\n这是工作区文件预览。\n'
+    : 'export function previewWorkspace() {\n  return "ready";\n}\n';
+  return {
+    schemaVersion: 'rag-ime.agent-workspace-read.v1',
+    ok: true,
+    sessionId: 'session-preview',
+    summary: `已读取 ${path.split('/').at(-1)}`,
+    path,
+    root: '/Users/example/Projects/personal-agent-workbench',
+    offset: 0,
+    byteSize: new TextEncoder().encode(content).byteLength,
+    content,
+    contentBytes: new TextEncoder().encode(content).byteLength,
+    truncated: false,
+    nextOffset: new TextEncoder().encode(content).byteLength,
   };
 }
 

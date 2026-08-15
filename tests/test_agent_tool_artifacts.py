@@ -110,6 +110,31 @@ class AgentToolArtifactProjectorTests(unittest.TestCase):
         self.assertEqual(projection.status, "unavailable")
         self.assertEqual(self.media.list_for_session(str(self.session["id"])), [])
 
+    def test_explicit_html_read_projects_a_managed_static_preview_block(self) -> None:
+        target = self.workspace / "project-intro.html"
+        target.write_text("<!doctype html><h1>项目介绍</h1>", encoding="utf-8")
+        raw = target.read_bytes()
+
+        projection = self.projector.project_workspace_read(
+            session=self.session,
+            receipt={
+                "path": str(target),
+                "resourceRevision": f"sha256:{hashlib.sha256(raw).hexdigest()}",
+            },
+        )
+
+        self.assertEqual(projection.status, "available")
+        self.assertEqual(len(projection.blocks), 1)
+        block = projection.blocks[0]
+        self.assertEqual(block["type"], "file")
+        self.assertEqual(block["data"]["fileName"], "project-intro.html")
+        self.assertEqual(block["data"]["mimeType"], "text/html")
+        _, stored = self.media.read(
+            str(block["data"]["mediaId"]),
+            session_id=str(self.session["id"]),
+        )
+        self.assertEqual(stored, raw)
+
 
 class AgentToolBlockBufferTests(unittest.TestCase):
     def test_tool_blocks_wait_for_the_final_assistant_message_and_deduplicate(self) -> None:

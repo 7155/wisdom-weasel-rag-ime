@@ -486,19 +486,29 @@ class RoomTurnRegistry:
         self,
         event: AgentEventEnvelope,
     ) -> bool:
-        """Route only an accepted runtime turn, buffering events before ACK.
+        """Route only an explicit Room turn or private intercom turn.
 
         Runtime events can reach the background projection lane before
         prompt() returns its turn id. While a Root is pending, events are
         retained by runtime turn id instead of guessing which turn owns the
         Root. accept() returns only the accepted turn's buffered sequence and
-        discards every older candidate for that Session.
+        discards every older candidate for that Session. An ordinary direct
+        Session turn is never a Room event merely because that Session also
+        belongs to a Room participant.
         """
 
         if not event.turn_id:
-            return True
+            return False
         key = (event.session_id, event.turn_id)
         with self.lock:
+            # `mirror_to_room()` owns private-intercom suppression and terminal
+            # cleanup. Let those events reach it without making them public.
+            if (
+                key in self.private_intercom_by_session_turn
+                or event.session_id
+                in self.private_intercom_pending_by_session
+            ):
+                return True
             if key in self.cancelled_turn_by_session_turn:
                 return False
             if self.cancelled_root_by_session.get(event.session_id):
@@ -508,10 +518,7 @@ class RoomTurnRegistry:
             if event.session_id in self.pending_turn_by_session:
                 self._buffer_pending_event_locked(key, event)
                 return False
-            return not any(
-                registered_session_id == event.session_id
-                for registered_session_id, _turn_id in self.turn_by_session_turn
-            )
+            return False
 
     def turn_for_event(
         self,

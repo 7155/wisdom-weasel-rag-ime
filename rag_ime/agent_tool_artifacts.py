@@ -70,6 +70,45 @@ class AgentToolArtifactProjector:
             origin_tool="workspace_patch",
         )
 
+    def project_workspace_read(
+        self,
+        *,
+        session: Mapping[str, object],
+        receipt: Mapping[str, object],
+    ) -> ToolArtifactProjection:
+        """Publish an explicitly requested workspace preview as a managed file.
+
+        Ordinary reads stay ordinary Tool results. The caller opts into this
+        projection only when the user asked to open, preview, or deliver the
+        file, so source inspection does not flood the final answer with cards.
+        """
+
+        try:
+            path = str(receipt.get("path") or "").strip()
+            revision = str(receipt.get("resourceRevision") or "").strip()
+            if not path or not revision.startswith("sha256:"):
+                raise ValueError("workspace read receipt is incomplete")
+            target = _authorized_regular_file(Path(path), session.get("workspaceRoots"))
+            raw = _read_verified_revision(target, revision.removeprefix("sha256:"))
+            session_id = str(session.get("id") or "").strip()
+            if not session_id:
+                raise ValueError("workspace artifact Session is missing")
+            media_receipt = self.media.import_bytes(
+                session_id=session_id,
+                data=raw,
+                mime_type=_text_mime_for(target.name),
+                file_name=target.name,
+                origin="tool_result",
+                origin_tool="workspace_read",
+                origin_receipt_id=revision,
+            )
+            return ToolArtifactProjection(
+                blocks=(_file_block(media_receipt, kind="file"),),
+                status="available",
+            )
+        except (OSError, TypeError, ValueError):
+            return ToolArtifactProjection(status="unavailable", reason="verification_failed")
+
     def project_workspace_mutation(
         self,
         *,
@@ -164,6 +203,11 @@ def _authorized_regular_file(path: Path, raw_roots: object) -> Path:
 
 
 def _read_verified_postimage(path: Path, receipt: Mapping[str, object]) -> bytes:
+    expected = str(receipt.get("postimageSha256") or "").strip().lower()
+    return _read_verified_revision(path, expected)
+
+
+def _read_verified_revision(path: Path, expected: str) -> bytes:
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(path, flags)
     try:
@@ -176,9 +220,8 @@ def _read_verified_postimage(path: Path, receipt: Mapping[str, object]) -> bytes
         os.close(descriptor)
     if len(raw) != metadata.st_size or len(raw) > 2 * 1024 * 1024:
         raise ValueError("workspace artifact changed while being read")
-    expected = str(receipt.get("postimageSha256") or "").strip().lower()
     if not expected or hashlib.sha256(raw).hexdigest() != expected:
-        raise ValueError("workspace artifact no longer matches the mutation receipt")
+        raise ValueError("workspace artifact no longer matches the verified receipt")
     raw.decode("utf-8")
     return raw
 

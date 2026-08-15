@@ -1,8 +1,6 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
-import type { RootProjection } from '@/contracts/room-kernel-reducer';
 import {
   createRoomProjection,
   parseRoomEventSnapshot,
@@ -75,6 +73,29 @@ describe('RoomTurn canonical conversation chronology', () => {
     ))).toEqual(['a-first', 'b-middle', 'a-last']);
   });
 
+  it('opens a participant lane when authoritative assistant text starts streaming', async () => {
+    const projection = liveProjection([
+      userEvent(1, 'opening', '请开始输出实时正文'),
+      event(2, 'route_decision', {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-live',
+        targetParticipantId: 'participant-a',
+      }),
+      event(3, 'participant_delta', {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-live',
+        messageId: 'assistant-live',
+        blockId: 'assistant-live:text',
+        delta: '第一段实时正文',
+      }),
+    ]);
+    const view = render(roomTurn(projection));
+    const lane = view.container.querySelector<HTMLDetailsElement>('.room-agent-lane')!;
+
+    await waitFor(() => expect(lane).toHaveAttribute('open'));
+    expect(screen.getByText('第一段实时正文')).toBeVisible();
+  });
+
   it('renders live reduction and reconnect replay with the same canonical order', () => {
     const events = alignmentEvents();
     const live = liveProjection(events);
@@ -117,126 +138,11 @@ describe('RoomTurn canonical conversation chronology', () => {
     ]);
   });
 
-  it('places the start action immediately after the final alignment summary', () => {
-    const projection = liveProjection(alignmentEvents().slice(0, -1));
-    const view = render(roomTurn(projection, {
-      kernelRootsById: { 'root-a': root('waiting') },
-      kernelReceiptsById: Object.fromEntries([
-        receipt(1, { operation: 'room_define', requiresStartAction: true }),
-        receipt(2, {
-          purpose: 'intake_phase',
-          phase: 'awaiting_start',
-          clarificationOccurred: true,
-        }),
-      ].map((item) => [item.receiptId, item])),
-      onStartExecution: () => undefined,
-    }));
-    const alignment = textElement(
-      view.container,
-      '已经对齐：先完成终端原生 TUI 的可运行闭环。',
-    );
-    const gate = screen.getByRole('group', { name: '确认开始行动' });
 
-    expect(alignment.compareDocumentPosition(gate) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(gate).toHaveTextContent('现在开始行动吗？');
-    expect(gate.closest('details')).toBeNull();
-  });
 
-  it('places the start action after direct alignment without inventing a clarification', () => {
-    const projection = liveProjection(alignmentEvents().slice(0, -1));
-    render(roomTurn(projection, {
-      kernelRootsById: { 'root-a': root('waiting') },
-      kernelReceiptsById: Object.fromEntries([
-        receipt(1, { operation: 'room_define', requiresStartAction: true }),
-        receipt(2, {
-          purpose: 'intake_phase',
-          phase: 'awaiting_start',
-          clarificationOccurred: false,
-        }),
-      ].map((item) => [item.receiptId, item])),
-      onStartExecution: () => undefined,
-    }));
 
-    expect(screen.getByRole('button', { name: '开始行动' })).toBeInTheDocument();
-  });
 
-  it('keeps the confirmed alignment as the only public lane while awaiting Start', () => {
-    const projection = liveProjection([
-      userEvent(1, 'opening', '我想把客户目录做得更顺手'),
-      postEvent(2, 'alignment', 'alignment', '已经对齐：导入、筛选、合并和历史会分别完成。'),
-      event(3, 'participant_activity', {
-        activityKind: 'work',
-        phase: 'blocked',
-        status: 'blocked',
-        work: {
-          workId: 'room-work:awaiting-start',
-          rootWorkId: 'room-work:awaiting-start',
-          objective: '整理客户目录需求',
-          state: 'blocked',
-          blocker: {
-            kernelRootState: 'waiting',
-            reason: 'Room 正在等待继续条件',
-          },
-        },
-      }, 'participant-a', ''),
-    ]);
-    const view = render(roomTurn(projection, {
-      kernelRootsById: { 'root-a': root('waiting') },
-      kernelReceiptsById: Object.fromEntries([
-        receipt(1, { operation: 'room_define', requiresStartAction: true }),
-        receipt(2, { purpose: 'intake_phase', phase: 'awaiting_start' }),
-      ].map((item) => [item.receiptId, item])),
-      onStartExecution: () => undefined,
-    }));
 
-    const lanes = view.container.querySelectorAll('.room-agent-lane');
-    expect(lanes).toHaveLength(1);
-    expect(lanes[0]).toHaveTextContent('已确认');
-    expect(lanes[0]).not.toHaveTextContent('等待新进展');
-    expect(screen.getByRole('button', { name: '开始行动' })).toBeInTheDocument();
-    expect(screen.queryByText('正在准备任务')).not.toBeInTheDocument();
-    expect(screen.queryByText('尚未收到公开工作进度')).not.toBeInTheDocument();
-  });
-
-  it('does not render an unanchored start action before the canonical alignment post arrives', () => {
-    const projection = liveProjection([
-      userEvent(1, 'opening', '请先澄清交付边界'),
-    ]);
-    render(roomTurn(projection, {
-      kernelRootsById: { 'root-a': root('waiting') },
-      kernelReceiptsById: Object.fromEntries([
-        receipt(1, { operation: 'room_define', requiresStartAction: true }),
-        receipt(2, {
-          purpose: 'intake_phase',
-          phase: 'awaiting_start',
-          clarificationOccurred: true,
-        }),
-      ].map((item) => [item.receiptId, item])),
-      onStartExecution: () => undefined,
-    }));
-
-    expect(screen.queryByRole('group', { name: '确认开始行动' })).not.toBeInTheDocument();
-  });
-
-  it('keeps a clear request on the direct path without a confirmation gate', () => {
-    const projection = liveProjection([
-      userEvent(1, 'opening', '把已确认的标题改成新标题并运行现有聚焦测试'),
-      postEvent(2, 'direct-work', 'work_result', '标题与测试已经更新', 'participant-a', 'dispatch-a'),
-    ]);
-    render(roomTurn(projection, {
-      kernelRootsById: { 'root-a': root('running') },
-      kernelReceiptsById: {
-        'receipt-1': receipt(1, {
-          purpose: 'intake_phase',
-          phase: 'execution_ready',
-          clarificationOccurred: false,
-        }),
-      },
-      onStartExecution: () => undefined,
-    }));
-
-    expect(screen.queryByRole('button', { name: '开始行动' })).not.toBeInTheDocument();
-  });
 });
 
 function roomTurn(
@@ -430,41 +336,5 @@ function participant(id: string, sessionId: string, ordinal: number) {
     ordinal,
     createdAtMs: 1,
     lastSpokeAtMs: null,
-  };
-}
-
-function root(state: RootProjection['state']): RootProjection {
-  return {
-    schemaVersion: 'wisdom-weasel.room-root-execution.v3',
-    rootId: 'root-a',
-    roomId: 'room-a',
-    generation: 1,
-    state,
-    facilitatorParticipantId: 'participant-a',
-    reporterParticipantId: null,
-    reporterSelectionReceiptId: null,
-    requirementAnchorRef: 'requirement-a',
-    createdByActorRef: 'user-a',
-    terminalReceiptId: null,
-    activeProfileRef: null,
-    budgetPolicyRef: 'budget-a',
-    independentReviewRequired: false,
-    createdAtMs: 1,
-    updatedAtMs: 2,
-    isFinal: false,
-  };
-}
-
-function receipt(createdAtMs: number, details: Record<string, unknown>): RoomKernelReceiptV1 {
-  return {
-    schemaVersion: 'wisdom-weasel.room-kernel-receipt.v1',
-    receiptId: `receipt-${createdAtMs}`,
-    rootId: 'root-a',
-    commandId: null,
-    receiptKind: 'accepted',
-    status: 'applied',
-    generation: 1,
-    details,
-    createdAtMs,
   };
 }

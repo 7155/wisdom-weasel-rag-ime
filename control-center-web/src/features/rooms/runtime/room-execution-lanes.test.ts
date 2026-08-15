@@ -8,10 +8,47 @@ import {
 import {
   roomActivityNeedsSessionAction,
   selectPublicRoomTurnOrder,
+  selectRoomExecutionOverview,
   selectRoomTurnExecution,
 } from './room-execution-lanes';
 
 describe('selectRoomTurnExecution', () => {
+  it('projects an active Pi Session dispatch into the task overview without a WorkItem', () => {
+    const projection = createRoomProjection('room-1');
+    projection.turnOrder.push('root-1');
+    projection.turnsById['root-1'] = {
+      id: 'root-1', rootId: 'root-1', status: 'running',
+      messageIds: ['request-1'], activityIds: ['tool-1'],
+      participantIds: ['participant-1'],
+      dispatchIds: ['dispatch-1'],
+      dispatchParticipantIds: { 'dispatch-1': 'participant-1' },
+      createdAtMs: 1, updatedAtMs: 3,
+    };
+    projection.messagesById['request-1'] = {
+      id: 'request-1', roomId: 'room-1', turnId: 'root-1',
+      participantId: null, sourceSessionId: '', role: 'user',
+      status: 'completed', text: '修好 Room 的任务页', rootId: 'root-1',
+      createdAtMs: 1,
+    };
+    projection.activitiesById['tool-1'] = {
+      id: 'tool-1', turnId: 'root-1', participantId: 'participant-1',
+      sourceSessionId: 'session-1', kind: 'participant_activity', status: 'running',
+      summary: '正在读取真实运行',
+      payload: { rootId: 'root-1', dispatchId: 'dispatch-1', sourceEventType: 'tool_started' },
+      createdAtMs: 2,
+    };
+
+    expect(selectRoomExecutionOverview(projection)).toEqual([expect.objectContaining({
+      id: 'root-1',
+      objective: '修好 Room 的任务页',
+      status: 'running',
+      participantIds: ['participant-1'],
+      laneCount: 1,
+      toolCount: 1,
+      lastSummary: '正在读取真实运行',
+    })]);
+  });
+
   it('removes the unscoped lifecycle slot before timeline virtualization', () => {
     const projection = createRoomProjection('room-1');
     projection.turnOrder.push('unscoped', 'root-1');

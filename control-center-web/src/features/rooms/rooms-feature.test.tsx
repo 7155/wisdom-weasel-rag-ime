@@ -7,10 +7,6 @@ import { createPreviewTransport } from '@/app/preview-control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { MockControlTransport } from '@/test/mock-transport';
 import { createRoomProjection, reduceRoomEvent } from '@/contracts/room-reducer';
-import { createRoomKernelProjection, type RootProjection } from '@/contracts/room-kernel-reducer';
-import type { RoomTaskV3 } from '@/contracts/generated/room-task.v3';
-import type { RoomDispatchEnvelopeV2 } from '@/contracts/generated/room-dispatch-envelope.v2';
-import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
 import { parseRoomEvent } from '@/contracts/validators';
 import { previewPersonas } from '@/features/agent/preview-data';
 import type { ControlRequest, PickedFile } from '@/platform/transport';
@@ -98,7 +94,7 @@ describe('Rooms experience', () => {
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
   });
 
-  it('sends messages through the room path and preserves the selected room id', async () => {
+  it('steers an active Room turn immediately and preserves the selected room id', async () => {
     const transport = new MockControlTransport({ routes: {
       'agent.rooms.list': {
         ok: true,
@@ -116,6 +112,7 @@ describe('Rooms experience', () => {
       ]),
       'agent.roles.list': { ok: true, items: [] },
       'agent.room.message': { ok: true },
+      'agent.room.participant.steer': { ok: true },
       'agent.rooms.create': { ok: true },
     } });
     const user = userEvent.setup();
@@ -130,17 +127,75 @@ describe('Rooms experience', () => {
     expect(screen.getByTestId('virtuoso-list')).toHaveAttribute('data-initial-index', 'LAST');
     expect(screen.getByTestId('virtuoso-list')).toHaveAttribute('data-initial-align', 'end');
     await user.type(composer, '并行核对边界');
-    await user.click(screen.getByRole('button', { name: '发送消息' }));
-    await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true));
-    const request = transport.requests.find((call) => call.request.pathId === 'agent.room.message')?.request;
+    await user.click(screen.getByRole('button', { name: '立即干预当前回合' }));
+    await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.participant.steer')).toBe(true));
+    const request = transport.requests.find((call) => call.request.pathId === 'agent.room.participant.steer')?.request;
     expect(request?.params).toEqual({ roomId: 'room-a' });
-    expect(request?.body).toMatchObject({ message: '并行核对边界' });
+    expect(request?.body).toMatchObject({
+      action: 'steer_participant',
+      message: '并行核对边界',
+      rootId: 'room-a:turn-1',
+    });
     expect(request?.body).not.toHaveProperty('workItemId');
     expect(transport.subscriptionCalls[0]?.request).toMatchObject({
       pathId: 'agent.room.events',
       params: { roomId: 'room-a' },
       lastEventId: 'room-a:1',
     });
+  });
+
+  it('keeps the normal composer after refresh when only detached subagent progress is unscoped', async () => {
+    const rootId = 'room-a:root-completed';
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': {
+        ok: true,
+        items: [roomSummary('room-a', '已完成的嵌套协作')],
+      },
+      'agent.room.snapshot': roomSnapshot('room-a', [
+        roomEvent('room-a', 1, 'user_message', {
+          messageId: 'room-a:user-1',
+          text: '运行嵌套子 Agent',
+        }, { turnId: rootId }),
+        roomEvent('room-a', 2, 'turn_completed', {
+          rootId,
+          dispatchId: 'room-a:dispatch-1',
+          status: 'completed',
+        }, {
+          turnId: rootId,
+          participantId: 'room-a:p1',
+          sourceSessionId: 'room-a:s1',
+        }),
+        roomEvent('room-a', 3, 'participant_activity', {
+          sourceEventId: 'room-a:s2:53',
+          sourceEventType: 'tool_progress',
+          data: {
+            rootId: '',
+            runId: 'subagent-run:1',
+            state: 'completed',
+            summary: '子 Agent 已返回结果，待主持会话核验',
+            toolCallId: 'subagent:subagent-batch:1',
+            toolName: 'agents',
+          },
+        }, {
+          turnId: '',
+          participantId: 'room-a:p2',
+          sourceSessionId: 'room-a:s2',
+        }),
+      ]),
+      'agent.roles.list': { ok: true, items: previewPersonas },
+    } });
+
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider><RoomsFeature /></TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
+    expect(composer).toHaveAttribute('placeholder', '继续聊，或输入 @ 请一位伙伴接手');
+    expect(screen.queryByText('当前任务仍在执行。现在发送文字会立即干预主持伙伴的当前回合。')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '立即干预当前回合' })).not.toBeInTheDocument();
   });
 
   it('automatically loads older Room history without collapsing an expanded report', async () => {
@@ -268,6 +323,40 @@ describe('Rooms experience', () => {
     }));
   });
 
+  it('shows real Pi Session work in the task view when no explicit WorkItem exists', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '轻量 Room')] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot('room-a', [
+        roomEvent('room-a', 1, 'user_message', { text: '修好伪空的任务界面' }, {
+          turnId: 'room-a:turn-1',
+        }),
+        roomEvent('room-a', 2, 'participant_activity', {
+          rootId: 'room-a:turn-1',
+          dispatchId: 'room-a:dispatch-1',
+          sourceEventType: 'tool_started',
+          status: 'running',
+          summary: '正在读取真实 Room 事件',
+        }, {
+          turnId: 'room-a:turn-1',
+          participantId: 'room-a:p1',
+          sourceSessionId: 'room-a:s1',
+        }),
+      ]),
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    expect(await screen.findByText('修好伪空的任务界面')).toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: '任务' }));
+
+    expect(screen.getByRole('region', { name: '当前协作分工' })).toHaveTextContent('修好伪空的任务界面');
+    expect(screen.getByRole('region', { name: '当前协作分工' })).toHaveTextContent('执行中');
+    expect(screen.getByRole('region', { name: '当前协作分工' })).toHaveTextContent('1 位伙伴');
+    expect(screen.getByRole('region', { name: '当前协作分工' })).toHaveTextContent('1 个工具步骤');
+    expect(screen.queryByText(/还没有单独登记的工作项/)).not.toBeInTheDocument();
+  });
+
   it('shows the canonical blocked WorkItem state instead of claiming work is executing', async () => {
     const room = roomSummary('room-a', '阻塞 Room');
     const blockedWork: NonNullable<RoomSummary['workItems']>[number] = {
@@ -316,101 +405,13 @@ describe('Rooms experience', () => {
     expect(await screen.findByText('learnA · 已阻塞')).toBeInTheDocument();
     expect(screen.queryByText(/正在完成任务/)).not.toBeInTheDocument();
     expect(screen.getByText(/已阻塞 · 澄·初 · 核对失败证据/)).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: '协作消息' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: '先继续或停止当前任务' })).toBeDisabled();
+    const composer = screen.getByRole('textbox', { name: '协作消息' });
+    expect(composer).toBeEnabled();
+    await userEvent.type(composer, '请按阻塞证据继续');
+    expect(screen.getByRole('button', { name: '告诉伙伴怎样继续' })).toBeEnabled();
     expect(screen.getByText(/当前任务已暂停/)).toBeInTheDocument();
   });
 
-  it('shows an authoritative awaiting-start Root as waiting for confirmation instead of its temporary blocked work', async () => {
-    const room = roomSummary('room-a', '等待开始 Room');
-    const awaitingStartWork: NonNullable<RoomSummary['workItems']>[number] = {
-      id: 'room-work:awaiting-start',
-      roomId: room.id,
-      topicId: '',
-      rootTurnId: 'root-new',
-      rootWorkId: 'room-work:awaiting-start',
-      parentWorkId: '',
-      objective: '整理客户目录需求',
-      expectedOutput: '等待用户确认后开始',
-      acceptanceCriteria: ['用户点击开始行动'],
-      accountableParticipantId: 'room-a:p1',
-      currentOwnerParticipantId: 'room-a:p2',
-      offeredToParticipantId: '',
-      createdByParticipantId: 'room-a:p1',
-      clientMessageId: 'awaiting-start-work',
-      state: 'blocked',
-      depth: 1,
-      revision: 0,
-      resultSummary: '',
-      artifactRefs: [],
-      evidenceRefs: [],
-      blocker: { reason: 'Room 正在等待继续条件。', nextStep: '等待用户点击开始行动。' },
-      acceptedTurnId: 'root-new',
-      createdAtMs: 2,
-      updatedAtMs: 99,
-      completedAtMs: null,
-    };
-    const snapshot = roomSnapshot(room.id, []);
-    const transport = new MockControlTransport({ routes: {
-      'agent.rooms.list': { ok: true, items: [{ ...room, workItems: [awaitingStartWork] }] },
-      'agent.roles.list': { ok: true, items: previewPersonas },
-      'agent.room.snapshot': {
-        ...snapshot,
-        room: { ...snapshot.room, workItems: [awaitingStartWork] },
-      },
-    } });
-    const { container } = render(
-      <ControlTransportProvider transport={transport}>
-        <TooltipProvider><RoomsFeature /></TooltipProvider>
-      </ControlTransportProvider>,
-    );
-    expect(await screen.findByText('learnA · 已阻塞')).toBeInTheDocument();
-
-    const kernel = createRoomKernelProjection(room.id);
-    kernel.rootsById['root-old'] = {
-      ...roomKernelRoot(room.id, 'blocked', false, 99),
-      rootId: 'root-old',
-      createdAtMs: 1,
-    };
-    kernel.rootsById['root-new'] = {
-      ...roomKernelRoot(room.id, 'waiting', false, 2),
-      rootId: 'root-new',
-      generation: 2,
-      createdAtMs: 2,
-    };
-    const definition: RoomKernelReceiptV1 = {
-      schemaVersion: 'wisdom-weasel.room-kernel-receipt.v1',
-      receiptId: 'receipt-new-definition',
-      rootId: 'root-new',
-      commandId: null,
-      receiptKind: 'accepted',
-      status: 'applied',
-      generation: 2,
-      details: { operation: 'room_define', requiresStartAction: true },
-      createdAtMs: 3,
-    };
-    const intake: RoomKernelReceiptV1 = {
-      ...definition,
-      receiptId: 'receipt-new-intake',
-      details: { purpose: 'intake_phase', phase: 'awaiting_start' },
-      createdAtMs: 4,
-    };
-    kernel.receiptsById[definition.receiptId] = definition;
-    kernel.receiptsById[intake.receiptId] = intake;
-    act(() => useRoomLiveStore.getState().setKernelProjection(room.id, kernel));
-
-    const headline = container.querySelector('.room-workspace > header > span > small');
-    await waitFor(() => expect(headline).toHaveTextContent('learnA · 等待你确认'));
-    expect(headline).not.toHaveTextContent('已阻塞');
-    expect(container.querySelector('.room-work-summary')).toHaveTextContent(
-      '等待你确认 · 澄·初 · 整理客户目录需求',
-    );
-    expect(container.querySelector('.room-work-summary')).toHaveAttribute('data-state', 'waiting');
-    expect(screen.queryByText(/当前任务已暂停/)).not.toBeInTheDocument();
-    expect(screen.getByText(/当前任务正在等待你点击“开始行动”/)).toBeInTheDocument();
-    expect(screen.queryByText(/当前任务仍在执行/)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '先开始或停止当前任务' })).toBeDisabled();
-  });
 
   it('submits the pending wait answer through the busy gate and clears it only from the accepted user RoomPost', async () => {
     const pendingSend = deferred<Record<string, unknown>>();
@@ -519,7 +520,7 @@ describe('Rooms experience', () => {
     expect(answerMessage).toHaveTextContent('方案 B');
     expect(resolvedPrompt.compareDocumentPosition(answerMessage) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(document.querySelectorAll('.room-user-message')).toHaveLength(1);
-    expect(screen.getByRole('button', { name: '等待当前任务完成' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '立即干预当前回合' })).toBeDisabled();
     await waitFor(() => expect(screen.getByRole('textbox', { name: '协作消息' })).toHaveFocus());
   });
 
@@ -585,247 +586,6 @@ describe('Rooms experience', () => {
     expect(resolvedQuestion.getByText('回答保留在下一条用户消息中')).toBeInTheDocument();
     expect(screen.getByText('请保留现有 API，并补充错误状态。').closest('.room-user-message')).toBeInTheDocument();
     expect(document.querySelectorAll('.room-user-message')).toHaveLength(1);
-  });
-
-  it('finishes the second clarification before exposing the explicit Start action', async () => {
-    const room = roomSummary('room-a', '两轮澄清 Room');
-    const rootId = 'room-root:clarification';
-    const secondQuestionId = 'room-a:question-3';
-    const transport = new MockControlTransport({ routes: {
-      'agent.rooms.list': { ok: true, items: [room] },
-      'agent.roles.list': { ok: true, items: previewPersonas },
-      'agent.room.snapshot': roomSnapshot(room.id, [
-        roomQuestionEvent(room.id, 1, {
-          content: '先确认重复客户的判断方式。',
-          prompt: '怎样判断重复客户？',
-          options: [
-            { value: 'email', label: '邮箱完全相同' },
-            { value: 'name', label: '姓名相同' },
-          ],
-        }, rootId),
-        roomEvent(room.id, 2, 'user_message', {
-          answerToPostId: 'room-a:question-1',
-          messageId: 'answer-one',
-          rootId,
-          text: '邮箱完全相同',
-        }, { turnId: rootId }),
-        roomQuestionEvent(room.id, 3, {
-          content: '再确认导入预览的处理方式。',
-          prompt: '有问题的行怎样处理？',
-          options: [
-            { value: 'block-row', label: '只阻止有问题的行' },
-            { value: 'block-all', label: '整批都不导入' },
-          ],
-        }, rootId),
-      ]),
-      'agent.room.message': (request: ControlRequest) => {
-        const body = request.body as Record<string, unknown>;
-        return {
-          ok: true,
-          timelineEvents: [
-            roomEvent(room.id, 4, 'user_message', {
-              answerToPostId: secondQuestionId,
-              clientMessageId: String(body.clientMessageId),
-              messageId: 'answer-two',
-              rootId,
-              text: String(body.message),
-            }, { turnId: rootId }),
-            roomEvent(room.id, 5, 'room_post', {
-              post: {
-                schemaVersion: 'wisdom-weasel.room-post.v2',
-                postId: 'alignment-two',
-                roomId: room.id,
-                rootId,
-                generation: 0,
-                dispatchId: 'dispatch-align',
-                authorActorRef: `${room.id}:p1`,
-                kind: 'alignment',
-                visibility: 'room',
-                content: '已经对齐：导入时只阻止有问题的行，确认后再写入。',
-                idempotencyKey: 'alignment-two',
-                publicationSource: { kind: 'room_commit', ref: 'commit:alignment-two' },
-                createdAtMs: 5,
-              },
-            }, {
-              turnId: rootId,
-              participantId: `${room.id}:p1`,
-              sourceSessionId: `${room.id}:s1`,
-            }),
-          ],
-        };
-      },
-      'agent.room.startExecution': { ok: true, accepted: true, timelineEvents: [] },
-    } });
-    const user = userEvent.setup();
-    const { container } = render(
-      <ControlTransportProvider transport={transport}>
-        <TooltipProvider><RoomsFeature /></TooltipProvider>
-      </ControlTransportProvider>,
-    );
-
-    const question = within(await screen.findByRole('region', {
-      name: '需要回答：有问题的行怎样处理？',
-    }));
-    await user.click(question.getByRole('radio', { name: '只阻止有问题的行' }));
-    await user.click(question.getByRole('button', { name: '发送回答' }));
-
-    await waitFor(() => expect(
-      transport.requests.filter(({ request }) => request.pathId === 'agent.room.message'),
-    ).toHaveLength(1));
-    expect(transport.requests.filter(
-      ({ request }) => request.pathId === 'agent.room.startExecution',
-    )).toHaveLength(0);
-
-    const aligning = createRoomKernelProjection(room.id);
-    aligning.rootsById[rootId] = {
-      ...roomKernelRoot(room.id, 'running', false, 6),
-      rootId,
-      generation: 0,
-    };
-    const aligningReceipt: RoomKernelReceiptV1 = {
-      schemaVersion: 'wisdom-weasel.room-kernel-receipt.v1',
-      receiptId: 'receipt-aligning',
-      rootId,
-      commandId: null,
-      receiptKind: 'accepted',
-      status: 'applied',
-      generation: 0,
-      details: { purpose: 'intake_phase', phase: 'aligning', clarificationOccurred: true },
-      createdAtMs: 6,
-    };
-    aligning.receiptsById[aligningReceipt.receiptId] = aligningReceipt;
-    act(() => useRoomLiveStore.getState().setKernelProjection(room.id, aligning));
-
-    const headline = container.querySelector('.room-workspace > header > span > small');
-    await waitFor(() => expect(headline).toHaveTextContent('正在整理确认结果'));
-    expect(screen.queryByRole('button', { name: '开始行动' })).not.toBeInTheDocument();
-    expect(transport.requests.filter(
-      ({ request }) => request.pathId === 'agent.room.startExecution',
-    )).toHaveLength(0);
-
-    const awaitingStart = createRoomKernelProjection(room.id);
-    awaitingStart.rootsById[rootId] = {
-      ...aligning.rootsById[rootId]!,
-      state: 'waiting',
-      updatedAtMs: 8,
-    };
-    const definition: RoomKernelReceiptV1 = {
-      ...aligningReceipt,
-      receiptId: 'receipt-definition',
-      details: { operation: 'room_define', requiresStartAction: true },
-      createdAtMs: 7,
-    };
-    const intake: RoomKernelReceiptV1 = {
-      ...aligningReceipt,
-      receiptId: 'receipt-awaiting-start',
-      details: { purpose: 'intake_phase', phase: 'awaiting_start', clarificationOccurred: true },
-      createdAtMs: 8,
-    };
-    awaitingStart.receiptsById[definition.receiptId] = definition;
-    awaitingStart.receiptsById[intake.receiptId] = intake;
-    act(() => useRoomLiveStore.getState().setKernelProjection(room.id, awaitingStart));
-
-    const start = await screen.findByRole('button', { name: '开始行动' });
-    expect(transport.requests.filter(
-      ({ request }) => request.pathId === 'agent.room.startExecution',
-    )).toHaveLength(0);
-    await user.click(start);
-    await waitFor(() => expect(
-      transport.requests.filter(({ request }) => request.pathId === 'agent.room.startExecution'),
-    ).toHaveLength(1));
-    expect(transport.requests.find(
-      ({ request }) => request.pathId === 'agent.room.startExecution',
-    )?.request).toMatchObject({
-      params: { roomId: room.id },
-      body: { action: 'start_execution', rootId },
-    });
-  });
-
-  it('revalidates the authoritative Kernel snapshot after Start is accepted', async () => {
-    const room = roomSummary('room-start-refresh', '开始后刷新 Room');
-    const rootId = 'root-a';
-    let started = false;
-    const awaitingStart = {
-      ...roomKernelSnapshot(room.id),
-      receipts: [] as RoomKernelReceiptV1[],
-    };
-    awaitingStart.lastSequence = 3;
-    awaitingStart.roots[0]!.state = 'waiting';
-    awaitingStart.receipts = [
-      {
-        schemaVersion: 'wisdom-weasel.room-kernel-receipt.v1',
-        receiptId: 'receipt-definition',
-        rootId,
-        commandId: null,
-        receiptKind: 'accepted',
-        status: 'applied',
-        generation: 1,
-        details: { operation: 'room_define', requiresStartAction: true },
-        createdAtMs: 2,
-      },
-      {
-        schemaVersion: 'wisdom-weasel.room-kernel-receipt.v1',
-        receiptId: 'receipt-awaiting-start',
-        rootId,
-        commandId: null,
-        receiptKind: 'accepted',
-        status: 'applied',
-        generation: 1,
-        details: { purpose: 'intake_phase', phase: 'awaiting_start' },
-        createdAtMs: 3,
-      },
-    ];
-    const running = roomKernelSnapshot(room.id);
-    running.lastSequence = 6;
-    running.roots[0]!.state = 'running';
-    const transport = new MockControlTransport({ routes: {
-      'agent.rooms.list': { ok: true, items: [room] },
-      'agent.roles.list': { ok: true, items: previewPersonas },
-      'agent.room.snapshot': roomSnapshot(room.id, [
-        roomEvent(room.id, 1, 'user_message', { text: '请先对齐再开始。' }, { turnId: rootId }),
-        roomEvent(room.id, 2, 'room_post', {
-          post: {
-            schemaVersion: 'wisdom-weasel.room-post.v2',
-            postId: 'alignment-start-refresh',
-            roomId: room.id,
-            rootId,
-            generation: 1,
-            dispatchId: 'dispatch-align-start-refresh',
-            authorActorRef: `${room.id}:p1`,
-            kind: 'alignment',
-            visibility: 'room',
-            content: '已经对齐，可以开始。',
-            idempotencyKey: 'alignment-start-refresh',
-            publicationSource: { kind: 'room_commit', ref: 'commit:alignment-start-refresh' },
-            createdAtMs: 2,
-          },
-        }, {
-          turnId: rootId,
-          participantId: `${room.id}:p1`,
-          sourceSessionId: `${room.id}:s1`,
-        }),
-      ], room.title),
-      'agent.room.kernel.snapshot': () => started ? running : awaitingStart,
-      'agent.room.startExecution': () => {
-        started = true;
-        return { ok: true, accepted: true, timelineEvents: [] };
-      },
-    } });
-    const user = userEvent.setup();
-    render(
-      <ControlTransportProvider transport={transport}>
-        <TooltipProvider><RoomsFeature /></TooltipProvider>
-      </ControlTransportProvider>,
-    );
-
-    await waitFor(() => expect(transport.requests.filter(({ request }) => (
-      request.pathId === 'agent.room.kernel.snapshot'
-    ))).toHaveLength(1));
-    await user.click(await screen.findByRole('button', { name: '开始行动' }));
-    await waitFor(() => expect(transport.requests.filter(({ request }) => (
-      request.pathId === 'agent.room.kernel.snapshot'
-    ))).toHaveLength(2));
-    expect(screen.queryByRole('group', { name: '确认开始行动' })).not.toBeInTheDocument();
   });
 
   it('ignores optimistic-shaped and unrelated user events until the same Root publishes the accepted answer', async () => {
@@ -1156,96 +916,7 @@ describe('Rooms experience', () => {
   });
 
 
-  it('shows one reporter final while preserving attributed participant contributions', () => {
-    const room = roomSummary('room-a', '汇报人 Room');
-    const projection = createRoomProjection(room.id);
-    projection.turnOrder.push('turn-reporter');
-    projection.turnsById['turn-reporter'] = {
-      id: 'turn-reporter',
-      rootId: 'turn-reporter',
-      status: 'completed',
-      messageIds: ['participant-result', 'reporter-result-old', 'reporter-result-final'],
-      activityIds: [],
-      participantIds: ['room-a:p1', 'room-a:p2'],
-      dispatchIds: ['dispatch-participant', 'dispatch-reporter'],
-      terminalDispatchIds: ['dispatch-participant', 'dispatch-reporter'],
-      failedDispatchIds: [],
-      abortedDispatchIds: [],
-      terminalParticipantIds: ['room-a:p1', 'room-a:p2'],
-      failedParticipantIds: [],
-      abortedParticipantIds: [],
-      dispatchParticipantIds: {
-        'dispatch-participant': 'room-a:p1',
-        'dispatch-reporter': 'room-a:p2',
-      },
-      createdAtMs: 1,
-      updatedAtMs: 4,
-    };
-    for (const [index, message] of [
-      {
-        id: 'participant-result',
-        participantId: 'room-a:p1',
-        dispatchId: 'dispatch-participant',
-        text: '参与者提交了可检查的工作结果',
-        postKind: 'work_result' as const,
-      },
-      {
-        id: 'reporter-result-old',
-        participantId: 'room-a:p2',
-        dispatchId: 'dispatch-reporter',
-        text: '较早的汇报人总结',
-        postKind: 'result' as const,
-      },
-      {
-        id: 'reporter-result-final',
-        participantId: 'room-a:p2',
-        dispatchId: 'dispatch-reporter',
-        text: '唯一最终汇报人总结',
-        postKind: 'result' as const,
-      },
-    ].entries()) {
-      projection.messagesById[message.id] = {
-        id: message.id,
-        roomId: room.id,
-        turnId: 'turn-reporter',
-        participantId: message.participantId,
-        sourceSessionId: message.participantId === 'room-a:p2' ? 'room-a:s2' : 'room-a:s1',
-        role: 'assistant',
-        status: 'completed',
-        text: message.text,
-        projectionKind: 'post',
-        rootId: 'turn-reporter',
-        dispatchId: message.dispatchId,
-        postKind: message.postKind,
-        createdAtMs: index + 1,
-        completedAtMs: index + 1,
-      };
-    }
-    const root = {
-      ...roomKernelRoot(room.id, 'completed', true, 4),
-      rootId: 'turn-reporter',
-      reporterParticipantId: 'room-a:p2',
-    };
 
-    const { container } = render(
-      <RoomTurn
-        turnId="turn-reporter"
-        room={room}
-        projection={projection}
-        personas={previewPersonas}
-        kernelRootsById={{ 'turn-reporter': root }}
-      />,
-    );
-
-    expect(screen.getByText('唯一最终汇报人总结')).toBeInTheDocument();
-    expect(screen.getByText('参与者提交了可检查的工作结果')).toBeInTheDocument();
-    expect(screen.queryByText('较早的汇报人总结')).not.toBeInTheDocument();
-    expect(screen.getByText('工作交付')).toBeInTheDocument();
-    expect(screen.getByText('最终答复')).toBeInTheDocument();
-    expect(container.querySelectorAll('.room-agent-lane__post[data-kind="result"]')).toHaveLength(1);
-    expect(container.querySelectorAll('.room-agent-lane__post[data-kind="work_result"]')).toHaveLength(1);
-    expect(screen.getByText('2 项分工已经收束。已保留 2 条伙伴公开汇报，可在上方查看。')).toBeInTheDocument();
-  });
   it('uses only the runtime receipt for response provenance', () => {
     const room = roomSummary('room-a', '回复用量 Room');
     const projection = createRoomProjection(room.id);
@@ -2491,32 +2162,6 @@ describe('Rooms experience', () => {
     expect(screen.getByRole('textbox', { name: '协作消息' })).toBeEnabled();
   });
 
-  it('allows a new task after an earlier Root stopped with fenced unknown surfaces', async () => {
-    const room = roomSummary('room-terminal-unknown', '停止后继续 Room');
-    const kernelSnapshot = roomKernelSnapshot(room.id);
-    kernelSnapshot.roots[0]!.state = 'cancelled_with_unknowns';
-    kernelSnapshot.roots[0]!.terminalReceiptId = 'terminal:unknown-cancel';
-    const transport = new MockControlTransport({ routes: {
-      'agent.rooms.list': { ok: true, items: [room] },
-      'agent.roles.list': { ok: true, items: previewPersonas },
-      'agent.room.snapshot': roomSnapshot(room.id, [], room.title),
-      'agent.room.kernel.snapshot': kernelSnapshot,
-      'agent.room.message': { ok: true },
-    } });
-
-    render(
-      <ControlTransportProvider transport={transport}>
-        <TooltipProvider><RoomsFeature /></TooltipProvider>
-      </ControlTransportProvider>,
-    );
-
-    const composer = await screen.findByRole('textbox', { name: '协作消息' });
-    await waitFor(() => expect(transport.requests.some(({ request }) => (
-      request.pathId === 'agent.room.kernel.snapshot'
-    ))).toBe(true));
-    await userEvent.setup().type(composer, '开始下一项任务');
-    expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled();
-  });
 
   it('opens the shared status experience for the selected Room', async () => {
     const transport = new MockControlTransport({ routes: {
@@ -2534,87 +2179,7 @@ describe('Rooms experience', () => {
     expect(screen.getByRole('button', { name: '收起进展面板' })).toBeInTheDocument();
   });
 
-  it('hydrates authoritative task progress while the public conversation view remains selected', async () => {
-    const room = roomSummary(
-      'room-status',
-      'Fresh installed-stack Room acceptance for automatic collaboration recovery and terminal settlement',
-    );
-    const transport = new MockControlTransport({ routes: {
-      'agent.rooms.list': { ok: true, items: [room] },
-      'agent.roles.list': { ok: true, items: previewPersonas },
-      'agent.room.snapshot': roomSnapshot(room.id, [], room.title),
-      'agent.room.kernel.snapshot': roomKernelSnapshot(room.id),
-    } });
-    const user = userEvent.setup();
-    const { container } = render(
-      <ControlTransportProvider transport={transport}>
-        <TooltipProvider><RoomsFeature /></TooltipProvider>
-      </ControlTransportProvider>,
-    );
 
-    await screen.findByText('还没有公开消息');
-    await waitFor(() => expect(transport.requests.some(({ request }) => (
-      request.pathId === 'agent.room.kernel.snapshot'
-    ))).toBe(true));
-    await user.click(screen.getByRole('button', { name: '看看协作进展' }));
-
-    const status = screen.getByRole('complementary', { name: '协作进展' });
-    expect(within(status).getByRole('status', { name: '任务进度连接' })).toHaveTextContent(
-      '实时进度已连接',
-    );
-    expect(within(status).getByText(/更新于/)).toBeInTheDocument();
-    expect(within(status).queryByText('进度同步异常')).not.toBeInTheDocument();
-    expect(within(status).queryByText(/任务进度暂时不可用/)).not.toBeInTheDocument();
-    expect(within(status).getByLabelText('整体任务与分工进度')).toHaveTextContent(
-      '整体任务工作进行中',
-    );
-    expect(container.querySelector('.room-execution-workspace')).toHaveAttribute('hidden');
-  });
-
-  it('returns from a task card to the exact logical Room turn', async () => {
-    window.location.hash = '#/rooms';
-    const room = roomSummary('room-a', '任务定位 Room');
-    const kernelSnapshot = {
-      ...roomKernelSnapshot(room.id),
-      tasks: [roomKernelTask('work-a', 'work', 'active')],
-    };
-    const transport = new MockControlTransport({ routes: {
-      'agent.rooms.list': { ok: true, items: [room] },
-      'agent.roles.list': { ok: true, items: previewPersonas },
-      'agent.room.snapshot': roomSnapshot(room.id, [
-        roomEvent(room.id, 1, 'user_message', { text: '任务对应的权威对话' }, {
-          turnId: 'root-a',
-        }),
-      ], room.title),
-      'agent.room.kernel.snapshot': kernelSnapshot,
-    } });
-    const user = userEvent.setup();
-    const { container } = render(
-      <ControlTransportProvider transport={transport}>
-        <TooltipProvider><RoomsFeature /></TooltipProvider>
-      </ControlTransportProvider>,
-    );
-
-    expect(await screen.findByText('任务对应的权威对话')).toBeInTheDocument();
-    await waitFor(() => expect(transport.requests.some(({ request }) => (
-      request.pathId === 'agent.room.kernel.snapshot'
-    ))).toBe(true));
-    await user.click(screen.getByRole('button', { name: '查看任务总览' }));
-    const task = await screen.findByRole('button', {
-      name: '查看完成自己的部分对应的协作对话',
-    });
-    roomVirtuosoMock.scrollToIndex.mockClear();
-    await user.click(task);
-
-    await waitFor(() => expect(roomVirtuosoMock.scrollToIndex).toHaveBeenCalledWith({
-      align: 'center',
-      behavior: 'auto',
-      index: 0,
-    }));
-    expect(screen.getByText('任务对应的权威对话')).toBeInTheDocument();
-    expect(container.querySelector('.room-execution-workspace')).toHaveAttribute('hidden');
-    expect(window.location.hash).not.toContain('/agent');
-  });
 
   it('keeps the real role catalog usable when the Room list request fails', async () => {
     const transport = new MockControlTransport({ routes: {
@@ -2747,19 +2312,12 @@ describe('Rooms experience', () => {
       'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '独立连接状态 Room')] },
       'agent.roles.list': { ok: true, items: previewPersonas },
       'agent.room.snapshot': roomSnapshot('room-a', [progress]),
-      'agent.room.kernel.snapshot': roomKernelSnapshot('room-a'),
     } });
-    useRoomLiveStore.getState().setKernelSync('room-a', {
-      state: 'synced',
-      detail: '任务内核实时更新已连接',
-      updatedAtMs: now,
-    });
     const view = render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     expect((await screen.findAllByText('正在核对最新界面实现')).length).toBeGreaterThan(0);
     const lane = view.container.querySelector<HTMLElement>('.room-agent-lane')!;
     await waitFor(() => expect(lane).toHaveAttribute('data-motion', 'fresh'));
-    expect(useRoomLiveStore.getState().kernelSyncByRoomId['room-a']?.state).toBe('synced');
 
     act(() => {
       expect(transport.fail('agent.room.events', new Error('conversation stream interrupted'))).toBe(1);
@@ -2768,7 +2326,6 @@ describe('Rooms experience', () => {
     await waitFor(() => expect(lane).toHaveAttribute('data-motion', 'disconnected'));
     expect(lane).toHaveTextContent('正在恢复 Room 对话实时更新');
     expect(lane.querySelector('.room-agent-lane__activity')).toHaveAttribute('data-motion', 'paused');
-    expect(useRoomLiveStore.getState().kernelSyncByRoomId['room-a']?.state).toBe('synced');
   });
 
   it('refreshes Room metadata without tearing down the live timeline subscription', async () => {
@@ -3057,120 +2614,7 @@ describe('Rooms experience', () => {
     expect(onAbortTurn).toHaveBeenCalledWith('room-turn:root-a');
   });
 
-  it('offers explicit continue and stop actions when the authoritative Root is blocked', async () => {
-    const room = roomSummary('room-a', '阻塞恢复 Room');
-    const projection = createRoomProjection(room.id);
-    projection.turnOrder.push('turn-a');
-    projection.turnsById['turn-a'] = {
-      id: 'turn-a',
-      rootId: 'room-root:blocked',
-      status: 'running',
-      messageIds: [],
-      activityIds: [],
-      participantIds: ['room-a:p1'],
-      createdAtMs: 1,
-      updatedAtMs: 2,
-    };
-    const root: RootProjection = {
-      schemaVersion: 'wisdom-weasel.room-root-execution.v3',
-      rootId: 'room-root:blocked',
-      roomId: room.id,
-      generation: 0,
-      state: 'blocked',
-      facilitatorParticipantId: 'room-a:p1',
-      reporterParticipantId: null,
-      reporterSelectionReceiptId: null,
-      requirementAnchorRef: 'requirement:block',
-      createdByActorRef: 'user:local',
-      terminalReceiptId: null,
-      activeProfileRef: null,
-      budgetPolicyRef: 'room-budget:interactive-v1',
-      independentReviewRequired: false,
-      createdAtMs: 1,
-      isFinal: false,
-      updatedAtMs: 2,
-    };
-    const onRetryRoot = vi.fn();
-    const onAbortTurn = vi.fn();
-    const user = userEvent.setup();
 
-    render(<RoomTurn
-      turnId="turn-a"
-      room={room}
-      projection={projection}
-      personas={previewPersonas}
-      kernelRootsById={{ [root.rootId]: root }}
-      onRetryRoot={onRetryRoot}
-      onAbortTurn={onAbortTurn}
-    />);
-
-    expect(screen.getByRole('alert')).toHaveTextContent('只重做失败的部分');
-    await user.click(screen.getByRole('button', { name: '继续任务' }));
-    await user.click(screen.getByRole('button', { name: '停止任务' }));
-    expect(onRetryRoot).toHaveBeenCalledWith(root.rootId);
-    expect(onAbortTurn).toHaveBeenCalledWith(root.rootId);
-  });
-
-  it('keeps internal alignment dispatches out of the conversation surface', () => {
-    const room = roomSummary('room-a', '并行对齐 Room');
-    const projection = createRoomProjection(room.id);
-    projection.turnOrder.push('turn-a');
-    projection.turnsById['turn-a'] = {
-      id: 'turn-a',
-      rootId: 'root-a',
-      status: 'running',
-      messageIds: [],
-      activityIds: [],
-      participantIds: room.participants.map((participant) => participant.id),
-      createdAtMs: 1,
-      updatedAtMs: 2,
-    };
-    const alignmentDispatches = room.participants.map((
-      participant,
-      index,
-    ): RoomDispatchEnvelopeV2 => ({
-      schemaVersion: 'wisdom-weasel.room-dispatch-envelope.v2',
-      dispatchId: `dispatch-align-${index}`,
-      rootId: 'root-a',
-      taskId: `task-align-${index}`,
-      parentDispatchId: null,
-      generation: 0,
-      hopCount: 0,
-      depth: 0,
-      budgetCost: 1,
-      targetSessionId: participant.sessionId,
-      targetParticipantId: participant.id,
-      triggerId: 'trigger-a',
-      intentKind: 'align',
-      idempotencyKey: `align-${index}`,
-      attempt: 0,
-      capabilityEpoch: 1,
-      runtimeProfileRevision: 'runtime-profile:test-v1',
-      alignmentOrdinal: index,
-      dependsOnDispatchIds: [],
-      state: index === 0 ? 'leased' : 'pending',
-    }));
-    const dispatchesById = Object.fromEntries(
-      alignmentDispatches.map((dispatch) => [
-        dispatch.dispatchId,
-        dispatch,
-      ]),
-    );
-
-    render(<RoomTurn
-      turnId="turn-a"
-      room={room}
-      projection={projection}
-      personas={previewPersonas}
-      kernelDispatchesById={dispatchesById}
-    />);
-
-    expect(screen.queryByRole('region', {
-      name: '并行需求对齐进度',
-    })).not.toBeInTheDocument();
-    expect(screen.queryByText('开始前 · 并行确认')).not.toBeInTheDocument();
-    expect(screen.queryByText('需求对齐')).not.toBeInTheDocument();
-  });
 
   it('shows replayed read arguments and bounded result behind a copyable row disclosure', async () => {
     const room = roomSummary('room-a', '工具回执 Room');
@@ -3881,7 +3325,7 @@ describe('Rooms experience', () => {
     expect(screen.queryByRole('button', { name: '再试一次' })).not.toBeInTheDocument();
   });
 
-  it('keeps a retry-wait Root cancellable until the participant completes', () => {
+  it('keeps a retry-wait Root cancellable and unlocks it when the participant completes', () => {
     const rootTurnId = 'room-turn:retry-wait';
     let projection = reduceRoomEvent(
       createRoomProjection('room-a'),
@@ -3931,13 +3375,13 @@ describe('Rooms experience', () => {
     view.rerender(roomTurn());
 
     expect(projection.turnsById[rootTurnId]).toMatchObject({
-      status: 'running',
+      status: 'completed',
       terminalDispatchIds: ['dispatch:retry-wait'],
       failedDispatchIds: [],
       terminalParticipantIds: ['room-a:p1'],
       failedParticipantIds: [],
     });
-    expect(screen.getByText('已完成')).toBeInTheDocument();
+    expect(screen.getByText('这轮协作已完成')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '停止本轮任务' })).not.toBeInTheDocument();
   });
 
@@ -3981,7 +3425,6 @@ describe('Rooms experience', () => {
       expect(String((request?.body as Record<string, unknown>)?.clientRequestId))
         .toMatch(/^room-abort-/);
     });
-    expect(await screen.findByText('这轮协作已停止')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '停止本轮任务' })).not.toBeInTheDocument();
   });
 
@@ -4287,372 +3730,12 @@ describe('Rooms experience', () => {
     expect(container).toHaveTextContent('工作摘要');
   });
 
-  it('keeps active Kernel task owners running and shows their canonical responsibility', () => {
-    const room = roomSummary('room-a', '权威伙伴状态 Room');
-    const projection = createRoomProjection(room.id);
-    projection.activityOrder.push('coordinator-tool-finished', 'implementer-tool-finished');
-    projection.activitiesById['coordinator-tool-finished'] = {
-      id: 'coordinator-tool-finished',
-      turnId: 'root-a',
-      participantId: 'room-a:p1',
-      sourceSessionId: 'room-a:s1',
-      kind: 'participant_activity',
-      status: 'completed',
-      summary: '已完成一次文件读取',
-      payload: {
-        rootId: 'root-a',
-        dispatchId: 'dispatch-coordinator',
-        sourceEventType: 'tool_finished',
-        toolName: 'read',
-      },
-      createdAtMs: 4,
-      updatedAtMs: 4,
-    };
-    projection.activitiesById['implementer-tool-finished'] = {
-      id: 'implementer-tool-finished',
-      turnId: 'root-a',
-      participantId: 'room-a:p2',
-      sourceSessionId: 'room-a:s2',
-      kind: 'participant_activity',
-      status: 'completed',
-      summary: '已完成一次命令',
-      payload: {
-        rootId: 'root-a',
-        dispatchId: 'dispatch-implementer',
-        sourceEventType: 'tool_finished',
-        toolName: 'bash',
-      },
-      createdAtMs: 5,
-      updatedAtMs: 5,
-    };
 
-    const kernel = createRoomKernelProjection(room.id);
-    kernel.rootsById['root-a'] = roomKernelRoot(room.id, 'running', false, 5);
-    kernel.tasksById['task-coordinator'] = {
-      ...roomKernelTask('task-coordinator', 'work', 'active'),
-      currentOwnerParticipantId: 'room-a:p1',
-      objective: '整合两条实现结果',
-    };
-    kernel.tasksById['task-implementer'] = {
-      ...roomKernelTask('task-implementer', 'work', 'active'),
-      currentOwnerParticipantId: 'room-a:p2',
-      objective: '实现 CSV 导入',
-    };
-    useRoomLiveStore.getState().setKernelProjection(room.id, kernel);
 
-    const { container } = render(
-      <TooltipProvider>
-        <RoomStatusPanel room={room} projection={projection} open onClose={() => undefined} />
-      </TooltipProvider>,
-    );
 
-    const coordinator = container.querySelector<HTMLElement>(
-      '.room-status-public-lane[data-participant-id="room-a:p1"]',
-    )!;
-    const implementer = container.querySelector<HTMLElement>(
-      '.room-status-public-lane[data-participant-id="room-a:p2"]',
-    )!;
-    expect(coordinator).toHaveAttribute('data-state', 'running');
-    expect(coordinator.querySelector(':scope > header > i')).toHaveTextContent('执行中');
-    expect(within(coordinator).getByText('整合两条实现结果')).toBeInTheDocument();
-    expect(implementer).toHaveAttribute('data-state', 'running');
-    expect(implementer.querySelector(':scope > header > i')).toHaveTextContent('执行中');
-    expect(within(implementer).getByText('实现 CSV 导入')).toBeInTheDocument();
-    expect(container).not.toHaveTextContent('这位伙伴暂时没有单独分到的部分');
-  });
 
-  it('selects the newest hydrated task when snapshot update timestamps are absent', () => {
-    const room = roomSummary('room-a', '任务顺序 Room');
-    const kernel = createRoomKernelProjection(room.id);
-    const older = {
-      ...roomKernelRoot(room.id, 'completed', true, 0),
-      rootId: 'root-old',
-      createdAtMs: 1,
-    };
-    const newer = {
-      ...roomKernelRoot(room.id, 'blocked', false, 0),
-      rootId: 'root-new',
-      createdAtMs: 2,
-    };
-    kernel.rootsById[older.rootId] = older;
-    kernel.rootsById[newer.rootId] = newer;
-    useRoomLiveStore.getState().setKernelProjection(room.id, kernel);
 
-    const { container } = render(
-      <TooltipProvider>
-        <RoomStatusPanel
-          room={room}
-          projection={createRoomProjection(room.id)}
-          open
-          onClose={() => undefined}
-        />
-      </TooltipProvider>,
-    );
 
-    expect(container.querySelector('.room-status-panel > header')).toHaveTextContent(
-      '需要处理阻塞',
-    );
-  });
-
-  it('keeps confirmed progress visible and exposes recovery when the task stream is stale', () => {
-    const room = roomSummary('room-a', '恢复进度 Room');
-    const kernel = createRoomKernelProjection(room.id);
-    kernel.rootsById['root-a'] = roomKernelRoot(room.id, 'running', false, 4);
-    useRoomLiveStore.getState().setKernelProjection(room.id, kernel);
-    useRoomLiveStore.getState().setKernelSync(room.id, {
-      state: 'stale',
-      detail: '继续显示上次确认的进度',
-      updatedAtMs: 120,
-      failureAtMs: 140,
-    });
-    const onOpenProgress = vi.fn();
-
-    render(
-      <TooltipProvider>
-        <RoomStatusPanel
-          room={room}
-          projection={createRoomProjection(room.id)}
-          open
-          onClose={() => undefined}
-          onOpenProgress={onOpenProgress}
-        />
-      </TooltipProvider>,
-    );
-
-    const freshness = screen.getByRole('status', { name: '任务进度连接' });
-    expect(freshness).toHaveTextContent('显示上次确认的进度');
-    expect(screen.getByLabelText('整体任务与分工进度')).toHaveTextContent(
-      '整体任务工作进行中',
-    );
-    fireEvent.click(screen.getByRole('button', { name: '打开任务进度' }));
-    expect(onOpenProgress).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps the plain-language phase sequence visible while peer review is running', () => {
-    const room = roomSummary('room-a', '共同检查 Room');
-    const kernel = createRoomKernelProjection(room.id);
-    kernel.rootsById['root-a'] = roomKernelRoot(room.id, 'running', false, 4);
-    kernel.tasksById['work-a'] = roomKernelTask('work-a', 'work', 'completed');
-    kernel.tasksById['review-a'] = {
-      ...roomKernelTask('review-a', 'review', 'active'),
-      reviewOfTaskIds: ['work-a'],
-      reviewAuthorParticipantIds: ['room-a:p2'],
-      reviewState: 'in_review',
-      reviewRound: 2,
-      reviewTargetRevision: `sha256:${'a'.repeat(64)}`,
-      reviewFindings: [
-        {
-          findingId: 'Finding-17',
-          fingerprint: `sha256:${'b'.repeat(64)}`,
-          gateEffect: 'blocking',
-          impact: 'high',
-          category: 'correctness',
-          scope: { criterionId: 'criterion:gateway-replay' },
-          observation: '网关断线重连后仍显示旧结果',
-          expected: '重连后应显示最新结果',
-          userImpact: '用户会看到过期状态',
-          evidenceRefs: ['execution:review-read'],
-          reproduction: ['断开网关', '恢复连接并查看状态'],
-          state: 'open',
-          dispositionRationale: null,
-          ownerParticipantId: 'room-a:p1',
-          firstSeenRevision: `sha256:${'c'.repeat(64)}`,
-          lastCheckedRevision: `sha256:${'a'.repeat(64)}`,
-          failedRechecks: 1,
-          response: {
-            findingId: 'Finding-17',
-            action: 'fixed',
-            rationale: '已刷新重连后的投影并补充验证',
-            evidenceRefs: ['execution:facilitator-fix'],
-            participantId: 'room-a:p1',
-            createdAtMs: 5,
-          },
-        },
-      ],
-    };
-    useRoomLiveStore.getState().setKernelProjection(room.id, kernel);
-
-    render(
-      <TooltipProvider>
-        <RoomStatusPanel room={room} projection={createRoomProjection(room.id)} open onClose={() => undefined} />
-      </TooltipProvider>,
-    );
-
-    const phase = screen.getByRole('region', { name: '当前协作阶段' });
-    expect(phase).toHaveTextContent('各自工作');
-    expect(phase).toHaveTextContent('一起检查');
-    expect(phase).toHaveTextContent('0 / 1 位伙伴完成检查');
-    const summary = within(phase).getByLabelText('整体任务与分工进度');
-    expect(summary).toHaveTextContent('整体任务工作进行中');
-    expect(summary).toHaveTextContent('分工完成1 / 2');
-    expect(summary).toHaveTextContent('伙伴执行等待开始');
-    expect(phase).not.toHaveTextContent('最终回复');
-    const review = screen.getByRole('button', { name: /独立复核/ })
-      .closest<HTMLElement>('.agent-status-section')!;
-    expect(review).toHaveTextContent('澄·初');
-    expect(review).toHaveTextContent('第 2 轮');
-    expect(review).toHaveTextContent('重新复核');
-    expect(review).toHaveTextContent('Finding-17');
-    expect(review).toHaveTextContent('阻断');
-    expect(review).toHaveTextContent('网关断线重连后仍显示旧结果');
-    expect(review).toHaveTextContent('修正回应');
-    expect(review).toHaveTextContent('已刷新重连后的投影并补充验证');
-  });
-
-  it('keeps the internal Report task and dispatch out of peer progress', () => {
-    const room = roomSummary('room-a', '报告统计 Room');
-    const kernel = createRoomKernelProjection(room.id);
-    kernel.rootsById['root-a'] = roomKernelRoot(room.id, 'running', false, 5);
-    kernel.tasksById['work-a'] = roomKernelTask('work-a', 'work', 'completed');
-    kernel.tasksById['report-a'] = roomKernelTask('report-a', 'report', 'active');
-    kernel.dispatchesById['dispatch-report-a'] = {
-      schemaVersion: 'wisdom-weasel.room-dispatch-envelope.v2',
-      dispatchId: 'dispatch-report-a',
-      rootId: 'root-a',
-      taskId: 'report-a',
-      parentDispatchId: null,
-      generation: 1,
-      hopCount: 0,
-      depth: 0,
-      budgetCost: 1,
-      targetSessionId: 'room-a:s1',
-      targetParticipantId: 'room-a:p1',
-      triggerId: 'trigger:report-a',
-      intentKind: 'close',
-      idempotencyKey: 'report-a',
-      attempt: 1,
-      capabilityEpoch: 1,
-      runtimeProfileRevision: 'profile:report-a',
-      state: 'running',
-    };
-    useRoomLiveStore.getState().setKernelProjection(room.id, kernel);
-
-    render(
-      <TooltipProvider>
-        <RoomStatusPanel room={room} projection={createRoomProjection(room.id)} open onClose={() => undefined} />
-      </TooltipProvider>,
-    );
-
-    const phase = screen.getByRole('region', { name: '当前协作阶段' });
-    const summary = within(phase).getByLabelText('整体任务与分工进度');
-    expect(phase).toHaveTextContent('1 / 1 项完成');
-    expect(summary).toHaveTextContent('分工完成1 / 1');
-    expect(summary).toHaveTextContent('伙伴执行等待开始');
-    expect(phase).not.toHaveTextContent('1 / 2');
-  });
-
-  it('labels active work after requested review changes as revision work', () => {
-    const room = roomSummary('room-a', '返修状态 Room');
-    const kernel = createRoomKernelProjection(room.id);
-    kernel.rootsById['root-a'] = roomKernelRoot(room.id, 'running', false, 5);
-    kernel.tasksById['work-a'] = roomKernelTask('work-a', 'work', 'completed');
-    kernel.tasksById['review-a'] = {
-      ...roomKernelTask('review-a', 'review', 'active'),
-      reviewOfTaskIds: ['work-a'],
-      reviewAuthorParticipantIds: ['room-a:p2'],
-      reviewState: 'changes_requested',
-      reviewRound: 2,
-      reviewTargetRevision: `sha256:${'d'.repeat(64)}`,
-    };
-    useRoomLiveStore.getState().setKernelProjection(room.id, kernel);
-
-    render(
-      <TooltipProvider>
-        <RoomStatusPanel room={room} projection={createRoomProjection(room.id)} open onClose={() => undefined} />
-      </TooltipProvider>,
-    );
-
-    const review = screen.getByRole('button', { name: /独立复核/ })
-      .closest<HTMLElement>('.agent-status-section')!;
-    expect(review).toHaveTextContent('返修中');
-    expect(review).toHaveTextContent('负责人正在按复核意见返修');
-    expect(review).not.toHaveTextContent('重新复核');
-  });
-
-  it('keeps the final public Room reply visible after peer checks complete', () => {
-    const room = roomSummary('room-a', '最终回复 Room');
-    const kernel = createRoomKernelProjection(room.id);
-    kernel.rootsById['root-a'] = roomKernelRoot(room.id, 'completed', true, 6);
-    kernel.tasksById['work-a'] = roomKernelTask('work-a', 'work', 'completed');
-    kernel.tasksById['review-a'] = {
-      ...roomKernelTask('review-a', 'review', 'completed'),
-      reviewOfTaskIds: ['work-a'],
-      reviewAuthorParticipantIds: ['room-a:p2'],
-      reviewState: 'accepted',
-    };
-    kernel.postOrder.push('final-post');
-    kernel.postsById['final-post'] = {
-      schemaVersion: 'wisdom-weasel.room-post.v2',
-      postId: 'final-post',
-      roomId: room.id,
-      rootId: 'root-a',
-      generation: 1,
-      authorActorRef: 'room-a:p1',
-      kind: 'result',
-      visibility: 'room',
-      content: '每位伙伴的结果都已互相检查，这是最终公开回复。',
-      idempotencyKey: 'final-post',
-      publicationSource: { kind: 'room_commit', ref: 'commit-final' },
-      createdAtMs: 6,
-    };
-    useRoomLiveStore.getState().setKernelProjection(room.id, kernel);
-
-    const { container } = render(
-      <TooltipProvider>
-        <RoomStatusPanel room={room} projection={createRoomProjection(room.id)} open onClose={() => undefined} />
-      </TooltipProvider>,
-    );
-
-    const phase = screen.getByRole('region', { name: '当前协作阶段' });
-    const reply = container.querySelector<HTMLElement>('.room-status-final-reply')!;
-    expect(phase).toHaveTextContent('各自工作');
-    expect(phase).toHaveTextContent('一起检查');
-    expect(phase).toHaveTextContent('最终回复');
-    expect(reply).toHaveTextContent('每位伙伴的结果都已互相检查，这是最终公开回复。');
-    expect(phase.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  it('keeps only the latest public reply in the status rail when work ends without a success receipt', () => {
-    const room = roomSummary('room-a', '未完成回复 Room');
-    const kernel = createRoomKernelProjection(room.id);
-    kernel.rootsById['root-a'] = roomKernelRoot(room.id, 'failed', false, 8);
-    kernel.postOrder.push('earlier-post', 'failed-post');
-    kernel.postsById['earlier-post'] = {
-      schemaVersion: 'wisdom-weasel.room-post.v2',
-      postId: 'earlier-post',
-      roomId: room.id,
-      rootId: 'root-a',
-      generation: 1,
-      authorActorRef: 'room-a:p1',
-      kind: 'progress',
-      visibility: 'room',
-      content: '较早的公开进度',
-      idempotencyKey: 'earlier-post',
-      publicationSource: { kind: 'room_commit', ref: 'commit-earlier' },
-      createdAtMs: 7,
-    };
-    kernel.postsById['failed-post'] = {
-      ...kernel.postsById['earlier-post']!,
-      postId: 'failed-post',
-      kind: 'failure',
-      content: '本轮未完成，伙伴已经给出可复核的最后说明。',
-      idempotencyKey: 'failed-post',
-      publicationSource: { kind: 'room_commit', ref: 'commit-failed' },
-      createdAtMs: 8,
-    };
-    useRoomLiveStore.getState().setKernelProjection(room.id, kernel);
-
-    const { container } = render(
-      <TooltipProvider>
-        <RoomStatusPanel room={room} projection={createRoomProjection(room.id)} open onClose={() => undefined} />
-      </TooltipProvider>,
-    );
-
-    expect(container.querySelectorAll('.room-status-final-reply')).toHaveLength(1);
-    expect(container).toHaveTextContent('本轮未完成，伙伴已经给出可复核的最后说明。');
-    expect(container).not.toHaveTextContent('较早的公开进度');
-    expect(screen.getByRole('region', { name: '当前协作阶段' })).toHaveTextContent('最终回复');
-  });
 
   it('labels a completed Room turn without a Post as completed in the status panel', () => {
     const room = roomSummary('room-a', '终态 Room');
@@ -4762,81 +3845,6 @@ describe('Rooms experience', () => {
 
 });
 
-function roomKernelTask(
-  taskId: string,
-  taskKind: RoomTaskV3['taskKind'],
-  state: RoomTaskV3['state'],
-): RoomTaskV3 {
-  return {
-    schemaVersion: 'wisdom-weasel.room-task.v3',
-    taskId,
-    rootId: 'root-a',
-    parentTaskId: null,
-    taskKind,
-    currentOwnerParticipantId: taskKind === 'review' ? 'room-a:p2' : 'room-a:p1',
-    ownershipRevision: 1,
-    ownershipReceiptId: null,
-    objective: taskKind === 'review' ? '检查伙伴结果' : '完成自己的部分',
-    expectedOutput: '公开结果',
-    requirementItemIds: [],
-    acceptanceCriterionIds: [],
-    contextEvidenceRefs: [],
-    invitationId: null,
-    reviewOfTaskIds: [],
-    reviewAuthorParticipantIds: [],
-    reviewState: taskKind === 'review' ? 'required' : 'not_required',
-    revision: 1,
-    state,
-  };
-}
-
-function roomKernelRoot(
-  roomId: string,
-  state: RootProjection['state'],
-  isFinal: boolean,
-  updatedAtMs: number,
-): RootProjection {
-  return {
-    schemaVersion: 'wisdom-weasel.room-root-execution.v3',
-    rootId: 'root-a',
-    roomId,
-    generation: 1,
-    state,
-    facilitatorParticipantId: `${roomId}:p1`,
-    reporterParticipantId: isFinal ? `${roomId}:p1` : null,
-    reporterSelectionReceiptId: null,
-    requirementAnchorRef: 'requirement:root-a',
-    createdByActorRef: 'user:1',
-    terminalReceiptId: isFinal ? 'terminal:root-a' : null,
-    activeProfileRef: null,
-    budgetPolicyRef: 'budget:default',
-    independentReviewRequired: false,
-    createdAtMs: 1,
-    updatedAtMs,
-    isFinal,
-  };
-}
-
-function roomKernelSnapshot(roomId: string) {
-  const root: Record<string, unknown> = {
-    ...roomKernelRoot(roomId, 'running', false, 1),
-  };
-  delete root.isFinal;
-  delete root.updatedAtMs;
-  return {
-    roomId,
-    lastSequence: 1,
-    snapshotHash: `sha256:${'0'.repeat(64)}`,
-    roots: [root],
-    tasks: [],
-    dispatches: [],
-    posts: [],
-    sessions: [],
-    receipts: [],
-    cancellationSurfaces: [],
-  };
-}
-
 function pickedRoomImage(
   id: string,
   name: string,
@@ -4910,9 +3918,8 @@ function roomQuestionEvent(
       recommended?: boolean;
     }[];
   },
-  requestedRootId?: string,
 ) {
-  const rootId = requestedRootId ?? `${roomId}:turn-${sequence}`;
+  const rootId = `${roomId}:turn-${sequence}`;
   return roomEvent(roomId, sequence, 'room_post', {
     post: {
       schemaVersion: 'wisdom-weasel.room-post.v2',

@@ -1,4 +1,4 @@
-import { AlertCircle, GitBranch, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { AlertCircle, FolderTree, GitBranch, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
@@ -20,6 +20,7 @@ import {
 } from './sessions/ConversationForkDialog';
 import { NewSessionDialog, type NewSessionInput } from './sessions/NewSessionDialog';
 import { AgentStatusPanel } from './status/AgentStatusPanel';
+import { AgentFilesPanel } from './workspace/AgentFilesPanel';
 import { useMediaQuery, useModalPanel } from './overlay-dialog';
 import { agentProjection, useAgentLiveStore } from './state/live-store';
 import { useContextResourceController } from './state/use-context-resource-controller';
@@ -110,6 +111,7 @@ function AgentWorkspace() {
   const [scrollToLatestRequest, setScrollToLatestRequest] = useState(0);
   const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
   const [statusOpen, setStatusOpen] = useState(shouldOpenTaskCenterByDefault);
+  const [filesOpen, setFilesOpen] = useState(false);
   const [error, setVisibleError] = useState('');
   const [sendTimings] = useState(() => new AgentSendTimingTracker());
   const session = sessions.find((item) => item.id === selectedId);
@@ -118,6 +120,8 @@ function AgentWorkspace() {
   const railRef = useRef<HTMLElement>(null);
   const statusToggleRef = useRef<HTMLButtonElement>(null);
   const statusRef = useRef<HTMLElement>(null);
+  const filesToggleRef = useRef<HTMLButtonElement>(null);
+  const filesRef = useRef<HTMLElement>(null);
   const conversationRef = useRef<HTMLElement>(null);
   useComposerClearance(conversationRef);
   const selectedIdRef = useRef(selectedId);
@@ -283,13 +287,19 @@ function AgentWorkspace() {
   const approvalForReview = pendingApproval ?? requestedApproval;
   const railModal = mobileViewport && railOpen;
   const statusModal = statusOverlayViewport && statusOpen;
+  const filesModal = statusOverlayViewport && filesOpen;
+  const sidePanelOpen = statusOpen || filesOpen;
+  const sidePanelModal = statusModal || filesModal;
 
   useEffect(() => {
     if (mobileViewport) setRailOpen(false);
   }, [mobileViewport]);
 
   useEffect(() => {
-    if (statusOverlayViewport) setStatusOpen(false);
+    if (statusOverlayViewport) {
+      setStatusOpen(false);
+      setFilesOpen(false);
+    }
   }, [statusOverlayViewport]);
 
   useEffect(() => {
@@ -308,6 +318,13 @@ function AgentWorkspace() {
     panelRef: statusRef,
     returnFocusRef: statusToggleRef,
     onClose: closeStatusPanel,
+  });
+  useModalPanel({
+    active: filesModal,
+    panelRef: filesRef,
+    returnFocusRef: filesToggleRef,
+    onClose: closeFilesPanel,
+    initialFocusSelector: '[data-drawer-autofocus]',
   });
 
   const loadSessions = useCallback(async (preferredId = '') => {
@@ -362,6 +379,33 @@ function AgentWorkspace() {
       }
     } finally {
       setLoading(false);
+    }
+  }, [showArchived, transport]);
+
+  const refreshSessionRail = useCallback(async () => {
+    try {
+      const response = await transport.request({
+        pathId: 'agent.sessions.list',
+        query: { limit: 100, includeArchived: showArchived },
+      });
+      const nextSessions = sessionItems(response);
+      setSessions((current) => {
+        const existingById = new Map(current.map((item) => [item.id, item]));
+        return nextSessions.map((item) => {
+          const existing = existingById.get(item.id);
+          return existing
+            ? {
+                ...existing,
+                ...item,
+                roomParticipant: item.roomParticipant ?? existing.roomParticipant,
+              }
+            : item;
+        });
+      });
+    } catch {
+      // The transcript event stream remains authoritative for the open
+      // conversation. A rail refresh must never replace a completed turn with
+      // a page-level error; the next terminal event or explicit reload retries.
     }
   }, [showArchived, transport]);
 
@@ -484,6 +528,9 @@ function AgentWorkspace() {
                 return;
               }
               batcher.push(event);
+              if (event.eventType === 'turn_completed' || event.eventType === 'turn_failed') {
+                void refreshSessionRail();
+              }
               if (event.eventType === 'session_configuration_changed') {
                 modelSelection.applyConfigurationEvent(selectedId, event.payload);
               }
@@ -629,7 +676,7 @@ function AgentWorkspace() {
       unsubscribe();
       sendTimings.clearSession(selectedId);
     };
-  }, [ensure, isRoomParticipant, selectedId, sendTimings, transport]);
+  }, [ensure, isRoomParticipant, refreshSessionRail, selectedId, sendTimings, transport]);
 
   const defaultPersona = personas.find((item) => item.runtimeCharacteristics.isDefault)
     ?? personas.find((item) => item.roleId === 'companion-future-v1')
@@ -655,10 +702,19 @@ function AgentWorkspace() {
     setStatusOpen(false);
   }
 
+  function closeFilesPanel(): void {
+    setFilesOpen(false);
+  }
+
+  function closeSidePanel(): void {
+    setStatusOpen(false);
+    setFilesOpen(false);
+  }
+
   function toggleRail(): void {
     setRailOpen((value) => {
       const next = !value;
-      if (next && mobileViewport) setStatusOpen(false);
+      if (next && mobileViewport) closeSidePanel();
       return next;
     });
   }
@@ -666,7 +722,21 @@ function AgentWorkspace() {
   function toggleStatus(): void {
     setStatusOpen((value) => {
       const next = !value;
-      if (next && mobileViewport) setRailOpen(false);
+      if (next) {
+        setFilesOpen(false);
+        if (mobileViewport) setRailOpen(false);
+      }
+      return next;
+    });
+  }
+
+  function toggleFiles(): void {
+    setFilesOpen((value) => {
+      const next = !value;
+      if (next) {
+        setStatusOpen(false);
+        if (mobileViewport) setRailOpen(false);
+      }
       return next;
     });
   }
@@ -863,7 +933,7 @@ function AgentWorkspace() {
     if (value === '/model' || value === '/thinking') { setSelectedDraft(''); openModelPicker(); return; }
     if (value === '/permissions') { setSelectedDraft(''); setPermissionPickerRequest((current) => current + 1); return; }
     if (value === '/tools') { setSelectedDraft(''); openToolPicker(); return; }
-    if (value === '/status' || value === '/session') { setSelectedDraft(''); setStatusOpen(true); return; }
+    if (value === '/status' || value === '/session') { setSelectedDraft(''); setFilesOpen(false); setStatusOpen(true); return; }
     if (value === '/settings') { setSelectedDraft(''); window.location.hash = '/configuration'; return; }
     if (value === '/help' || value === '/hotkeys') { setSelectedDraft(''); setHelpRequest((current) => current + 1); return; }
     if (value === '/stop') { setSelectedDraft(''); await stop(); return; }
@@ -931,6 +1001,21 @@ function AgentWorkspace() {
         nowMs: Date.now(),
         ...(delivery === 'prompt' ? {} : { turnId: activeTurnId, delivery }),
       });
+      const optimisticProjection = agentProjection(sessionId);
+      const optimisticPreview = message.replace(/\s+/g, ' ').trim().slice(0, 240);
+      setSessions((current) => current.map((item) => (
+        item.id === sessionId
+          ? {
+              ...item,
+              messageCount: Math.max(
+                (item.messageCount ?? 0) + 1,
+                optimisticProjection.messageOrder.length,
+              ),
+              lastMessagePreview: optimisticPreview || item.lastMessagePreview,
+              updatedAtMs: Date.now(),
+            }
+          : item
+      )));
     }
     sendTimings.optimistic(clientMessageId);
     setSessionError(sessionId, '');
@@ -977,6 +1062,11 @@ function AgentWorkspace() {
     void (async () => {
       try {
         const response = await requestAdmission();
+        useAgentLiveStore.getState().acknowledgeOptimistic(
+          sessionId,
+          clientMessageId,
+          Date.now(),
+        );
         sendTimings.accepted(clientMessageId, response);
       } catch (requestError) {
         if (handlePendingAdmission(requestError)) return;
@@ -993,6 +1083,7 @@ function AgentWorkspace() {
         }
         if (isAgentTurnConflict(requestError)) {
           useAgentLiveStore.getState().discardOptimistic(sessionId, clientMessageId);
+          void refreshSessionRail();
           restoreInput?.();
           onAdmissionRolledBack?.();
           setSessionError(sessionId, '上一轮仍在处理，输入已保留；可以继续补充或先停止当前轮。');
@@ -1002,6 +1093,7 @@ function AgentWorkspace() {
         const projection = agentProjection(sessionId);
         const hasOptimisticTurn = Boolean(projection.optimisticByClientMessageId[clientMessageId]);
         useAgentLiveStore.getState().failOptimistic(sessionId, clientMessageId, failure, Date.now());
+        void refreshSessionRail();
         restoreInput?.();
         setSessionError(sessionId, hasOptimisticTurn ? '' : failure);
       } finally {
@@ -1116,6 +1208,7 @@ function AgentWorkspace() {
         break;
       case 'session':
       case 'status':
+        setFilesOpen(false);
         setStatusOpen(true);
         break;
       case 'settings':
@@ -1672,16 +1765,16 @@ function AgentWorkspace() {
   }
 
   return (
-    <main className="agent-feature" data-route-id="agent" data-rail-open={railOpen} data-status-open={statusOpen}>
+    <main className="agent-feature" data-route-id="agent" data-rail-open={railOpen} data-status-open={sidePanelOpen} data-side-panel={filesOpen ? 'files' : statusOpen ? 'status' : 'none'}>
       <h1 className="agent-feature__title">Agent 任务中心</h1>
-      <SessionRail ref={railRef} sessions={sessions} selectedId={selectedId} loading={loading} error={sessionLoadError} open={railOpen} modal={railModal} blocked={statusModal || newSessionOpen} showArchived={showArchived} onSelect={selectSession} onCreate={() => { if (mobileViewport) setRailOpen(false); setNewSessionOpen(true); }} onShowArchivedChange={setShowArchived} onArchive={(sessionId, archived) => void archiveSession(sessionId, archived)} onDelete={deleteSession} onRetry={() => void loadSessions(selectedIdRef.current || requestedSessionId)} onClose={closeMobileRail} />
+      <SessionRail ref={railRef} sessions={sessions} selectedId={selectedId} loading={loading} error={sessionLoadError} open={railOpen} modal={railModal} blocked={sidePanelModal || newSessionOpen} showArchived={showArchived} onSelect={selectSession} onCreate={() => { if (mobileViewport) setRailOpen(false); setNewSessionOpen(true); }} onShowArchivedChange={setShowArchived} onArchive={(sessionId, archived) => void archiveSession(sessionId, archived)} onDelete={deleteSession} onRetry={() => void loadSessions(selectedIdRef.current || requestedSessionId)} onClose={closeMobileRail} />
       <AgentPaneResizer side="rail" />
       <button className="agent-rail-backdrop" aria-hidden="true" disabled={!railModal} tabIndex={-1} onClick={closeMobileRail} type="button" />
       <section
         ref={conversationRef}
         className="agent-conversation"
-        aria-hidden={railModal || statusModal || undefined}
-        inert={railModal || statusModal ? true : undefined}
+        aria-hidden={railModal || sidePanelModal || undefined}
+        inert={railModal || sidePanelModal ? true : undefined}
       >
         <header className="agent-conversation__header">
           <IconButton ref={railToggleRef} className="agent-rail-toggle" label={railOpen ? '收起对话列表' : '展开对话列表'} icon={railOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} onClick={toggleRail} tooltip />
@@ -1689,6 +1782,7 @@ function AgentWorkspace() {
           {error ? <p role="alert" title={error}><AlertCircle size={14} /><span>{error}</span></p> : null}
           <div className="agent-conversation__actions">
             <IconButton label="查看对话路径与分支" icon={<GitBranch size={17} />} onClick={() => openForkDialog()} disabled={!session} tooltip />
+            <IconButton ref={filesToggleRef} className="agent-files-toggle" aria-controls="agent-files-panel" aria-expanded={filesOpen} label={filesOpen ? '收起文件目录' : '展开文件目录'} icon={<FolderTree size={17} />} disabled={!session} onClick={toggleFiles} tooltip />
             <IconButton ref={statusToggleRef} className="agent-status-toggle" aria-controls="agent-status-panel" aria-expanded={statusOpen} label={statusOpen ? '收起任务中心' : '展开任务中心'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} disabled={!session} onClick={toggleStatus} tooltip />
           </div>
         </header>
@@ -1755,8 +1849,17 @@ function AgentWorkspace() {
           />
         )}
       </section>
-      <button className="agent-status-backdrop" aria-hidden="true" disabled={!statusModal} tabIndex={-1} onClick={closeStatusPanel} type="button" />
+      <button className="agent-status-backdrop" aria-hidden="true" disabled={!sidePanelModal} tabIndex={-1} onClick={closeSidePanel} type="button" />
       <AgentPaneResizer side="status" />
+      <AgentFilesPanel
+        ref={filesRef}
+        sessionId={selectedId}
+        workspaceRoots={session?.workspaceRoots ?? []}
+        open={filesOpen}
+        modal={filesModal}
+        onClose={closeFilesPanel}
+        onManageRoots={() => void manageWorkspaceRoots()}
+      />
       <AgentStatusPanel
         ref={statusRef}
         sessionId={selectedId}

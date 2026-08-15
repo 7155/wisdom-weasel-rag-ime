@@ -14,6 +14,41 @@ afterEach(() => {
 });
 
 describe('file preview interaction', () => {
+  it('renders an explicit HTML artifact as a sandboxed managed report preview', async () => {
+    const content = '<!doctype html><h1>项目介绍</h1><script>window.pwned = true</script>';
+    const transport = new StubControlTransport('mock', {
+      'agent.media.preview': htmlPreview(content),
+    });
+    const user = userEvent.setup();
+    render(
+      <TooltipProvider>
+        <ControlTransportProvider transport={transport}>
+          <AgentFileBlock
+            data={{
+              mediaId: MEDIA_ID,
+              fileName: 'project-intro.html',
+              mimeType: 'text/html',
+              byteSize: new TextEncoder().encode(content).byteLength,
+              sha256: SHA256,
+            }}
+            sessionId={SESSION_ID}
+          />
+          <FilePreviewHost />
+        </ControlTransportProvider>
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByText('HTML 报告')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '预览报告' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('project-intro.html')).toBeInTheDocument();
+    const frame = within(dialog).getByTitle('project-intro.html 静态预览');
+    expect(frame).toHaveAttribute('sandbox', '');
+    expect(frame.getAttribute('srcdoc')).toContain('项目介绍');
+    expect(frame.getAttribute('srcdoc')).not.toContain('<script');
+  });
+
   it('expands a managed Markdown file in its message instead of opening a dialog', async () => {
     const transport = new StubControlTransport('mock', {
       'agent.media.preview': preview('# 交付\n\n- 类型检查通过'),
@@ -75,6 +110,27 @@ function preview(content: string) {
       sha256: SHA256,
       previewKind: 'markdown',
       language: '',
+      contentUrl: `/api/agent/media/${MEDIA_ID}/content?sessionId=${SESSION_ID}`,
+    },
+    content,
+    previewByteSize: new TextEncoder().encode(content).byteLength,
+    truncated: false,
+  };
+}
+
+function htmlPreview(content: string) {
+  return {
+    schemaVersion: 'rag-ime.agent-file-preview.v1',
+    descriptor: {
+      schemaVersion: 'rag-ime.agent-file-descriptor.v1',
+      mediaId: MEDIA_ID,
+      sessionId: SESSION_ID,
+      fileName: 'project-intro.html',
+      mimeType: 'text/html',
+      byteSize: new TextEncoder().encode(content).byteLength,
+      sha256: SHA256,
+      previewKind: 'html',
+      language: 'html',
       contentUrl: `/api/agent/media/${MEDIA_ID}/content?sessionId=${SESSION_ID}`,
     },
     content,

@@ -183,6 +183,17 @@ class RuntimeTurnBindingTests(unittest.TestCase):
             "dispatch:current",
         )
 
+    def test_unregistered_participant_session_turn_is_not_a_room_event(
+        self,
+    ) -> None:
+        registry = RoomTurnRegistry()
+
+        self.assertFalse(
+            registry.allows_room_event(
+                self._event("runtime-turn:direct", "text_delta")
+            )
+        )
+
     def test_accept_replays_current_terminal_buffered_before_runtime_ack(
         self,
     ) -> None:
@@ -348,6 +359,7 @@ class PrivateIntercomTurnTests(unittest.TestCase):
         )
 
         first = self._event("text_delta")
+        self.assertTrue(self.registry.allows_room_event(first))
         self.assertEqual(
             self.registry.private_intercom_for_event(first),
             "intercom:notice",
@@ -362,6 +374,11 @@ class PrivateIntercomTurnTests(unittest.TestCase):
                 self._event("turn_completed")
             ),
             "intercom:notice",
+        )
+        self.assertTrue(
+            self.registry.allows_room_event(
+                self._event("turn_completed")
+            )
         )
         self.registry.finish_private_intercom_event(
             self._event("turn_completed")

@@ -24,10 +24,6 @@ import {
   Select,
 } from '@/components/primitives';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
-import type { RoomDispatchEnvelopeV2 } from '@/contracts/generated/room-dispatch-envelope.v2';
-import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
-import type { RoomTaskV3 } from '@/contracts/generated/room-task.v3';
-import type { RoomKernelProjection, RootProjection } from '@/contracts/room-kernel-reducer';
 import type { PickedFile } from '@/platform/transport';
 import { parseRoomEventPage, type RoomAttachmentReceipt } from '@/contracts/room-reducer';
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
@@ -39,13 +35,6 @@ import { RoomStatusPanel } from './RoomStatusPanel';
 import { RoomMemberBoundaryDialog } from './RoomMemberBoundaryDialog';
 import { RoomPaneResizer } from './RoomPaneResizer';
 import { RoomComposer, roomMentionedParticipants } from './composer/RoomComposer';
-import { RoomKernelLivePanel, useRoomTaskSubagents } from './kernel/RoomKernelLivePanel';
-import { latestAuthoritativeRoomRoot } from './kernel/RoomKernelControlPlane';
-import type { RoomTaskConversationTarget } from './kernel/RoomTaskFlowGraph';
-import {
-  buildRetryRootCommand,
-  createControlRoomKernelCommandTransport,
-} from './kernel/room-kernel-command-transport';
 import {
   roomCollaborationRoleDescription,
   roomCollaborationRoleLabel,
@@ -78,8 +67,10 @@ import type {
   RoomWorkState,
 } from './room-types';
 import { RoomTurn } from './timeline/RoomTurn';
-import { roomRootIntakePhase, roomRootRequiresStartAction } from './timeline/RoomStartActionGate';
-import { selectPublicRoomTurnOrder } from './runtime/room-execution-lanes';
+import {
+  selectPublicRoomTurnOrder,
+  selectRoomExecutionOverview,
+} from './runtime/room-execution-lanes';
 import { useRoomLiveSession } from './runtime/use-room-live-session';
 import { useRoomLiveStore } from './state/live-store';
 import './rooms.css';
@@ -99,17 +90,6 @@ export type {
 } from './room-types';
 
 const emptyRoomTurnIds: string[] = [];
-const emptyKernelRoots: Record<string, RootProjection> = {};
-const emptyKernelDispatches: Record<string, RoomDispatchEnvelopeV2> = {};
-const emptyKernelTasks: Record<string, RoomTaskV3> = {};
-const emptyKernelTaskUpdatedAtMs: Record<string, number> = {};
-const emptyKernelReceipts: Record<string, RoomKernelReceiptV1> = {};
-const ROOM_ROOT_TERMINAL_STATES: Record<string, true> = {
-  completed: true,
-  failed: true,
-  cancelled: true,
-  cancelled_with_unknowns: true,
-};
 const ROOM_WORK_ITEM_STATES: Record<string, true> = {
   queued: true,
   active: true,
@@ -270,7 +250,6 @@ export function RoomsFeature() {
   const [statusOpen, setStatusOpen] = useState(false);
   const [workspaceView, setWorkspaceView] = useState<'posts' | 'execution' | 'sessions'>('posts');
   const [historyLoadRevision, setHistoryLoadRevision] = useState(0);
-  const [pendingTaskTarget, setPendingTaskTarget] = useState<RoomTaskConversationTarget | null>(null);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [roomRecoveryStates, setRoomRecoveryStates] = useState<Record<string, 'recovering' | 'failed' | 'synced'>>({});
   const [draft, setDraft] = useState('');
@@ -320,37 +299,26 @@ export function RoomsFeature() {
   const [boundaryParticipant, setBoundaryParticipant] = useState<RoomParticipant>();
   const [abortingTurnIds, setAbortingTurnIds] = useState<Set<string>>(() => new Set());
   const [sendingRoomIds, setSendingRoomIds] = useState<Set<string>>(() => new Set());
-  const [retryingRootIds, setRetryingRootIds] = useState<Set<string>>(() => new Set());
-  const [startingRootIds, setStartingRootIds] = useState<Set<string>>(() => new Set());
-  const [kernelRefreshRevisions, setKernelRefreshRevisions] = useState<Record<string, number>>({});
-  const kernelProjection = useRoomLiveStore((state) => (
-    state.kernelProjections[selectedId] ?? null
-  ));
   const visibleTurnOrder = useRoomLiveStore(useShallow((state) => {
     const projection = state.projections[selectedId];
     return projection ? selectPublicRoomTurnOrder(projection) : emptyRoomTurnIds;
   }));
+  const selectedRoomProjection = useRoomLiveStore((state) => state.projections[selectedId]);
+  const runtimeWorkItems = useMemo(
+    () => selectedRoomProjection ? selectRoomExecutionOverview(selectedRoomProjection) : [],
+    [selectedRoomProjection],
+  );
   const pendingQuestion = useRoomLiveStore((state) => (
     state.projections[selectedId]?.pendingUserQuestion
   ));
-  const kernelRootsById = useRoomLiveStore((state) => (
-    state.kernelProjections[selectedId]?.rootsById ?? emptyKernelRoots
-  ));
-  const kernelDispatchesById = useRoomLiveStore((state) => (
-    state.kernelProjections[selectedId]?.dispatchesById ?? emptyKernelDispatches
-  ));
-  const kernelTasksById = useRoomLiveStore((state) => (
-    state.kernelProjections[selectedId]?.tasksById ?? emptyKernelTasks
-  ));
-  const kernelTaskUpdatedAtMsById = useRoomLiveStore((state) => (
-    state.kernelProjections[selectedId]?.taskUpdatedAtMsById ?? emptyKernelTaskUpdatedAtMs
-  ));
-  const kernelReceiptsById = useRoomLiveStore((state) => (
-    state.kernelProjections[selectedId]?.receiptsById ?? emptyKernelReceipts
-  ));
-  const kernelSync = useRoomLiveStore((state) => (
-    state.kernelSyncByRoomId[selectedId]
-  ));
+  const activeRoomTurn = useRoomLiveStore((state) => {
+    const projection = state.projections[selectedId];
+    if (!projection) return undefined;
+    return [...selectPublicRoomTurnOrder(projection)]
+      .reverse()
+      .map((turnId) => projection.turnsById[turnId])
+      .find((turn) => turn?.status === 'queued' || turn?.status === 'running');
+  });
   const pendingGroupedInput = useRoomLiveStore((state) => (
     latestPendingGroupedRoomInput(state.projections[selectedId])
   ));
@@ -359,7 +327,6 @@ export function RoomsFeature() {
   const selectedRoomRecoveryState = roomRecoveryStates[selectedId];
   const selectedRoomErrorSource = roomErrorsRef.current.get(selectedId)?.source;
   const latestVisibleTurnId = visibleTurnOrder.at(-1) ?? '';
-  const navigableRootIds = useMemo(() => new Set(visibleTurnOrder), [visibleTurnOrder]);
 
   selectedRoomIdRef.current = selectedId;
 
@@ -437,42 +404,11 @@ export function RoomsFeature() {
     return () => window.cancelAnimationFrame(frame);
   }, [latestVisibleTurnId, roomTimelineScroller, visibleTurnOrder.length]);
 
-  useEffect(() => {
-    if (workspaceView !== 'posts' || !pendingTaskTarget) return;
-    const index = visibleTurnOrder.indexOf(pendingTaskTarget.rootId);
-    if (index < 0) {
-      setPendingTaskTarget(null);
-      return;
-    }
-    const frame = window.requestAnimationFrame(() => {
-      roomTimelineFollowIntentRef.current = index === visibleTurnOrder.length - 1;
-      roomTimelineRef.current?.scrollToIndex({ align: 'center', behavior: 'auto', index });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [pendingTaskTarget, visibleTurnOrder, workspaceView]);
-
-  const navigateToTaskConversation = useCallback((target: RoomTaskConversationTarget) => {
-    if (!visibleTurnOrder.includes(target.rootId)) return;
-    roomTimelineFollowIntentRef.current = false;
-    setPendingTaskTarget(target);
-    setWorkspaceView('posts');
-  }, [visibleTurnOrder]);
-
-  useEffect(() => {
-    setStartingRootIds((current) => {
-      const next = new Set([...current].filter((rootId) => (
-        kernelRootsById[rootId]?.state === 'waiting'
-      )));
-      return next.size === current.size ? current : next;
-    });
-  }, [kernelRootsById]);
-
   function selectRoomId(roomId: string): void {
     selectedRoomIdRef.current = roomId;
     setSelectedId(roomId);
     setWorkspaceView('posts');
     setHistoryLoadRevision(0);
-    setPendingTaskTarget(null);
     setDraft(roomDraftsRef.current.get(roomId) ?? '');
     setAttachments(roomAttachmentsRef.current.get(roomId) ?? []);
     setError(roomErrorsRef.current.get(roomId)?.message ?? '');
@@ -715,88 +651,21 @@ export function RoomsFeature() {
 
   const room = rooms.find((item) => item.id === selectedId);
   const activeParticipants = room?.participants.filter((participant) => participant.status === 'active') ?? [];
-  const participantLabels = useMemo(
-    () => Object.fromEntries((room?.participants ?? []).map((participant) => [participant.id, participant.displayName])),
-    [room?.participants],
-  );
-  const participantSessionIds = useMemo(
-    () => [...new Set((room?.participants ?? [])
-      .map((participant) => participant.sessionId.trim())
-      .filter(Boolean))],
-    [room?.participants],
-  );
-  const participantRoles = useMemo<Record<string, RoomCollaborationRole>>(() => {
-    const roles: Record<string, RoomCollaborationRole> = {};
-    for (const participant of room?.participants ?? []) {
-      if (participant.collaborationRole) roles[participant.id] = participant.collaborationRole;
-    }
-    return roles;
-  }, [room?.participants]);
-  const subagentsByTaskId = useRoomTaskSubagents({
-    enabled: Boolean(room && selectedId),
-    participantSessionIds,
-    projection: kernelProjection as RoomKernelProjection | null,
-    roomId: selectedId,
-    transport,
-  });
-  const latestKernelRoot = latestAuthoritativeRoomRoot(Object.values(kernelRootsById));
-  const latestRootRequiresStartAction = roomRootRequiresStartAction(
-    latestKernelRoot,
-    Object.values(kernelReceiptsById),
-  );
-  const latestRootIntakePhase = roomRootIntakePhase(
-    latestKernelRoot,
-    Object.values(kernelReceiptsById),
-  );
   const unresolvedWork = room?.workItems?.filter((work) => (
     ['blocked', 'review', 'active', 'queued'].includes(work.state)
   )) ?? [];
-  const activeWorkForLatestRoot = latestKernelRoot
-    ? unresolvedWork.find((work) => (
-        work.rootTurnId === latestKernelRoot.rootId
-        || work.acceptedTurnId === latestKernelRoot.rootId
-      ))
-    : undefined;
-  const fallbackActiveWork = unresolvedWork[0];
-  const activeWork = activeWorkForLatestRoot ?? (
-    fallbackActiveWork
-    && (!latestKernelRoot || (
-      (latestKernelRoot.createdAtMs ?? 0) <= fallbackActiveWork.createdAtMs
-    ))
-      ? fallbackActiveWork
-      : undefined
-  );
-  const latestRootOpen = Boolean(
-    latestKernelRoot && !ROOM_ROOT_TERMINAL_STATES[latestKernelRoot.state],
-  );
-  const latestRootAligning = Boolean(
-    latestKernelRoot?.state === 'running'
-    && ['aligning', 'clarifying'].includes(latestRootIntakePhase),
-  );
+  const activeWork = unresolvedWork[0];
   const managedTaskBusyState = room?.roomKind === 'roleplay'
     ? undefined
-    : latestRootRequiresStartAction
-      ? 'awaiting_start'
-      : activeWork?.state === 'blocked'
-        || latestRootOpen && latestKernelRoot?.state === 'blocked'
+    : activeWork?.state === 'blocked'
       ? 'blocked'
-      : latestRootOpen || activeWork
+      : activeRoomTurn || activeWork
         ? 'running'
         : undefined;
-  const roomHeadlineState = latestRootRequiresStartAction
-    ? '等待你确认'
-    : latestRootAligning
-      ? '正在整理确认结果'
-    : activeWork
+  const roomHeadlineState = activeWork
       ? roomWorkStateLabel(activeWork.state)
-      : latestRootOpen && latestKernelRoot
-        ? ({
-            pending: '等待开始',
-            running: '执行中',
-            waiting: '等待下一步',
-            blocked: '已阻塞',
-            cancelling: '正在停止',
-          } as Partial<Record<RootProjection['state'], string>>)[latestKernelRoot.state] ?? '任务进行中'
+      : activeRoomTurn
+        ? '执行中'
         : '先把目标聊清楚';
   const roomSettingsChanged = Boolean(room && (
     settingsTitle.trim() !== room.title
@@ -837,15 +706,9 @@ export function RoomsFeature() {
     const message = (options.preserveMessage ? composerDraft : composerDraft.trim())
       || (selectedAttachments.length ? '请查看附件。' : '');
     const pendingQuestionAnswer = Boolean(message.trim() && matchesAuthoritativeQuestion);
-    if (managedTaskBusyState && !pendingQuestionAnswer) {
-      setRoomError(
-        room.id,
-        managedTaskBusyState === 'blocked'
-          ? '当前任务已暂停；请先继续或停止这项任务。'
-          : managedTaskBusyState === 'awaiting_start'
-            ? '当前任务正在等待你点击“开始行动”；确认后才会开始执行。'
-            : '当前任务仍在执行；完成或停止后才能发送下一项任务。',
-      );
+    const steering = Boolean(activeRoomTurn && !pendingQuestionAnswer);
+    if (steering && selectedAttachments.length) {
+      setRoomError(room.id, '当前回合进行中时可以立即干预文字；图片请在下一轮发送。');
       return false;
     }
     if (!message.trim() || roomSendLocksRef.current.has(room.id)) return false;
@@ -856,42 +719,56 @@ export function RoomsFeature() {
     roomTimelineFollowIntentRef.current = true;
     roomSendLocksRef.current.add(room.id);
     setSendingRoomIds((current) => new Set(current).add(room.id));
-    useRoomLiveStore.getState().appendOptimistic(
-      room.id,
-      {
-        clientMessageId,
-        text: message,
-        attachments: selectedAttachments,
-        nowMs: Date.now(),
-        ...(pendingQuestionAnswer && authoritativeQuestion
-          ? { answerToPostId: authoritativeQuestion.postId }
-          : {}),
-      },
-    );
+    if (!steering) {
+      useRoomLiveStore.getState().appendOptimistic(
+        room.id,
+        {
+          clientMessageId,
+          text: message,
+          attachments: selectedAttachments,
+          nowMs: Date.now(),
+          ...(pendingQuestionAnswer && authoritativeQuestion
+            ? { answerToPostId: authoritativeQuestion.postId }
+            : {}),
+        },
+      );
+    }
     if (includeComposerState) {
       updateRoomDraft(room.id, '');
       if (!pendingQuestionAnswer) updateRoomAttachments(room.id, []);
     }
     setRoomError(room.id, '');
     try {
-      const response = await transport.request<Record<string, unknown>>({
-        pathId: 'agent.room.message',
-        params: { roomId: room.id },
-        body: {
-          message,
-          clientMessageId,
-          attachmentIds: selectedAttachments.map((attachment) => attachment.mediaId),
-          ...(pendingQuestionAnswer && authoritativeQuestion
-            ? {
-                answerToPostId: authoritativeQuestion.postId,
-                answerToRootId: authoritativeQuestion.rootId,
-              }
-            : {}),
-          ...(addressedParticipants.length
-            ? { participantIds: addressedParticipants.map((participant) => participant.id) }
-            : {}),
-        },
-      });
+      const response = await transport.request<Record<string, unknown>>(steering && activeRoomTurn
+        ? {
+            pathId: 'agent.room.participant.steer',
+            params: { roomId: room.id },
+            body: {
+              action: 'steer_participant',
+              rootId: activeRoomTurn.rootId ?? activeRoomTurn.id,
+              participantId: activeRoomTurn.participantIds[0] ?? '',
+              clientActionId: clientMessageId,
+              message,
+            },
+          }
+        : {
+            pathId: 'agent.room.message',
+            params: { roomId: room.id },
+            body: {
+              message,
+              clientMessageId,
+              attachmentIds: selectedAttachments.map((attachment) => attachment.mediaId),
+              ...(pendingQuestionAnswer && authoritativeQuestion
+                ? {
+                    answerToPostId: authoritativeQuestion.postId,
+                    answerToRootId: authoritativeQuestion.rootId,
+                  }
+                : {}),
+              ...(addressedParticipants.length
+                ? { participantIds: addressedParticipants.map((participant) => participant.id) }
+                : {}),
+            },
+          });
       useRoomLiveStore.getState().acceptMessage(room.id, response);
       const workItem = record(response).workItem;
       if (isRoomWorkItem(workItem) && workItem.roomId === room.id) {
@@ -907,7 +784,9 @@ export function RoomsFeature() {
       }
       return true;
     } catch (requestError) {
-      useRoomLiveStore.getState().discardOptimistic(room.id, clientMessageId);
+      if (!steering) {
+        useRoomLiveStore.getState().discardOptimistic(room.id, clientMessageId);
+      }
       if (includeComposerState) {
         updateRoomDraft(room.id, composerDraft);
         if (!pendingQuestionAnswer) {
@@ -967,79 +846,6 @@ export function RoomsFeature() {
         next.delete(turnId);
         return next;
       });
-    }
-  }
-  async function retryBlockedRoot(rootId: string): Promise<void> {
-    if (!room || retryingRootIds.has(rootId)) return;
-    const root = kernelRootsById[rootId];
-    if (!root || root.state !== 'blocked') {
-      setRoomError(room.id, '这项任务已经更新，请查看最新进度。');
-      return;
-    }
-    setRetryingRootIds((current) => new Set(current).add(rootId));
-    roomTimelineFollowIntentRef.current = true;
-    setRoomError(room.id, '');
-    const commandId = `ui-retry:${rootId}:${root.generation}:${crypto.randomUUID()}`;
-    try {
-      const receipt = await createControlRoomKernelCommandTransport(transport).execute(
-        buildRetryRootCommand(
-          { roomId: room.id, rootId, generation: root.generation },
-          { commandId, sourceId: 'room-timeline', createdAtMs: Date.now() },
-        ),
-      );
-      if (receipt.receiptKind !== 'root_retried' || receipt.status !== 'applied') {
-        throw new Error('继续请求没有进入执行队列');
-      }
-    } catch (requestError) {
-      setRoomError(room.id, publicErrorText(requestError, '暂时无法继续这项任务，请稍后重试。'));
-    } finally {
-      setRetryingRootIds((current) => {
-        const next = new Set(current);
-        next.delete(rootId);
-        return next;
-      });
-    }
-  }
-  async function startRoomExecution(rootId: string): Promise<void> {
-    if (!room || !rootId || startingRootIds.has(rootId)) return;
-    const root = kernelRootsById[rootId];
-    if (!root || root.state !== 'waiting') {
-      setRoomError(room.id, '这项工作已经更新，请查看最新进展。');
-      return;
-    }
-    setStartingRootIds((current) => new Set(current).add(rootId));
-    roomTimelineFollowIntentRef.current = true;
-    setRoomError(room.id, '');
-    let accepted = false;
-    try {
-      const response = await transport.request<Record<string, unknown>>({
-        pathId: 'agent.room.startExecution',
-        params: { roomId: room.id },
-        body: {
-          action: 'start_execution',
-          rootId,
-          clientActionId: `room-start-${crypto.randomUUID()}`,
-        },
-      });
-      if (response.ok !== true || response.accepted !== true) {
-        throw new Error('开始请求没有被接受');
-      }
-      accepted = true;
-      useRoomLiveStore.getState().acceptMessage(room.id, response);
-      setKernelRefreshRevisions((current) => ({
-        ...current,
-        [room.id]: (current[room.id] ?? 0) + 1,
-      }));
-    } catch (requestError) {
-      setRoomError(room.id, publicErrorText(requestError, '暂时无法开始这项工作，请稍后重试。'));
-    } finally {
-      if (!accepted) {
-        setStartingRootIds((current) => {
-          const next = new Set(current);
-          next.delete(rootId);
-          return next;
-        });
-      }
     }
   }
   function beginCreateRoom(): void {
@@ -1464,7 +1270,7 @@ export function RoomsFeature() {
             <IconButton label="管理话题" icon={<Plus size={14} />} disabled={topicSaving} onClick={() => { setTopicError(''); setTopicsOpen(true); }} tooltip />
           </div>
           <div className="room-context-actions">
-            {activeWork ? <span className="room-work-summary" data-state={latestRootRequiresStartAction ? 'waiting' : activeWork.state} title={activeWork.objective}><GitBranch size={13} />{latestRootRequiresStartAction ? '等待你确认' : latestRootAligning ? '正在整理确认结果' : roomWorkStateLabel(activeWork.state)} · {participantName(room, activeWork.currentOwnerParticipantId)} · {activeWork.objective}</span> : <span>{room.description || (room.roomKind === 'roleplay' ? '让几位伙伴一起聊聊' : '先聊清楚，再一起把事情做完')}</span>}
+            {activeWork ? <span className="room-work-summary" data-state={activeWork.state} title={activeWork.objective}><GitBranch size={13} />{roomWorkStateLabel(activeWork.state)} · {participantName(room, activeWork.currentOwnerParticipantId)} · {activeWork.objective}</span> : <span>{room.description || (room.roomKind === 'roleplay' ? '让几位伙伴一起聊聊' : '先聊清楚，再一起把事情做完')}</span>}
             {room.roomKind !== 'roleplay' ? <IconButton label="分享工作文件" icon={artifactPicking ? <LoaderCircle className="ui-spin" size={15} /> : <FilePlus2 size={15} />} disabled={artifactPicking || room.status !== 'active'} onClick={() => void addRoomArtifact()} tooltip /> : null}
           </div>
         </div> : <div aria-hidden="true" className="room-context-bar room-context-bar--empty" />}
@@ -1497,24 +1303,12 @@ export function RoomsFeature() {
             itemContent={(_index, turnId) => <RoomTurn
               key={turnId}
               turnId={turnId}
-              focusTarget={pendingTaskTarget?.rootId === turnId ? pendingTaskTarget : undefined}
               roomId={room.id}
               room={room}
               personas={personas}
               abortingTurnIds={abortingTurnIds}
-              kernelRootsById={kernelRootsById}
-              kernelDispatchesById={kernelDispatchesById}
-              kernelTasksById={kernelTasksById}
-              kernelTaskUpdatedAtMsById={kernelTaskUpdatedAtMsById}
-              kernelReceiptsById={kernelReceiptsById}
-              kernelSync={kernelSync}
               roomSyncState={selectedRoomRecoveryState}
-              subagentsByTaskId={subagentsByTaskId}
               onAbortTurn={(rootId) => void abortRootTurn(rootId)}
-              retryingRootIds={retryingRootIds}
-              onRetryRoot={(rootId) => void retryBlockedRoot(rootId)}
-              startingRootIds={startingRootIds}
-              onStartExecution={(rootId) => void startRoomExecution(rootId)}
               retryingTurn={sendingRoomIds.has(room.id)}
               onRetryTurn={room.status === 'active'
                 ? (message) => void send(message, {
@@ -1532,12 +1326,7 @@ export function RoomsFeature() {
                     });
                     if (accepted) requestAnimationFrame(() => roomComposerRef.current?.focus());
                     return accepted;
-                }
-                : undefined}
-              onFocusTargetHandled={pendingTaskTarget?.rootId === turnId
-                ? () => setPendingTaskTarget((current) => (
-                    current === pendingTaskTarget ? null : current
-                  ))
+                  }
                 : undefined}
             />}
           /> : snapshotLoading
@@ -1622,20 +1411,18 @@ export function RoomsFeature() {
           {!activeParticipants.length ? <p className="room-empty">还没有伙伴加入这个协作空间。</p> : null}
         </section> : null}
         <section className="room-execution-workspace" aria-label="任务流转与验收" hidden={workspaceView !== 'execution'}>
-          {room ? (
-            <RoomKernelLivePanel
-              navigableRootIds={navigableRootIds}
-              onNavigateToTask={navigateToTaskConversation}
-              participantLabels={participantLabels}
-              participantSessionIds={participantSessionIds}
-              participantRoles={participantRoles}
-              refreshRevision={kernelRefreshRevisions[room.id] ?? 0}
-              roomId={room.id}
-              subagentsByTaskId={subagentsByTaskId}
-              visible
-              workItems={room.workItems ?? []}
-            />
-          ) : <p className="room-empty">请选择一个协作空间。</p>}
+          {workspaceView === 'execution' && room ? <section className="room-session-workspace" aria-label="当前协作分工">
+            <header><span><strong>当前协作</strong><small>主持伙伴通过自己的 Pi Session 拆分任务；伙伴和 Tool Agent 的进度会直接回到同一条 Room 时间线。</small></span></header>
+            <div>{runtimeWorkItems.map((work) => <article data-runtime-work-state={work.status} key={work.id}>
+              <GitBranch size={16} />
+              <span><strong>{work.objective}</strong><small>{roomRuntimeWorkStateLabel(work.status)} · {work.participantIds.length ? `${work.participantIds.length} 位伙伴` : '主持伙伴'}{work.toolCount ? ` · ${work.toolCount} 个工具步骤` : ''}{work.lastSummary ? ` · ${work.lastSummary}` : ''}</small></span>
+            </article>)}
+            {(room.workItems ?? []).map((work) => <article key={work.id}>
+              <GitBranch size={16} />
+              <span><strong>{work.objective}</strong><small>登记工作项 · {roomWorkStateLabel(work.state)} · {participantName(room, work.currentOwnerParticipantId)}</small></span>
+            </article>)}</div>
+            {!runtimeWorkItems.length && !room.workItems?.length ? <p className="room-empty">还没有开始协作；在“对话”里发出目标后，这里会同步显示主持伙伴、伙伴和 Tool Agent 的实际运行。</p> : null}
+          </section> : workspaceView === 'execution' ? <p className="room-empty">请选择一个协作空间。</p> : null}
         </section>
       </section>
       <button className="agent-status-backdrop room-status-backdrop" aria-hidden="true" disabled={!roomStatusModal} tabIndex={-1} onClick={() => setStatusOpen(false)} type="button" />
@@ -1647,10 +1434,6 @@ export function RoomsFeature() {
         open={statusOpen}
         modal={roomStatusModal}
         onClose={() => setStatusOpen(false)}
-        onOpenProgress={() => {
-          setWorkspaceView('execution');
-          setStatusOpen(false);
-        }}
       />
     </main>
     <Dialog open={createOpen} onOpenChange={(open) => { if (!creating) { setCreateOpen(open); if (!open) setCreateError(''); } }}>
@@ -1763,6 +1546,18 @@ export function RoomsFeature() {
       onClose={() => setBoundaryParticipant(undefined)}
     />
   </>;
+}
+
+function roomRuntimeWorkStateLabel(
+  state: 'queued' | 'running' | 'completed' | 'failed' | 'aborted',
+): string {
+  return {
+    queued: '等待开始',
+    running: '执行中',
+    completed: '已完成',
+    failed: '未完成',
+    aborted: '已停止',
+  }[state];
 }
 
 

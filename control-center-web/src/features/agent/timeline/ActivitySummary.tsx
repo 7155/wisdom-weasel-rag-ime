@@ -19,7 +19,7 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from 'react';
 import {
   Button,
   Dialog,
@@ -45,8 +45,14 @@ import { SafeFieldList } from './BlockRenderer';
 import {
   toggleDisclosureOnKeyPreservingAnchor,
   toggleDisclosurePreservingAnchor,
+  useAutoFollowScroll,
 } from './disclosure-anchor';
-import { publicToolResultView, safeSourceLabels, type PublicToolResultView } from './public-tool-result';
+import {
+  inspectableRawResultText,
+  publicToolResultView,
+  safeSourceLabels,
+  type PublicToolResultView,
+} from './public-tool-result';
 import { publicAgentErrorText } from '../public-error';
 
 export function ActivitySummary({
@@ -86,8 +92,17 @@ export function ActivitySummary({
     && Boolean(text(activity.payload.toolCallId))
   ));
   const pendingApprovalId = text(pendingApproval?.payload.approvalId);
-  const [inlineOpen, setInlineOpen] = useState(Boolean(pendingApprovalId));
+  const [inlineOpen, setInlineOpen] = useState(
+    running || waiting || failed || Boolean(pendingApprovalId),
+  );
   const presentedApprovalRef = useRef(pendingApprovalId);
+  const inlineContentKey = activities
+    .map((activity) => `${activity.id}:${activity.status}:${activity.updatedAtMs}`)
+    .join('|');
+  const {
+    onScroll: handleInlineScroll,
+    scrollRef: inlineTimelineRef,
+  } = useAutoFollowScroll<HTMLDivElement>(inlineContentKey, inline && inlineOpen);
   useEffect(() => {
     if (!pendingApprovalId || pendingApprovalId === presentedApprovalRef.current) return;
     presentedApprovalRef.current = pendingApprovalId;
@@ -175,13 +190,19 @@ export function ActivitySummary({
           </summary>
           {inlineOpen ? (
             <div
-              aria-label={`${title}详情`}
+              aria-label="操作与思考过程"
               className="agent-activity__inline-timeline"
+              data-bounded-scroll="true"
+              onScroll={handleInlineScroll}
+              ref={inlineTimelineRef}
+              role="region"
+              tabIndex={0}
             >
               {activities.map((activity) => (
                 <ActivityRow
                   key={activity.id}
                   activity={activity}
+                  initiallyOpen={activity.status === 'failed' || activity.status === 'waiting'}
                   onApprovalDecision={onApprovalDecision}
                   onOpenApproval={(selected) => {
                     setInlineOpen(false);
@@ -253,13 +274,15 @@ export function ActivitySummary({
   );
 }
 
-function ActivityRow({
+const ActivityRow = memo(function ActivityRow({
   activity,
+  initiallyOpen = false,
   onApprovalDecision,
   onOpenApproval,
   onRequestPermission,
 }: {
   activity: AgentActivityProjection;
+  initiallyOpen?: boolean;
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
   onOpenApproval?: (activity: AgentActivityProjection) => void;
   onRequestPermission?: () => void;
@@ -280,13 +303,18 @@ function ActivityRow({
     : null;
   const Icon = presentation.icon;
   const isToolActivity = ['tool_started', 'tool_progress', 'tool_finished'].includes(displayActivity.kind);
-  const toolView = isToolActivity ? publicToolResultView(displayActivity) : null;
+  const toolView = useMemo(
+    () => (isToolActivity ? publicToolResultView(displayActivity) : null),
+    [displayActivity, isToolActivity],
+  );
   const visibleSummary = activity.kind === 'turn_failed'
     ? publicAgentErrorText(activity.summary, '模型服务请求失败，请重试或切换模型。')
     : publicActivitySummary(activity.summary, presentation.title);
   const canDecide = activity.status === 'waiting' && approvalNeedsHumanDecision(payload) && approvalId && hash && onApprovalDecision;
   const progressHistory = isToolActivity ? agentToolProgressHistory(payload.progressHistory) : [];
-  const [rowOpen, setRowOpen] = useState(Boolean(boundToTool && activity.status === 'waiting'));
+  const [rowOpen, setRowOpen] = useState(Boolean(
+    initiallyOpen || (boundToTool && activity.status === 'waiting'),
+  ));
   const nowMs = useActivityClock(activity.status === 'running');
   const duration = activityDuration(activity, nowMs);
   return (
@@ -319,9 +347,8 @@ function ActivityRow({
           {presentation.detail ? <p>{presentation.detail}</p> : null}
           <ToolProgressTimeline activity={activity} entries={progressHistory} />
           {toolView?.request.length ? <PublicToolRequest view={toolView} /> : null}
-          {toolView?.output ? <PublicToolOutput view={toolView} /> : null}
-          {toolView?.preview ? <SemanticToolPreview preview={toolView.preview} /> : null}
-          {toolView && toolView.fields.every((field) => field.id === 'status') && !toolView.request.length && !toolView.output && !toolView.preview && !toolView.error ? (
+          {toolView ? <PublicToolResult view={toolView} /> : null}
+          {toolView && toolView.fields.every((field) => field.id === 'status') && !toolView.request.length && !toolView.output && !toolView.preview && !toolView.resultItems.length && !toolView.change && !toolView.error ? (
             <p className="agent-tool-unavailable">这条历史回执未包含可公开的调用参数或返回内容。</p>
           ) : null}
           {activity.kind === 'reasoning_summary'
@@ -364,7 +391,7 @@ function ActivityRow({
       ) : null}
     </details>
   );
-}
+});
 
 interface PublicActivityFeedEntry {
   id: string;
@@ -596,6 +623,261 @@ function ToolProgressTimeline({
   );
 }
 
+function PublicToolResult({ view }: { view: PublicToolResultView }) {
+  let primary: ReactNode = null;
+  if (view.resultKind === 'semantic' && view.preview) {
+    primary = <SemanticToolPreview preview={view.preview} />;
+  } else if (view.resultKind === 'terminal' && view.output) {
+    primary = <PublicTerminalResult view={view} />;
+  } else if (view.resultKind === 'code' && view.output) {
+    primary = <PublicCodeResult view={view} />;
+  } else if (view.resultKind === 'matches' && view.resultItems.length) {
+    primary = <PublicResultList view={view} label="搜索匹配结果" icon={<Search size={14} />} />;
+  } else if (view.resultKind === 'files' && view.resultItems.length) {
+    primary = <PublicResultList view={view} label="项目文件结果" icon={<Database size={14} />} />;
+  } else if (view.resultKind === 'browser' && view.resultItems.length) {
+    primary = <PublicResultList view={view} label="浏览器结果" icon={<ExternalLink size={14} />} />;
+  } else if (view.resultKind === 'change' && (view.target || view.change)) {
+    primary = <PublicChangeResult view={view} />;
+  } else if (view.output) {
+    primary = <PublicToolOutput view={view} />;
+  }
+  return (
+    <>
+      {primary}
+      {view.rawResult ? <InspectableToolResult view={view} /> : null}
+    </>
+  );
+}
+
+function PublicTerminalResult({ view }: { view: PublicToolResultView }) {
+  const output = view.output?.text ?? '';
+  const { copy, state } = useCopyableText(output);
+  return (
+    <section
+      aria-label="命令输出"
+      className="agent-tool-result-view agent-tool-terminal-result"
+      data-result-kind="terminal"
+    >
+      <header>
+        <strong><TerminalSquare size={14} />命令输出</strong>
+        <Button
+          aria-live="polite"
+          leadingIcon={state === 'copied' ? <Check size={13} /> : <Copy size={13} />}
+          onClick={() => void copy()}
+          size="small"
+          variant="quiet"
+        >
+          {state === 'copied' ? '已复制输出' : '复制输出'}
+        </Button>
+      </header>
+      <pre aria-label="命令输出内容" tabIndex={0}><code>{output}</code></pre>
+      {view.output?.truncated ? <small>{view.rawResult ? '摘要已截断；可展开下方“完整返回”查看原始回执。' : '完整结果仍由本机工具回执保留。'}</small> : null}
+      {state === 'failed' ? <small role="alert">无法复制输出，请手动选择内容。</small> : null}
+    </section>
+  );
+}
+
+function PublicCodeResult({ view }: { view: PublicToolResultView }) {
+  const file = view.target || '文件内容';
+  const code = view.output?.text ?? '';
+  const { copy, state } = useCopyableText(code);
+  return (
+    <section
+      aria-label={`文件内容：${file}`}
+      className="agent-tool-result-view agent-tool-code-result"
+      data-result-kind="code"
+    >
+      <header>
+        <strong><BookOpenText size={14} />{file}</strong>
+        <span>
+          <small>{view.language ?? 'text'}</small>
+          <Button
+            aria-live="polite"
+            leadingIcon={state === 'copied' ? <Check size={13} /> : <Copy size={13} />}
+            onClick={() => void copy()}
+            size="small"
+            variant="quiet"
+          >
+            {state === 'copied' ? '已复制代码' : '复制代码'}
+          </Button>
+        </span>
+      </header>
+      <pre aria-label={`${file} 代码内容`} data-language={view.language ?? 'text'} tabIndex={0}><code>{code}</code></pre>
+      {view.output?.truncated ? <small>{view.rawResult ? '代码摘要已截断；可展开下方“完整返回”查看原始回执。' : '完整结果仍由本机工具回执保留。'}</small> : null}
+      {state === 'failed' ? <small role="alert">无法复制代码，请手动选择内容。</small> : null}
+    </section>
+  );
+}
+
+function PublicResultList({
+  view,
+  label,
+  icon,
+}: {
+  view: PublicToolResultView;
+  label: string;
+  icon: ReactNode;
+}) {
+  const itemText = (item: PublicToolResultView['resultItems'][number]) => {
+    if (!item.text) return item.label;
+    return view.resultKind === 'matches'
+      ? `${item.label}:${item.text}`
+      : `${item.label}  ${item.text}`;
+  };
+  const copyText = view.resultItems
+    .map(itemText)
+    .join('\n');
+  const { copy, state } = useCopyableText(copyText);
+  return (
+    <section
+      aria-label={label}
+      className="agent-tool-result-view agent-tool-list-result"
+      data-result-kind={view.resultKind}
+    >
+      <header>
+        <strong>{icon}{label}</strong>
+        <span>
+          <small>{view.resultItems.length} 项</small>
+          <Button
+            aria-live="polite"
+            leadingIcon={state === 'copied' ? <Check size={13} /> : <Copy size={13} />}
+            onClick={() => void copy()}
+            size="small"
+            variant="quiet"
+          >
+            {state === 'copied' ? '已复制' : '复制结果'}
+          </Button>
+        </span>
+      </header>
+      <ol>
+        {view.resultItems.map((item) => (
+          <li key={item.id}>
+            <strong>{item.label}</strong>
+            {item.text ? <span>{view.resultKind === 'matches' ? ':' : null}{item.text}</span> : null}
+          </li>
+        ))}
+      </ol>
+      {view.output?.truncated ? <small>{view.rawResult ? '列表摘要已截断；可展开下方“完整返回”查看原始回执。' : '完整结果仍由本机工具回执保留。'}</small> : null}
+      {state === 'failed' ? <small role="alert">无法复制结果，请手动选择内容。</small> : null}
+    </section>
+  );
+}
+
+function PublicChangeResult({ view }: { view: PublicToolResultView }) {
+  return (
+    <section
+      aria-label="文件变更结果"
+      className="agent-tool-result-view agent-tool-change-result"
+      data-result-kind="change"
+    >
+      <span aria-hidden="true"><GitBranch size={17} /></span>
+      <span>
+        <strong>{view.target || '项目文件'}</strong>
+        <small>{view.summary}</small>
+      </span>
+      <dl aria-label="变更统计">
+        <div data-tone="add"><dt>新增</dt><dd>+{view.change?.additions ?? 0}</dd></div>
+        <div data-tone="delete"><dt>删除</dt><dd>−{view.change?.deletions ?? 0}</dd></div>
+      </dl>
+    </section>
+  );
+}
+
+function InspectableToolResult({ view }: { view: PublicToolResultView }) {
+  const raw = view.rawResult;
+  const [open, setOpen] = useState(false);
+  if (!raw) return null;
+  return (
+    <details className="agent-tool-result-view agent-tool-raw-result" aria-label="完整工具返回" open={open}>
+      <summary
+        aria-expanded={open}
+        onClick={(event) => toggleDisclosurePreservingAnchor(event, setOpen)}
+        onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setOpen)}
+      >
+        <ChevronRight size={14} aria-hidden="true" />
+        <strong>完整返回</strong>
+        <small>{raw.format.toUpperCase()}</small>
+      </summary>
+      {open ? <InspectableToolResultBody raw={raw} /> : null}
+    </details>
+  );
+}
+
+const RAW_RESULT_LINE_HEIGHT = 20;
+const RAW_RESULT_VIEWPORT_HEIGHT = 320;
+const RAW_RESULT_OVERSCAN = 10;
+const RAW_RESULT_VIRTUALIZE_AT = 240;
+
+function InspectableToolResultBody({
+  raw,
+}: {
+  raw: NonNullable<PublicToolResultView['rawResult']>;
+}) {
+  const content = useMemo(
+    () => inspectableRawResultText(raw.value, raw.format),
+    [raw],
+  );
+  const lines = useMemo(() => content.split('\n'), [content]);
+  const { copy, state } = useCopyableText(content);
+  return (
+    <div className="agent-tool-raw-result__body">
+      <header>
+        <small>{lines.length.toLocaleString()} 行 · {content.length.toLocaleString()} 字符</small>
+        <Button
+          aria-live="polite"
+          leadingIcon={state === 'copied' ? <Check size={13} /> : <Copy size={13} />}
+          onClick={() => void copy()}
+          size="small"
+          variant="quiet"
+        >
+          {state === 'copied' ? '已复制完整返回' : '复制完整返回'}
+        </Button>
+      </header>
+      {lines.length >= RAW_RESULT_VIRTUALIZE_AT
+        ? <VirtualizedRawResult lines={lines} />
+        : <pre aria-label="完整工具返回内容" tabIndex={0}><code>{content}</code></pre>}
+      {state === 'failed' ? <small role="alert">无法复制完整返回，请手动选择内容。</small> : null}
+    </div>
+  );
+}
+
+function VirtualizedRawResult({ lines }: { lines: string[] }) {
+  const [scrollTop, setScrollTop] = useState(0);
+  const frameRef = useRef<number | null>(null);
+  const pendingScrollTopRef = useRef(0);
+  useEffect(() => () => {
+    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+  }, []);
+  const visibleCount = Math.ceil(RAW_RESULT_VIEWPORT_HEIGHT / RAW_RESULT_LINE_HEIGHT);
+  const start = Math.max(0, Math.floor(scrollTop / RAW_RESULT_LINE_HEIGHT) - RAW_RESULT_OVERSCAN);
+  const end = Math.min(lines.length, start + visibleCount + (RAW_RESULT_OVERSCAN * 2));
+  const visibleText = useMemo(() => lines.slice(start, end).join('\n'), [end, lines, start]);
+  const onScroll = (event: UIEvent<HTMLDivElement>) => {
+    pendingScrollTopRef.current = event.currentTarget.scrollTop;
+    if (frameRef.current !== null) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
+      setScrollTop(pendingScrollTopRef.current);
+    });
+  };
+  return (
+    <div
+      aria-label="完整工具返回内容"
+      className="agent-tool-raw-result__virtual-scroll"
+      onScroll={onScroll}
+      role="region"
+      tabIndex={0}
+    >
+      <div style={{ height: lines.length * RAW_RESULT_LINE_HEIGHT }}>
+        <pre style={{ transform: `translateY(${start * RAW_RESULT_LINE_HEIGHT}px)` }}>
+          <code>{visibleText}</code>
+        </pre>
+      </div>
+    </div>
+  );
+}
+
 export function PublicToolFields({ view }: { view: PublicToolResultView }) {
   const fieldsText = JSON.stringify(
     Object.fromEntries(view.fields.map((field) => [field.id, field.value])),
@@ -607,7 +889,7 @@ export function PublicToolFields({ view }: { view: PublicToolResultView }) {
   if (view.fields.length === 0) {
     return view.error
       ? null
-      : <p>工具没有返回可公开展示的结构化明细。</p>;
+      : <p>工具没有返回额外的结构化明细。</p>;
   }
   return (
     <section className="agent-tool-result-panel" aria-label="工具结果明细">

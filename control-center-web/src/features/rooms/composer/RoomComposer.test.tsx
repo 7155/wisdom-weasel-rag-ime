@@ -140,7 +140,7 @@ describe('RoomComposer macOS input methods', () => {
     expect(onAttachmentsChange).toHaveBeenCalledWith([]);
   });
 
-  it('opens only the authoritative pending-answer send path while a managed task is busy', () => {
+  it('offers native steer while a task is busy and keeps pending answers constrained', () => {
     const onSend = vi.fn();
     const common = {
       room: {
@@ -166,8 +166,8 @@ describe('RoomComposer macOS input methods', () => {
       </TooltipProvider>,
     );
 
-    expect(screen.getByRole('button', { name: '等待当前任务完成' })).toBeDisabled();
-    expect(screen.getByText(/完成或停止后才能发送下一项任务/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '立即干预当前回合' })).toBeEnabled();
+    expect(screen.getByText(/发送文字会立即干预主持伙伴的当前回合/)).toBeInTheDocument();
 
     view.rerender(
       <TooltipProvider>

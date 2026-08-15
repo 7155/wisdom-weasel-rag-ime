@@ -8,7 +8,9 @@ import { StubControlTransport } from '@/test/stub-control-transport';
 import { useAgentLiveStore } from '../state/live-store';
 import {
   AgentTurn,
+  agentDeliveryFeedback,
   agentScrollSeekConfiguration,
+  agentTurnMarkerKind,
   interleavedTurnEntries,
   visibleAgentTurnIds,
 } from './AgentTimeline';
@@ -28,6 +30,14 @@ afterEach(() => {
 });
 
 describe('Agent chat rendering', () => {
+
+  it('shows the observable Steer delivery lifecycle instead of a static badge', () => {
+    expect(agentDeliveryFeedback('steer', 'sending', 'queued')).toBe('正在发送干预');
+    expect(agentDeliveryFeedback('steer', 'accepted', 'queued')).toBe('已接收，正在切换当前执行');
+    expect(agentDeliveryFeedback('steer', 'applied', 'completed')).toBe('新指令已生效');
+    expect(agentDeliveryFeedback('steer', undefined, 'completed')).toBe('新指令已生效');
+    expect(agentDeliveryFeedback('steer', 'accepted', 'failed')).toBe('未能确认干预是否已接收');
+  });
 
   it('uses authoritative event sequence before message clock drift', () => {
     const before = { ...assistantMessage('session-1', 'turn-1', '调用前', 120), timelineSequence: 8 };
@@ -49,6 +59,56 @@ describe('Agent chat rendering', () => {
     expect(entries.map((entry) => entry.kind)).toEqual(['message', 'activity-group', 'message']);
     expect(entries[0].kind === 'message' ? entries[0].message.blocks[0]?.data.text : '').toBe('调用前');
     expect(entries[2].kind === 'message' ? entries[2].message.blocks[0]?.data.text : '').toBe('调用后');
+  });
+
+  it('uses assistant text as the boundary between bounded reasoning and Tool blocks', () => {
+    const before = { ...assistantMessage('session-1', 'turn-1', '先说明第一步。', 20), timelineSequence: 3 };
+    const after = {
+      ...assistantMessage('session-1', 'turn-1', '第一步完成，继续处理。', 60),
+      id: 'turn-1:assistant:segment:7',
+      timelineSequence: 7,
+    };
+    const activity = (
+      id: string,
+      kind: 'reasoning_summary' | 'tool_finished',
+      timelineSequence: number,
+    ) => ({
+      id,
+      turnId: 'turn-1',
+      kind,
+      status: 'completed' as const,
+      summary: id,
+      payload: kind === 'reasoning_summary'
+        ? { source: 'provider_reasoning_summary', items: [id] }
+        : { toolName: 'overview' },
+      createdAtMs: timelineSequence * 10,
+      updatedAtMs: timelineSequence * 10,
+      timelineSequence,
+    });
+
+    const entries = interleavedTurnEntries(
+      [after, before],
+      [
+        activity('reasoning-before', 'reasoning_summary', 1),
+        activity('tool-before', 'tool_finished', 2),
+        activity('reasoning-middle', 'reasoning_summary', 4),
+        activity('tool-middle', 'tool_finished', 5),
+        activity('tool-after', 'tool_finished', 8),
+      ],
+    );
+
+    expect(entries.map((entry) => entry.kind)).toEqual([
+      'activity-group',
+      'message',
+      'activity-group',
+      'message',
+      'activity-group',
+    ]);
+    expect(entries.flatMap((entry) => entry.kind === 'activity-group' ? [entry.activities.map((item) => item.id)] : [])).toEqual([
+      ['reasoning-before', 'tool-before'],
+      ['reasoning-middle', 'tool-middle'],
+      ['tool-after'],
+    ]);
   });
 
   it('renders assistant text and tool results in their real event order', () => {
@@ -194,18 +254,20 @@ describe('Agent chat rendering', () => {
       <AgentTurn sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
     );
 
-    const summary = screen.getByRole('button', { name: /查看 Agent 思考摘要/ });
-    expect(summary).toHaveTextContent('思考摘要');
-    expect(summary).toHaveTextContent('Implementing durable history reconstruction');
-    expect(summary).not.toHaveTextContent('Analyzing session message discrepancies');
-    fireEvent.click(summary);
-    const reasoningDialog = screen.getByRole('dialog', { name: '思考摘要' });
-    expect(reasoningDialog).toHaveTextContent('Analyzing session message discrepancies');
-    expect(reasoningDialog).toHaveTextContent('Implementing durable history reconstruction');
-    expect(reasoningDialog).not.toHaveTextContent('provider_reasoning_summary');
+    expect(screen.queryByRole('button', { name: /查看 Agent 思考摘要/ })).not.toBeInTheDocument();
+    const group = document.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    expect(group).not.toHaveAttribute('open');
+    fireEvent.click(group.querySelector('summary')!);
+    const activityBlock = screen.getByRole('region', { name: '操作与思考过程' });
+    expect(activityBlock).toHaveAttribute('data-bounded-scroll', 'true');
+    expect(activityBlock).toHaveAttribute('tabindex', '0');
+    fireEvent.click(activityBlock.querySelector('.agent-activity-row summary')!);
+    expect(activityBlock).toHaveTextContent('Analyzing session message discrepancies');
+    expect(activityBlock).toHaveTextContent('Implementing durable history reconstruction');
+    expect(activityBlock).not.toHaveTextContent('provider_reasoning_summary');
   });
 
-  it('keeps reasoning outside Tool counts and expanded Tool rows', () => {
+  it('keeps reasoning out of Tool counts but inside the same bounded activity block', () => {
     const sessionId = 'session-1';
     const turnId = 'turn-1';
     useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
@@ -244,15 +306,19 @@ describe('Agent chat rendering', () => {
       <AgentTurn sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
     );
 
-    expect(screen.getByRole('button', { name: /查看 Agent 思考摘要/ })).toHaveTextContent('先分析代码路径');
     const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
     expect(group.querySelector('summary')).toHaveTextContent('1 项操作');
+    expect(group).not.toHaveAttribute('open');
     fireEvent.click(group.querySelector('summary')!);
-    expect(group).toHaveAttribute('open');
     expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
-    const details = within(group).getByLabelText('操作记录详情');
-    expect(details.querySelectorAll('.agent-activity-row')).toHaveLength(1);
-    expect(details).not.toHaveTextContent('处理说明');
+    const details = within(group).getByRole('region', { name: '操作与思考过程' });
+    expect(details.querySelectorAll('.agent-activity-row')).toHaveLength(2);
+    for (const summary of details.querySelectorAll('.agent-activity-row summary')) {
+      fireEvent.click(summary);
+    }
+    expect(details).toHaveTextContent('处理说明');
+    expect(details).toHaveTextContent('先分析代码路径');
+    expect(details).toHaveTextContent('AgentTimeline.tsx:342:export function AgentTurn');
   });
 
   it('renders headings, lists, GFM tables, inline code, and fenced code blocks', () => {
@@ -697,6 +763,110 @@ describe('Agent chat rendering', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('当前模型不可用，请切换模型后重试');
     expect(screen.queryByText(/not supported by any configured account/i)).not.toBeInTheDocument();
     expect(container.querySelectorAll('.agent-inline-notice[data-tone="danger"]')).toHaveLength(0);
+  });
+
+  it('does not render an empty assistant shell after a stopped turn', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-stopped-empty';
+    const emptyAssistant: UiAgentMessage = {
+      ...assistantMessage(sessionId, turnId, '', 2),
+      status: 'aborted',
+      blocks: [],
+    };
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId), emptyAssistant],
+      liveEvents: [],
+      lastSequence: 2,
+      resumeToken: `${sessionId}:2`,
+      status: 'idle',
+    });
+
+    const { container } = render(
+      <AgentTurn sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
+    );
+
+    expect(container.querySelector('.agent-user-message')).toBeInTheDocument();
+    expect(container.querySelector('.agent-assistant-turn')).not.toBeInTheDocument();
+  });
+
+  it('shows the stopping transition while the terminal receipt is pending', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId)],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'busy',
+      partial: true,
+    });
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(1, 'status_changed', { status: 'aborting' }),
+    ]);
+
+    render(<AgentTurn sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />);
+
+    expect(screen.getAllByText('正在停止').length).toBeGreaterThan(0);
+    expect(screen.getByText('正在取消当前模型与工具执行。')).toBeInTheDocument();
+  });
+
+  it('labels a tool-only terminal turn as completed and an aborted turn as stopped', () => {
+    const sessionId = 'session-1';
+    const toolTurnId = 'turn-tool-only';
+    const stoppedTurnId = 'turn-stopped';
+    const toolUser = {
+      ...userMessage(sessionId, toolTurnId),
+      id: 'tool-only-user',
+      blocks: [{
+        ...userMessage(sessionId, toolTurnId).blocks[0]!,
+        id: 'tool-only-user:text',
+        data: { text: '运行工具' },
+      }],
+    };
+    const stoppedUser = {
+      ...userMessage(sessionId, stoppedTurnId),
+      id: 'stopped-user',
+      blocks: [{
+        ...userMessage(sessionId, stoppedTurnId).blocks[0]!,
+        id: 'stopped-user:text',
+        data: { text: '停止工具' },
+      }],
+    };
+    const stoppedAssistant = {
+      ...assistantMessage(sessionId, stoppedTurnId, '已停止。', 4),
+      status: 'aborted' as const,
+      blocks: assistantMessage(sessionId, stoppedTurnId, '已停止。', 4).blocks.map(
+        (block) => ({ ...block, status: 'aborted' as const }),
+      ),
+    };
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [toolUser, stoppedUser, stoppedAssistant],
+      liveEvents: [
+        {
+          ...agentEventFixture(1, 'tool_started', {
+            toolCallId: 'tool-only-call',
+            toolName: 'bash',
+            summary: '运行工具',
+          }),
+          turnId: toolTurnId,
+        },
+        {
+          ...agentEventFixture(2, 'tool_finished', {
+            toolCallId: 'tool-only-call',
+            toolName: 'bash',
+            result: { summary: '完成' },
+          }),
+          turnId: toolTurnId,
+        },
+      ],
+      lastSequence: 2,
+      resumeToken: `${sessionId}:2`,
+      status: 'idle',
+    });
+
+    const projection = useAgentLiveStore.getState().projections[sessionId];
+    expect(agentTurnMarkerKind(projection, toolTurnId)).toBe('complete');
+    expect(agentTurnMarkerKind(projection, stoppedTurnId)).toBe('aborted');
   });
 
   it('keeps Room public posts auditable without rendering them as another Session turn', () => {

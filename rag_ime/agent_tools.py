@@ -330,6 +330,10 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
             "artifact",
             "abort",
         ),
+        # Session subagents are a core harness primitive, not an optional
+        # product capability. Their schema must be present on a fresh Session
+        # so the model never pays a tool_search/tool_load round trip first.
+        "alwaysAvailable": True,
         "resultPresentation": "tool_result",
     },
     {
@@ -347,6 +351,9 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "output": "伙伴模型/状态、子 Session 终态结果或公开进展回执",
         "does": "把正式 Room Partner 作为普通 Pi Session 调用，并将子事件归入当前 Room turn。",
         "operations": ("list", "delegate", "post"),
+        # Availability is still Room-bound below. Once available, this is the
+        # only formal Partner primitive and must be callable directly.
+        "alwaysAvailable": True,
         "resultPresentation": "tool_result",
     },
     {
@@ -1705,6 +1712,7 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "cwd": {"type": "string", "maxLength": 1_024},
     "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 120},
     "allowNetwork": {"type": "boolean"},
+    "asArtifact": {"type": "boolean"},
     "label": {"type": "string", "minLength": 1, "maxLength": 120},
     "jobId": {"type": "string", "pattern": r"^bg_[a-f0-9]{32}$"},
     "cursor": {"type": "integer", "minimum": 0},
@@ -1811,7 +1819,7 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
     ),
     "workspace_read": (
         "path", "resourceRef", "selector", "selectorCursor",
-        "offset", "limit", "lineOffset", "lineLimit",
+        "offset", "limit", "lineOffset", "lineLimit", "asArtifact",
     ),
     "workspace_search": (
         "query", "path", "mode", "caseSensitive", "limit",
@@ -1913,16 +1921,192 @@ _RUNTIME_TOOL_REQUIRED_ALTERNATIVES: dict[
 }
 
 
-_RUNTIME_TOOL_PROJECTIONS: dict[str, tuple[dict[str, str], ...]] = {
-    "workspace_list": ({"name": "ls", "operation": "list"},),
-    "workspace_read": ({"name": "read", "operation": "read"},),
-    "workspace_search": (
-        {"name": "grep", "operation": "search"},
-        {"name": "find", "operation": "search"},
+_RUNTIME_TOOL_PROJECTIONS: dict[str, tuple[dict[str, object], ...]] = {
+    "workspace_list": (
+        {
+            "name": "ls",
+            "operation": "list",
+            "description": "List files and directories inside the authorized workspace.",
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "path": {"type": "string", "maxLength": 1_024},
+                    "depth": {"type": "integer", "minimum": 1, "maximum": 3},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 300},
+                },
+            },
+        },
     ),
-    "workspace_edit": ({"name": "edit", "operation": "apply"},),
-    "workspace_write": ({"name": "write", "operation": "apply"},),
-    "workspace_shell": ({"name": "bash", "operation": "run"},),
+    "workspace_read": (
+        {
+            "name": "read",
+            "operation": "read",
+            "description": (
+                "Read authorized UTF-8 files or managed resources with bounded "
+                "continuation. HTML files automatically include a sandboxed "
+                "preview; use asArtifact to preview another generated text file."
+            ),
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "oneOf": [{"required": ["path"]}, {"required": ["resourceRef"]}],
+                "properties": {
+                    "path": {"type": "string", "minLength": 1, "maxLength": 1_024},
+                    "resourceRef": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1_024,
+                    },
+                    "selector": {"type": "string", "minLength": 1, "maxLength": 500},
+                    "selectorCursor": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 50_000_000,
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50_000_000,
+                    },
+                    "byteOffset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 50_000_000,
+                    },
+                    "byteLimit": {"type": "integer", "minimum": 1, "maximum": 65_536},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 2_000},
+                    "asArtifact": {"type": "boolean"},
+                },
+            },
+        },
+    ),
+    "workspace_search": (
+        {
+            "name": "grep",
+            "operation": "search",
+            "description": (
+                "Search authorized UTF-8 files for a literal string or regular "
+                "expression and return matching lines."
+            ),
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["pattern"],
+                "properties": {
+                    "pattern": {"type": "string", "minLength": 1, "maxLength": 500},
+                    "path": {"type": "string", "maxLength": 1_024},
+                    "glob": {"type": "string", "maxLength": 300},
+                    "ignoreCase": {"type": "boolean"},
+                    "literal": {"type": "boolean"},
+                    "context": {"type": "integer", "minimum": 0, "maximum": 20},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                },
+            },
+        },
+        {
+            "name": "find",
+            "operation": "search",
+            "description": (
+                "Find files and directories by glob pattern inside the authorized "
+                "workspace."
+            ),
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["pattern"],
+                "properties": {
+                    "pattern": {"type": "string", "minLength": 1, "maxLength": 500},
+                    "path": {"type": "string", "maxLength": 1_024},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                },
+            },
+        },
+    ),
+    "workspace_edit": (
+        {
+            "name": "edit",
+            "operation": "apply",
+            "description": (
+                "Apply exact replacements to the file revision returned by the "
+                "latest read."
+            ),
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["path", "resourceRevision", "edits"],
+                "properties": {
+                    "path": {"type": "string", "minLength": 1, "maxLength": 1_024},
+                    "resourceRevision": {
+                        "type": "string",
+                        "pattern": r"^sha256:[0-9a-fA-F]{64}$",
+                    },
+                    "edits": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 64,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["oldText", "newText"],
+                            "properties": {
+                                "oldText": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 65_536,
+                                },
+                                "newText": {"type": "string", "maxLength": 131_072},
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    ),
+    "workspace_write": (
+        {
+            "name": "write",
+            "operation": "apply",
+            "description": (
+                "Create or overwrite an authorized UTF-8 file with snapshot "
+                "preflight."
+            ),
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["path", "resourceRevision", "content"],
+                "properties": {
+                    "path": {"type": "string", "minLength": 1, "maxLength": 1_024},
+                    "resourceRevision": {
+                        "type": "string",
+                        "pattern": r"^(?:sha256:[0-9a-fA-F]{64}|missing)$",
+                    },
+                    "content": {"type": "string", "maxLength": 2_097_152},
+                },
+            },
+        },
+    ),
+    "workspace_shell": (
+        {
+            "name": "bash",
+            "operation": "run",
+            "description": (
+                "Execute a bounded shell command inside the authorized workspace "
+                "and return output and exit status."
+            ),
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["command"],
+                "properties": {
+                    "command": {"type": "string", "minLength": 1, "maxLength": 2_000},
+                    "cwd": {"type": "string", "maxLength": 1_024},
+                    "timeout": {"type": "integer", "minimum": 1, "maximum": 120},
+                    "allowNetwork": {"type": "boolean"},
+                },
+            },
+        },
+    ),
     "memory": (
         {
             "name": "memory_capture",
@@ -2017,6 +2201,89 @@ def _normalize_runtime_tool_args(
         if scope:
             normalized.setdefault("mode", scope)
     return normalized
+
+
+def _normalize_runtime_tool_call(
+    tool: str,
+    args: Mapping[str, object],
+) -> tuple[str, dict[str, object]]:
+    aliases = {
+        str(projection["name"]): (target, str(projection["operation"]))
+        for target, projections in _RUNTIME_TOOL_PROJECTIONS.items()
+        if target.startswith("workspace_")
+        for projection in projections
+    }
+    target = aliases.get(tool)
+    if target is None:
+        return tool, _normalize_runtime_tool_args(tool, args)
+
+    gateway_tool, operation = target
+    params = dict(args)
+    if tool == "read":
+        path = str(params.get("path") or "")
+        resource_ref = params.get("resourceRef")
+        if not resource_ref and re.match(r"^(?:artifact|media|room|skill)://", path):
+            resource_ref = path
+        if resource_ref:
+            normalized = {
+                "op": operation,
+                "resourceRef": resource_ref,
+                "offset": params.get("byteOffset"),
+                "limit": params.get("byteLimit"),
+            }
+        elif params.get("selector"):
+            normalized = {
+                "op": operation,
+                "path": params.get("path"),
+                "selector": params.get("selector"),
+                "selectorCursor": params.get("selectorCursor"),
+                "lineLimit": params.get("limit"),
+            }
+        else:
+            as_artifact = params.get("asArtifact")
+            if as_artifact is None and Path(path).suffix.lower() in {".htm", ".html"}:
+                as_artifact = True
+            normalized = {
+                "op": operation,
+                "path": params.get("path"),
+                "lineOffset": params.get("offset"),
+                "lineLimit": params.get("limit"),
+                "asArtifact": as_artifact,
+            }
+    elif tool == "grep":
+        normalized = {
+            "op": operation,
+            "query": params.get("pattern"),
+            "path": params.get("path"),
+            "mode": "content",
+            "patternKind": "literal" if params.get("literal") is True else "regex",
+            "caseSensitive": params.get("ignoreCase") is not True,
+            "glob": params.get("glob"),
+            "context": params.get("context"),
+            "limit": params.get("limit"),
+        }
+    elif tool == "find":
+        normalized = {
+            "op": operation,
+            "query": params.get("pattern"),
+            "path": params.get("path"),
+            "mode": "name",
+            "patternKind": "glob",
+            "limit": params.get("limit"),
+        }
+    elif tool == "bash":
+        normalized = {
+            "op": operation,
+            "command": params.get("command"),
+            "cwd": params.get("cwd"),
+            "timeoutSeconds": params.get("timeout"),
+            "allowNetwork": params.get("allowNetwork"),
+        }
+    else:
+        normalized = {"op": operation, **params}
+    return gateway_tool, {
+        key: value for key, value in normalized.items() if value is not None
+    }
 
 
 class ControlToolGateway:
@@ -2165,6 +2432,36 @@ class ControlToolGateway:
                 continue
             spec = _TOOL_SPEC_BY_ID[str(manifest["id"])]
             operations = list(manifest.get("effectiveOperations") or [])
+            projections = [
+                copy.deepcopy(projection)
+                for projection in _RUNTIME_TOOL_PROJECTIONS.get(
+                    str(manifest["id"]),
+                    (),
+                )
+                if projection["operation"] in operations
+            ]
+            # Protocol v2 disables Pi's built-in filesystem tools so every file
+            # operation still passes through the product workspace boundary.
+            # Register the provider-facing names here and normalize them back to
+            # their workspace_* Gateway targets at execution time. The internal
+            # route names must never become a second model-facing Tool family.
+            if spec.get("modelVisible") is False and projections:
+                for projection in projections:
+                    manifests.append(
+                        {
+                            "name": projection["name"],
+                            "description": projection["description"],
+                            "parameters": projection["parameters"],
+                            "when": list(spec["when"]),
+                            "notFor": list(spec["notFor"]),
+                            "input": spec["input"],
+                            "output": spec["output"],
+                            "does": spec["does"],
+                            "risk": manifest.get("riskLevel") or "R0",
+                            "alwaysAvailable": True,
+                        }
+                    )
+                continue
             parameter_schema = _runtime_tool_parameter_schema(
                 str(manifest["id"]),
                 operations,
@@ -2190,14 +2487,6 @@ class ControlToolGateway:
             }
             if spec.get("modelVisible") is False:
                 item["modelVisible"] = False
-            projections = [
-                dict(projection)
-                for projection in _RUNTIME_TOOL_PROJECTIONS.get(
-                    str(manifest["id"]),
-                    (),
-                )
-                if projection["operation"] in operations
-            ]
             if projections:
                 item["runtimeProjections"] = projections
             manifests.append(item)
@@ -2255,6 +2544,11 @@ class ControlToolGateway:
                 "resultPresentation": spec["resultPresentation"],
                 "availability": "online" if available else "offline",
                 "version": "1",
+                **(
+                    {"alwaysAvailable": True}
+                    if spec.get("alwaysAvailable") is True
+                    else {}
+                ),
             }
             validate_contract(manifest, "control-tool-manifest.v1.json")
             if session is not None:
@@ -2349,7 +2643,7 @@ class ControlToolGateway:
             raise ValueError("archived sessions cannot execute tools")
         tool = str(request["tool"])
         raw_args = request.get("args") if isinstance(request.get("args"), Mapping) else {}
-        args = _normalize_runtime_tool_args(tool, raw_args)
+        tool, args = _normalize_runtime_tool_call(tool, raw_args)
         if tool == "room_partner":
             if self.collaboration is None:
                 raise ValueError("managed room collaboration is unavailable")
@@ -2470,6 +2764,12 @@ class ControlToolGateway:
                     result = self._read_internal_resource(session_id, args)
                 else:
                     result = self.workspace_harness.read(session, args)
+                    if args.get("asArtifact") is True and self.artifact_projector is not None:
+                        projection = self.artifact_projector.project_workspace_read(
+                            session=session,
+                            receipt=result,
+                        )
+                        result.update(projection.receipt_fields())
             elif tool == "workspace_search":
                 result = self.workspace_harness.search(session, args)
             elif tool == "workspace_lsp":

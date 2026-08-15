@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   abortAgentTurn,
+  acknowledgeOptimisticAgentMessage,
   appendOptimisticAgentMessage,
   applyAgentBackgroundJobReceipt,
   applyAgentSnapshot,
@@ -310,16 +311,46 @@ describe('AgentEventReducer', () => {
     expect(optimistic.turnOrder).toEqual(['turn-active']);
     expect(optimistic.turnsById['turn-active']?.status).toBe('running');
     expect(optimistic.messagesById['local:steer-1']?.blocks[0]?.data.delivery).toBe('steer');
+    expect(optimistic.messagesById['local:steer-1']?.deliveryState).toBe('sending');
+    const accepted = acknowledgeOptimisticAgentMessage(optimistic, 'steer-1', 21);
+    expect(accepted.messagesById['local:steer-1']?.deliveryState).toBe('accepted');
     expect(queued.messageQueue).toEqual({
       steering: ['先不要修改配置'],
       followUp: ['完成后总结'],
     });
+    expect(queued.messagesById['local:steer-1']?.deliveryState).toBe('accepted');
 
-    const restored = applyAgentSnapshot(queued, {
+    const applied = reduceAgentEvent(
+      queued,
+      agentEvent(3, 'message_queue_updated', {
+        steering: [],
+        followUp: ['完成后总结'],
+      }),
+    ).state;
+    expect(applied.messagesById['local:steer-1']?.deliveryState).toBe('applied');
+
+    const reconciled = reduceAgentEvent(
+      applied,
+      agentEvent(4, 'message_completed', {
+        clientMessageId: 'steer-1',
+        message: {
+          ...serverMessage('server-steer-1', 'user', 'turn-active', '先不要修改配置'),
+          clientMessageId: 'steer-1',
+        },
+      }),
+    ).state;
+    expect(reconciled.messagesById['server-steer-1']).toMatchObject({
+      deliveryState: 'applied',
+      blocks: [expect.objectContaining({
+        data: expect.objectContaining({ delivery: 'steer' }),
+      })],
+    });
+
+    const restored = applyAgentSnapshot(reconciled, {
       messages: [],
       liveEvents: [],
-      lastSequence: 3,
-      resumeToken: 'session-1:3',
+      lastSequence: 5,
+      resumeToken: 'session-1:5',
       messageQueue: { steering: [], followUp: ['下一项任务'] },
     });
     expect(restored.messageQueue).toEqual({ steering: [], followUp: ['下一项任务'] });
@@ -991,6 +1022,42 @@ describe('AgentEventReducer', () => {
     expect(recovered.messagesById['turn-1:assistant'].status).toBe('aborted');
   });
 
+  it('preserves an aborted transcript when an idle snapshot also restores a failed tool receipt', () => {
+    const abortedAssistant = {
+      ...serverMessage('assistant-aborted', 'assistant', 'turn-1', '已停止。'),
+      status: 'aborted',
+      blocks: serverMessage('assistant-aborted', 'assistant', 'turn-1', '已停止。').blocks.map(
+        (block) => ({ ...block, status: 'aborted' }),
+      ),
+    };
+    const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [
+        serverMessage('user-stop', 'user', 'turn-1', '运行长命令'),
+        abortedAssistant,
+      ],
+      liveEvents: [
+        rawAgentEvent(41, 'tool_started', {
+          toolCallId: 'tool-stop',
+          toolName: 'bash',
+          summary: '运行长命令',
+        }),
+        rawAgentEvent(42, 'tool_finished', {
+          toolCallId: 'tool-stop',
+          toolName: 'bash',
+          isError: true,
+          result: {},
+        }),
+      ],
+      lastSequence: 42,
+      resumeToken: 'session-1:42',
+      status: 'idle',
+    });
+
+    expect(recovered.turnsById['turn-1'].status).toBe('aborted');
+    expect(recovered.messagesById['assistant-aborted'].status).toBe('aborted');
+    expect(recovered.activitiesById['tool-stop'].status).toBe('failed');
+  });
+
   it('does not reopen the last completed transcript turn when Pi marks the Session active', () => {
     const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
       messages: [
@@ -1060,6 +1127,28 @@ describe('AgentEventReducer', () => {
         ],
       },
     });
+  });
+
+  it('does not create a ghost parent turn for detached subagent progress', () => {
+    const detachedProgress = {
+      ...agentEvent(1, 'tool_progress', {
+        toolCallId: 'subagent:subagent-batch:1',
+        toolName: 'agents',
+        summary: '子 Agent 已返回结果，待主持会话核验',
+        state: 'completed',
+      }),
+      turnId: '',
+    };
+
+    const state = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      detachedProgress,
+    ).state;
+
+    expect(state.lastSequence).toBe(1);
+    expect(state.turnOrder).toEqual([]);
+    expect(state.activityOrder).toEqual([]);
+    expect(state.status).toBe('idle');
   });
 
   it('projects an Act Gate refusal as a safe no-op instead of a failed Tool', () => {
@@ -1339,6 +1428,60 @@ describe('AgentEventReducer', () => {
     expect(stopped.status).toBe('idle');
     expect(stopped.turnsById['turn-1'].status).toBe('aborted');
     expect(stopped.messagesById['turn-1:assistant'].status).toBe('aborted');
+  });
+
+  it('does not reopen a stopped turn when its aborted message arrives after the terminal event', () => {
+    const streaming = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      agentEvent(1, 'text_delta', { delta: 'partial' }),
+    ).state;
+    const stopped = reduceAgentEvent(
+      streaming,
+      agentEvent(2, 'turn_completed', { status: 'aborted', aborted: true }),
+    ).state;
+    const abortedMessage = {
+      ...serverMessage('assistant-stop', 'assistant', 'turn-1', '已停止。'),
+      status: 'aborted',
+      blocks: serverMessage('assistant-stop', 'assistant', 'turn-1', '已停止。').blocks.map(
+        (block) => ({ ...block, status: 'aborted' }),
+      ),
+    };
+    const restored = reduceAgentEvent(
+      stopped,
+      agentEvent(3, 'message_completed', { message: abortedMessage }),
+    ).state;
+
+    expect(restored.turnsById['turn-1'].status).toBe('aborted');
+    expect(restored.messagesById['assistant-stop'].status).toBe('aborted');
+  });
+
+  it('removes a superseded failure activity when Stop wins the terminal race', () => {
+    const streaming = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      agentEvent(1, 'text_delta', { delta: 'partial' }),
+    ).state;
+    const aborting = reduceAgentEvent(
+      streaming,
+      agentEvent(2, 'status_changed', { status: 'aborting' }),
+    ).state;
+    const failed = reduceAgentEvent(
+      aborting,
+      agentEvent(3, 'turn_failed', { error: 'fetch failed after user abort' }),
+    ).state;
+    const stopped = reduceAgentEvent(
+      failed,
+      agentEvent(4, 'turn_completed', {
+        status: 'aborted',
+        aborted: true,
+        terminalCorrection: true,
+        terminalEvent: 'abort_failure_race',
+      }),
+    ).state;
+
+    expect(stopped.turnsById['turn-1'].status).toBe('aborted');
+    expect(stopped.turnsById['turn-1'].failure).toBeUndefined();
+    expect(stopped.turnsById['turn-1'].activityIds).toEqual([]);
+    expect(stopped.activityOrder).toEqual([]);
   });
 
   it('projects background job snapshots and terminal events by durable job id', () => {

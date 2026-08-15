@@ -126,15 +126,17 @@ export class NativeControlTransport implements ControlTransport {
 
   async request<Response = unknown>(request: ControlRequest): Promise<Response> {
     assertControlRequest(request);
-    const catalogTimeoutMs = request.pathId === 'agent.session.commands'
+    const slowSessionRequestTimeoutMs = request.pathId === 'agent.session.commands'
       || request.pathId === 'agent.session.models'
+      || request.pathId === 'agent.session.forks.list'
+      || request.pathId === 'agent.session.forks.create'
       ? Math.max(this.requestTimeoutMs, 45_000)
       : this.requestTimeoutMs;
     const result = await this.call(
       'request',
       controlRequestWirePayload(request),
       request.signal,
-      catalogTimeoutMs,
+      slowSessionRequestTimeoutMs,
     );
     const contract = request.responseContract ?? controlRoute(request.pathId).responseContract;
     return (contract ? parseContract(contract, result) : result) as Response;

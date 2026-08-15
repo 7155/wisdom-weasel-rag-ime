@@ -102,6 +102,8 @@ function toolView(overrides: Partial<PublicToolResultView>): PublicToolResultVie
     toolLabel: '项目工具',
     operation: 'edit',
     summary: '项目工具已完成',
+    resultKind: 'structured',
+    resultItems: [],
     fields: [],
     request: [],
     sources: [],

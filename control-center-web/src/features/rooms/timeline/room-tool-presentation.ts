@@ -40,6 +40,12 @@ export function roomPublicToolResultView(view: PublicToolResultView): PublicTool
   const summary = sanitizeText(view.summary) || `${view.toolLabel}已完成`;
   const error = view.error ? sanitizeText(view.error) : '';
   const sources = view.sources.map(sanitizeText).filter(Boolean);
+  const resultItems = view.resultItems.flatMap((item) => {
+    const label = sanitizeText(item.label);
+    const text = sanitizeText(item.text);
+    if (!label && !text) return [];
+    return [{ ...item, label, text }];
+  });
   const preview = view.preview
     ? {
         ...view.preview,
@@ -67,9 +73,14 @@ export function roomPublicToolResultView(view: PublicToolResultView): PublicTool
     toolLabel: view.toolLabel,
     operation: view.operation,
     summary,
+    resultKind: view.resultKind,
+    resultItems,
     fields,
     request,
     sources,
+    ...(view.target && sanitizePath(view.target) ? { target: sanitizePath(view.target) } : {}),
+    ...(view.change ? { change: view.change } : {}),
+    ...(view.language ? { language: view.language } : {}),
     ...(preview ? { preview } : {}),
     ...(outputText && view.output
       ? { output: { ...view.output, text: outputText } }

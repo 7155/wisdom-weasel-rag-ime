@@ -12,26 +12,8 @@ import {
   type OptimisticRoomMessageInput,
   type RoomProjectionState,
 } from '@/contracts/room-reducer';
-import type { RoomKernelProjection } from '@/contracts/room-kernel-reducer';
 import type { UiRoomEvent } from '@/contracts/ui-events';
 import { mergeAcceptedRoomTimeline } from '../runtime/accepted-room-timeline';
-
-export type RoomKernelLiveState =
-  | 'idle'
-  | 'loading'
-  | 'synced'
-  | 'reconnecting'
-  | 'recovering'
-  | 'stale'
-  | 'denied'
-  | 'error';
-
-export interface RoomKernelSyncProjection {
-  state: RoomKernelLiveState;
-  detail: string;
-  updatedAtMs: number;
-  failureAtMs?: number;
-}
 
 export interface RoomHistoryWindow {
   events: readonly UiRoomEvent[];
@@ -44,8 +26,6 @@ interface RoomLiveStore {
   projections: Record<string, RoomProjectionState>;
   roomRevisions: Record<string, number>;
   turnRevisions: Record<string, Record<string, number>>;
-  kernelProjections: Record<string, RoomKernelProjection>;
-  kernelSyncByRoomId: Record<string, RoomKernelSyncProjection>;
   historyByRoomId: Record<string, RoomHistoryWindow>;
   snapshotsByRoomId: Record<string, RoomEventSnapshot>;
   ensure(roomId: string): void;
@@ -65,8 +45,6 @@ interface RoomLiveStore {
     participantId: string,
     nowMs: number,
   ): void;
-  setKernelProjection(roomId: string, projection: RoomKernelProjection): void;
-  setKernelSync(roomId: string, sync: RoomKernelSyncProjection): void;
   remove(roomId: string): void;
   reset(): void;
 }
@@ -75,8 +53,6 @@ export const useRoomLiveStore = create<RoomLiveStore>((set, get) => ({
   projections: {},
   roomRevisions: {},
   turnRevisions: {},
-  kernelProjections: {},
-  kernelSyncByRoomId: {},
   historyByRoomId: {},
   snapshotsByRoomId: {},
   ensure(roomId) {
@@ -85,35 +61,6 @@ export const useRoomLiveStore = create<RoomLiveStore>((set, get) => ({
       projections: {
         ...state.projections,
         [roomId]: createRoomProjection(roomId),
-      },
-    }));
-  },
-  setKernelProjection(roomId, projection) {
-    if (!roomId || projection.roomId !== roomId) {
-      throw new TypeError('Room Kernel projection does not belong to this Room');
-    }
-    const current = get().kernelProjections[roomId];
-    if (current === projection || (current && projection.lastSequence < current.lastSequence)) return;
-    set((state) => ({
-      kernelProjections: {
-        ...state.kernelProjections,
-        [roomId]: projection,
-      },
-    }));
-  },
-  setKernelSync(roomId, sync) {
-    if (!roomId) return;
-    const current = get().kernelSyncByRoomId[roomId];
-    if (
-      current?.state === sync.state
-      && current.detail === sync.detail
-      && current.updatedAtMs === sync.updatedAtMs
-      && current.failureAtMs === sync.failureAtMs
-    ) return;
-    set((state) => ({
-      kernelSyncByRoomId: {
-        ...state.kernelSyncByRoomId,
-        [roomId]: sync,
       },
     }));
   },
@@ -272,23 +219,17 @@ export const useRoomLiveStore = create<RoomLiveStore>((set, get) => ({
       const projections = { ...state.projections };
       const roomRevisions = { ...state.roomRevisions };
       const turnRevisions = { ...state.turnRevisions };
-      const kernelProjections = { ...state.kernelProjections };
-      const kernelSyncByRoomId = { ...state.kernelSyncByRoomId };
       const historyByRoomId = { ...state.historyByRoomId };
       const snapshotsByRoomId = { ...state.snapshotsByRoomId };
       delete projections[roomId];
       delete roomRevisions[roomId];
       delete turnRevisions[roomId];
-      delete kernelProjections[roomId];
-      delete kernelSyncByRoomId[roomId];
       delete historyByRoomId[roomId];
       delete snapshotsByRoomId[roomId];
       return {
         projections,
         roomRevisions,
         turnRevisions,
-        kernelProjections,
-        kernelSyncByRoomId,
         historyByRoomId,
         snapshotsByRoomId,
       };
@@ -299,8 +240,6 @@ export const useRoomLiveStore = create<RoomLiveStore>((set, get) => ({
       projections: {},
       roomRevisions: {},
       turnRevisions: {},
-      kernelProjections: {},
-      kernelSyncByRoomId: {},
       historyByRoomId: {},
       snapshotsByRoomId: {},
     });

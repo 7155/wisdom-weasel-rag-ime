@@ -116,6 +116,51 @@ describe('NativeControlTransport', () => {
     transport.dispose();
   });
 
+  it('does not cancel a conversation fork at the ordinary native request timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const sent: NativeBridgeRequestEnvelope[] = [];
+      const bridgeWindow = fakeBridgeWindow((envelope) => {
+        sent.push(envelope);
+        globalThis.setTimeout(() => bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+          id: envelope.id,
+          ok: true,
+          result: {
+            schemaVersion: 'rag-ime.agent-session-fork-create.v1',
+            ok: true,
+            sourceSessionId: 'agent:source',
+            entryId: 'entry-user-1',
+            selectedText: '从这里继续',
+            session: sessionFixture,
+          },
+        }), 150);
+      });
+      const transport = new NativeControlTransport({
+        bridgeWindow,
+        createId: () => 'fork-call',
+        requestTimeoutMs: 100,
+      });
+
+      const fork = transport.request({
+        pathId: 'agent.session.forks.create',
+        params: { sessionId: 'agent:source' },
+        body: { entryId: 'entry-user-1', title: '新分支' },
+      });
+      const result = expect(fork).resolves.toMatchObject({
+        sourceSessionId: 'agent:source',
+        entryId: 'entry-user-1',
+      });
+
+      await vi.advanceTimersByTimeAsync(150);
+      await result;
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ method: 'request' });
+      transport.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('multiplexes subscribe/event/cancelSubscription with resume cursors', async () => {
     const sent: NativeBridgeRequestEnvelope[] = [];
     let nextId = 1;

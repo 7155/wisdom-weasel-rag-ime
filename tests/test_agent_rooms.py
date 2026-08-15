@@ -1661,7 +1661,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             receipt = self.service.steer_room_participant(
                 str(room["id"]),
                 {
-                    "action": "steer",
+                    "action": "steer_participant",
                     "rootId": accepted["roomTurnId"],
                     "participantId": facilitator["id"],
                     "message": "先停止旧方向，只验证 Stop。",
@@ -2453,6 +2453,18 @@ class AgentRoomServiceTests(unittest.TestCase):
         )["room"]
         hermes = next(item for item in room["participants"] if item["roleId"] == "companion-firstlight-v1")
         session_id = str(hermes["sessionId"])
+        room_turn_id = "room-turn:safe"
+        self.service._begin_room_turn(
+            session_id,
+            room_turn_id,
+            str(room["activeTopicId"]),
+            dispatch_id="room-dispatch:safe",
+        )
+        self.service._accept_room_turn(
+            session_id,
+            "turn:safe",
+            room_turn_id,
+        )
 
         self.service.events.publish(
             session_id,

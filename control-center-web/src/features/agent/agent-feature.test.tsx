@@ -93,6 +93,36 @@ afterEach(() => {
 });
 
 describe('Agent experience', () => {
+  it('starts restoring a deep-linked conversation before the session rail finishes loading', async () => {
+    const pendingSessions = deferred<unknown>();
+    const pendingSnapshot = deferred<unknown>();
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      () => pendingSessions.promise,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => pendingSnapshot.promise,
+    );
+
+    renderAgent(transport, '/agent?session=session-preview');
+
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.snapshot',
+        params: { sessionId: 'session-preview' },
+      }),
+    })));
+    expect(screen.getByRole('status', { name: '正在打开对话' })).toBeInTheDocument();
+
+    pendingSessions.resolve({ ok: true, items: previewSessions });
+    pendingSnapshot.resolve(previewAgentSnapshot('session-preview'));
+    expect(await screen.findByRole('textbox', { name: '消息' })).toBeInTheDocument();
+  });
+
   it('renders a recent deep-link snapshot before idempotently replacing it with full history', async () => {
     const pendingFull = deferred<unknown>();
     const complete = previewAgentSnapshot('session-preview');
@@ -156,36 +186,6 @@ describe('Agent experience', () => {
     expect(transport.requests.filter((request) => (
       request.pathId === 'agent.session.snapshot'
     ))).toHaveLength(2);
-  });
-
-  it('starts restoring a deep-linked conversation before the session rail finishes loading', async () => {
-    const pendingSessions = deferred<unknown>();
-    const pendingSnapshot = deferred<unknown>();
-    const transport = featureTransport(
-      undefined,
-      undefined,
-      () => pendingSessions.promise,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      () => pendingSnapshot.promise,
-    );
-
-    renderAgent(transport, '/agent?session=session-preview');
-
-    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
-      request: expect.objectContaining({
-        pathId: 'agent.session.snapshot',
-        params: { sessionId: 'session-preview' },
-      }),
-    })));
-    expect(screen.getByRole('status', { name: '正在打开对话' })).toBeInTheDocument();
-
-    pendingSessions.resolve({ ok: true, items: previewSessions });
-    pendingSnapshot.resolve(previewAgentSnapshot('session-preview'));
-    expect(await screen.findByRole('textbox', { name: '消息' })).toBeInTheDocument();
   });
 
   it('makes the full session row clickable', async () => {
@@ -1578,8 +1578,8 @@ describe('Agent experience', () => {
       message: '完成后再整理测试结果',
       delivery: 'followUp',
     });
-    expect(screen.getByText('干预当前执行')).toBeInTheDocument();
-    expect(screen.getByText('完成后接续')).toBeInTheDocument();
+    expect(screen.getByText('已接收，正在切换当前执行')).toBeInTheDocument();
+    expect(screen.getByText('已接收，等待当前执行完成')).toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.abort')).toBe(false);
   });
 
@@ -2228,13 +2228,12 @@ describe('Agent experience', () => {
     const activity = [...view.container.querySelectorAll<HTMLElement>('.agent-activity--inline')]
       .find((item) => item.textContent?.includes('该操作需要本机审批后继续'));
     expect(activity).toBeDefined();
-    fireEvent.click(activity!.querySelector('summary')!);
     expect(activity).toHaveAttribute('open');
     expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
     const failedRow = [...activity!.querySelectorAll<HTMLDetailsElement>('.agent-activity-row')]
       .find((row) => row.textContent?.includes('该操作需要本机审批后继续'));
     expect(failedRow).toBeDefined();
-    fireEvent.click(failedRow!.querySelector('summary')!);
+    expect(failedRow).toHaveAttribute('open');
     await user.click(within(failedRow!).getByRole('button', { name: '去审批' }));
 
     const dialog = await screen.findByRole('dialog', { name: '确认失败工具的受控操作' });
@@ -2280,13 +2279,12 @@ describe('Agent experience', () => {
     const activity = [...view.container.querySelectorAll<HTMLElement>('.agent-activity--inline')]
       .find((item) => item.textContent?.includes('工作区不在授权目录内'));
     expect(activity).toBeDefined();
-    fireEvent.click(activity!.querySelector('summary')!);
     expect(activity).toHaveAttribute('open');
     expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
     const failedRow = [...activity!.querySelectorAll<HTMLDetailsElement>('.agent-activity-row')]
       .find((row) => row.textContent?.includes('工作区不在授权目录内'));
     expect(failedRow).toBeDefined();
-    fireEvent.click(failedRow!.querySelector('summary')!);
+    expect(failedRow).toHaveAttribute('open');
     await user.click(within(failedRow!).getByRole('button', { name: '请求权限' }));
 
     expect(await screen.findByText('对话权限')).toBeInTheDocument();
@@ -3443,6 +3441,61 @@ describe('Agent experience', () => {
     expect(await screen.findByRole('button', { name: '继续昨天的对话' })).toHaveAttribute('aria-current', 'true');
   });
 
+  it('updates the Session rail immediately and reconciles its preview after a terminal event', async () => {
+    const initialSession = {
+      ...previewSessions[0]!,
+      messageCount: 0,
+      lastMessagePreview: '',
+    };
+    let sessionListCalls = 0;
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      () => {
+        sessionListCalls += 1;
+        return {
+          ok: true,
+          activeSessionId: initialSession.id,
+          items: [{
+            ...initialSession,
+            ...(sessionListCalls > 1
+              ? { messageCount: 6, lastMessagePreview: '权威助手摘要' }
+              : {}),
+          }],
+        };
+      },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    const rail = await screen.findByLabelText('对话与项目');
+    expect(within(rail).getByText('0 条消息')).toBeInTheDocument();
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composer, '刚刚发送的用户请求');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(within(rail).getByText('刚刚发送的用户请求')).toBeInTheDocument();
+    await waitFor(() => expect(transport.activeSubscriptionCount()).toBe(1));
+    const projection = useAgentLiveStore.getState().projections['session-preview'];
+    act(() => {
+      transport.emit('agent.session.events', {
+        schemaVersion: 'rag-ime.agent-event.v1',
+        eventId: 'rail-summary-terminal',
+        sessionId: 'session-preview',
+        turnId: projection.turnOrder.at(-1) ?? 'turn-rail-summary',
+        sequence: projection.lastSequence + 1,
+        createdAtMs: Date.now(),
+        streamKind: 'agent',
+        eventType: 'turn_completed',
+        payload: { status: 'completed', messageCount: 6 },
+        resumeToken: `session-preview:${projection.lastSequence + 1}`,
+      });
+    });
+
+    await waitFor(() => expect(sessionListCalls).toBe(2));
+    expect(await within(rail).findByText('权威助手摘要')).toBeInTheDocument();
+  });
+
   it('shows the conversation rail while the independent role catalog is slow', async () => {
     const pendingRoles = deferred<unknown>();
     const transport = productionTransport({
@@ -4139,6 +4192,63 @@ describe('Agent experience', () => {
     expect(conversation).not.toHaveAttribute('inert');
     expect(rail).not.toHaveAttribute('inert');
     await waitFor(() => expect(toggle).toHaveFocus());
+  });
+
+  it('opens a lazy workspace tree from the header and previews text files with the shared renderer', async () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false })));
+    const root = '/Users/example/Projects/personal-agent-workbench';
+    const transport = productionTransport({
+      'agent.session.workspace.list': (request: ControlRequest) => {
+        const path = String(request.query?.path ?? '');
+        return {
+          schemaVersion: 'rag-ime.agent-workspace-list.v1',
+          ok: true,
+          sessionId: 'session-preview',
+          root,
+          path,
+          items: path === root
+            ? [
+                { path: `${root}/src`, name: 'src', kind: 'directory' },
+                { path: `${root}/README.md`, name: 'README.md', kind: 'file', byteSize: 18 },
+              ]
+            : [{ path: `${root}/src/index.ts`, name: 'index.ts', kind: 'file', byteSize: 24 }],
+          truncated: false,
+        };
+      },
+      'agent.session.workspace.read': (request: ControlRequest) => ({
+        schemaVersion: 'rag-ime.agent-workspace-read.v1',
+        ok: true,
+        sessionId: 'session-preview',
+        path: request.query?.path,
+        root,
+        content: '# Agent workspace\n\nRendered markdown.\n',
+        byteSize: 39,
+        truncated: false,
+      }),
+    });
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '展开文件目录' }));
+    const panel = screen.getByRole('complementary', { name: '当前对话文件目录' });
+    expect(panel).toHaveAttribute('data-open', 'true');
+    expect(screen.getByLabelText('当前对话任务中心')).toHaveAttribute('aria-hidden', 'true');
+    expect(await within(panel).findByRole('button', { name: '预览文件 README.md' })).toBeVisible();
+    expect(transport.requests).toContainEqual(expect.objectContaining({
+      pathId: 'agent.session.workspace.list',
+      query: { path: root, depth: 1, limit: 240 },
+    }));
+
+    await user.click(within(panel).getByRole('button', { name: '展开目录 src' }));
+    expect(await within(panel).findByRole('button', { name: '预览文件 index.ts' })).toBeVisible();
+
+    await user.click(within(panel).getByRole('button', { name: '预览文件 README.md' }));
+    const preview = await screen.findByRole('dialog', { name: 'README.md' });
+    expect(within(preview).getByRole('heading', { name: 'Agent workspace' })).toBeVisible();
+    expect(transport.requests).toContainEqual(expect.objectContaining({
+      pathId: 'agent.session.workspace.read',
+      query: { path: `${root}/README.md`, offset: 0, limit: 65_536 },
+    }));
   });
 
   it('opens the task center by default on wide desktops', async () => {

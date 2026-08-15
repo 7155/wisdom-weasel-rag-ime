@@ -16,8 +16,6 @@ import type {
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import {
   ActivitySummary,
-  PublicActivityFeed,
-  ReasoningActivitySummary,
 } from './ActivitySummary';
 import { AgentBlocks } from './BlockRenderer';
 import { PersonaAvatar, type PersonaPresence } from './PersonaAvatar';
@@ -35,6 +33,33 @@ export function isRoomPublicPostMessage(message: AgentMessageProjection): boolea
       && block.visibility === 'room_post'
     )
   ));
+}
+
+function isRenderableAssistantMessage(message: AgentMessageProjection): boolean {
+  if (message.role !== 'assistant' || isRoomPublicPostMessage(message)) return false;
+  return message.blocks.some((block) => (
+    block.type !== 'error'
+    && (block.type !== 'text' || Boolean(text(block.data.text).trim()))
+  ));
+}
+
+export function agentTurnMarkerKind(
+  projection: AgentProjectionState | undefined,
+  turnId: string | undefined,
+): 'active' | 'failed' | 'aborted' | 'complete' | 'user' {
+  const turn = turnId ? projection?.turnsById[turnId] : undefined;
+  if (!turn) return 'complete';
+  if (turn.status === 'failed') return 'failed';
+  if (turn.status === 'aborted') return 'aborted';
+  if (turn.status === 'queued' || turn.status === 'running' || turn.status === 'waiting') return 'active';
+  const hasAssistant = turn.messageIds.some((messageId) => {
+    const message = projection?.messagesById[messageId];
+    return Boolean(message && isRenderableAssistantMessage(message));
+  });
+  // A tool-only turn is still a completed response. Calling it "waiting for
+  // reply" after a Steer split the provider transcript made history look as
+  // if Pi had dropped the original user request.
+  return hasAssistant || turn.activityIds.length > 0 ? 'complete' : 'user';
 }
 
 /** Room Posts remain in the durable transcript for audit/recovery, but their
@@ -119,15 +144,7 @@ export function AgentTimeline({
   const markerKinds = useAgentLiveStore(useShallow((state) => markerIndexes.map((index) => {
     const projection = state.projections[sessionId];
     const turnId = turnOrder[index];
-    const turn = projection?.turnsById[turnId];
-    if (!turn) return 'complete';
-    if (turn.status === 'failed') return 'failed';
-    if (turn.status === 'queued' || turn.status === 'running' || turn.status === 'waiting') return 'active';
-    const hasAssistant = turn.messageIds.some((messageId) => {
-      const message = projection?.messagesById[messageId];
-      return message?.role === 'assistant' && !isRoomPublicPostMessage(message);
-    });
-    return hasAssistant ? 'complete' : 'user';
+    return agentTurnMarkerKind(projection, turnId);
   })));
   const markerUserPreviews = useAgentLiveStore(useShallow((state) => markerIndexes.map((index) => {
     const projection = state.projections[sessionId];
@@ -145,9 +162,9 @@ export function AgentTimeline({
     const messages = turn?.messageIds
       .map((messageId) => projection?.messagesById[messageId])
       .filter((item): item is AgentMessageProjection => (
-        item?.role === 'assistant'
+        Boolean(item)
         && item.status !== 'streaming'
-        && !isRoomPublicPostMessage(item)
+        && isRenderableAssistantMessage(item)
       )) ?? [];
     return messagePreview(messages.at(-1));
   })));
@@ -475,6 +492,11 @@ export function AgentTurn({
   onEditMessage?: (messageId: string) => void;
 }) {
   const turn = useAgentLiveStore((state) => state.projections[sessionId]?.turnsById[turnId]);
+  const stopping = useAgentLiveStore((state) => {
+    const projection = state.projections[sessionId];
+    return projection?.status === 'aborting'
+      && projection.turnOrder.at(-1) === turnId;
+  });
   const userIds = useAgentLiveStore(useShallow((state) => {
     const projection = state.projections[sessionId];
     return (projection?.turnsById[turnId]?.messageIds ?? []).filter((id) => projection?.messagesById[id]?.role === 'user');
@@ -484,7 +506,7 @@ export function AgentTurn({
     return (projection?.turnsById[turnId]?.messageIds ?? [])
       .map((id) => projection?.messagesById[id])
       .filter((message): message is AgentMessageProjection => (
-        message?.role === 'assistant' && !isRoomPublicPostMessage(message)
+        Boolean(message && isRenderableAssistantMessage(message))
       ));
   }));
   const activities = useAgentLiveStore(useShallow((state) => {
@@ -539,9 +561,8 @@ export function AgentTurn({
         <div className="agent-assistant-turn">
           <PersonaAvatar fallbackName={assistantName} persona={persona} presence={showWorking ? 'thinking' : presence} />
           <div className="agent-assistant-turn__body">
-            <header><strong>{persona?.displayName ?? assistantName}</strong><span>{showWorking ? '正在处理' : turnStatusLabel(turn.status)}</span></header>
-            {showWorking ? <AssistantWorkingState activities={activities} startedAtMs={turn.createdAtMs} /> : null}
-            <PublicActivityFeed activities={activities} />
+            <header><strong>{persona?.displayName ?? assistantName}</strong><span>{showWorking ? (stopping ? '正在停止' : '正在处理') : turnStatusLabel(turn.status)}</span></header>
+            {showWorking ? <AssistantWorkingState activities={activities} startedAtMs={turn.createdAtMs} stopping={stopping} /> : null}
             <div className="agent-turn-sequence" aria-label="本轮响应过程">
               {timelineEntries.map((entry) => entry.kind === 'message' ? (
                 <div data-timeline-kind="message" key={entry.message.id}>
@@ -681,9 +702,11 @@ function compareTimelineItems(left: TurnTimelineItem, right: TurnTimelineItem): 
 function AssistantWorkingState({
   activities,
   startedAtMs,
+  stopping = false,
 }: {
   activities: AgentActivityProjection[];
   startedAtMs: number;
+  stopping?: boolean;
 }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
@@ -694,7 +717,10 @@ function AssistantWorkingState({
   return (
     <div className="agent-assistant-pending" role="status" aria-live="polite">
       <CircleDashed aria-hidden="true" size={17} />
-      <span><strong>思考中 <time>{formatElapsed(nowMs - startedAtMs)}</time></strong><small>{detail}</small></span>
+      <span>
+        <strong>{stopping ? '正在停止' : '思考中'} <time>{formatElapsed(nowMs - startedAtMs)}</time></strong>
+        <small>{stopping ? '正在取消当前模型与工具执行。' : detail}</small>
+      </span>
       <i className="agent-working-dots" aria-hidden="true"><b /><b /><b /></i>
     </div>
   );
@@ -732,6 +758,7 @@ function MessageView({
   const delivery = user
     ? text(message.blocks.find((block) => block.type === 'text')?.data.delivery)
     : '';
+  const deliveryFeedback = agentDeliveryFeedback(delivery, message.deliveryState, message.status);
   const branchText = message.blocks.map((block) => (
     text(block.data.text ?? block.data.markdown ?? block.data.message ?? block.data.summary)
   )).filter(Boolean).join('\n').trim();
@@ -752,9 +779,15 @@ function MessageView({
     <div className="agent-user-message-shell" data-actions={canFork || canEdit || undefined} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
       <div className="agent-user-message" data-status={message.status}>
         <AgentBlocks blocks={visibleBlocks} sessionId={sessionId} onApprovalDecision={onApprovalDecision} />
-        {delivery === 'steer' || delivery === 'followUp' ? (
-          <small className="agent-user-message__delivery" data-delivery={delivery}>
-            {delivery === 'steer' ? '干预当前执行' : '完成后接续'}
+        {deliveryFeedback ? (
+          <small
+            aria-live="polite"
+            className="agent-user-message__delivery"
+            data-delivery={delivery}
+            data-state={message.deliveryState ?? 'sending'}
+            role="status"
+          >
+            {deliveryFeedback}
           </small>
         ) : null}
         {message.attachments.length ? <small>{message.attachments.length} 个附件</small> : null}
@@ -844,19 +877,16 @@ function ActivityGroupView({
   onRequestPermission?: () => void;
 }) {
   const compactions = activities.filter((activity) => activity.kind === 'context_compaction');
-  const reasoning = activities.filter((activity) => activity.kind === 'reasoning_summary');
-  const ordinary = activities.filter((activity) => (
+  const visibleActivities = activities.filter((activity) => (
     activity.kind !== 'context_compaction'
-    && activity.kind !== 'reasoning_summary'
     && (!isAgentTodoActivity(activity) || activity.status === 'failed')
   ));
   return (
     <>
       {compactions.map((activity) => <ContextCompactionNotice key={activity.id} activity={activity} />)}
-      <ReasoningActivitySummary activities={reasoning} />
-      {ordinary.length ? (
+      {visibleActivities.length ? (
         <ActivitySummary
-          activities={ordinary}
+          activities={visibleActivities}
           inline
           onApprovalDecision={onApprovalDecision}
           onOpenApproval={onOpenApproval}
@@ -932,9 +962,31 @@ function turnStatusLabel(status: string): string {
   return '已完成';
 }
 
+export function agentDeliveryFeedback(
+  delivery: string,
+  state: AgentMessageProjection['deliveryState'],
+  messageStatus: AgentMessageProjection['status'],
+): string {
+  if (delivery !== 'steer' && delivery !== 'followUp') return '';
+  if (messageStatus === 'failed') {
+    return delivery === 'steer' ? '未能确认干预是否已接收' : '未能确认接续是否已接收';
+  }
+  if (state === 'applied') {
+    return delivery === 'steer' ? '新指令已生效' : '接续指令已生效';
+  }
+  if (state === 'accepted') {
+    return delivery === 'steer' ? '已接收，正在切换当前执行' : '已接收，等待当前执行完成';
+  }
+  if (state === 'sending' || messageStatus === 'queued') {
+    return delivery === 'steer' ? '正在发送干预' : '正在发送接续';
+  }
+  return delivery === 'steer' ? '新指令已生效' : '接续指令已生效';
+}
+
 function turnMarkerLabel(kind: string): string {
   if (kind === 'active') return '进行中';
   if (kind === 'failed') return '未完成';
+  if (kind === 'aborted') return '已停止';
   if (kind === 'user') return '待回复';
   return '已完成';
 }

@@ -2029,8 +2029,10 @@ class AgentService:
         room_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
-        if str(payload.get("action") or "steer").strip() != "steer":
-            raise ValueError("Room participant control action must be steer")
+        if str(payload.get("action") or "").strip() != "steer_participant":
+            raise ValueError(
+                "Room participant control action must be steer_participant"
+            )
         root_id = str(payload.get("rootId") or "").strip()
         message = str(payload.get("message") or "").strip()
         client_action_id = str(payload.get("clientActionId") or "").strip()

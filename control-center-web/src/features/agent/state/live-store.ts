@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import {
   applyAgentBackgroundJobReceipt,
+  acknowledgeOptimisticAgentMessage,
   abortAgentTurn,
   agentSnapshotFromResponse,
   appendOptimisticAgentMessage,
@@ -31,6 +32,8 @@ interface AgentLiveStore {
       text: string;
       attachments?: string[];
       nowMs: number;
+      turnId?: string;
+      delivery?: 'prompt' | 'steer' | 'followUp';
     },
   ): void;
   rewriteOptimistic(
@@ -56,6 +59,7 @@ interface AgentLiveStore {
     clientMessageId: string,
     nowMs: number,
   ): void;
+  acknowledgeOptimistic(sessionId: string, clientMessageId: string, nowMs: number): void;
   abortTurn(sessionId: string, turnId: string, nowMs: number): void;
   clear(sessionId: string): void;
 }
@@ -150,6 +154,19 @@ export const useAgentLiveStore = create<AgentLiveStore>((set, get) => ({
       clientMessageId,
       nowMs,
     );
+    set((state) => ({
+      projections: { ...state.projections, [sessionId]: projection },
+    }));
+  },
+  acknowledgeOptimistic(sessionId, clientMessageId, nowMs) {
+    const current = get().projections[sessionId];
+    if (!current) return;
+    const projection = acknowledgeOptimisticAgentMessage(
+      current,
+      clientMessageId,
+      nowMs,
+    );
+    if (projection === current) return;
     set((state) => ({
       projections: { ...state.projections, [sessionId]: projection },
     }));

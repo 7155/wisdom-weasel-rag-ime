@@ -59,7 +59,7 @@ export function RoomComposer({
   draft: string;
   attachments: RoomAttachmentReceipt[];
   sending: boolean;
-  taskBusyState?: 'running' | 'blocked' | 'awaiting_start';
+  taskBusyState?: 'running' | 'blocked';
   pendingUserAnswer?: boolean;
   inputRef?: { current: HTMLTextAreaElement | null };
   onDraftChange: (value: string) => void;
@@ -80,7 +80,7 @@ export function RoomComposer({
   const [activeIndex, setActiveIndex] = useState(0);
   const roomCanCompose = room?.status === 'active';
   const pendingAnswerMode = Boolean(pendingUserAnswer);
-  const roomCanSend = roomCanCompose && (!taskBusyState || pendingAnswerMode);
+  const roomCanSend = roomCanCompose;
   const participants = room?.participants.filter(
     (participant) => participant.status === 'active',
   ) ?? [];
@@ -250,11 +250,9 @@ export function RoomComposer({
       {taskBusyState || pendingAnswerMode ? <p className="room-composer__task-lock" role="status">
         {pendingAnswerMode
           ? '当前任务正在等待你的回答。这里只发送文字回答；点名和附件不会随回答发送。'
-          : taskBusyState === 'awaiting_start'
-            ? '当前任务正在等待你点击“开始行动”。确认后才会开始执行；你可以先在这里起草。'
-            : taskBusyState === 'blocked'
-              ? '当前任务已暂停。请在上方继续或停止任务；你可以先在这里准备下一条消息。'
-              : '当前任务仍在执行。完成或停止后才能发送下一项任务；你可以先在这里起草。'}
+          : taskBusyState === 'blocked'
+            ? '当前任务已暂停。发送文字可以告诉主持伙伴怎样继续，停止按钮会终止整条协作。'
+            : '当前任务仍在执行。现在发送文字会立即干预主持伙伴的当前回合。'}
       </p> : null}
       <div className="room-composer">
         <textarea
@@ -318,7 +316,7 @@ export function RoomComposer({
           placeholder={pendingAnswerMode
             ? '回答伙伴正在等待的问题…'
             : taskBusyState
-              ? '可以先起草下一项任务…'
+              ? '立即干预当前回合…'
               : composerPlaceholder(room)}
           aria-label="协作消息"
           aria-autocomplete="list"
@@ -333,7 +331,7 @@ export function RoomComposer({
               className="room-composer__attachment"
               label="添加图片"
               icon={<Paperclip size={16} />}
-              disabled={!roomCanCompose || sending || pendingAnswerMode || attachments.length >= 8}
+              disabled={!roomCanCompose || sending || pendingAnswerMode || Boolean(taskBusyState) || attachments.length >= 8}
               onClick={onPickAttachments}
               tooltip
             />
@@ -350,13 +348,11 @@ export function RoomComposer({
             className="room-composer__send"
             label={pendingAnswerMode
               ? '发送问题回答'
-              : taskBusyState === 'awaiting_start'
-                ? '先开始或停止当前任务'
-                : taskBusyState === 'blocked'
-                  ? '先继续或停止当前任务'
-                  : taskBusyState
-                    ? '等待当前任务完成'
-                    : '发送消息'}
+              : taskBusyState === 'blocked'
+                ? '告诉伙伴怎样继续'
+                : taskBusyState
+                  ? '立即干预当前回合'
+                  : '发送消息'}
             icon={<Send size={17} />}
             disabled={!canSend}
             onClick={submit}

@@ -3,6 +3,8 @@ import { approvalDecisionReasonLabel, approvalDecisionView, approvalNeedsHumanDe
 import { publicToolName } from '../tool-presentation';
 const PUBLIC_TOOL_OUTPUT_MAX_CHARS = 6_000;
 const PUBLIC_TOOL_OUTPUT_MAX_LINES = 40;
+const INSPECTABLE_TOOL_RESULT_MAX_CHARS = 24_000;
+const INSPECTABLE_TOOL_RESULT_TRUNCATED = '\n[结果已截断；完整内容请通过受控工具结果引用分页读取]';
 
 export interface PublicToolActivityProjection {
   kind: string;
@@ -25,12 +27,24 @@ export interface PublicToolResultView {
   toolLabel: string;
   operation: string;
   summary: string;
+  resultKind: PublicToolResultKind;
+  target?: string;
+  change?: {
+    additions: number;
+    deletions: number;
+  };
   fields: PublicToolResultField[];
   request: PublicToolRequestField[];
   output?: {
     text: string;
     truncated: boolean;
   };
+  resultItems: PublicToolResultItem[];
+  rawResult?: {
+    format: 'json' | 'text';
+    value: unknown;
+  };
+  language?: string;
   sources: string[];
   preview?: PublicToolSemanticPreview;
   error?: string;
@@ -39,6 +53,23 @@ export interface PublicToolResultView {
     href: string;
     label: string;
   };
+}
+
+export type PublicToolResultKind =
+  | 'terminal'
+  | 'code'
+  | 'matches'
+  | 'files'
+  | 'change'
+  | 'browser'
+  | 'semantic'
+  | 'structured';
+
+export interface PublicToolResultItem {
+  id: string;
+  label: string;
+  text: string;
+  kind?: string;
 }
 
 export interface PublicToolSemanticPreview {
@@ -351,6 +382,9 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
     ? safeKnowledgeSourceLabels(items)
     : safeSourceLabels(payload.sources ?? payload.documents ?? payload.books);
   const preview = semanticToolPreview(toolId, operation, layers);
+  const resultKind = publicToolResultKind(toolId, Boolean(preview));
+  const resultItems = publicToolResultItems(resultKind, layers, codeResult.output?.text ?? '');
+  const rawResult = inspectableRawResult(payload);
   const error = !expectedNoop && (activity.status === 'failed' || payload.isError === true)
     ? publicToolError(layers, carrier)
     : '';
@@ -361,15 +395,284 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
     toolLabel,
     operation,
     summary: summary || codeResult.summary || `${toolLabel} ${activity.status === 'running' ? '正在处理' : activity.status === 'failed' ? '执行失败' : activity.status === 'aborted' ? '已停止' : '已完成'}`,
+    resultKind,
+    ...(codeResult.file ? { target: codeResult.file } : {}),
+    ...(codeResult.additions !== undefined || codeResult.deletions !== undefined ? {
+      change: {
+        additions: codeResult.additions ?? 0,
+        deletions: codeResult.deletions ?? 0,
+      },
+    } : {}),
     fields,
     request: codeResult.request,
     ...(codeResult.output ? { output: codeResult.output } : {}),
+    resultItems,
+    ...(rawResult ? { rawResult } : {}),
+    ...(resultKind === 'code' && codeResult.file ? { language: publicCodeLanguage(codeResult.file) } : {}),
     sources,
     ...(preview ? { preview } : {}),
     ...(error ? { error } : {}),
     ...(recovery ? { recovery } : {}),
     ...(toolDestinations[toolId] ? { destination: toolDestinations[toolId] } : {}),
   };
+}
+
+function inspectableRawResult(
+  payload: Record<string, unknown>,
+): PublicToolResultView['rawResult'] | undefined {
+  const value = payload.result !== undefined
+    ? payload.result
+    : payload.partialResult;
+  if (value === undefined || value === null) return undefined;
+  return {
+    format: typeof value === 'string' ? 'text' : 'json',
+    value,
+  };
+}
+
+const rawSecretKey = /(?:token|secret|password|api.?key|authorization|cookie)/iu;
+
+export function inspectableRawResultText(value: unknown, format: 'json' | 'text'): string {
+  if (format === 'text' && typeof value === 'string') {
+    const source = value
+      .slice(0, INSPECTABLE_TOOL_RESULT_MAX_CHARS + 4_096)
+      .replace(/\r\n?/gu, '\n');
+    return boundedInspectableText(maskRawResultString(source), value.length > source.length);
+  }
+  return boundedInspectableJson(value);
+}
+
+function boundedInspectableText(value: string, alreadyTruncated = false): string {
+  const bodyLimit = INSPECTABLE_TOOL_RESULT_MAX_CHARS - INSPECTABLE_TOOL_RESULT_TRUNCATED.length;
+  if (!alreadyTruncated && value.length <= INSPECTABLE_TOOL_RESULT_MAX_CHARS) return value;
+  return `${value.slice(0, bodyLimit)}${INSPECTABLE_TOOL_RESULT_TRUNCATED}`;
+}
+
+function boundedInspectableJson(value: unknown): string {
+  const bodyLimit = INSPECTABLE_TOOL_RESULT_MAX_CHARS - INSPECTABLE_TOOL_RESULT_TRUNCATED.length;
+  const chunks: string[] = [];
+  const seen = new WeakSet<object>();
+  let length = 0;
+  let truncated = false;
+  const append = (part: string) => {
+    if (truncated || !part) return;
+    const remaining = bodyLimit - length;
+    if (remaining <= 0) {
+      truncated = true;
+      return;
+    }
+    if (part.length > remaining) {
+      chunks.push(part.slice(0, remaining));
+      length += remaining;
+      truncated = true;
+      return;
+    }
+    chunks.push(part);
+    length += part.length;
+  };
+  const visit = (item: unknown, depth: number, indent: string) => {
+    if (truncated) return;
+    if (item === null || typeof item === 'number' || typeof item === 'boolean') {
+      append(JSON.stringify(item));
+      return;
+    }
+    if (typeof item === 'string' || typeof item === 'bigint' || typeof item === 'undefined') {
+      append(JSON.stringify(maskRawResultString(String(item))));
+      return;
+    }
+    if (typeof item !== 'object') {
+      append(JSON.stringify(String(item)));
+      return;
+    }
+    if (depth >= 8) {
+      append(JSON.stringify('[bounded]'));
+      return;
+    }
+    if (seen.has(item)) {
+      append(JSON.stringify('[circular]'));
+      return;
+    }
+    seen.add(item);
+    const nextIndent = `${indent}  `;
+    if (Array.isArray(item)) {
+      append('[');
+      for (let index = 0; index < item.length && !truncated; index += 1) {
+        append(`${index === 0 ? '' : ','}\n${nextIndent}`);
+        visit(item[index], depth + 1, nextIndent);
+      }
+      if (!truncated && item.length > 0) append(`\n${indent}`);
+      append(']');
+      seen.delete(item);
+      return;
+    }
+    append('{');
+    const entries = Object.entries(item as Record<string, unknown>);
+    for (let index = 0; index < entries.length && !truncated; index += 1) {
+      const [key, child] = entries[index]!;
+      append(`${index === 0 ? '' : ','}\n${nextIndent}${JSON.stringify(key)}: `);
+      if (rawSecretKey.test(key)) append(JSON.stringify('[REDACTED_SECRET]'));
+      else visit(child, depth + 1, nextIndent);
+    }
+    if (!truncated && entries.length > 0) append(`\n${indent}`);
+    append('}');
+    seen.delete(item);
+  };
+  try {
+    visit(value, 0, '');
+  } catch {
+    return boundedInspectableText(maskRawResultString(String(value)), true);
+  }
+  const text = chunks.join('');
+  return truncated ? `${text}${INSPECTABLE_TOOL_RESULT_TRUNCATED}` : text;
+}
+
+function maskRawResultString(value: string): string {
+  return value
+    .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/gu, '[REDACTED_SECRET]')
+    .replace(/\b([A-Za-z0-9_]*(?:api[_-]?key|access[_-]?token|password|secret|authorization))(\s*(?:=|:)\s*)([^\s;'"\\]+|"[^"]*"|'[^']*')/giu, '$1$2[REDACTED_SECRET]')
+    .replace(/(--(?:api[_-]?key|token|password|secret)\s+)([^\s;'"\\]+|"[^"]*"|'[^']*')/giu, '$1[REDACTED_SECRET]');
+}
+
+const terminalResultTools = new Set(['bash', 'shell', 'workspace_shell', 'workspace_job']);
+const codeResultTools = new Set(['read', 'read_file', 'workspace_read']);
+const matchResultTools = new Set(['grep', 'workspace_search', 'workspace_lsp']);
+const fileResultTools = new Set(['find', 'ls', 'workspace_list']);
+const changeResultTools = new Set([
+  'write', 'write_file', 'workspace_write', 'workspace_write_file',
+  'edit', 'edit_file', 'workspace_edit', 'workspace_edit_file', 'workspace_patch',
+]);
+
+function publicToolResultKind(toolId: string, semantic: boolean): PublicToolResultKind {
+  if (semantic) return 'semantic';
+  if (terminalResultTools.has(toolId)) return 'terminal';
+  if (codeResultTools.has(toolId)) return 'code';
+  if (matchResultTools.has(toolId)) return 'matches';
+  if (fileResultTools.has(toolId)) return 'files';
+  if (changeResultTools.has(toolId)) return 'change';
+  if (toolId === 'browser') return 'browser';
+  return 'structured';
+}
+
+function publicToolResultItems(
+  kind: PublicToolResultKind,
+  layers: Record<string, unknown>[],
+  output: string,
+): PublicToolResultItem[] {
+  if (kind === 'matches') return publicMatchItems(output);
+  if (kind === 'browser') return publicBrowserItems(layers);
+  if (kind !== 'files') return [];
+  const entries = firstArray(layers, ['entries', 'files', 'items']);
+  const projected = entries.slice(0, 40).flatMap((value, index) => {
+    if (typeof value === 'string') {
+      const visible = publicStructuredText(value);
+      return visible ? [{ id: `file:${index}:${visible}`, label: visible, text: '', kind: '' }] : [];
+    }
+    const item = record(value);
+    const label = publicDisplayText(
+      item.name ?? item.fileName ?? item.title ?? item.label,
+      '',
+    );
+    if (!label) return [];
+    const itemKind = publicDisplayText(item.kind ?? item.type, '');
+    return [{
+      id: `file:${index}:${label}`,
+      label,
+      text: itemKind ? publicFileKindLabel(itemKind) : '',
+      kind: itemKind,
+    }];
+  });
+  if (projected.length > 0) return projected;
+  return output.split('\n').slice(0, 40).flatMap((line, index) => {
+    const visible = publicStructuredText(line);
+    return visible ? [{ id: `file-output:${index}:${visible}`, label: visible, text: '', kind: '' }] : [];
+  });
+}
+
+function publicBrowserItems(layers: Record<string, unknown>[]): PublicToolResultItem[] {
+  const items = firstArray(layers, ['tabs', 'items', 'traces']);
+  return items.slice(0, 40).flatMap((value, index) => {
+    const item = record(value);
+    const host = publicBrowserHost(text(item.url));
+    const label = publicDisplayText(
+      item.title ?? item.pageTitle ?? item.action ?? item.browserName ?? item.label,
+      host,
+    );
+    if (!label) return [];
+    const status = publicStatusLabel(text(item.status ?? item.state));
+    const detail = [host && host !== label ? host : '', status].filter(Boolean).join(' · ');
+    return [{
+      id: `browser:${index}:${label}`,
+      label,
+      text: detail,
+      kind: text(item.action ?? item.status),
+    }];
+  });
+}
+
+function publicBrowserHost(value: string): string {
+  if (!value || value.length > 4_000) return '';
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:'
+      ? url.host.slice(0, 240)
+      : '';
+  } catch {
+    return '';
+  }
+}
+
+function publicMatchItems(output: string): PublicToolResultItem[] {
+  return output.split('\n').slice(0, 40).flatMap((line, index) => {
+    const visible = publicStructuredText(line);
+    if (!visible) return [];
+    const match = /^(.+?):(\d+)(?::\d+)?:\s?(.*)$/u.exec(visible);
+    if (!match) {
+      return [{ id: `match:${index}:${visible}`, label: `结果 ${index + 1}`, text: visible }];
+    }
+    const location = `${match[1]}:${match[2]}`;
+    return [{
+      id: `match:${index}:${location}`,
+      label: location,
+      text: match[3] || '匹配位置',
+    }];
+  });
+}
+
+function publicFileKindLabel(value: string): string {
+  return ({
+    directory: '文件夹',
+    dir: '文件夹',
+    file: '文件',
+    symlink: '链接',
+  } as Record<string, string>)[value.toLowerCase()] ?? value;
+}
+
+function publicCodeLanguage(file: string): string {
+  const extension = file.toLowerCase().split('.').at(-1) ?? '';
+  return ({
+    ts: 'typescript',
+    tsx: 'tsx',
+    js: 'javascript',
+    jsx: 'jsx',
+    py: 'python',
+    rs: 'rust',
+    go: 'go',
+    swift: 'swift',
+    java: 'java',
+    kt: 'kotlin',
+    c: 'c',
+    h: 'c',
+    cc: 'cpp',
+    cpp: 'cpp',
+    css: 'css',
+    html: 'html',
+    json: 'json',
+    md: 'markdown',
+    yaml: 'yaml',
+    yml: 'yaml',
+    sh: 'shellscript',
+    zsh: 'shellscript',
+  } as Record<string, string>)[extension] ?? 'text';
 }
 
 function semanticToolPreview(
@@ -598,7 +901,7 @@ function publicCodeToolResult(
   ]);
   const searchTools = new Set(['grep', 'workspace_search']);
   const listTools = new Set(['find', 'ls', 'workspace_list']);
-  const commandTools = new Set(['bash', 'workspace_shell']);
+  const commandTools = new Set(['bash', 'shell', 'workspace_shell', 'workspace_job']);
   const codeTools = new Set([...fileTools, ...searchTools, ...listTools, ...commandTools]);
   const rawOutputText = firstText([publicResult], ['outputPreview']);
   const managedEvidence = managedEvidencePreview(rawOutputText);
@@ -667,9 +970,17 @@ function publicCodeToolResult(
       summary: file ? `${file}${lines !== undefined ? ` +${lines}` : ' 已写入'}` : '文件已写入',
     };
   }
-  if (['edit', 'edit_file', 'workspace_edit', 'workspace_edit_file'].includes(toolId)) {
+  if (['edit', 'edit_file', 'workspace_edit', 'workspace_edit_file', 'workspace_patch'].includes(toolId)) {
     const diff = firstText([envelope, carrier], ['diff', 'patch']);
-    const changes = publicDiffCounts(diff);
+    const diffChanges = publicDiffCounts(diff);
+    const additions = firstFiniteNumber([publicResult, envelope, carrier], ['additions'])
+      ?? diffChanges.additions;
+    const deletions = firstFiniteNumber([publicResult, envelope, carrier], ['deletions'])
+      ?? diffChanges.deletions;
+    const changes = {
+      ...(additions !== undefined ? { additions } : {}),
+      ...(deletions !== undefined ? { deletions } : {}),
+    };
     const changeLabel = changes.additions !== undefined || changes.deletions !== undefined
       ? ` +${changes.additions ?? 0} / -${changes.deletions ?? 0}`
       : ' 已更新';

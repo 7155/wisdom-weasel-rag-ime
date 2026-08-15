@@ -178,6 +178,10 @@ export interface UiAgentMessage {
   clientMessageId?: string;
   retryOfClientMessageId?: string;
   admissionState?: 'ambiguous' | 'pending' | 'unresolved';
+  /** Local projection of a steer/follow-up receipt. Runtime messages do not
+   * persist this UI-only lifecycle field. */
+  deliveryState?: 'sending' | 'accepted' | 'applied';
+  deliveryAcceptedAtMs?: number;
   provider?: string;
   model?: string;
   usage?: {

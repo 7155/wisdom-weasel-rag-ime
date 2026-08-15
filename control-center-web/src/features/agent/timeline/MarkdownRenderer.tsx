@@ -6,6 +6,11 @@ import type { AgentBlockRenderProps } from './renderer-contract';
 import { CodeContentBlock, StreamingCursor } from './CodeDiffRenderers';
 import { text } from './renderer-values';
 import { toggleDisclosurePreservingAnchor } from './disclosure-anchor';
+import {
+  HtmlOutputPlaceholder,
+  InlineHtmlOutput,
+  standaloneHtmlSource,
+} from './InlineHtmlOutput';
 
 const MARKDOWN_FOLD_LINES = 48;
 const MARKDOWN_FOLD_CHARACTERS = 7_000;
@@ -37,7 +42,13 @@ export function MarkdownBody({
       : { stableFragments: [source], active: '' },
     [source, streamingTail],
   );
+  const standaloneHtml = useMemo(() => standaloneHtmlSource(source), [source]);
   if (!source) return null;
+  if (standaloneHtml) {
+    return streamingTail
+      ? <HtmlOutputPlaceholder />
+      : <InlineHtmlOutput content={standaloneHtml} />;
+  }
   const lineCount = source.split('\n').length;
   const foldable = !streamingTail
     && (lineCount > MARKDOWN_FOLD_LINES || source.length > MARKDOWN_FOLD_CHARACTERS);
@@ -147,6 +158,12 @@ function MarkdownFragment({
           const code = raw.replace(/\n$/u, '');
           const fenced = Boolean(match) || raw.endsWith('\n');
           const tail = hasStreamingTail(props);
+          const html = match?.[1]?.toLowerCase() === 'html';
+          if (fenced && html) {
+            return streamingTail || tail
+              ? <HtmlOutputPlaceholder />
+              : <InlineHtmlOutput content={code} />;
+          }
           return fenced ? (
             <CodeContentBlock
               code={code}
@@ -191,6 +208,8 @@ export function partitionStreamingMarkdownFragments(source: string): {
   let previousLineWasBlank = false;
   let fenceCharacter = '';
   let fenceLength = 0;
+  let fenceLanguage = '';
+  let terminalHtmlFenceClosed = false;
 
   while (offset < source.length) {
     const newline = source.indexOf('\n', offset);
@@ -211,13 +230,28 @@ export function partitionStreamingMarkdownFragments(source: string): {
       if (!fenceCharacter) {
         fenceCharacter = marker[0] ?? '';
         fenceLength = marker.length;
+        fenceLanguage = content.slice(marker.length).trim().split(/\s+/u)[0]?.toLowerCase() ?? '';
+        terminalHtmlFenceClosed = false;
       } else if (marker[0] === fenceCharacter && marker.length >= fenceLength) {
+        terminalHtmlFenceClosed = fenceLanguage === 'html' || fenceLanguage === 'htm';
         fenceCharacter = '';
         fenceLength = 0;
+        fenceLanguage = '';
       }
+    } else if (content.trim()) {
+      terminalHtmlFenceClosed = false;
     }
     previousLineWasBlank = !fenceCharacter && content.trim() === '';
     offset = lineEnd;
+  }
+
+  // A closing fence is itself a stable streaming boundary. Waiting for a
+  // following paragraph made an HTML card sit as a placeholder even though
+  // the model had already delivered a complete document. VCP-style rendering
+  // promotes the closed block immediately while the rest of the reply may
+  // continue streaming later.
+  if (terminalHtmlFenceClosed && stableBoundaries.at(-1) !== source.length) {
+    stableBoundaries.push(source.length);
   }
 
   const stableEnd = stableBoundaries.at(-1) ?? 0;

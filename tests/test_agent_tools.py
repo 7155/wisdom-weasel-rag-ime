@@ -961,40 +961,55 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertNotIn("查看输入法、模型", overview["does"])
         self.assertIn("Agent、模型、记忆、输入", overview["output"])
 
-    def test_workspace_shell_card_routes_edits_and_room_waits_to_their_owners(
+    def test_native_bash_guidance_routes_edits_and_room_waits_to_their_owners(
         self,
     ) -> None:
-        coordinator = self.store.create(
-            title="workspace tool card",
-            mode="coordinator",
-            workspace_roots=[self.tmp.name],
-            created_at_ms=2,
-        )
-        manifests = self.gateway.runtime_manifests(coordinator)
-        shell = next(item for item in manifests if item["name"] == "workspace_shell")
+        extension = (
+            Path(__file__).parents[1] / "integrations" / "pi" / "rag-ime-control.ts"
+        ).read_text(encoding="utf-8")
 
-        self.assertTrue(any("workspace_patch" in value for value in shell["notFor"]))
-        self.assertTrue(any("apply_patch" in value for value in shell["notFor"]))
-        self.assertTrue(
-            any("sleep" in value and "Room" in value for value in shell["notFor"])
+        self.assertIn(
+            "Use edit, write, or workspace_patch for file changes; do not wrap edits in shell commands.",
+            extension,
+        )
+        self.assertIn(
+            "Do not use sleep or polling to wait for another Session or Room participant; use Agent events and status instead.",
+            extension,
         )
 
     def test_workspace_root_path_accepts_an_omitted_or_empty_value(self) -> None:
+        (Path(self.tmp.name) / "root-contract.txt").write_text(
+            "root-contract-marker\n",
+            encoding="utf-8",
+        )
         coordinator = self.store.create(
             title="workspace root schema",
             mode="coordinator",
             workspace_roots=[self.tmp.name],
             created_at_ms=2,
         )
-        manifests = {
-            item["name"]: item
-            for item in self.gateway.runtime_manifests(coordinator)
-        }
+        for path_value in (None, ""):
+            path_args = {} if path_value is None else {"path": path_value}
+            listed = self.gateway.execute(
+                {
+                    **self._tool_call("workspace_list", "list", **path_args),
+                    "sessionId": coordinator["id"],
+                }
+            )["result"]
+            searched = self.gateway.execute(
+                {
+                    **self._tool_call(
+                        "workspace_search",
+                        "search",
+                        query="root-contract-marker",
+                        **path_args,
+                    ),
+                    "sessionId": coordinator["id"],
+                }
+            )["result"]
 
-        for name in ("workspace_list", "workspace_search"):
-            path_schema = manifests[name]["parameters"]["properties"]["path"]
-            self.assertNotIn("minLength", path_schema)
-            self.assertIn("空字符串", path_schema["description"])
+            self.assertEqual(listed["items"][0]["path"], str(Path(self.tmp.name).resolve()))
+            self.assertEqual(searched["matches"][0]["preview"], "root-contract-marker")
 
     def test_workspace_gateway_targets_are_hidden_behind_native_runtime_tools(
         self,
@@ -1010,24 +1025,20 @@ class ControlToolGatewayTests(unittest.TestCase):
             for item in self.gateway.runtime_manifests(coordinator)
         }
 
-        expected = {
-            "workspace_list": [{"name": "ls", "operation": "list"}],
-            "workspace_read": [{"name": "read", "operation": "read"}],
-            "workspace_search": [
-                {"name": "grep", "operation": "search"},
-                {"name": "find", "operation": "search"},
-            ],
-            "workspace_edit": [{"name": "edit", "operation": "apply"}],
-            "workspace_write": [{"name": "write", "operation": "apply"}],
-            "workspace_shell": [{"name": "bash", "operation": "run"}],
-        }
-        for target, projections in expected.items():
+        for target in (
+            "workspace_list",
+            "workspace_read",
+            "workspace_search",
+            "workspace_edit",
+            "workspace_write",
+            "workspace_shell",
+        ):
             with self.subTest(target=target):
-                self.assertIs(manifests[target]["modelVisible"], False)
-                self.assertEqual(
-                    manifests[target]["runtimeProjections"],
-                    projections,
-                )
+                self.assertNotIn(target, manifests)
+        # These have no differently named always-on native alias. They remain
+        # progressive Tools and are disclosed only when selected.
+        self.assertIn("workspace_patch", manifests)
+        self.assertIn("workspace_lsp", manifests)
         for target in ("workspace_edit", "workspace_write"):
             with self.subTest(contract_target=target):
                 validate_contract(
@@ -1101,7 +1112,12 @@ class ControlToolGatewayTests(unittest.TestCase):
             facade=self.facade,
             knowledge_client=self.knowledge,
             collaboration=SimpleNamespace(
-                execute_room_partner_tool=execute_room_partner_tool
+                execute_room_partner_tool=execute_room_partner_tool,
+                rooms=SimpleNamespace(
+                    participant_for_session=lambda *_args, **_kwargs: {
+                        "id": "participant:room-partner-test",
+                    },
+                ),
             ),
         )
         request = {
@@ -1126,6 +1142,12 @@ class ControlToolGatewayTests(unittest.TestCase):
                 }
             ],
         )
+        room_partner = next(
+            item
+            for item in gateway.runtime_manifests(self.session)
+            if item["name"] == "room_partner"
+        )
+        self.assertTrue(room_partner["alwaysAvailable"])
 
     def test_memory_capture_is_r0_and_does_not_create_an_approval(self) -> None:
         AgentMemorySourceStore(
@@ -1177,8 +1199,10 @@ class ControlToolGatewayTests(unittest.TestCase):
         knowledge = next(item for item in manifests if item["name"] == "knowledge")
         todo = next(item for item in manifests if item["name"] == "todo")
         goal = next(item for item in manifests if item["name"] == "agent_goal")
+        agents = next(item for item in manifests if item["name"] == "agents")
 
         self.assertTrue(todo["alwaysAvailable"])
+        self.assertTrue(agents["alwaysAvailable"])
         self.assertNotIn("ask", {item["name"] for item in manifests})
 
         knowledge_branches = {
@@ -1555,7 +1579,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 operations,
                 {"start", "list", "status", "logs", "cancel"},
             )
-            self.assertIs(manifests["workspace_read"]["modelVisible"], False)
+            self.assertNotIn("workspace_read", manifests)
         finally:
             background_jobs.close()
 
@@ -1852,6 +1876,80 @@ class ControlToolGatewayTests(unittest.TestCase):
             self.store.agent_todo(str(coordinator["id"]))["counts"]["inProgress"],
             1,
         )
+
+    def test_explicit_workspace_read_projects_a_managed_html_preview(self) -> None:
+        workspace = Path(self.tmp.name) / "workspace-html-preview"
+        workspace.mkdir()
+        target = workspace / "project-intro.html"
+        source = "<!doctype html><html><body><h1>Project</h1></body></html>"
+        target.write_text(source, encoding="utf-8")
+        coordinator = self.store.create(
+            title="coordinator html preview",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=3,
+        )
+        media = AgentMediaStore(
+            Path(self.tmp.name) / "rag-ime.sqlite",
+            root=Path(self.tmp.name) / "tool-media-read",
+        )
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=_Facade(),
+            artifact_projector=AgentToolArtifactProjector(media),
+        )
+
+        ordinary = gateway.execute(
+            {
+                **self._tool_call("workspace_read", "read", path=str(target)),
+                "sessionId": coordinator["id"],
+            }
+        )["result"]
+        projected = gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_read",
+                    "read",
+                    path=str(target),
+                    asArtifact=True,
+                ),
+                "sessionId": coordinator["id"],
+            }
+        )["result"]
+        auto_projected = gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": coordinator["id"],
+                "tool": "read",
+                "toolCallId": "tool:auto-html-preview",
+                "args": {"path": str(target)},
+            }
+        )["result"]
+
+        self.assertNotIn("agentBlocks", ordinary)
+        self.assertEqual(
+            projected["artifactProjection"],
+            {"status": "available", "count": 1},
+        )
+        block = projected["agentBlocks"][0]
+        self.assertEqual(
+            auto_projected["artifactProjection"],
+            {"status": "available", "count": 1},
+        )
+        self.assertEqual(
+            auto_projected["agentBlocks"][0]["data"]["fileName"],
+            "project-intro.html",
+        )
+        self.assertEqual(block["data"]["fileName"], "project-intro.html")
+        self.assertEqual(block["data"]["mimeType"], "text/html")
+        _, stored = media.read(
+            str(block["data"]["mediaId"]),
+            session_id=str(coordinator["id"]),
+        )
+        self.assertEqual(stored.decode("utf-8"), source)
 
     def test_native_workspace_browser_reuses_bounded_list_and_read_harness(self) -> None:
         workspace = Path(self.tmp.name) / "browser-workspace"
@@ -3677,6 +3775,17 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn("RAG_IME_AGENT_ROOM_BOUND", extension)
         self.assertIn('if (roomBound) return selectedSpecs.filter((spec) => spec.name !== "ask")', extension)
         self.assertIn('sessionMode === "coordinator"', extension)
+        for native_readonly in (
+            'ls: ["list"]',
+            'read: ["read"]',
+            'grep: ["search"]',
+            'find: ["search"]',
+            'bash: ["run"]',
+        ):
+            self.assertIn(native_readonly, extension)
+        hidden_start = extension.index("const readOnlyHiddenNativeTools")
+        hidden_end = extension.index("function specsForToolProfile", hidden_start)
+        self.assertNotIn("bash: true", extension[hidden_start:hidden_end])
         self.assertIn("/tool/approval-result", extension)
         self.assertIn('const reviewTitlePrefix = "RAG-IME-REVIEW:"', extension)
         self.assertIn("const memoryParameterSchema", extension)
@@ -3770,6 +3879,8 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn('spec.name === "read"', extension)
         self.assertIn('{ required: ["resourceRef"] }', extension)
         self.assertIn("selectorCursor: params.selectorCursor", extension)
+        self.assertIn("asArtifact: params.asArtifact", extension)
+        self.assertIn('asArtifact: { type: "boolean" }', extension)
         self.assertIn("resourceRef,", extension)
         self.assertIn('required: ["path", "resourceRevision", "edits"]', extension)
         self.assertIn('required: ["path", "resourceRevision", "content"]', extension)

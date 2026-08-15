@@ -31,6 +31,8 @@ const canonicalPathIds = [
   'agent.sessions.list',
   'agent.sessions.create',
   'agent.session.snapshot',
+  'agent.session.workspace.list',
+  'agent.session.workspace.read',
   'agent.session.rename',
   'agent.session.archive',
   'agent.session.mode.update',
@@ -82,17 +84,10 @@ const canonicalPathIds = [
   'agent.room.participant.update',
   'agent.room.delete',
   'agent.room.message',
-  'agent.room.startExecution',
+  'agent.room.participant.steer',
   'agent.room.abort',
   'agent.room.events',
   'agent.room.history',
-  'agent.room.kernel.snapshot',
-  'agent.room.kernel.events',
-  'agent.room.kernel.command',
-  'agent.room.kernel.settle',
-  'agent.room.kernel.create',
-  'agent.room.kernel.dispatch',
-  'agent.room.kernel.finalize',
   'agent.room.topics',
   'agent.room.topic.create',
   'agent.room.topic.update',
@@ -184,6 +179,7 @@ const canonicalPathIds = [
   'memory.book.archive.apply',
   'memory.book.archive.rollback',
   'memory.activityTimeline.get',
+  'memory.activityTimeline.calendar',
   'memory.activityTimeline.build',
   'memory.activityTimeline.approve',
   'memory.activityTimeline.reject',
@@ -661,21 +657,23 @@ describe('control route policy', () => {
     ).not.toThrow();
   });
 
-  it('allows only the typed Room start action fields', () => {
+  it('allows only the typed Room steer fields', () => {
     expect(() =>
       assertControlRequest({
-        pathId: 'agent.room.startExecution',
+        pathId: 'agent.room.participant.steer',
         params: { roomId: 'room-1' },
         body: {
-          action: 'start_execution',
+          action: 'steer_participant',
           rootId: 'root-1',
-          clientActionId: 'room-start-1',
+          participantId: 'participant-1',
+          clientActionId: 'room-steer-1',
+          message: '立即采用新的边界',
         },
       }),
     ).not.toThrow();
-    expect(CONTROL_ROUTES['agent.room.startExecution']).toMatchObject({
+    expect(CONTROL_ROUTES['agent.room.participant.steer']).toMatchObject({
       method: 'POST',
-      path: '/api/agent/rooms/:roomId/start-execution',
+      path: '/api/agent/rooms/:roomId/steer',
     });
   });
 
