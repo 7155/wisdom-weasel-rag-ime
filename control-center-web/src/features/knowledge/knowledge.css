@@ -836,6 +836,7 @@
 .knowledge-job-list__icon { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid var(--color-border); border-radius: 6px; }
 .knowledge-job-list__summary { display: grid; align-items: center; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; cursor: pointer; }
 .knowledge-job-list__summary > span { display: grid; min-width: 0; gap: 3px; }
+.knowledge-job-list__summary > svg { transition: transform var(--motion-disclose) var(--ease-standard); }
 .knowledge-job-list article[data-expanded] .knowledge-job-list__summary > svg { transform: rotate(180deg); }
 .knowledge-job-list strong { font-size: 13px; }
 .knowledge-job-list small { color: var(--color-text-tertiary); font-size: 13px; }
@@ -874,7 +875,8 @@
 .knowledge-settings-fields--index { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
 .knowledge-settings-fields--advanced { padding-top: var(--space-2); border-top: 1px solid var(--color-border); grid-template-columns: repeat(4, minmax(110px, 1fr)); }
 .knowledge-embedding-advanced { border-block: 1px solid var(--color-border); }
-.knowledge-embedding-advanced > summary { padding: var(--space-2) 2px; color: var(--color-text-secondary); font-size: 13px; font-weight: var(--font-weight-semibold); cursor: pointer; }
+.knowledge-embedding-advanced > summary,
+.knowledge-graph__advanced > summary { display: flex; min-height: 44px; align-items: center; padding: var(--space-2) 2px; color: var(--color-text-secondary); font-size: 13px; font-weight: var(--font-weight-semibold); cursor: pointer; }
 .knowledge-embedding-advanced[open] > summary { color: var(--color-text-primary); }
 .knowledge-embedding-advanced > .knowledge-settings-fields { padding-block: var(--space-3); }
 .knowledge-index-status { display: flex; align-items: center; gap: 8px; }
@@ -987,9 +989,13 @@
   }
   .knowledge-library__tabs > [role='tablist'] [role='tab'] {
     min-width: 0;
-    min-height: 38px;
+    min-height: 44px;
     white-space: normal;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knowledge-job-list__summary > svg { transition: none; }
 }
 
 @media (max-width: 460px) {
@@ -1159,4 +1165,22 @@
 
 @media (max-width: 760px) {
   .knowledge-base-rail { min-height: 0; }
+
+  main.knowledge-feature .ui-button,
+  main.knowledge-feature .ui-icon-button,
+  main.knowledge-feature .ui-input,
+  main.knowledge-feature .ui-select__trigger,
+  main.knowledge-feature .knowledge-material-row__select,
+  main.knowledge-feature details > summary {
+    min-height: 44px;
+  }
+
+  main.knowledge-feature details > summary {
+    display: flex;
+    align-items: center;
+  }
+
+  main.knowledge-feature .knowledge-base-header__delete {
+    min-width: 44px;
+  }
 }

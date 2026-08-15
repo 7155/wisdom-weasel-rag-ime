@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implement with Tests"
+  short_description: "Implement known behavior with red-green regression evidence"
+  default_prompt: "Use $test-driven-implementation to implement one bounded known behavior through a meaningful red-green cycle."

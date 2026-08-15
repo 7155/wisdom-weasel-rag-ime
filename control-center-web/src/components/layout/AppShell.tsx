@@ -1,4 +1,4 @@
-import { LoaderCircle } from 'lucide-react';
+import { ChevronRight, LoaderCircle } from 'lucide-react';
 import {
   useEffect,
   useLayoutEffect,
@@ -32,22 +32,36 @@ export function AppShell({ children }: { children: ReactNode }) {
     () => 'idle',
   );
   const routePending = navigationState !== 'idle';
+  const [routeIsSlow, setRouteIsSlow] = useState(false);
   const immersive = activeRoute.id === 'project-field';
   const [collapsed, setCollapsedState] = useState(getInitialCollapsed);
   const previousRouteId = useRef(activeRoute.id);
+  const routeScrollPositions = useRef(new Map<string, number>());
   const routeStageRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
-    window.scrollTo({ left: 0, top: 0, behavior: 'auto' });
     if (previousRouteId.current !== activeRoute.id) {
+      routeScrollPositions.current.set(previousRouteId.current, window.scrollY);
+      window.scrollTo({
+        left: 0,
+        top: routeScrollPositions.current.get(activeRoute.id) ?? 0,
+        behavior: 'auto',
+      });
       routeStageRef.current?.focus({ preventScroll: true });
       previousRouteId.current = activeRoute.id;
     }
   }, [activeRoute.id]);
 
   useEffect(() => {
-    document.title = `${identity.productName} · Agent 记忆与协作`;
-  }, [identity.productName]);
+    document.title = `${activeRoute.label} · ${identity.productName}`;
+  }, [activeRoute.label, identity.productName]);
+
+  useEffect(() => {
+    setRouteIsSlow(false);
+    if (!routePending) return;
+    const timeout = window.setTimeout(() => setRouteIsSlow(true), 8_000);
+    return () => window.clearTimeout(timeout);
+  }, [activeRoute.id, routePending]);
 
   const setCollapsed = (next: boolean) => {
     setCollapsedState(next);
@@ -84,8 +98,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         {!immersive ? (
           <header className="shell-topbar">
             <div className="shell-topbar__title" key={activeRoute.id}>
-              <h1>{activeRoute.label}</h1>
               <span>{routeGroupLabels[activeRoute.group]}</span>
+              <ChevronRight aria-hidden="true" size={13} strokeWidth={1.8} />
+              {activeRoute.id === 'agent' || activeRoute.id === 'rooms'
+                ? <h1>{activeRoute.label}</h1>
+                : <strong>{activeRoute.label}</strong>}
             </div>
             <div className="shell-topbar__actions">
               <ConnectionIndicator />
@@ -101,13 +118,42 @@ export function AppShell({ children }: { children: ReactNode }) {
           data-route-pending={routePending || undefined}
           id="workspace-main"
           tabIndex={-1}
+          role="region"
+          aria-label={`${activeRoute.label}主内容`}
           aria-busy={routePending}
         >
           {children}
           {routePending ? (
             <div className="shell-route-pending" role="status" aria-live="polite">
-              <LoaderCircle className="ui-spin" size={18} aria-hidden="true" />
-              <span>正在打开{activeRoute.label}</span>
+              {routeIsSlow ? (
+                <div className="shell-route-pending__slow">
+                  <strong>{activeRoute.label}还没有打开</strong>
+                  <span>界面仍在载入，连接不稳定时可能需要更久。你可以继续等待，或留在当前页面。</span>
+                  <div className="shell-route-pending__actions">
+                    <button
+                      className="ui-button"
+                      data-variant="primary"
+                      onClick={() => router.navigate(0)}
+                      type="button"
+                    >
+                      重新载入
+                    </button>
+                    <button
+                      className="ui-button"
+                      data-variant="secondary"
+                      onClick={() => void router.navigate(router.state.location.pathname, { replace: true })}
+                      type="button"
+                    >
+                      留在当前页
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <LoaderCircle className="ui-spin" size={18} aria-hidden="true" />
+                  <span>正在打开{activeRoute.label}</span>
+                </>
+              )}
             </div>
           ) : null}
         </div>

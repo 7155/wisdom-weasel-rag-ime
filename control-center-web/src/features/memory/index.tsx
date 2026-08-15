@@ -48,6 +48,7 @@ import {
   MemoryReferenceDialog,
   type MemoryReferenceSelection,
 } from './MemoryReferenceDialog';
+import { publicMemoryOwnerLabel, publicMemoryText } from './public-copy';
 import {
   InlineNotice,
   ManagementPage,
@@ -74,9 +75,9 @@ type MemoryRouteLayer = MemoryLayer | 'timelines' | 'role-books';
 type MemoryView = 'catalog' | 'roleBooks' | 'timeline' | 'relations' | 'organize';
 
 const layers = [
-  { value: 'evidence', label: 'Evidence · 证据' },
-  { value: 'atoms', label: 'Atom · 记忆单元' },
-  { value: 'books', label: 'Book · 主题书' },
+  { value: 'evidence', label: '记录来源' },
+  { value: 'atoms', label: '已整理记忆' },
+  { value: 'books', label: '主题' },
 ] as const;
 
 function defaultMemoryStatus(kind: MemoryKind): string {
@@ -122,9 +123,10 @@ export function MemoryFeature() {
     ...arrayRecords(summaryPayload.owners).map((owner) => {
       const ownerKind = stringValue(owner.ownerKind);
       const ownerId = stringValue(owner.ownerId);
+      const ownerName = memoryOwnerName(owner);
       return {
         value: encodeOwnerKey(ownerKind, ownerId),
-        label: `${ownerLabel(ownerKind, ownerId)} · ${numberValue(owner.itemCount)} 项`,
+        label: `${ownerLabel(ownerKind, ownerId, ownerName)} · ${numberValue(owner.itemCount)} 项`,
       };
     }),
   ], [summaryPayload.owners]);
@@ -163,20 +165,23 @@ export function MemoryFeature() {
   return (
     <ManagementPage
       actions={<Button leadingIcon={<RefreshCw size={15} />} loading={summary.isRefetching || pages.isRefetching} onClick={refresh} size="small">刷新</Button>}
-      description="沿 Evidence → Atom → Book 查看记忆如何形成、如何聚合，以及每条结论来自哪里。"
+      description="查看已整理的记忆、它们的来源和主题；需要时可以回到原始记录核对。"
       eyebrow="关于我"
       routeId="memory"
       title="我的记忆"
     >
       <QueryState error={error} isPending={pending} onRetry={refresh}>
-        <MemorySystemOverview
-          activeLayer={layer}
-          onOpenLayer={openCatalogLayer}
-          onOpenOrganize={() => openView('organize')}
-          onOpenRelations={() => openView('relations')}
-          onOpenTimeline={() => openView('timeline')}
-          summary={summaryPayload}
-        />
+        <details className="memory-system-summary">
+          <summary>查看记忆整理状态</summary>
+          <MemorySystemOverview
+            activeLayer={layer}
+            onOpenLayer={openCatalogLayer}
+            onOpenOrganize={() => openView('organize')}
+            onOpenRelations={() => openView('relations')}
+            onOpenTimeline={() => openView('timeline')}
+            summary={summaryPayload}
+          />
+        </details>
 
         <ViewTabs
           className="memory-view-tabs"
@@ -197,7 +202,7 @@ export function MemoryFeature() {
             >
               <div className="mgmt-stack">
                 <SegmentedControl
-                  aria-label="Evidence Atom Book 三层记忆"
+                  aria-label="记忆内容分类"
                   items={layers}
                   onValueChange={(next) => openCatalogLayer(next as MemoryLayer)}
                   value={layer}
@@ -207,7 +212,7 @@ export function MemoryFeature() {
                   <Field className="memory-catalog-filters__query" htmlFor="memory-search" label="搜索">
                     <Input id="memory-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') runSearch(); }} placeholder="标题、正文或标签" value={draftQuery} />
                   </Field>
-                  <Button className="memory-catalog-filters__submit" leadingIcon={<Search size={14} />} onClick={runSearch} size="small">搜索</Button>
+                  <Button className="memory-catalog-filters__submit" leadingIcon={<Search size={14} />} onClick={runSearch} size="small">筛选</Button>
                   <Field className="memory-catalog-filters__status" htmlFor="memory-status-filter" label="状态">
                     <Select
                       id="memory-status-filter"
@@ -245,8 +250,8 @@ export function MemoryFeature() {
                         const rowStatus = stringValue(row.status, 'unknown');
                         return {
                           id,
-                          title: stringValue(row.title, '未命名记忆'),
-                          detail: stringValue(row.detail, '暂无摘要'),
+                          title: publicMemoryText(stringValue(row.title, '未命名记忆')),
+                          detail: publicMemoryText(stringValue(row.detail, '暂无摘要')),
                           meta: catalogRowMeta(kind, row, identity.assistantName),
                           status: <StatusBadge label={catalogStatusLabel(kind, rowStatus)} tone={catalogStatusTone(kind, rowStatus)} />,
                           onClick: () => {
@@ -302,8 +307,8 @@ export function MemoryFeature() {
                             <ManagementMutationWorkflow
                               availability={archiveAvailability}
                               description={archiveDraft.archived
-                                ? '归档长期主题，退出日常自动召回；事实和来源关系仍会保留。'
-                                : '恢复长期主题，重新参与日常记忆召回。'}
+                                ? '归档长期主题，以后不再自动参考；事实和来源关系仍会保留。'
+                                : '恢复长期主题，恢复为可自动参考。'}
                               draftKey={JSON.stringify(archiveDraft)}
                               mutationKey={['memory', 'mutation', 'archive']}
                               onApply={async (preview) => parseManagementWorkReceipt(
@@ -368,10 +373,13 @@ export function MemoryFeature() {
             <MemoryRelations enabled={view === 'relations'} />
           </TabsContent>
           <TabsContent value="timeline">
-            {view === 'timeline' ? <ActivityTimeline /> : null}
+            {view === 'timeline' ? <ActivityTimeline initialDate={routeSelection.date} /> : null}
           </TabsContent>
           <TabsContent value="organize">
-            <MemoryCurationWorkbench enabled={view === 'organize'} />
+            <MemoryCurationWorkbench
+              enabled={view === 'organize'}
+              onOpenTimeline={openTimeline}
+            />
           </TabsContent>
         </ViewTabs>
         <MemoryEditDialog
@@ -427,6 +435,16 @@ export function MemoryFeature() {
     }
   }
 
+  function openTimeline(date: string) {
+    setView('timeline');
+    setEditOpen(false);
+    setReference(null);
+    navigate({
+      pathname: location.pathname,
+      search: `?layer=timelines&date=${encodeURIComponent(date)}`,
+    }, { replace: true });
+  }
+
   function archiveBlockedReason(): string {
     if (!selected) return '先从上方目录中选择一项。';
     if (kind !== 'books') return '当前只有长期主题支持可回滚归档。';
@@ -448,23 +466,24 @@ export function MemoryFeature() {
   }
 
   function sourceDispositionBlockedReason(): string {
-    if (!selected) return '先从上方目录中选择一条证据。';
+    if (!selected) return '先从上方目录中选择一条来源记录。';
     if (archiveBoundary.capabilities.isPending) return '正在确认本机记忆管理能力。';
     if (archiveBoundary.capabilities.error) return '无法确认本机记忆管理能力，请刷新后重试。';
     if (!archiveBoundary.capabilities.data?.routeIds.includes('memory.source.disposition')) {
       return '当前服务尚未开放从记忆中移除来源。';
     }
     if (selectedStatus === 'consolidated') {
-      return '这条来源已经形成 Atom，请改为编辑或移除对应的记忆单元。';
+      return '这条来源已经整理成记忆，请改为编辑或移除对应的记忆。';
     }
     if (!['pending', 'remember', 'needs_review'].includes(selectedStatus)) {
-      return '当前 Evidence 状态不支持直接移出。';
+      return '这条来源当前不能直接移出记忆。';
     }
     return '';
   }
 }
 
 interface MemoryRouteSelection {
+  date: string;
   id: string;
   layer: MemoryLayer;
   reference: MemoryReferenceSelection | null;
@@ -477,6 +496,7 @@ function memoryRouteSelection(search: string): MemoryRouteSelection {
   const rawLayer = params.get('layer') ?? 'atoms';
   const routeLayer: MemoryRouteLayer = isMemoryRouteLayer(rawLayer) ? rawLayer : 'atoms';
   const id = (params.get('id') ?? '').trim().slice(0, 500);
+  const requestedDate = (params.get('date') ?? '').trim();
   const view: MemoryView = routeLayer === 'timelines'
     ? 'timeline'
     : routeLayer === 'role-books'
@@ -486,6 +506,7 @@ function memoryRouteSelection(search: string): MemoryRouteSelection {
     ? routeLayer
     : 'atoms';
   return {
+    date: /^\d{4}-\d{2}-\d{2}$/u.test(requestedDate) ? requestedDate : '',
     id,
     layer,
     reference: id ? {
@@ -543,6 +564,9 @@ function normalizeMemoryRow(item: Record<string, unknown>): Record<string, unkno
     aliases: safeCatalogStringList(item.aliases),
     ownerKind: item.ownerKind ?? item.owner_kind,
     ownerId: item.ownerId ?? item.owner_id,
+    ownerDisplayName: item.ownerDisplayName ?? item.owner_display_name,
+    ownerName: item.ownerName ?? item.owner_name,
+    ownerLabel: item.ownerLabel ?? item.owner_label,
     disposition: item.disposition,
     dispositionReason: item.dispositionReason,
     trustClass: item.trustClass,
@@ -583,42 +607,38 @@ function MemoryLayerContext({
 }) {
   const values = {
     evidence: {
-      code: 'Evidence',
+      label: '来源记录',
       count: numberValue(
         summary.memoryEvidenceCount,
         numberValue(summary.evidenceSourceCount) + numberValue(summary.agentEvidenceCount),
       ),
-      eyebrow: '统一记忆来源',
-      text: '只展示输入法、语音和 Agent 主动记录。命令、工具过程及已判定非持久的审计输入不会进入本目录。',
+      text: '可核对的原始记录',
     },
     atoms: {
-      code: 'Atom',
+      label: '记忆',
       count: numberValue(summary.currentAtomCount, numberValue(summary.memoryAtomCount)),
-      eyebrow: '派生记忆单元',
-      text: '展示所有可查询的 Atom 类型，不按偏好、原则或其他类别隐藏；每项都应保留 Evidence 引用。',
+      text: '可查找，并保留来源',
     },
     books: {
-      code: 'Book',
+      label: '主题',
       count: numberValue(summary.memoryBookCount),
-      eyebrow: '主题聚合',
-      text: '把相关 Atom 组织为检索主题。Book 不复制事实，也不越过 Atom 直接成为新的真相来源。',
+      text: '按主题持续查找',
     },
   } as const;
   const current = values[kind as MemoryLayer] ?? values.atoms;
   return (
     <div className="memory-layer-context" data-layer={kind}>
-      <span>{current.code}</span>
-      <div><strong>{current.eyebrow}</strong><p>{current.text}</p></div>
-      <b>{current.count}<small>当前可用</small></b>
+      <strong>{current.count} 条可用{current.label}</strong>
+      <span>{current.text}</span>
     </div>
   );
 }
 
 function memoryLayerDescription(kind: MemoryKind): string {
   return ({
-    evidence: '查看输入法、语音与 Agent 主动记录形成的统一记忆来源。',
-    atoms: '检查完整 Atom 目录、当前状态以及它引用的 Evidence。',
-    books: '检查 Book 如何聚合 Atom，并从主题一路追溯到 Evidence。',
+    evidence: '查看输入法、语音与伙伴主动记录形成的记忆来源。',
+    atoms: '查看完整记忆目录、当前状态以及每条记忆的来源。',
+    books: '查看长期主题如何整理相关记忆，并追溯到原始来源。',
   } as Partial<Record<MemoryKind, string>>)[kind] ?? '查看当前记忆层的内容与来源。';
 }
 
@@ -628,13 +648,13 @@ function catalogRowMeta(
   assistantName: string,
 ): string {
   const references = catalogReferences(row, kind);
-  const owner = ownerLabel(stringValue(row.ownerKind), stringValue(row.ownerId));
+  const owner = ownerLabel(stringValue(row.ownerKind), stringValue(row.ownerId), memoryOwnerName(row));
   if (kind === 'books') {
     const atomCount = Math.max(
       numberValue(row.atomCount),
       references.filter((reference) => reference.kind === 'atom').length,
     );
-    return [`${atomCount} 个 Atom`, owner, formatUpdatedAt(numberValue(row.updatedAtMs))]
+    return [`${atomCount} 条记忆`, owner, formatUpdatedAt(numberValue(row.updatedAtMs))]
       .filter(Boolean)
       .join(' · ');
   }
@@ -642,7 +662,7 @@ function catalogRowMeta(
     const evidenceCount = references.filter((reference) => (
       reference.kind === 'evidence' || reference.kind === 'event'
     )).length;
-    return [atomTypeLabel(stringValue(row.type)), `${evidenceCount} 条 Evidence`, owner]
+    return [atomTypeLabel(stringValue(row.type)), `${evidenceCount} 条来源`, owner]
       .filter(Boolean)
       .join(' · ');
   }
@@ -666,7 +686,7 @@ function atomTypeLabel(value: string): string {
     project_constraint: '项目约束',
     security_constraint: '安全约束',
     source_event_archive: '来源归档',
-  } as Record<string, string>)[value] ?? (value ? `类型 · ${value}` : '未分类 Atom');
+  } as Record<string, string>)[value] ?? (value ? `类型 · ${value}` : '未分类记忆');
 }
 
 function MemoryCatalogDetail({
@@ -691,26 +711,26 @@ function MemoryCatalogDetail({
   const status = stringValue(row.status);
   const redacted = row.sensitive === true;
   return (
-    <section className="memory-catalog-detail" aria-label={`${stringValue(row.title, '记忆')} 详情`}>
+    <section className="memory-catalog-detail" aria-label={`${publicMemoryText(stringValue(row.title, '记忆'))} 详情`}>
       <div className="memory-catalog-detail__identity">
         <span><Fingerprint aria-hidden="true" size={16} />{kindLabel(kind)}</span>
-        <h3>{stringValue(row.title, '未命名记忆')}</h3>
-        <p>{redacted ? '正文因为隐私策略已隐藏，只保留可审计的来源和状态。' : stringValue(row.detail, '暂无摘要')}</p>
+        <h3>{publicMemoryText(stringValue(row.title, '未命名记忆'))}</h3>
+        <p>{redacted ? '正文因为隐私策略已隐藏，只保留可审计的来源和状态。' : publicMemoryText(stringValue(row.detail, '暂无摘要'))}</p>
       </div>
       <dl>
         <div><dt>状态</dt><dd>{catalogStatusLabel(kind, status)}</dd></div>
         <div><dt>来源</dt><dd>{catalogSourceLabel(kind, row, assistantName)}</dd></div>
         {stringValue(row.ownerKind) ? (
-          <div><dt>归属</dt><dd>{ownerLabel(stringValue(row.ownerKind), stringValue(row.ownerId))}</dd></div>
+          <div><dt>归属</dt><dd>{ownerLabel(stringValue(row.ownerKind), stringValue(row.ownerId), memoryOwnerName(row))}</dd></div>
         ) : null}
         <div><dt>更新</dt><dd>{formatUpdatedAt(numberValue(row.updatedAtMs))}</dd></div>
-        <div><dt>索引关系</dt><dd>{values.length ? `${values.length} 项` : '暂无'}</dd></div>
-        <div><dt>直接引用</dt><dd>{references.length ? `${references.length} 条` : '查看完整链路'}</dd></div>
+        <div><dt>标签</dt><dd>{values.length ? `${values.length} 项` : '暂无'}</dd></div>
+        <div><dt>来源</dt><dd>{references.length ? `${references.length} 条` : '暂无'}</dd></div>
       </dl>
-      {values.length ? <div className="memory-catalog-detail__tags">{values.slice(0, 8).map((value) => <span key={value}>{value}</span>)}</div> : null}
+      {values.length ? <div className="memory-catalog-detail__tags">{values.slice(0, 8).map((value) => <span key={value}>{publicMemoryText(value)}</span>)}</div> : null}
       {redacted ? (
         <InlineNotice title="敏感内容已脱敏" tone="warning">
-          此处不会显示原文。来源标识、处理时间和治理状态仍可用于审计。
+          此处不会显示原文。来源标识、处理时间和处理状态仍可供核对。
         </InlineNotice>
       ) : null}
       <div className="memory-lineage-panel">
@@ -724,7 +744,7 @@ function MemoryCatalogDetail({
             {lineageReferences.map((reference) => (
               <button key={`${reference.kind}:${reference.referenceId}`} onClick={() => onOpenReference(reference)} type="button">
                 <Fingerprint aria-hidden="true" size={14} />
-                <span><small>{referenceKindCode(reference.kind)}</small>{reference.label || referenceKindLabel(reference.kind)}</span>
+                <span><small>{referenceKindCode(reference.kind)}</small>{publicMemoryText(reference.label || referenceKindLabel(reference.kind))}</span>
                 <ChevronRight aria-hidden="true" size={14} />
               </button>
             ))}
@@ -737,7 +757,7 @@ function MemoryCatalogDetail({
             size="small"
             variant="quiet"
           >
-            从 {referenceKindCode(rootReference.kind)} 开始完整追溯
+            查看最早的来源
           </Button>
         ) : null}
       </div>
@@ -844,28 +864,28 @@ function primaryLineageReferences(
 
 function lineageHeading(kind: MemoryKind): string {
   return ({
-    books: 'Book → Atom',
-    atoms: 'Atom → Evidence',
-    evidence: 'Evidence → 原始来源',
+    books: '包含的记忆',
+    atoms: '相关来源',
+    evidence: '原始来源',
   } as Partial<Record<MemoryKind, string>>)[kind] ?? '来源链';
 }
 
 function lineageSummary(kind: MemoryKind, count: number): string {
   if (!count) return '从稳定引用读取完整来源';
-  if (kind === 'books') return `${count} 个 Atom 组成这本 Book`;
-  if (kind === 'atoms') return `${count} 条 Evidence 支持这个 Atom`;
-  if (kind === 'evidence') return `${count} 条原始来源构成这份 Evidence`;
+  if (kind === 'books') return `${count} 条记忆组成这个主题`;
+  if (kind === 'atoms') return `${count} 条来源支持这条记忆`;
+  if (kind === 'evidence') return `${count} 条原始记录构成这份证据`;
   return `${count} 条直接引用`;
 }
 
 function lineageDescription(kind: MemoryKind, shortcutCount: number): string {
   const base = kind === 'books'
-    ? '先打开 Book，再逐层进入 Atom 与 Evidence；主题摘要不会跳过中间层成为事实。'
+    ? '先打开主题，再查看其中的记忆与来源；主题摘要不会替代原始记忆。'
     : kind === 'atoms'
-      ? 'Evidence 是 Atom 的依据；继续展开可查看原始事件与当时允许显示的上下文。'
-      : 'Evidence 保留不可变来源；遗忘或状态变化不会删除这条审计路径。';
+      ? '相关来源是这条记忆的依据；继续展开可以查看原始记录与当时允许显示的上下文。'
+      : '证据会保留原始来源；移出记忆或状态变化不会删除这条核对路径。';
   return shortcutCount > 0
-    ? `${base} 完整查看器另保留 ${shortcutCount} 条跨层审计捷径。`
+    ? `${base} 另有 ${shortcutCount} 条快捷引用可供核对。`
     : base;
 }
 
@@ -890,23 +910,23 @@ function normalizeCatalogReferenceKind(
 
 function referenceKindCode(kind: MemoryReferenceSelection['kind']): string {
   return ({
-    event: 'Evidence',
-    evidence: 'Evidence',
-    atom: 'Atom',
-    book: 'Book',
-    timeline: 'Timeline',
-    role_book_revision: 'Role Book',
+    event: '来源',
+    evidence: '证据',
+    atom: '记忆',
+    book: '主题',
+    timeline: '活动',
+    role_book_revision: '伙伴设定',
   } as const)[kind];
 }
 
 function referenceKindLabel(kind: MemoryReferenceSelection['kind']): string {
   return ({
-    event: 'Evidence · 原始来源事件',
-    evidence: 'Evidence · 不可变证据',
-    atom: 'Atom · 记忆单元',
-    book: 'Book · 主题书',
-    timeline: 'Timeline · 活动时间线',
-    role_book_revision: 'Role Book · 伙伴记忆版本',
+    event: '原始来源',
+    evidence: '引用证据',
+    atom: '已整理记忆',
+    book: '长期主题',
+    timeline: '活动记录',
+    role_book_revision: '伙伴记忆版本',
   } as const)[kind];
 }
 
@@ -937,7 +957,7 @@ function DirectMemoryEditAction({
         <div>
           <span className="mgmt-workflow__risk">本机写入</span>
           <strong>编辑内容</strong>
-          <p>直接编辑当前选中的记忆，不经过 Agent 转述。</p>
+          <p>直接编辑当前选中的记忆，你保存的文字会按原样保留。</p>
         </div>
         <Button disabled={Boolean(disabledReason)} onClick={onClick} size="small">编辑</Button>
       </div>
@@ -980,12 +1000,11 @@ function MemoryEvidenceDispositionAction({
   }
 
   return (
-    <div className="mgmt-workflow" data-availability={disabledReason ? 'blocked' : 'available'} data-stage="idle">
+    <div className="mgmt-workflow" data-availability={disabledReason ? 'blocked' : 'available'} data-confirmation="direct" data-stage="idle">
       <div className="mgmt-workflow__heading">
         <div>
-          <span className="mgmt-workflow__risk">保留审计</span>
           <strong>移出记忆</strong>
-          <p>从 Evidence 目录和长期记忆整理中移除；原始输入只留在本机审计账本。</p>
+          <p>不再用于长期记忆与后续联想；原始输入仍保留在本机记录中。</p>
         </div>
         <Button
           disabled={Boolean(disabledReason)}
@@ -998,7 +1017,7 @@ function MemoryEvidenceDispositionAction({
         </Button>
       </div>
       <p className="memory-action-unavailable">
-        {error || disabledReason || '移出后不再计入 Evidence；不会物理删除原始审计记录。'}
+        {error || disabledReason || '移出后不再用于记忆；原始记录不会被删除。'}
       </p>
     </div>
   );
@@ -1195,7 +1214,6 @@ function splitList(value: string): string[] {
 function UnavailableMemoryAction({
   description,
   reason,
-  risk,
   title,
 }: {
   description: string;
@@ -1204,10 +1222,9 @@ function UnavailableMemoryAction({
   title: string;
 }) {
   return (
-    <div className="mgmt-workflow" data-availability="unsupported" data-stage="idle">
+    <div className="mgmt-workflow" data-availability="unsupported" data-confirmation="direct" data-stage="idle">
       <div className="mgmt-workflow__heading">
         <div>
-          <span className="mgmt-workflow__risk">{risk === 'R2' ? '谨慎确认' : '需要确认'}</span>
           <strong>{title}</strong>
           <p>{description}</p>
         </div>
@@ -1221,11 +1238,11 @@ function UnavailableMemoryAction({
 function kindLabel(kind: MemoryKind): string {
   return {
     apps: '应用',
-    books: 'Book · 主题书',
-    atoms: 'Atom · 记忆单元',
+    books: '长期主题',
+    atoms: '已整理记忆',
     tags: '标签',
     phrases: '短语',
-    evidence: 'Evidence · 证据',
+    evidence: '记忆来源',
     groups: '分组',
     negative: '负反馈',
   }[kind];
@@ -1350,15 +1367,15 @@ function parseOwnerKey(value: string): { ownerKind: string; ownerId: string } {
   return { ownerKind: '', ownerId: '' };
 }
 
-function ownerLabel(ownerKind: string, ownerId: string): string {
-  if (!ownerKind || !ownerId) return '';
-  if (ownerKind === 'user' && ownerId === 'default') return '个人记忆';
-  if (ownerKind === 'shared' && ownerId === 'default') return '全局共享';
-  if (ownerKind === 'shared') return `项目共享 · ${ownerId}`;
-  if (ownerKind === 'agent') return `角色 · ${ownerId}`;
-  if (ownerKind === 'session') return `会话 · ${ownerId}`;
-  if (ownerKind === 'room') return `协作空间 · ${ownerId}`;
-  return `${ownerKind} · ${ownerId}`;
+function ownerLabel(ownerKind: string, ownerId: string, ownerName = ''): string {
+  return publicMemoryOwnerLabel(ownerKind, ownerId, ownerName);
+}
+
+function memoryOwnerName(value: Record<string, unknown>): string {
+  return stringValue(
+    value.ownerDisplayName,
+    stringValue(value.ownerName, stringValue(value.displayName, stringValue(value.ownerLabel))),
+  );
 }
 
 function formatUpdatedAt(value: number): string {

@@ -60,7 +60,7 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
   display: grid;
   min-width: 0;
   border-block: 1px solid var(--color-border);
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .planning-summary-item {
@@ -112,6 +112,18 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
   flex-wrap: wrap;
   gap: var(--space-2);
   padding-top: var(--space-3);
+}
+
+.planning-next-steps {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.planning-next-steps h3 {
+  margin: 0;
+  font-size: var(--text-subsection);
+  line-height: var(--text-subsection-lh);
 }
 
 .planning-overview-grid {
@@ -263,6 +275,15 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
   justify-content: flex-end;
   gap: var(--space-1);
 }
+
+.planning-wake-catalog-state {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.planning-wake-catalog-state > .mgmt-notice { flex: 1 1 auto; }
+.planning-wake-catalog-state > .ui-button { min-height: 44px; }
 
 .planning-wake-form {
   display: grid;
@@ -423,6 +444,11 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
 }
 
 @media (max-width: 560px) {
+  .planning-wake-catalog-state {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .planning-companion__actions .ui-button {
     flex: 1 1 140px;
   }
@@ -430,6 +456,17 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
   .ui-dialog.planning-dialog {
     width: auto;
     max-height: calc(100dvh - 16px);
+  }
+
+  .ui-dialog.planning-dialog .ui-button,
+  .ui-dialog.planning-dialog .ui-input,
+  .ui-dialog.planning-dialog .ui-select__trigger {
+    min-height: 44px;
+  }
+
+  .ui-dialog.planning-dialog .ui-icon-button {
+    min-width: 44px;
+    min-height: 44px;
   }
 
   main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
@@ -482,7 +519,7 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
   gap: var(--space-5) var(--space-8);
 }
 @media (min-width: 1100px) {
-  .planning-summary-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .planning-summary-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 .planning-summary-item {
   min-height: 0;

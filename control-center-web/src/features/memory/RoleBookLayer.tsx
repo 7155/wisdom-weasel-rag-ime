@@ -251,7 +251,7 @@ function RoleBookDetail({
           })}
         />
       ) : (
-        <p className="memory-lineage-empty">选择一条伙伴记忆，查看它的来源和证据引用。</p>
+        <p className="memory-lineage-empty">选择一条伙伴记忆，查看它的相关来源。</p>
       )}
 
       <footer>
@@ -285,20 +285,20 @@ function RoleBookItemDetail({
         <span>{label}</span>
         <strong>{stringValue(item.text)}</strong>
         <dl>
-          <div><dt>来源类型</dt><dd>{stringValue(provenance.sourceType, '未标注')}</dd></div>
-          <div><dt>来源对象</dt><dd>{stringValue(provenance.sourceId, '未标注')}</dd></div>
-          <div><dt>证据引用</dt><dd>{evidenceIds.length} 条</dd></div>
+          <div><dt>来源类型</dt><dd>{roleBookSourceTypeLabel(stringValue(provenance.sourceType))}</dd></div>
+          <div><dt>来源对象</dt><dd>{stringValue(provenance.sourceId) ? '已关联' : '未标注'}</dd></div>
+          <div><dt>相关来源</dt><dd>{evidenceIds.length} 条</dd></div>
         </dl>
       </div>
       {evidenceIds.length ? (
-        <div className="memory-reference-list" aria-label="伙伴记忆证据引用">
-          {evidenceIds.map((evidenceId) => (
+        <div className="memory-reference-list" aria-label="伙伴记忆相关来源">
+          {evidenceIds.map((evidenceId, index) => (
             <button key={evidenceId} onClick={() => onOpenReference(evidenceId)} type="button">
-              <Fingerprint size={14} /><span>{evidenceId}</span><ChevronRight size={14} />
+              <Fingerprint size={14} /><span>来源 {index + 1}</span><ChevronRight size={14} />
             </button>
           ))}
         </div>
-      ) : <p className="memory-lineage-empty">这条记录没有可展开的证据标识。</p>}
+      ) : <p className="memory-lineage-empty">这条记录没有可展开的来源信息。</p>}
     </div>
   );
 }
@@ -315,6 +315,15 @@ function uniqueRevisions(
     seen.add(id);
     return true;
   });
+}
+
+function roleBookSourceTypeLabel(value: string): string {
+  return ({
+    daily_session_summary: '对话总结',
+    session_summary: '对话总结',
+    agent_memory: '伙伴记录',
+    user_input: '用户输入',
+  } as Record<string, string>)[value] ?? (value ? '已记录来源' : '未标注');
 }
 
 function roleBookSectionItems(sections: Record<string, unknown>) {

@@ -16,6 +16,7 @@ import type {
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import {
   ActivitySummary,
+  ReasoningActivitySummary,
 } from './ActivitySummary';
 import { AgentBlocks } from './BlockRenderer';
 import { PersonaAvatar, type PersonaPresence } from './PersonaAvatar';
@@ -876,23 +877,41 @@ function ActivityGroupView({
   onOpenApproval?: (activity: AgentActivityProjection) => void;
   onRequestPermission?: () => void;
 }) {
-  const compactions = activities.filter((activity) => activity.kind === 'context_compaction');
-  const visibleActivities = activities.filter((activity) => (
-    activity.kind !== 'context_compaction'
-    && (!isAgentTodoActivity(activity) || activity.status === 'failed')
-  ));
+  type ActivitySegment =
+    | { kind: 'compaction'; activity: AgentActivityProjection }
+    | { kind: 'reasoning' | 'ordinary'; activities: AgentActivityProjection[] };
+  const segments: ActivitySegment[] = [];
+  for (const activity of activities) {
+    if (activity.kind === 'context_compaction') {
+      segments.push({ kind: 'compaction', activity });
+      continue;
+    }
+    if (isAgentTodoActivity(activity) && activity.status !== 'failed') continue;
+    const kind = activity.kind === 'reasoning_summary' ? 'reasoning' : 'ordinary';
+    const previous = segments.at(-1);
+    if (previous && previous.kind === kind) previous.activities.push(activity);
+    else segments.push({ kind, activities: [activity] });
+  }
   return (
     <>
-      {compactions.map((activity) => <ContextCompactionNotice key={activity.id} activity={activity} />)}
-      {visibleActivities.length ? (
-        <ActivitySummary
-          activities={visibleActivities}
-          inline
-          onApprovalDecision={onApprovalDecision}
-          onOpenApproval={onOpenApproval}
-          onRequestPermission={onRequestPermission}
-        />
-      ) : null}
+      {segments.map((segment) => {
+        if (segment.kind === 'compaction') {
+          return <ContextCompactionNotice key={segment.activity.id} activity={segment.activity} />;
+        }
+        if (segment.kind === 'reasoning') {
+          return <ReasoningActivitySummary key={`reasoning:${segment.activities[0]?.id}`} activities={segment.activities} />;
+        }
+        return (
+          <ActivitySummary
+            key={`ordinary:${segment.activities[0]?.id}`}
+            activities={segment.activities}
+            inline
+            onApprovalDecision={onApprovalDecision}
+            onOpenApproval={onOpenApproval}
+            onRequestPermission={onRequestPermission}
+          />
+        );
+      })}
     </>
   );
 }

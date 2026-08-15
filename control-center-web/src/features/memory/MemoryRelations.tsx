@@ -1,4 +1,4 @@
-import { BookOpen, Boxes, Network, RefreshCw, Search, Tags } from 'lucide-react';
+import { BookOpen, Boxes, Eye, EyeOff, Network, RefreshCw, Search, Tags } from 'lucide-react';
 import {
   useDeferredValue,
   useMemo,
@@ -251,11 +251,20 @@ function TagNetwork({
   onSelect: (id: string) => void;
   selectedId: string;
 }) {
+  const [showUnconnected, setShowUnconnected] = useState(false);
   const activeId = availableNodes.some((node) => node.id === selectedId)
     ? selectedId
     : availableNodes[0]?.id ?? '';
   const selected = availableNodes.find((node) => node.id === activeId) ?? null;
   const entity = useMemoryEntityQuery('tag', selected?.entityId ?? '', Boolean(selected));
+  const connectedIds = useMemo(
+    () => edgeNodeIds(graph.edges.map((edge) => ({ source: edge.source, target: edge.target }))),
+    [graph.edges],
+  );
+  const unconnectedCount = graph.nodes.filter((node) => !connectedIds.has(node.id)).length;
+  const visibleNodes = graph.edges.length === 0 || showUnconnected
+    ? graph.nodes
+    : graph.nodes.filter((node) => connectedIds.has(node.id) || node.id === selectedId);
 
   return (
     <>
@@ -268,7 +277,15 @@ function TagNetwork({
         />
         <div className="memory-explorer__visual">
           <GraphLegend view="tags" />
-          <GraphTruthNotice edgeCount={graph.edges.length} nodeCount={graph.nodes.length} />
+          <GraphTruthNotice
+            edgeCount={graph.edges.length}
+            nodeCount={visibleNodes.length}
+            onToggleUnconnected={graph.edges.length > 0 && unconnectedCount > 0
+              ? () => setShowUnconnected((value) => !value)
+              : undefined}
+            showUnconnected={showUnconnected}
+            unconnectedCount={unconnectedCount}
+          />
           <MemoryRelationCanvas
             edges={graph.edges.map((edge) => ({
               id: `tag-edge:${edge.source}:${edge.target}:${edge.type}`,
@@ -279,15 +296,19 @@ function TagNetwork({
               evidenceCount: edge.evidenceCount,
             }))}
             enabled={enabled}
-            nodes={graph.nodes.map((node) => ({
+            nodes={visibleNodes.map((node) => ({
               id: node.id,
               label: node.label,
               kind: 'tag',
               count: node.itemCount,
               connections: node.edgeCount,
+              description: node.description,
+              metricLabel: `${node.itemCount} 条记忆`,
+              source: formatSource(node.source),
+              status: formatStatus(node.status),
             }))}
             onSelect={onSelect}
-            selectedId={selectedId}
+            selectedId={availableNodes.some((node) => node.id === selectedId) ? selectedId : ''}
           />
         </div>
       </div>
@@ -326,6 +347,7 @@ function GroupTagNetwork({
   onSelect: (key: string) => void;
   selectedKey: string;
 }) {
+  const [showUnconnected, setShowUnconnected] = useState(false);
   const defaultKey = availableGroups[0]
     ? groupKey(availableGroups[0].id)
     : tagKey(availableTags[0]?.id ?? '');
@@ -343,6 +365,23 @@ function GroupTagNetwork({
   const entityKind = selectedGroup ? 'group' : 'tag';
   const entityId = selectedGroup?.entityId ?? selectedTag?.entityId ?? '';
   const entity = useMemoryEntityQuery(entityKind, entityId, Boolean(entityId));
+  const graphEdges = useMemo(() => graph.edges.map((edge) => ({
+    id: `group-tag:${edge.groupId}:${edge.tagId}`,
+    source: groupKey(edge.groupId),
+    target: tagKey(edge.tagId),
+    label: formatRelation(edge.relation),
+    weight: edge.weight,
+    evidenceCount: edge.evidenceCount,
+  })), [graph.edges]);
+  const connectedIds = useMemo(() => edgeNodeIds(graphEdges), [graphEdges]);
+  const graphNodes = useMemo(() => [
+    ...graph.groups.map((node) => ({ id: groupKey(node.id), label: node.label, kind: 'group' as const, count: node.eventCount, connections: node.edgeCount, description: node.note, metricLabel: `${node.eventCount} 个成员`, source: formatSource(node.source), status: formatStatus(node.status) })),
+    ...graph.tags.map((node) => ({ id: tagKey(node.id), label: node.label, kind: 'tag' as const, count: node.itemCount, connections: node.edgeCount, description: node.description, metricLabel: `${node.itemCount} 条记忆`, source: formatSource(node.source), status: formatStatus(node.status) })),
+  ], [graph.groups, graph.tags]);
+  const unconnectedCount = graphNodes.filter((node) => !connectedIds.has(node.id)).length;
+  const visibleNodes = graphEdges.length === 0 || showUnconnected
+    ? graphNodes
+    : graphNodes.filter((node) => connectedIds.has(node.id) || node.id === selectedKey);
 
   return (
     <>
@@ -355,23 +394,21 @@ function GroupTagNetwork({
         />
         <div className="memory-explorer__visual">
           <GraphLegend view="groups" />
-          <GraphTruthNotice edgeCount={graph.edges.length} nodeCount={graph.groups.length + graph.tags.length} />
+          <GraphTruthNotice
+            edgeCount={graphEdges.length}
+            nodeCount={visibleNodes.length}
+            onToggleUnconnected={graphEdges.length > 0 && unconnectedCount > 0
+              ? () => setShowUnconnected((value) => !value)
+              : undefined}
+            showUnconnected={showUnconnected}
+            unconnectedCount={unconnectedCount}
+          />
           <MemoryRelationCanvas
-            edges={graph.edges.map((edge) => ({
-              id: `group-tag:${edge.groupId}:${edge.tagId}`,
-              source: groupKey(edge.groupId),
-              target: tagKey(edge.tagId),
-              label: formatRelation(edge.relation),
-              weight: edge.weight,
-              evidenceCount: edge.evidenceCount,
-            }))}
+            edges={graphEdges}
             enabled={enabled}
-            nodes={[
-              ...graph.groups.map((node) => ({ id: groupKey(node.id), label: node.label, kind: 'group' as const, count: node.eventCount, connections: node.edgeCount })),
-              ...graph.tags.map((node) => ({ id: tagKey(node.id), label: node.label, kind: 'tag' as const, count: node.itemCount, connections: node.edgeCount })),
-            ]}
+            nodes={visibleNodes}
             onSelect={onSelect}
-            selectedId={selectedKey}
+            selectedId={validKeys.has(selectedKey) ? selectedKey : ''}
           />
         </div>
       </div>
@@ -410,6 +447,7 @@ function GroupBookNetwork({
   onSelect: (key: string) => void;
   selectedKey: string;
 }) {
+  const [showUnconnected, setShowUnconnected] = useState(false);
   const defaultKey = availableGroups[0]
     ? groupKey(availableGroups[0].id)
     : bookKey(availableBooks[0]?.id ?? '');
@@ -427,6 +465,23 @@ function GroupBookNetwork({
   const entityKind = selectedGroup ? 'group' : 'book';
   const entityId = selectedGroup?.entityId ?? selectedBook?.entityId ?? '';
   const entity = useMemoryEntityQuery(entityKind, entityId, Boolean(entityId));
+  const graphEdges = useMemo(() => graph.edges.map((edge) => ({
+    id: `group-book:${edge.groupId}:${edge.bookId}`,
+    source: groupKey(edge.groupId),
+    target: bookKey(edge.bookId),
+    label: formatRelation(edge.relation),
+    weight: edge.weight,
+    evidenceCount: edge.evidenceCount,
+  })), [graph.edges]);
+  const connectedIds = useMemo(() => edgeNodeIds(graphEdges), [graphEdges]);
+  const graphNodes = useMemo(() => [
+    ...graph.groups.map((node) => ({ id: groupKey(node.id), label: node.label, kind: 'group' as const, count: node.eventCount, connections: node.edgeCount, description: node.note, metricLabel: `${node.eventCount} 个成员`, source: formatSource(node.source), status: formatStatus(node.status) })),
+    ...graph.books.map((node) => ({ id: bookKey(node.id), label: node.label, kind: 'book' as const, count: node.memberCount, connections: node.edgeCount, description: node.description, metricLabel: `${node.memberCount} 条记忆`, source: formatSource(node.source), status: formatStatus(node.status) })),
+  ], [graph.books, graph.groups]);
+  const unconnectedCount = graphNodes.filter((node) => !connectedIds.has(node.id)).length;
+  const visibleNodes = graphEdges.length === 0 || showUnconnected
+    ? graphNodes
+    : graphNodes.filter((node) => connectedIds.has(node.id) || node.id === selectedKey);
 
   return (
     <>
@@ -439,23 +494,21 @@ function GroupBookNetwork({
         />
         <div className="memory-explorer__visual">
           <GraphLegend view="books" />
-          <GraphTruthNotice edgeCount={graph.edges.length} nodeCount={graph.groups.length + graph.books.length} />
+          <GraphTruthNotice
+            edgeCount={graphEdges.length}
+            nodeCount={visibleNodes.length}
+            onToggleUnconnected={graphEdges.length > 0 && unconnectedCount > 0
+              ? () => setShowUnconnected((value) => !value)
+              : undefined}
+            showUnconnected={showUnconnected}
+            unconnectedCount={unconnectedCount}
+          />
           <MemoryRelationCanvas
-            edges={graph.edges.map((edge) => ({
-              id: `group-book:${edge.groupId}:${edge.bookId}`,
-              source: groupKey(edge.groupId),
-              target: bookKey(edge.bookId),
-              label: formatRelation(edge.relation),
-              weight: edge.weight,
-              evidenceCount: edge.evidenceCount,
-            }))}
+            edges={graphEdges}
             enabled={enabled}
-            nodes={[
-              ...graph.groups.map((node) => ({ id: groupKey(node.id), label: node.label, kind: 'group' as const, count: node.eventCount, connections: node.edgeCount })),
-              ...graph.books.map((node) => ({ id: bookKey(node.id), label: node.label, kind: 'book' as const, count: node.memberCount, connections: node.edgeCount })),
-            ]}
+            nodes={visibleNodes}
             onSelect={onSelect}
-            selectedId={selectedKey}
+            selectedId={validKeys.has(selectedKey) ? selectedKey : ''}
           />
         </div>
       </div>
@@ -599,14 +652,46 @@ function GroupBookScanList({
   );
 }
 
-function GraphTruthNotice({ edgeCount, nodeCount }: { edgeCount: number; nodeCount: number }) {
+function GraphTruthNotice({
+  edgeCount,
+  nodeCount,
+  onToggleUnconnected,
+  showUnconnected = false,
+  unconnectedCount = 0,
+}: {
+  edgeCount: number;
+  nodeCount: number;
+  onToggleUnconnected?: () => void;
+  showUnconnected?: boolean;
+  unconnectedCount?: number;
+}) {
   return (
-    <p className="memory-graph__truth" data-empty={edgeCount === 0 || undefined}>
-      {edgeCount > 0
-        ? `当前显示 ${nodeCount} 项记忆与 ${edgeCount} 条有证据关系。`
-        : `${nodeCount} 项记忆目前没有已记录关系。`}
-    </p>
+    <div className="memory-graph__truth" data-empty={edgeCount === 0 || undefined}>
+      <p>
+        {edgeCount > 0
+          ? `当前显示 ${nodeCount} 项记忆与 ${edgeCount} 条有证据关系。`
+          : `${nodeCount} 项记忆目前没有已记录关系。`}
+      </p>
+      {onToggleUnconnected ? (
+        <Button
+          aria-label={`${showUnconnected ? '隐藏' : '显示'} ${unconnectedCount} 个未连接节点`}
+          leadingIcon={showUnconnected ? <EyeOff size={13} /> : <Eye size={13} />}
+          onClick={onToggleUnconnected}
+          size="small"
+          variant="quiet"
+        >{showUnconnected ? '隐藏未连接项' : `查看未连接项 · ${unconnectedCount}`}</Button>
+      ) : null}
+    </div>
   );
+}
+
+function edgeNodeIds(edges: readonly { source: string; target: string }[]) {
+  const ids = new Set<string>();
+  for (const edge of edges) {
+    ids.add(edge.source);
+    ids.add(edge.target);
+  }
+  return ids;
 }
 
 function GraphLegend({ view }: { view: RelationView }) {

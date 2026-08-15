@@ -2,7 +2,7 @@
   width: 100%;
   max-width: none;
   height: calc(100dvh - var(--topbar-height));
-  min-height: 720px;
+  min-height: calc(100dvh - var(--topbar-height));
   padding: 0;
   overflow: hidden;
 }
@@ -38,6 +38,57 @@
 
 .browser-action-receipt .mgmt-notice {
   margin: 0;
+}
+
+.browser-query-issue {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border-block: 1px solid var(--color-warning-border);
+  background: var(--color-warning-soft);
+}
+
+.browser-query-issue > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.browser-query-issue strong {
+  color: var(--color-text);
+  font-size: 13px;
+}
+
+.browser-query-issue span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.browser-query-issue .ui-button { flex: none; }
+
+.browser-rail > .browser-query-issue {
+  align-items: stretch;
+  flex-direction: column;
+  margin: 10px;
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--radius-3);
+}
+
+.browser-list-view > .browser-query-issue,
+.browser-setup__section > .browser-query-issue {
+  margin-bottom: 14px;
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--radius-3);
+}
+
+.browser-page-empty > .browser-query-issue {
+  width: min(100% - 32px, 620px);
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--radius-3);
 }
 
 .browser-modebar__status {
@@ -165,7 +216,9 @@
   text-align: left;
 }
 
-.browser-tab-list button:hover { background: var(--color-surface-hover); }
+@media (hover: hover) and (pointer: fine) {
+  .browser-tab-list button:hover { background: var(--color-surface-hover); }
+}
 .browser-tab-list button[data-selected='true'] {
   border-left-color: var(--color-accent);
   background: var(--color-accent-soft);
@@ -173,6 +226,7 @@
 
 .browser-page-empty { display: grid; height: 100%; min-height: 480px; place-items: center; }
 .browser-page-view { display: grid; height: 100%; min-height: 0; grid-template-rows: auto minmax(0, 1fr); }
+.browser-page-view[data-query-error='true'] { grid-template-rows: auto auto minmax(0, 1fr); }
 
 .browser-page-view__header {
   display: flex;
@@ -208,6 +262,10 @@
 
 .browser-spin { animation: browser-spin 1.2s linear infinite; }
 @keyframes browser-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .browser-spin { animation: none; }
+}
 
 .browser-page-view__content {
   display: grid;
@@ -369,12 +427,36 @@
 .browser-setup dt { color: var(--color-text-secondary); font-size: 12px; }
 .browser-setup dd { margin: 0; font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
 
+.browser-setup__advanced-details {
+  margin-top: 10px;
+}
+
+.browser-setup__advanced-details > summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+  list-style-position: inside;
+}
+
+.browser-setup__advanced-details[open] > summary {
+  color: var(--color-text-secondary);
+}
+
+.browser-setup__advanced-details > dl {
+  margin-top: 2px;
+}
+
 .browser-pairing-token {
   display: grid;
   align-items: end;
   gap: 8px;
   margin-top: 14px;
-  grid-template-columns: minmax(0, 1fr) max-content 36px;
+  grid-template-columns: minmax(0, 1fr) max-content 44px;
 }
 .browser-pairing-token label { grid-column: 1 / -1; color: var(--color-text-secondary); font-size: 12px; font-weight: 700; }
 .browser-pairing-token input {
@@ -399,6 +481,14 @@
   margin: 12px 0;
 }
 .browser-managed-actions { margin-top: 14px; }
+
+.mgmt-page[data-route-id='browser'] .ui-button,
+.mgmt-page[data-route-id='browser'] .ui-icon-button,
+.mgmt-page[data-route-id='browser'] .ui-segmented__item {
+  min-height: 44px;
+}
+
+.mgmt-page[data-route-id='browser'] .ui-icon-button { min-width: 44px; }
 
 @media (max-width: 1100px) {
   .browser-page-view__content { grid-template-columns: 1fr; overflow: auto; }
@@ -428,9 +518,9 @@
   .mgmt-page[data-route-id='browser'] .ui-icon-button,
   .mgmt-page[data-route-id='browser'] .ui-segmented__item,
   .mgmt-page[data-route-id='browser'] .browser-pairing-token input {
-    min-height: 40px;
+    min-height: 44px;
   }
-  .mgmt-page[data-route-id='browser'] .ui-icon-button { min-width: 40px; }
+  .mgmt-page[data-route-id='browser'] .ui-icon-button { min-width: 44px; min-height: 44px; }
 }
 
 /* ============== browser adopts the workspace pane grammar ==============

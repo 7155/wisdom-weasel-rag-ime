@@ -15,6 +15,7 @@ import {
   asRecord,
   booleanValue,
   numberValue,
+  publicErrorText,
   stringValue,
 } from '@/features/overview/management-ui';
 import './diagnostics.css';
@@ -24,8 +25,9 @@ export function DiagnosticsFeature() {
   const runtime = asRecord(queries.runtime.data);
   const predictorEnvelope = asRecord(queries.predictor.data);
   const predictor = asRecord(predictorEnvelope.predictor);
-  const predictorCapabilities = asRecord(predictor.capabilities);
-  const predictorModelInfo = asRecord(predictor.modelInfo);
+  const predictorProbe = asRecord(predictor.capabilityProbe);
+  const predictorCapabilities = asRecord(predictor.capabilities ?? predictorProbe.capabilities);
+  const predictorModelInfo = asRecord(predictor.modelInfo ?? predictorProbe.modelInfo);
   const predictorProvider = stringValue(
     predictor.provider,
     stringValue(predictor.providerName, stringValue(predictor.kind, 'local')),
@@ -40,15 +42,30 @@ export function DiagnosticsFeature() {
     ...asRecord(value),
     id,
   } as Record<string, unknown>));
+  const componentById = Object.fromEntries(components.map((item) => [stringValue(item.id), item]));
+  const candidateDelivery = asRecord(componentById.assistantCandidateDelivery);
+  const candidateStages = asRecord(asRecord(candidateDelivery.metadata).stages);
+  const foregroundContext = asRecord(componentById.foregroundContext);
+  const foregroundEvidence = asRecord(foregroundContext.metadata);
   const [copyStatus, setCopyStatus] = useState('');
   const runtimeRevision = numberValue(runtime.runtimeRevision, -1);
   const aiEnabled = booleanValue(asRecord(asRecord(runtime.runtimeConfig).postCommit).enabled, true);
+  const repairActions = runtimeActions(aiEnabled);
+  const capabilityKnown = queries.capabilities.data !== undefined;
   const canOpenAccessibilitySettings = Boolean(
-    queries.capabilities.data?.native.approvedExternalActions
+    capabilityKnown
+      && queries.capabilities.data?.native.approvedExternalActions
       && queries.transport.runApprovedExternalAction,
   );
   const error = [queries.runtime.error, queries.predictor.error, queries.models.error, queries.source.error].find(Boolean) as Error | null;
   const pending = queries.runtime.isPending || queries.predictor.isPending || queries.models.isPending || queries.source.isPending;
+  const coreFetching = queries.runtime.isFetching
+    || queries.predictor.isFetching
+    || queries.models.isFetching
+    || queries.source.isFetching;
+  const reportReady = !error
+    && [queries.runtime.data, queries.predictor.data, queries.models.data, queries.source.data]
+      .every((value) => value !== undefined);
   const refresh = () => void Promise.all([
     queries.runtime.refetch(),
     queries.predictor.refetch(),
@@ -76,8 +93,8 @@ export function DiagnosticsFeature() {
     <ManagementPage
       actions={
         <>
-          <Button leadingIcon={<Clipboard size={15} />} onClick={() => void copyReport()} size="small">复制排查报告</Button>
-          <Button leadingIcon={<RefreshCw size={15} />} loading={queries.runtime.isFetching} onClick={refresh} size="small">刷新</Button>
+          <Button disabled={!reportReady} leadingIcon={<Clipboard size={15} />} onClick={() => void copyReport()} size="small">复制排查报告</Button>
+          <Button leadingIcon={<RefreshCw size={15} />} loading={coreFetching || queries.capabilities.isFetching} onClick={refresh} size="small">刷新</Button>
         </>
       }
       description="哪里没准备好、为什么没准备好，以及下一步怎么处理，都从这里查。"
@@ -87,14 +104,63 @@ export function DiagnosticsFeature() {
     >
       <QueryState error={error} isPending={pending} onRetry={refresh}>
         {copyStatus ? <InlineNotice title="诊断导出" tone="info">{copyStatus}</InlineNotice> : null}
+        {queries.capabilities.error ? (
+          <div className="diagnostics-capability-state">
+            <InlineNotice title="无法确认本机操作能力" tone="danger">
+              当前无法判断是否能打开系统设置或执行本机修复。状态恢复前不会把它误报为“桌面端不可用”。
+            </InlineNotice>
+            <Button
+              loading={queries.capabilities.isFetching}
+              onClick={() => void queries.capabilities.refetch()}
+              size="small"
+            >
+              重新检查操作能力
+            </Button>
+          </div>
+        ) : null}
         <ManagementSection title="关键检查">
           <MetricStrip items={[
             { label: '输入法', value: booleanValue(inputSource.typingReady) ? '可以输入' : '需要检查', detail: inputReadinessLabel(stringValue(inputSource.readinessState)), icon: Keyboard, tone: booleanValue(inputSource.typingReady) ? 'success' : 'warning' },
             { label: '本机预测', value: booleanValue(predictorEnvelope.ok) ? '运行正常' : '需要检查', detail: predictorServiceLabel(predictorProvider), icon: Cpu, tone: booleanValue(predictorEnvelope.ok) ? 'success' : 'warning' },
-            { label: '本机模型能力', value: predictorDimensions, detail: '模型报告的特征维度', icon: Activity },
-            { label: '系统设置', value: canOpenAccessibilitySettings ? '可以打开' : '当前不可用', detail: 'macOS 辅助功能', icon: ServerCog, tone: canOpenAccessibilitySettings ? 'success' : 'warning' },
+            { label: '智能候选', value: booleanValue(candidateDelivery.ok) ? '已显示' : '等待前台验证', detail: '在真实应用中输入后刷新本页', icon: Activity, tone: booleanValue(candidateDelivery.ok) ? 'success' : 'warning' },
+            {
+              label: '系统设置',
+              value: queries.capabilities.isPending
+                ? '正在检查'
+                : queries.capabilities.error ? '状态未知' : canOpenAccessibilitySettings ? '可以打开' : '当前不可用',
+              detail: queries.capabilities.error ? '重新检查后确认' : 'macOS 辅助功能',
+              icon: ServerCog,
+              tone: queries.capabilities.isPending || queries.capabilities.error
+                ? 'neutral'
+                : canOpenAccessibilitySettings ? 'success' : 'warning',
+            },
           ]} />
         </ManagementSection>
+
+        {Object.keys(candidateDelivery).length ? (
+          <ManagementSection
+            title="智能候选检查"
+            description="本机服务正常不代表候选已经显示。请依次检查输入法、已安装组件、本机补全服务、候选生成和前台显示。"
+            trailing={<StatusBadge label={booleanValue(candidateDelivery.ok) ? '前台已验收' : '尚未前台验收'} tone={booleanValue(candidateDelivery.ok) ? 'success' : 'warning'} />}
+          >
+            <OperationalList items={candidateStageItems(candidateStages)} />
+            {!booleanValue(asRecord(candidateStages.foregroundRendered).ok) ? (
+              <InlineNotice title="还没有确认候选显示" tone="warning">
+                先在真实应用中输入并等待智能候选，再刷新本页。若“候选已生成”但仍未显示，请在统一发布验收中重新部署受管输入法、重启输入法并复测；这类会改变已安装输入法的操作才需要确认，本页不会自行安装或重启。
+              </InlineNotice>
+            ) : null}
+          </ManagementSection>
+        ) : (
+          <ManagementSection title="智能候选检查" description="候选是否真正显示，需要来自真实应用的前台验证记录。">
+            <EmptyState
+              action={<Button onClick={refresh} size="small">重新检查</Button>}
+              description="暂未收到前台验证记录。请在真实应用中输入并等待智能候选出现，再重新检查。"
+              headingLevel={3}
+              icon={Activity}
+              title="等待前台验证"
+            />
+          </ManagementSection>
+        )}
 
         <ManagementSection title="服务状态" trailing={<StatusBadge label={`${components.length} 项`} tone={components.every((item) => booleanValue(item.ok)) ? 'success' : 'warning'} />}>
           {components.length ? <OperationalList items={components.map((item) => ({
@@ -103,16 +169,15 @@ export function DiagnosticsFeature() {
             detail: componentDetail(item),
             meta: serviceStatusLabel(stringValue(item.status)),
             status: <StatusBadge label={booleanValue(item.ok) ? '正常' : '需要检查'} tone={booleanValue(item.ok) ? 'success' : 'warning'} />,
-          }))} /> : <EmptyState description="后台尚未返回服务状态。" icon={Activity} title="暂无服务状态" />}
+          }))} /> : <EmptyState action={<Button onClick={refresh} size="small">重新检查</Button>} description="暂未收到本机服务状态。" headingLevel={3} icon={Activity} title="暂无服务状态" />}
         </ManagementSection>
 
         <div className="mgmt-grid-2">
           <ManagementSection title="本机预测">
             <dl className="mgmt-kv">
-              <dt>服务方式</dt><dd>{predictorServiceLabel(predictorProvider)}</dd>
               <dt>当前模型</dt><dd>{displayModelName(predictor)}</dd>
-              <dt>运行位置</dt><dd>{runtimeLabel(stringValue(predictor.runtime, 'local'))}</dd>
-              <dt>缓存状态</dt><dd>{booleanValue(asRecord(predictor.statusCache).hit) ? '已命中' : '暂无命中'}</dd>
+              <dt>可用状态</dt><dd>{booleanValue(predictorEnvelope.ok) ? '可以生成智能候选' : '需要查看服务状态或尝试修复'}</dd>
+              <dt>下一步</dt><dd>{booleanValue(predictorEnvelope.ok) ? '在真实应用中输入，确认候选是否显示。' : '先查看服务状态；必要时重启本机补全服务。'}</dd>
             </dl>
           </ManagementSection>
           <ManagementSection title="模型路由">
@@ -124,27 +189,62 @@ export function DiagnosticsFeature() {
           </ManagementSection>
         </div>
 
+        <details className="diagnostics-boundary">
+          <summary>高级：诊断详情</summary>
+          <div className="mgmt-grid-2">
+            <ManagementSection title="本机预测证据">
+              <dl className="mgmt-kv">
+                <dt>服务方式</dt><dd>{predictorServiceLabel(predictorProvider)}</dd>
+                <dt>配置状态</dt><dd>{booleanValue(predictor.configured) ? '应启用' : '未配置'}</dd>
+                <dt>连接探测</dt><dd>{booleanValue(predictorProbe.modelLoaded) ? '模型已加载' : booleanValue(predictorProbe.ok) ? '探测通过，未报告加载状态' : '未取得加载凭证'}</dd>
+                <dt>运行位置</dt><dd>{runtimeLabel(stringValue(predictor.runtime, 'local'))}</dd>
+                <dt>模型指纹</dt><dd>{fingerprintLabel(stringValue(predictorProbe.modelFingerprint))}</dd>
+                <dt>缓存状态</dt><dd>{booleanValue(asRecord(predictor.statusCache).hit) ? '已命中' : '暂无命中'}</dd>
+                <dt>模型维度</dt><dd>{predictorDimensions}</dd>
+              </dl>
+            </ManagementSection>
+            <ManagementSection title="前台验证证据">
+              <dl className="mgmt-kv">
+                <dt>采集来源</dt><dd>{foregroundSourceLabel(stringValue(foregroundEvidence.source))}</dd>
+                <dt>证据新鲜度</dt><dd>{freshnessLabel(numberValue(foregroundEvidence.freshnessMs, -1))}</dd>
+                <dt>已写入当前应用</dt><dd>{booleanValue(foregroundEvidence.applied) ? '是' : '尚无凭证'}</dd>
+                <dt>提交文本匹配</dt><dd>{booleanValue(foregroundEvidence.commitTextMatched) ? '是' : '尚无凭证'}</dd>
+                <dt>采集范围</dt><dd>{numberValue(foregroundEvidence.capturedContextChars)} 字</dd>
+              </dl>
+            </ManagementSection>
+          </div>
+        </details>
+
         <ManagementSection
           title="可以尝试的修复"
-          description="先预览影响，再确认并追踪执行结果。"
+          description="日常检查无需确认；只有会改变已安装输入法、服务或系统设置的操作才会先说明影响并要求确认。"
           trailing={(
             <StatusBadge
-              label={runtimeRevision < 0 ? '等待后台状态' : canOpenAccessibilitySettings ? '宿主可用' : '仅桌面端可用'}
-              tone={runtimeRevision < 0 || !canOpenAccessibilitySettings ? 'warning' : 'success'}
+              label={runtimeRevision < 0
+                ? '等待服务状态'
+                : queries.capabilities.isPending ? '正在检查宿主能力'
+                  : queries.capabilities.error ? '宿主能力未知'
+                    : canOpenAccessibilitySettings ? '宿主可用' : '仅桌面端可用'}
+              tone={runtimeRevision < 0 || queries.capabilities.isPending || queries.capabilities.error || !canOpenAccessibilitySettings ? 'warning' : 'success'}
             />
           )}
         >
-          {!canOpenAccessibilitySettings ? (
+          {queries.capabilities.isPending ? (
+            <InlineNotice title="正在确认本机操作能力" tone="info">
+              完成后会显示当前环境能够执行的修复；等待期间不会发送任何本机操作。
+            </InlineNotice>
+          ) : queries.capabilities.error ? null : !canOpenAccessibilitySettings ? (
             <InlineNotice title="请在已安装的应用中操作" tone="warning">
               重启服务、重新部署和打开系统设置只在已安装的应用中执行；浏览器预览保持只读。
             </InlineNotice>
           ) : runtimeRevision < 0 ? (
             <InlineNotice title="正在等待运行状态" tone="warning">
-              后台返回当前运行版本后，修复操作才会开放预览。
+              正在同步运行状态，完成后即可继续。
             </InlineNotice>
           ) : null}
-          <div className="diagnostics-action-list">
-            {runtimeActions(aiEnabled).map((item) => (
+          {!queries.capabilities.isPending && !queries.capabilities.error && canOpenAccessibilitySettings && runtimeRevision >= 0 ? (
+            <div className="diagnostics-action-list">
+              {repairActions.map((item) => (
               <DiagnosticsRuntimeWorkflow
                 action={item.action}
                 description={item.description}
@@ -156,18 +256,36 @@ export function DiagnosticsFeature() {
                 title={item.title}
                 transport={queries.transport}
               />
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : !queries.capabilities.isPending && !queries.capabilities.error ? <DiagnosticsActionSummary actions={repairActions} /> : null}
         </ManagementSection>
 
-        <ManagementSection title="这些操作为什么需要确认">
+        <ManagementSection title="哪些操作需要确认">
           <details className="diagnostics-boundary">
             <summary>查看受保护操作</summary>
-            <p>清空历史、清空记忆、恢复默认与卸载不属于快捷修复。执行前必须单独审阅影响范围并再次确认。</p>
+            <p>清空历史、清空记忆、恢复默认、卸载，以及重新部署受管输入法都会改变本机内容或已安装组件。执行前需要单独查看影响并确认；查看状态和普通检查不需要确认。</p>
           </details>
         </ManagementSection>
       </QueryState>
     </ManagementPage>
+  );
+}
+
+function DiagnosticsActionSummary({
+  actions,
+}: {
+  actions: readonly { description: string; risk: 'R1' | 'R2' | 'R3'; title: string }[];
+}) {
+  return (
+    <ul className="diagnostics-action-summary" aria-label="可用修复清单">
+      {actions.map((item) => (
+        <li key={item.title}>
+          <div><strong>{item.title}</strong><p>{item.description}</p></div>
+          {item.risk === 'R3' ? <StatusBadge label="需要确认" tone="warning" /> : null}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -179,9 +297,9 @@ function runtimeActions(aiEnabled: boolean): readonly {
 }[] {
   return [
     { action: 'register_input_source', title: '重新连接输入法', description: '刷新当前用户的输入源注册，不会清空个人词库或输入记录。', risk: 'R2' },
-    { action: 'restart_sidecar', title: '重启后台服务', description: '由已安装的应用安全重启后台连接服务，任务边界和审计不会丢失。', risk: 'R2' },
-    { action: 'restart_predictor', title: '应用并重启本机模型', description: '读取已保存设置，重启 MLX 与后台服务，并等待两端配置一致。', risk: 'R2' },
-    { action: 'redeploy_rime', title: '应用输入法前端设置', description: '同步候选数量与触发延迟，重新部署受管理配置；不接受页面传入的路径或命令。', risk: 'R3' },
+    { action: 'restart_sidecar', title: '重新连接本机补全服务', description: '由已安装的应用重新连接本机补全服务；当前工作不会丢失。', risk: 'R2' },
+    { action: 'restart_predictor', title: '应用并重启本机模型', description: '应用已保存的设置，重新载入本机模型与补全服务，完成后自动检查状态。', risk: 'R2' },
+    { action: 'redeploy_rime', title: '重新部署受管输入法', description: '把已保存的候选数量和触发延迟应用到受管输入法。这会修改已安装组件，因此需要确认。', risk: 'R3' },
     { action: 'open_accessibility_settings', title: '打开辅助功能设置', description: '打开 macOS 辅助功能权限页，不自动修改权限。', risk: 'R1' },
     aiEnabled
       ? { action: 'stop_ai', title: '暂停智能候选', description: '暂停输入后的智能候选，基础输入仍然可以使用。', risk: 'R1' }
@@ -192,24 +310,61 @@ function runtimeActions(aiEnabled: boolean): readonly {
 function componentLabel(id: string): string {
   return ({
     inputMethod: '输入法',
-    sidecar: '后台服务',
+    sidecar: '本机补全',
     predictor: '本机模型',
     foregroundContext: '当前应用识别',
     hybridRag: '知识检索',
     memoryCompiler: '记忆整理',
-    sqlite: '本机数据库',
-    voiceAgent: '语音代理',
+    sqlite: '本机存储',
+    voiceAgent: '语音输入',
     voiceMicrophone: '麦克风权限',
     voiceAccessibility: '辅助功能权限',
-    voiceRecognition: '语音定稿',
-    deployment: '安装一致性',
-  } as Record<string, string>)[id] ?? '其他服务';
+    voiceRecognition: '实时转写',
+    deployment: '安装状态',
+    assistantCandidateDelivery: '智能候选显示',
+  } as Record<string, string>)[id] ?? '其他本机组件';
+}
+
+function candidateStageItems(stages: Record<string, unknown>) {
+  const definitions = [
+    ['sourcePresent', '输入法功能已准备'],
+    ['installedProvenance', '已安装输入法版本'],
+    ['sidecarConnected', '本机补全服务已连接'],
+    ['candidateProduced', '候选已生成'],
+    ['foregroundRendered', '候选已显示'],
+  ] as const;
+  return definitions.map(([id, title]) => {
+    const stage = asRecord(stages[id]);
+    const ok = booleanValue(stage.ok);
+    return {
+      id,
+      title,
+      detail: ok ? '已准备好' : '等待检查或实际输入验证',
+      meta: ok ? '已验证' : '待验证',
+      status: <StatusBadge label={ok ? '成立' : '未成立'} tone={ok ? 'success' : 'warning'} />,
+    };
+  });
 }
 
 function componentDetail(item: Record<string, unknown>): string {
   const detail = stringValue(item.detail).trim();
   if (!detail) return booleanValue(item.ok) ? '运行正常' : '请打开详情继续检查';
-  return detail;
+  return publicDiagnosticDetail(detail);
+}
+
+function publicDiagnosticDetail(detail: string): string {
+  if (/语音代理.*版本过旧.*定稿/u.test(detail)) {
+    return '已安装的语音输入组件版本较旧，暂不支持完整转写。';
+  }
+  if (/voice was installed from another product commit/i.test(detail)) {
+    return '已安装的语音组件与当前版本不一致。';
+  }
+  if (/\b(?:path|sha(?:256)?|token|receipt|revision|schema)\b/i.test(detail)) {
+    return '服务返回了需要进一步排查的信息，请复制报告后查看。';
+  }
+  return /[\u3400-\u9fff]/u.test(detail)
+    ? detail
+    : publicErrorText(new Error(detail), '服务需要进一步检查，请复制报告后查看。');
 }
 
 function serviceStatusLabel(value: string): string {
@@ -230,7 +385,28 @@ function predictorServiceLabel(value: string): string {
 
 function displayModelName(predictor: Record<string, unknown>): string {
   const model = stringValue(predictor.model).trim();
-  return model && !model.includes('/') ? model : '由本机配置决定';
+  if (!model) return '由本机配置决定';
+  return model.split('/').filter(Boolean).at(-1) ?? '由本机配置决定';
+}
+
+function fingerprintLabel(value: string): string {
+  const normalized = value.replace(/^sha256:/, '').trim();
+  return normalized ? normalized.slice(0, 12) : '尚未报告';
+}
+
+function foregroundSourceLabel(value: string): string {
+  return ({
+    accessibility: '辅助功能前台文本',
+    text_input_client: '输入控件文本',
+  } as Record<string, string>)[value] ?? (value ? `已记录 · ${value}` : '尚无真实前台请求凭证');
+}
+
+function freshnessLabel(value: number): string {
+  if (value < 0) return '尚未记录';
+  if (value < 1_000) return '刚刚';
+  if (value < 60_000) return `${Math.ceil(value / 1_000)} 秒前`;
+  if (value < 3_600_000) return `${Math.ceil(value / 60_000)} 分钟前`;
+  return `${Math.ceil(value / 3_600_000)} 小时前`;
 }
 
 function runtimeLabel(value: string): string {

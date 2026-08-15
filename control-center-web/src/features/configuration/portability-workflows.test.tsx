@@ -19,6 +19,7 @@ describe('configuration file migration workflows', () => {
   it('binds native file selection to import preview, confirmation, and apply', async () => {
     const user = userEvent.setup();
     const transport = renderConfiguration();
+    await openPortabilityPanel(user);
 
     const importWorkflow = (await screen.findByText('导入配置', { selector: 'strong' })).closest('.mgmt-workflow');
     expect(importWorkflow).not.toBeNull();
@@ -29,7 +30,7 @@ describe('configuration file migration workflows', () => {
     expect(screen.getByText('2048')).toBeInTheDocument();
     expect(screen.getByText('包含远程模型开关')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '查看并确认导入' }));
+    await user.click(screen.getByRole('button', { name: '查看影响并继续' }));
     const dialog = await screen.findByRole('dialog', { name: /确认导入/ });
     expect(within(dialog).getByRole('button', { name: '确认并导入' })).toBeDisabled();
     await user.click(within(dialog).getByRole('checkbox'));
@@ -52,9 +53,35 @@ describe('configuration file migration workflows', () => {
     });
   });
 
+  it('imports ordinary settings directly after the user has reviewed the file diff', async () => {
+    const user = userEvent.setup();
+    const transport = renderConfiguration({
+      providers: {},
+      requiresRemoteModelConfirmation: false,
+    });
+    await openPortabilityPanel(user);
+    const workflow = (await screen.findByText('导入配置', { selector: 'strong' })).closest('.mgmt-workflow');
+    expect(workflow).not.toBeNull();
+
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '选择并校验' }));
+    expect(await within(workflow as HTMLElement).findByRole('button', { name: '导入配置' })).toBeEnabled();
+    expect(screen.queryByRole('dialog', { name: /确认导入/ })).not.toBeInTheDocument();
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '导入配置' }));
+
+    expect(await screen.findByText('配置已导入')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: /确认导入/ })).not.toBeInTheDocument();
+    expect(requestBody(transport, 'configuration.import.apply')).toEqual({
+      path: '/trusted/rag-ime.config.yaml',
+      expectedRuntimeRevision: 4,
+      previewToken: configurationHash,
+      confirmText: 'IMPORT RAG-IME CONFIGURATION',
+    });
+  });
+
   it('exports to a native-selected directory and shows the real receipt path', async () => {
     const user = userEvent.setup();
     const transport = renderConfiguration();
+    await openPortabilityPanel(user);
 
     await user.click(await screen.findByRole('button', { name: '选择目录并导出' }));
 
@@ -69,6 +96,7 @@ describe('configuration file migration workflows', () => {
   it('shows restore scope and sends the bound token and runtime revision only after confirmation', async () => {
     const user = userEvent.setup();
     const transport = renderConfiguration();
+    await openPortabilityPanel(user);
 
     const restoreWorkflow = (await screen.findByText('恢复可移植备份', { selector: 'strong' })).closest('.mgmt-workflow');
     expect(restoreWorkflow).not.toBeNull();
@@ -91,6 +119,10 @@ describe('configuration file migration workflows', () => {
     });
   });
 });
+
+async function openPortabilityPanel(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByText('导入、备份与恢复'));
+}
 
 class PortabilityTransport extends MockControlTransport {
   override async pickFiles(options: FilePickOptions): Promise<PickedFile[]> {
@@ -127,7 +159,7 @@ class PortabilityTransport extends MockControlTransport {
   }
 }
 
-function renderConfiguration(): PortabilityTransport {
+function renderConfiguration(importOverrides: Record<string, unknown> = {}): PortabilityTransport {
   const routeIds: ControlPathId[] = [
     'configuration.settings',
     'configuration.schema',
@@ -159,6 +191,7 @@ function renderConfiguration(): PortabilityTransport {
         configurationHash,
         requiresConfirmation: 'IMPORT RAG-IME CONFIGURATION',
         runtimeRevision: 4,
+        ...importOverrides,
       },
       'configuration.import.apply': {
         ok: true,

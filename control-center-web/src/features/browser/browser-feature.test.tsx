@@ -65,19 +65,23 @@ describe('BrowserFeature', () => {
     expect(await screen.findByText('停止浏览器请求已送达，等待确认')).toBeInTheDocument();
 
     await user.click(screen.getByRole('tab', { name: /连接/ }));
-    const credential = await screen.findByLabelText('配对凭据');
+    const credential = await screen.findByLabelText('配对码');
     expect(credential).toHaveAttribute('type', 'password');
-    expect(credential).toHaveAccessibleDescription(/只复制给你正在配对的本机插件/);
+    expect(credential).toHaveAccessibleDescription(/只复制给正在配对的本机插件/);
+    expect(screen.getByText('高级连接详情')).toBeInTheDocument();
+    expect(screen.queryByText('桥接地址')).not.toBeInTheDocument();
+    await user.click(screen.getByText('高级连接详情'));
+    expect(screen.getByText('本机连接地址')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '轮换配对凭据' }));
-    expect(await screen.findByText('轮换配对凭据请求已送达，等待确认')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '更换配对码' }));
+    expect(await screen.findByText('更换配对码请求已送达，等待确认')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '启动托管浏览器' }));
     expect(await screen.findByText('启动托管浏览器请求已送达，等待确认')).toBeInTheDocument();
   });
 
   it('turns a rejected browser action into a public failure receipt', async () => {
     const user = userEvent.setup();
-    renderBrowser(true);
+    renderBrowser({ failCommand: true });
 
     await screen.findByText('1 个浏览器在线');
     await user.click(screen.getByRole('button', { name: '获取截图' }));
@@ -85,10 +89,80 @@ describe('BrowserFeature', () => {
     expect(await screen.findByText('获取截图失败')).toBeInTheDocument();
     expect(screen.getByText('请求未完成；当前页面状态没有改变。请刷新状态后重试。')).toBeInTheDocument();
   });
+
+  it('keeps browser status visible when tabs fail and retries only the tab list', async () => {
+    const user = userEvent.setup();
+    const transport = renderBrowser({ failOnce: ['tabs'] });
+
+    expect(await screen.findByText('1 个浏览器在线')).toBeInTheDocument();
+    expect(await screen.findByText('标签页暂时未同步')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Agent Runtime 文档', level: 2 })).toBeInTheDocument();
+    const requestsBeforeRetry = requestCount(transport, 'browser.tabs');
+
+    await user.click(screen.getByRole('button', { name: '重新加载标签页' }));
+
+    await waitFor(() => expect(requestCount(transport, 'browser.tabs')).toBeGreaterThan(requestsBeforeRetry));
+    await waitFor(() => expect(screen.queryByText('标签页暂时未同步')).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: /Agent Runtime 文档/ })).toBeInTheDocument();
+  });
+
+  it('recovers snapshot, permission, and trace queries in place without false empty states', async () => {
+    const user = userEvent.setup();
+    renderBrowser({ failOnce: ['snapshot', 'permissions', 'traces'] });
+
+    expect(await screen.findByText('页面快照未更新')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Agent Runtime 文档', level: 2 })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '重新加载页面快照' }));
+    await waitFor(() => expect(screen.queryByText('页面快照未更新')).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole('tab', { name: /权限/ }));
+    expect(await screen.findByText('权限请求未同步')).toBeInTheDocument();
+    expect(screen.queryByText('没有待处理权限')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '重新加载权限请求' }));
+    expect(await screen.findByText('https://research.example.com')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('权限请求未同步')).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole('tab', { name: /轨迹/ }));
+    expect(await screen.findByText('执行轨迹未同步')).toBeInTheDocument();
+    expect(screen.queryByText('暂无执行轨迹')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '重新加载执行轨迹' }));
+    expect(await screen.findByText('暂无执行轨迹')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('执行轨迹未同步')).not.toBeInTheDocument());
+  });
+
+  it('recovers pairing locally and includes pairing in the page refresh', async () => {
+    const user = userEvent.setup();
+    const transport = renderBrowser({ failOnce: ['pairing'] });
+
+    await screen.findByText('1 个浏览器在线');
+    await user.click(screen.getByRole('tab', { name: /连接/ }));
+    expect(await screen.findByText('配对信息未同步')).toBeInTheDocument();
+    expect(screen.queryByText('配对码已生成')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '重新加载配对信息' }));
+    expect(await screen.findByText('配对码已生成')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('配对信息未同步')).not.toBeInTheDocument());
+
+    const pairingRequestsBeforeRefresh = requestCount(transport, 'browser.pairing');
+    await user.click(screen.getByRole('button', { name: '刷新浏览器状态' }));
+    await waitFor(() => expect(requestCount(transport, 'browser.pairing')).toBeGreaterThan(pairingRequestsBeforeRefresh));
+  });
 });
 
-function renderBrowser(failCommand = false) {
+type BrowserQueryFailure = 'pairing' | 'permissions' | 'snapshot' | 'tabs' | 'traces';
+
+function renderBrowser({
+  failCommand = false,
+  failOnce = [],
+}: {
+  failCommand?: boolean;
+  failOnce?: BrowserQueryFailure[];
+} = {}) {
   const now = Date.now();
+  const pendingFailures = new Set(failOnce);
+  const queryResponse = async <Value,>(name: BrowserQueryFailure, value: Value): Promise<Value> => {
+    if (pendingFailures.delete(name)) throw new Error(`${name} unavailable`);
+    return value;
+  };
   const snapshot = {
     ok: true,
     schemaVersion: 'rag-ime.browser-control.v1',
@@ -121,14 +195,14 @@ function renderBrowser(failCommand = false) {
           profilePath: '/tmp/browser-profile',
         },
       },
-      'browser.pairing': {
+      'browser.pairing': async () => queryResponse('pairing', {
         ok: true,
         pairingToken: 'pairing-secret',
         tokenFingerprint: 'abcd1234',
         extensionPath: '/Applications/RagIme/BrowserCopilot/extension',
         bridgeUrl: 'http://127.0.0.1:8766',
-      },
-      'browser.tabs': {
+      }),
+      'browser.tabs': async () => queryResponse('tabs', {
         ok: true,
         items: [{
           deviceId: 'chrome-user',
@@ -137,9 +211,9 @@ function renderBrowser(failCommand = false) {
           url: 'https://docs.example.com/runtime',
           active: true,
         }],
-      },
-      'browser.snapshot.latest': snapshot,
-      'browser.permissions': {
+      }),
+      'browser.snapshot.latest': async () => queryResponse('snapshot', snapshot),
+      'browser.permissions': async () => queryResponse('permissions', {
         ok: true,
         items: [{
           promptId: 'bperm-research',
@@ -149,8 +223,8 @@ function renderBrowser(failCommand = false) {
           status: 'pending',
           createdAtMs: now,
         }],
-      },
-      'browser.traces': { ok: true, items: [] },
+      }),
+      'browser.traces': async () => queryResponse('traces', { ok: true, items: [] }),
       'browser.mode.update': { ok: true, mode: 'codrive' },
       'browser.permission.decide': {
         ok: true,
@@ -184,4 +258,8 @@ function renderBrowser(failCommand = false) {
     </TooltipProvider>,
   );
   return transport;
+}
+
+function requestCount(transport: MockControlTransport, pathId: string): number {
+  return transport.requests.filter((call) => call.request.pathId === pathId).length;
 }

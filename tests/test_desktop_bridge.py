@@ -68,6 +68,48 @@ class DesktopBridgeClientTests(unittest.TestCase):
         self.assertTrue(result["accessibilityTrusted"])
         self.assertEqual(result["captureMode"], "accessibility_semantics")
         self.assertFalse(result["usesScreenCapture"])
+        self.assertEqual(result["transportMetrics"]["requestCount"], 1)
+        self.assertGreater(result["transportMetrics"]["lastResponseBytes"], 0)
+
+    def test_find_projects_bounded_native_selector_arguments(self) -> None:
+        observed = {}
+
+        def respond(request):
+            observed.update(request)
+            return (
+                json.dumps(
+                    {
+                        "schemaVersion": "rag-ime.desktop-bridge-response.v1",
+                        "requestId": request["requestId"],
+                        "ok": True,
+                        "result": {
+                            "schemaVersion": "rag-ime.desktop-find.v1",
+                            "matches": [],
+                            "matchCount": 0,
+                        },
+                    }
+                ).encode()
+                + b"\n"
+            )
+
+        client = DesktopBridgeClient(
+            socket_path="/tmp/unused-desktop-bridge.sock",
+            verify_socket_owner=False,
+        )
+        with patch("rag_ime.desktop_bridge.socket.socket", return_value=_FakeSocket(respond)):
+            client.find(
+                bundle_id="com.example.Editor",
+                role="AXTextField",
+                identifier="search",
+                limit=99,
+                max_nodes=900,
+                max_depth=99,
+            )
+
+        self.assertEqual(observed["op"], "find")
+        self.assertEqual(observed["limit"], 20)
+        self.assertEqual(observed["maxNodes"], 500)
+        self.assertEqual(observed["maxDepth"], 12)
 
     def test_native_error_and_request_id_mismatch_fail_closed(self) -> None:
         client = DesktopBridgeClient(
@@ -144,6 +186,10 @@ class DesktopBridgeClientTests(unittest.TestCase):
         self.assertIn('"AXChildrenInNavigationOrder"', source)
         self.assertIn("kAXContentsAttribute", source)
         self.assertIn("semanticChildren", source)
+        self.assertIn('case "find"', source)
+        self.assertIn('"rag-ime.desktop-find.v1"', source)
+        self.assertIn('!identifier.isEmpty && !secure', source)
+        self.assertIn("record.identifier", source)
         self.assertIn("AXObserverAddNotification", source)
         self.assertIn("refreshSnapshotForAction", source)
         self.assertIn("nodeActionStateSha256", source)

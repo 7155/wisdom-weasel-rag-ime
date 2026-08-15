@@ -84,6 +84,51 @@
   padding-top: var(--space-5);
 }
 
+.work-documents__technical-details {
+  border-top: 1px solid var(--color-border-soft);
+  padding-top: var(--space-5);
+}
+
+.work-documents__technical-details > summary {
+  align-items: center;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  font: var(--font-label);
+  gap: var(--space-2);
+  list-style: none;
+}
+
+.work-documents__technical-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.work-documents__technical-details > summary::before {
+  content: '›';
+  font-size: 18px;
+  line-height: 1;
+  transform-origin: center;
+  transition: transform var(--motion-disclose) var(--ease-standard);
+}
+
+.work-documents__technical-details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.work-documents__technical-details[open] > summary {
+  margin-bottom: var(--space-5);
+}
+
+.work-documents__technical-details:not([open]) > :not(summary) {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .work-documents__technical-details > summary::before {
+    transition: none;
+  }
+}
+
 .work-documents__facts h3,
 .work-documents__progress h3,
 .work-documents__actions h3,
@@ -245,6 +290,20 @@
 }
 
 @media (max-width: 760px) {
+  .ui-dialog.work-documents__erase-dialog .ui-button,
+  .ui-dialog.work-documents__erase-dialog .ui-input {
+    min-height: 44px;
+  }
+
+  .ui-dialog.work-documents__erase-dialog .ui-icon-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  main[data-route-id='work-documents'] .ui-tabs__trigger {
+    min-height: 44px;
+  }
+
   .work-documents__search,
   .work-documents__action-row {
     align-items: stretch;

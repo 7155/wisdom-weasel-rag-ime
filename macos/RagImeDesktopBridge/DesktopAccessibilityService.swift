@@ -27,6 +27,7 @@ final class DesktopAccessibilityService {
         let nodeHashes: [String: String]
         let nodeActionHashes: [String: String]
         let nodePayloads: [String: [String: Any]]
+        let nodeOrder: [String]
         let elements: [String: AXUIElement]
         let maxNodes: Int
         let maxDepth: Int
@@ -38,6 +39,7 @@ final class DesktopAccessibilityService {
         let depth: Int
         let role: String
         let subrole: String
+        let identifier: String
         let label: String
         let value: String
         let enabled: Bool
@@ -62,6 +64,7 @@ final class DesktopAccessibilityService {
                 "actions": actions,
             ]
             if !subrole.isEmpty { payload["subrole"] = subrole }
+            if !identifier.isEmpty && !secure { payload["identifier"] = identifier }
             if !label.isEmpty { payload["label"] = label }
             if !value.isEmpty && !secure { payload["value"] = value }
             return payload
@@ -77,7 +80,7 @@ final class DesktopAccessibilityService {
         var stateHash: String {
             desktopSHA256(
                 [
-                    ref, parentRef, role, subrole, label, value,
+                    ref, parentRef, role, subrole, identifier, label, value,
                     enabled ? "1" : "0",
                     focused ? "1" : "0",
                     selected ? "1" : "0",
@@ -93,7 +96,7 @@ final class DesktopAccessibilityService {
         var actionStateHash: String {
             desktopSHA256(
                 [
-                    ref, parentRef, role, subrole, label, value,
+                    ref, parentRef, role, subrole, identifier, label, value,
                     enabled ? "1" : "0",
                     secure ? "1" : "0",
                     actions.joined(separator: ","),
@@ -123,6 +126,8 @@ final class DesktopAccessibilityService {
             return try listApplications(request)
         case "inspect":
             return try inspect(request)
+        case "find":
+            return try find(request)
         case "prepare_action":
             return try prepareAction(request)
         case "act":
@@ -149,6 +154,7 @@ final class DesktopAccessibilityService {
             "usesScreenCapture": false,
             "usesModelSuppliedCoordinates": false,
             "supportsTreeDiff": true,
+            "supportsSemanticFind": true,
             "supportsSemanticActions": true,
             "frontmostApplication": [
                 "pid": Int(frontmost?.processIdentifier ?? 0),
@@ -289,7 +295,11 @@ final class DesktopAccessibilityService {
             uniqueKeysWithValues: records.map { record in
             var payload = record.modelPayload
             if !query.isEmpty {
-                let haystack = "\(record.role) \(record.subrole) \(record.label) \(record.value)".lowercased()
+                let haystack = (
+                    record.secure
+                        ? "\(record.role) \(record.subrole)"
+                        : "\(record.role) \(record.subrole) \(record.identifier) \(record.label) \(record.value)"
+                ).lowercased()
                 payload["matchesQuery"] = haystack.contains(query)
             }
             return (record.ref, payload)
@@ -306,6 +316,7 @@ final class DesktopAccessibilityService {
             nodeHashes: nodeHashes,
             nodeActionHashes: nodeActionHashes,
             nodePayloads: payloads,
+            nodeOrder: records.map(\.ref),
             elements: Dictionary(uniqueKeysWithValues: records.map { ($0.ref, $0.element) }),
             maxNodes: maxNodes,
             maxDepth: maxDepth
@@ -347,6 +358,73 @@ final class DesktopAccessibilityService {
             "returnedNodeCount": responseRecords.count,
             "truncated": traversal.truncated,
             "diff": diff,
+        ]
+    }
+
+    private func find(_ request: [String: Any]) throws -> [String: Any] {
+        var inspectRequest = request
+        // `find` always searches one fresh complete in-process snapshot. It
+        // returns only compact matches, so no full semantic tree crosses the
+        // socket merely to let the model locate one control.
+        inspectRequest["query"] = ""
+        inspectRequest["sinceSnapshotId"] = ""
+        let inspected = try inspect(inspectRequest)
+        let snapshotID = boundedString(inspected["snapshotId"], maximum: 200)
+        guard let snapshot = snapshots[snapshotID] else {
+            throw DesktopBridgeError.stale("snapshot_not_found")
+        }
+        let role = boundedString(request["role"], maximum: 80).lowercased()
+        let subrole = boundedString(request["subrole"], maximum: 80).lowercased()
+        let identifier = boundedString(request["identifier"], maximum: 240).lowercased()
+        let label = boundedString(request["label"], maximum: 240).lowercased()
+        let query = boundedString(request["query"], maximum: 300).lowercased()
+        guard !role.isEmpty || !subrole.isEmpty || !identifier.isEmpty
+                || !label.isEmpty || !query.isEmpty else {
+            throw DesktopBridgeError.invalidRequest("semantic_selector_is_required")
+        }
+        let limit = boundedInteger(request["limit"], default: 5, minimum: 1, maximum: 20)
+        let matches = snapshot.nodeOrder.compactMap { nodeRef -> [String: Any]? in
+            guard let node = snapshot.nodePayloads[nodeRef],
+                  node["secure"] as? Bool != true else { return nil }
+            let nodeRole = boundedString(node["role"], maximum: 80).lowercased()
+            let nodeSubrole = boundedString(node["subrole"], maximum: 80).lowercased()
+            let nodeIdentifier = boundedString(node["identifier"], maximum: 240).lowercased()
+            let nodeLabel = boundedString(node["label"], maximum: 240).lowercased()
+            let nodeValue = boundedString(node["value"], maximum: 800).lowercased()
+            guard role.isEmpty || nodeRole == role,
+                  subrole.isEmpty || nodeSubrole == subrole,
+                  identifier.isEmpty || nodeIdentifier == identifier,
+                  label.isEmpty || nodeLabel.contains(label) else { return nil }
+            if !query.isEmpty {
+                let haystack = "\(nodeRole) \(nodeSubrole) \(nodeIdentifier) \(nodeLabel) \(nodeValue)"
+                guard haystack.contains(query) else { return nil }
+            }
+            var compact: [String: Any] = [
+                "nodeRef": nodeRef,
+                "role": node["role"] ?? "",
+                "enabled": node["enabled"] ?? true,
+                "actions": node["actions"] ?? [],
+            ]
+            for key in ["subrole", "identifier", "label"] {
+                if let value = node[key], !(value is NSNull), !String(describing: value).isEmpty {
+                    compact[key] = value
+                }
+            }
+            let compactValue = boundedString(node["value"], maximum: 160)
+            if !compactValue.isEmpty { compact["value"] = compactValue }
+            return compact
+        }
+        let returned = Array(matches.prefix(limit))
+        return [
+            "schemaVersion": "rag-ime.desktop-find.v1",
+            "snapshotId": snapshot.id,
+            "revision": snapshot.revision,
+            "capturedAtMs": snapshot.createdAtMs,
+            "application": inspected["application"] ?? [:],
+            "matches": returned,
+            "matchCount": matches.count,
+            "returnedMatchCount": returned.count,
+            "truncated": inspected["truncated"] as? Bool ?? false,
         ]
     }
 
@@ -695,6 +773,7 @@ final class DesktopAccessibilityService {
                 depth: depth,
                 role: role,
                 subrole: subrole,
+                identifier: String(identifier.prefix(240)),
                 label: String(label.prefix(240)),
                 value: value,
                 enabled: boolValue(attributes[kAXEnabledAttribute as String], default: true),

@@ -1,0 +1,1575 @@
+{
+  "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
+  "generatedAt": "2026-08-15T17:19:01Z",
+  "source": {
+    "repository": "git@github.com:7155/personal-agent-workbench.git",
+    "branch": "main",
+    "baseCommit": "69ccce70a000414dea752e4f68e2a6a5c931d1c1",
+    "candidateCommitPolicy": "Commit this exact inventory as one clean source candidate; the candidate commit is the commit containing this manifest."
+  },
+  "dispositions": {
+    "keep_release": "Retain this path change in the source release candidate.",
+    "delete_old_implementation": "Commit the deletion or cleanup so the obsolete implementation no longer ships.",
+    "other_work_not_in_release": "Leave outside this candidate. No current dirty path matched this disposition."
+  },
+  "groups": {
+    "project_harness": {
+      "description": "Root self-hosting project context and bounded consistency checks.",
+      "pathCount": 11
+    },
+    "control_center_release_ui": {
+      "description": "User-visible Control Center release redesign, recovery paths, accessibility, and regression coverage.",
+      "pathCount": 149
+    },
+    "session_room_skill_flow": {
+      "description": "Pi-native Session/Room composition, compact Skills, routing cards, and installed-runtime synchronization.",
+      "pathCount": 38
+    },
+    "desktop_semantic_accessibility": {
+      "description": "Accessibility-only semantic desktop bridge, bounded find, metrics, smoke target, and foreground verifier.",
+      "pathCount": 8
+    },
+    "memory_curation": {
+      "description": "Owner-scoped memory curation and source/pagination correctness.",
+      "pathCount": 3
+    },
+    "room_kernel_cleanup": {
+      "description": "Removal of obsolete heavy-Kernel-specific test obligations without rewriting immutable migrations.",
+      "pathCount": 2
+    },
+    "release_scope": {
+      "description": "One-time, source-candidate inventory.",
+      "pathCount": 1
+    }
+  },
+  "summary": {
+    "pathCount": 212,
+    "dispositionCounts": {
+      "keep_release": 203,
+      "delete_old_implementation": 9
+    },
+    "groupCounts": {
+      "project_harness": 11,
+      "control_center_release_ui": 149,
+      "session_room_skill_flow": 38,
+      "desktop_semantic_accessibility": 8,
+      "memory_curation": 3,
+      "release_scope": 1,
+      "room_kernel_cleanup": 2
+    },
+    "unclassifiedPathCount": 0,
+    "otherWorkNotInReleasePathCount": 0
+  },
+  "cleanupReceipts": [
+    {
+      "path": "design-system/rag-ime-control-center/prototypes/room-navigation-wayfinder/06-current-agent-handoff.md",
+      "action": "removed_untracked_historical_artifact",
+      "reason": "Stale handoff referenced retired fixed-pipeline Skills and was explicitly forbidden by the public-source audit."
+    },
+    {
+      "path": "rag_ime/db/migrations/0152_room_participant_steer_receipts.sql",
+      "action": "restored_immutable_migration",
+      "reason": "Formatting-only edits would have changed the migration checksum for installed databases."
+    }
+  ],
+  "verification": {
+    "projectHarness": "passed",
+    "focusedSkillAndPromptTests": "38 passed",
+    "pythonFullSuiteShards": "3245 tests across four shards; one shard exposed only 3 stale voice UI copy assertions, and its corrected voice module reran 8/8 passed",
+    "databaseMigrationsAfterChecksumRestore": "17 passed",
+    "frontendTypecheck": "passed with pnpm 11.9.0",
+    "frontendUnitTests": "929 passed",
+    "frontendBuild": "passed",
+    "frontendBrowserAcceptance": "166 passed, 49 conditional skips, 0 failed",
+    "agentToolMatrix": "29/29 Pi runtime Tools invoked successfully in a real Room Session",
+    "repositoryPublicAudit": "pending clean candidate commit",
+    "localInstall": "pending clean candidate commit and build gates",
+    "foregroundAcceptance": "not claimed by this source scope"
+  },
+  "items": [
+    {
+      "path": "AGENTS.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+    },
+    {
+      "path": "ARCHITECTURE.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+    },
+    {
+      "path": "CHANGELOG.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+    },
+    {
+      "path": "CONTEXT.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+    },
+    {
+      "path": "control-center-web/e2e/management-dark-accessibility.e2e.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/e2e/management-dynamic-type.e2e.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/e2e/management-overlays.e2e.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/e2e/management-visual-contracts.e2e.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/index.html",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/playwright.config.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/AppErrorBoundary.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/AppErrorBoundary.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/control-connection-monitor.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/control-connection-monitor.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/mount-control-center.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/preview-control-transport.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/preview-control-transport.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/preview-input-data.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/preview-memory-data.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/preview-work-document-routes.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/route-registry.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/router-recovery.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/router.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/start-control-center.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/start-control-center.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/components/layout/AppShell.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/components/layout/AppShell.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/components/layout/layout.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/components/layout/Navigation.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/components/layout/useHashRoute.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/components/primitives/Dialog.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/components/primitives/Dialog.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/components/primitives/EmptyState.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/components/primitives/primitives.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/design/tokens.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/browser/browser-feature.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/browser/browser.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/browser/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/configuration/configuration.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/configuration/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/configuration/management-writes.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/configuration/pi-provider-credentials.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/configuration/PiProviderCredentials.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/configuration/portability-workflows.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/configuration/PortabilityWorkflows.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/context-debug/context-debug-feature.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/context-debug/context-debug.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/context-debug/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/diagnostics/diagnostics-feature.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/diagnostics/diagnostics.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/diagnostics/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/diagnostics/runtime-actions.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/governance/governance-feature.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/governance/governance.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/governance/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/history/api.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/history/history.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/history/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/history/management-writes.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/input-method/api.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/input-method/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/input-method/input-method-feature.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/input-method/input-method-presentation.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/input-method/input-method.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/input-method/lexicon-workflow.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/api.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/document-workspace.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/interactive-graph-canvas.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/knowledge-feature.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/knowledge-graph.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/knowledge.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/public-copy.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/knowledge/public-copy.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/activity-timeline.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/ActivityTimeline.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/knowledge-session-workflow.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/knowledge-workbench.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/knowledge-workbench.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/KnowledgeVisualization.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/memory-feature.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/memory.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemoryCurationWorkbench.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemoryReferenceDialog.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemoryRelationCanvas.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemoryRelations.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemorySystemOverview.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/PersonalKnowledgeWorkbench.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/public-copy.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/RoleBookLayer.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/observability/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/observability/observability-feature.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/observability/observability.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/overview/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/overview/management-features.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/overview/management-mutation.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/overview/management-mutation.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/overview/management-ui.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/overview/management.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/planning/AgentWakeSchedules.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/planning/AgentWakeSchedules.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/planning/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/planning/management-writes.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/planning/planning.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/plugins/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/plugins/plugins-feature.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/plugins/plugins.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/roles/collaboration-profile-control-gate.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/roles/collaboration-profile-control-gate.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/roles/collaboration-profile-governance.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/roles/CollaborationProfileGovernancePanel.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/roles/CollaborationProfileGovernancePanel.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/roles/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/roles/roles-feature.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/roles/roles.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/voice/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/voice/voice-feature.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/voice/voice.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/work-documents/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/work-documents/work-documents-feature.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/work-documents/work-documents.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/main.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "DECISIONS.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+    },
+    {
+      "path": "integrations/pi/skill-routing-cards.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/alignment-and-decision/agents/openai.yaml",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/alignment-and-decision/SKILL.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/facilitate-room/agents/openai.yaml",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/facilitate-room/SKILL.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/implementation-execution/agents/openai.yaml",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "session_room_skill_flow",
+      "reason": "Retire the fixed pipeline Skill so it cannot compete with the compact Session/Room Skill catalog."
+    },
+    {
+      "path": "integrations/pi/skills/implementation-execution/references/execution-continuity-contract.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "session_room_skill_flow",
+      "reason": "Retire the fixed pipeline Skill so it cannot compete with the compact Session/Room Skill catalog."
+    },
+    {
+      "path": "integrations/pi/skills/implementation-execution/SKILL.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "session_room_skill_flow",
+      "reason": "Retire the fixed pipeline Skill so it cannot compete with the compact Session/Room Skill catalog."
+    },
+    {
+      "path": "integrations/pi/skills/implementation-planning/agents/openai.yaml",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/implementation-planning/SKILL.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/independent-review/agents/openai.yaml",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/independent-review/SKILL.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/orchestrate-session/agents/openai.yaml",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/orchestrate-session/SKILL.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/organize-work-documents/agents/openai.yaml",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/organize-work-documents/SKILL.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/quality-gate/SKILL.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "session_room_skill_flow",
+      "reason": "Retire the fixed pipeline Skill so it cannot compete with the compact Session/Room Skill catalog."
+    },
+    {
+      "path": "integrations/pi/skills/review-feedback-resolution/SKILL.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "session_room_skill_flow",
+      "reason": "Retire the fixed pipeline Skill so it cannot compete with the compact Session/Room Skill catalog."
+    },
+    {
+      "path": "integrations/pi/skills/structured-handoff/SKILL.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "session_room_skill_flow",
+      "reason": "Retire the fixed pipeline Skill so it cannot compete with the compact Session/Room Skill catalog."
+    },
+    {
+      "path": "integrations/pi/skills/systematic-debugging/agents/openai.yaml",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/systematic-debugging/SKILL.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/test-driven-implementation/agents/openai.yaml",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/test-driven-implementation/SKILL.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/work-document-archive/SKILL.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "session_room_skill_flow",
+      "reason": "Retire the fixed pipeline Skill so it cannot compete with the compact Session/Room Skill catalog."
+    },
+    {
+      "path": "macos/RagImeDesktopBridge/DesktopAccessibilityService.swift",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "desktop_semantic_accessibility",
+      "reason": "Keep bounded semantic desktop find, bridge metrics, smoke target, and verification."
+    },
+    {
+      "path": "macos/RagImeDesktopSmokeTarget/DesktopSmokeTarget.swift",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "desktop_semantic_accessibility",
+      "reason": "Keep bounded semantic desktop find, bridge metrics, smoke target, and verification."
+    },
+    {
+      "path": "macos/RagImeDesktopSmokeTarget/Info.plist",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "desktop_semantic_accessibility",
+      "reason": "Keep bounded semantic desktop find, bridge metrics, smoke target, and verification."
+    },
+    {
+      "path": "OUTCOMES.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+    },
+    {
+      "path": "PROJECT.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+    },
+    {
+      "path": "rag_ime/agent_templates.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "rag_ime/desktop_bridge.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "desktop_semantic_accessibility",
+      "reason": "Keep bounded semantic desktop find, bridge metrics, smoke target, and verification."
+    },
+    {
+      "path": "rag_ime/owner_memory_curation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep owner-memory curation, capture provenance, and pagination updates."
+    },
+    {
+      "path": "README.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+    },
+    {
+      "path": "release/release-candidate-scope.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "release_scope",
+      "reason": "Record the exact candidate boundary without owning runtime or completion state."
+    },
+    {
+      "path": "scripts/build_desktop_bridge.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "desktop_semantic_accessibility",
+      "reason": "Keep bounded semantic desktop find, bridge metrics, smoke target, and verification."
+    },
+    {
+      "path": "scripts/build_managed_pi_runtime_v2.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "scripts/check_project_harness.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+    },
+    {
+      "path": "scripts/install_sidecar_launch_agent.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "scripts/verify_desktop_semantic_foreground.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "desktop_semantic_accessibility",
+      "reason": "Keep bounded semantic desktop find, bridge metrics, smoke target, and verification."
+    },
+    {
+      "path": "tests/test_agent_prompt_audit.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "tests/test_agent_tools.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "tests/test_build_managed_pi_runtime_v2.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "tests/test_database_migrations.py",
+      "status": "modified",
+      "disposition": "delete_old_implementation",
+      "group": "room_kernel_cleanup",
+      "reason": "Remove dedicated assertions and fixture coverage for the retired heavy Room dispatch-attempt Kernel table while preserving immutable migration files."
+    },
+    {
+      "path": "tests/test_desktop_agent_tools.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "desktop_semantic_accessibility",
+      "reason": "Keep bounded semantic desktop find, bridge metrics, smoke target, and verification."
+    },
+    {
+      "path": "tests/test_desktop_bridge.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "desktop_semantic_accessibility",
+      "reason": "Keep bounded semantic desktop find, bridge metrics, smoke target, and verification."
+    },
+    {
+      "path": "tests/test_managed_pi_runtime.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "tests/test_management_pagination.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep owner-memory curation, capture provenance, and pagination updates."
+    },
+    {
+      "path": "tests/test_owner_memory_curation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep owner-memory curation, capture provenance, and pagination updates."
+    },
+    {
+      "path": "tests/test_project_harness.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+    },
+    {
+      "path": "control-center-web/e2e/__screenshots__/product-scenes.e2e.ts/agent-preview-desktop-1280x820.png",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/e2e/__screenshots__/product-scenes.e2e.ts/agent-preview-desktop-1440x900.png",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/e2e/__screenshots__/product-scenes.e2e.ts/agent-preview-mobile-430x932.png",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/e2e/__screenshots__/product-scenes.e2e.ts/agent-preview-tablet-1024x768.png",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/e2e/__screenshots__/responsive.e2e.ts/control-center-shell-desktop-1280x820.png",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/e2e/__screenshots__/responsive.e2e.ts/control-center-shell-desktop-1440x900.png",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/e2e/__screenshots__/responsive.e2e.ts/control-center-shell-mobile-390x844.png",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/e2e/__screenshots__/responsive.e2e.ts/control-center-shell-mobile-430x932.png",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/e2e/__screenshots__/responsive.e2e.ts/control-center-shell-tablet-1024x768.png",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/e2e/collaboration-profile-control.e2e.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/e2e/helpers.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/e2e/navigation.e2e.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/e2e/observability.e2e.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/e2e/product-scenes.e2e.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/e2e/responsive.e2e.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/e2e/route-health.e2e.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/e2e/session-room-interactions.e2e.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/src/features/agent/agent.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/src/features/agent/preview-data.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/AgentTimeline.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/chat-rendering.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/src/features/project-field/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/src/features/project-field/project-field.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/src/features/project-field/project-field.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/RoomMemberBoundaryDialog.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/RoomTaskGraph.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/rooms-feature.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/rooms.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "scripts/check_agent_tool_matrix.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration, unified Provider-facing Tool surface, and refreshed contract coverage."
+    },
+    {
+      "path": "tests/test_agent_capability_policy.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration, unified Provider-facing Tool surface, and refreshed contract coverage."
+    },
+    {
+      "path": "tests/test_agent_service.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration, unified Provider-facing Tool surface, and refreshed contract coverage."
+    },
+    {
+      "path": "tests/test_agent_tool_matrix_script.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration, unified Provider-facing Tool surface, and refreshed contract coverage."
+    },
+    {
+      "path": "tests/test_agent_workspace.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration, unified Provider-facing Tool surface, and refreshed contract coverage."
+    },
+    {
+      "path": "tests/test_collaboration_profile_control.py",
+      "status": "modified",
+      "disposition": "delete_old_implementation",
+      "group": "room_kernel_cleanup",
+      "reason": "Remove active-Root pin and cancellation expectations from collaboration profiles; profiles now configure future Pi Sessions without reviving the retired Room Kernel."
+    },
+    {
+      "path": "tests/test_control_center_page_actions_http.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration, unified Provider-facing Tool surface, and refreshed contract coverage."
+    },
+    {
+      "path": "tests/test_pi_runtime.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration, unified Provider-facing Tool surface, and refreshed contract coverage."
+    },
+    {
+      "path": "tests/test_voice_input.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep voice feature contract tests aligned with the release UI's plain-language provider, credential, and hotword boundaries."
+    }
+  ]
+}

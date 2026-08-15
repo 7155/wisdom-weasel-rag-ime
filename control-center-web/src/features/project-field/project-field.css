@@ -514,6 +514,10 @@
   cursor: pointer;
 }
 
+.project-field__search-toggle {
+  display: none;
+}
+
 .project-field__attention-button {
   min-width: 62px;
   padding-inline: 9px;
@@ -2728,12 +2732,19 @@
     height: 42px;
     opacity: 0;
     pointer-events: none;
+    visibility: hidden;
   }
 
+  .project-field__search[data-open='true'],
   .project-field__search:focus-within {
     z-index: 50;
     opacity: 1;
     pointer-events: auto;
+    visibility: visible;
+  }
+
+  .project-field__header-actions .project-field__search-toggle {
+    display: inline-flex;
   }
 
   .project-field__search input,

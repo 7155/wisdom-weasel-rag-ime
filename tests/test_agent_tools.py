@@ -2043,7 +2043,7 @@ class ControlToolGatewayTests(unittest.TestCase):
 
         artifact = read("artifact://artifact:one")
         media = read("media://media_abcdefghijkl")
-        skill = read("skill://structured-handoff", limit=6)
+        skill = read("skill://orchestrate-session", limit=6)
         room = read("room://room:managed")
 
         self.assertEqual(artifact["resourceKind"], "artifact")

@@ -21,21 +21,30 @@ describe('PluginsFeature', () => {
     const user = userEvent.setup();
     renderPlugins();
 
-    expect(await screen.findByRole('heading', { name: '工具、技能与扩展', level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '技能与工具', level: 1 })).toBeInTheDocument();
     const list = await screen.findByRole('group', { name: '能力列表' });
+    const descriptions = Array.from(list.querySelectorAll<HTMLElement>('.plugins-list__copy > span'));
+    expect(descriptions).toHaveLength(4);
+    expect(descriptions.every((description) => {
+      const style = getComputedStyle(description);
+      return style.display === 'block'
+        && style.overflow !== 'hidden'
+        && style.webkitLineClamp !== '2';
+    })).toBe(true);
     expect(within(list).getByRole('button', { name: /记忆与工具书/ })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByRole('complementary', { name: '能力详情占位' })).toBeInTheDocument();
     expect(list.parentElement).toHaveAttribute('data-detail-open', 'false');
 
-    await user.click(within(list).getByRole('button', { name: /历史与配置/ }));
+    const detailTrigger = within(list).getByRole('button', { name: /历史与配置/ });
+    await user.click(detailTrigger);
     const detail = screen.getByRole('complementary', { name: '能力详情' });
     expect(list.parentElement).toHaveAttribute('data-detail-open', 'true');
     expect(detail).toHaveTextContent('受禁区保护');
     expect(detail).toHaveTextContent('native_approval');
     expect(detail).toHaveTextContent('恢复备份');
     expect(detail).toHaveTextContent('执行授权');
-    expect(detail).toHaveTextContent('当前披露');
-    expect(within(detail).getByRole('combobox', { name: '历史与配置的所有对话默认披露' })).toBeEnabled();
+    expect(detail).toHaveTextContent('伙伴可见范围');
+    expect(within(detail).getByRole('combobox', { name: '历史与配置的所有对话默认可见范围' })).toBeEnabled();
 
     expect(document.body).not.toHaveTextContent('configuration');
     expect(document.body).not.toHaveTextContent('restore_apply');
@@ -44,6 +53,11 @@ describe('PluginsFeature', () => {
     expect(document.body).not.toHaveTextContent('assistant');
     expect(document.body).not.toHaveTextContent('coordinator');
 
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('complementary', { name: '能力详情' })).not.toBeInTheDocument();
+    expect(detailTrigger).toHaveFocus();
+
+    await user.click(detailTrigger);
     await user.click(screen.getByRole('button', { name: '关闭能力详情' }));
     expect(screen.queryByRole('complementary', { name: '能力详情' })).not.toBeInTheDocument();
     expect(screen.getByRole('complementary', { name: '能力详情占位' })).toBeInTheDocument();
@@ -66,10 +80,10 @@ describe('PluginsFeature', () => {
       'agent.tools.list': capabilityCatalog([fixedAsk]),
     });
 
-    await user.click(await screen.findByRole('button', { name: /Ask/ }));
+    await user.click(await screen.findByRole('button', { name: /向你提问/ }));
     const detail = screen.getByRole('complementary', { name: '能力详情' });
-    expect(within(detail).getByRole('region', { name: '固定能力策略' })).toHaveTextContent('固定加载');
-    expect(within(detail).queryByRole('combobox', { name: 'Ask的所有对话默认披露' })).not.toBeInTheDocument();
+    expect(within(detail).getByRole('region', { name: '固定能力策略' })).toHaveTextContent('默认可用');
+    expect(within(detail).queryByRole('combobox', { name: 'Ask的所有对话默认可见范围' })).not.toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.pathId === 'agent.configuration.update')).toBe(false);
   });
 
@@ -104,7 +118,7 @@ describe('PluginsFeature', () => {
   it('filters capabilities by readable purpose, availability and kind', async () => {
     const user = userEvent.setup();
     renderPlugins();
-    await screen.findByRole('heading', { name: '工具、技能与扩展', level: 1 });
+    await screen.findByRole('heading', { name: '技能与工具', level: 1 });
 
     const search = await screen.findByRole('textbox', { name: '搜索' });
     await user.type(search, '语音');
@@ -152,7 +166,7 @@ describe('PluginsFeature', () => {
     const transport = renderPlugins();
     await user.click(await screen.findByRole('button', { name: /记忆与工具书/ }));
     const preference = screen.getByRole('combobox', {
-      name: '记忆与工具书的所有对话默认披露',
+      name: '记忆与工具书的所有对话默认可见范围',
     });
     await user.click(preference);
     await user.click(await screen.findByRole('option', { name: '不向伙伴披露' }));
@@ -166,7 +180,7 @@ describe('PluginsFeature', () => {
     ))).toBe(true));
     expect(screen.getByRole('complementary', { name: '能力详情' })).toHaveTextContent('不适用');
     expect(await screen.findByText('默认设置已保存')).toBeVisible();
-    expect(screen.getByText(/后台已确认保存所有对话默认/)).toBeVisible();
+    expect(screen.getByText(/所有对话默认已保存/)).toBeVisible();
   });
 
   it('loads and persists a project default from an Agent Session context', async () => {
@@ -186,10 +200,10 @@ describe('PluginsFeature', () => {
 
     await user.click(await screen.findByRole('button', { name: /记忆与工具书/ }));
     const projectPreference = screen.getByRole('combobox', {
-      name: '记忆与工具书的当前项目默认披露',
+      name: '记忆与工具书的当前项目默认可见范围',
     });
     expect(projectPreference).toHaveTextContent('向伙伴披露');
-    expect(screen.getByRole('region', { name: '能力披露优先级' })).toHaveTextContent('由当前授权工作区控制 · workspace-bb…bbbb');
+    expect(screen.getByRole('region', { name: '能力可见范围' })).toHaveTextContent('影响此项目的新对话');
     await user.click(projectPreference);
     await user.click(await screen.findByRole('option', { name: '不向伙伴披露' }));
 
@@ -201,7 +215,7 @@ describe('PluginsFeature', () => {
     expect(transport.requests.find((call) => call.request.pathId === 'agent.tools.list')?.request.query)
       .toEqual({ sessionId: 'session-project' });
     expect(await screen.findByText('默认设置已保存')).toBeVisible();
-    expect(screen.getByText(/后台已确认保存当前项目默认/)).toBeVisible();
+    expect(screen.getByText(/当前项目默认已保存/)).toBeVisible();
   });
 
   it('keeps the failed persistent change owner-scoped and retries the same preference', async () => {
@@ -216,7 +230,7 @@ describe('PluginsFeature', () => {
     });
 
     await user.click(await screen.findByRole('button', { name: /记忆与工具书/ }));
-    await user.click(screen.getByRole('combobox', { name: '记忆与工具书的所有对话默认披露' }));
+    await user.click(screen.getByRole('combobox', { name: '记忆与工具书的所有对话默认可见范围' }));
     await user.click(await screen.findByRole('option', { name: '不向伙伴披露' }));
     expect(await screen.findByText('默认设置没有保存')).toBeVisible();
     expect(screen.getAllByText('配置修订冲突').length).toBeGreaterThan(0);
@@ -248,9 +262,9 @@ describe('PluginsFeature', () => {
   it('shows governed versions and lifecycle policies, and can toggle a hook', async () => {
     const user = userEvent.setup();
     const transport = renderPlugins();
-    expect(screen.queryByText('Session Review')).not.toBeInTheDocument();
+    expect(screen.queryByText('对话复盘')).not.toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: '管理扩展与自动整理' }));
-    expect(await screen.findByText('Session Review')).toBeInTheDocument();
+    expect(await screen.findByText('对话复盘')).toBeInTheDocument();
     expect(screen.getByText('v1.1.0 · 2 个版本')).toBeInTheDocument();
     expect(screen.getByText('为下一轮准备记忆建议')).toBeInTheDocument();
     await user.click(screen.getByRole('switch', { name: '任务完成：已启用' }));
@@ -282,7 +296,7 @@ describe('PluginsFeature', () => {
     const user = userEvent.setup();
     const transport = renderPlugins();
     await user.click(await screen.findByRole('button', { name: '管理扩展与自动整理' }));
-    await screen.findByText('Session Review');
+    await screen.findByText('对话复盘');
     const tracked: ControlPathId[] = [
       'agent.tools.list',
       'agent.extensions.list',
@@ -343,8 +357,8 @@ describe('PluginsFeature', () => {
     });
 
     await user.click(await screen.findByRole('button', { name: '管理扩展与自动整理' }));
-    await user.click(await screen.findByRole('button', { name: /Session Review/ }));
-    expect(screen.getByText('v1.1.0 · 需要的权限：session.read · 当前已启用 · 校验标记 0123456789ab…cdef')).toBeVisible();
+    await user.click(await screen.findByRole('button', { name: /对话复盘/ }));
+    expect(screen.getByText('v1.1.0 · 需要的权限：读取对话内容 · 当前已启用')).toBeVisible();
   });
   it('shows installed display names and disables rollback after the visible version transition', async () => {
     const user = userEvent.setup();
@@ -352,19 +366,15 @@ describe('PluginsFeature', () => {
     renderPluginsWithTransport(transport);
 
     await user.click(await screen.findByRole('button', { name: '管理扩展与自动整理' }));
-    await screen.findByText('Timeline Inspector');
+    await screen.findByText('时间线检查');
 
     await user.click(screen.getByRole('button', { name: '停用' }));
-    expect(await screen.findByText('停用插件：Timeline Inspector')).toBeVisible();
-    expect(screen.queryByText('停用插件：timeline-inspector')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'agent.extensions.apply')).toHaveLength(1));
 
     const rollback = screen.getByRole('button', { name: '恢复上一版本' });
     expect(rollback).toBeEnabled();
     await user.click(rollback);
-    expect(await screen.findByText('回滚插件：Timeline Inspector')).toBeVisible();
-    expect(screen.getByText('v0.9.0 · 无额外权限')).toBeVisible();
-    await user.click(screen.getByRole('button', { name: '确认更改' }));
+    await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'agent.extensions.apply')).toHaveLength(2));
 
     expect(await screen.findByText('v0.9.0')).toBeVisible();
     expect(screen.getByRole('button', { name: '恢复上一版本' })).toBeDisabled();

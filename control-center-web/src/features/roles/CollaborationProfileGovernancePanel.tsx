@@ -1,7 +1,7 @@
 import { FileDiff, Fingerprint, LockKeyhole, ReceiptText, RotateCcw, ShieldCheck, ShieldX } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useControlTransport } from '@/app/control-transport';
-import { Button } from '@/components/primitives';
+import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/primitives';
 import type { CollaborationProfileCommandReceiptV1 } from '@/contracts/generated/collaboration-profile-command-receipt.v1';
 import type { CollaborationProfileCommandV1 } from '@/contracts/generated/collaboration-profile-command.v1';
 import type { CollaborationProfileProjectionV1 } from '@/contracts/generated/collaboration-profile-projection.v1';
@@ -18,10 +18,11 @@ export function CollaborationProfileGovernancePanel({ profileId }: { profileId: 
   const [projection, setProjection] = useState<CollaborationProfileProjectionV1 | null>(null);
   const [gate, setGate] = useState<CollaborationProfileControlGate | null>(null);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'missing' | 'denied' | 'error'>('loading');
-  const [notice, setNotice] = useState('正在读取 canonical Profile projection');
+  const [notice, setNotice] = useState('正在读取角色书的当前设置');
   const [bundleText, setBundleText] = useState('');
   const [candidate, setCandidate] = useState<{ candidateId: string; contentHash: string; stage: string; signerId: string } | null>(null);
   const [activationScope, setActivationScope] = useState<'immediate' | 'new_roots_only'>('new_roots_only');
+  const [pendingConfirmationAction, setPendingConfirmationAction] = useState<Action | null>(null);
   const [operation, setOperation] = useState<{ action: Action | null; status: OperationStatus; message: string; receipt: CollaborationProfileCommandReceiptV1 | null }>({ action: null, status: 'idle', message: '', receipt: null });
   const pendingRef = useRef(false);
 
@@ -46,12 +47,12 @@ export function CollaborationProfileGovernancePanel({ profileId }: { profileId: 
       setGate(verifiedGate);
       setProjection(next);
       setLoadState('ready');
-      setNotice(verifiedGate.commandEnabled ? 'canonical projection 已同步' : verifiedGate.reason);
+      setNotice(verifiedGate.commandEnabled ? '角色书当前设置已同步' : verifiedGate.reason);
     } catch (error) {
       const status = errorStatus(error);
       setProjection(null);
       setLoadState(status === 404 ? 'missing' : status === 401 || status === 403 ? 'denied' : 'error');
-      setNotice(status === 404 ? '该角色书尚未安装；普通 Agent 和无 Room Agent 不受影响。' : publicError(error));
+      setNotice(status === 404 ? '这份角色书尚未安装；普通伙伴和未使用角色书的协作不受影响。' : publicError(error));
     }
   }, [profileId, transport]);
 
@@ -75,14 +76,12 @@ export function CollaborationProfileGovernancePanel({ profileId }: { profileId: 
         if (!isRecord(parsed)) throw new TypeError('bundle must be an object');
         parsedBundle = parsed;
       } catch (error) {
-        setOperation({ action, status: 'rejected', message: `Bundle JSON 无效：${publicError(error)}`, receipt: null });
+        setOperation({ action, status: 'rejected', message: `角色书配置格式无效：${publicError(error)}`, receipt: null });
         return;
       }
     }
-    const sensitive = action === 'activate' || action === 'rollback' || action === 'revoke';
-    if (sensitive && !window.confirm(`${actionLabel(action)}会改变角色书指针或撤销状态。确认以管理员身份继续？`)) return;
     pendingRef.current = true;
-    setOperation({ action, status: 'pending', message: '命令已提交，等待类型化回执', receipt: null });
+    setOperation({ action, status: 'pending', message: '操作已提交，正在等待结果', receipt: null });
     try {
       const command = buildCommand({
         action, profileId, candidate, inspection, activationScope,
@@ -117,56 +116,81 @@ export function CollaborationProfileGovernancePanel({ profileId }: { profileId: 
     }
   }
 
-  return <section className="profile-governance" aria-label="角色书正式控制面" data-load-state={loadState}>
-    <header><span><LockKeyhole size={14} /><strong>正式控制面</strong></span><small>{projection ? `guard epoch ${projection.guardEpoch}` : loadStateLabel(loadState)}</small></header>
-    <p className="profile-governance__notice" role={loadState === 'denied' || loadState === 'error' ? 'alert' : 'status'}>{notice}</p>
-    {projection?.normalAgentFallback ? <p className="profile-governance__fallback">普通 Agent 和无 Room Agent 不受影响；只有显式绑定该 Profile 的新 Root 才读取活动指针。</p> : null}
-    {projection ? <>
+  const requestExecution = (action: Action) => {
+    if (action === 'revoke') setPendingConfirmationAction(action);
+    else void execute(action);
+  };
+
+  return <section className="profile-governance" aria-label="高级：角色书管理" data-load-state={loadState}>
+    <details className="profile-governance__details">
+      <summary><span><LockKeyhole size={14} /><strong>高级：角色书管理</strong></span><small>{projection ? '已同步' : loadStateLabel(loadState)}</small></summary>
+      <div className="profile-governance__content">
+        <p className="profile-governance__notice" role={loadState === 'denied' || loadState === 'error' ? 'alert' : 'status'}>{notice}</p>
+        {projection?.normalAgentFallback ? <p className="profile-governance__fallback">普通伙伴和未绑定角色书的协作不会受影响；只有明确选择这份角色书的新对话才会使用它。</p> : null}
+        {projection ? <>
       <dl>
-        <div><dt><Fingerprint size={14} />Profile route</dt><dd title={projection.routeHash}>{shortHash(projection.routeHash)}</dd></div>
-        <div><dt>Pointer revision</dt><dd>r{inspection.pointerRevision}</dd></div>
-        <div><dt><Fingerprint size={14} />Active hash</dt><dd title={inspection.active?.contentHash}>{shortHash(inspection.active?.contentHash || '未启用')}</dd></div>
-        <div><dt><ShieldCheck size={14} />Signature</dt><dd>{candidate?.signerId ? `${candidate.signerId} · ${candidate.stage}` : manifest ? `${text(manifest.trustTier)} · ${validateObserved ? 'validate 回执已观察' : '签名回执未上报'}` : '未上报'}</dd></div>
-        <div><dt><ReceiptText size={14} />Compile receipt</dt><dd>{inspection.active?.compileReceiptId || text(compile?.receiptId) || '未上报'}</dd></div>
-        <div><dt>Binding revision</dt><dd>{inspection.active?.bindingRevision || text(compile?.bindingRevision) || '未上报'}</dd></div>
+        <div><dt><Fingerprint size={14} />设置校验标识</dt><dd title={projection.routeHash}>{shortHash(projection.routeHash)}</dd></div>
+        <div><dt>当前版本</dt><dd>第 {inspection.pointerRevision} 版</dd></div>
+        <div><dt><Fingerprint size={14} />启用内容标识</dt><dd title={inspection.active?.contentHash}>{shortHash(inspection.active?.contentHash || '未启用')}</dd></div>
+        <div><dt><ShieldCheck size={14} />签名状态</dt><dd>{candidate?.signerId ? `${candidate.signerId} · ${candidateStageLabel(candidate.stage)}` : manifest ? `${trustTierLabel(text(manifest.trustTier))} · ${validateObserved ? '签名已验证' : '等待签名验证'}` : '未上报'}</dd></div>
+        <div><dt><ReceiptText size={14} />构建记录</dt><dd>{inspection.active?.compileReceiptId || text(compile?.receiptId) || '未上报'}</dd></div>
+        <div><dt>关联版本</dt><dd>{inspection.active?.bindingRevision || text(compile?.bindingRevision) || '未上报'}</dd></div>
       </dl>
       <section className="profile-governance__manifest" aria-label="角色书声明">
         <header><strong>{text(manifest?.displayName) || profileId}</strong><small>{text(manifest?.version) ? `v${text(manifest?.version)}` : '没有活动版本'}</small></header>
-        <p>{text(manifest?.summary) || '当前 projection 没有活动 manifest。'}</p>
-        <pre tabIndex={0} aria-label="角色书提示词只读文本">{stringArray(manifest?.promptGuidance).join('\n') || '未上报提示词指导'}</pre>
+        <p>{text(manifest?.summary) || '当前没有启用的角色书说明。'}</p>
+        <pre tabIndex={0} aria-label="角色书说明（高级只读）">{stringArray(manifest?.promptGuidance).join('\n') || '没有可查看的角色书说明'}</pre>
       </section>
       <ol aria-label="角色书安全流水线">{(['inspect', 'validate', 'compile', 'dry_run', 'stage', 'activate'] as Action[]).map((action) => <li key={action} data-state={pipelineState(action, receipts, candidate)}>{actionLabel(action)}</li>)}</ol>
       <section className="profile-governance__diff" aria-label="角色书能力差异">
-        <header><span><FileDiff size={14} /><strong>能力差异</strong></span><small>compile receipt 投影</small></header>
+        <header><span><FileDiff size={14} /><strong>能力差异</strong></span><small>构建记录摘要</small></header>
         <p><b>基线</b><span>{diff.baseline.join(' · ') || '未上报'}</span></p>
         <p><b>有效</b><span>{diff.effective.join(' · ') || '未上报'}</span></p>
         <p data-change="removed"><b>收窄</b><span>{diff.removed.join(' · ') || '无变化'}</span></p>
         <p data-change="blocked"><b>拒绝</b><span>{diff.rejected.join(' · ') || '无'}</span></p>
       </section>
       <section className="profile-governance__pointer" aria-label="角色书指针控制">
-        <header><strong>指针控制</strong><small>new-roots-only 默认保护活动 Root</small></header>
-        <label><input type="checkbox" checked={activationScope === 'new_roots_only'} onChange={(event) => setActivationScope(event.target.checked ? 'new_roots_only' : 'immediate')} />仅新 Root 使用</label>
-        <p>{activeRootIds.length ? `活动 Root blocker：${activeRootIds.join(' · ')}` : '当前 projection 未上报活动 Root blocker。immediate 仍由后端最终裁决。'}</p>
+        <header><strong>生效范围</strong><small>默认只影响新开始的对话，保护正在进行的任务</small></header>
+        <label><input type="checkbox" checked={activationScope === 'new_roots_only'} onChange={(event) => setActivationScope(event.target.checked ? 'new_roots_only' : 'immediate')} />仅用于新开始的对话</label>
+        <p>{activeRootIds.length ? `正在进行的任务：${activeRootIds.join(' · ')}` : '当前没有正在进行的任务报告；立即生效仍会由系统最后核对。'}</p>
       </section>
       <section className="profile-governance__candidate" aria-label="角色书候选包">
-        <label htmlFor={`profile-bundle-${profileId}`}>声明式 Profile bundle JSON</label>
+        <label htmlFor={`profile-bundle-${profileId}`}>角色书配置（高级 JSON）</label>
         <textarea id={`profile-bundle-${profileId}`} value={bundleText} onChange={(event) => setBundleText(event.target.value)} disabled={!writeEnabled || operation.status === 'pending'} rows={5} />
       </section>
       <div className="profile-governance__actions" aria-label="角色书流水线命令">
-        {(['inspect', 'validate', 'compile', 'dry_run', 'stage'] as Action[]).map((action) => <Button key={action} variant="quiet" size="small" disabled={!writeEnabled || operation.status === 'pending' || !actionReady(action, candidate, bundleText)} onClick={() => void execute(action)}>{actionLabel(action)}</Button>)}
-        <Button variant="primary" size="small" disabled={!writeEnabled || operation.status === 'pending' || !candidate || candidate.stage !== 'staged'} onClick={() => void execute('activate')}>启用</Button>
-        <Button variant="quiet" size="small" leadingIcon={<RotateCcw size={12} />} disabled={!writeEnabled || operation.status === 'pending' || !inspection.active} onClick={() => void execute('rollback')}>回滚</Button>
-        <Button variant="quiet" size="small" leadingIcon={<ShieldX size={12} />} disabled={!writeEnabled || operation.status === 'pending' || !inspection.active} onClick={() => void execute('revoke')}>撤销</Button>
+        {(['inspect', 'validate', 'compile', 'dry_run', 'stage'] as Action[]).map((action) => <Button key={action} variant="quiet" size="small" disabled={!writeEnabled || operation.status === 'pending' || !actionReady(action, candidate, bundleText)} onClick={() => requestExecution(action)}>{actionLabel(action)}</Button>)}
+        <Button variant="primary" size="small" disabled={!writeEnabled || operation.status === 'pending' || !candidate || candidate.stage !== 'staged'} onClick={() => requestExecution('activate')}>启用</Button>
+        <Button variant="quiet" size="small" leadingIcon={<RotateCcw size={12} />} disabled={!writeEnabled || operation.status === 'pending' || !inspection.active} onClick={() => requestExecution('rollback')}>恢复上个版本</Button>
+        <Button variant="danger" size="small" leadingIcon={<ShieldX size={12} />} disabled={!writeEnabled || operation.status === 'pending' || !inspection.active} onClick={() => requestExecution('revoke')}>撤销…</Button>
       </div>
       <OperationReceipt operation={operation} />
-      <section className="profile-governance__receipts" aria-label="角色书最近回执"><header><strong>最近类型化回执</strong><small>{receipts.length} 项</small></header>{receipts.length ? receipts.map((receipt) => <p key={receipt.receiptId}><span><b>{actionLabel(receipt.action)}</b><small>{receipt.receiptId}</small></span><span><b data-status="applied">applied</b><small>epoch {receipt.guardEpoch} · {shortHash(receipt.commandHash)}</small></span></p>) : <p>暂无回执。</p>}</section>
-    </> : loadState === 'missing' ? <p className="profile-governance__fallback">普通 Agent、无 Profile Agent 和无 Room Agent 继续使用原有运行路径，不会被角色书控制面阻断。</p> : null}
+      <section className="profile-governance__receipts" aria-label="角色书最近操作记录"><header><strong>最近操作记录</strong><small>{receipts.length} 项</small></header>{receipts.length ? receipts.map((receipt) => <p key={`${receipt.receiptId}:${receipt.action}:${receipt.commandId}`}><span><b>{actionLabel(receipt.action)}</b><small>{receipt.receiptId}</small></span><span><b data-status="applied">已应用</b><small>安全版本 {receipt.guardEpoch} · {shortHash(receipt.commandHash)}</small></span></p>) : <p>暂无操作记录。</p>}</section>
+        </> : loadState === 'missing' ? <p className="profile-governance__fallback">普通伙伴和未绑定角色书的协作会继续按原有方式运行。</p> : null}
+      </div>
+    </details>
+    <Dialog onOpenChange={(open) => { if (!open) setPendingConfirmationAction(null); }} open={Boolean(pendingConfirmationAction)}>
+      <DialogContent className="profile-governance__confirmation">
+        <DialogHeader>
+          <DialogTitle>确认{pendingConfirmationAction ? actionLabel(pendingConfirmationAction) : '操作'}</DialogTitle>
+          <DialogDescription>{confirmationDescription(pendingConfirmationAction)}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button onClick={() => setPendingConfirmationAction(null)} variant="quiet">取消</Button>
+          <Button onClick={() => {
+            const action = pendingConfirmationAction;
+            setPendingConfirmationAction(null);
+            if (action) void execute(action);
+          }} variant="danger">确认{pendingConfirmationAction ? actionLabel(pendingConfirmationAction) : '操作'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </section>;
 }
 
 function OperationReceipt({ operation }: { operation: { action: Action | null; status: OperationStatus; message: string; receipt: CollaborationProfileCommandReceiptV1 | null } }) {
   if (operation.status === 'idle') return null;
-  return <p className="profile-governance__operation" role={operation.status === 'rejected' || operation.status === 'unknown' ? 'alert' : 'status'} data-status={operation.status}><strong>{operation.action ? actionLabel(operation.action) : '命令'} · {operation.status}</strong><span>{operation.message}</span>{operation.receipt ? <small>{operation.receipt.receiptId} · epoch {operation.receipt.guardEpoch}</small> : null}</p>;
+  return <p className="profile-governance__operation" role={operation.status === 'rejected' || operation.status === 'unknown' ? 'alert' : 'status'} data-status={operation.status}><strong>{operation.action ? actionLabel(operation.action) : '操作'} · {operationStatusLabel(operation.status)}</strong><span>{operation.message}</span>{operation.receipt ? <small>{operation.receipt.receiptId} · 安全版本 {operation.receipt.guardEpoch}</small> : null}</p>;
 }
 
 function buildCommand(input: { action: Action; profileId: string; candidate: { candidateId: string; contentHash: string; stage: string } | null; inspection: Inspection; activationScope: 'immediate' | 'new_roots_only'; bundle?: Record<string, unknown> }): CollaborationProfileCommandV1 {
@@ -231,11 +255,19 @@ function pipelineState(action: Action, receipts: CollaborationProfileCommandRece
 }
 function actionReady(action: Action, candidate: { stage: string } | null, bundleText: string) { if (action === 'inspect') return Boolean(bundleText.trim()); const expected = ({ validate: 'inspected', compile: 'validated', dry_run: 'compiled', stage: 'dry_run' } as Record<string, string>)[action]; return candidate?.stage === expected; }
 function candidateStageIndex(value?: string) { return ['inspected', 'validated', 'compiled', 'dry_run', 'staged', 'activate'].indexOf(value || ''); }
-function actionLabel(value: Action) { return ({ inspect: '检查', validate: '校验签名', compile: '编译', dry_run: '试运行', stage: '暂存', activate: '启用', rollback: '回滚', revoke: '撤销' } as const)[value]; }
-function receiptMessage(receipt: CollaborationProfileCommandReceiptV1) { const result = isRecord(receipt.result) ? receipt.result : {}; return `applied · pointer r${integer(result.pointerRevision)} · ${text(result.activationScope) || 'pipeline'}`; }
-function failureMessage(error: unknown) { const message = publicError(error); if (/pointer revision changed/i.test(message)) return `stale revision：${message}`; if (/hash|signature/i.test(message)) return `hash/signature mismatch：${message}`; if (/active Root pins/i.test(message)) return `active Root blocker：${message}`; return message; }
+function actionLabel(value: Action) { return ({ inspect: '检查', validate: '验证签名', compile: '准备内容', dry_run: '试运行', stage: '待启用', activate: '启用', rollback: '恢复上个版本', revoke: '撤销' } as const)[value]; }
+function confirmationDescription(action: Action | null) {
+  if (action === 'revoke') return '撤销会永久停用当前版本，正在使用它的协作也会进入安全退出流程；这个版本不能再次启用。';
+  return '这项操作无法直接恢复。确认后才会继续。';
+}
+function receiptMessage(receipt: CollaborationProfileCommandReceiptV1) { const result = isRecord(receipt.result) ? receipt.result : {}; return `已应用 · 当前为第 ${integer(result.pointerRevision)} 版 · ${activationScopeLabel(text(result.activationScope))}`; }
+function failureMessage(error: unknown) { const message = error instanceof Error ? error.message : ''; if (/pointer revision changed/i.test(message)) return '当前版本已经变化，请刷新后重试。'; if (/hash|signature/i.test(message)) return '内容或签名校验未通过，操作没有执行。'; if (/active Root pins/i.test(message)) return '仍有进行中的任务使用当前版本，请仅对新对话生效。'; return publicError(error); }
 function loadStateLabel(value: string) { return ({ loading: '读取中', ready: '已同步', missing: '未安装', denied: '无权限', error: '读取失败' } as Record<string, string>)[value] ?? value; }
-function publicError(error: unknown) { return error instanceof Error && error.message ? error.message : 'Profile command result is unknown'; }
+function publicError(error: unknown) { const message = error instanceof Error ? error.message : ''; return message && !/[A-Za-z_]{4,}|sha256|schema|pointer|receipt|profile/i.test(message) ? message : '操作结果暂时无法确认，请刷新后重试。'; }
+function operationStatusLabel(value: OperationStatus) { return ({ idle: '未开始', pending: '处理中', applied: '已应用', rejected: '未执行', unknown: '结果待确认' } as const)[value]; }
+function candidateStageLabel(value: string) { return ({ inspected: '已检查', validated: '签名已验证', compiled: '内容已准备', dry_run: '试运行通过', staged: '等待启用', activate: '已启用' } as Record<string, string>)[value] ?? '处理中'; }
+function trustTierLabel(value: string) { return ({ trusted: '可信签名', verified: '签名已验证', local: '本机来源' } as Record<string, string>)[value] ?? '签名来源已记录'; }
+function activationScopeLabel(value: string) { return value === 'new_roots_only' ? '仅用于新对话' : value === 'immediate' ? '立即生效' : '已完成安全流程'; }
 function errorStatus(error: unknown) { return isRecord(error) && typeof error.status === 'number' ? error.status : 0; }
 function shortHash(value: string) { return value.length > 24 ? `${value.slice(0, 15)}…${value.slice(-8)}` : value; }
 function text(value: unknown) { return typeof value === 'string' ? value : ''; }

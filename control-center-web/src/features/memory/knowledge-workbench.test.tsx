@@ -23,6 +23,7 @@ describe('Knowledge write boundaries', () => {
     const transport = renderKnowledge();
     expect(await screen.findByRole('region', { name: '知识来源可用状态' })).toBeInTheDocument();
     expect(screen.getByText('回答生成', { selector: 'strong' })).toBeInTheDocument();
+    expect(screen.getByText('根据找到的依据组织回答与长文')).toBeInTheDocument();
     expect(screen.getAllByText('未连接').length).toBeGreaterThan(0);
     expect(screen.queryByText('explicit_active_rag_knowledge_provider')).not.toBeInTheDocument();
     expect(screen.queryByText('deepseek-v4')).not.toBeInTheDocument();
@@ -32,10 +33,8 @@ describe('Knowledge write boundaries', () => {
     await user.type(screen.getByPlaceholderText('输入一个明确的知识任务'), '检查知识来源');
     const workflow = screen.getByText('启动知识任务', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '查看任务内容' }));
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认任务内容' }));
-    await user.click(within(workflow as HTMLElement).getByRole('checkbox'));
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '开始整理' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '启动知识任务' }));
+    expect(within(workflow as HTMLElement).queryByRole('checkbox')).not.toBeInTheDocument();
 
     const sourceDistribution = await screen.findByRole('group', { name: '证据来源分布' });
     await user.click(within(sourceDistribution).getByRole('button', { name: /远程笔记1/ }));
@@ -56,11 +55,7 @@ describe('Knowledge write boundaries', () => {
 
     const workflow = screen.getByText('启动知识任务', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '查看任务内容' }));
-    expect(within(workflow as HTMLElement).getByText(/梳理 Agent ControlTransport/)).toBeInTheDocument();
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认任务内容' }));
-    await user.click(within(workflow as HTMLElement).getByRole('checkbox'));
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '开始整理' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '启动知识任务' }));
 
     expect(await within(workflow as HTMLElement).findByText('知识任务正在处理')).toBeInTheDocument();
     expect(within(workflow as HTMLElement).queryByText('knowledge:test-session')).not.toBeInTheDocument();
@@ -85,10 +80,7 @@ describe('Knowledge write boundaries', () => {
     await user.type(await screen.findByPlaceholderText('输入一个明确的知识任务'), '保留这项知识任务');
     const workflow = screen.getByText('启动知识任务', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '查看任务内容' }));
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认任务内容' }));
-    await user.click(within(workflow as HTMLElement).getByRole('checkbox'));
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '开始整理' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '启动知识任务' }));
 
     expect(await screen.findByText('暂时无法更新任务')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('输入一个明确的知识任务')).toHaveValue('保留这项知识任务');

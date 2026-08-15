@@ -13,10 +13,167 @@
     <link rel="icon" type="image/png" sizes="64x64" href="./app-icon-64.png" />
     <link rel="apple-touch-icon" sizes="192x192" href="./app-icon-192.png" />
     <link rel="manifest" href="./manifest.webmanifest" />
-    <title>澄 · Agent 记忆与协作</title>
+    <title>澄 · 个人助手工作台</title>
+    <style>
+      .app-boot {
+        display: grid;
+        min-height: 100dvh;
+        place-items: center;
+        background: #f6f7f8;
+        color: #22272b;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+      }
+
+      .app-boot__status {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 18px;
+        border: 1px solid #d7dbde;
+        border-radius: 5px;
+        background: #fbfcfc;
+      }
+
+      .app-boot__indicator {
+        width: 18px;
+        height: 18px;
+        flex: none;
+        border: 2px solid #c8cfce;
+        border-top-color: #2e7d72;
+        border-radius: 50%;
+        animation: app-boot-spin 800ms linear infinite;
+      }
+
+      .app-boot__copy {
+        display: grid;
+        gap: 2px;
+      }
+
+      .app-boot__copy strong {
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      .app-boot__copy span {
+        color: #5d666c;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .app-boot--failed {
+        padding: 24px;
+      }
+
+      .app-boot__recovery {
+        display: grid;
+        width: min(480px, 100%);
+        gap: 20px;
+        padding: 24px;
+        border: 1px solid #d7dbde;
+        border-radius: 8px;
+        background: #fbfcfc;
+        box-shadow: 0 18px 48px rgb(32 42 48 / 8%);
+      }
+
+      .app-boot__recovery-copy {
+        display: grid;
+        gap: 6px;
+      }
+
+      .app-boot__recovery-copy > span {
+        color: #a25e16;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: .04em;
+      }
+
+      .app-boot__recovery h1,
+      .app-boot__recovery p {
+        margin: 0;
+      }
+
+      .app-boot__recovery h1 {
+        font-size: 20px;
+        line-height: 1.35;
+      }
+
+      .app-boot__recovery p {
+        max-width: 42ch;
+        color: #5d666c;
+        font-size: 14px;
+        line-height: 1.65;
+      }
+
+      .app-boot__retry {
+        min-width: 104px;
+        min-height: 44px;
+        justify-self: start;
+        padding: 8px 16px;
+        border: 1px solid #2e7d72;
+        border-radius: 6px;
+        background: #2e7d72;
+        color: #fff;
+        font: inherit;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .app-boot__retry:focus-visible {
+        outline: 3px solid rgb(46 125 114 / 28%);
+        outline-offset: 3px;
+      }
+
+      @keyframes app-boot-spin {
+        to { transform: rotate(360deg); }
+      }
+
+      @media (prefers-color-scheme: dark) {
+        .app-boot {
+          background: #171a1d;
+          color: #eef1f2;
+        }
+
+        .app-boot__status {
+          border-color: #343a3f;
+          background: #1e2225;
+        }
+
+        .app-boot__indicator {
+          border-color: #3c4847;
+          border-top-color: #6fc6b7;
+        }
+
+        .app-boot__copy span { color: #aeb7bc; }
+
+        .app-boot__recovery {
+          border-color: #343a3f;
+          background: #1e2225;
+          box-shadow: 0 18px 48px rgb(0 0 0 / 28%);
+        }
+
+        .app-boot__recovery-copy > span { color: #eab56e; }
+        .app-boot__recovery p { color: #aeb7bc; }
+        .app-boot__retry { border-color: #6fc6b7; background: #6fc6b7; color: #10201e; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .app-boot__indicator { animation: none; }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="app-boot" role="status" aria-live="polite">
+        <div class="app-boot__status">
+          <span class="app-boot__indicator" aria-hidden="true"></span>
+          <span class="app-boot__copy">
+            <strong>正在准备工作台</strong>
+            <span>正在载入界面</span>
+          </span>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

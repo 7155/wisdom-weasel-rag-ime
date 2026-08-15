@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { App } from '@/app/App';
@@ -8,13 +8,14 @@ import { TooltipProvider } from '@/components/primitives';
 import { MotionProvider } from '@/design/motion';
 import { ThemeProvider } from '@/design/themes';
 import { AppShell } from './AppShell';
+import { MobileBottomNavigation } from './Navigation';
 
 describe('control center shell', () => {
   afterEach(cleanup);
 
-  beforeEach(async () => {
+  beforeEach(() => {
     window.localStorage.clear();
-    await router.navigate('/agent');
+    window.location.hash = '#/';
     document.documentElement.dataset.controlTransport = 'mock';
   });
 
@@ -31,7 +32,7 @@ describe('control center shell', () => {
 
     await user.click(screen.getAllByRole('link', { name: '任务' })[0]);
     await waitFor(() => expect(document.querySelector('main[data-route-id="planning"]')).toBeInTheDocument());
-    expect(screen.getAllByRole('heading', { name: '任务' })).not.toHaveLength(0);
+    expect(screen.getAllByRole('heading', { name: '任务' })).toHaveLength(1);
     expect(document.activeElement).toHaveAttribute('id', 'workspace-main');
 
     act(() => publishConnectionState({ state: 'connected', label: 'Sidecar 已连接' }));
@@ -53,7 +54,29 @@ describe('control center shell', () => {
       { timeout: 10_000 },
     );
     expect(document.querySelector('.shell-topbar__title h1')).toHaveTextContent('对话');
+    expect(document.title).toBe('对话 · 澄');
+    expect(document.querySelector('#workspace-main')).toHaveAccessibleName('对话主内容');
     expect(document.querySelector('.shell-sidebar [data-route="agent"]')).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('uses the conversation shell while the root or an unknown hash redirects', async () => {
+    window.location.hash = '#/not-a-route';
+
+    render(
+      <ThemeProvider>
+        <MotionProvider>
+          <TooltipProvider>
+            <GlobalFeedbackProvider>
+              <AppShell><main aria-label="测试页面" /></AppShell>
+            </GlobalFeedbackProvider>
+          </TooltipProvider>
+        </MotionProvider>
+      </ThemeProvider>,
+    );
+
+    expect(document.querySelector('.control-shell')).not.toHaveAttribute('data-immersive');
+    expect(document.querySelector('.shell-topbar__title h1')).toHaveTextContent('对话');
+    expect(document.querySelector('#workspace-main')).toHaveAccessibleName('对话主内容');
   });
 
   it('persists theme, motion, and sidebar preferences', async () => {
@@ -103,6 +126,7 @@ describe('control center shell', () => {
     const skipLink = screen.getByRole('link', { name: '跳到主工作区' });
     expect(skipLink).toHaveAttribute('href', '#workspace-main');
     expect(document.querySelector('#workspace-main')).toHaveAttribute('tabindex', '-1');
+    expect(document.querySelector('#workspace-main')).toHaveAttribute('role', 'region');
 
     await user.click(skipLink);
 
@@ -110,14 +134,18 @@ describe('control center shell', () => {
     expect(document.activeElement).toHaveAttribute('id', 'workspace-main');
   });
 
-  it('gives the Project Field an immersive shell without duplicate navigation chrome', async () => {
-    await router.navigate('/project-field');
-    render(<App />);
+  it('groups mobile navigation and closes it after a route choice', async () => {
+    const user = userEvent.setup();
+    render(<MobileBottomNavigation activeRouteId="overview" />);
+    fireEvent.click(screen.getByLabelText('打开全部导航，当前页面：概览'));
 
-    await waitFor(() => expect(document.querySelector('main.project-field')).toBeInTheDocument());
-    expect(document.querySelector('.control-shell')).toHaveAttribute('data-immersive', 'true');
-    expect(document.querySelector('.shell-sidebar')).not.toBeInTheDocument();
-    expect(document.querySelector('.shell-topbar')).not.toBeInTheDocument();
-    expect(document.querySelector('.shell-mobile-nav')).not.toBeInTheDocument();
+    const dialog = screen.getByRole('dialog', { name: '全部功能' });
+    expect(dialog).toHaveTextContent('工作');
+    expect(dialog).toHaveTextContent('能力');
+    expect(dialog).toHaveTextContent('系统');
+    expect(screen.getByRole('link', { name: '概览', current: 'page' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('link', { name: '任务' }));
+    expect(screen.queryByRole('dialog', { name: '全部功能' })).not.toBeInTheDocument();
   });
 });

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Facilitate Room"
+  short_description: "Coordinate Partner Sessions into one integrated Room result"
+  default_prompt: "Use $facilitate-room to coordinate bounded Partner Sessions, shared work documents, optional review, and one final result."

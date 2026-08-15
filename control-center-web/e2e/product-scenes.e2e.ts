@@ -24,6 +24,9 @@ test('production Agent scene preserves Turn aggregation and composer responsiven
   await expect(page.locator('.agent-sticker-block')).toBeAttached();
   await expect(page.locator('.agent-citation')).toBeAttached();
   await expect(page.locator('.agent-file-block')).toBeAttached();
+  const reasoningSummary = page.getByRole('button', { name: /查看 Agent 思考摘要/ });
+  await expect(reasoningSummary).toBeVisible();
+  await expect(reasoningSummary).toContainText('核对迁移计划与当前前端边界');
   await page.getByRole('button', { name: '展开 room-runtime-handoff.md' }).click();
   const filePreview = page.getByRole('region', { name: 'room-runtime-handoff.md 内联预览' });
   await expect(filePreview.getByRole('heading', { name: 'Room Runtime 交接' })).toBeVisible();
@@ -35,7 +38,6 @@ test('production Agent scene preserves Turn aggregation and composer responsiven
   await expect(activity).toHaveCount(1);
   await activity.locator(':scope > summary').click();
   await expect(activity).toHaveAttribute('open', '');
-  await expect(page.getByRole('button', { name: '查看 Agent 思考摘要：核对迁移计划与当前前端边界' })).toBeVisible();
   await expect(activity.locator('.agent-activity-row > summary strong')).toHaveText([
     '检索文档',
     '读取工具书',
@@ -110,6 +112,10 @@ test('production Room and Role scenes retain group and persona boundaries', asyn
     await expect(page.getByRole('radio', { name: '对话' })).toBeChecked();
     await page.getByRole('radio', { name: '任务' }).click();
     await expect(roomsScene.locator('.room-execution-workspace')).toBeVisible();
+    const taskGraph = roomsScene.getByRole('region', { name: '任务图' });
+    await expect(taskGraph).toBeVisible();
+    await expect(taskGraph).toContainText('共同目标');
+    await expect(taskGraph).toContainText('结果');
     await page.getByRole('radio', { name: '伙伴' }).click();
     await expect(roomsScene.locator('.room-session-workspace')).toBeVisible();
     await roomsScene.getByRole('button', { name: '查看能做什么' }).first().click();
@@ -119,7 +125,13 @@ test('production Room and Role scenes retain group and persona boundaries', asyn
     await expect(boundary.getByRole('radio', { name: '只读' })).toHaveCount(0);
     await expect(boundary.getByRole('button', { name: '保存权限' })).toHaveCount(0);
     await boundary.getByText(/看看可以使用哪些工具/).click();
-    await expect(boundary).toContainText(/运行项目命令|运行命令/);
+    await expect(boundary).toContainText('Session 基础工具');
+    await expect(boundary).toContainText('读取文件');
+    await expect(boundary).toContainText('编辑文件');
+    await expect(boundary).toContainText('写入文件');
+    await expect(boundary).toContainText('运行命令');
+    await expect(boundary).not.toContainText('工作区读取');
+    await expect(boundary).not.toContainText('受控命令');
     await boundary.getByRole('button', { name: '知道了' }).click();
     await page.getByRole('radio', { name: '对话' }).click();
     await expect(page.getByRole('textbox', { name: '协作消息' })).toBeEnabled();

@@ -16,7 +16,6 @@
   user-select: none;
   transition:
     transform var(--duration-press) var(--ease-press),
-    box-shadow var(--duration-enter) var(--ease-standard),
     opacity var(--duration-fast) var(--ease-standard);
 }
 
@@ -87,7 +86,7 @@
 .ui-button[data-variant='danger'] {
   border-color: var(--color-danger);
   background: var(--color-danger);
-  color: #fff;
+  color: var(--color-danger-text);
 }
 
 .ui-button__icon {
@@ -177,10 +176,14 @@
   color: var(--color-canvas);
   font-size: 13px;
   line-height: 1.35;
+  transform-origin: var(--radix-tooltip-content-transform-origin);
 }
-.ui-tooltip[data-state='delayed-open'],
+.ui-tooltip[data-state='delayed-open'] {
+  animation: ui-origin-content-in 125ms var(--ease-standard) both;
+}
+
 .ui-tooltip[data-state='instant-open'] {
-  animation: ui-content-in var(--duration-enter) var(--ease-standard) both;
+  animation: none;
 }
 
 .ui-tooltip__arrow {
@@ -198,9 +201,18 @@
   box-shadow: var(--shadow-menu);
   color: var(--color-text);
 }
+
+.ui-menu {
+  transform-origin: var(--radix-dropdown-menu-content-transform-origin);
+}
+
+.ui-popover {
+  transform-origin: var(--radix-popover-content-transform-origin);
+}
+
 .ui-menu[data-state='open'],
 .ui-popover[data-state='open'] {
-  animation: ui-content-in var(--duration-enter) var(--ease-standard) both;
+  animation: ui-origin-content-in var(--duration-enter) var(--ease-standard) both;
 }
 
 .ui-menu__item {
@@ -217,9 +229,7 @@
   cursor: default;
   outline: none;
   user-select: none;
-  transition:
-    transform var(--duration-press) var(--ease-press),
-    box-shadow var(--duration-enter) var(--ease-standard);
+  transition: transform var(--duration-press) var(--ease-press);
 }
 
 .ui-menu__item[data-highlighted] {
@@ -360,7 +370,6 @@
   cursor: pointer;
   transition:
     transform var(--duration-press) var(--ease-press),
-    box-shadow var(--duration-enter) var(--ease-standard),
     opacity var(--duration-fast) var(--ease-standard);
 }
 
@@ -421,9 +430,7 @@
   font-size: var(--font-size-ui-strong);
   line-height: var(--line-height-ui);
   outline: none;
-  transition:
-    border-color var(--duration-fast) var(--ease-standard),
-    box-shadow var(--duration-fast) var(--ease-standard);
+  transition: border-color var(--duration-fast) var(--ease-standard);
 }
 
 .ui-input:hover:not(:disabled) {
@@ -548,9 +555,10 @@ input[type='radio']:focus-visible {
   background: var(--color-surface);
   box-shadow: var(--shadow-menu);
   color: var(--color-text);
+  transform-origin: var(--radix-select-content-transform-origin);
 }
 .ui-select__content[data-state='open'] {
-  animation: ui-content-in var(--duration-enter) var(--ease-standard) both;
+  animation: ui-origin-content-in var(--duration-enter) var(--ease-standard) both;
 }
 
 .ui-select__viewport { max-height: 278px; padding: var(--space-1); overflow-y: auto; }
@@ -607,7 +615,6 @@ input[type='radio']:focus-visible {
   cursor: pointer;
   transition:
     transform var(--duration-press) var(--ease-press),
-    box-shadow var(--duration-enter) var(--ease-standard),
     opacity var(--duration-fast) var(--ease-standard);
 }
 
@@ -708,10 +715,6 @@ input[type='radio']:focus-visible {
   outline: none;
 }
 
-.ui-tabs__content[data-state='active'] {
-  animation: ui-panel-in var(--duration-panel) var(--ease-standard) both;
-}
-
 .ui-toast__viewport {
   position: fixed;
   z-index: 120;
@@ -745,7 +748,7 @@ input[type='radio']:focus-visible {
 }
 
 .ui-toast[data-state='closed'] {
-  animation: ui-toast-out var(--duration-fast) var(--ease-exit);
+  animation: ui-toast-out var(--duration-fast) var(--ease-standard) both;
 }
 
 .ui-toast[data-swipe='move'] {
@@ -753,7 +756,7 @@ input[type='radio']:focus-visible {
 }
 
 .ui-toast[data-swipe='end'] {
-  animation: ui-toast-swipe-out var(--duration-fast) var(--ease-exit);
+  animation: ui-toast-swipe-out var(--duration-fast) var(--ease-standard) both;
 }
 
 .ui-toast[data-tone='success'] { border-left-color: var(--color-success); }
@@ -779,9 +782,7 @@ input[type='radio']:focus-visible {
 .ui-skeleton {
   min-height: 12px;
   border-radius: var(--radius-1);
-  background: linear-gradient(90deg, var(--color-surface-subtle) 20%, var(--color-surface-hover) 40%, var(--color-surface-subtle) 60%);
-  background-size: 220% 100%;
-  animation: ui-skeleton 1.4s ease-in-out infinite;
+  background: var(--color-surface-subtle);
 }
 
 /* An absence is a side-note, not a hero: one compact left-aligned row. It
@@ -824,15 +825,16 @@ input[type='radio']:focus-visible {
 .ui-empty-state__description {
   color: var(--color-text-secondary);
   font-size: 13px;
+  text-wrap: pretty;
 }
 
 .ui-empty-state__action {
   margin-top: var(--space-2);
 }
 
-@keyframes ui-content-in {
-  from { opacity: 0; transform: translateY(-3px); }
-  to { opacity: 1; transform: translateY(0); }
+@keyframes ui-origin-content-in {
+  from { opacity: 0; transform: scale(.97); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 @keyframes ui-fade-in {
@@ -843,11 +845,6 @@ input[type='radio']:focus-visible {
 @keyframes ui-dialog-in {
   from { opacity: 0; transform: translate(-50%, calc(-50% + 10px)); }
   to { opacity: 1; transform: translate(-50%, -50%); }
-}
-
-@keyframes ui-panel-in {
-  from { opacity: 0; transform: translateY(var(--distance-enter)); }
-  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes ui-toast-in {
@@ -861,11 +858,6 @@ input[type='radio']:focus-visible {
 
 @keyframes ui-toast-swipe-out {
   to { transform: translateX(var(--radix-toast-swipe-end-x)); }
-}
-
-@keyframes ui-skeleton {
-  from { background-position: 100% 0; }
-  to { background-position: -120% 0; }
 }
 
 @media (max-width: 560px) {

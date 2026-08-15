@@ -56,7 +56,7 @@ describe('ObservabilityFeature', () => {
 
     const timeline = await screen.findByRole('list', { name: '运行记录事件' });
     expect(within(timeline).getByText('记忆工具 已完成')).toBeInTheDocument();
-    await user.click(screen.getByRole('tab', { name: '工具' }));
+    await user.click(screen.getByRole('button', { name: '工具' }));
 
     await waitFor(() => {
       const latest = transport.requests.at(-1)?.request;
@@ -68,6 +68,11 @@ describe('ObservabilityFeature', () => {
     expect(screen.getByText('参数字段')).toBeInTheDocument();
     expect(screen.getByText('已脱敏')).toBeInTheDocument();
     expect(screen.queryByText('PRIVATE_TOOL_RESULT')).not.toBeInTheDocument();
+
+    await user.type(screen.getByRole('searchbox', { name: '搜索运行记录' }), '不会匹配');
+    expect(await screen.findByRole('heading', { name: '没有匹配的记录' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '清除筛选' }));
+    expect((await screen.findAllByText('记忆工具 已完成')).length).toBeGreaterThan(0);
   });
 });
 

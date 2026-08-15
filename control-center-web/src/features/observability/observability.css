@@ -2,6 +2,16 @@ main[data-route-id='observability'] .mgmt-page__body {
   gap: var(--space-4);
 }
 
+main[data-route-id='observability'] .observation-connection-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+main[data-route-id='observability'] .observation-connection-notice .mgmt-notice {
+  flex: 1 1 auto;
+}
+
 main[data-route-id='observability'] .observation-controls {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(220px, 320px) auto;
@@ -34,16 +44,19 @@ main[data-route-id='observability'] .observation-category-tabs button {
   font-size: 13px;
   font-weight: 650;
   cursor: pointer;
-}
-
-main[data-route-id='observability'] .observation-category-tabs button:hover {
-  color: var(--color-text);
-  background: color-mix(in srgb, var(--color-surface-muted) 64%, transparent);
+  transition: border-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
 }
 
 main[data-route-id='observability'] .observation-category-tabs button[data-active='true'] {
   border-bottom-color: var(--color-accent);
   color: var(--color-accent);
+}
+
+main[data-route-id='observability'] .observation-category-tabs button:focus-visible,
+main[data-route-id='observability'] .observation-timeline button:focus-visible,
+main[data-route-id='observability'] .observation-trace li > button:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
 }
 
 main[data-route-id='observability'] .observation-search {
@@ -74,6 +87,10 @@ main[data-route-id='observability'] .observation-search input {
   color: var(--color-text);
   font: inherit;
   font-size: 13px;
+}
+
+main[data-route-id='observability'] .observation-debug-context:not([open]) > :not(summary) {
+  display: none !important;
 }
 
 main[data-route-id='observability'] .observation-scope {
@@ -380,6 +397,15 @@ main[data-route-id='observability'] .observation-debug-actions strong { font-siz
 main[data-route-id='observability'] .observation-debug-actions small { color: var(--color-text-tertiary); font-size: 12px; }
 main[data-route-id='observability'] .observation-debug-context > summary::marker { content: ''; }
 
+/* Category filters are high-frequency controls: only color changes, with no
+   positional motion or delayed panel transition. */
+@media (hover: hover) and (pointer: fine) {
+  main[data-route-id='observability'] .observation-category-tabs button:hover {
+    color: var(--color-text);
+    background: color-mix(in srgb, var(--color-surface-muted) 64%, transparent);
+  }
+}
+
 @media (max-width: 980px) {
   main[data-route-id='observability'] .observation-controls {
     grid-template-columns: minmax(0, 1fr) minmax(210px, 280px);
@@ -398,7 +424,19 @@ main[data-route-id='observability'] .observation-debug-context > summary::marker
   }
 }
 
-@media (max-width: 640px) {
+/* The shell uses compact navigation through 760px. Match that breakpoint so
+   landscape phones and 200% browser zoom keep the same touch-safe controls as
+   portrait phones instead of falling into a 32px gap between layouts. */
+@media (max-width: 760px) {
+  main[data-route-id='observability'] .observation-connection-notice {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  main[data-route-id='observability'] .observation-connection-notice .ui-button {
+    min-height: var(--control-height-lg);
+  }
+
   main[data-route-id='observability'] .observation-controls {
     grid-template-columns: 1fr;
   }
@@ -409,8 +447,13 @@ main[data-route-id='observability'] .observation-debug-context > summary::marker
   }
 
   main[data-route-id='observability'] .observation-search {
-    height: var(--control-height-lg);
+    /* The one-pixel wrapper border sits outside the actual input. A 46px
+       wrapper keeps the editable hit target itself at a full 44px. */
+    min-height: 46px;
+    height: 46px;
   }
+
+  main[data-route-id='observability'] .mgmt-page__actions .ui-button { min-height: 44px; }
 
   main[data-route-id='observability'] .observation-category-tabs {
     flex-wrap: wrap;
@@ -420,7 +463,7 @@ main[data-route-id='observability'] .observation-debug-context > summary::marker
   main[data-route-id='observability'] .observation-category-tabs button {
     flex: 1 0 auto;
     padding-inline: 8px;
-    min-height: var(--control-height-lg);
+    min-height: 44px;
   }
 
   main[data-route-id='observability'] .observation-timeline button {
@@ -443,4 +486,8 @@ main[data-route-id='observability'] .observation-debug-context > summary::marker
   main[data-route-id='observability'] .observation-facts {
     grid-template-columns: 1fr;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  main[data-route-id='observability'] .observation-category-tabs button { transition: none; }
 }

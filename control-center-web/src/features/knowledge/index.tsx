@@ -11,7 +11,7 @@ import {
   Settings2,
   Trash2,
 } from 'lucide-react';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type RefObject } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Virtuoso } from 'react-virtuoso';
 import { useControlTransport } from '@/app/control-transport';
@@ -82,12 +82,12 @@ import {
   type KnowledgeEmbeddingProvider,
   type KnowledgeParserMode,
   type KnowledgeRetrievalConfig,
-  type KnowledgeReindexPreview,
   type KnowledgeSearchHit,
   knowledgeIndexRuntimeStatus,
 } from './api';
 import { KnowledgeDocumentViewer, KnowledgeJobsPanel, KnowledgeMaterialsPanel, type KnowledgeUploadItem } from './document-workspace';
 import { KnowledgeGraphPanel } from './knowledge-graph';
+import { publicKnowledgeText } from './public-copy';
 import './knowledge.css';
 
 type DetailTab = 'materials' | 'viewer' | 'search' | 'graph' | 'jobs' | 'settings';
@@ -103,6 +103,7 @@ export function KnowledgeFeature() {
   const [focusedHit, setFocusedHit] = useState<KnowledgeSearchHit | null>(null);
   const [reparseDocument, setReparseDocument] = useState<KnowledgeDocument | null>(null);
   const [uploadItems, setUploadItems] = useState<KnowledgeUploadItem[]>([]);
+  const dialogTriggerRef = useRef<HTMLElement | null>(null);
   const queries = useKnowledgeLibraryQueries(selectedBaseId);
   const queryClient = useQueryClient();
   const bases = queries.bases.data ?? [];
@@ -279,17 +280,13 @@ export function KnowledgeFeature() {
       await invalidateBase(base.id);
     },
   });
-  const reindexPreviewMutation = useMutation({
-    mutationFn: () => selectedBase
-      ? previewKnowledgeReindex(queries.transport, selectedBase)
-      : Promise.reject(new Error('没有选中的知识库。')),
-  });
   const rebuildMutation = useMutation({
-    mutationFn: (preview: KnowledgeReindexPreview) => selectedBase
-      ? rebuildKnowledgeBase(queries.transport, selectedBase, preview)
-      : Promise.reject(new Error('没有选中的知识库。')),
+    mutationFn: async () => {
+      if (!selectedBase) throw new Error('没有选中的知识库。');
+      const preview = await previewKnowledgeReindex(queries.transport, selectedBase);
+      await rebuildKnowledgeBase(queries.transport, selectedBase, preview);
+    },
     onSuccess: async () => {
-      reindexPreviewMutation.reset();
       selectTab('jobs');
       await invalidateBase();
     },
@@ -308,6 +305,12 @@ export function KnowledgeFeature() {
 
   const pageError = queries.bases.error as Error | null;
   const worker = workerState(queries.worker.data, queries.worker.error);
+  const rememberDialogTrigger = (trigger?: HTMLElement) => {
+    const candidate = trigger ?? document.activeElement;
+    dialogTriggerRef.current = candidate instanceof HTMLElement
+      ? candidate
+      : null;
+  };
 
   return (
     <main className="knowledge-feature" data-route-id="knowledge">
@@ -316,7 +319,7 @@ export function KnowledgeFeature() {
         <div className="knowledge-library" data-empty={!bases.length || undefined}>
           <KnowledgeBaseRail
             bases={bases}
-            onCreate={() => setCreateOpen(true)}
+            onCreate={(trigger) => { rememberDialogTrigger(trigger); setCreateOpen(true); }}
             onRefresh={refresh}
             onSelect={(baseId) => { setSelectedBaseId(baseId); setSelectedDocumentId(''); selectTab('materials'); }}
             refreshing={queries.bases.isFetching || queries.worker.isFetching}
@@ -326,7 +329,7 @@ export function KnowledgeFeature() {
           <section className="knowledge-library__detail" aria-label="知识库详情">
             {selectedBase ? (
               <>
-                <KnowledgeBaseHeader base={selectedBase} onDelete={() => setDeleteBaseOpen(true)} worker={worker} />
+                <KnowledgeBaseHeader base={selectedBase} onDelete={(trigger) => { rememberDialogTrigger(trigger); setDeleteBaseOpen(true); }} worker={worker} />
                 <Tabs className="knowledge-library__tabs" onValueChange={(value) => selectTab(asDetailTab(value))} value={tab}>
                   <TabsList aria-label="知识库管理视图">
                     <TabsTrigger value="materials">资料</TabsTrigger>
@@ -345,11 +348,11 @@ export function KnowledgeFeature() {
                       error={queries.documents.error as Error | null}
                       importError={importMutation.error as Error | null}
                       importing={importMutation.isPending}
-                      onDelete={setDocumentToDelete}
+                      onDelete={(document, trigger) => { rememberDialogTrigger(trigger); setDocumentToDelete(document); }}
                       onClearUploads={() => { importMutation.reset(); setUploadItems([]); }}
                       onImport={() => importMutation.mutate({})}
                       onOpen={(documentId) => { setFocusedHit(null); setSelectedDocumentId(documentId); selectTab('viewer'); }}
-                      onReparse={setReparseDocument}
+                      onReparse={(document, trigger) => { rememberDialogTrigger(trigger); setReparseDocument(document); }}
                       onRetryUpload={(item) => importMutation.mutate({ retryItem: item })}
                       onSelect={(documentId) => { setFocusedHit(null); setSelectedDocumentId(documentId); }}
                       pendingDocumentId={retryMutation.variables?.document.id ?? ''}
@@ -428,16 +431,13 @@ export function KnowledgeFeature() {
                       onSaveInfo={(name, description) => updateMutation.mutate({ name, description })}
                       onSaveChunking={(chunkingConfig) => updateMutation.mutate({ chunkingConfig })}
                       onSaveRetrieval={(retrievalConfig) => updateMutation.mutate({ retrievalConfig })}
-                      onPreviewReindex={() => reindexPreviewMutation.mutate()}
                       onPreviewChunking={(documentId, config) => chunkPreviewMutation.mutate({ documentId, config })}
-                      onRebuild={(preview) => rebuildMutation.mutate(preview)}
+                      onRebuild={() => rebuildMutation.mutate()}
                       parserData={queries.parsers.data}
                       pending={updateMutation.isPending}
                       updateError={updateMutation.error}
-                      rebuildError={rebuildMutation.error ?? reindexPreviewMutation.error}
+                      rebuildError={rebuildMutation.error}
                       rebuilding={rebuildMutation.isPending}
-                      reindexPreview={reindexPreviewMutation.data ?? null}
-                      reindexPreviewing={reindexPreviewMutation.isPending}
                       chunkPreview={chunkPreviewMutation.data ?? null}
                       chunkPreviewError={chunkPreviewMutation.error}
                       chunkPreviewing={chunkPreviewMutation.isPending}
@@ -450,7 +450,7 @@ export function KnowledgeFeature() {
               </>
             ) : (
               <EmptyState
-                action={<Button leadingIcon={<FolderPlus size={15} />} onClick={() => setCreateOpen(true)} variant="primary">新建知识库</Button>}
+                action={<Button leadingIcon={<FolderPlus size={15} />} onClick={(event) => { rememberDialogTrigger(event.currentTarget); setCreateOpen(true); }} variant="primary">新建知识库</Button>}
                 description="为项目资料、论文或产品文档建立独立知识库。"
                 icon={Database}
                 title="还没有文档知识库"
@@ -465,6 +465,7 @@ export function KnowledgeFeature() {
         onCreate={(input) => createMutation.mutate(input)}
         onOpenChange={(open) => { setCreateOpen(open); if (!open) createMutation.reset(); }}
         open={createOpen}
+        returnFocusRef={dialogTriggerRef}
       />
       <ConfirmDialog
         description={selectedBase ? `将删除“${selectedBase.name}”及其文档索引。个人记忆不会受到影响。` : ''}
@@ -473,15 +474,17 @@ export function KnowledgeFeature() {
         onConfirm={() => deleteBaseMutation.mutate()}
         onOpenChange={setDeleteBaseOpen}
         open={deleteBaseOpen}
+        returnFocusRef={dialogTriggerRef}
         title="删除文档知识库"
       />
       <ConfirmDialog
-        description={documentToDelete ? `将移除“${documentToDelete.name}”及其索引片段。` : ''}
+        description={documentToDelete ? `将移除“${documentToDelete.name}”及其索引段落。` : ''}
         error={deleteDocumentMutation.error}
         loading={deleteDocumentMutation.isPending}
         onConfirm={() => { if (documentToDelete) deleteDocumentMutation.mutate(documentToDelete.id); }}
         onOpenChange={(open) => { if (!open) setDocumentToDelete(null); }}
         open={Boolean(documentToDelete)}
+        returnFocusRef={dialogTriggerRef}
         title="删除文档"
       />
       <ReparseDocumentDialog
@@ -490,6 +493,7 @@ export function KnowledgeFeature() {
         loading={retryMutation.isPending}
         onConfirm={(parser) => { if (reparseDocument) retryMutation.mutate({ document: reparseDocument, parser }); }}
         onOpenChange={(open) => { if (!open) { setReparseDocument(null); retryMutation.reset(); } }}
+        returnFocusRef={dialogTriggerRef}
       />
     </main>
   );
@@ -505,7 +509,7 @@ function KnowledgeBaseRail({
   worker,
 }: {
   bases: readonly DocumentKnowledgeBase[];
-  onCreate: () => void;
+  onCreate: (trigger: HTMLElement) => void;
   onRefresh: () => void;
   onSelect: (baseId: string) => void;
   refreshing: boolean;
@@ -518,7 +522,7 @@ function KnowledgeBaseRail({
         <div><strong>知识库</strong><span>{bases.length} 个独立库</span></div>
         <div className="knowledge-base-rail__actions">
           <IconButton disabled={refreshing} icon={<RefreshCw size={14} />} label="刷新知识库" onClick={onRefresh} size="small" tooltip />
-          <IconButton icon={<FolderPlus size={15} />} label="新建知识库" onClick={onCreate} size="small" tooltip />
+          <IconButton icon={<FolderPlus size={15} />} label="新建知识库" onClick={(event) => onCreate(event.currentTarget)} size="small" tooltip />
         </div>
       </header>
       <div className="knowledge-base-rail__mobile">
@@ -540,7 +544,7 @@ function KnowledgeBaseRail({
         </span>
         <div className="knowledge-base-rail__actions">
           <IconButton disabled={refreshing} icon={<RefreshCw size={15} />} label="刷新知识库" onClick={onRefresh} size="large" tooltip />
-          <IconButton icon={<FolderPlus size={16} />} label="新建知识库" onClick={onCreate} size="large" tooltip />
+          <IconButton icon={<FolderPlus size={16} />} label="新建知识库" onClick={(event) => onCreate(event.currentTarget)} size="large" tooltip />
         </div>
       </div>
       <div className="knowledge-base-rail__worker" data-state={worker.tone}>
@@ -554,7 +558,7 @@ function KnowledgeBaseRail({
           data={bases}
           itemContent={(_index, base) => (
             <button
-              aria-label={`${base.name}，${base.documentCount} 个文件，${base.chunkCount} 个片段`}
+              aria-label={`${base.name}，${base.documentCount} 个文件，${base.chunkCount} 个段落`}
               aria-current={base.id === selectedBaseId ? 'page' : undefined}
               className="knowledge-base-row"
               data-selected={base.id === selectedBaseId || undefined}
@@ -562,8 +566,8 @@ function KnowledgeBaseRail({
               type="button"
             >
               <span className="knowledge-base-row__icon"><BookOpen size={15} /></span>
-              <span><strong>{base.name}</strong><small>{base.documentCount} 个文件 · {base.chunkCount} 个片段</small></span>
-              {base.agentEnabled ? <span className="knowledge-base-row__agent">Agent</span> : null}
+              <span><strong>{base.name}</strong><small>{base.documentCount} 个文件 · {base.chunkCount} 个段落</small></span>
+              {base.agentEnabled ? <span className="knowledge-base-row__agent">伙伴可用</span> : null}
             </button>
           )}
         />
@@ -572,7 +576,7 @@ function KnowledgeBaseRail({
   );
 }
 
-function KnowledgeBaseHeader({ base, onDelete, worker }: { base: DocumentKnowledgeBase; onDelete: () => void; worker: WorkerState }) {
+function KnowledgeBaseHeader({ base, onDelete, worker }: { base: DocumentKnowledgeBase; onDelete: (trigger: HTMLElement) => void; worker: WorkerState }) {
   return (
     <header className="knowledge-base-header">
       <div>
@@ -582,11 +586,11 @@ function KnowledgeBaseHeader({ base, onDelete, worker }: { base: DocumentKnowled
       </div>
       <dl>
         <div><dt>文件</dt><dd>{base.documentCount}</dd></div>
-        <div><dt>片段</dt><dd>{base.chunkCount}</dd></div>
+        <div><dt>段落</dt><dd>{base.chunkCount}</dd></div>
         <div><dt>解析</dt><dd>{parserLabel(base.parser)}</dd></div>
         <div><dt>服务</dt><dd><StatusBadge label={worker.label} tone={worker.tone} /></dd></div>
       </dl>
-      <IconButton className="knowledge-base-header__delete" icon={<Trash2 size={15} />} label="删除知识库" onClick={onDelete} size="small" tooltip />
+      <IconButton className="knowledge-base-header__delete" icon={<Trash2 size={15} />} label="删除知识库" onClick={(event) => onDelete(event.currentTarget)} size="small" tooltip />
     </header>
   );
 }
@@ -623,30 +627,25 @@ function KnowledgeSearchPanel({ base, onOpenHit, transport }: { base: DocumentKn
       </form>
       <div className="knowledge-search__config" aria-label="当前检索配置">
         <span>{retrievalModeLabel(base.retrievalConfig.mode)}</span>
-        <span>Top K {base.retrievalConfig.topK}</span>
-        <span>阈值 {base.retrievalConfig.threshold.toFixed(2)}</span>
-        {base.retrievalConfig.mode === 'hybrid' ? <span>L {base.retrievalConfig.lexicalWeight.toFixed(1)} / D {base.retrievalConfig.denseWeight.toFixed(1)}</span> : null}
-        {base.retrievalConfig.mode === 'hybrid' ? <span>RRF K {base.retrievalConfig.rrfK} · 候选 ×{base.retrievalConfig.candidateMultiplier}</span> : null}
-        {base.retrievalConfig.mode === 'hybrid' ? (
-          <span>{base.retrievalConfig.graphEnabled ? `图谱 ×${base.retrievalConfig.graphWeight.toFixed(1)}` : '图谱关闭'}</span>
-        ) : null}
+        <span>最多显示 {base.retrievalConfig.topK} 条</span>
+        <span>最低相关度 {base.retrievalConfig.threshold.toFixed(2)}</span>
       </div>
-      <p className="knowledge-search__score-note">排名分融合关键词、向量与已就绪图谱的候选名次，只用于排列召回片段，不代表答案正确率。</p>
+      <p className="knowledge-search__score-note">结果按与你的问题的相关程度排序，建议打开来源核对原文。</p>
       {searchMutation.error ? <InlineNotice title="检索失败" tone="warning">{publicErrorText(searchMutation.error, '知识服务暂时无法完成检索。')}</InlineNotice> : null}
       {hits.length ? (
         <div className="knowledge-search__results">
           <div className="knowledge-search__list" role="listbox" aria-label="检索结果">
             {hits.map((hit) => (
               <button aria-selected={selected?.id === hit.id} data-selected={selected?.id === hit.id || undefined} key={hit.id} onClick={() => setSelectedId(hit.id)} role="option" type="button">
-                <span><strong>{hit.documentName}</strong><small>{hit.title} · {citationLabel(hit)}{hit.diagnostics.graphRank === null ? '' : ' · 图谱关联'}</small><small>{hit.excerpt || '没有可显示的摘录'}</small></span>
-                <b>{scorePoints(hit.score)}</b>
+                <span><strong>{publicKnowledgeText(hit.documentName)}</strong><small>{publicKnowledgeText(hit.title)} · {citationLabel(hit)}{hit.diagnostics.graphRank === null ? '' : ' · 图谱关联'}</small><small>{publicKnowledgeText(hit.excerpt) || '没有可显示的摘录'}</small></span>
+                <b>{relevanceLabel(hit.score)}</b>
               </button>
             ))}
           </div>
           {selected ? <KnowledgeHitDetail baseId={base.id} hit={selected} onOpen={onOpenHit} transport={transport} /> : null}
         </div>
       ) : searchMutation.isSuccess ? (
-        <EmptyState description="换一个关键词，或检查文件是否已经完成索引。" icon={FileSearch} title="没有匹配片段" />
+        <EmptyState description="换一个关键词，或检查文件是否已经完成索引。" icon={FileSearch} title="没有匹配段落" />
       ) : (
         <EmptyState description="结果会显示文档、页码或行号，并可回到原始来源。" icon={Search} title="验证这套知识是否可用" />
       )}
@@ -658,20 +657,33 @@ function KnowledgeHitDetail({ baseId, hit, onOpen, transport }: { baseId: string
   const openMutation = useMutation({ mutationFn: () => openKnowledgeHit(transport, baseId, hit), onSuccess: () => onOpen(hit) });
   return (
     <article className="knowledge-search__detail">
-      <span>{hit.documentName}</span>
-      <h3>{hit.title}</h3>
-      <p>{hit.excerpt || '这个片段没有可显示的摘录。'}</p>
+      <span>{publicKnowledgeText(hit.documentName)}</span>
+      <h3>{publicKnowledgeText(hit.title)}</h3>
+      <p>{publicKnowledgeText(hit.excerpt) || '这个段落没有可显示的摘录。'}</p>
       <dl>
         <div><dt>位置</dt><dd>{citationLabel(hit)}</dd></div>
-        <div><dt>综合排名分</dt><dd>{scorePoints(hit.score)} / 100（非正确率）</dd></div>
-        <div><dt>命中依据</dt><dd>{retrievalEvidenceLabel(hit)}</dd></div>
-        {hit.diagnostics.graphPaths.length ? <div><dt>图谱路径</dt><dd>{hit.diagnostics.graphPaths.slice(0, 2).join('；')}</dd></div> : null}
-        <div><dt>标题路径</dt><dd>{hit.heading || '未提供'}</dd></div>
+        <div><dt>相关程度</dt><dd>{relevanceLabel(hit.score, false)}</dd></div>
+        <div><dt>标题路径</dt><dd>{publicKnowledgeText(hit.heading) || '未提供'}</dd></div>
       </dl>
+      <details className="knowledge-search__advanced">
+        <summary>高级：检索详情</summary>
+        <dl>
+          <div><dt>相关度分数</dt><dd>{scorePoints(hit.score)} / 100</dd></div>
+          <div><dt>命中方式</dt><dd>{retrievalEvidenceLabel(hit)}</dd></div>
+          {hit.diagnostics.graphPaths.length ? <div><dt>关联路径</dt><dd>{publicKnowledgeText(hit.diagnostics.graphPaths.slice(0, 2).join('；'))}</dd></div> : null}
+        </dl>
+      </details>
       <Button leadingIcon={<ExternalLink size={14} />} loading={openMutation.isPending} onClick={() => openMutation.mutate()} size="small">打开来源</Button>
       {openMutation.error ? <p className="knowledge-inline-error">当前无法打开来源。</p> : null}
     </article>
   );
+}
+
+function relevanceLabel(score: number | null, detailed = true): string {
+  if (score === null) return detailed ? '相关度未知' : '未知';
+  if (score >= 0.75) return detailed ? '高相关' : '高';
+  if (score >= 0.45) return detailed ? '相关' : '中';
+  return detailed ? '较低' : '较低';
 }
 
 function KnowledgeSettingsPanel({
@@ -688,15 +700,12 @@ function KnowledgeSettingsPanel({
   onSaveInfo,
   onSaveChunking,
   onSaveRetrieval,
-  onPreviewReindex,
   onPreviewChunking,
   onRebuild,
   parserData,
   pending,
   rebuildError,
   rebuilding,
-  reindexPreview,
-  reindexPreviewing,
   refreshParser,
   settingsEnvelope,
   updateError,
@@ -715,15 +724,12 @@ function KnowledgeSettingsPanel({
   onSaveInfo: (name: string, description: string) => void;
   onSaveChunking: (config: KnowledgeChunkingConfig) => void;
   onSaveRetrieval: (config: KnowledgeRetrievalConfig) => void;
-  onPreviewReindex: () => void;
   onPreviewChunking: (documentId: string, config: KnowledgeChunkingConfig) => void;
-  onRebuild: (preview: KnowledgeReindexPreview) => void;
+  onRebuild: () => void;
   parserData: unknown;
   pending: boolean;
   rebuildError: unknown;
   rebuilding: boolean;
-  reindexPreview: KnowledgeReindexPreview | null;
-  reindexPreviewing: boolean;
   refreshParser: () => void;
   settingsEnvelope: unknown;
   updateError: unknown;
@@ -751,7 +757,7 @@ function KnowledgeSettingsPanel({
         : retrieval.graphWeight < 0 || retrieval.graphWeight > 10
           ? '图谱权重必须在 0–10 之间。'
         : retrieval.lexicalWeight + retrieval.denseWeight <= 0
-          ? 'Lexical 和 Dense 权重不能同时为 0。'
+          ? '关键词权重和向量权重不能同时为 0。'
           : retrieval.rrfK < 1 || retrieval.rrfK > 1_000 || retrieval.candidateMultiplier < 1 || retrieval.candidateMultiplier > 20
             ? 'RRF K 或候选倍数超出允许范围。'
             : '';
@@ -774,15 +780,15 @@ function KnowledgeSettingsPanel({
       </section>
       <div className="knowledge-settings-grid">
         <section>
-          <div className="knowledge-settings__heading"><ServerCog size={16} /><div><strong>Agent</strong><span>knowledge</span></div></div>
-          <Switch checked={base.agentEnabled} disabled={pending} label="允许 Agent 使用" onCheckedChange={onAgentEnabled} />
+          <div className="knowledge-settings__heading"><ServerCog size={16} /><div><strong>伙伴</strong><span>检索权限</span></div></div>
+          <Switch checked={base.agentEnabled} disabled={pending} label="允许伙伴检索此知识库" onCheckedChange={onAgentEnabled} />
         </section>
         <section>
           <div className="knowledge-settings__heading"><Settings2 size={16} /><div><strong>解析器</strong><span>新导入与重试</span></div></div>
-          <Field htmlFor="knowledge-parser" label="Provider">
+          <Field htmlFor="knowledge-parser" label="解析方式">
             <Select disabled={pending} id="knowledge-parser" onValueChange={(value) => onParser(asParserMode(value))} options={[{ value: 'auto', label: '自动选择' }, { value: 'builtin', label: '内置解析' }, { value: 'mineru', label: 'MinerU' }]} value={base.parser} />
           </Field>
-          <div className="knowledge-parser-health"><div><span>Worker</span><StatusBadge label={worker.label} tone={worker.tone} /></div><div><span>MinerU</span><StatusBadge label={mineru.label} tone={mineru.tone} /></div><IconButton icon={<RefreshCw size={14} />} label="检查解析服务" onClick={refreshParser} size="small" tooltip /></div>
+          <div className="knowledge-parser-health"><div><span>解析服务</span><StatusBadge label={worker.label} tone={worker.tone} /></div><div><span>MinerU</span><StatusBadge label={mineru.label} tone={mineru.tone} /></div><IconButton icon={<RefreshCw size={14} />} label="检查解析服务" onClick={refreshParser} size="small" tooltip /></div>
           {base.parser === 'mineru' && !mineru.ready ? <InlineNotice title="MinerU 未连接" tone="warning">本机服务不可用。</InlineNotice> : null}
         </section>
       </div>
@@ -802,24 +808,27 @@ function KnowledgeSettingsPanel({
           <Button disabled={!previewDocumentId || Boolean(chunkingError)} loading={chunkPreviewing} onClick={() => onPreviewChunking(previewDocumentId, chunking)} size="small">预览切分</Button>
         </div>
         {chunkPreviewError ? <InlineNotice title="切分预览失败" tone="warning">{publicErrorText(chunkPreviewError, '请确认材料已经完成解析。')}</InlineNotice> : null}
-        {visibleChunkPreview ? <div className="knowledge-chunk-preview"><header><strong>{visibleChunkPreview.total} 个片段</strong><span>显示前 {visibleChunkPreview.chunks.length} 个</span></header><div>{visibleChunkPreview.chunks.map((chunk) => <article key={chunk.id}><b>#{chunk.ordinal + 1}{chunk.page ? ` · 第 ${chunk.page} 页` : ''}</b><p>{chunk.content}</p></article>)}</div></div> : null}
+        {visibleChunkPreview ? <div className="knowledge-chunk-preview"><header><strong>{visibleChunkPreview.total} 个段落</strong><span>显示前 {visibleChunkPreview.chunks.length} 个</span></header><div>{visibleChunkPreview.chunks.map((chunk) => <article key={chunk.id}><b>#{chunk.ordinal + 1}{chunk.page ? ` · 第 ${chunk.page} 页` : ''}</b><p>{publicKnowledgeText(chunk.content)}</p></article>)}</div></div> : null}
         <div className="knowledge-settings__actions"><Button disabled={pending || Boolean(chunkingError) || equalConfig(chunking, base.chunkingConfig)} loading={pending} onClick={() => onSaveChunking(chunking)} size="small" variant="primary">保存切分设置</Button></div>
       </section>
       <section>
-        <div className="knowledge-settings__heading"><Search size={16} /><div><strong>检索</strong><span>页面测试与 Agent Tool</span></div></div>
+        <div className="knowledge-settings__heading"><Search size={16} /><div><strong>检索</strong><span>页面测试与伙伴检索</span></div></div>
         <div className="knowledge-settings-fields">
           <Field htmlFor="knowledge-retrieval-mode" label="模式"><Select id="knowledge-retrieval-mode" onValueChange={(value) => setRetrieval({ ...retrieval, mode: asRetrievalMode(value) })} options={[{ value: 'hybrid', label: '混合' }, { value: 'dense', label: '向量' }, { value: 'lexical', label: '关键词' }]} value={retrieval.mode} /></Field>
-          <Field htmlFor="knowledge-retrieval-topk" label="Top K"><Input id="knowledge-retrieval-topk" max={100} min={1} onChange={(event) => setRetrieval({ ...retrieval, topK: Number(event.target.value) })} type="number" value={retrieval.topK} /></Field>
-          <Field htmlFor="knowledge-retrieval-threshold" label="阈值"><Input id="knowledge-retrieval-threshold" max={1} min={0} onChange={(event) => setRetrieval({ ...retrieval, threshold: Number(event.target.value) })} step={0.05} type="number" value={retrieval.threshold} /></Field>
+          <Field htmlFor="knowledge-retrieval-topk" label="返回数量"><Input id="knowledge-retrieval-topk" max={100} min={1} onChange={(event) => setRetrieval({ ...retrieval, topK: Number(event.target.value) })} type="number" value={retrieval.topK} /></Field>
+          <Field htmlFor="knowledge-retrieval-threshold" label="最低相关度"><Input id="knowledge-retrieval-threshold" max={1} min={0} onChange={(event) => setRetrieval({ ...retrieval, threshold: Number(event.target.value) })} step={0.05} type="number" value={retrieval.threshold} /></Field>
         </div>
-        <div className="knowledge-settings-fields knowledge-settings-fields--advanced">
-          <Field htmlFor="knowledge-lexical-weight" label="Lexical 权重"><Input id="knowledge-lexical-weight" max={10} min={0} onChange={(event) => setRetrieval({ ...retrieval, lexicalWeight: Number(event.target.value) })} step={0.1} type="number" value={retrieval.lexicalWeight} /></Field>
-          <Field htmlFor="knowledge-dense-weight" label="Dense 权重"><Input id="knowledge-dense-weight" max={10} min={0} onChange={(event) => setRetrieval({ ...retrieval, denseWeight: Number(event.target.value) })} step={0.1} type="number" value={retrieval.denseWeight} /></Field>
-          <Switch checked={retrieval.graphEnabled} disabled={retrieval.mode !== 'hybrid'} label="启用图谱增强" onCheckedChange={(graphEnabled) => setRetrieval({ ...retrieval, graphEnabled })} />
-          <Field htmlFor="knowledge-graph-weight" label="Graph 权重"><Input disabled={retrieval.mode !== 'hybrid' || !retrieval.graphEnabled} id="knowledge-graph-weight" max={10} min={0} onChange={(event) => setRetrieval({ ...retrieval, graphWeight: Number(event.target.value) })} step={0.05} type="number" value={retrieval.graphWeight} /></Field>
-          <Field htmlFor="knowledge-rrf-k" label="RRF K"><Input id="knowledge-rrf-k" max={1_000} min={1} onChange={(event) => setRetrieval({ ...retrieval, rrfK: Number(event.target.value) })} type="number" value={retrieval.rrfK} /></Field>
-          <Field htmlFor="knowledge-candidate-multiplier" label="候选倍数"><Input id="knowledge-candidate-multiplier" max={20} min={1} onChange={(event) => setRetrieval({ ...retrieval, candidateMultiplier: Number(event.target.value) })} type="number" value={retrieval.candidateMultiplier} /></Field>
-        </div>
+        <details className="knowledge-settings__advanced-details">
+          <summary>高级：检索调优</summary>
+          <div className="knowledge-settings-fields knowledge-settings-fields--advanced">
+            <Field htmlFor="knowledge-lexical-weight" label="关键词权重"><Input id="knowledge-lexical-weight" max={10} min={0} onChange={(event) => setRetrieval({ ...retrieval, lexicalWeight: Number(event.target.value) })} step={0.1} type="number" value={retrieval.lexicalWeight} /></Field>
+            <Field htmlFor="knowledge-dense-weight" label="向量权重"><Input id="knowledge-dense-weight" max={10} min={0} onChange={(event) => setRetrieval({ ...retrieval, denseWeight: Number(event.target.value) })} step={0.1} type="number" value={retrieval.denseWeight} /></Field>
+            <Switch checked={retrieval.graphEnabled} disabled={retrieval.mode !== 'hybrid'} label="启用图谱增强" onCheckedChange={(graphEnabled) => setRetrieval({ ...retrieval, graphEnabled })} />
+            <Field htmlFor="knowledge-graph-weight" label="关系权重"><Input disabled={retrieval.mode !== 'hybrid' || !retrieval.graphEnabled} id="knowledge-graph-weight" max={10} min={0} onChange={(event) => setRetrieval({ ...retrieval, graphWeight: Number(event.target.value) })} step={0.05} type="number" value={retrieval.graphWeight} /></Field>
+            <Field htmlFor="knowledge-rrf-k" label="融合系数"><Input id="knowledge-rrf-k" max={1_000} min={1} onChange={(event) => setRetrieval({ ...retrieval, rrfK: Number(event.target.value) })} type="number" value={retrieval.rrfK} /></Field>
+            <Field htmlFor="knowledge-candidate-multiplier" label="候选范围"><Input id="knowledge-candidate-multiplier" max={20} min={1} onChange={(event) => setRetrieval({ ...retrieval, candidateMultiplier: Number(event.target.value) })} type="number" value={retrieval.candidateMultiplier} /></Field>
+          </div>
+        </details>
         {retrievalError ? <p className="knowledge-inline-error" role="alert">{retrievalError}</p> : null}
         <div className="knowledge-settings__actions"><Button disabled={pending || Boolean(retrievalError) || equalConfig(retrieval, base.retrievalConfig)} loading={pending} onClick={() => onSaveRetrieval(retrieval)} size="small" variant="primary">保存检索设置</Button></div>
       </section>
@@ -832,13 +841,8 @@ function KnowledgeSettingsPanel({
         state={embeddingState}
       />
       <section>
-        <div className="knowledge-settings__heading"><RefreshCw size={16} /><div><strong>索引重建</strong><span>{base.documentCount} 个材料 · {base.chunkCount} 个现有片段</span></div></div>
-        {reindexPreview ? (
-          <div className="knowledge-reindex-preview">
-            <dl><div><dt>材料</dt><dd>{reindexPreview.documentCount}</dd></div><div><dt>待重建</dt><dd>{reindexPreview.staleDocumentCount}</dd></div><div><dt>预计片段</dt><dd>{reindexPreview.estimatedChunkCount || '重新计算'}</dd></div></dl>
-            <div><Button disabled={rebuilding} onClick={onPreviewReindex} size="small" variant="quiet">重新预览</Button><Button loading={rebuilding} onClick={() => onRebuild(reindexPreview)} size="small" variant="primary">确认重建</Button></div>
-          </div>
-        ) : <div className="knowledge-settings__actions"><Button loading={reindexPreviewing} onClick={onPreviewReindex} size="small">预览重建</Button></div>}
+        <div className="knowledge-settings__heading"><RefreshCw size={16} /><div><strong>索引重建</strong><span>{base.documentCount} 个材料 · {base.chunkCount} 个现有段落</span></div></div>
+        <div className="knowledge-settings__actions"><Button loading={rebuilding} onClick={onRebuild} size="small" variant="primary">重建索引</Button></div>
         {rebuildError ? <InlineNotice title="索引操作失败" tone="warning">{publicErrorText(rebuildError, '当前索引保持不变。')}</InlineNotice> : null}
       </section>
     </div>
@@ -916,11 +920,11 @@ function KnowledgeEmbeddingSettings({
     setVerifiedDraftKey('');
   };
   const blockedReason = runtimeRevision === null
-    ? '当前设置 revision 尚未就绪，请刷新后重试。'
+    ? '当前设置尚未就绪，请刷新后重试。'
     : validationError
       ? validationError
       : !verified
-        ? '请先测试候选模型；只有 Probe 成功的同一份配置才能进入影响预览。'
+        ? '请先测试连接；只有连接通过的这份配置才能查看影响。'
         : '';
   const phase = state?.phase ?? 'applied_pending_restart';
   const runtime = state?.runtime;
@@ -929,19 +933,36 @@ function KnowledgeEmbeddingSettings({
   const fingerprint = runtime?.fingerprint || fallbackRuntime.fingerprint;
   const dimensions = runtime?.dimensions ?? fallbackRuntime.dimensions;
   const vectorCount = runtime?.vectorCount ?? fallbackRuntime.vectorCount;
-  const phaseLabel = phase === 'active' ? '已生效' : phase === 'applied_pending_rebuild' ? '待重建' : '待 Worker 重启';
+  const phaseLabel = phase === 'active' ? '已生效' : phase === 'applied_pending_rebuild' ? '待重建' : '等待索引服务重启';
   const phaseTone = phase === 'active' ? 'success' : 'warning';
+  const connectionLabel = verified
+    ? '当前设置已通过连接测试'
+    : probeMutation.isPending
+      ? '正在测试连接'
+      : probeMutation.error
+        ? '连接测试未通过'
+        : '尚未测试当前设置';
+  const indexCoverageLabel = typeof vectorCount === 'number'
+    ? `${vectorCount} 个段落已建立向量`
+    : '等待索引状态';
 
   return (
-    <section aria-label="Embedding 与索引">
-      <div className="knowledge-settings__heading"><Database size={16} /><div><strong>Embedding 与索引</strong><span>全局 Profile · Probe · 批准 · 重建</span></div></div>
-      {error ? <InlineNotice title="无法读取活动 Embedding Profile" tone="warning">{publicErrorText(error, '当前草稿不会自动应用。')}</InlineNotice> : null}
+    <section aria-label="向量模型与索引">
+      <div className="knowledge-settings__heading"><Database size={16} /><div><strong>向量模型与索引</strong><span>配置向量模型，测试连接后查看影响</span></div></div>
+      {error ? <InlineNotice title="无法读取当前向量模型配置" tone="warning">{publicErrorText(error, '当前草稿不会自动应用。')}</InlineNotice> : null}
       <div className="knowledge-index-status">
         <StatusBadge label={phaseLabel} tone={phaseTone} />
-        <span>{runtime?.reason || fallbackRuntime.reason || '配置状态与实际向量覆盖率分别核对。'}</span>
+        <span>{phase === 'active' ? '当前设置已经可以用于知识检索。' : phase === 'applied_pending_rebuild' ? '设置已保存，完成重建后即可用于检索。' : '设置正在应用，稍后刷新查看结果。'}</span>
       </div>
-      <div className="knowledge-settings-fields knowledge-settings-fields--index">
-        <Field htmlFor="knowledge-embedding-provider" label="Embedding Provider">
+      <dl className="mgmt-kv">
+        <dt>连接状态</dt><dd>{connectionLabel}</dd>
+        <dt>索引状态</dt><dd>{indexCoverageLabel}</dd>
+      </dl>
+      <InlineNotice title="下一步" tone={phase === 'active' ? 'success' : 'info'}>{phase === 'active' ? '可以直接使用知识检索。需要更换向量模型时，再打开高级设置。' : '打开高级设置检查连接并更新配置；完成后按提示重建索引。'}</InlineNotice>
+      <details className="knowledge-embedding-advanced">
+        <summary>高级：连接与索引设置</summary>
+        <div className="knowledge-settings-fields knowledge-settings-fields--index">
+        <Field htmlFor="knowledge-embedding-provider" label="向量模型服务">
           <Select
             id="knowledge-embedding-provider"
             onValueChange={(value) => selectProvider(value as KnowledgeEmbeddingProvider)}
@@ -949,7 +970,7 @@ function KnowledgeEmbeddingSettings({
             value={candidate.provider}
           />
         </Field>
-        <Field htmlFor="knowledge-embedding-model" label="Embedding 模型">
+        <Field htmlFor="knowledge-embedding-model" label="向量模型">
           <Input disabled={['environment', 'none', 'local-hash'].includes(candidate.provider)} id="knowledge-embedding-model" maxLength={1_000} onChange={(event) => updateCandidate({ model: event.target.value })} value={candidate.model} />
         </Field>
         <Field htmlFor="knowledge-embedding-base-url" label="兼容 API 地址">
@@ -961,34 +982,34 @@ function KnowledgeEmbeddingSettings({
         <Field htmlFor="knowledge-embedding-secret-reference" label="密钥环境变量名">
           <Input disabled={candidate.provider !== 'openai-compatible'} id="knowledge-embedding-secret-reference" maxLength={128} onChange={(event) => updateCandidate({ secretReference: event.target.value })} placeholder="PAW_EMBEDDING_API_KEY" value={candidate.secretReference} />
         </Field>
-      </div>
-      <details className="knowledge-embedding-advanced">
-        <summary>高级参数</summary>
+        </div>
+        <details className="knowledge-embedding-advanced">
+          <summary>高级：索引参数</summary>
         <div className="knowledge-settings-fields knowledge-settings-fields--advanced">
-          <Field htmlFor="knowledge-embedding-backend" label="Dense 索引后端">
+          <Field htmlFor="knowledge-embedding-backend" label="向量索引方式">
             <Select disabled={['environment', 'none'].includes(candidate.provider)} id="knowledge-embedding-backend" onValueChange={(value) => updateCandidate({ denseBackend: value === 'usearch' ? 'usearch' : 'sqlite-exact' })} options={[{ value: 'sqlite-exact', label: 'SQLite exact' }, { value: 'usearch', label: 'USearch ANN' }]} value={candidate.denseBackend} />
           </Field>
-          <Field htmlFor="knowledge-embedding-query-prefix" label="Query Prefix">
+          <Field htmlFor="knowledge-embedding-query-prefix" label="查询前缀">
             <Input disabled={['environment', 'none', 'local-hash'].includes(candidate.provider)} id="knowledge-embedding-query-prefix" maxLength={500} onChange={(event) => updateCandidate({ queryPrefix: event.target.value })} value={candidate.queryPrefix} />
           </Field>
-          <Field htmlFor="knowledge-embedding-document-prefix" label="Document Prefix">
+          <Field htmlFor="knowledge-embedding-document-prefix" label="文档前缀">
             <Input disabled={['environment', 'none', 'local-hash'].includes(candidate.provider)} id="knowledge-embedding-document-prefix" maxLength={500} onChange={(event) => updateCandidate({ documentPrefix: event.target.value })} value={candidate.documentPrefix} />
           </Field>
         </div>
-      </details>
+        </details>
       {validationError ? <p className="knowledge-inline-error" role="alert">{validationError}</p> : null}
       <div className="knowledge-settings__actions">
-        <Button disabled={Boolean(validationError) || !state} loading={probeMutation.isPending} onClick={() => probeMutation.mutate(candidate)} size="small">测试候选模型</Button>
+        <Button disabled={Boolean(validationError) || !state} loading={probeMutation.isPending} onClick={() => probeMutation.mutate(candidate)} size="small">测试连接</Button>
       </div>
-      {probeMutation.error ? <InlineNotice title="候选模型测试失败" tone="warning">{publicErrorText(probeMutation.error, '不会保存或重启当前 Worker。')}</InlineNotice> : null}
+      {probeMutation.error ? <InlineNotice title="连接测试失败" tone="warning">{publicErrorText(probeMutation.error, '不会保存或重启当前服务。')}</InlineNotice> : null}
       {verified && probeMutation.data ? (
-        <InlineNotice title="Probe 已通过" tone="success">
-          {probeMutation.data.provider} · {probeMutation.data.model || '无向量模型'} · {probeMutation.data.dimensions} 维 · {probeMutation.data.latencyMs.toFixed(1)} ms；收据不包含密钥。
+        <InlineNotice title="连接测试通过" tone="success">
+          当前设置可以连接；保存前会列出受影响的知识库。密钥不会显示或发送到页面。
         </InlineNotice>
       ) : null}
       <ManagementMutationWorkflow<EmbeddingMutationContext>
         availability={mutationBoundary.availability(blockedReason)}
-        description="先再次 Probe 并列出所有受影响知识库；批准后保存 Profile、重启隔离 Worker，再逐库重建。旧 fingerprint 向量保留用于配置回滚。"
+        description="先确认连接仍可用并列出受影响的知识库；保存后会更新向量模型配置、重启索引服务并逐库重建。旧索引会保留，以便必要时撤回。"
         draftKey={JSON.stringify({ draftKey, profileRevision, runtimeRevision })}
         mutationKey={['knowledge-library', 'embedding', 'apply']}
         onApply={async (preview) => parseManagementWorkReceipt(
@@ -1007,10 +1028,10 @@ function KnowledgeEmbeddingSettings({
         )}
         onApplied={() => void refreshAuthoritativeState()}
         onPreview={async () => {
-          if (!verified || runtimeRevision === null || !state) throw new Error('候选 Profile 已变化，请重新 Probe。');
+          if (!verified || runtimeRevision === null || !state) throw new Error('候选配置已变化，请重新测试连接。');
           const impact = await previewKnowledgeEmbeddingImpact(transport, candidate);
           if (impact.currentProfileSha256 !== state.profile.profileSha256 || impact.probe.profileSha256 !== probeMutation.data?.profileSha256) {
-            throw new Error('活动 Profile 或 Probe 收据已经变化，请刷新后重试。');
+            throw new Error('当前配置或连接测试结果已经变化，请刷新后重试。');
           }
           const context: EmbeddingMutationContext = { candidate: { ...candidate }, changes: impact.configurationChanges, impact };
           const preview = parseManagementWorkPreview(
@@ -1025,12 +1046,12 @@ function KnowledgeEmbeddingSettings({
             ...preview,
             summary: {
               ...preview.summary,
-              title: '切换 Knowledge Embedding Profile？',
+              title: '更新向量模型配置？',
               items: [
                 `候选：${impact.probe.provider} / ${impact.probe.model || '无向量模型'} / ${impact.probe.dimensions} 维`,
-                `影响 ${impact.affectedBaseCount} 个知识库、${impact.affectedDocumentCount} 个文档、${impact.affectedChunkCount} 个片段`,
-                impact.requiresWorkerRestart ? '保存后需要重启 Knowledge Worker' : 'Worker 配置 fingerprint 不变',
-                impact.requiresRebuild ? '新 Profile 生效前必须逐库重建向量索引' : '当前没有需要重建的文档',
+                `影响 ${impact.affectedBaseCount} 个知识库、${impact.affectedDocumentCount} 个文档、${impact.affectedChunkCount} 个段落`,
+                impact.requiresWorkerRestart ? '保存后需要重启索引服务' : '当前服务配置无需重启',
+                impact.requiresRebuild ? '新配置生效前需要逐库重建向量索引' : '当前没有需要重建的文档',
               ],
               risk: 'R2',
             },
@@ -1046,28 +1067,29 @@ function KnowledgeEmbeddingSettings({
         )}
         onRolledBack={() => void refreshAuthoritativeState()}
         risk="R2"
-        title="切换 Embedding Profile"
+        title="更新向量模型配置"
       />
       <div className="knowledge-settings-fields knowledge-settings-fields--index">
-        <Field htmlFor="knowledge-dense-provider" label="实际 Provider"><Input disabled id="knowledge-dense-provider" readOnly value={runtimeProvider || '未报告'} /></Field>
-        <Field htmlFor="knowledge-dense-model" label="实际 Model / Fingerprint"><Input disabled id="knowledge-dense-model" readOnly value={fingerprint || runtimeModel || '未报告'} /></Field>
+        <Field htmlFor="knowledge-dense-provider" label="当前服务"><Input disabled id="knowledge-dense-provider" readOnly value={runtimeProvider || '未报告'} /></Field>
+        <Field htmlFor="knowledge-dense-model" label="当前模型标识"><Input disabled id="knowledge-dense-model" readOnly value={fingerprint || runtimeModel || '未报告'} /></Field>
         <Field htmlFor="knowledge-dense-dimension" label="实际维度"><Input disabled id="knowledge-dense-dimension" readOnly value={dimensions ?? '未报告'} /></Field>
-        <Field htmlFor="knowledge-vector-count" label="当前 fingerprint 向量"><Input disabled id="knowledge-vector-count" readOnly value={vectorCount ?? '未报告'} /></Field>
-        <Field htmlFor="knowledge-index-revision" label="索引 revision"><Input disabled id="knowledge-index-revision" readOnly value={indexRevisionLabel(documents)} /></Field>
-        <Field htmlFor="knowledge-config-revision" label="配置 revision"><Input disabled id="knowledge-config-revision" readOnly value={baseRevision} /></Field>
+        <Field htmlFor="knowledge-vector-count" label="当前向量数量"><Input disabled id="knowledge-vector-count" readOnly value={vectorCount ?? '未报告'} /></Field>
+        <Field htmlFor="knowledge-index-revision" label="索引版本"><Input disabled id="knowledge-index-revision" readOnly value={indexRevisionLabel(documents)} /></Field>
+        <Field htmlFor="knowledge-config-revision" label="配置版本"><Input disabled id="knowledge-config-revision" readOnly value={baseRevision} /></Field>
       </div>
-      <InlineNotice title="生效判定" tone="info">只有 Worker fingerprint 与活动 Profile 一致，且当前 fingerprint 的向量覆盖全部片段，才显示“已生效”；配置保存成功不等于索引重建完成。</InlineNotice>
+      <InlineNotice title="何时生效" tone="info">当前索引服务与保存的向量模型配置一致，并且向量覆盖全部段落后，才会显示“已生效”；保存配置不代表索引已经重建完成。</InlineNotice>
+      </details>
     </section>
   );
 }
 
 const embeddingProviderOptions = [
   { value: 'environment', label: '沿用环境配置' },
-  { value: 'none', label: '关闭 Dense（仅关键词）' },
+  { value: 'none', label: '关闭向量检索（仅关键词）' },
   { value: 'local-hash', label: 'Local Hash（基线）' },
   { value: 'sentence-transformers', label: 'Sentence Transformers' },
   { value: 'mlx-bert', label: 'MLX BERT' },
-  { value: 'openai-compatible', label: 'OpenAI-compatible Embedding' },
+  { value: 'openai-compatible', label: 'OpenAI 兼容向量模型' },
 ];
 
 function emptyEmbeddingCandidate(): KnowledgeEmbeddingCandidate {
@@ -1091,13 +1113,13 @@ function candidateFromEmbeddingState(state: KnowledgeEmbeddingProfileState): Kno
 function embeddingCandidateError(candidate: KnowledgeEmbeddingCandidate): string {
   if (!Number.isInteger(candidate.dimensions) || candidate.dimensions < 0 || candidate.dimensions > 65_536) return '向量维度必须是 0–65536 的整数。';
   if (candidate.provider === 'local-hash' && candidate.dimensions < 8) return 'Local Hash 至少需要 8 维。';
-  if (['sentence-transformers', 'mlx-bert', 'openai-compatible'].includes(candidate.provider) && !candidate.model.trim()) return '当前 Provider 必须填写模型 ID 或本机模型目录。';
+  if (['sentence-transformers', 'mlx-bert', 'openai-compatible'].includes(candidate.provider) && !candidate.model.trim()) return '当前服务需要填写模型名称或本机模型目录。';
   if (candidate.provider === 'openai-compatible') {
     try {
       const parsed = new URL(candidate.baseUrl);
       if (!['http:', 'https:'].includes(parsed.protocol)) return '兼容 API 地址必须使用 HTTP(S)。';
     } catch {
-      return 'OpenAI-compatible Provider 必须填写有效的 HTTP(S) API 地址。';
+      return 'OpenAI 兼容服务需要填写有效的 HTTP(S) API 地址。';
     }
     if (candidate.secretReference && !/^[A-Z][A-Z0-9_]{2,127}$/u.test(candidate.secretReference)) return '密钥引用必须是大写环境变量名，页面不会保存明文密钥。';
   }
@@ -1110,12 +1132,14 @@ function CreateKnowledgeBaseDialog({
   onCreate,
   onOpenChange,
   open,
+  returnFocusRef,
 }: {
   error: unknown;
   loading: boolean;
   onCreate: (input: { name: string; description: string }) => void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
+  returnFocusRef: RefObject<HTMLElement | null>;
 }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -1124,10 +1148,10 @@ function CreateKnowledgeBaseDialog({
   }, [open]);
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!loading) onOpenChange(next); }}>
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={(event) => restoreDialogFocus(event, returnFocusRef)}>
         <DialogHeader><DialogTitle>新建文档知识库</DialogTitle><DialogDescription>资料和个人记忆会使用不同存储，不会混在一起。</DialogDescription></DialogHeader>
         <form className="knowledge-create-form" id="knowledge-create-form" onSubmit={(event) => { event.preventDefault(); if (name.trim()) onCreate({ name: name.trim(), description: description.trim() }); }}>
-          <Field htmlFor="knowledge-base-name" label="名称" required><Input autoFocus id="knowledge-base-name" maxLength={120} onChange={(event) => setName(event.target.value)} placeholder="例如：Agent Runtime 源码" value={name} /></Field>
+          <Field htmlFor="knowledge-base-name" label="名称" required><Input autoFocus id="knowledge-base-name" maxLength={120} onChange={(event) => setName(event.target.value)} placeholder="例如：项目技术文档" value={name} /></Field>
           <Field htmlFor="knowledge-base-description" label="说明"><TextArea id="knowledge-base-description" maxLength={1_000} onChange={(event) => setDescription(event.target.value)} placeholder="这个库包含什么、给谁使用" rows={4} value={description} /></Field>
           {error ? <p className="knowledge-inline-error" role="alert">{publicErrorText(error, '暂时无法新建知识库。')}</p> : null}
         </form>
@@ -1137,13 +1161,13 @@ function CreateKnowledgeBaseDialog({
   );
 }
 
-function ReparseDocumentDialog({ document, error, loading, onConfirm, onOpenChange }: { document: KnowledgeDocument | null; error: unknown; loading: boolean; onConfirm: (parser: KnowledgeParserMode) => void; onOpenChange: (open: boolean) => void }) {
+function ReparseDocumentDialog({ document, error, loading, onConfirm, onOpenChange, returnFocusRef }: { document: KnowledgeDocument | null; error: unknown; loading: boolean; onConfirm: (parser: KnowledgeParserMode) => void; onOpenChange: (open: boolean) => void; returnFocusRef: RefObject<HTMLElement | null> }) {
   const [parser, setParser] = useState<KnowledgeParserMode>('auto');
   useEffect(() => { if (document) setParser(asParserMode(document.parser)); }, [document]);
   return (
     <Dialog open={Boolean(document)} onOpenChange={(next) => { if (!loading) onOpenChange(next); }}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>重新解析文档</DialogTitle><DialogDescription>{document ? `“${document.name}”将重新生成 Markdown、Chunks 和索引。` : ''}</DialogDescription></DialogHeader>
+      <DialogContent onCloseAutoFocus={(event) => restoreDialogFocus(event, returnFocusRef)}>
+        <DialogHeader><DialogTitle>重新解析文档</DialogTitle><DialogDescription>{document ? `“${document.name}”将重新生成文档内容、段落和索引。` : ''}</DialogDescription></DialogHeader>
         <div className="knowledge-create-form">
           <Field htmlFor="knowledge-document-parser" label="解析方式">
             <Select id="knowledge-document-parser" onValueChange={(value) => setParser(asParserMode(value))} options={[{ value: 'auto', label: '自动选择' }, { value: 'builtin', label: '内置文本解析' }, { value: 'mineru', label: 'MinerU OCR / 版面解析' }]} value={parser} />
@@ -1157,16 +1181,24 @@ function ReparseDocumentDialog({ document, error, loading, onConfirm, onOpenChan
   );
 }
 
-function ConfirmDialog({ description, error, loading, onConfirm, onOpenChange, open, title }: { description: string; error: unknown; loading: boolean; onConfirm: () => void; onOpenChange: (open: boolean) => void; open: boolean; title: string }) {
+function ConfirmDialog({ description, error, loading, onConfirm, onOpenChange, open, returnFocusRef, title }: { description: string; error: unknown; loading: boolean; onConfirm: () => void; onOpenChange: (open: boolean) => void; open: boolean; returnFocusRef: RefObject<HTMLElement | null>; title: string }) {
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!loading) onOpenChange(next); }}>
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={(event) => restoreDialogFocus(event, returnFocusRef)}>
         <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{description}</DialogDescription></DialogHeader>
         {error ? <p className="knowledge-inline-error" role="alert">{publicErrorText(error, '删除失败，原内容仍然保留。')}</p> : null}
-        <DialogFooter><Button disabled={loading} onClick={() => onOpenChange(false)} variant="quiet">取消</Button><Button leadingIcon={<Trash2 size={14} />} loading={loading} onClick={onConfirm}>确认删除</Button></DialogFooter>
+        <DialogFooter><Button disabled={loading} onClick={() => onOpenChange(false)} variant="quiet">取消</Button><Button leadingIcon={<Trash2 size={14} />} loading={loading} onClick={onConfirm} variant="danger">确认删除</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );
+}
+
+function restoreDialogFocus(
+  event: Event,
+  returnFocusRef: RefObject<HTMLElement | null>,
+): void {
+  event.preventDefault();
+  returnFocusRef.current?.focus();
 }
 
 interface WorkerState { label: string; tone: 'success' | 'warning' | 'danger' | 'info' | 'neutral' }
@@ -1211,10 +1243,10 @@ function retrievalEvidenceLabel(hit: KnowledgeSearchHit): string {
     hit.diagnostics.denseRank === null ? '' : `向量候选第 ${hit.diagnostics.denseRank}`,
     hit.diagnostics.graphRank === null ? '' : `图谱候选第 ${hit.diagnostics.graphRank}`,
   ].filter(Boolean);
-  const matches = hit.diagnostics.graphMatches.length ? ` · 关联 ${hit.diagnostics.graphMatches.slice(0, 3).join('、')}` : '';
+  const matches = hit.diagnostics.graphMatches.length ? ` · 关联 ${publicKnowledgeText(hit.diagnostics.graphMatches.slice(0, 3).join('、'))}` : '';
   return ranks.length ? `${mode} · ${ranks.join(' · ')}${matches}` : mode;
 }
-function citationLabel(hit: KnowledgeSearchHit): string { if (hit.page !== null) return `第 ${hit.page} 页`; if (hit.lineStart !== null) return hit.lineEnd && hit.lineEnd !== hit.lineStart ? `第 ${hit.lineStart}-${hit.lineEnd} 行` : `第 ${hit.lineStart} 行`; return '文档片段'; }
+function citationLabel(hit: KnowledgeSearchHit): string { if (hit.page !== null) return `第 ${hit.page} 页`; if (hit.lineStart !== null) return hit.lineEnd && hit.lineEnd !== hit.lineStart ? `第 ${hit.lineStart}-${hit.lineEnd} 行` : `第 ${hit.lineStart} 行`; return '文档段落'; }
 function uploadItemId(file: File, index: number): string { return `upload-${Date.now()}-${index}-${file.name}-${file.size}`; }
 function replaceUploadItem(items: KnowledgeUploadItem[], id: string, patch: Partial<KnowledgeUploadItem>): KnowledgeUploadItem[] { return items.map((item) => item.id === id ? { ...item, ...patch } : item); }
 function indexRevisionLabel(documents: readonly KnowledgeDocument[]): string {

@@ -300,11 +300,14 @@ mkdir -p "$MANAGED_PI_SKILLS_DIR"
 RETIRED_MANAGED_PI_SKILLS=(
   grill-me
   grill-me-docs
+  implementation-execution
   managed-task-execution
   project-devlog
+  quality-gate
   rag-ime-memory-curator
   rag-ime-plugin-creator
   requirement-alignment
+  review-feedback-resolution
   room-delivery-closure
   room-delivery-self-check
   room-implementation-execution
@@ -318,7 +321,9 @@ RETIRED_MANAGED_PI_SKILLS=(
   room-systematic-debugging
   room-test-driven-implementation
   solution-convergence
+  structured-handoff
   structured-result-presentation
+  work-document-archive
 )
 for retired_skill_name in "${RETIRED_MANAGED_PI_SKILLS[@]}"; do
   rm -rf "$MANAGED_PI_SKILLS_DIR/$retired_skill_name"

@@ -167,7 +167,6 @@
 }
 
 .knowledge-source-bars button:last-child { border-right: 0; }
-.knowledge-source-bars button:hover { background: var(--color-surface-hover); }
 .knowledge-source-bars button:active { transform: scale(.99); }
 .knowledge-source-bars button[data-selected='true'] { background: var(--color-accent-soft); color: var(--color-accent); }
 .knowledge-source-bars button > span { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 6px; }
@@ -186,7 +185,6 @@
   height: 3px;
   background: var(--color-accent);
   transform-origin: left;
-  transition: width var(--duration-panel) var(--ease-standard);
 }
 
 .knowledge-evidence__explorer {
@@ -221,7 +219,6 @@
   transition: background var(--duration-enter) var(--ease-standard), transform var(--duration-press) var(--ease-press);
 }
 
-.knowledge-evidence__list > button:hover { background: var(--color-surface-hover); }
 .knowledge-evidence__list > button:active { transform: scale(.995); }
 .knowledge-evidence__list > button[data-selected='true'] {
   box-shadow: inset 3px 0 0 var(--color-accent);
@@ -279,7 +276,12 @@
   text-decoration: none;
 }
 
-.knowledge-evidence__detail a:hover { text-decoration: underline; }
+@media (hover: hover) and (pointer: fine) {
+  .knowledge-source-bars button:hover,
+  .knowledge-evidence__list > button:hover { background: var(--color-surface-hover); }
+
+  .knowledge-evidence__detail a:hover { text-decoration: underline; }
+}
 
 @media (max-width: 1100px) {
   .knowledge-route-visual { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -1,5 +1,5 @@
 import { Activity, Menu as MenuIcon, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   routeGroupLabels,
   routeRegistry,
@@ -21,6 +21,7 @@ import type { ProductIdentity } from '@/features/identity/product-identity';
 import { routeIcons } from './route-icons';
 
 const mobilePrimaryRoutes: RouteId[] = ['project-field', 'agent', 'rooms', 'memory'];
+const routeGroups = Object.keys(routeGroupLabels) as Array<keyof typeof routeGroupLabels>;
 
 function RouteLink({
   compact = false,
@@ -34,11 +35,20 @@ function RouteLink({
   selected: boolean;
 }) {
   const Icon = routeIcons[route.id];
+  const linkRef = useRef<HTMLAnchorElement>(null);
+
+  useEffect(() => {
+    if (!selected) return;
+    linkRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [selected]);
+
   const anchor = (
     <a
+      ref={linkRef}
       className="shell-nav__link"
       data-route={route.id}
       href={`#${route.path}`}
+      aria-label={compact ? route.label : undefined}
       aria-current={selected ? 'page' : undefined}
       onClick={onNavigate}
       onFocus={() => prefetchRoute(route.id)}
@@ -68,6 +78,31 @@ export function DesktopNavigation({
   identity: ProductIdentity;
   onCollapsedChange: (collapsed: boolean) => void;
 }) {
+  const navigationRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const navigation = navigationRef.current;
+    if (!navigation) return;
+
+    const updateScrollHint = () => {
+      const remaining = navigation.scrollHeight - navigation.scrollTop - navigation.clientHeight;
+      navigation.dataset.canScrollDown = String(remaining > 16);
+    };
+
+    updateScrollHint();
+    navigation.addEventListener('scroll', updateScrollHint, { passive: true });
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(updateScrollHint);
+    resizeObserver?.observe(navigation);
+    window.addEventListener('resize', updateScrollHint);
+    return () => {
+      navigation.removeEventListener('scroll', updateScrollHint);
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', updateScrollHint);
+    };
+  }, []);
+
   return (
     <aside className="shell-sidebar" aria-label="主导航">
       <div className="shell-brand">
@@ -80,8 +115,8 @@ export function DesktopNavigation({
           <small>{identity.tagline}</small>
         </span>
       </div>
-      <nav className="shell-nav">
-        {(Object.keys(routeGroupLabels) as Array<keyof typeof routeGroupLabels>).map((group) => (
+      <nav className="shell-nav" ref={navigationRef}>
+        {routeGroups.map((group) => (
           <section className="shell-nav__group" key={group} aria-label={routeGroupLabels[group]}>
             <p className="shell-nav__group-label">{routeGroupLabels[group]}</p>
             {routeRegistry.filter((route) => route.group === group).map((route) => (
@@ -115,24 +150,54 @@ export function DesktopNavigation({
 
 export function MobileRouteMenu({ activeRouteId }: { activeRouteId: RouteId }) {
   const [open, setOpen] = useState(false);
+  const navigatingRef = useRef(false);
+  const activeRoute = routeRegistry.find((route) => route.id === activeRouteId)!;
+  const activeRouteIsInMenu = !mobilePrimaryRoutes.includes(activeRouteId);
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <IconButton className="shell-mobile-menu__trigger" icon={<MenuIcon size={18} />} label="打开全部导航" />
+        <IconButton
+          className="shell-mobile-menu__trigger"
+          data-current-page={activeRouteIsInMenu || undefined}
+          icon={<MenuIcon size={18} />}
+          label={activeRouteIsInMenu ? `打开全部导航，当前页面：${activeRoute.label}` : '打开全部导航'}
+        />
       </DialogTrigger>
-      <DialogContent className="shell-mobile-menu">
+      <DialogContent
+        className="shell-mobile-menu"
+        onCloseAutoFocus={(event) => {
+          if (!navigatingRef.current) return;
+          event.preventDefault();
+          navigatingRef.current = false;
+        }}
+      >
         <DialogHeader>
-          <DialogTitle>去哪里？</DialogTitle>
-          <DialogDescription>对话、记忆、协作与设置都在这里。</DialogDescription>
+          <DialogTitle>全部功能</DialogTitle>
+          <DialogDescription>按工作、能力和系统分类选择页面。</DialogDescription>
         </DialogHeader>
         <nav className="shell-mobile-menu__routes" aria-label="全部导航">
-          {routeRegistry.map((route) => (
-            <RouteLink
-              key={route.id}
-              onNavigate={() => setOpen(false)}
-              route={route}
-              selected={route.id === activeRouteId}
-            />
+          {routeGroups.map((group) => (
+            <section
+              aria-labelledby={`mobile-navigation-${group}`}
+              className="shell-mobile-menu__group"
+              key={group}
+            >
+              <h3 id={`mobile-navigation-${group}`}>{routeGroupLabels[group]}</h3>
+              <div className="shell-mobile-menu__group-links">
+                {routeRegistry.filter((route) => route.group === group).map((route) => (
+                  <RouteLink
+                    key={route.id}
+                    onNavigate={() => {
+                      navigatingRef.current = route.id !== activeRouteId;
+                      setOpen(false);
+                    }}
+                    route={route}
+                    selected={route.id === activeRouteId}
+                  />
+                ))}
+              </div>
+            </section>
           ))}
         </nav>
       </DialogContent>

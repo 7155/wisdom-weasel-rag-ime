@@ -52,6 +52,7 @@ target.write_text(
                 "accessibilitySemantics": True,
                 "treeDiff": True,
                 "semanticActions": True,
+                "semanticFind": True,
                 "liveStateRevalidation": True,
                 "modelSuppliedCoordinates": False,
                 "screenCapture": False,

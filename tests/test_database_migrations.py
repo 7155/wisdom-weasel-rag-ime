@@ -56,7 +56,6 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("room_workspace_bindings", tables)
             self.assertIn("room_workspace_events", tables)
             self.assertIn("room_workspace_integration_leases", tables)
-            self.assertIn("room_kernel_dispatch_attempts", tables)
             self.assertIn("room_v2_prompt_compile_receipts", tables)
             self.assertIn("room_v2_prompt_compare_diffs", tables)
             self.assertIn("room_v2_session_context_epochs", tables)
@@ -465,124 +464,6 @@ class DatabaseMigrationTests(unittest.TestCase):
                 conn.execute(
                     """UPDATE room_kernel_continuations SET state='resumed'
                        WHERE continuation_id='continuation:unproven'"""
-                )
-
-    def test_0151_backfills_exact_current_dispatch_attempt_identity(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory(
-            prefix="rag-ime-migrations-0150-"
-        ) as temporary:
-            migrations_0150 = Path(temporary) / "migrations-0150"
-            migrations_0151 = Path(temporary) / "migrations-0151"
-            migrations_0150.mkdir()
-            migrations_0151.mkdir()
-            for migration in load_migrations():
-                if migration.version <= 150:
-                    shutil.copy2(
-                        migration.path,
-                        migrations_0150 / migration.path.name,
-                    )
-                if migration.version <= 151:
-                    shutil.copy2(
-                        migration.path,
-                        migrations_0151 / migration.path.name,
-                    )
-
-            with closing(sqlite3.connect(":memory:")) as conn:
-                initial = apply_database_migrations(
-                    conn,
-                    migrations_dir=migrations_0150,
-                )
-                self.assertEqual(initial.current_version, 150)
-                conn.execute(
-                    """INSERT INTO room_kernel_roots(
-                       root_id,room_id,generation,state,
-                       facilitator_participant_id,requirement_anchor_ref,
-                       budget_remaining,max_hops,max_depth,payload_json,
-                       created_at_ms,updated_at_ms)
-                       VALUES ('root:attempt','room:attempt',3,'running',
-                               'participant:a','anchor:attempt',10,4,3,
-                               '{}',1,1)"""
-                )
-                conn.execute(
-                    """INSERT INTO room_kernel_tasks(
-                       task_id,root_id,state,payload_json,updated_at_ms,
-                       current_owner_participant_id)
-                       VALUES ('task:attempt','root:attempt','active','{}',1,
-                               'participant:a')"""
-                )
-                dispatch_payload = json.dumps(
-                    {
-                        "attempt": 2,
-                        "capabilityEpoch": 5,
-                        "dispatchId": "dispatch:attempt",
-                        "generation": 3,
-                        "rootId": "root:attempt",
-                        "targetParticipantId": "participant:a",
-                        "targetSessionId": "session:a",
-                        "taskId": "task:attempt",
-                    },
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-                conn.execute(
-                    """INSERT INTO room_kernel_dispatches(
-                       dispatch_id,root_id,task_id,generation,hop_count,depth,
-                       budget_cost,target_session_id,target_participant_id,
-                       trigger_id,intent_kind,idempotency_key,state,payload_json,
-                       created_at_ms,updated_at_ms)
-                       VALUES ('dispatch:attempt','root:attempt','task:attempt',
-                               3,0,0,1,'session:a','participant:a',
-                               'trigger:attempt','execute','key:attempt',
-                               'running',?,2,8)""",
-                    (dispatch_payload,),
-                )
-                conn.execute(
-                    """INSERT INTO room_kernel_leases(
-                       lease_id,root_id,dispatch_id,generation,lease_token,
-                       state,expires_at_ms,updated_at_ms)
-                       VALUES ('lease:attempt','root:attempt',
-                               'dispatch:attempt',3,'token:attempt',
-                               'accepted',100,8)"""
-                )
-                runtime_receipt = json.dumps(
-                    {"turnId": "turn:attempt:2"},
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-                conn.execute(
-                    """INSERT INTO room_kernel_runtime_effects(
-                       dispatch_id,root_id,session_id,dispatch_generation,
-                       state,runtime_receipt_json,updated_at_ms)
-                       VALUES ('dispatch:attempt','root:attempt','session:a',
-                               3,'accepted',?,8)""",
-                    (runtime_receipt,),
-                )
-
-                upgraded = apply_database_migrations(
-                    conn,
-                    migrations_dir=migrations_0151,
-                )
-
-                self.assertEqual(upgraded.applied_versions, (151,))
-                self.assertEqual(
-                    conn.execute(
-                        """SELECT attempt_id,dispatch_attempt,generation,
-                                  capability_epoch,state,lease_id,
-                                  runtime_turn_id,dispatch_payload_json
-                           FROM room_kernel_dispatch_attempts"""
-                    ).fetchone(),
-                    (
-                        "room-dispatch-attempt:dispatch:attempt:2",
-                        2,
-                        3,
-                        5,
-                        "runtime_accepted",
-                        "lease:attempt",
-                        "turn:attempt:2",
-                        dispatch_payload,
-                    ),
                 )
 
     def test_0122_backfills_failed_command_for_explicit_retry_lineage(

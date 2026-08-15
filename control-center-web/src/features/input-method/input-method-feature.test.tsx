@@ -6,6 +6,7 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { MockControlTransport } from '@/test/mock-transport';
 import { InputMethodFeature } from './index';
+import { modeSettingLabel } from './input-method-presentation';
 
 const settings = {
   ok: true,
@@ -99,7 +100,7 @@ describe('InputMethodFeature', () => {
     resolveOverview({ ok: true, profile: '安全模式' });
 
     await waitFor(() => expect(screen.getByText('安全模式')).toBeInTheDocument());
-    expect(screen.getByText('切换运行模式')).toBeInTheDocument();
+    expect(screen.getByText('保存使用方式')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '当前不可用' })).not.toBeInTheDocument();
   });
 
@@ -147,6 +148,7 @@ describe('InputMethodFeature', () => {
     expect(document.body).not.toHaveTextContent('pathId');
     expect(document.body).not.toHaveTextContent('provider_internal_v3');
     expect(document.body).not.toHaveTextContent('/api/internal/schema');
+    expect(modeSettingLabel('rag.lanes.timeDailyBook')).toBe('时间与日记联想');
   });
 
   it('groups settings by backend schema responsibility and keeps controls disabled without the write contract', async () => {
@@ -230,6 +232,12 @@ describe('InputMethodFeature', () => {
 
     expect(await screen.findByRole('heading', { level: 3, name: '输入体验' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 3, name: '候选界面' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: '输入体验' })).toHaveAttribute('open');
+    expect(screen.getByRole('heading', { level: 3, name: '输入体验' }).closest('details')).toHaveAttribute('open');
+    expect(screen.getByRole('heading', { level: 3, name: '候选界面' }).closest('details')).not.toHaveAttribute('open');
+    expect(document.querySelectorAll('.input-settings-group[open]')).toHaveLength(1);
+    expect(document.querySelector('.input-settings-save')?.compareDocumentPosition(document.querySelector('.input-settings-grid')!))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(screen.getByRole('list', { name: '输入法运行链状态' }).children).toHaveLength(4);
     expect(screen.getByText('本机模型已加载')).toBeInTheDocument();
     expect(screen.getByText('降级')).toBeInTheDocument();
@@ -301,9 +309,9 @@ describe('InputMethodFeature', () => {
 
     await user.click(await screen.findByRole('radio', { name: '安全' }));
     expect(screen.getByText('3 项设置将发生变化')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '查看影响' }));
+    await user.click(screen.getByRole('button', { name: '保存使用方式' }));
 
-    expect(await screen.findByText('切换到安全模式？')).toBeInTheDocument();
+    await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'configuration.settings.preview')).toBe(true));
     const previewRequest = transport.requests.find(({ request }) => request.pathId === 'configuration.settings.preview')?.request;
     expect(previewRequest?.body).toEqual({
       changes: {
@@ -314,11 +322,7 @@ describe('InputMethodFeature', () => {
       expectedRuntimeRevision: 9,
     });
 
-    await user.click(screen.getByRole('button', { name: '确认这些更改' }));
-    await user.click(screen.getByRole('checkbox', { name: '我确认只执行上方列出的更改' }));
-    await user.click(screen.getByRole('button', { name: '确认执行' }));
-
-    expect(await screen.findByText('这次更改已安全记录')).toBeInTheDocument();
+    expect(await screen.findByText('已保存')).toBeInTheDocument();
     const applyRequest = transport.requests.find(({ request }) => request.pathId === 'configuration.settings.apply')?.request;
     expect(applyRequest?.body).toEqual({
       changes: {
@@ -332,7 +336,7 @@ describe('InputMethodFeature', () => {
       confirmText: 'apply',
     });
 
-    await user.click(screen.getByRole('button', { name: '撤销这次更改' }));
+    await user.click(screen.getByRole('button', { name: '撤销' }));
     expect(await screen.findByText('已恢复到更改前')).toBeInTheDocument();
     const rollbackRequest = transport.requests.find(({ request }) => request.pathId === 'configuration.settings.rollback')?.request;
     expect(rollbackRequest?.body).toEqual({
@@ -426,12 +430,13 @@ describe('InputMethodFeature', () => {
 
     await user.click(await screen.findByRole('combobox', { name: 'Option+数字行为' }));
     await user.click(await screen.findByRole('option', { name: '关闭' }));
+    await user.click(screen.getByRole('heading', { level: 3, name: '候选界面' }).closest('summary')!);
     const candidateCount = screen.getByLabelText('续写候选数量');
     await user.clear(candidateCount);
     await user.type(candidateCount, '6');
-    await user.click(screen.getByRole('button', { name: '查看影响' }));
+    await user.click(screen.getByRole('button', { name: '保存输入体验设置' }));
 
-    await screen.findByText('应用这些输入设置？');
+    await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'configuration.settings.preview')).toBe(true));
     const previewRequest = transport.requests.find(({ request }) => request.pathId === 'configuration.settings.preview')?.request;
     expect(previewRequest?.body).toEqual({
       changes: {
@@ -441,13 +446,7 @@ describe('InputMethodFeature', () => {
       expectedRuntimeRevision: 7,
     });
 
-    await user.click(screen.getByRole('button', { name: '确认这些更改' }));
-    const approve = screen.getByRole('checkbox', { name: '我确认只执行上方列出的更改' });
-    expect(screen.getByRole('button', { name: '确认执行' })).toBeDisabled();
-    await user.click(approve);
-    await user.click(screen.getByRole('button', { name: '确认执行' }));
-
-    expect(await screen.findByText('这次更改已安全记录')).toBeInTheDocument();
+    expect(await screen.findByText('已保存')).toBeInTheDocument();
     const applyRequest = transport.requests.find(({ request }) => request.pathId === 'configuration.settings.apply')?.request;
     expect(applyRequest?.body).toEqual({
       changes: {
@@ -460,7 +459,7 @@ describe('InputMethodFeature', () => {
       confirmText: 'apply',
     });
 
-    await user.click(screen.getByRole('button', { name: '撤销这次更改' }));
+    await user.click(screen.getByRole('button', { name: '撤销' }));
     expect(await screen.findByText('已恢复到更改前')).toBeInTheDocument();
     const rollbackRequest = transport.requests.find(({ request }) => request.pathId === 'configuration.settings.rollback')?.request;
     expect(rollbackRequest?.body).toEqual({
@@ -563,18 +562,19 @@ describe('InputMethodFeature', () => {
     expect(await screen.findByText('配置已生效')).toBeInTheDocument();
     expect(screen.getAllByText('minimind-ime-v2').length).toBeGreaterThan(0);
     expect(screen.queryByLabelText('普通数字键')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('combobox', { name: '注册模型 ID' }));
+    await user.click(screen.getByRole('heading', { level: 3, name: '本机补全' }).closest('summary')!);
+    await user.click(screen.getByRole('combobox', { name: '本机补全模型' }));
     await user.click(screen.getByRole('option', { name: 'minimind-ime-v2' }));
     expect(screen.getByLabelText('本机模型目录')).toHaveValue('/tmp/minimind-ime-v2');
-    const maxTokens = screen.getByLabelText('最大生成 Token');
+    const maxTokens = screen.getByLabelText('单次补全长度');
     await user.clear(maxTokens);
     await user.type(maxTokens, '12');
     const modelBudget = screen.getByLabelText('本机模型最长等待');
     await user.clear(modelBudget);
     await user.type(modelBudget, '1200');
-    await user.click(screen.getByRole('button', { name: '查看影响' }));
+    await user.click(screen.getByRole('button', { name: '保存输入体验设置' }));
 
-    await screen.findByText('应用这些输入设置？');
+    await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'configuration.settings.preview')).toBe(true));
     const previewRequest = transport.requests.find(({ request }) => request.pathId === 'configuration.settings.preview')?.request;
     expect(previewRequest?.body).toEqual({
       changes: {
@@ -585,6 +585,66 @@ describe('InputMethodFeature', () => {
       },
       expectedRuntimeRevision: 9,
     });
+  });
+
+  it('keeps a changed or invalid settings group open with inline recovery feedback', async () => {
+    const user = userEvent.setup();
+    renderFeature(new MockControlTransport({
+      capabilities: {
+        features: {
+          managementWorkContract: true,
+          configurationSettingsWorkContract: true,
+        },
+      },
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '标准模式' },
+        'configuration.settings': {
+          ok: true,
+          runtimeRevision: 12,
+          settings: { display: { maxPostCommitCandidates: 5 } },
+        },
+        'configuration.schema': {
+          ok: true,
+          sections: [{
+            id: 'display',
+            fields: [{
+              key: 'display.maxPostCommitCandidates',
+              type: 'integer',
+              min: 1,
+              max: 8,
+              applyMode: 'reload',
+            }],
+          }],
+        },
+        'input.lexicon.review': emptyReview,
+      },
+    }));
+
+    const group = (await screen.findByRole('heading', { level: 3, name: '候选界面' })).closest('details')!;
+    const summary = group.querySelector('summary')!;
+    expect(group).not.toHaveAttribute('open');
+    await user.click(summary);
+    const candidateCount = screen.getByLabelText('续写候选数量');
+    await user.clear(candidateCount);
+    await user.type(candidateCount, '12');
+
+    expect(group).toHaveAttribute('open');
+    expect(summary).toHaveTextContent('1 项需修正');
+    expect(screen.getByRole('alert')).toHaveTextContent('请输入 1 到 8 之间的数值。');
+    expect(candidateCount).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('需要修正')).toBeInTheDocument();
+
+    await user.click(summary);
+    expect(group).toHaveAttribute('open');
+    expect(screen.getByRole('alert')).toBeVisible();
+
+    await user.clear(candidateCount);
+    await user.type(candidateCount, '6');
+    expect(summary).toHaveTextContent('1 项待保存');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await user.click(summary);
+    expect(group).toHaveAttribute('open');
   });
 
   it('does not enable input setting writes when any settings work-contract route is missing', async () => {
@@ -627,7 +687,7 @@ describe('InputMethodFeature', () => {
 
     expect(await screen.findByLabelText('Option+数字行为')).toBeDisabled();
     expect(screen.getByRole('radio', { name: '安全' })).toBeDisabled();
-    expect(screen.getAllByText(/没有提供完整的设置预览、应用与撤销能力/)).toHaveLength(2);
+    expect(screen.getAllByText(/当前应用不支持安全保存这项设置/)).toHaveLength(2);
     expect(screen.queryByRole('button', { name: '尚不可预览' })).not.toBeInTheDocument();
   });
 
@@ -672,6 +732,28 @@ describe('InputMethodFeature', () => {
         expect(transport.requests.filter((call) => call.request.pathId === pathId).length).toBeGreaterThan(count);
       }
     });
+  });
+
+  it('offers a focused retry when the local model status cannot be read', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '标准模式' },
+        'configuration.settings': settings,
+        'configuration.schema': schema,
+        'input.lexicon.review': emptyReview,
+      },
+    });
+    renderFeature(transport);
+
+    expect(await screen.findByText('模型状态暂不可用')).toBeInTheDocument();
+    expect(screen.getByText(/已保存的选择不会改变/)).toBeInTheDocument();
+    const before = transport.requests.filter(({ request }) => request.pathId === 'diagnostics.models').length;
+    await user.click(screen.getByRole('button', { name: '重试模型检查' }));
+    await waitFor(() => expect(
+      transport.requests.filter(({ request }) => request.pathId === 'diagnostics.models').length,
+    ).toBeGreaterThan(before));
   });
 
   it('fails closed when the host does not expose all lexicon pathIds', async () => {
@@ -736,7 +818,7 @@ describe('InputMethodFeature', () => {
     expect(screen.getByText('运行失败')).toBeInTheDocument();
     expect(screen.getByText('上次定期整理失败')).toBeInTheDocument();
     expect(screen.getByText(/本机数据库暂时不可写。/)).toBeInTheDocument();
-    expect(screen.getByText(/Rime 仍负责基础输入和候选排序/)).toBeInTheDocument();
+    expect(screen.getByText('已启用，结果会先交给你审阅。')).toBeInTheDocument();
   });
 
   it('uses the live review token, renders an unapplied redeploy state, and rolls back by receipt', async () => {
@@ -770,12 +852,9 @@ describe('InputMethodFeature', () => {
     renderFeature(transport);
 
     expect(await screen.findByRole('checkbox', { name: '选择 表情包' })).toBeChecked();
-    await user.click(screen.getByRole('button', { name: '查看已选词条' }));
-    expect(screen.getByText('已选 1 条')).toBeInTheDocument();
-    expect(screen.getByText(/更新后还需重载输入法/)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '确认这些词条' }));
-    await user.click(screen.getByRole('checkbox', { name: /只加入上方 1 条/ }));
-    await user.click(screen.getByRole('button', { name: '确认加入词库' }));
+    expect(screen.getByText(/待审 1 条 · 已选 1 条/)).toBeInTheDocument();
+    expect(screen.getByText(/保存后仍需重载输入法/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '加入所选词条' }));
 
     expect(await screen.findByText('已加入 · 等待重载')).toBeInTheDocument();
     expect(screen.getByText('词条已加入用户词库')).toBeInTheDocument();
@@ -815,12 +894,9 @@ describe('InputMethodFeature', () => {
     }));
 
     await screen.findByRole('checkbox', { name: '选择 表情包' });
-    await user.click(screen.getByRole('button', { name: '查看已选词条' }));
-    await user.click(screen.getByRole('button', { name: '确认这些词条' }));
-    await user.click(screen.getByRole('checkbox', { name: /只加入上方 1 条/ }));
-    await user.click(screen.getByRole('button', { name: '确认加入词库' }));
+    await user.click(screen.getByRole('button', { name: '加入所选词条' }));
 
-    expect(await screen.findByText('词库审阅已变化，请刷新后重新选择并确认。')).toBeInTheDocument();
+    expect(await screen.findByText('词库审阅已变化，请刷新后重新选择。')).toBeInTheDocument();
     expect(screen.queryByText('已加入 · 等待重载')).not.toBeInTheDocument();
   });
 });

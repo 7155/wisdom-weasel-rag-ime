@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ComponentType } from 'react';
 import { MemoryRouter } from 'react-router-dom';
@@ -179,8 +179,8 @@ const routeFixtures: Partial<Record<ControlPathId, MockRouteHandler>> = {
 
 const pages: readonly [string, ComponentType, string, ControlPathId][] = [
   ['overview', OverviewFeature, '概览', 'overview.get'],
-  ['input', InputMethodFeature, '输入法与词库', 'input.source.get'],
-  ['plugins', PluginsFeature, '工具、技能与扩展', 'agent.tools.list'],
+  ['input', InputMethodFeature, '输入体验与个人词库', 'input.source.get'],
+  ['plugins', PluginsFeature, '技能与工具', 'agent.tools.list'],
   ['voice', VoiceFeature, '语音输入', 'configuration.settings'],
   ['planning', PlanningFeature, '任务', 'planning.dashboard'],
   ['memory', MemoryFeature, '我的记忆', 'memory.pages'],
@@ -246,6 +246,70 @@ describe('management features', () => {
     expect(transport.requests.filter((call) => call.request.pathId === 'overview.get')).toHaveLength(2);
   });
 
+  it('offers problem diagnosis when the overview cannot be read', async () => {
+    renderFeature(OverviewFeature, {
+      ...routeFixtures,
+      'overview.get': () => {
+        throw new Error('connection refused at 127.0.0.1:8766');
+      },
+    });
+
+    expect(await screen.findByRole('heading', { name: '读取失败' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '打开问题排查' })).toBeInTheDocument();
+    expect(screen.queryByText(/127\.0\.0\.1|connection refused/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps optional capability failures unknown and retries their real queries', async () => {
+    const user = userEvent.setup();
+    let recovered = false;
+    const transport = renderFeature(OverviewFeature, {
+      ...routeFixtures,
+      'agent.runtime.get': () => {
+        if (!recovered) throw new Error('runtime unavailable');
+        return routeFixtures['agent.runtime.get'];
+      },
+      'diagnostics.models': () => {
+        if (!recovered) throw new Error('models unavailable');
+        return routeFixtures['diagnostics.models'];
+      },
+      'knowledge.routeStatus': () => {
+        if (!recovered) throw new Error('knowledge route unavailable');
+        return routeFixtures['knowledge.routeStatus'];
+      },
+    });
+
+    expect(await screen.findByText('部分能力状态暂时未更新')).toBeInTheDocument();
+    expect(screen.getAllByText('状态未知').length).toBeGreaterThanOrEqual(3);
+    expect(screen.queryByRole('button', { name: '配置知识检索' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '配置深度回答' })).not.toBeInTheDocument();
+
+    recovered = true;
+    await user.click(screen.getByRole('button', { name: '重新检查能力状态' }));
+
+    await waitFor(() => expect(screen.queryByText('部分能力状态暂时未更新')).not.toBeInTheDocument());
+    for (const pathId of ['agent.runtime.get', 'diagnostics.models', 'knowledge.routeStatus'] as const) {
+      expect(transport.requests.filter((call) => call.request.pathId === pathId)).toHaveLength(2);
+    }
+  });
+
+  it('does not call slow optional capability reads unconfigured while they are pending', async () => {
+    const pendingResponse = () => new Promise<never>(() => undefined);
+    renderFeature(OverviewFeature, {
+      ...routeFixtures,
+      'agent.runtime.get': pendingResponse,
+      'diagnostics.models': pendingResponse,
+      'knowledge.routeStatus': pendingResponse,
+    });
+
+    expect(await screen.findByText('快捷入口')).toBeInTheDocument();
+    expect(screen.getAllByText('正在检查').length).toBeGreaterThanOrEqual(4);
+    expect(screen.queryByText('需配置')).not.toBeInTheDocument();
+    expect(screen.queryByText('尚未配置')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '配置知识检索' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '配置深度回答' })).not.toBeInTheDocument();
+  });
+
   it('uses the live runtime revision without exposing internal hashes', async () => {
     renderFeature(ConfigurationFeature, {
       ...routeFixtures,
@@ -277,7 +341,7 @@ describe('management features', () => {
       },
     });
 
-    expect(await screen.findByText('已是最新状态')).toBeInTheDocument();
+    expect(await screen.findByText('更改设置后，可以在这里直接保存；需要重启、部署或权限的更改会先说明需要采取的操作。')).toBeInTheDocument();
     expect(screen.queryByText('sha256:live-settings-hash')).not.toBeInTheDocument();
     expect(screen.queryByText('sha256:effective-settings')).not.toBeInTheDocument();
     expect(screen.queryByText('554')).not.toBeInTheDocument();
@@ -314,7 +378,7 @@ describe('management features', () => {
       },
     });
 
-    expect(await screen.findByText('模型与知识服务')).toBeInTheDocument();
+    expect(await screen.findByText('记忆与知识')).toBeInTheDocument();
     expect(screen.queryByText('local-mlx')).not.toBeInTheDocument();
   });
 
@@ -327,9 +391,211 @@ describe('management features', () => {
       },
     });
 
-    expect(await screen.findByText('暂无组件快照')).toBeInTheDocument();
-    expect(screen.getByText('等待状态')).toBeInTheDocument();
+    expect(await screen.findByText('暂无组件状态')).toBeInTheDocument();
+    expect(screen.getByText('尚未读取')).toBeInTheDocument();
     expect(screen.queryByText('全部就绪')).not.toBeInTheDocument();
+  });
+
+  it('keeps healthy services visible in a compact status matrix', async () => {
+    renderFeature(OverviewFeature);
+
+    const matrix = await screen.findByRole('list', { name: '运行状态' });
+    expect(within(matrix).getAllByRole('listitem')).toHaveLength(2);
+    expect(within(matrix).getByText('输入法')).toBeInTheDocument();
+    expect(within(matrix).getByText('本机补全')).toBeInTheDocument();
+    expect(within(matrix).getAllByText('已就绪')).toHaveLength(2);
+    expect(screen.queryByText('基础服务已就绪')).not.toBeInTheDocument();
+    expect(screen.queryByText('现在能不能用')).not.toBeInTheDocument();
+    expect(screen.queryByText('其他服务')).not.toBeInTheDocument();
+  });
+
+  it('treats degraded evidence as needing inspection even when ok is true', async () => {
+    renderFeature(OverviewFeature, {
+      ...routeFixtures,
+      'overview.get': {
+        ...(routeFixtures['overview.get'] as Record<string, unknown>),
+        components: {
+          foregroundContext: {
+            ok: true,
+            status: 'degraded',
+            detail: '前台上下文采样不足',
+          },
+        },
+      },
+    });
+
+    expect(await screen.findByText('前台上下文')).toBeInTheDocument();
+    expect(screen.getByText('需检查')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看前台检查' })).toBeInTheDocument();
+    expect(screen.getByText('1 项需检查')).toBeInTheDocument();
+    expect(screen.queryByText('已就绪')).not.toBeInTheDocument();
+  });
+
+  it('translates internal service evidence into product copy', async () => {
+    renderFeature(OverviewFeature, {
+      ...routeFixtures,
+      'overview.get': {
+        ...(routeFixtures['overview.get'] as Record<string, unknown>),
+        components: {
+          foregroundContext: {
+            ok: false,
+            status: 'unavailable',
+            detail: '尚无可信前台上下文来源证据',
+          },
+          assistantCandidateDelivery: {
+            ok: false,
+            status: 'degraded',
+            detail: '候选框源码能力不完整',
+          },
+          voiceRecognition: {
+            ok: false,
+            status: 'unavailable',
+            detail: '未找到语音代理安装包',
+          },
+          sqlite: { ok: true, status: 'healthy', detail: '正常' },
+        },
+      },
+    });
+
+    expect(await screen.findByText('尚未确认当前应用的文字读取状态')).toBeInTheDocument();
+    expect(screen.getByText('候选窗口尚未准备好')).toBeInTheDocument();
+    expect(screen.getByText('语音输入组件尚未安装')).toBeInTheDocument();
+    expect(screen.getByText('本机数据可以正常读取')).toBeInTheDocument();
+    expect(screen.getByText('未确认')).toBeInTheDocument();
+    expect(screen.getByText('未安装')).toBeInTheDocument();
+    expect(screen.queryByText(/可信|证据|源码|代理安装包/)).not.toBeInTheDocument();
+  });
+
+  it('gives every overview warning a direct, honest next step', async () => {
+    renderFeature(OverviewFeature, {
+      ...routeFixtures,
+      'overview.get': {
+        ...(routeFixtures['overview.get'] as Record<string, unknown>),
+        components: {
+          inputMethod: { ok: false, status: 'unavailable', detail: '当前输入源不匹配' },
+          predictor: { ok: false, status: 'unavailable', detail: '本机补全尚未启动' },
+          hybridRag: { ok: false, status: 'disabled', detail: '尚未启用' },
+          memoryCompiler: { ok: false, status: 'degraded', detail: '尚无成功整理记录' },
+          voiceMicrophone: { ok: false, status: 'unavailable', detail: '未授权' },
+        },
+      },
+      'diagnostics.models': {
+        ok: true,
+        predictor: { ok: false, status: 'unavailable' },
+        activeRagRoute: { remoteReady: false },
+      },
+      'agent.runtime.get': {
+        ...(routeFixtures['agent.runtime.get'] as Record<string, unknown>),
+        ok: false,
+        status: 'needs_configuration',
+      },
+      'knowledge.routeStatus': { ok: true, deepseekReady: false },
+    });
+
+    expect(await screen.findByRole('button', { name: '检查输入法' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '打开问题排查' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '打开设置' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '打开记忆' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '检查语音输入' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '检查本机补全' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '配置深度回答' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '检查工作助手' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '处理待复核' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '配置知识检索' })).toBeInTheDocument();
+    expect(screen.queryByText('查看影响')).not.toBeInTheDocument();
+  });
+
+  it('keeps service status separate from optional capability configuration', async () => {
+    renderFeature(OverviewFeature, {
+      ...routeFixtures,
+      'knowledge.routeStatus': { ok: true, deepseekReady: false },
+      'diagnostics.models': {
+        ok: true,
+        predictor: { ok: false, status: 'unknown' },
+        activeRagRoute: { remoteReady: false },
+      },
+      'overview.get': {
+        ...(routeFixtures['overview.get'] as Record<string, unknown>),
+        memory: {
+          eventCount: 0,
+          memoryBookCount: 0,
+          retrievalDocCount: 0,
+          pendingGovernedEvidenceCount: 0,
+          governedNeedsReviewEvidenceCount: 0,
+        },
+      },
+    });
+
+    expect(await screen.findByText('2 项已就绪')).toBeInTheDocument();
+    expect(screen.getAllByText('已就绪')).toHaveLength(2);
+    expect(screen.queryByText('基础服务已就绪')).not.toBeInTheDocument();
+    expect(screen.getByText('无需处理')).toBeInTheDocument();
+    expect(screen.getByText('配置后可用')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '配置知识检索' })).toBeInTheDocument();
+  });
+
+  it('keeps memory and knowledge recovery actions hidden when no work remains', async () => {
+    renderFeature(OverviewFeature, {
+      ...routeFixtures,
+      'overview.get': {
+        ...(routeFixtures['overview.get'] as Record<string, unknown>),
+        memory: {
+          eventCount: 0,
+          memoryBookCount: 0,
+          retrievalDocCount: 0,
+          pendingGovernedEvidenceCount: 0,
+          governedNeedsReviewEvidenceCount: 0,
+        },
+      },
+    });
+
+    await screen.findByText('2 项已就绪');
+    expect(screen.queryByRole('button', { name: '检查工作助手' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '处理待复核' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '配置知识检索' })).not.toBeInTheDocument();
+  });
+
+  it('lets people retry an empty overview snapshot directly', async () => {
+    const user = userEvent.setup();
+    const transport = renderFeature(OverviewFeature, {
+      ...routeFixtures,
+      'overview.get': {
+        ...(routeFixtures['overview.get'] as Record<string, unknown>),
+        components: {},
+      },
+    });
+    await screen.findByText('暂无组件状态');
+
+    await user.click(screen.getByRole('button', { name: '重新检查' }));
+
+    await waitFor(() => expect(
+      transport.requests.filter((call) => call.request.pathId === 'overview.get'),
+    ).toHaveLength(2));
+  });
+
+  it('names installed, voice, and candidate delivery capabilities instead of grouping them as other services', async () => {
+    renderFeature(OverviewFeature, {
+      ...routeFixtures,
+      'overview.get': {
+        ...(routeFixtures['overview.get'] as Record<string, unknown>),
+        components: {
+          deployment: { ok: true, status: 'healthy', detail: '版本一致' },
+          voiceAgent: { ok: true, status: 'healthy', detail: '运行中' },
+          voiceMicrophone: { ok: true, status: 'healthy', detail: '已授权' },
+          voiceAccessibility: { ok: true, status: 'healthy', detail: '已授权' },
+          voiceRecognition: { ok: false, status: 'unavailable', detail: '未安装' },
+          assistantCandidateDelivery: { ok: false, status: 'degraded', detail: '尚无前台显示凭证' },
+        },
+      },
+    });
+
+    expect(await screen.findByText('安装状态')).toBeInTheDocument();
+    expect(screen.getByText('语音输入')).toBeInTheDocument();
+    expect(screen.getByText('麦克风权限')).toBeInTheDocument();
+    expect(screen.getByText('辅助功能权限')).toBeInTheDocument();
+    expect(screen.getByText('实时转写')).toBeInTheDocument();
+    expect(screen.getByText('候选显示验证')).toBeInTheDocument();
+    expect(screen.queryByText('其他服务')).not.toBeInTheDocument();
   });
 
   it('keeps Voice explicitly unavailable when the backend exposes no voice state', async () => {
@@ -350,8 +616,8 @@ describe('management features', () => {
       },
     });
 
-    expect(await screen.findByText('浏览器预览不能启动听写或打开系统授权；请回到已安装的澄。')).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: '流式 ASR' })).toBeInTheDocument();
+    expect(await screen.findByText('网页端不能启动听写或打开系统授权；请回到已安装的澄。')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: '实时听写' })).toBeInTheDocument();
     expect(screen.queryByText(/middle-mouse/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '尚不可预览' })).not.toBeInTheDocument();
     expect(screen.queryByText('unavailable')).not.toBeInTheDocument();

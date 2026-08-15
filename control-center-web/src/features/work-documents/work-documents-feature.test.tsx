@@ -52,6 +52,8 @@ describe('WorkDocumentsFeature', () => {
     expect(screen.getByText('正在归档')).toBeInTheDocument();
     expect(screen.getByText('需要修复')).toBeInTheDocument();
     expect(screen.getAllByText('进行中')).toHaveLength(1);
+    expect(screen.getAllByText('来自对话任务').length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(/Todo/i)).toHaveLength(0);
 
     const listRequest = transport.requests.find((call) => call.request.pathId === 'workDocuments.list');
     expect(listRequest?.request.query).toEqual({ limit: 100 });
@@ -82,6 +84,14 @@ describe('WorkDocumentsFeature', () => {
     expect(transport.requests.filter((call) => call.request.pathId === 'workDocuments.list')).toHaveLength(1);
   });
 
+  it('gives an untitled document a user-facing name in the list', async () => {
+    const untitled = workDocument({ documentId: DOCUMENT_ID_ACTIVE, title: '' });
+    renderFeature(workDocumentTransport({ active: [untitled] }));
+
+    const listItem = await screen.findByRole('button', { name: /未命名工作文档/ });
+    expect(listItem).not.toHaveTextContent(DOCUMENT_ID_ACTIVE);
+  });
+
   it('archives an active document with the trusted terminal receipt and renders the backend receipt', async () => {
     const user = userEvent.setup();
     const active = workDocument({ documentId: DOCUMENT_ID_ARCHIVE, state: 'active', title: '待归档验收记录' });
@@ -98,10 +108,10 @@ describe('WorkDocumentsFeature', () => {
 
     const archiveButton = await screen.findByRole('button', { name: '归档到历史' });
     expect(archiveButton).toBeDisabled();
-    await user.type(screen.getByRole('textbox', { name: '完成凭证编号' }), 'terminal-receipt-1');
+    await user.type(screen.getByRole('textbox', { name: '完成依据' }), 'terminal-receipt-1');
     await user.click(archiveButton);
 
-    expect(await screen.findByText(RECEIPT_ID_ARCHIVE)).toBeInTheDocument();
+    expect(await screen.findByText('操作结果 · 已应用')).toBeInTheDocument();
     expect(archive).toHaveBeenCalledWith(expect.objectContaining({
       params: { documentId: DOCUMENT_ID_ARCHIVE },
       body: { terminalReceiptId: 'terminal-receipt-1' },
@@ -123,9 +133,10 @@ describe('WorkDocumentsFeature', () => {
     });
     renderFeature(transport);
 
-    await user.click(await screen.findByRole('button', { name: '修复移动或索引' }));
-    expect(await screen.findByText(/后端操作收据/)).toBeInTheDocument();
-    expect(screen.getByText(RECEIPT_ID_REPAIR)).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: '重新检查状态' }));
+    const receiptId = await screen.findByText('操作结果 · 已应用');
+    expect(screen.getByText('操作结果 · 已应用')).toBeInTheDocument();
+    expect(receiptId.closest('.work-documents__receipt')).toHaveAttribute('data-tone', 'success');
     expect(repair).toHaveBeenCalledTimes(1);
     await waitFor(() => {
       expect(transport.requests.filter((call) => call.request.pathId === 'workDocuments.list').length).toBeGreaterThan(1);
@@ -145,9 +156,9 @@ describe('WorkDocumentsFeature', () => {
     });
     renderFeature(transport);
 
-    await user.click(await screen.findByRole('button', { name: '修复移动或索引' }));
-    const receiptId = await screen.findByText(RECEIPT_ID_DEFAULT);
-    expect(screen.getByText('后端操作收据 · 后端拒绝或失败')).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: '重新检查状态' }));
+    const receiptId = await screen.findByText('操作结果 · 未完成');
+    expect(screen.getByText('操作结果 · 未完成')).toBeInTheDocument();
     expect(receiptId.closest('.work-documents__receipt')).toHaveAttribute('data-tone', 'danger');
   });
 
@@ -179,7 +190,7 @@ describe('WorkDocumentsFeature', () => {
     renderFeature(transport, '/work-documents?scope=history');
 
     await user.click(await screen.findByRole('button', { name: '重新打开到活跃区' }));
-    expect(await screen.findByText(RECEIPT_ID_REOPEN)).toBeInTheDocument();
+    expect(await screen.findByText('操作结果 · 已应用')).toBeInTheDocument();
     expect(reopen).toHaveBeenCalledWith(expect.objectContaining({
       body: { authorityRevision: 10, transitionReceiptId: 'reopen-transition-2' },
     }));
@@ -246,9 +257,11 @@ describe('WorkDocumentsFeature', () => {
     await waitFor(() => expect(eraseTrigger).toHaveFocus());
     await user.click(eraseTrigger);
 
-    await user.type(screen.getByRole('textbox', { name: '发起操作的对话编号' }), 'session-erase-1');
-    await user.click(screen.getByRole('button', { name: '获取清除审批' }));
-    expect(await screen.findByText('approval-erase-1')).toBeInTheDocument();
+    const approvalConversation = await screen.findByRole('combobox', { name: '接收审批的对话' });
+    expect(approvalConversation).toHaveTextContent('清除审批对话');
+    expect(screen.queryByText('session-erase-1')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '准备永久清除' }));
+    expect(await screen.findByText('清除审批已就绪')).toBeInTheDocument();
     const finalButton = screen.getByRole('button', { name: '永久清除，不是归档' });
     expect(finalButton).toBeDisabled();
     await user.type(screen.getByRole('textbox', { name: '永久清除确认' }), '永久清除');
@@ -261,7 +274,7 @@ describe('WorkDocumentsFeature', () => {
         payloadSha256: PAYLOAD_SHA256,
       },
     }));
-    expect(await screen.findByText(RECEIPT_ID_ERASE)).toBeInTheDocument();
+    expect(await screen.findByText('操作结果 · 已应用')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '永久清除工作文档' })).not.toBeInTheDocument();
   });
 
@@ -276,6 +289,13 @@ describe('WorkDocumentsFeature', () => {
     const transport = workDocumentTransport({
       history: [archived],
       extraRoutes: {
+        'agent.sessions.list': {
+          ok: true,
+          items: [
+            { id: 'session-one', title: '第一段对话', status: 'idle', updatedAtMs: 2_000 },
+            { id: 'session-two', title: '第二段对话', status: 'idle', updatedAtMs: 1_000 },
+          ],
+        },
         'workDocuments.erase.preview': (): WorkDocumentErasePreviewV1 => ({
           schemaVersion: 'rag-ime.work-document-command.v1',
           ok: true,
@@ -289,14 +309,14 @@ describe('WorkDocumentsFeature', () => {
     renderFeature(transport, '/work-documents?scope=history');
 
     await user.click(await screen.findByRole('button', { name: '永久清除…' }));
-    const sessionInput = screen.getByRole('textbox', { name: '发起操作的对话编号' });
-    await user.type(sessionInput, 'session-one');
-    await user.click(screen.getByRole('button', { name: '获取清除审批' }));
-    expect(await screen.findByText('approval-session-one')).toBeInTheDocument();
+    const sessionSelect = await screen.findByRole('combobox', { name: '接收审批的对话' });
+    expect(sessionSelect).toHaveTextContent('第一段对话');
+    await user.click(screen.getByRole('button', { name: '准备永久清除' }));
+    expect(await screen.findByText('清除审批已就绪')).toBeInTheDocument();
 
-    await user.clear(sessionInput);
-    await user.type(sessionInput, 'session-two');
-    expect(screen.queryByText('approval-session-one')).not.toBeInTheDocument();
+    await user.click(sessionSelect);
+    await user.click(await screen.findByRole('option', { name: '第二段对话' }));
+    expect(screen.queryByText('清除审批已就绪')).not.toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: '永久清除确认' }), '永久清除');
     expect(screen.getByRole('button', { name: '永久清除，不是归档' })).toBeDisabled();
   });
@@ -316,7 +336,7 @@ describe('WorkDocumentsFeature', () => {
     renderFeature(transport);
 
     await screen.findByRole('heading', { name: '第一份活跃文档' });
-    await user.type(screen.getByRole('textbox', { name: '完成凭证编号' }), 'terminal-receipt-late');
+    await user.type(screen.getByRole('textbox', { name: '完成依据' }), 'terminal-receipt-late');
     await user.click(screen.getByRole('button', { name: '归档到历史' }));
     await user.click(screen.getByRole('button', { name: /第二份活跃文档/ }));
     expect(await screen.findByRole('heading', { name: '第二份活跃文档' })).toBeInTheDocument();
@@ -330,7 +350,7 @@ describe('WorkDocumentsFeature', () => {
       await archiveResult;
     });
     await waitFor(() => {
-      expect(screen.queryByText(RECEIPT_ID_ARCHIVE)).not.toBeInTheDocument();
+      expect(screen.queryByText('操作结果 · 已应用')).not.toBeInTheDocument();
       expect(screen.getByRole('heading', { name: '第二份活跃文档' })).toBeInTheDocument();
     });
   });
@@ -396,7 +416,7 @@ describe('WorkDocumentsFeature', () => {
     renderFeature(transport);
 
     expect(await screen.findByRole('heading', { name: '只读宿主仍可查看' })).toBeInTheDocument();
-    expect(screen.getByText('当前宿主以阅读为主')).toBeInTheDocument();
+    expect(screen.getByText('当前应用以阅读为主')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '历史归档' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '当前宿主不支持归档' })).toBeDisabled();
     expect(transport.requests.some((call) => call.request.pathId === 'workDocuments.list')).toBe(true);
@@ -473,6 +493,10 @@ function workDocumentTransport({
       'workDocuments.archive': () => commandResponse('archive', active[0], RECEIPT_ID_DEFAULT),
       'workDocuments.repair': () => commandResponse('repair', active[0], RECEIPT_ID_DEFAULT),
       'workDocuments.reopen': () => commandResponse('reopen', history[0], RECEIPT_ID_DEFAULT),
+      'agent.sessions.list': () => ({
+        ok: true,
+        items: [{ id: 'session-erase-1', title: '清除审批对话', status: 'idle', updatedAtMs: 2_000 }],
+      }),
       'workDocuments.erase.preview': () => ({
         schemaVersion: 'rag-ime.work-document-command.v1',
         ok: true,

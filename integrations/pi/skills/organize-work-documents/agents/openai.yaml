@@ -1,0 +1,4 @@
+interface:
+  display_name: "Organize Work Documents"
+  short_description: "Check and condense agent-maintained work documents"
+  default_prompt: "Use $organize-work-documents to check, link, and condense agent-maintained work documents without replacing their owners."

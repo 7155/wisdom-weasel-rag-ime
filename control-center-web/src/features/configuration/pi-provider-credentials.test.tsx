@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { MemoryRouter, useLocation } from 'react-router-dom';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { MockControlTransport } from '@/test/mock-transport';
@@ -10,7 +11,50 @@ import { PiProviderCredentials } from './PiProviderCredentials';
 afterEach(cleanup);
 
 describe('Pi provider credential UI', () => {
-  it('previews and confirms API key replacement without rendering the secret', async () => {
+  it('explains that model account support is still being checked', async () => {
+    const transport = new MockControlTransport({
+      capabilities: { features: { piProviderCredentials: true } },
+      routes: { 'agent.providers.get': providerCatalog() },
+    });
+    const settledCapabilities = await transport.capabilities();
+    const pendingCapabilities = deferred<typeof settledCapabilities>();
+    vi.spyOn(transport, 'capabilities').mockReturnValue(pendingCapabilities.promise);
+
+    renderProvider(transport);
+
+    expect(screen.getByText('正在检查模型账号')).toBeInTheDocument();
+    expect(screen.getByText('正在确认这台 Mac 是否可以连接和管理远程模型账号。')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '重新检查' })).not.toBeInTheDocument();
+
+    await act(async () => pendingCapabilities.resolve(settledCapabilities));
+    expect(await screen.findByLabelText('API 密钥')).toBeInTheDocument();
+  });
+
+  it('hides capability errors and offers a real retry', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      capabilities: { features: { piProviderCredentials: true } },
+      routes: { 'agent.providers.get': providerCatalog() },
+    });
+    const settledCapabilities = await transport.capabilities();
+    const capabilities = vi.spyOn(transport, 'capabilities')
+      .mockRejectedValueOnce(new Error('pathId=agent.providers.get providerId=gpt secret=internal'))
+      .mockResolvedValue(settledCapabilities);
+
+    renderProvider(transport);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('模型账号检查失败');
+    expect(alert).toHaveTextContent('没有读到这台 Mac 的账号管理能力。');
+    expect(alert).not.toHaveTextContent(/pathId|providerId|secret=internal/);
+
+    await user.click(screen.getByRole('button', { name: '重新检查' }));
+
+    expect(await screen.findByLabelText('API 密钥')).toBeInTheDocument();
+    expect(capabilities).toHaveBeenCalledTimes(2);
+  });
+
+  it('saves an API key directly without rendering the secret', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({
       capabilities: { features: { piProviderCredentials: true } },
@@ -24,7 +68,7 @@ describe('Pi provider credential UI', () => {
           action: 'set_api_key',
           requiredConfirm: 'replace',
           expiresAtMs: Date.now() + 60_000,
-          summary: ['替换 GPT 的 API Key。', '现有密钥不会读取或显示。'],
+          summary: ['替换 GPT 的 API 密钥。', '现有密钥不会读取或显示。'],
           secretPolicy: '密钥仅在确认写入时送往本机 Pi。',
           sessionBoundary: '当前回复不被中断。',
         },
@@ -41,13 +85,11 @@ describe('Pi provider credential UI', () => {
     renderProvider(transport);
 
     const secret = 'secret-sentinel-ui';
-    await user.type(await screen.findByLabelText('API Key'), secret);
+    await user.type(await screen.findByLabelText('API 密钥'), secret);
     await user.click(screen.getByRole('button', { name: '保存密钥' }));
-    expect(await screen.findByRole('heading', { name: '替换 API Key？' })).toBeInTheDocument();
-    expect(screen.queryByText(secret)).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '确认继续' }));
 
-    expect(await screen.findByText('API Key 已保存')).toBeInTheDocument();
+    expect(await screen.findByText('API 密钥已保存')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     const apply = transport.requests.find(({ request }) => request.pathId === 'agent.provider.auth.apply');
     expect(apply?.request.body).toEqual({
       previewToken: 'preview-provider-key',
@@ -58,6 +100,49 @@ describe('Pi provider credential UI', () => {
     await waitFor(() => expect(
       transport.requests.filter(({ request }) => request.pathId === 'agent.providers.get').length,
     ).toBeGreaterThanOrEqual(2));
+  });
+
+  it('keeps confirmation for disconnecting a configured account', async () => {
+    const user = userEvent.setup();
+    const catalog = providerCatalog();
+    catalog.providers[0].auth = {
+      ...catalog.providers[0].auth,
+      configured: true,
+      type: 'api_key',
+    };
+    const transport = new MockControlTransport({
+      capabilities: { features: { piProviderCredentials: true } },
+      routes: {
+        'agent.providers.get': catalog,
+        'agent.provider.auth.preview': {
+          ok: true,
+          previewToken: 'preview-provider-logout',
+          provider: 'gpt',
+          providerName: 'GPT',
+          action: 'logout',
+          requiredConfirm: 'disconnect',
+          expiresAtMs: Date.now() + 60_000,
+          summary: ['断开 GPT。'],
+        },
+        'agent.provider.auth.apply': {
+          ok: true,
+          receiptId: 'pi-auth-logout-1',
+          provider: 'gpt',
+          action: 'logout',
+          receiptState: 'applied',
+          requiresAgentRestart: true,
+        },
+      },
+    });
+    renderProvider(transport);
+
+    await user.click(await screen.findByRole('button', { name: '断开账号' }));
+    expect(await screen.findByRole('heading', { name: '断开这个模型账号？' })).toBeInTheDocument();
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.provider.auth.apply')).toHaveLength(0);
+
+    await user.click(screen.getByRole('button', { name: '确认断开' }));
+    expect(await screen.findByText('账号已断开')).toBeInTheDocument();
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.provider.auth.apply')).toHaveLength(1);
   });
 
   it('uses browser callback OAuth by default and stays pending until completion', async () => {
@@ -100,9 +185,9 @@ describe('Pi provider credential UI', () => {
     renderProvider(transport);
 
     await user.click(await screen.findByRole('button', { name: '连接 ChatGPT' }));
-    await user.click(await screen.findByRole('button', { name: '确认继续' }));
 
     expect(await screen.findByText('登录流程已启动')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /继续浏览器登录/ })).toHaveAttribute(
       'href',
       'https://auth.openai.com/oauth/authorize?client_id=test&state=test',
@@ -142,7 +227,6 @@ describe('Pi provider credential UI', () => {
     renderProvider(transport);
 
     await user.click(await screen.findByRole('button', { name: '使用设备码' }));
-    await user.click(await screen.findByRole('button', { name: '确认继续' }));
 
     expect(await screen.findByText('登录失败')).toBeInTheDocument();
     expect(screen.getByText('请先在 ChatGPT「设置 → 安全」中开启设备码授权，然后重新连接。'))
@@ -177,8 +261,30 @@ describe('Pi provider credential UI', () => {
 
     expect(await screen.findByRole('combobox', { name: '模型服务' })).toHaveTextContent('x1top');
     expect(screen.getByText('Luna Max')).toBeInTheDocument();
-    expect(screen.getByLabelText('API Key')).toHaveValue('');
+    expect(screen.getByLabelText('API 密钥')).toHaveValue('');
     expect(screen.queryByText(/secret|token/i)).not.toBeInTheDocument();
+  });
+
+  it('offers real recovery actions when account management is unavailable', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      capabilities: {
+        features: { piProviderCredentials: false },
+        routeIds: [],
+      },
+    });
+    const capabilities = vi.spyOn(transport, 'capabilities');
+
+    renderProvider(transport);
+
+    expect(await screen.findByText('模型账号管理仍不可用')).toBeInTheDocument();
+    expect(screen.getByText(/已保存的模型连接不会因此丢失/)).toBeInTheDocument();
+    expect(screen.queryByText(/更新应用/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '重新检查' }));
+    await waitFor(() => expect(capabilities.mock.calls.length).toBeGreaterThanOrEqual(2));
+
+    await user.click(screen.getByRole('button', { name: '打开问题排查' }));
+    expect(screen.getByTestId('provider-route')).toHaveTextContent('/diagnostics');
   });
 
 });
@@ -189,11 +295,19 @@ function renderProvider(transport: MockControlTransport): void {
     <TooltipProvider delayDuration={0}>
       <ControlTransportProvider transport={transport}>
         <QueryClientProvider client={client}>
-          <PiProviderCredentials />
+          <MemoryRouter initialEntries={['/configuration']}>
+            <PiProviderCredentials />
+            <RouteProbe />
+          </MemoryRouter>
         </QueryClientProvider>
       </ControlTransportProvider>
     </TooltipProvider>,
   );
+}
+
+function RouteProbe() {
+  const location = useLocation();
+  return <output data-testid="provider-route">{location.pathname}</output>;
 }
 
 function providerCatalog() {
@@ -238,4 +352,14 @@ function oauthProviderCatalog() {
       },
     }],
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
 }

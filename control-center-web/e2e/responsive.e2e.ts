@@ -195,7 +195,8 @@ test('Session releases desktop side panels after a live resize', async ({ page }
   const rail = page.locator('.agent-session-rail');
   await expect(feature).toHaveAttribute('data-rail-open', 'true');
   await expect(rail).toBeVisible();
-  await page.getByRole('button', { name: '展开状态面板' }).click();
+  const taskCenterTrigger = page.getByRole('button', { name: '展开任务中心' });
+  if (await taskCenterTrigger.count()) await taskCenterTrigger.click();
   await expect(feature).toHaveAttribute('data-status-open', 'true');
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -228,11 +229,11 @@ test('Session and Room share narrow-desktop status drawer behavior', async ({ pa
   await page.setViewportSize({ width: 1_280, height: 820 });
   await page.goto('/#/agent');
   const agentConversation = page.locator('.agent-conversation');
-  const agentStatusTrigger = page.getByRole('button', { name: '展开状态面板' });
+  const agentStatusTrigger = page.getByRole('button', { name: '展开任务中心' });
   await expect(page.getByRole('separator', { name: '调整对话列表宽度' })).toBeVisible();
   await expect(page.getByRole('separator', { name: '调整状态面板宽度' })).toBeHidden();
   await agentStatusTrigger.click();
-  const agentStatus = page.getByRole('dialog', { name: '当前对话状态' });
+  const agentStatus = page.getByRole('dialog', { name: '当前对话任务中心' });
   await expect(agentStatus).toHaveAttribute('aria-modal', 'true');
   await expect(agentConversation).toHaveAttribute('inert', '');
   await page.keyboard.press('Escape');
@@ -372,6 +373,7 @@ test('Session and Room headers float over full-height timelines without hiding t
   expect(Math.abs((roomTimelineBox?.y ?? 0) - (roomHeaderBox?.y ?? 0))).toBeLessThanOrEqual(1);
   expect(roomSpacerBox?.height).toBeGreaterThanOrEqual((roomContextBox?.y ?? 0) + (roomContextBox?.height ?? 0) - (roomHeaderBox?.y ?? 0));
   expect(firstRoomTurnBox?.y).toBeGreaterThanOrEqual((roomContextBox?.y ?? 0) + (roomContextBox?.height ?? 0) - 1);
+  expect(firstRoomTurnBox?.y).toBeLessThanOrEqual((roomContextBox?.y ?? 0) + (roomContextBox?.height ?? 0) + 96);
   await expectNoHorizontalPageOverflow(page);
 });
 
@@ -379,13 +381,16 @@ test('capability precedence labels stay whole on narrow screens', async ({ page 
   for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/#/plugins');
-    await page.getByRole('group', { name: '能力列表' }).getByRole('button').first().click();
-    const precedence = page.getByRole('region', { name: '能力披露优先级' });
+    await page.getByRole('group', { name: '能力列表' })
+      .getByRole('button', { name: /个人上下文记忆/ })
+      .click();
+    const detail = page.getByRole('complementary', { name: '能力详情' });
+    const precedence = detail.getByRole('region', { name: '能力可见范围' });
     await expect(precedence).toBeVisible();
     const labels = precedence.locator('dt');
     await expect(labels).toHaveText([
-      '1 · 所有对话默认',
-      '最后 · 产品内置默认',
+      '所有对话',
+      '默认设置',
     ]);
     const measurements = await labels.evaluateAll((items) => items.map((item) => {
       const label = item as HTMLElement;

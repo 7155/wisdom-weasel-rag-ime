@@ -125,9 +125,10 @@ owns any real integration.
 
 Shared writable workspaces are allowed when the parent selects ordinary write
 access. An isolated worktree is optional for genuinely concurrent conflicting
-writes, not a requirement for every child. Durable Project/Outcome/Run
-documents, Boundary Revision, shared-resource leases, and automatic
-ChangeManifest remain deferred; none is required for Room to finish.
+writes, not a requirement for every child. Tracked Project/Outcome/Decision
+documents provide bounded semantic context, but they do not own Runtime state
+or block Room completion. Per-run interactive documents, Boundary Revision,
+shared-resource leases, and automatic ChangeManifest remain deferred.
 
 #### Public projection
 

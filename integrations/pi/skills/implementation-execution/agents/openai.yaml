@@ -1,4 +1,0 @@
-interface:
-  display_name: "Implementation Execution"
-  short_description: "Implement a confirmed plan without losing the user's original intent"
-  default_prompt: "Use $implementation-execution to preserve the original request and vision, update one authority-bound WorkDocument, implement bounded code slices, verify each slice, and route code through quality and review."

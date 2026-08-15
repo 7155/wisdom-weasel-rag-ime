@@ -14,8 +14,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from rag_ime.agent_execution_policy import WORKSPACE_SCOPE_CONFIRMATION
-from rag_ime.agent_tool_ids import CONTROL_TOOL_IDS
 from rag_ime.debug_server import DebugImeService, DebugServerConfig
 
 
@@ -32,44 +30,43 @@ TOOL_CALLS: dict[str, dict[str, object]] = {
     "runtime": {"op": "health"},
     "configuration": {"op": "history"},
     "agents": {"op": "catalog"},
+    "room_partner": {"op": "list"},
     "browser": {"op": "status"},
     "todo": {"op": "view"},
     "agent_goal": {"op": "list"},
     "plugins": {"op": "list"},
     "work_documents": {"op": "list", "limit": 1},
     "desktop_semantic": {"op": "status"},
-    "workspace_list": {"op": "list", "path": "."},
+    "ls": {"path": "."},
     "workspace_lsp": {"op": "status"},
-    "workspace_read": {"op": "read", "path": "sample.txt"},
-    "workspace_search": {"op": "search", "path": ".", "query": "hello matrix"},
+    "read": {"path": "sample.txt"},
+    "grep": {"path": ".", "pattern": "hello matrix", "literal": True},
+    "find": {"path": ".", "pattern": "sample.txt"},
     "workspace_patch": {
         "op": "apply",
         "path": "sample.txt",
         "oldText": "hello",
         "newText": "patched",
     },
-    "workspace_edit": {
-        "op": "apply",
+    "edit": {
         "path": "sample.txt",
         "resourceRevision": "",
         "edits": [{"oldText": "patched", "newText": "edited"}],
     },
-    "workspace_write": {
-        "op": "apply",
+    "write": {
         "path": "created.txt",
         "resourceRevision": "missing",
         "content": "created by Agent Tool matrix\n",
     },
     "workspace_job": {"op": "list"},
-    "workspace_shell": {
-        "op": "run",
+    "bash": {
         "command": "python3 -c \"print('agent-tool-matrix-shell-ok')\"",
         "cwd": ".",
-        "timeoutSeconds": 10,
+        "timeout": 10,
     },
 }
 
-EXPECTED_TOOL_IDS = frozenset(CONTROL_TOOL_IDS)
+EXPECTED_TOOL_IDS = frozenset(TOOL_CALLS)
 
 
 def run_matrix(*, keep_workspace: bool = False) -> dict[str, object]:
@@ -99,20 +96,31 @@ def run_matrix(*, keep_workspace: bool = False) -> dict[str, object]:
     started = time.perf_counter()
     rows: list[dict[str, object]] = []
     try:
-        created = service.agent.create_session(
+        created_room = service.agent.create_room(
             {
-                "title": "Agent Tool execution matrix",
-                "mode": "coordinator",
-                "roleId": "companion-present-v1",
-                "roleVersion": "1",
-                "toolProfileVersion": "control-center-v1",
-                "executionMode": "workspace_managed",
-                "workspaceScopeConfirmation": WORKSPACE_SCOPE_CONFIRMATION,
+                "title": "Agent Tool execution matrix Room",
                 "workspaceRoots": [str(workspace)],
+                "participants": [
+                    {
+                        "roleId": "companion-present-v1",
+                        "roleVersion": "1",
+                    },
+                    {
+                        "roleId": "companion-firstlight-v1",
+                        "roleVersion": "1",
+                    },
+                ],
             }
         )
-        session = dict(created["session"])
+        room = dict(created_room["room"])
+        facilitator = dict(room["participants"][0])
+        session = service.agent.sessions.get(str(facilitator["sessionId"]))
         session_id = str(session["id"])
+        service.agent._begin_room_turn(
+            session_id,
+            "agent-tool-matrix:root",
+            dispatch_id="agent-tool-matrix:dispatch",
+        )
         todo_task = "在隔离工作区验证读、写与命令工具"
         service.agent.sessions.mutate_agent_todo(
             session_id,
@@ -133,23 +141,23 @@ def run_matrix(*, keep_workspace: bool = False) -> dict[str, object]:
             actor="agent-tool-matrix",
         )
 
-        enabled = {
-            str(item["id"])
-            for item in service.agent_tools.manifests(session_id=session_id)["items"]
-            if item.get("enabled") is True
-        }
-        if enabled != EXPECTED_TOOL_IDS:
+        runtime_tools = tuple(
+            str(item["name"])
+            for item in service.agent_tools.runtime_manifests(session)
+        )
+        if runtime_tools != tuple(TOOL_CALLS):
             raise RuntimeError(
-                "enabled Tool matrix differs from the reviewed catalog: "
-                f"missing={sorted(EXPECTED_TOOL_IDS - enabled)}, "
-                f"unexpected={sorted(enabled - EXPECTED_TOOL_IDS)}"
+                "Pi runtime Tool matrix differs from the reviewed Provider surface: "
+                f"missing={sorted(EXPECTED_TOOL_IDS - set(runtime_tools))}, "
+                f"unexpected={sorted(set(runtime_tools) - EXPECTED_TOOL_IDS)}, "
+                f"actualOrder={list(runtime_tools)}"
             )
 
         for index, (tool, args) in enumerate(TOOL_CALLS.items(), start=1):
             call_started = time.perf_counter()
             try:
                 call_args = dict(args)
-                if tool == "workspace_edit":
+                if tool == "edit":
                     digest = hashlib.sha256((workspace / "sample.txt").read_bytes()).hexdigest()
                     call_args["resourceRevision"] = f"sha256:{digest}"
                 response = service.agent_tools.execute(

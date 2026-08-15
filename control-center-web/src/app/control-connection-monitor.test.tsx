@@ -27,12 +27,13 @@ describe('control connection monitor', () => {
   it('reports a bounded degraded state when the local control service is unavailable', async () => {
     const transport = new MockControlTransport();
     Object.defineProperty(transport, 'kind', { value: 'http' });
-    vi.spyOn(transport, 'capabilities').mockRejectedValue(new Error('control service unavailable'));
+    vi.spyOn(transport, 'capabilities').mockRejectedValue(new Error('Failed to fetch secret=abc'));
 
     renderMonitor(transport);
 
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('连接受限'));
-    expect(screen.getByRole('status')).toHaveAttribute('title', 'control service unavailable');
+    expect(screen.getByRole('status')).toHaveAttribute('title', '暂时无法连接本机控制服务');
+    expect(screen.getByRole('status')).not.toHaveAttribute('title', expect.stringMatching(/secret|fetch/i));
   });
 });
 

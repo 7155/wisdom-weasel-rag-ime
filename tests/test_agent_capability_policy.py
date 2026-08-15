@@ -484,8 +484,12 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
             "references",
             "diagnostics",
         }
-        forbidden_tools = {
-            "workspace_patch",
+        forbidden_tools = {"edit", "write"}
+        retired_provider_aliases = {
+            "workspace_list",
+            "workspace_read",
+            "workspace_search",
+            "workspace_shell",
             "workspace_edit",
             "workspace_write",
         }
@@ -494,15 +498,13 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
             manifests = gateway.runtime_manifests(dict(session))
             by_name = {str(item["name"]): item for item in manifests}
             self.assertTrue(
-                {"workspace_list", "workspace_read", "workspace_search", "workspace_lsp"}
+                {"ls", "read", "grep", "find", "workspace_lsp"}
                 <= set(by_name)
             )
-            self.assertIn("workspace_shell", by_name)
-            self.assertEqual(
-                by_name["workspace_shell"]["parameters"]["oneOf"][0]["properties"]["op"]["const"],
-                "run",
-            )
+            self.assertIn("bash", by_name)
+            self.assertEqual(by_name["bash"]["parameters"]["required"], ["command"])
             self.assertTrue(forbidden_tools.isdisjoint(by_name))
+            self.assertTrue(retired_provider_aliases.isdisjoint(by_name))
             self.assertNotIn("workspace_job", by_name)
             lsp = by_name["workspace_lsp"]
             branches = lsp["parameters"].get("oneOf", [])

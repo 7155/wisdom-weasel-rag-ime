@@ -27,7 +27,7 @@ describe('History WorkContract UI', () => {
     expect(toolbar).toHaveClass('history-filter-toolbar');
     expect(within(toolbar).getByRole('textbox', { name: '搜索' })).toBeInTheDocument();
     expect(within(toolbar).getByRole('combobox', { name: '来源' })).toBeInTheDocument();
-    expect(within(toolbar).getByRole('button', { name: '搜索' })).toBeInTheDocument();
+    expect(within(toolbar).getByRole('button', { name: '查找' })).toBeInTheDocument();
   });
 
   it('opens a real full-text detail from the keyboard and exposes only verified server state', async () => {
@@ -47,8 +47,13 @@ describe('History WorkContract UI', () => {
     expect(within(dialog).getByText('澄')).toBeInTheDocument();
     expect(within(dialog).getByRole('heading', { name: '辅助上下文' })).toBeInTheDocument();
     expect(within(dialog).getByText('前面正在核对来源筛选，随后完成了当前输入。')).toBeInTheDocument();
-    expect(within(dialog).getByText('辅助功能读取')).toBeInTheDocument();
-    expect(within(dialog).getByText('未关联')).toBeInTheDocument();
+    expect(within(dialog).getByText('语音定稿插入')).toBeInTheDocument();
+    expect(within(dialog).getByText('不适用 · 语音定稿不请求智能候选')).toBeInTheDocument();
+    expect(within(dialog).getByText('14 字 · 已记录')).toBeInTheDocument();
+    expect(within(dialog).getByText('0 字 · 语音输入不经过输入法缓冲区')).toBeInTheDocument();
+    expect(within(dialog).getByText('已存入 · 强边界')).toBeInTheDocument();
+    expect(within(dialog).queryByText('其他采集方式')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('未关联')).not.toBeInTheDocument();
     expect(within(dialog).queryByText('wisdom-weasel-rag-ime')).not.toBeInTheDocument();
     expect(findRequest(transport, 'history.detail')).toMatchObject({ query: { eventId: 81 } });
     await user.keyboard('{Escape}');
@@ -64,8 +69,9 @@ describe('History WorkContract UI', () => {
     await user.click(await screen.findByRole('option', { name: /完成了/ }));
     const workflow = screen.getByText('不再用于记忆', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
+    expect(workflow).toHaveAttribute('data-confirmation', 'direct');
 
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '查看影响' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '不再用于记忆' }));
     await waitFor(() => expect(findRequest(transport, 'history.tombstone.preview')).toMatchObject({
       body: {
         eventId: 81,
@@ -73,13 +79,9 @@ describe('History WorkContract UI', () => {
         expectedRuntimeRevision: 9,
       },
     }));
-    expect(await within(workflow as HTMLElement).findByText('隐藏输入历史记录')).toBeInTheDocument();
-    expect(within(workflow as HTMLElement).queryByText('记录 ID: 81')).not.toBeInTheDocument();
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认这些更改' }));
-    await user.click(within(workflow as HTMLElement).getByRole('checkbox'));
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认执行' }));
-
-    expect(await within(workflow as HTMLElement).findByText('这次更改已安全记录')).toBeInTheDocument();
+    expect(within(workflow as HTMLElement).queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(within(workflow as HTMLElement).queryByRole('button', { name: '确认执行' })).not.toBeInTheDocument();
+    expect(await within(workflow as HTMLElement).findByText('已保存')).toBeInTheDocument();
     expect(findRequest(transport, 'history.tombstone.apply')).toMatchObject({
       body: {
         eventId: 81,
@@ -88,7 +90,7 @@ describe('History WorkContract UI', () => {
         confirmText: 'apply',
       },
     });
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '撤销这次更改' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '撤销' }));
     expect(await within(workflow as HTMLElement).findByText('已恢复到更改前')).toBeInTheDocument();
     expect(findRequest(transport, 'history.tombstone.rollback')).toMatchObject({
       body: {
@@ -102,7 +104,7 @@ describe('History WorkContract UI', () => {
 
   it('does not offer a fake negative-feedback mutation', async () => {
     renderHistory();
-    expect(await screen.findByText('选择一条记录后，可以让它退出后续召回。原始记录仍会保留，操作也可以撤销。')).toBeInTheDocument();
+    expect(await screen.findByText('选择一条记录后，可以让它以后不再用于联想。原始记录仍会保留，操作也可以撤销。')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '演练流程' })).not.toBeInTheDocument();
   });
 });
@@ -228,12 +230,26 @@ function historyDetail() {
         textChars: 22,
         truncated: false,
         hasAdditionalText: true,
-        captureSource: 'accessibility',
-        captureMode: 'accessibility_semantics',
+        captureSource: 'voice_insertion',
+        captureMode: '',
         fallbackReason: '',
-        fieldContextChars: 22,
-        imeBufferChars: 8,
+        fieldContextRecorded: true,
+        fieldContextChars: 14,
+        imeBufferRecorded: true,
+        imeBufferChars: 0,
+        modelRequestAssociation: 'not_applicable',
+        modelRequestReason: 'voice_capture_does_not_request_assistant_candidates',
         modelRequestLinked: false,
+        captureReceipt: {
+          available: true,
+          channel: 'voice',
+          boundaryKind: 'voice_final',
+          boundaryConfidence: 'strong',
+          outcome: 'stored',
+          reason: 'strong_final_boundary',
+          evidenceState: 'candidate',
+          evidenceReason: 'awaiting_luna_adjudication',
+        },
       },
       status: 'active',
       feedback: {

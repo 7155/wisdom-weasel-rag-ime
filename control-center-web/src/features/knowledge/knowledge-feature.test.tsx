@@ -34,7 +34,14 @@ describe('document knowledge library', () => {
 
     expect(await screen.findByRole('complementary', { name: '文档知识库' })).toBeInTheDocument();
     expect(screen.getByRole('main')).toHaveClass('knowledge-feature');
-    expect(await screen.findByRole('heading', { name: 'Agent Runtime 资料', level: 2 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '伙伴运行资料', level: 2 })).toBeInTheDocument();
+    const materialDetails = screen.getByText('高级：材料详情', { selector: 'summary' });
+    expect(materialDetails).toBeInTheDocument();
+    expect(screen.getByText('PDF 文档')).toBeInTheDocument();
+    expect(screen.getByText('application/pdf')).not.toBeVisible();
+    await user.click(materialDetails);
+    expect(screen.getByText('application/pdf')).toBeVisible();
+    await user.click(materialDetails);
     expect((await screen.findAllByText('runtime.pdf')).length).toBeGreaterThan(0);
     expect(transport.requests.some((call) => call.request.pathId.startsWith('memory.'))).toBe(false);
     expect(transport.requests.some((call) => call.request.pathId === 'knowledge.routeStatus')).toBe(false);
@@ -42,14 +49,16 @@ describe('document knowledge library', () => {
     await user.click(screen.getByRole('tab', { name: '检索测试' }));
     await user.type(screen.getByRole('textbox', { name: '检索测试' }), '工具如何注册');
     await user.click(screen.getByRole('button', { name: '检索' }));
-    expect(await screen.findByRole('option', { name: /Tool 注册/ })).toBeInTheDocument();
-    expect(screen.getByText('排名分融合关键词、向量与已就绪图谱的候选名次，只用于排列召回片段，不代表答案正确率。')).toBeInTheDocument();
-    expect(screen.getByText('图谱 ×0.7')).toBeInTheDocument();
-    expect(screen.getByText('92 / 100（非正确率）')).toBeInTheDocument();
-    expect(screen.getByText('混合检索 · 关键词候选第 1 · 向量候选第 2 · 图谱候选第 1 · 关联 Tool、Knowledge Worker')).toBeInTheDocument();
-    expect(screen.getByText('Tool → mentions → 文档片段')).toBeInTheDocument();
+    expect(await screen.findByRole('option', { name: /工具注册/ })).toBeInTheDocument();
+    expect(screen.getByText('结果按与你的问题的相关程度排序，建议打开来源核对原文。')).toBeInTheDocument();
+    expect(screen.getByText('高相关')).toBeInTheDocument();
+    await user.click(screen.getByText('高级：检索详情', { selector: 'summary' }));
+    expect(screen.getByText('92 / 100')).toBeInTheDocument();
+    expect(screen.getByText('混合检索 · 关键词候选第 1 · 向量候选第 2 · 图谱候选第 1 · 关联 工具、知识整理服务')).toBeInTheDocument();
+    expect(screen.getByText('工具 → mentions → 文档片段')).toBeInTheDocument();
     expect(screen.getByText('第 12 页')).toBeInTheDocument();
-    expect(screen.getByText('Agent Loop > Tools')).toBeInTheDocument();
+    expect(screen.getByText('伙伴工作循环 > 工具')).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent('Knowledge Worker');
     const search = request(transport, 'knowledgeBases.search');
     expect(search?.params).toEqual({ kbId: 'kb-runtime' });
     expect(search?.body).toEqual({ query: '工具如何注册', topK: 10, mode: 'hybrid', threshold: 0.2 });
@@ -61,7 +70,7 @@ describe('document knowledge library', () => {
     }));
     await waitFor(() => expect(screen.getByRole('tab', { name: '查看材料' })).toHaveAttribute('data-state', 'active'));
     expect(await screen.findByText(/已定位检索命中/)).toBeInTheDocument();
-    expect(screen.getByText('Agent 启动时注册 knowledge。').closest('article')).toHaveAttribute('data-focused', 'true');
+    expect(screen.getByText('伙伴启动时注册 knowledge。').closest('article')).toHaveAttribute('data-focused', 'true');
   });
 
   it('imports through the typed transport and updates Agent/parser settings with revisions', async () => {
@@ -80,7 +89,7 @@ describe('document knowledge library', () => {
     expect(screen.getByText('已进入解析')).toBeInTheDocument();
 
     await user.click(screen.getByRole('tab', { name: '设置' }));
-    const agentSwitch = screen.getByRole('switch', { name: '允许 Agent 使用' });
+    const agentSwitch = screen.getByRole('switch', { name: '允许伙伴检索此知识库' });
     expect(agentSwitch).not.toBeChecked();
     await user.click(agentSwitch);
     await waitFor(() => expect(request(transport, 'knowledgeBases.update')?.body).toMatchObject({
@@ -88,7 +97,7 @@ describe('document knowledge library', () => {
       expectedRevision: 8,
     }));
 
-    await user.click(screen.getByRole('combobox', { name: 'Provider' }));
+    await user.click(screen.getByRole('combobox', { name: '解析方式' }));
     await user.click(await screen.findByRole('option', { name: 'MinerU' }));
     await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'knowledgeBases.update').at(-1)?.request.body).toMatchObject({
       parserProvider: 'mineru_local_http',
@@ -105,7 +114,7 @@ describe('document knowledge library', () => {
       expectedRevision: 8,
     }));
 
-    const denseWeight = screen.getByRole('spinbutton', { name: 'Dense 权重' });
+    const denseWeight = screen.getByRole('spinbutton', { name: '向量权重' });
     await user.clear(denseWeight);
     await user.type(denseWeight, '1.5');
     const graphSwitch = screen.getByRole('switch', { name: '启用图谱增强' });
@@ -122,33 +131,34 @@ describe('document knowledge library', () => {
     expect(screen.getByDisplayValue('local-hash:96:v1')).toBeDisabled();
     expect(screen.getByDisplayValue('42')).toBeDisabled();
 
-    await user.click(screen.getByRole('button', { name: '预览重建' }));
-    expect(await screen.findByText('预计片段')).toBeInTheDocument();
-    expect(screen.getByText('48')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '确认重建' }));
+    await user.click(screen.getByRole('button', { name: '重建索引' }));
+    await waitFor(() => expect(request(transport, 'knowledgeBases.reindexPreview')).toBeDefined());
     await waitFor(() => expect(request(transport, 'knowledgeBases.rebuild')?.body).toEqual({
       previewToken: 'preview-reindex', payloadSha256: 'sha256:reindex', expectedRevision: 8, confirmText: 'REBUILD',
     }));
     await waitFor(() => expect(screen.getByRole('tab', { name: '处理记录' })).toHaveAttribute('data-state', 'active'));
   });
 
-  it('probes, previews, approves, and rolls back a global embedding profile without sending a secret', async () => {
+  it('tests, saves, and rolls back a global vector model configuration without sending a secret', async () => {
     const transport = createTransport();
     const user = userEvent.setup();
     renderKnowledge(transport, '/knowledge?tab=settings');
 
-    expect(await screen.findByRole('region', { name: 'Embedding 与索引' })).toBeInTheDocument();
-    await user.click(screen.getByRole('combobox', { name: 'Embedding Provider' }));
-    await user.click(await screen.findByRole('option', { name: 'OpenAI-compatible Embedding' }));
-    await user.type(screen.getByRole('textbox', { name: 'Embedding 模型' }), 'bge-m3');
+    expect(await screen.findByRole('region', { name: '向量模型与索引' })).toBeInTheDocument();
+    expect(screen.getByText('连接状态')).toBeInTheDocument();
+    expect(screen.getByText('索引状态')).toBeInTheDocument();
+    await user.click(screen.getByText('高级：连接与索引设置', { selector: 'summary' }));
+    await user.click(screen.getByRole('combobox', { name: '向量模型服务' }));
+    await user.click(await screen.findByRole('option', { name: 'OpenAI 兼容向量模型' }));
+    await user.type(screen.getByRole('textbox', { name: '向量模型' }), 'bge-m3');
     await user.type(screen.getByRole('textbox', { name: '兼容 API 地址' }), 'https://embedding.example.test/v1');
     const dimensions = screen.getByRole('spinbutton', { name: '向量维度' });
     await user.clear(dimensions);
     await user.type(dimensions, '1024');
     await user.type(screen.getByRole('textbox', { name: '密钥环境变量名' }), 'PAW_EMBEDDING_API_KEY');
-    await user.click(screen.getByRole('button', { name: '测试候选模型' }));
+    await user.click(screen.getByRole('button', { name: '测试连接' }));
 
-    expect(await screen.findByText('Probe 已通过')).toBeInTheDocument();
+    expect(await screen.findByText('连接测试通过')).toBeInTheDocument();
     const probe = request(transport, 'knowledgeEmbedding.probe');
     expect(probe?.body).toMatchObject({ profile: {
       provider: 'openai-compatible', model: 'bge-m3', baseUrl: 'https://embedding.example.test/v1',
@@ -156,14 +166,15 @@ describe('document knowledge library', () => {
     } });
     expect(JSON.stringify(probe?.body)).not.toContain('secret-value');
 
-    await user.click(screen.getByRole('button', { name: '查看影响' }));
-    expect(await screen.findByText('影响 1 个知识库、1 个文档、42 个片段')).toBeInTheDocument();
-    expect(request(transport, 'knowledgeEmbedding.impact')).toBeDefined();
-    expect(request(transport, 'configuration.settings.preview')?.body).toMatchObject({ expectedRuntimeRevision: 12 });
+    const embeddingWorkflow = (await screen.findAllByText('更新向量模型配置'))
+      .map((element) => element.closest<HTMLElement>('.mgmt-workflow'))
+      .find((workflow): workflow is HTMLElement => Boolean(workflow));
+    if (!embeddingWorkflow) throw new Error('向量模型配置工作流未找到');
+    expect(embeddingWorkflow).toHaveAttribute('data-confirmation', 'direct');
+    await user.click(within(embeddingWorkflow).getByRole('button', { name: '更新向量模型配置' }));
+    await waitFor(() => expect(request(transport, 'knowledgeEmbedding.impact')).toBeDefined());
+    await waitFor(() => expect(request(transport, 'configuration.settings.preview')?.body).toMatchObject({ expectedRuntimeRevision: 12 }));
 
-    await user.click(screen.getByRole('button', { name: '确认这些更改' }));
-    await user.click(screen.getByRole('checkbox', { name: '我确认只执行上方列出的更改' }));
-    await user.click(screen.getByRole('button', { name: '确认执行' }));
     await waitFor(() => expect(request(transport, 'configuration.settings.apply')?.body).toMatchObject({
       expectedRuntimeRevision: 12,
       previewToken: 'preview-embedding-settings',
@@ -175,8 +186,8 @@ describe('document knowledge library', () => {
         'knowledgeLibrary.embedding.secretReference': 'PAW_EMBEDDING_API_KEY',
       },
     }));
-    expect(await screen.findByText('这次更改已安全记录')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '撤销这次更改' }));
+    expect(await within(embeddingWorkflow).findByText('已保存')).toBeInTheDocument();
+    await user.click(within(embeddingWorkflow).getByRole('button', { name: '撤销' }));
     await waitFor(() => expect(request(transport, 'configuration.settings.rollback')?.body).toEqual({
       receiptId: 'receipt-embedding-settings',
       rollbackToken: 'rollback-embedding-settings',
@@ -211,6 +222,35 @@ describe('document knowledge library', () => {
     expect(document.body).not.toHaveTextContent('/Users/private/Knowledge');
   });
 
+  it('returns focus after dialogs and gives destructive confirmations danger emphasis', async () => {
+    const user = userEvent.setup();
+    renderKnowledge(createTransport());
+
+    const createTrigger = await screen.findByRole('button', { name: '新建知识库' });
+    await user.click(createTrigger);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(createTrigger).toHaveFocus());
+
+    const deleteBaseTrigger = screen.getByRole('button', { name: '删除知识库' });
+    await user.click(deleteBaseTrigger);
+    const deleteBaseDialog = screen.getByRole('dialog', { name: '删除文档知识库' });
+    expect(within(deleteBaseDialog).getByRole('button', { name: '确认删除' })).toHaveAttribute('data-variant', 'danger');
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(deleteBaseTrigger).toHaveFocus());
+
+    const reparseTrigger = screen.getByRole('button', { name: '重新解析 runtime.pdf' });
+    await user.click(reparseTrigger);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(reparseTrigger).toHaveFocus());
+
+    const deleteDocumentTrigger = screen.getByRole('button', { name: '删除 runtime.pdf' });
+    await user.click(deleteDocumentTrigger);
+    const deleteDocumentDialog = screen.getByRole('dialog', { name: '删除文档' });
+    expect(within(deleteDocumentDialog).getByRole('button', { name: '确认删除' })).toHaveAttribute('data-variant', 'danger');
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(deleteDocumentTrigger).toHaveFocus());
+  });
+
   it('opens source, markdown, chunks, image and table artifacts from the file row', async () => {
     const transport = createTransport();
     const user = userEvent.setup();
@@ -219,16 +259,16 @@ describe('document knowledge library', () => {
     await user.click(await screen.findByRole('button', { name: '查看 runtime.pdf' }));
     expect(await screen.findByRole('tab', { name: '源文件' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Markdown' })).toHaveAttribute('data-state', 'active');
-    expect(screen.getByRole('heading', { name: 'Agent Loop' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '伙伴工作循环' })).toBeInTheDocument();
     expect(screen.getByText('图片引用已隔离：远程图')).toBeInTheDocument();
     expect(screen.queryByRole('img', { name: '远程图' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('tab', { name: '源文件' }));
     expect(await screen.findByTitle('runtime.pdf 源文件')).toHaveAttribute('src', 'blob:knowledge-source');
     expect(transport.knowledgeDocumentSourceCalls[0]).toMatchObject({ kbId: 'kb-runtime', fileId: 'file-runtime' });
-    await user.click(screen.getByRole('tab', { name: 'Chunks' }));
-    expect(screen.getByText('Agent 启动时注册 knowledge。')).toBeInTheDocument();
-    expect(screen.getByText('Agent Loop > Tools')).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: '段落' }));
+    expect(screen.getByText('伙伴启动时注册 knowledge。')).toBeInTheDocument();
+    expect(screen.getByText('伙伴工作循环 > 工具')).toBeInTheDocument();
     await user.click(screen.getByRole('tab', { name: '解析产物' }));
     expect(await screen.findByRole('img', { name: '工具流程图' })).toHaveAttribute('src', 'blob:knowledge-asset');
     expect(screen.getByRole('link', { name: '查看 tool-flow.png' })).toHaveAttribute('href', 'blob:knowledge-asset');
@@ -276,11 +316,11 @@ describe('document knowledge library', () => {
     await user.click(screen.getByRole('button', { name: '继续加载 Markdown' }));
     expect(await screen.findByRole('heading', { name: '第二段' })).toBeInTheDocument();
 
-    await user.click(screen.getByRole('tab', { name: 'Chunks' }));
+    await user.click(screen.getByRole('tab', { name: '段落' }));
     expect(screen.getByText('第一个片段')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '加载更多' }));
     expect(await screen.findByText('第二个片段')).toBeInTheDocument();
-    expect(screen.getByText('已加载全部 2 个片段。')).toBeInTheDocument();
+    expect(screen.getByText('已加载全部 2 个段落。')).toBeInTheDocument();
   });
 
   it('maps succeeded jobs to completed and exposes task details', async () => {
@@ -292,6 +332,8 @@ describe('document knowledge library', () => {
     expect(screen.getAllByText('已完成').length).toBeGreaterThan(0);
     expect(screen.queryByText('处理中')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /runtime.pdf/ }));
+    expect(screen.getByText('job-1')).not.toBeVisible();
+    await user.click(screen.getByText('高级：处理详情', { selector: 'summary' }));
     expect(screen.getByText('job-1')).toBeInTheDocument();
     expect(screen.getByRole('list', { name: '任务阶段记录' })).toBeInTheDocument();
   });
@@ -312,8 +354,10 @@ describe('document knowledge library', () => {
       params: { kbId: 'kb-runtime', fileId: 'file-runtime' },
       body: { chunkingConfig: { strategy: 'laws' }, limit: 12 },
     }));
-    expect(await screen.findByText('2 个片段')).toBeInTheDocument();
-    expect(screen.getByText('第一条预览')).toBeInTheDocument();
+    expect(await screen.findByText('2 个段落')).toBeInTheDocument();
+    expect(screen.getByText(/\u4f19伴运行环境/)).toBeInTheDocument();
+    expect(screen.getByText(/\u5de5具只按需检索/)).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent('Agent Runtime');
   });
 
   it('cancels an active indexing job from the jobs workspace', async () => {
@@ -376,6 +420,8 @@ describe('document knowledge library', () => {
     await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'knowledgeBases.graph.get' && call.request.query?.query === 'DeepSeek')).toHaveLength(1), { timeout: 1_500 });
     expect(transport.requests.filter((call) => call.request.pathId === 'knowledgeBases.graph.get' && call.request.query?.query)).toHaveLength(1);
     await user.click(screen.getByRole('radio', { name: '节点' }));
+    expect(screen.getByRole('button', { name: /知识整理服务/ })).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent('Knowledge Worker');
     await user.click(screen.getByRole('button', { name: /按需检索与上下文注入/ }));
     expect(screen.getByLabelText('节点详情')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '按需检索与上下文注入' })).toBeInTheDocument();
@@ -384,16 +430,22 @@ describe('document knowledge library', () => {
 
     await user.click(screen.getByRole('tab', { name: '知识图谱' }));
     await user.click(screen.getByRole('radio', { name: '关系' }));
+    expect(document.body).not.toHaveTextContent('contains');
+    expect(document.body).not.toHaveTextContent('mentions');
     await user.click(screen.getByRole('button', { name: /runtime.pdf → 工具注册/ }));
     expect(screen.getByLabelText('关系详情')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '包含' })).toBeInTheDocument();
+    expect(screen.getByText('类型').nextElementSibling).toHaveTextContent('包含');
     await user.click(screen.getByRole('button', { name: '关闭图谱详情' }));
     expect(screen.queryByLabelText('关系详情')).not.toBeInTheDocument();
     await user.click(screen.getByRole('radio', { name: '构建状态' }));
+    expect(screen.getByText('图谱从当前文档知识库构建，用于管理，并在回答时提供参考；它不与个人记忆图谱合并。')).toBeInTheDocument();
     expect(screen.getByText('已索引材料')).toBeInTheDocument();
     expect(screen.getByText('待处理材料')).toBeInTheDocument();
-    expect(screen.getByText('下次重建').nextElementSibling).toHaveTextContent('模型抽取（推荐）');
-    expect(screen.getByText('由 Worker 运行时配置')).toBeInTheDocument();
+    expect(screen.getByText('下次重建').nextElementSibling).toHaveTextContent('模型整理（推荐）');
+    expect(screen.getByText('由当前配置决定')).not.toBeVisible();
+    await user.click(screen.getByText('高级：构建详情', { selector: 'summary' }));
+    expect(screen.getByText('由当前配置决定')).toBeInTheDocument();
     expect(screen.getByText('抽取上限').nextElementSibling).toHaveTextContent('5 实体 / 4 关系 / 2 主题');
     await user.click(screen.getAllByRole('button', { name: '重建图谱' }).at(-1)!);
     await waitFor(() => expect(request(transport, 'knowledgeBases.graph.rebuild')?.body).toEqual({
@@ -521,7 +573,7 @@ function createTransport(options: { activeJob?: boolean; emptyGraph?: boolean; p
           currentProfileSha256: 'profile-current',
           configurationChanges: Object.fromEntries(Object.entries(candidate).map(([key, value]) => [`knowledgeLibrary.embedding.${key}`, value])),
           requiresWorkerRestart: true, requiresRebuild: true,
-          affectedBases: [{ kbId: 'kb-runtime', name: 'Agent Runtime 资料', documentCount: 1, chunkCount: 42 }],
+          affectedBases: [{ kbId: 'kb-runtime', name: '伙伴运行资料', documentCount: 1, chunkCount: 42 }],
           affectedBaseCount: 1, affectedDocumentCount: 1, affectedChunkCount: 42,
           approvalRequiredForApply: true, secretsVisible: false,
         };
@@ -553,7 +605,7 @@ function createTransport(options: { activeJob?: boolean; emptyGraph?: boolean; p
       'knowledgeBases.reindexPreview': { previewToken: 'preview-reindex', payloadSha256: 'sha256:reindex', expectedRevision: 8, summary: { documentCount: 1, staleDocumentCount: 1, estimatedChunkCount: 48 } },
       'knowledgeBases.rebuild': { ok: true },
       'knowledgeBases.job.cancel': { ok: true, job: { id: 'job-1', status: 'cancelled' } },
-      'knowledgeBases.chunkPreview': { ok: true, fileId: 'file-runtime', total: 2, truncated: false, items: [{ chunkId: 'preview-1', ordinal: 0, content: '第一条预览', page: 1 }, { chunkId: 'preview-2', ordinal: 1, content: '第二条预览', page: 2 }] },
+      'knowledgeBases.chunkPreview': { ok: true, fileId: 'file-runtime', total: 2, truncated: false, items: [{ chunkId: 'preview-1', ordinal: 0, content: '# Agent Runtime\nTool 只按需检索。', page: 1 }, { chunkId: 'preview-2', ordinal: 1, content: '第二条预览', page: 2 }] },
       'knowledgeBases.graph.get': () => {
         graphRequestCount += 1;
         return {
@@ -588,7 +640,7 @@ function createTransport(options: { activeJob?: boolean; emptyGraph?: boolean; p
 
 function knowledgeBase() {
   return {
-    id: 'kb-runtime', name: 'Agent Runtime 资料', description: '只包含外部文档', documentCount: 1,
+    id: 'kb-runtime', name: '伙伴运行资料', description: '只包含外部文档', documentCount: 1,
     chunkCount: 42, status: 'ready', agentEnabled: false, parserProvider: 'auto', updatedAtMs: Date.now(), revision: 8,
     chunkingConfig: { strategy: 'markdown', size: 1_200, overlap: 160, separator: '\n\n', respectHeadings: true, respectPageBoundaries: true },
     retrievalConfig: {

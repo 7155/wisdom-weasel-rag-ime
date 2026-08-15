@@ -2518,7 +2518,9 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(response["lastSequence"], event.sequence)
         self.assertEqual(response["resumeToken"], event.resume_token)
         self.assertEqual(response["status"], "idle")
-        self.assertEqual(response["liveEvents"], [event.to_payload()])
+        # Settled idle status changes only advance the durable resume cursor;
+        # they are not restored as a ghost live turn after refresh.
+        self.assertEqual(response["liveEvents"], [])
         self.assertEqual(response["todo"]["phases"][0]["tasks"][0]["content"], "恢复可见 Todo")
         self.assertEqual(response["todo"]["phases"][0]["tasks"][0]["status"], "in_progress")
 

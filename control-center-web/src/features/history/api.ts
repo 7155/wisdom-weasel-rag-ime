@@ -66,7 +66,7 @@ export function useHistoryMutationBoundary() {
     const routeIds = new Set((capabilities.data?.routeIds ?? []) as readonly string[]);
     const required = Object.values(historyMutationPathIds);
     if (!flags.managementWorkContract || !flags.historyWorkContract || required.some((pathId) => !routeIds.has(pathId))) {
-      return { state: 'unsupported', reason: '当前版本还不能安全修改历史记录；不会执行任何更改。' };
+      return { state: 'unsupported', reason: '当前服务未提供安全的历史记录修改能力；不会执行任何更改。' };
     }
     if (blockedReason) return { state: 'blocked', reason: blockedReason };
     return { state: 'available' };

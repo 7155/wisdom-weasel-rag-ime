@@ -10,6 +10,8 @@ change can therefore cross privacy or lifecycle boundaries.
 - Use Python 3.12 or newer.
 - Use Node.js 22 and the pinned `pnpm@11.9.0` for `control-center-web/`.
 - Use Xcode 16 or newer for patched Squirrel and native release work.
+- Read [PROJECT.md](PROJECT.md) and the relevant active Outcome in
+  [OUTCOMES.md](OUTCOMES.md); load only the related decisions and architecture.
 - Read [ARCHITECTURE.md](ARCHITECTURE.md).
 - Open an issue before changing persisted schemas, Provider context ordering,
   Tool approval, Room settlement/cancellation, or cross-language route
@@ -44,6 +46,7 @@ build products, or macOS permission state to fixtures.
 Run focused tests while working. Before a substantial pull request, run:
 
 ```bash
+uv run --locked python scripts/check_project_harness.py
 uv run --locked python -m compileall -q rag_ime scripts tests
 uv run --locked python scripts/check_import_boundaries.py
 uv run --locked python scripts/check_route_ownership.py

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Independently"
+  short_description: "Review fixed results independently against intent and standards"
+  default_prompt: "Use $independent-review to review this fixed result independently against the original request, evidence, and project standards."

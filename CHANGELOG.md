@@ -7,8 +7,9 @@ source checkpoint is not a signed and notarized macOS binary release.
 
 ### Added
 
-- Structured Agent Sessions and durable multi-Agent Rooms with Root, Task,
-  Dispatch, quality-gate, continuation, and settlement evidence.
+- Structured Agent Sessions and lightweight multi-Agent Rooms that compose
+  ordinary Pi Sessions while retaining durable dispatch, cancellation, ordered
+  public events, and terminal evidence.
 - Capability-bound Tool disclosure, authorization, approval, execution, and
   terminal receipts.
 - Protocol-owned Pi v1/v2 selection and an enforced public runtime contract.
@@ -45,9 +46,12 @@ source checkpoint is not a signed and notarized macOS binary release.
   fail-closed ratchet for deliberately special routes.
 - Room-turn bookkeeping has one mutation owner.
 - Pi v1 and v2 share explicit public projection/value contracts.
-- Managed Rooms now execute peer-owned slices in parallel, gate final delivery on
-  shared review and evidence, and recover bounded participant Sessions without
-  requiring manual control-plane repair.
+- Managed Rooms now use one Facilitator Session plus optional Partner Sessions;
+  parallelism and independent review are selected only when useful, while the
+  Facilitator integrates evidence and owns one final result.
+- Core work guidance is now a conditional set of task Skills shared by
+  standalone Sessions, Partners, and Tool Agents. The fixed
+  execution/quality/review/handoff/archive pipeline is retired.
 - The Control Center Room timeline now separates live reasoning, Tool activity,
   public participant reports, shared review, and the final reply in equal,
   responsive participant lanes with user-facing status language.

@@ -22,13 +22,61 @@
 .governance-timeline article { border: 1px solid var(--color-border); border-radius: var(--radius-2); }
 .governance-empty { margin: 0; padding: var(--space-4); color: var(--color-text-tertiary); font-size: 13px; }
 .governance-error { color: var(--color-danger) !important; }
+.governance-record-summary,
+.governance-record-version {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+.governance-record-version { display: block; margin-top: 7px; }
+.governance-record-details {
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--color-border-soft);
+}
+.governance-record-details > summary {
+  min-height: 44px;
+  padding: 8px 0;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+  list-style-position: inside;
+}
+.governance-record-details > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.governance-record-details > dl { display: grid; gap: 7px; margin: 2px 0 8px; }
+.governance-record-details > dl > div { min-width: 0; }
+.governance-record-details dt {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 650;
+}
+.governance-record-details dd { margin: 2px 0 0; }
+.governance-record-details > section > h4 {
+  margin: 10px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+.governance-record-details:not([open]) > :not(summary) { display: none !important; }
+.governance-loading__skeletons {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.governance-loading__skeletons .ui-skeleton { min-height: 72px; }
+.governance-load-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.governance-load-error > .mgmt-notice { flex: 1 1 auto; }
+.governance-load-error > .ui-button { min-height: 44px; }
 
 @media (max-width: 980px) {
-  .governance-filters, .governance-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .governance-filters, .governance-columns, .governance-loading__skeletons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 620px) {
-  .governance-filters, .governance-columns, .governance-columns--two { grid-template-columns: minmax(0, 1fr); }
+  .governance-filters, .governance-columns, .governance-columns--two, .governance-loading__skeletons { grid-template-columns: minmax(0, 1fr); }
   .governance-list article header, .governance-timeline article header { align-items: flex-start; flex-direction: column; }
+  .governance-load-error { align-items: stretch; flex-direction: column; }
 }
 
 /* ============== governance adopts the editorial page grammar ==============
@@ -61,4 +109,58 @@
   padding: 9px 0 0;
   color: var(--color-text-tertiary);
   font-size: var(--font-size-ui);
+}
+
+/* The audit is occasional, so its disclosure earns a short state cue. The
+   records themselves stay still: people read these rather than watch them. */
+.governance-advanced,
+.governance-filter-disclosure {
+  border-block: 1px solid var(--color-border-soft);
+}
+.governance-advanced > summary,
+.governance-filter-disclosure > summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 10px 2px;
+  list-style: none;
+  transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+.governance-advanced > summary::-webkit-details-marker,
+.governance-filter-disclosure > summary::-webkit-details-marker { display: none; }
+.governance-advanced > summary::before,
+.governance-filter-disclosure > summary::before {
+  color: var(--color-text-tertiary);
+  content: '›';
+  font-size: 18px;
+  line-height: 1;
+  transition: transform var(--motion-disclose) var(--ease-standard);
+}
+.governance-advanced[open] > summary::before,
+.governance-filter-disclosure[open] > summary::before { transform: rotate(90deg); }
+.governance-advanced > summary:focus-visible,
+.governance-filter-disclosure > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+
+/* A few page rules intentionally make disclosure children grids. Declare the
+   closed state here as well, so those grids cannot override native details
+   hiding and leave focusable controls in the layout. */
+.governance-advanced:not([open]) > :not(summary),
+.governance-filter-disclosure:not([open]) > :not(summary) { display: none !important; }
+
+@media (hover: hover) and (pointer: fine) {
+  .governance-advanced > summary:hover,
+  .governance-filter-disclosure > summary:hover { background: var(--color-surface-hover); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .governance-advanced > summary,
+  .governance-filter-disclosure > summary,
+  .governance-advanced > summary::before,
+  .governance-filter-disclosure > summary::before { transition: none; }
+}
+
+@media (max-width: 620px) {
+  .governance-filter-disclosure input.ui-input,
+  .governance-filter-disclosure input { min-height: 44px; }
 }

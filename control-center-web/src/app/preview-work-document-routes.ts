@@ -111,7 +111,7 @@ function previewWorkDocument(
     activePath: 'docs/agent/todo.md',
     archivePath: 'archive/session-preview/todo.md',
     state,
-    title: historical ? '输入法前台验收目标' : '控制中心发布 Todo',
+    title: historical ? '输入法前台验收目标' : '控制中心发布任务',
     terminalReceiptId,
     error: '',
     createdAtMs: Date.now() - 172_800_000,

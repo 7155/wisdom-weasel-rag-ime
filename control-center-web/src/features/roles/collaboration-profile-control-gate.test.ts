@@ -13,11 +13,11 @@ describe('CollaborationProfile production control gate', () => {
   it('fails closed for a changed route, stale projection hash or missing remote approval', async () => {
     const changed = capabilities();
     (changed.raw as { routes: Array<Record<string, unknown>> }).routes[1]!.method = 'PATCH';
-    expect((await evaluateCollaborationProfileControlGate(changed, PROFILE_ROUTE_HASH)).reason).toMatch(/command route hash mismatch/);
-    expect((await evaluateCollaborationProfileControlGate(capabilities(), `sha256:${'0'.repeat(64)}`)).reason).toMatch(/projection route hash mismatch/);
+    expect((await evaluateCollaborationProfileControlGate(changed, PROFILE_ROUTE_HASH)).reason).toMatch(/不能安全修改角色书/);
+    expect((await evaluateCollaborationProfileControlGate(capabilities(), `sha256:${'0'.repeat(64)}`)).reason).toMatch(/内容已经变化/);
     const remote = capabilities();
     (remote.raw as { client: Record<string, unknown> }).client = { remote: true, deviceAuthenticated: true, grantedScopes: ['agent.write'] };
-    expect((await evaluateCollaborationProfileControlGate(remote, PROFILE_ROUTE_HASH)).reason).toMatch(/agent.write and agent.approve/);
+    expect((await evaluateCollaborationProfileControlGate(remote, PROFILE_ROUTE_HASH)).reason).toMatch(/完成设备验证/);
   });
 });
 

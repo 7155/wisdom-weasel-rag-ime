@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   ProjectFieldFeature,
+  projectFieldCameraCenterXForViewport,
   projectFieldInitialCamera,
   projectFieldText,
   projectFieldShouldReduceMotion,
@@ -147,6 +148,10 @@ describe('Project Field prototype', () => {
       centerY: 420,
       scale: 1,
     });
+
+    const camera = projectFieldInitialCamera(project!);
+    expect(projectFieldCameraCenterXForViewport(project!, camera, 338, 0.68)).toBeCloseTo(2013.24, 2);
+    expect(projectFieldCameraCenterXForViewport(project!, camera, 1200, 0.68)).toBe(camera.centerX);
   });
 
   it('uses the application motion preference before the operating-system fallback', () => {

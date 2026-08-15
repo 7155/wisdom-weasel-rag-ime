@@ -1,139 +1,41 @@
 ---
 name: implementation-planning
-description: Turn confirmed requirements and decisions into the smallest dependency-aware implementation plan without starting work. Use for multi-step changes that need task boundaries, blockers, ownership, verification, or rollback.
-when:
-  - Confirmed work spans multiple steps or owners
-does: Map acceptance to vertical tasks, blockers, owners, and evidence.
-input: Confirmed alignment, implementation facts, constraints, and authority.
-output: Ordered tasks, dependencies, integration gates, evidence, and rollback.
-notFor:
-  - Unconfirmed decisions, one-step work, execution, or file lists
+description: "Turn a confirmed change into the smallest dependency-aware set of verifiable work items. Use when work spans multiple steps, owners, shared contracts, integration points, or rollback boundaries. Do not use for one coherent action, an unknown failure, an unresolved material choice, or to manufacture parallel tasks; e.g., one localized edit plus its focused test does not need a plan."
 ---
 
-# Implementation Planning
+# Plan Implementation
 
-## Planning Invariants
-
-- Reread the confirmed packet's immutable `User Source`; the original request and vision outrank every AI summary.
-  Do not grill the user or revise the selected route.
-- Begin each persisted plan with that block byte-for-byte. Preserve its ref and
-  revision; do not invent a work ID between stages.
-- Plan backward from observable acceptance. A candidate is a verifiable
-  vertical result for one fresh context window, never a file list.
-- One canonical owner controls each shared contract; derived copies are read-only.
+Plan only as much structure as the work needs. Prefer one coherent Session when it can finish the task safely.
 
 ## Workflow
 
-1. Compare interpretation with verbatim request, vision, corrections, scope,
-   acceptance, permissions, and decision. If a new user-owned choice appears,
-   stop with `needs_alignment_decision` and return it to
-   `alignment-and-decision`; do not ask or compare options here.
-2. Inspect implementation plus the confirmed Domain Language Delta, glossary,
-   and ADRs. Locate owners, dependency direction, test seams, migrations,
-   permissions, and extension points. Planning goes deeper than alignment only
-   to locate executable seams.
-3. Map every acceptance check to implementation and fresh verification. Prefer
-   the highest stable behavior seam already present.
-4. If one Session can finish coherently, return one candidate. Otherwise use
-   tracer-bullet candidates: each crosses affected layers, produces observable
-   behavior, is independently verifiable, and fits one fresh context window.
-5. Express dependencies as blocking edges. Work with no unfinished blocking
-   edges is on the frontier. Name owner, order, permission, cancellation,
-   integration, and rollback boundaries.
-6. For wide migrations use expand-migrate-contract: add a compatible form,
-   migrate bounded batches, then remove the old form after consumers move.
-7. Parallelize only when at least two candidates have non-overlapping
-   responsibilities, no unmet prerequisite, and a material waiting-time
-   benefit. Otherwise serialize or combine them under one owner; never create
-   parallel work merely to fill a roster.
-8. Keep one Facilitator/Integrator accountable for shared contracts and the
-   authoritative workspace. For concurrent writable children, require a
-   separate receipted workspace from the same Root baseline; read-only work
-   may share a baseline.
-   Workspace policy is immutable for one Task. A delivery candidate that may
-   need to change the artifact is writable from the start. If a read-only
-   investigation finds a defect, it returns evidence and the next plan
-   revision creates a new writable implementation candidate; handoff never
-   upgrades the read-only Task.
-9. When alignment includes a pre-start plan preview, preserve its named
-   vertical outcomes, blocking edges, and waves. Detailed planning may refine
-   implementation seams after Start, but must not silently change the user's
-   public ownership or acceptance boundaries.
-10. When the user requires a living work document, use one canonical document.
-    After Start, update it when requirements or material progress change; record
-    the current evidence and next frontier, without copying private reasoning or
-    treating a public status line as the document update.
-11. Keep the smallest plan covering all acceptance without widening scope.
+1. Read the TaskBrief, acceptance criteria, decisions, relevant ContextRefs, and current implementation seams.
+2. Stop and suggest `alignment-and-decision` only if a newly discovered material user choice prevents a valid plan.
+3. Map each acceptance criterion to an observable implementation seam and fresh verification.
+4. Create the smallest vertical work items that produce independently inspectable results; do not use file lists as tasks.
+5. Record blocking dependencies, shared-contract ownership, integration order, rollback points, and the current executable frontier.
+6. Recommend parallel work only when items are independent and concurrency has a material benefit.
+7. Recommend capabilities and workspace needs; leave Agent creation, assignment, and workspace binding to the caller.
+8. Update the owned workboard with the accepted plan, material blockers, and next frontier.
 
-## Managed Room Boundary
+## Document Responsibility
 
-- The Facilitator owns decomposition, partner selection, dependency handling,
-  integration, and the single final answer. Planning does not create a second
-  task graph or Kernel state machine.
-- If one Session can finish coherently, keep the work in that Session. Otherwise
-  inspect the roster with `room_partner(operation="list")` and delegate only
-  bounded, non-overlapping work through `room_partner(operation="delegate")`.
-- Each delegation carries the task, expected output, and acceptance criteria in
-  its prompt. Partners read only the directly relevant project documents and
-  return a bounded result event to the Facilitator.
-- Review is optional and risk-driven. When chosen, delegate a fixed review scope
-  to a distinct partner after integration; do not manufacture review for every
-  task.
-- Participant Session identity is distinct from a filesystem root. Record the
-  actual shared or isolated workspace mode; a path alone proves neither.
+- Update the existing workboard or return a proposed delta when write access is absent.
+- Keep runtime state, Agent presence, and workspace status out of prose; reference their Runtime projections.
+- Link decisions, evidence, and affected contracts instead of copying their full contents.
 
-## Durable State Gate
+## Output
 
-State-changing plans must include:
-
-- a stateful-object census of identity, fields, lifecycle, replicas, caches,
-  indexes, projections, and receipts;
-- one canonical owner per object and transition;
-- a transition table with state, event, preconditions, atomic effects,
-  durable evidence, and recovery;
-- invariants for authorization, uniqueness, ordering, and terminal states;
-- adversarial checks for crash boundaries, concurrent or duplicate operations,
-  restart/restore/replay, and bypass attempts.
-
-Map every invariant and adversarial check to observable evidence.
-
-## Candidate Contract
+Return the common `AgentResult` envelope with:
 
 ```text
-Objective | end-to-end behavior | owned state or contract
-Inputs and blocking candidates | acceptance aliases
-Test seam and fresh evidence | permissions and cancellation
-Rollback or integration signal
+work items | acceptance mapping | dependencies | executable frontier
+shared owners | integration order | rollback | review recommendation
+workboard update receipt or proposed delta
 ```
 
-Shared contracts need one integration owner and explicit order: contract,
-independent consumers, integration verification.
+## Not For
 
-## Output Contract
+Do not execute work, create Agents, force parallelism, invent a worktree, or introduce a mandatory review or quality-gate stage.
 
-Start with `User Source`, then AI interpretation. Return source hash/ref,
-ordered candidates, capability-compatible owner recommendations for the
-Facilitator, blockers, frontier, explicit parallel/serial choice, one
-integration owner/workspace, review-warrant decision, evidence gates,
-non-goals, rollback, and `ready_for_execution`,
-`needs_alignment_decision`, or `blocked_by_external_fact`. Once the Runtime
-accepts the plan, route the accepted plan reference and exact acceptance
-aliases to `implementation-execution`.
-
-Publicly show titles, blocking graph, material risks, and status. Do not repeat the
-confirmed requirements or dump every field unless requested.
-
-## Self-Check
-
-- Does every acceptance item map to implementation and fresh verification?
-- Is each candidate a complete vertical result for one fresh Session?
-- Are blocking edges, frontier, shared owners, order, and rollback explicit?
-- Could one coherent Session do this more simply?
-- Did I leave assignment and roster changes to the Facilitator rather
-  than use round-robin or free-text mentions?
-
-## Boundaries
-
-Do not allocate Agents, create managed work, publish tracker tickets, write
-implementation code, reopen confirmed choices, or invent a hierarchy. A plan
-is not Runtime work until the Facilitator starts or delegates it.
+Example: a localized behavior change with a known owner and one focused test should proceed directly with the implementation Skill.

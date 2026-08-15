@@ -28,6 +28,33 @@ interface RoomToolCatalogItem {
   enabled: boolean;
 }
 
+const PI_SESSION_BASE_TOOLS: readonly RoomToolCatalogItem[] = [
+  {
+    id: 'read',
+    displayName: '读取文件',
+    description: '读取当前授权工作区内的文件。',
+    enabled: true,
+  },
+  {
+    id: 'edit',
+    displayName: '编辑文件',
+    description: '在当前工作权限允许时精确修改已有文件。',
+    enabled: true,
+  },
+  {
+    id: 'write',
+    displayName: '写入文件',
+    description: '在当前工作权限允许时新建或重写文件。',
+    enabled: true,
+  },
+  {
+    id: 'bash',
+    displayName: '运行命令',
+    description: '在当前授权工作区内运行命令。',
+    enabled: true,
+  },
+];
+
 export function RoomMemberBoundaryDialog({
   executionMode,
   participant,
@@ -78,7 +105,9 @@ export function RoomMemberBoundaryDialog({
     };
   }, [participant, transport]);
 
-  const enabledTools = tools.filter((tool) => tool.enabled);
+  const baseToolIds = new Set(PI_SESSION_BASE_TOOLS.map((tool) => tool.id));
+  const enabledTools = tools.filter((tool) => tool.enabled && !baseToolIds.has(tool.id));
+  const availableToolCount = PI_SESSION_BASE_TOOLS.length + enabledTools.length;
   return (
     <Dialog open={Boolean(participant)} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="room-policy-dialog">
@@ -95,7 +124,7 @@ export function RoomMemberBoundaryDialog({
               <ShieldCheck size={18} />
               <span>
                 <strong>{executionModeLabel(executionMode)}</strong>
-                <small>{loading ? '正在确认可用工具；' : `${enabledTools.length} 项工具可用；`}{executionMode === 'full_trust' ? '独立审批助手（Luna Max）依据整个协作空间的结构化审批记录判定待审批操作；' : ''}停止任务、目录边界、删库、灾难性破坏和敏感数据外传禁区始终有效。</small>
+                <small>{loading ? '4 项 Session 基础工具已就绪，正在确认扩展能力；' : `${availableToolCount} 项工具可用，其中 4 项为 Session 基础工具；`}{executionMode === 'full_trust' ? '独立审批助手（Luna Max）依据整个协作空间的结构化审批记录判定待审批操作；' : ''}停止任务、目录边界、删库、灾难性破坏和敏感数据外传禁区始终有效。</small>
               </span>
             </div>
             <fieldset>
@@ -109,8 +138,18 @@ export function RoomMemberBoundaryDialog({
               ) : <p className="room-policy-empty">这个协作空间不会访问项目目录。</p>}
             </fieldset>
             <details className="room-policy-tools-disclosure">
-              <summary>看看可以使用哪些工具 <small>{loading ? '确认中' : `${enabledTools.length} 项`}</small></summary>
-              {loading ? <p className="room-policy-loading" role="status">正在确认可用工具…</p> : (
+              <summary>看看可以使用哪些工具 <small>{loading ? '4 项基础工具，扩展能力确认中' : `${availableToolCount} 项`}</small></summary>
+              <p className="room-policy-tools-heading"><strong>Session 基础工具</strong><small>由 Pi 原生暴露，真实执行仍受当前目录与工作权限约束。</small></p>
+              <div className="room-policy-tools">
+                {PI_SESSION_BASE_TOOLS.map((tool) => (
+                  <div key={tool.id}>
+                    <Check size={14} />
+                    <span><strong>{publicToolName(tool.id, tool.displayName)}</strong><small>{tool.description}</small></span>
+                  </div>
+                ))}
+              </div>
+              {loading ? <p className="room-policy-loading" role="status">正在确认扩展能力…</p> : enabledTools.length ? <>
+                <p className="room-policy-tools-heading"><strong>扩展能力</strong><small>按当前 Session 的能力设置加载。</small></p>
                 <div className="room-policy-tools">
                   {enabledTools.map((tool) => (
                     <div key={tool.id}>
@@ -119,7 +158,7 @@ export function RoomMemberBoundaryDialog({
                     </div>
                   ))}
                 </div>
-              )}
+              </> : <p className="room-policy-empty room-policy-tools-empty">当前没有额外启用的扩展能力。</p>}
             </details>
           </div>
         ) : null}

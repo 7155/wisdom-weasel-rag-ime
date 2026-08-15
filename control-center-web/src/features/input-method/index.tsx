@@ -1,4 +1,5 @@
 import {
+  ChevronDown,
   Cpu,
   Keyboard,
   Network,
@@ -56,7 +57,6 @@ import {
   stringValue,
   valueAt,
 } from '@/features/overview/management-ui';
-import { useProductIdentity } from '@/features/identity/product-identity';
 import './input-method.css';
 
 
@@ -120,7 +120,6 @@ const commonInputSettingKeys = new Set([
 ]);
 
 export function InputMethodFeature() {
-  const identity = useProductIdentity();
   const queries = useInputMethodQueries();
   const source = asRecord(queries.source.data);
   const overview = asRecord(queries.overview.data);
@@ -260,14 +259,14 @@ export function InputMethodFeature() {
           刷新
         </Button>
       )}
-      description={`输入法只是${identity.assistantName}了解你的一个可选来源。你可以在这里管理输入体验和个人词库。`}
-      eyebrow="输入来源"
+      description="调整输入体验和个人词库。普通拼音输入仍由系统输入法负责，常用词和补全建议由你决定是否采用。"
+      eyebrow="输入体验"
       routeId="input"
-      title="输入法与词库"
+      title="输入体验与个人词库"
     >
       <ManagementSection
-        description="查看 macOS 输入源是否连接，以及听写、本机模型和上下文是否准备好。"
-        title="输入法状态"
+        description="确认输入法、补全建议和当前输入环境是否已经准备好。"
+        title="准备情况"
         trailing={(
           <StatusBadge
             label={queries.overview.isPending ? '正在读取模式' : profileLabel(reportedProfile)}
@@ -277,6 +276,7 @@ export function InputMethodFeature() {
       >
         <QueryState
           error={sourceError}
+          headingLevel={3}
           isPending={queries.source.isPending}
           onRetry={() => void queries.source.refetch()}
         >
@@ -291,7 +291,7 @@ export function InputMethodFeature() {
             <InputStatusItem
               {...componentStatus(
                 asRecord(components.sidecar),
-                '后台服务',
+                '补全服务',
                 Network,
                 queries.overview.isPending,
                 overviewError,
@@ -300,7 +300,7 @@ export function InputMethodFeature() {
             <InputStatusItem
               {...componentStatus(
                 asRecord(components.predictor),
-                '本机模型',
+                '本机补全',
                 Cpu,
                 queries.overview.isPending,
                 overviewError,
@@ -326,25 +326,27 @@ export function InputMethodFeature() {
             </div>
           ) : null}
 
-          <InlineNotice
-            title={booleanValue(source.typingReady) ? '系统检查通过' : '输入源需要处理'}
-            tone={booleanValue(source.typingReady) ? 'success' : 'warning'}
-          >
-            {inputSourceMessage(source)}
-          </InlineNotice>
+          {booleanValue(source.typingReady) ? (
+            <InlineNotice title="系统检查通过" tone="success">{inputSourceMessage(source)}</InlineNotice>
+          ) : (
+            <div className="input-inline-action">
+              <InlineNotice title="输入源需要处理" tone="warning">{inputSourceMessage(source)}</InlineNotice>
+              <Button leadingIcon={<TextCursorInput size={14} />} onClick={openDiagnostics} size="small">打开问题排查</Button>
+            </div>
+          )}
         </QueryState>
       </ManagementSection>
 
       <ManagementSection
-        description="选择运行模式后先查看具体变化；仅选择模式不会直接修改设置。"
-        title="运行模式"
+        description="选择更适合你的输入方式；选择后不会立刻改变现在的设置。"
+        title="使用方式"
         trailing={<StatusBadge label={displayedMode || '自定义设置'} tone={displayedMode ? 'info' : 'neutral'} />}
       >
         <div className="input-mode-layout">
           <div className="input-mode-choice">
-            <strong>希望使用的模式</strong>
+            <strong>希望怎样输入</strong>
             <SegmentedControl
-              aria-label="希望使用的运行模式"
+              aria-label="希望怎样输入"
               disabled={settingsWriteAvailability.state !== 'available'}
               items={inputModes}
               onValueChange={setModeDraft}
@@ -355,14 +357,14 @@ export function InputMethodFeature() {
           <ManagementMutationWorkflow
             availability={queries.settingsMutationAvailability(
               runtimeRevision === null
-                ? '当前设置状态尚未同步，刷新后才能预览。'
-                : !modeDraft
-                  ? '请选择一个运行模式后再生成预览。'
+                ? '当前设置状态尚未同步，刷新后才能继续。'
+                  : !modeDraft
+                  ? '请选择一种使用方式后再继续。'
                   : modeDiffItems.length === 0
                     ? '当前设置已经符合所选模式，无需重复应用。'
                     : '',
             )}
-            description="只应用所选模式绑定的设置差异，不会改写其他自定义项。"
+            description="只保存这次选择带来的设置变化，不会改写其他自定义项。"
             draftKey={JSON.stringify({ mode: modeDraft, changes: pendingModeChanges, runtimeRevision })}
             mutationKey={['input-method', 'mutation', 'mode']}
             onApply={async (preview) => parseManagementWorkReceipt(
@@ -397,7 +399,7 @@ export function InputMethodFeature() {
                 ...parsed,
                 summary: {
                   ...parsed.summary,
-                  title: `切换到${modeDraft}？`,
+                  title: `使用${modeDraft}？`,
                   items: modeDiffItems,
                 },
               };
@@ -420,14 +422,14 @@ export function InputMethodFeature() {
               void Promise.all([queries.settings.refetch(), queries.overview.refetch()]);
             }}
             risk={modeDraft === '调试模式' || modeDraft === '安全模式' ? 'R2' : 'R1'}
-            title="切换运行模式"
+            title="保存使用方式"
           />
         </div>
       </ManagementSection>
 
       <ManagementSection
-        description="模型设置保存为期望状态；只有受信任宿主完成重装且 Sidecar 与 MLX 健康回读一致后才算生效。"
-        title="本地预测"
+        description="选择本机补全建议使用的模型。保存后，请在已安装的应用中应用设置；完成后建议才会按新选择出现。"
+        title="本机补全建议"
         trailing={(
           <StatusBadge
             label={queries.models.isPending ? '正在读取' : modelHealthReady && !modelConfigurationPending ? '配置已生效' : '等待应用'}
@@ -436,17 +438,20 @@ export function InputMethodFeature() {
         )}
       >
         {booleanValue(modelsStatus.statusUnavailable) ? (
-          <InlineNotice title="模型状态暂不可用" tone="warning">
-            仍可编辑设置；应用前请刷新模型状态。
-          </InlineNotice>
+          <div className="input-inline-action">
+            <InlineNotice title="模型状态暂不可用" tone="warning">
+              已保存的选择不会改变；重新检查成功前不会把它当作已生效。
+            </InlineNotice>
+            <Button loading={queries.models.isFetching} onClick={() => void queries.models.refetch()} size="small">重试模型检查</Button>
+          </div>
         ) : queries.models.isPending ? (
-          <InlineNotice title="正在读取模型状态" tone="info">正在核对模型注册表、后台服务与 MLX 预测器。</InlineNotice>
+          <InlineNotice title="正在读取模型状态" tone="info">正在检查已保存的模型选择和本机补全服务。</InlineNotice>
         ) : null}
           <dl className="mgmt-kv">
             <dt>当前模型</dt><dd>{modelConfigValue(activeModelConfig.modelId)}</dd>
             <dt>已登记模型</dt><dd>{availableModelIds.length ? availableModelIds.join('、') : '等待注册表状态'}</dd>
-            <dt>推理 Profile</dt><dd>{inputOptionLabel(stringValue(activeModelConfig.profileId))}</dd>
-            <dt>Prompt 模式</dt><dd>{inputOptionLabel(stringValue(activeModelConfig.promptMode))}</dd>
+            <dt>补全方式</dt><dd>{inputOptionLabel(stringValue(activeModelConfig.profileId))}</dd>
+            <dt>建议方式</dt><dd>{inputOptionLabel(stringValue(activeModelConfig.promptMode))}</dd>
             <dt>生成上限</dt><dd>{modelTokenLabel(activeModelConfig.maxTokens)}</dd>
           </dl>
           <InlineNotice
@@ -454,29 +459,30 @@ export function InputMethodFeature() {
             tone={modelHealthReady && !modelConfigurationPending ? 'success' : 'warning'}
           >
             {modelHealthReady && !modelConfigurationPending
-              ? '模型注册表、后台服务和 MLX 预测器报告了同一组配置。'
-              : '先在下方修改并保存设置，再通过受信任操作应用；普通数字键始终保留给输入法。'}
+              ? '已保存的模型选择与本机补全服务一致。'
+              : '先在下方修改并保存设置，再在已安装的应用中应用；普通数字键始终保留给输入法。'}
           </InlineNotice>
           {runtimeRevision === null ? (
             <InlineNotice title="正在等待运行版本" tone="warning">运行版本返回后才能安全应用模型配置。</InlineNotice>
           ) : !nativeExternalActions ? (
-            <InlineNotice title="请在已安装的应用中操作" tone="warning">浏览器预览可以查看和保存设置，但重装本机模型只允许由已安装宿主执行。</InlineNotice>
-          ) : null}
-          <DiagnosticsRuntimeWorkflow
-            action="restart_predictor"
-            description="读取已保存设置，更新模型注册表，依次重启 MLX 与后台服务，并执行两端健康一致性检查。"
-            nativeExternalActions={nativeExternalActions}
-            onApplied={refresh}
-            risk="R2"
-            runtimeRevision={runtimeRevision ?? -1}
-            title="应用并重启本机预测"
-            transport={queries.transport}
-          />
+            <InlineNotice title="请在已安装的应用中操作" tone="warning">网页端可以查看和保存选择；更新本机补全服务需要在已安装的应用中完成。</InlineNotice>
+          ) : (
+            <DiagnosticsRuntimeWorkflow
+              action="restart_predictor"
+              description="应用已保存的模型选择并重启本机补全服务。完成后会检查建议是否能正常使用。"
+              nativeExternalActions={nativeExternalActions}
+              onApplied={refresh}
+              risk="R2"
+              runtimeRevision={runtimeRevision}
+              title="应用本机补全建议"
+              transport={queries.transport}
+            />
+          )}
       </ManagementSection>
 
       <ManagementSection
-        description="调整输入体验和本机模型；系统会先生成绑定当前版本的预览，只有明确确认后才应用。"
-        title="输入设置"
+        description="调整候选数量、触发时机和本机补全方式；保存时只会处理这次改动。"
+        title="输入体验设置"
         trailing={(
           <StatusBadge
             label={settingsPending ? '正在读取' : settingsError ? '读取失败' : String(fieldCount) + ' 项'}
@@ -486,45 +492,26 @@ export function InputMethodFeature() {
       >
         <QueryState
           error={settingsError}
+          headingLevel={3}
           isPending={settingsPending}
           onRetry={() => void Promise.all([queries.settings.refetch(), queries.schema.refetch()])}
         >
           {settingsGroups.length ? (
             <div className="input-settings-layout">
-              <div className="input-settings-grid">
-                {settingsGroups.map((section) => (
-                  <section
-                    aria-labelledby={'input-settings-' + section.id}
-                    className="input-settings-group"
-                    key={section.id}
-                  >
-                    <header>
-                      <h3 id={'input-settings-' + section.id}>{sectionLabel(section.id)}</h3>
-                      <span>{section.fields.length} 项</span>
-                    </header>
-                    <div className="input-setting-list">
-                      {section.fields.map((field) => {
-                        const key = stringValue(field.key);
-                        return (
-                          <InputSettingField
-                            disabled={settingsWriteAvailability.state !== 'available'}
-                            field={field}
-                            key={key}
-                            modelIds={key === 'models.modelId' ? availableModelIds : undefined}
-                            onChange={(value) => updateSettingChange(key, value)}
-                            value={changes[key] ?? valueAt(settings, key)}
-                          />
-                        );
-                      })}
-                    </div>
-                  </section>
-                ))}
-              </div>
-              <div className="mgmt-stack">
-                <h3 className="input-settings-diff-title">待应用差异</h3>
+              <div className="mgmt-stack input-settings-save">
+                <div className="input-settings-save__heading">
+                  <div>
+                    <h3 className="input-settings-diff-title">待保存更改</h3>
+                    <p>{diffRows.length ? `已修改 ${diffRows.length} 项设置，请核对后保存。` : '修改下方设置后，可在这里核对并保存。'}</p>
+                  </div>
+                  <StatusBadge
+                    label={hasInvalidChanges ? '需要修正' : diffRows.length ? `${diffRows.length} 项待保存` : '尚未修改'}
+                    tone={hasInvalidChanges ? 'danger' : diffRows.length ? 'info' : 'neutral'}
+                  />
+                </div>
                 {diffRows.length ? (
                   <DataTable
-                    caption="输入法设置差异"
+                    caption="输入设置待保存更改"
                     columns={[
                       { key: 'key', label: '设置项', width: '34%' },
                       { key: 'before', label: '当前' },
@@ -533,20 +520,18 @@ export function InputMethodFeature() {
                     ]}
                     rows={diffRows}
                   />
-                ) : (
-                  <EmptyState description="调整左侧设置后会在这里显示差异。" icon={TextCursorInput} title="没有待应用变更" />
-                )}
+                ) : null}
                 <ManagementMutationWorkflow
                   availability={queries.settingsMutationAvailability(
                     runtimeRevision === null
-                      ? '当前设置状态尚未同步，刷新后才能预览。'
+                      ? '当前设置状态尚未同步，刷新后才能继续。'
                       : hasInvalidChanges
                         ? '至少一项设置超出可用范围，请先修正。'
                       : diffRows.length === 0
-                        ? '修改至少一个常用输入设置后才能生成预览。'
+                        ? '修改至少一个输入设置后才能保存。'
                         : '',
                   )}
-                  description="只保存上方列出的差异，并按每项设置的生效方式处理。"
+                  description="只保存上方列出的改动，并按每项设置的生效方式处理。"
                   draftKey={JSON.stringify({ changes: pendingChanges, runtimeRevision })}
                   mutationKey={['input-method', 'mutation', 'settings']}
                   onApply={async (preview) => parseManagementWorkReceipt(
@@ -584,7 +569,7 @@ export function InputMethodFeature() {
                       ...parsed,
                       summary: {
                         ...parsed.summary,
-                        title: '应用这些输入设置？',
+                        title: '保存这些输入设置？',
                         items: diffRows.map((row) => `${row.key}：${row.before} → ${row.after}（${row.applyMode}）`),
                       },
                     };
@@ -604,13 +589,29 @@ export function InputMethodFeature() {
                   )}
                   onRolledBack={() => void Promise.all([queries.settings.refetch(), queries.models.refetch()])}
                   risk={diffRows.some((row) => row.requiresReload) ? 'R2' : 'R1'}
-                  title="应用输入设置"
+                  title="保存输入体验设置"
                 />
+              </div>
+              <div className="input-settings-grid">
+                {settingsGroups.map((section) => (
+                  <InputSettingsGroup
+                    changes={changes}
+                    disabled={settingsWriteAvailability.state !== 'available'}
+                    fields={section.fields}
+                    id={section.id}
+                    key={section.id}
+                    modelIds={availableModelIds}
+                    onChange={updateSettingChange}
+                    settings={settings}
+                  />
+                ))}
               </div>
             </div>
           ) : (
             <EmptyState
+              action={<Button leadingIcon={<TextCursorInput size={14} />} onClick={openDiagnostics} size="small">打开问题排查</Button>}
               description="当前没有可显示的输入设置。刷新后仍为空时，可到问题排查页检查状态。"
+              headingLevel={3}
               icon={TextCursorInput}
               title="暂无输入设置"
             />
@@ -619,31 +620,32 @@ export function InputMethodFeature() {
       </ManagementSection>
 
       <ManagementSection
-        description="候选数量和触发延迟需要写入受管理的 Rime 配置块并重新载入；Tab 与 Option+数字策略由后台响应实时下发。"
-        title="应用到输入法前端"
+        description="将候选数量和触发时机应用到输入法。只会更新应用管理的设置，不会修改你的词库或其他自定义输入法配置。"
+        title="重新载入输入法设置"
       >
         {!nativeExternalActions ? (
           <InlineNotice title="请在已安装的应用中操作" tone="warning">
-            浏览器预览不会改写 Rime 文件，也不会重载当前输入法。
+            重新载入功能会在已安装应用中出现。
           </InlineNotice>
         ) : runtimeRevision === null ? (
-          <InlineNotice title="正在等待运行版本" tone="warning">运行版本返回后才能生成绑定当前状态的部署预览。</InlineNotice>
-        ) : null}
-        <DiagnosticsRuntimeWorkflow
-          action="redeploy_rime"
-          description="从设置数据库读取候选数量和停顿触发时间，只更新应用拥有的 YAML 块，然后构建并重新载入 Squirrel。"
-          nativeExternalActions={nativeExternalActions}
-          onApplied={refresh}
-          risk="R3"
-          runtimeRevision={runtimeRevision ?? -1}
-          title="应用输入法前端设置"
-          transport={queries.transport}
-        />
+          <InlineNotice title="正在等待运行版本" tone="warning">运行状态返回后才能安全地重新载入输入法设置。</InlineNotice>
+        ) : (
+          <DiagnosticsRuntimeWorkflow
+            action="redeploy_rime"
+            description="重新载入应用管理的候选数量和触发时机。此操作会重载当前输入法，请在完成后用实际输入和选词确认效果。"
+            nativeExternalActions={nativeExternalActions}
+            onApplied={refresh}
+            risk="R3"
+            runtimeRevision={runtimeRevision}
+            title="重新载入输入法设置"
+            transport={queries.transport}
+          />
+        )}
       </ManagementSection>
 
       <ManagementSection
-        description="只处理当前审阅记录中的词条；每次写入前都会先预览，之后也可以撤销。"
-        title="词库建议"
+        description="查看适合加入个人词库的常用词；只会处理本次勾选的词条，之后也可以撤销。"
+        title="常用词建议"
         trailing={<StatusBadge label={lexiconState.label} tone={lexiconState.tone} />}
       >
         {queries.capabilities.isPending ? (
@@ -656,7 +658,10 @@ export function InputMethodFeature() {
             <Button onClick={() => void queries.capabilities.refetch()} size="small">重试能力检查</Button>
           </div>
         ) : !queries.lexiconAvailable ? (
-          <InlineNotice title="词库管理不可用" tone="warning">当前版本没有提供完整的审阅、写入与撤销能力。为避免误操作，本页不会执行任何更改。</InlineNotice>
+          <div className="input-inline-action">
+            <InlineNotice title="词库管理不可用" tone="warning">当前版本没有提供完整的审阅、写入与撤销能力。为避免误操作，本页不会执行任何更改。</InlineNotice>
+            <Button leadingIcon={<TextCursorInput size={14} />} onClick={openDiagnostics} size="small">打开问题排查</Button>
+          </div>
         ) : queries.lexiconReview.isPending ? (
           <InlineNotice title="正在读取词库建议" tone="info">正在准备本次可审阅的词条。</InlineNotice>
         ) : queries.lexiconReview.error ? (
@@ -682,6 +687,123 @@ export function InputMethodFeature() {
   );
 }
 
+function InputSettingsGroup({
+  changes,
+  disabled,
+  fields,
+  id,
+  modelIds,
+  onChange,
+  settings,
+}: {
+  changes: Record<string, DraftValue>;
+  disabled: boolean;
+  fields: Record<string, unknown>[];
+  id: string;
+  modelIds: readonly string[];
+  onChange: (key: string, value: DraftValue) => void;
+  settings: Record<string, unknown>;
+}) {
+  const [userOpen, setUserOpen] = useState(id === 'interaction');
+  const [advancedUserOpen, setAdvancedUserOpen] = useState(false);
+  const dailyFields = fields.filter((field) => stringValue(field.key) !== 'models.path');
+  const advancedFields = fields.filter((field) => stringValue(field.key) === 'models.path');
+  const changedKeys = fields
+    .map((field) => stringValue(field.key))
+    .filter((key) => key in changes && !Object.is(valueAt(settings, key), changes[key]));
+  const invalidKeys = changedKeys.filter((key) => {
+    const field = fields.find((item) => stringValue(item.key) === key) ?? {};
+    return !validInputSettingValue(field, changes[key]);
+  });
+  const needsAttention = changedKeys.length > 0 || invalidKeys.length > 0;
+  const open = userOpen || needsAttention;
+  const advancedNeedsAttention = advancedFields.some((field) => changedKeys.includes(stringValue(field.key)));
+  const advancedOpen = advancedUserOpen || advancedNeedsAttention;
+  const status = invalidKeys.length
+    ? `${invalidKeys.length} 项需修正`
+    : changedKeys.length
+      ? `${changedKeys.length} 项待保存`
+      : `共 ${fields.length} 项`;
+
+  return (
+    <details
+      aria-labelledby={`input-settings-${id}`}
+      className="input-settings-group"
+      data-attention={needsAttention || undefined}
+      onToggle={(event) => {
+        if (!needsAttention) setUserOpen(event.currentTarget.open);
+      }}
+      open={open}
+    >
+      <summary onClick={(event) => {
+        if (needsAttention && open) event.preventDefault();
+      }}>
+        <span className="input-settings-group__copy">
+          <h3 id={`input-settings-${id}`}>{sectionLabel(id)}</h3>
+          <small>{inputSettingsGroupDescription(id)}</small>
+        </span>
+        <span className="input-settings-group__meta">
+          <span>{status}</span>
+          <ChevronDown aria-hidden="true" size={16} />
+        </span>
+      </summary>
+      <div className="input-setting-list">
+        {dailyFields.map((field) => {
+          const key = stringValue(field.key);
+          return (
+            <InputSettingField
+              disabled={disabled}
+              edited={key in changes && !Object.is(valueAt(settings, key), changes[key])}
+              field={field}
+              key={key}
+              modelIds={key === 'models.modelId' ? modelIds : undefined}
+              onChange={(value) => onChange(key, value)}
+              value={changes[key] ?? valueAt(settings, key)}
+            />
+          );
+        })}
+        {advancedFields.length ? (
+          <details
+            className="input-settings-advanced"
+            onToggle={(event) => {
+              if (!advancedNeedsAttention) setAdvancedUserOpen(event.currentTarget.open);
+            }}
+            open={advancedOpen}
+          >
+            <summary onClick={(event) => {
+              if (advancedNeedsAttention && advancedOpen) event.preventDefault();
+            }}>高级：模型文件位置</summary>
+            {advancedFields.map((field) => {
+              const key = stringValue(field.key);
+              return (
+                <InputSettingField
+                  disabled={disabled}
+                  edited={key in changes && !Object.is(valueAt(settings, key), changes[key])}
+                  field={field}
+                  key={key}
+                  onChange={(value) => onChange(key, value)}
+                  value={changes[key] ?? valueAt(settings, key)}
+                />
+              );
+            })}
+          </details>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function inputSettingsGroupDescription(id: string): string {
+  return ({
+    interaction: '预测何时出现，以及键盘如何接纳建议。',
+    display: '控制建议数量和候选面板样式。',
+    activeRag: '控制知识结果的位置与等待时长。',
+    pinyin: '选择适合你的模糊音习惯。',
+    models: '选择本机模型及补全参数。',
+    lexiconOrganization: '设置本机整理常用词的频率。',
+  } as Record<string, string>)[id] ?? '查看和调整这一组输入设置。';
+}
+
 function LexiconOrganizationState({
   organization,
 }: {
@@ -700,17 +822,16 @@ function LexiconOrganizationState({
         <dd>{organization.enabled && organization.nextRunAtMs !== null ? formatLexiconRunTime(organization.nextRunAtMs, '等待下一次本机整理') : '已停用'}</dd>
         <dt>本次结果</dt>
         <dd>{lastRun.status === 'succeeded' ? `已整理 ${lastRun.candidateCount} 条待审阅建议` : lastRun.status === 'running' ? '正在本机整理' : failure ? '运行失败' : '等待首次运行'}</dd>
-        <dt>由谁处理</dt>
-        <dd>由本机定时任务安排；Rime 仍负责基础输入和候选排序</dd>
+        <dt>自动整理</dt>
+        <dd>{organization.enabled ? '已启用，结果会先交给你审阅。' : '已停用'}</dd>
       </dl>
       {failure ? (
         <InlineNotice title="上次定期整理失败" tone="danger">
-          {lastRun.error || '本机任务没有返回成功结果。'}
-          {lastRun.errorCode ? `（${lastRun.errorCode}）` : ''}
+          {publicErrorText(lastRun.error, '本机任务没有返回成功结果。')}
         </InlineNotice>
       ) : (
         <InlineNotice title="只在本机整理，先审阅再写入" tone="info">
-          定期整理只根据本机实际选词反馈生成待审阅建议。页面只保存数量和校验摘要，不保存建议正文；你确认前，不会改动或重排 Rime 词库。
+          定期整理只根据本机实际选词反馈生成待审阅建议。你保存前，不会改动词库。
         </InlineNotice>
       )}
     </div>
@@ -725,14 +846,20 @@ function formatLexiconRunTime(value: number, fallback: string): string {
   }).format(new Date(value));
 }
 
+function openDiagnostics(): void {
+  window.location.hash = '#/diagnostics';
+}
+
 function InputSettingField({
   disabled,
+  edited,
   field,
   modelIds,
   onChange,
   value,
 }: {
   disabled: boolean;
+  edited: boolean;
   field: Record<string, unknown>;
   modelIds?: readonly string[];
   onChange: (value: DraftValue) => void;
@@ -742,10 +869,13 @@ function InputSettingField({
   const label = inputFieldFallback(key);
   const description = [
     publicInputText(stringValue(field.description), '当前输入设置'),
+    inputSettingHint(key, field),
     applyModeLabel(stringValue(field.applyMode, 'live')),
-  ].join(' · ');
+  ].filter(Boolean).join(' · ');
   const type = stringValue(field.type, 'string');
   const id = `input-setting-${key.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+  const invalid = edited && !validInputSettingValue(field, value as DraftValue);
+  const error = invalid ? inputSettingValidationMessage(field) : undefined;
 
   if (type === 'boolean') {
     return (
@@ -765,13 +895,14 @@ function InputSettingField({
     const options = [...new Set([...modelIds, ...(current ? [current] : [])])];
     return (
       <div className="input-setting-editor-row">
-        <Field description={description} htmlFor={id} label={label}>
+        <Field description={description} error={error} htmlFor={id} label={label}>
           <Select
+            aria-invalid={invalid || undefined}
             disabled={disabled}
             id={id}
             onValueChange={(next) => onChange(next === '__active_model__' ? '' : next)}
             options={[
-              { value: '__active_model__', label: '沿用当前 Hot 模型' },
+              { value: '__active_model__', label: '沿用当前本机模型' },
               ...options.map((modelId) => ({ value: modelId, label: modelId })),
             ]}
             value={current || '__active_model__'}
@@ -783,8 +914,9 @@ function InputSettingField({
   if (Array.isArray(field.options)) {
     return (
       <div className="input-setting-editor-row">
-        <Field description={description} htmlFor={id} label={label}>
+        <Field description={description} error={error} htmlFor={id} label={label}>
           <Select
+            aria-invalid={invalid || undefined}
             disabled={disabled}
             id={id}
             onValueChange={onChange}
@@ -801,8 +933,9 @@ function InputSettingField({
   if (type === 'integer' || type === 'number') {
     return (
       <div className="input-setting-editor-row">
-        <Field description={description} htmlFor={id} label={label}>
+        <Field description={description} error={error} htmlFor={id} label={label}>
           <Input
+            aria-invalid={invalid || undefined}
             disabled={disabled}
             id={id}
             max={typeof field.max === 'number' ? field.max : undefined}
@@ -819,8 +952,9 @@ function InputSettingField({
   if (type === 'string') {
     return (
       <div className="input-setting-editor-row">
-        <Field description={description} htmlFor={id} label={label}>
+        <Field description={description} error={error} htmlFor={id} label={label}>
           <Input
+            aria-invalid={invalid || undefined}
             disabled={disabled}
             id={id}
             maxLength={typeof field.maxLength === 'number' ? field.maxLength : undefined}
@@ -838,6 +972,27 @@ function InputSettingField({
       <StatusBadge label={formatSetting(value, key)} tone="neutral" />
     </div>
   );
+}
+
+function inputSettingValidationMessage(field: Record<string, unknown>): string {
+  const minimum = typeof field.min === 'number' ? field.min : null;
+  const maximum = typeof field.max === 'number' ? field.max : null;
+  if (minimum !== null && maximum !== null) return `请输入 ${minimum} 到 ${maximum} 之间的数值。`;
+  if (minimum !== null) return `请输入不小于 ${minimum} 的数值。`;
+  if (maximum !== null) return `请输入不大于 ${maximum} 的数值。`;
+  if (typeof field.maxLength === 'number') return `最多输入 ${field.maxLength} 个字符。`;
+  if (stringValue(field.key) === 'models.path') return '请输入以 / 或 ~/ 开头的本机路径。';
+  return '当前值不可用，请重新选择。';
+}
+
+function inputSettingHint(key: string, field: Record<string, unknown>): string {
+  if (['interaction.postCommit.idleTriggerMs', 'interaction.postCommit.cooldownMs', 'interaction.postCommit.panelTtlMs', 'interaction.postCommit.modelBudgetMs', 'activeRag.latencyBudgetMs'].includes(key)) {
+    return '单位：毫秒';
+  }
+  if (key === 'interaction.postCommit.minDeltaChars') return '单位：字';
+  if (key === 'models.temperature' && field.min === 0 && field.max === 1) return '0–1，越高变化越明显';
+  if (key === 'models.topP' && field.min === 0 && field.max === 1) return '0–1，越高范围更宽';
+  return '';
 }
 
 function InputStatusItem({

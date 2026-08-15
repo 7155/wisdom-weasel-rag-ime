@@ -1,6 +1,5 @@
 import {
   Check,
-  Clock3,
   Copy,
   Eye,
   History,
@@ -97,10 +96,9 @@ export function HistoryFeature() {
       <QueryState error={pages.error as Error | null} isPending={pages.isPending} onRetry={() => void pages.refetch()}>
         <ManagementSection title="当前记录">
           <MetricStrip items={[
-            { label: '记录', value: rows.length, detail: '这一页', icon: History },
+            { label: '已显示', value: rows.length, detail: '这一页', icon: History },
             { label: '来源', value: sources.size, detail: '不同来源', icon: MessageSquareText },
             { label: '原文保护', value: '仅摘要', detail: '脱敏显示', icon: ShieldCheck, tone: 'success' },
-            { label: '更多记录', value: pages.hasNextPage ? '可以继续加载' : '已全部显示', detail: '按需读取', icon: Clock3, tone: pages.hasNextPage ? 'info' : 'neutral' },
           ]} />
           <InlineNotice title="隐私" tone="info">列表只显示脱敏摘要；完整输入仅在你主动打开详情时读取。</InlineNotice>
         </ManagementSection>
@@ -110,7 +108,7 @@ export function HistoryFeature() {
             <Field className="history-filter-toolbar__search" htmlFor="history-search" label="搜索">
               <Input id="history-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') setQuery(draftQuery.trim()); }} placeholder="文本、应用或项目" value={draftQuery} />
             </Field>
-            <Button className="history-filter-toolbar__submit" leadingIcon={<Search size={14} />} onClick={() => setQuery(draftQuery.trim())} size="small">搜索</Button>
+            <Button className="history-filter-toolbar__submit" leadingIcon={<Search size={14} />} onClick={() => setQuery(draftQuery.trim())} size="small">查找</Button>
             <Field className="history-filter-toolbar__source" htmlFor="history-source-filter" label="来源">
               <Select id="history-source-filter" onValueChange={setFilter} options={[
                 { value: '', label: '全部来源' },
@@ -136,7 +134,7 @@ export function HistoryFeature() {
         </ManagementSection>
 
         {rows.length ? (
-          <ManagementSection title="不再用于记忆" description="选择一条记录后，可以让它退出后续召回。原始记录仍会保留，操作也可以撤销。">
+          <ManagementSection title="不再用于记忆" description="选择一条记录后，可以让它以后不再用于联想。原始记录仍会保留，操作也可以撤销。">
             <Field htmlFor="history-record" label="选择记录" style={{ maxWidth: 420 }}>
               <Select id="history-record" onValueChange={setSelectedId} options={[
                 { value: '', label: '请选择一条记录' },
@@ -152,7 +150,7 @@ export function HistoryFeature() {
                     ? '当前历史状态尚未同步，请刷新后重试。'
                     : '',
               )}
-              description="让所选记录退出后续记忆召回，原始记录仍然保留。"
+              description="让所选记录以后不再用于联想，原始记录仍然保留。"
               draftKey={JSON.stringify(tombstoneDraft)}
               mutationKey={['history', 'mutation', 'tombstone']}
               onApply={async (preview) => parseManagementWorkReceipt(
@@ -175,7 +173,7 @@ export function HistoryFeature() {
               }}
               onPreview={async () => {
                 if (runtimeRevision === null) throw new Error('当前历史状态尚未同步，请刷新后重试。');
-                return parseManagementWorkPreview(
+                const preview = parseManagementWorkPreview(
                   await mutationBoundary.request({
                     pathId: historyMutationPathIds.preview,
                     body: {
@@ -186,6 +184,13 @@ export function HistoryFeature() {
                   historyMutationPathIds.apply,
                   tombstoneDraft,
                 );
+                return {
+                  ...preview,
+                  summary: {
+                    ...preview.summary,
+                    items: preview.summary.items.map(historyWorkflowText),
+                  },
+                };
               }}
               onRollback={async (receipt, preview) => parseManagementWorkReceipt(
                 await mutationBoundary.request({
@@ -237,16 +242,13 @@ function HistoryTable({
             const id = stringValue(row.id);
             const label = `查看 ${stringValue(row.created, '这条记录')} 的输入详情`;
             return (
-              <tr
-                key={id}
-                onClick={() => onOpen(row)}
-              >
+              <tr key={id}>
                 <td>{stringValue(row.created, '未记录')}</td>
                 <td>{stringValue(row.sourceLabel, '未知来源')}</td>
                 <td className="history-table__preview">{stringValue(row.text, '没有可显示的摘要')}</td>
                 <td>{stringValue(row.app, '未记录')}</td>
                 <td>{projectLabel(stringValue(row.project), productName)}</td>
-                <td><button aria-label={label} className="history-table__open" data-history-event-id={id} onClick={(event) => { event.stopPropagation(); onOpen(row); }} type="button"><Eye aria-hidden="true" size={15} /><span>查看</span></button></td>
+                <td><button aria-label={label} className="history-table__open" data-history-event-id={id} onClick={() => onOpen(row)} type="button"><Eye aria-hidden="true" size={15} /><span>查看详情</span></button></td>
               </tr>
             );
           })}
@@ -274,6 +276,7 @@ function HistoryDetailDialog({
   const item = asRecord(response.item);
   const feedback = asRecord(item.feedback);
   const auxiliaryContext = asRecord(item.auxiliaryContext);
+  const captureReceipt = asRecord(auxiliaryContext.captureReceipt);
   const text = stringValue(item.text);
   const auxiliaryText = stringValue(auxiliaryContext.text);
   const candidateRank = item.candidateRank === null ? 0 : numberValue(item.candidateRank);
@@ -321,7 +324,12 @@ function HistoryDetailDialog({
           <DialogDescription>{response.ok === true ? `${formatTime(item.createdAtMs)} 保存的内容` : '读取已保存的完整输入内容'}</DialogDescription>
         </DialogHeader>
         {detail.isPending ? <p className="history-detail__state" role="status">正在读取详情...</p> : null}
-        {detail.error ? <p className="history-detail__state history-detail__state--error" role="alert">详情读取失败。请关闭后重试。</p> : null}
+        {detail.error ? (
+          <div className="history-detail__state history-detail__state--error" role="alert">
+            <p>详情读取失败。</p>
+            <Button leadingIcon={<RefreshCw size={14} />} loading={detail.isFetching} onClick={() => void detail.refetch()} size="small" variant="quiet">重试读取</Button>
+          </div>
+        ) : null}
         {!detail.isPending && !detail.error && response.ok !== true ? <p className="history-detail__state history-detail__state--error" role="alert">这条记录已不存在或当前不可读取。</p> : null}
         {response.ok === true ? (
           <div className="history-detail__body">
@@ -330,9 +338,7 @@ function HistoryDetailDialog({
               <DetailFact label="来源" value={sourceLabel(stringValue(item.source), stringValue(item.sourceCategory))} />
               <DetailFact label="应用" value={applicationLabel(stringValue(item.app))} />
               <DetailFact label="项目" value={projectLabel(stringValue(item.project), productName)} />
-              <DetailFact label="识别或候选服务" value={providerLabel(stringValue(item.provider))} />
-              <DetailFact label="候选位置" value={candidateRank > 0 ? `第 ${candidateRank} 位` : '未记录'} />
-              <DetailFact label="记录状态" value={stringValue(item.status) === 'hidden' ? '已隐藏' : '可参与后续召回'} />
+              <DetailFact label="记录状态" value={stringValue(item.status) === 'hidden' ? '已隐藏' : '可用于后续联想'} />
               <DetailFact label="上下文范围" value={groupLevelLabel(stringValue(item.groupLevel))} />
             </dl>
             <section aria-labelledby="history-detail-text" className="history-detail__text">
@@ -358,18 +364,28 @@ function HistoryDetailDialog({
                 ) : null}
               </div>
               <dl className="history-detail__context-grid">
-                <DetailFact label="采集方式" value={captureSourceLabel(stringValue(auxiliaryContext.captureSource), stringValue(auxiliaryContext.captureMode))} />
-                <DetailFact label="模型请求" value={auxiliaryContext.modelRequestLinked === true ? '已关联' : '未关联'} />
-                <DetailFact label="输入控件文本" value={numberValue(auxiliaryContext.fieldContextChars) > 0 ? `${numberValue(auxiliaryContext.fieldContextChars)} 字` : '未记录'} />
-                <DetailFact label="输入法缓冲区" value={numberValue(auxiliaryContext.imeBufferChars) > 0 ? `${numberValue(auxiliaryContext.imeBufferChars)} 字` : '未记录'} />
+                <DetailFact label="附近文本" value={auxiliaryContext.hasAdditionalText === true ? '已保存' : '未保存'} />
+                <DetailFact label="是否参与记忆" value={captureEvidenceLabel(captureReceipt)} />
               </dl>
               {auxiliaryText ? <pre tabIndex={0}>{auxiliaryText}</pre> : <p className="history-detail__empty">没有可查看的辅助上下文。</p>}
               {auxiliaryContext.truncated === true ? <p className="history-detail__empty">内容较长，当前显示前 8000 字。</p> : null}
-              {stringValue(auxiliaryContext.fallbackReason) ? <p className="history-detail__empty">采集降级：{captureFallbackLabel(stringValue(auxiliaryContext.fallbackReason))}</p> : null}
+              <details className="history-detail__advanced-context">
+                <summary>高级：采集详情</summary>
+                <dl className="history-detail__context-grid">
+                  <DetailFact label="来源方式" value={captureSourceLabel(stringValue(auxiliaryContext.captureSource), stringValue(auxiliaryContext.captureMode))} />
+                  <DetailFact label="识别或候选服务" value={providerLabel(stringValue(item.provider))} />
+                  <DetailFact label="候选位置" value={candidateRank > 0 ? `第 ${candidateRank} 位` : '未记录'} />
+                  <DetailFact label="相关服务" value={modelRequestAssociationLabel(auxiliaryContext)} />
+                  <DetailFact label="输入控件文本" value={capturedCharacterCountLabel(auxiliaryContext, 'fieldContext')} />
+                  <DetailFact label="输入缓冲" value={capturedCharacterCountLabel(auxiliaryContext, 'imeBuffer')} />
+                  <DetailFact label="保存状态" value={captureReceiptLabel(captureReceipt)} />
+                </dl>
+                {stringValue(auxiliaryContext.fallbackReason) ? <p className="history-detail__empty">读取方式变化：{captureFallbackLabel(stringValue(auxiliaryContext.fallbackReason))}</p> : null}
+              </details>
               {contextCopyState === 'failed' ? <p className="history-detail__copy-error" role="status">复制失败，可直接选择上方内容复制。</p> : null}
             </section>
             <section aria-labelledby="history-detail-feedback" className="history-detail__feedback">
-              <div className="history-detail__section-heading"><div><h3 id="history-detail-feedback">反馈与状态</h3><small>已经保存的真实状态</small></div></div>
+              <div className="history-detail__section-heading"><div><h3 id="history-detail-feedback">使用反馈</h3><small>这条记录的使用情况</small></div></div>
               {hasFeedback ? (
                 <dl className="history-detail__feedback-grid">
                   <DetailFact label="采用" value={`${numberValue(feedback.acceptedCount)} 次`} />
@@ -390,6 +406,11 @@ function HistoryDetailDialog({
 
 function DetailFact({ label, value }: { label: string; value: string }) {
   return <div><dt>{label}</dt><dd>{value || '未记录'}</dd></div>;
+}
+
+function historyWorkflowText(value: string): string {
+  if (/停止参与后续召回/.test(value)) return '以后不再用于联想。';
+  return value;
 }
 
 function sourceLabel(source: string, category = ''): string {
@@ -445,8 +466,60 @@ function captureSourceLabel(source: string, mode: string): string {
   if (mode === 'accessibility_semantics' || source === 'accessibility') return '辅助功能读取';
   if (source === 'text_input_client') return '当前输入控件';
   if (source === 'ime_active_buffer') return '输入法缓冲区';
+  if (source === 'voice_insertion') return '语音定稿插入';
   if (source === 'stored_event_context') return '事件上下文';
-  return source ? '其他采集方式' : '未记录';
+  return source ? `已记录 · ${source}` : '旧记录未保存采集方式';
+}
+
+function modelRequestAssociationLabel(context: Record<string, unknown>): string {
+  const association = stringValue(context.modelRequestAssociation);
+  if (association === 'not_applicable') return '不适用 · 语音定稿不请求智能候选';
+  if (association === 'intrinsic_candidate') return '已记录 · 该记录本身是智能候选';
+  if (association === 'linked' || context.modelRequestLinked === true) return '已关联';
+  if (association === 'not_recorded') return '采集契约未记录请求标识';
+  return '旧记录无法核对模型请求';
+}
+
+function capturedCharacterCountLabel(
+  context: Record<string, unknown>,
+  field: 'fieldContext' | 'imeBuffer',
+): string {
+  const countKey = field === 'fieldContext' ? 'fieldContextChars' : 'imeBufferChars';
+  const recordedKey = field === 'fieldContext' ? 'fieldContextRecorded' : 'imeBufferRecorded';
+  const count = numberValue(context[countKey]);
+  const recorded = context[recordedKey] === true || (!(recordedKey in context) && count > 0);
+  if (!recorded) return '旧记录未采集';
+  if (count > 0) return `${count} 字 · 已记录`;
+  if (field === 'imeBuffer' && stringValue(context.captureSource) === 'voice_insertion') {
+    return '0 字 · 语音输入不经过输入法缓冲区';
+  }
+  return '0 字 · 本次没有可验证文本';
+}
+
+function captureReceiptLabel(receipt: Record<string, unknown>): string {
+  if (receipt.available !== true) return '无法核对 · 旧记录或非原生采集';
+  const outcome = stringValue(receipt.outcome);
+  const confidence = stringValue(receipt.boundaryConfidence);
+  const outcomeLabel = outcome === 'stored'
+    ? '已存入'
+    : outcome === 'quarantined'
+      ? '已隔离'
+      : outcome === 'no_store'
+        ? '未存入'
+        : '状态未知';
+  const confidenceLabel = confidence === 'strong' ? '强边界' : confidence === 'weak' ? '弱边界' : '边界未知';
+  return `${outcomeLabel} · ${confidenceLabel}`;
+}
+
+function captureEvidenceLabel(receipt: Record<string, unknown>): string {
+  if (receipt.available !== true) return '无法核对 · 记录来源不完整';
+  const state = stringValue(receipt.evidenceState);
+  if (state === 'admitted') return '已整理到长期记忆';
+  if (state === 'candidate') return '等待整理';
+  if (state === 'needs_review') return '隔离待人工检查';
+  if (state === 'rejected') return '已排除，不进入记忆';
+  if (state === 'forgotten') return '已忘记，可按恢复规则重新启用';
+  return '尚未评估';
 }
 
 function captureFallbackLabel(reason: string): string {

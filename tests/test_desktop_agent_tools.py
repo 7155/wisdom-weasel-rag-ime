@@ -13,6 +13,24 @@ class _DesktopClient:
     def __init__(self) -> None:
         self.applied: list[dict[str, object]] = []
         self.stale = False
+        self.inspect_calls: list[dict[str, object]] = []
+        self.find_result = {
+            "schemaVersion": "rag-ime.desktop-find.v1",
+            "snapshotId": "axsnap_1",
+            "revision": 7,
+            "matchCount": 1,
+            "returnedMatchCount": 1,
+            "truncated": False,
+            "matches": [
+                {
+                    "nodeRef": "ax_button",
+                    "role": "AXButton",
+                    "identifier": "send-button",
+                    "label": "发送",
+                    "actions": ["press"],
+                }
+            ],
+        }
 
     def list_applications(self, *, include_background: bool):
         return {
@@ -30,7 +48,8 @@ class _DesktopClient:
             "usesScreenCapture": False,
         }
 
-    def inspect(self, **_kwargs):
+    def inspect(self, **kwargs):
+        self.inspect_calls.append(dict(kwargs))
         return {
             "schemaVersion": "rag-ime.desktop-snapshot.v1",
             "snapshotId": "axsnap_1",
@@ -46,6 +65,9 @@ class _DesktopClient:
             ],
             "diff": {"fullSnapshot": True, "added": ["ax_button"]},
         }
+
+    def find(self, **_kwargs):
+        return dict(self.find_result)
 
     def prepare_action(self, **kwargs):
         return {
@@ -118,6 +140,57 @@ class DesktopAgentToolTests(unittest.TestCase):
         self.assertEqual(inspected["snapshotId"], "axsnap_1")
         self.assertEqual(inspected["nodes"][0]["label"], "发送")
 
+    def test_find_returns_only_compact_semantic_matches(self) -> None:
+        found = self.gateway.execute(
+            self.call("find", bundleId="com.example.Editor", match={"identifier": "send-button"})
+        )["result"]
+
+        self.assertEqual(found["matchCount"], 1)
+        self.assertEqual(found["matches"][0]["nodeRef"], "ax_button")
+
+    def test_selector_act_resolves_exactly_once_then_uses_normal_approval(self) -> None:
+        prepared = self.gateway.execute(
+            self.call(
+                "act",
+                bundleId="com.example.Editor",
+                match={"identifier": "send-button"},
+                action="press",
+            )
+        )["result"]
+
+        self.assertTrue(prepared["approvalRequired"])
+        self.assertTrue(prepared["approval"]["preview"]["selectorResolved"])
+        self.assertEqual(
+            prepared["approval"]["preview"]["actionPayload"]["nodeRef"],
+            "ax_button",
+        )
+
+    def test_selector_act_rejects_ambiguous_or_truncated_searches(self) -> None:
+        self.desktop.find_result["matchCount"] = 2
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            self.gateway.execute(
+                self.call("act", match={"role": "AXButton"}, action="press")
+            )
+
+        self.desktop.find_result["matchCount"] = 1
+        self.desktop.find_result["truncated"] = True
+        with self.assertRaisesRegex(ValueError, "truncated"):
+            self.gateway.execute(
+                self.call("act", match={"label": "发送"}, action="press")
+            )
+
+        prepared = self.gateway.execute(
+            self.call("act", match={"identifier": "send-button"}, action="press")
+        )["result"]
+        self.assertTrue(prepared["approvalRequired"])
+
+    def test_inspect_automatically_uses_previous_session_snapshot(self) -> None:
+        self.gateway.execute(self.call("inspect", bundleId="com.example.Editor"))
+        self.gateway.execute(self.call("inspect", bundleId="com.example.Editor"))
+
+        self.assertEqual(self.desktop.inspect_calls[0]["since_snapshot_id"], "")
+        self.assertEqual(self.desktop.inspect_calls[1]["since_snapshot_id"], "axsnap_1")
+
     def test_action_is_hash_bound_and_runs_only_after_native_approval(self) -> None:
         prepared = self.gateway.execute(
             self.call(
@@ -140,6 +213,9 @@ class DesktopAgentToolTests(unittest.TestCase):
         receipt = self.gateway.apply_approval(decided)
 
         self.assertTrue(receipt["receipt"]["applied"])
+        self.assertTrue(receipt["mutationApplied"])
+        self.assertNotIn("postSnapshot", receipt["receipt"])
+        self.assertIn("postSnapshot", receipt["auditReceipt"])
         self.assertEqual(len(self.desktop.applied), 1)
         self.assertEqual(
             self.desktop.applied[0]["baseState"]["nodeStateSha256"],

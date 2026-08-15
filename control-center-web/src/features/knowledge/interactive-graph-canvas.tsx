@@ -3,6 +3,7 @@ import { Focus, Maximize2, ZoomIn, ZoomOut } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/primitives';
 import type { KnowledgeGraphEdge, KnowledgeGraphNode, KnowledgeGraphNodeKind } from './api';
+import { publicKnowledgeRelationLabel, publicKnowledgeText } from './public-copy';
 
 export type GraphSelection = { type: 'node'; id: string } | { type: 'edge'; id: string } | null;
 
@@ -222,13 +223,13 @@ function formatGraphData(nodes: readonly KnowledgeGraphNode[], edges: readonly K
   return {
     nodes: nodes.map((node) => ({
       id: node.id,
-      data: { label: node.label, kind: node.kind, degree: degree.get(node.id) ?? 0, weight: node.weight ?? 0 },
+      data: { label: publicKnowledgeText(node.label), kind: node.kind, degree: degree.get(node.id) ?? 0, weight: node.weight ?? 0 },
     })),
     edges: edges.map((edge) => ({
       id: edge.id,
       source: edge.source,
       target: edge.target,
-      data: { label: edge.label || edge.kind, kind: edge.kind, weight: edge.weight ?? .5 },
+      data: { label: publicKnowledgeRelationLabel(edge.label, edge.kind), kind: edge.kind, weight: edge.weight ?? .5 },
     })),
   };
 }

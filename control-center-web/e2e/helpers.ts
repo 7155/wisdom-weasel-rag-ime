@@ -12,8 +12,10 @@ export function isMobileViewport(page: Page): boolean {
 export async function openRoute(page: Page, routeId: string): Promise<number> {
   let link = page.locator(`.shell-sidebar [data-route="${routeId}"]`);
   if (isMobileViewport(page)) {
-    await page.locator('.shell-topbar .shell-mobile-menu__trigger').click();
-    const dialog = page.getByRole('dialog');
+    await page.getByRole('navigation', { name: '快捷导航' })
+      .getByRole('button', { name: /^打开全部导航/ })
+      .click();
+    const dialog = page.getByRole('dialog', { name: '全部功能' });
     await expect(dialog).toBeVisible();
     link = dialog.locator(`[data-route="${routeId}"]`);
   }
@@ -65,7 +67,7 @@ async function armNavigationMeasurement(page: Page, routeId: string): Promise<vo
       const started = performance.now();
       const poll = () => {
         const selected = document.querySelector(
-          `.shell-nav__link[data-route="${expectedRouteId}"][aria-current="page"]`,
+          `.shell-route-stage[data-active-route="${expectedRouteId}"]`,
         );
         if (!selected) {
           requestAnimationFrame(poll);

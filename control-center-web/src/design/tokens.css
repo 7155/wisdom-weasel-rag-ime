@@ -158,6 +158,7 @@
   --color-warning-soft: oklch(var(--semantic-fill-l) calc(var(--semantic-fill-c) * 1.3) 70);
   --color-danger: oklch(var(--semantic-l) .16 22);
   --color-danger-soft: oklch(var(--semantic-fill-l) var(--semantic-fill-c) 22);
+  --color-danger-text: #fff;
   --color-memory: oklch(var(--semantic-l) .1 215);
   --color-memory-soft: oklch(var(--semantic-fill-l) var(--semantic-fill-c) 215);
   --color-project: oklch(var(--semantic-l) .12 278);
@@ -260,7 +261,7 @@
   --distance-md: 12px;
   --ease-standard: cubic-bezier(.22, 1, .36, 1);
   --ease-press: cubic-bezier(.2, .8, .3, 1);
-  --ease-exit: cubic-bezier(.4, 0, 1, 1);
+  --ease-exit: cubic-bezier(.22, 1, .36, 1);
 
   --sidebar-wide: 220px;
   --sidebar-compact: 72px;
@@ -322,6 +323,7 @@
   --semantic-l: .8;
   --semantic-fill-l: .3;
   --semantic-fill-c: .04;
+  --color-danger-text: oklch(.2 .04 22);
   --color-focus: oklch(.75 .12 255);
   --color-selection: oklch(.4 .06 var(--accent-hue));
   --rule-figure: 1px solid color-mix(in srgb, var(--color-text) 46%, transparent);

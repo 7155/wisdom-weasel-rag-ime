@@ -122,6 +122,13 @@ export function ObservabilityFeature() {
     setSearchParams(params, { replace: true });
   }
 
+  function clearViewFilters(): void {
+    setNeedle('');
+    const params = new URLSearchParams(searchParams);
+    params.delete('category');
+    setSearchParams(params, { replace: true });
+  }
+
   return (
     <ManagementPage
       actions={(
@@ -145,11 +152,14 @@ export function ObservabilityFeature() {
         onRetry={() => void feed.refresh()}
       >
         <InlineNotice title="隐私边界" tone="info">
-          运行记录只保存状态、耗时、数量和脱敏后的标识。开启“本机上下文快照”后，上下文检查可从你指定的目录恢复经凭证与隐藏推理脱敏的内容；未开启时只读取当前运行中的内容。
+          运行记录只保存状态、耗时、数量和脱敏后的标识。开启“本机上下文快照”后，可以在上下文检查中查看指定目录保存的脱敏记录；未开启时只查看当前运行中的内容。
         </InlineNotice>
 
         {feed.streamError ? (
-          <InlineNotice title="实时连接" tone="warning">{feed.streamError}</InlineNotice>
+          <div className="observation-connection-notice">
+            <InlineNotice title="实时连接" tone="warning">{feed.streamError}</InlineNotice>
+            <Button onClick={() => void feed.refresh()} size="small">重新连接</Button>
+          </div>
         ) : null}
 
         <ManagementSection
@@ -192,14 +202,13 @@ export function ObservabilityFeature() {
         </ManagementSection>
 
         <section className="observation-controls" aria-label="运行记录筛选">
-          <div className="observation-category-tabs" role="tablist" aria-label="事件类型">
+          <div className="observation-category-tabs" role="group" aria-label="事件类型">
             {CATEGORY_FILTERS.map((item) => (
               <button
-                aria-selected={category === item}
+                aria-pressed={category === item}
                 data-active={category === item}
                 key={item}
                 onClick={() => selectCategory(item)}
-                role="tab"
                 type="button"
               >
                 {categoryLabel(item)}
@@ -209,6 +218,7 @@ export function ObservabilityFeature() {
           <label className="observation-search">
             <Search aria-hidden="true" size={15} />
             <input
+              aria-label="搜索运行记录"
               onChange={(event) => setNeedle(event.target.value)}
               placeholder="搜索流程、对话、协作或步骤"
               type="search"
@@ -249,9 +259,10 @@ export function ObservabilityFeature() {
               </ol>
             ) : (
               <EmptyState
-                description="当前范围内还没有结构化运行事件。"
+                action={feed.items.length ? <Button onClick={clearViewFilters} size="small">清除筛选</Button> : <Button onClick={() => void feed.refresh()} size="small">重新检查</Button>}
+                description={feed.items.length ? '当前筛选没有匹配的运行记录。' : '当前范围内还没有结构化运行事件。'}
                 icon={Network}
-                title="暂无观察事件"
+                title={feed.items.length ? '没有匹配的记录' : '暂无运行记录'}
               />
             )}
           </ManagementSection>
@@ -265,7 +276,7 @@ export function ObservabilityFeature() {
             {selectedTrace.length ? (
               <>
                 <header className="observation-trace-heading">
-                  <span title={selectedTraceId}><GitBranch size={15} />一次完整流程</span>
+                  <span><GitBranch size={15} />一次完整流程</span>
                   <small>{traceScope(selectedTrace)}</small>
                 </header>
                 <ol className="observation-trace">
@@ -324,7 +335,7 @@ function ObservationRow({
   const Icon = categoryIcon(item.category);
   return (
     <li data-active={active} data-category={item.category} data-status={item.status}>
-      <button onClick={onSelect} type="button">
+      <button aria-current={active ? 'true' : undefined} onClick={onSelect} type="button">
         <span className="observation-row__icon"><Icon size={16} /></span>
         <span className="observation-row__copy">
           <strong>{publicObservationSummary(item)}</strong>
@@ -491,7 +502,7 @@ function phaseLabel(phase: string): string {
     delivered: '已送达',
     applied: '已应用',
     rolled_back: '已回滚',
-  } as Record<string, string>)[phase] ?? phase.replaceAll('_', ' ');
+  } as Record<string, string>)[phase] ?? '其他步骤';
 }
 
 function metricLabel(key: string): string {
@@ -522,7 +533,7 @@ function metricLabel(key: string): string {
     compactionCount: '压缩次数',
     tokensBefore: '压缩前',
     estimatedTokensAfter: '压缩后约',
-  } as Record<string, string>)[key] ?? key;
+  } as Record<string, string>)[key] ?? '其他数据';
 }
 
 function displayMetric(key: string, value: unknown): string {
@@ -540,6 +551,8 @@ function displayValue(value: unknown): string {
 function publicObservationSummary(item: ObservationEventV1): string {
   const value = item.summary.trim()
     .replace(/\bime\.memory\b/giu, '记忆工具')
+    .replace(/\bsidecar\b/giu, '本机补全服务')
+    .replace(/\bprovider\b/giu, '模型服务')
     .replace(/\bAgent 私信\b/giu, '伙伴消息')
     .replace(/\bAgent 回合\b/giu, '伙伴本轮')
     .replace(/\bAgent\b/giu, '伙伴');

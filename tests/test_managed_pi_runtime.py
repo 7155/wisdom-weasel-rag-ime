@@ -925,7 +925,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             payload
             / "runtime-host"
             / "skills"
-            / "implementation-execution"
+            / "orchestrate-session"
             / "SKILL.md"
         )
         node.parent.mkdir(parents=True)
@@ -938,9 +938,9 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         extension.write_text("export default function () {}\n", encoding="utf-8")
         skill.write_text(
             "---\n"
-            "name: implementation-execution\n"
+            "name: orchestrate-session\n"
             "---\n"
-            "Apply test-driven implementation.\n",
+            "Delegate bounded Session work.\n",
             encoding="utf-8",
         )
         protocol_v2 = protocol_version == "2"

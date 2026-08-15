@@ -32,6 +32,7 @@ import { roleItems } from '@/features/agent/types';
 import { useMediaQuery, useModalPanel } from '@/features/agent/overlay-dialog';
 import { publicErrorText } from '@/features/overview/management-ui';
 import { RoomStatusPanel } from './RoomStatusPanel';
+import { RoomTaskGraph } from './RoomTaskGraph';
 import { RoomMemberBoundaryDialog } from './RoomMemberBoundaryDialog';
 import { RoomPaneResizer } from './RoomPaneResizer';
 import { RoomComposer, roomMentionedParticipants } from './composer/RoomComposer';
@@ -1288,7 +1289,6 @@ export function RoomsFeature() {
           {room ? visibleTurnOrder.length ? <Virtuoso
             ref={roomTimelineRef}
             context={{ historyLoadRevision, roomId: room.id }}
-            alignToBottom
             components={roomTimelineComponents}
             computeItemKey={(_index, turnId) => turnId}
             data={visibleTurnOrder}
@@ -1408,21 +1408,10 @@ export function RoomsFeature() {
         /> : null}</div>}</div></> : workspaceView === 'sessions' ? <section className="room-session-workspace" aria-label="伙伴与权限">
           <header><span><strong>伙伴与工作权限</strong><small>每位伙伴保留自己的工作上下文；分工负责引导协作，真正能做什么仍由工作目录、工具和你的授权决定。</small></span></header>
           <div>{activeParticipants.map((participant) => <article key={participant.id}><PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId)} /><span><strong>{participant.displayName}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)} · {roomExecutionModeLabel(room?.executionMode)}</small></span><Button variant="quiet" size="small" leadingIcon={<ShieldCheck size={14} />} onClick={() => setBoundaryParticipant(participant)}>查看能做什么</Button></article>)}</div>
-          {!activeParticipants.length ? <p className="room-empty">还没有伙伴加入这个协作空间。</p> : null}
+          {!activeParticipants.length ? <p className="room-empty room-session-workspace__empty">还没有伙伴加入这个协作空间。</p> : null}
         </section> : null}
         <section className="room-execution-workspace" aria-label="任务流转与验收" hidden={workspaceView !== 'execution'}>
-          {workspaceView === 'execution' && room ? <section className="room-session-workspace" aria-label="当前协作分工">
-            <header><span><strong>当前协作</strong><small>主持伙伴通过自己的 Pi Session 拆分任务；伙伴和 Tool Agent 的进度会直接回到同一条 Room 时间线。</small></span></header>
-            <div>{runtimeWorkItems.map((work) => <article data-runtime-work-state={work.status} key={work.id}>
-              <GitBranch size={16} />
-              <span><strong>{work.objective}</strong><small>{roomRuntimeWorkStateLabel(work.status)} · {work.participantIds.length ? `${work.participantIds.length} 位伙伴` : '主持伙伴'}{work.toolCount ? ` · ${work.toolCount} 个工具步骤` : ''}{work.lastSummary ? ` · ${work.lastSummary}` : ''}</small></span>
-            </article>)}
-            {(room.workItems ?? []).map((work) => <article key={work.id}>
-              <GitBranch size={16} />
-              <span><strong>{work.objective}</strong><small>登记工作项 · {roomWorkStateLabel(work.state)} · {participantName(room, work.currentOwnerParticipantId)}</small></span>
-            </article>)}</div>
-            {!runtimeWorkItems.length && !room.workItems?.length ? <p className="room-empty">还没有开始协作；在“对话”里发出目标后，这里会同步显示主持伙伴、伙伴和 Tool Agent 的实际运行。</p> : null}
-          </section> : workspaceView === 'execution' ? <p className="room-empty">请选择一个协作空间。</p> : null}
+          {workspaceView === 'execution' && room ? <RoomTaskGraph room={room} runtimeWorkItems={runtimeWorkItems} /> : workspaceView === 'execution' ? <p className="room-empty">请选择一个协作空间。</p> : null}
         </section>
       </section>
       <button className="agent-status-backdrop room-status-backdrop" aria-hidden="true" disabled={!roomStatusModal} tabIndex={-1} onClick={() => setStatusOpen(false)} type="button" />
@@ -1547,20 +1536,6 @@ export function RoomsFeature() {
     />
   </>;
 }
-
-function roomRuntimeWorkStateLabel(
-  state: 'queued' | 'running' | 'completed' | 'failed' | 'aborted',
-): string {
-  return {
-    queued: '等待开始',
-    running: '执行中',
-    completed: '已完成',
-    failed: '未完成',
-    aborted: '已停止',
-  }[state];
-}
-
-
 
 function roomAttachmentFromPicked(file: PickedFile, roomId: string): RoomAttachmentReceipt {
   if (

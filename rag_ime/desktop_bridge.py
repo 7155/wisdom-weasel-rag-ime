@@ -4,6 +4,7 @@ import json
 import os
 import socket
 import stat
+import threading
 import uuid
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -40,6 +41,10 @@ class DesktopBridgeClient:
             self.socket_path = app_support / "desktop-bridge.sock"
         self.timeout_seconds = max(0.1, min(float(timeout_seconds), 10.0))
         self.verify_socket_owner = bool(verify_socket_owner)
+        self._metrics_lock = threading.Lock()
+        self._request_count = 0
+        self._request_bytes = 0
+        self._response_bytes = 0
 
     def status(self) -> dict[str, object]:
         return self.request("status")
@@ -70,6 +75,39 @@ class DesktopBridgeClient:
         if since_snapshot_id:
             payload["sinceSnapshotId"] = str(since_snapshot_id)[:200]
         return self.request("inspect", **payload)
+
+    def find(
+        self,
+        *,
+        bundle_id: str = "",
+        pid: int = 0,
+        role: str = "",
+        subrole: str = "",
+        identifier: str = "",
+        label: str = "",
+        query: str = "",
+        limit: int = 5,
+        max_nodes: int = 500,
+        max_depth: int = 12,
+    ) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "limit": max(1, min(int(limit), 20)),
+            "maxNodes": max(1, min(int(max_nodes), 500)),
+            "maxDepth": max(1, min(int(max_depth), 12)),
+        }
+        for key, value, maximum in (
+            ("bundleId", bundle_id, 300),
+            ("role", role, 80),
+            ("subrole", subrole, 80),
+            ("identifier", identifier, 240),
+            ("label", label, 240),
+            ("query", query, 300),
+        ):
+            if value:
+                payload[key] = str(value)[:maximum]
+        if pid > 0:
+            payload["pid"] = int(pid)
+        return self.request("find", **payload)
 
     def prepare_action(
         self,
@@ -159,7 +197,23 @@ class DesktopBridgeClient:
         result = response.get("result")
         if not isinstance(result, Mapping):
             raise DesktopBridgeError("invalid_response", "desktop_bridge_result_must_be_object")
-        return dict(result)
+        with self._metrics_lock:
+            self._request_count += 1
+            self._request_bytes += len(encoded)
+            self._response_bytes += len(response_bytes)
+            transport_metrics = {
+                "requestCount": self._request_count,
+                "lastRequestBytes": len(encoded),
+                "lastResponseBytes": len(response_bytes),
+                "estimatedLastResponseTokens": (len(response_bytes) + 3) // 4,
+                "requestBytes": self._request_bytes,
+                "responseBytes": self._response_bytes,
+                "estimatedResponseTokens": (self._response_bytes + 3) // 4,
+            }
+        projected = dict(result)
+        if operation == "status":
+            projected["transportMetrics"] = transport_metrics
+        return projected
 
     def _validate_socket(self) -> None:
         if not self.verify_socket_owner:

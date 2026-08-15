@@ -1,4 +1,4 @@
 interface:
   display_name: "Align and Decide"
-  short_description: "Preserve intent, clarify the work, and grill decisions when requested"
-  default_prompt: "Use $alignment-and-decision to preserve the original request and vision, investigate uncertainty, settle one smallest question group at a time, and use one-at-a-time full Grill Mode when requested."
+  short_description: "Inspect facts and settle material user-owned choices"
+  default_prompt: "Use $alignment-and-decision to inspect available facts and settle only the material choices that belong to the user."

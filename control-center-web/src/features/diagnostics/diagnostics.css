@@ -3,6 +3,17 @@ main[data-route-id='diagnostics'] .diagnostics-action-list {
   border-block: 1px solid var(--color-border);
 }
 
+main[data-route-id='diagnostics'] .diagnostics-capability-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+main[data-route-id='diagnostics'] .diagnostics-capability-state > .mgmt-notice {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 main[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow {
   padding: 13px 10px;
   border: 0;
@@ -19,11 +30,6 @@ main[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow + .mgm
   margin-top: 0;
 }
 
-main[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow[data-availability='unsupported'] > .mgmt-notice,
-main[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow[data-availability='blocked'] > .mgmt-notice {
-  display: none;
-}
-
 main[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow__heading {
   align-items: center;
 }
@@ -37,12 +43,31 @@ main[data-route-id='diagnostics'] .diagnostics-boundary {
 }
 
 main[data-route-id='diagnostics'] .diagnostics-boundary summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: var(--space-2);
   padding: 11px 2px;
   color: var(--color-text-secondary);
   font-size: 13px;
   font-weight: 650;
   cursor: pointer;
+  list-style: none;
+  transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
 }
+
+main[data-route-id='diagnostics'] .diagnostics-boundary summary::-webkit-details-marker { display: none; }
+
+main[data-route-id='diagnostics'] .diagnostics-boundary summary::before {
+  color: var(--color-text-tertiary);
+  content: '›';
+  font-size: 18px;
+  line-height: 1;
+  transition: transform var(--motion-disclose) var(--ease-standard);
+}
+
+main[data-route-id='diagnostics'] .diagnostics-boundary[open] summary::before { transform: rotate(90deg); }
+main[data-route-id='diagnostics'] .diagnostics-boundary summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 
 main[data-route-id='diagnostics'] .diagnostics-boundary p {
   max-width: 760px;
@@ -53,8 +78,55 @@ main[data-route-id='diagnostics'] .diagnostics-boundary p {
   line-height: 1.55;
 }
 
+main[data-route-id='diagnostics'] .diagnostics-boundary:not([open]) > :not(summary) {
+  display: none !important;
+}
+
+main[data-route-id='diagnostics'] .diagnostics-action-summary {
+  display: grid;
+  gap: 0;
+  margin-top: var(--space-3);
+  border-block: 1px solid var(--color-border);
+}
+
+main[data-route-id='diagnostics'] .diagnostics-action-summary li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  padding: 11px 2px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+main[data-route-id='diagnostics'] .diagnostics-action-summary li:last-child { border-bottom: 0; }
+main[data-route-id='diagnostics'] .diagnostics-action-summary strong { color: var(--color-text-primary); font-size: 13px; }
+main[data-route-id='diagnostics'] .diagnostics-action-summary p { margin: 3px 0 0; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.45; }
+
 @media (max-width: 760px) {
+  main[data-route-id='diagnostics'] .diagnostics-capability-state {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  main[data-route-id='diagnostics'] .diagnostics-capability-state > .ui-button {
+    min-height: 44px;
+    align-self: stretch;
+  }
+
   main[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow {
     padding-inline: 2px;
   }
+
+  main[data-route-id='diagnostics'] .mgmt-page__actions .ui-button,
+  main[data-route-id='diagnostics'] .ui-empty-state .ui-button,
+  main[data-route-id='diagnostics'] .mgmt-notice + .ui-button,
+  main[data-route-id='diagnostics'] .diagnostics-action-list .ui-button { min-height: 44px; }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  main[data-route-id='diagnostics'] .diagnostics-boundary summary:hover { background: var(--color-surface-hover); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  main[data-route-id='diagnostics'] .diagnostics-boundary summary,
+  main[data-route-id='diagnostics'] .diagnostics-boundary summary::before { transition: none; }
 }

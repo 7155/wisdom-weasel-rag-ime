@@ -43,7 +43,6 @@ import {
 type TargetType = 'session' | 'role';
 type RecurrenceKind = 'once' | 'daily' | 'weekly';
 type ScheduleAction = 'pause' | 'resume' | 'cancel' | 'retry';
-type ConfirmedAction = { action: 'cancel' | 'retry'; scheduleId: string; title: string };
 
 const scheduleQueryKey = ['planning', 'agent-wake-schedules'] as const;
 
@@ -61,7 +60,6 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
   const [recurrence, setRecurrence] = useState<RecurrenceKind>('once');
   const [maxRuns, setMaxRuns] = useState(7);
   const [planningTaskId, setPlanningTaskId] = useState('');
-  const [confirmedAction, setConfirmedAction] = useState<ConfirmedAction | null>(null);
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai';
 
   const catalog = useQuery({
@@ -132,7 +130,6 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
       body: { action, confirmText: 'apply' },
     }),
     onSuccess: async () => {
-      setConfirmedAction(null);
       await queryClient.invalidateQueries({ queryKey: scheduleQueryKey });
     },
   });
@@ -188,11 +185,7 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
     if (!instruction.trim()) setInstruction(taskDetail || `完成任务《${taskTitle}》，并说明结果。`);
   }
 
-  function requestAction(action: ScheduleAction, scheduleId: string, scheduleTitle: string) {
-    if (action === 'cancel' || action === 'retry') {
-      setConfirmedAction({ action, scheduleId, title: scheduleTitle });
-      return;
-    }
+  function requestAction(action: ScheduleAction, scheduleId: string) {
     changeSchedule.mutate({ action, scheduleId });
   }
 
@@ -216,8 +209,27 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
       <InlineNotice title="到点后会发生什么" tone="info">
         伙伴会在选中的对话里继续，或开始一段新的对话。写文件、安装能力、修改任务或使用外部服务时，仍遵守对应对话的权限设置。
       </InlineNotice>
+      {catalog.isPending ? (
+        <InlineNotice title="正在读取可安排的对话与伙伴" tone="info">
+          已有安排仍可查看和管理；读取完成后即可添加新的安排。
+        </InlineNotice>
+      ) : null}
+      {catalog.error ? (
+        <div className="planning-wake-catalog-state">
+          <InlineNotice title="暂时无法读取可安排的对话与伙伴" tone="danger">
+            已有安排仍可查看和管理；重新读取后才能添加新的安排。
+          </InlineNotice>
+          <Button
+            loading={catalog.isFetching}
+            onClick={() => void catalog.refetch()}
+          >
+            重新读取对象
+          </Button>
+        </div>
+      ) : null}
       <QueryState
         error={schedules.error as Error | null}
+        headingLevel={3}
         isPending={schedules.isPending}
         onRetry={() => void schedules.refetch()}
       >
@@ -246,16 +258,16 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
                   </div>
                   <div className="planning-wake-row__actions">
                     <IconButton icon={<History size={16} />} label="查看执行记录" onClick={() => setHistoryId(id)} size="small" tooltip />
-                    {status === 'scheduled' ? <IconButton disabled={changeSchedule.isPending} icon={<Pause size={16} />} label="暂停自动执行" onClick={() => requestAction('pause', id, scheduleTitle)} size="small" tooltip /> : null}
-                    {status === 'paused' ? <IconButton disabled={changeSchedule.isPending} icon={<CirclePlay size={16} />} label="恢复自动执行" onClick={() => requestAction('resume', id, scheduleTitle)} size="small" tooltip /> : null}
-                    {['failed', 'completed'].includes(status) ? <IconButton disabled={changeSchedule.isPending} icon={<RotateCcw size={16} />} label="再做一次" onClick={() => requestAction('retry', id, scheduleTitle)} size="small" tooltip /> : null}
-                    {['scheduled', 'paused', 'failed'].includes(status) ? <IconButton disabled={changeSchedule.isPending} icon={<X size={16} />} label="取消这项安排" onClick={() => requestAction('cancel', id, scheduleTitle)} size="small" tooltip /> : null}
+                    {status === 'scheduled' ? <IconButton disabled={changeSchedule.isPending} icon={<Pause size={16} />} label="暂停自动执行" onClick={() => requestAction('pause', id)} size="small" tooltip /> : null}
+                    {status === 'paused' ? <IconButton disabled={changeSchedule.isPending} icon={<CirclePlay size={16} />} label="恢复自动执行" onClick={() => requestAction('resume', id)} size="small" tooltip /> : null}
+                    {['failed', 'completed'].includes(status) ? <IconButton disabled={changeSchedule.isPending} icon={<RotateCcw size={16} />} label="再做一次" onClick={() => requestAction('retry', id)} size="small" tooltip /> : null}
+                    {['scheduled', 'paused', 'failed'].includes(status) ? <IconButton disabled={changeSchedule.isPending} icon={<X size={16} />} label="取消这项安排" onClick={() => requestAction('cancel', id)} size="small" tooltip /> : null}
                   </div>
                 </article>
               );
             })}
           </div>
-        ) : <EmptyState description="有些事不用一直记在心里。设好时间后，伙伴会自动继续，并把结果留在这里。" icon={CalendarClock} title="还没有定时安排" />}
+        ) : <EmptyState description="有些事不用一直记在心里。设好时间后，伙伴会自动继续，并把结果留在这里。" headingLevel={3} icon={CalendarClock} title="还没有定时安排" />}
         {changeSchedule.error ? <InlineNotice title="安排未更新" tone="danger">{publicErrorText(changeSchedule.error)}</InlineNotice> : null}
       </QueryState>
 
@@ -323,7 +335,7 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
             <DialogTitle>执行记录 · {stringValue(selectedHistory?.title, '定时安排')}</DialogTitle>
             <DialogDescription>每次开始、接手、完成、失败或顺延都会保留在这里。</DialogDescription>
           </DialogHeader>
-          <QueryState error={history.error as Error | null} isPending={history.isPending} onRetry={() => void history.refetch()}>
+          <QueryState error={history.error as Error | null} headingLevel={3} isPending={history.isPending} onRetry={() => void history.refetch()}>
             {arrayRecords(asRecord(history.data).items).length ? (
               <div className="planning-wake-history">
                 {arrayRecords(asRecord(history.data).items).map((run) => (
@@ -338,7 +350,7 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
                   </div>
                 ))}
               </div>
-            ) : <EmptyState description="这项安排开始执行后，过程和结果会留在这里。" icon={History} title="还没有执行记录" />}
+            ) : <EmptyState description="这项安排开始执行后，过程和结果会留在这里。" headingLevel={3} icon={History} title="还没有执行记录" />}
           </QueryState>
           <DialogFooter>
             <Button leadingIcon={<RefreshCw size={15} />} onClick={() => void history.refetch()}>刷新</Button>
@@ -347,31 +359,6 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(confirmedAction)} onOpenChange={(open) => { if (!open && !changeSchedule.isPending) setConfirmedAction(null); }}>
-        <DialogContent className="planning-dialog planning-detail-dialog">
-          <DialogHeader>
-            <DialogTitle>{confirmedAction?.action === 'cancel' ? '取消这项安排？' : '再做一次？'}</DialogTitle>
-            <DialogDescription>
-              {confirmedAction?.action === 'cancel'
-                ? `取消后，“${confirmedAction.title}”不会再自动执行。`
-                : `“${confirmedAction?.title ?? ''}”会在确认后尽快再做一次，并新增一条执行记录。`}
-            </DialogDescription>
-          </DialogHeader>
-          {changeSchedule.error ? <InlineNotice title="操作未完成" tone="danger">{publicErrorText(changeSchedule.error)}</InlineNotice> : null}
-          <DialogFooter>
-            <Button disabled={changeSchedule.isPending} onClick={() => setConfirmedAction(null)} variant="quiet">暂不操作</Button>
-            <Button
-              loading={changeSchedule.isPending}
-              onClick={() => {
-                if (confirmedAction) changeSchedule.mutate(confirmedAction);
-              }}
-              variant={confirmedAction?.action === 'cancel' ? 'danger' : 'primary'}
-            >
-              {confirmedAction?.action === 'cancel' ? '取消安排' : '再做一次'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </ManagementSection>
   );
 }
@@ -435,5 +422,5 @@ function targetLabel(
     return `伙伴：${roles.find((item) => item.roleId === roleId)?.displayName ?? '未命名伙伴'}`;
   }
   const sessionId = stringValue(schedule.targetSessionId);
-  return `对话：${sessions.find((item) => item.id === sessionId)?.title ?? sessionId}`;
+  return `对话：${sessions.find((item) => item.id === sessionId)?.title || '原对话已不在列表中'}`;
 }

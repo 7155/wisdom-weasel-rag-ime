@@ -491,7 +491,8 @@ class PiRuntimeTests(unittest.TestCase):
             }
         )
 
-        self.assertIn("你是执行 Agent", prompt)
+        self.assertIn('<responsibility-profile id="worker">', prompt)
+        self.assertIn("在一个明确 TaskBrief 内产出并验证真实改动", prompt)
         self.assertIn("<capability-policy>", prompt)
         self.assertNotIn("<room-work>", prompt)
         self.assertNotIn("room_commit", prompt)

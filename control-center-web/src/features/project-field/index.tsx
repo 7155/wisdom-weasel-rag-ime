@@ -85,18 +85,24 @@ type UndoRoute = {
   query: string;
 };
 
-const WORLD_WIDTH = 1900;
+// The reconstructed project currently reaches x=2100. Keep the canvas and its
+// reset bounds large enough to contain the real graph instead of relying on
+// overflow from an undersized 1900px world.
+const WORLD_WIDTH = 2320;
 const WORLD_HEIGHT = 980;
 const PROJECT_ORIGIN = { x: 210, y: 520 } as const;
 const PROJECT_DESTINATION = { x: 1690, y: 560 } as const;
 const WAYFINDER_OVERVIEW_BOUNDS = {
   left: 60,
-  right: 1840,
+  right: 2240,
   top: 38,
   bottom: 930,
 } as const;
 const MIN_READABLE_OVERVIEW_SCALE = 0.68;
 const WAYFINDER_DESTINATION_CAMERA_OFFSET_Y = 10;
+const COMPACT_VIEWPORT_MAX_WIDTH = 540;
+const COMPACT_LANDMARK_WIDTH = 196;
+const COMPACT_LANDMARK_EDGE_INSET = 12;
 // The camera contract changed with the legibility pass.  A versioned key keeps
 // an old, zoomed-out overview from overriding the intended current-voyage
 // first impression after the prototype refreshes.
@@ -121,6 +127,28 @@ export function projectFieldInitialCamera(project: ProjectFieldProject): FieldCa
     centerY: WORLD_HEIGHT / 2 - savedCamera.y / savedCamera.scale,
     scale: savedCamera.scale,
   };
+}
+
+export function projectFieldCameraCenterXForViewport(
+  project: ProjectFieldProject,
+  camera: FieldCameraTarget,
+  viewportWidth: number,
+  scale: number,
+): number {
+  if (viewportWidth > COMPACT_VIEWPORT_MAX_WIDTH || scale <= 0 || !project.wayfinder) {
+    return camera.centerX;
+  }
+
+  const currentRoom = project.rooms.find((room) => room.id === project.wayfinder?.currentRoomId);
+  if (!currentRoom) return camera.centerX;
+
+  const currentRoomScreenCenter = viewportWidth / 2 + (currentRoom.x - camera.centerX) * scale;
+  const rightmostReadableCenter = viewportWidth
+    - COMPACT_LANDMARK_EDGE_INSET
+    - COMPACT_LANDMARK_WIDTH / 2;
+  if (currentRoomScreenCenter <= rightmostReadableCenter) return camera.centerX;
+
+  return camera.centerX + (currentRoomScreenCenter - rightmostReadableCenter) / scale;
 }
 
 function deliveryStageLabel(stageId: string, deliveryState: ProjectWayfinderRoom['deliveryState']): string {
@@ -258,6 +286,7 @@ export function ProjectFieldFeature() {
   const [activeProjectId, setActiveProjectId] = useState(projectFieldProjects[0].id);
   const [projectStates, setProjectStates] = useState(restoreProjectStates);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
   const [navigatorQuery, setNavigatorQuery] = useState('');
   const [routeProposal, setRouteProposal] = useState<RouteProposal | null>(null);
   const [pendingRequirement, setPendingRequirement] = useState<string | null>(null);
@@ -359,7 +388,13 @@ export function ProjectFieldFeature() {
           Math.max(MIN_READABLE_OVERVIEW_SCALE, availableHeight / overviewHeight),
         )
       : camera.scale;
-    const positionX = wrapper.clientWidth / 2 - camera.centerX * scale;
+    const centerX = projectFieldCameraCenterXForViewport(
+      project,
+      camera,
+      wrapper.clientWidth,
+      scale,
+    );
+    const positionX = wrapper.clientWidth / 2 - centerX * scale;
     const positionY = availableHeight / 2 - camera.centerY * scale;
     ref.setTransform(
       positionX,
@@ -419,12 +454,17 @@ export function ProjectFieldFeature() {
     const handler = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase('en-US') === 'k') {
         event.preventDefault();
-        searchInputRef.current?.focus();
+        setSearchOpen(true);
+        window.requestAnimationFrame(() => searchInputRef.current?.focus());
         return;
       }
       if (event.key !== 'Escape') return;
       if (routeProposal) {
         setRouteProposal(null);
+      } else if (searchOpen) {
+        setSearchOpen(false);
+        setSearchQuery('');
+        searchInputRef.current?.blur();
       } else if (searchQuery) {
         setSearchQuery('');
       } else if (attentionOpen) {
@@ -438,7 +478,7 @@ export function ProjectFieldFeature() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [attentionOpen, focusedRoom, project.id, routeProposal, searchQuery]);
+  }, [attentionOpen, focusedRoom, project.id, routeProposal, searchOpen, searchQuery]);
 
   useEffect(() => {
     const previous = previousFocusedRoomRef.current;
@@ -465,6 +505,7 @@ export function ProjectFieldFeature() {
 
   const focusRoom = useCallback((roomId: string) => {
     updateProjectState((state) => ({ ...state, focusedRoomId: roomId }));
+    setSearchOpen(false);
     setSearchQuery('');
     setRouteProposal(null);
     setAttentionOpen(false);
@@ -476,6 +517,7 @@ export function ProjectFieldFeature() {
 
   const switchProject = (projectId: string) => {
     setActiveProjectId(projectId);
+    setSearchOpen(false);
     setSearchQuery('');
     setRouteProposal(null);
     setAttentionOpen(false);
@@ -553,12 +595,24 @@ export function ProjectFieldFeature() {
         <FieldHeader
           attentionCount={attentionRooms.length}
           onAttention={() => setAttentionOpen((open) => !open)}
-          onClearSearch={() => setSearchQuery('')}
-          onFocusSearch={() => searchInputRef.current?.focus()}
+          onClearSearch={() => {
+            setSearchOpen(false);
+            setSearchQuery('');
+          }}
+          onDismissSearch={() => {
+            setSearchOpen(false);
+            setSearchQuery('');
+          }}
+          onFocusSearch={() => setSearchOpen(true)}
+          onOpenSearch={() => {
+            setSearchOpen(true);
+            window.requestAnimationFrame(() => searchInputRef.current?.focus());
+          }}
           onSearch={setSearchQuery}
           onSelectRoom={focusRoom}
           project={project}
           searchInputRef={searchInputRef}
+          searchOpen={searchOpen}
           searchQuery={searchQuery}
           searchResults={searchResults}
         />
@@ -816,22 +870,28 @@ function FieldHeader({
   attentionCount,
   onAttention,
   onClearSearch,
+  onDismissSearch,
   onFocusSearch,
+  onOpenSearch,
   onSearch,
   onSelectRoom,
   project,
   searchInputRef,
+  searchOpen,
   searchQuery,
   searchResults,
 }: {
   attentionCount: number;
   onAttention: () => void;
   onClearSearch: () => void;
+  onDismissSearch: () => void;
   onFocusSearch: () => void;
+  onOpenSearch: () => void;
   onSearch: (query: string) => void;
   onSelectRoom: (roomId: string) => void;
   project: ProjectFieldProject;
   searchInputRef: React.RefObject<HTMLInputElement | null>;
+  searchOpen: boolean;
   searchQuery: string;
   searchResults: readonly ProjectRoom[];
 }) {
@@ -859,7 +919,13 @@ function FieldHeader({
           <small>{projectFieldText(project.heading)}</small>
         </div>
       </div>
-      <div className="project-field__search">
+      <div
+        className="project-field__search"
+        data-open={searchOpen ? 'true' : undefined}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) onDismissSearch();
+        }}
+      >
         <Search size={16} aria-hidden="true" />
         <input
           aria-label="搜索协作目标"
@@ -887,6 +953,15 @@ function FieldHeader({
         ) : null}
       </div>
       <div className="project-field__header-actions">
+        <button
+          aria-expanded={searchOpen}
+          aria-label="打开协作目标搜索"
+          className="project-field__icon-button project-field__search-toggle"
+          onClick={onOpenSearch}
+          type="button"
+        >
+          <Search size={16} aria-hidden="true" />
+        </button>
         <button className="project-field__attention-button" onClick={onAttention} type="button" aria-label={`${attentionCount} 件事需要你`}>
           <Bell size={16} aria-hidden="true" />
           <span>{attentionCount || '安静'}</span>

@@ -31,13 +31,13 @@ main[data-route-id='configuration'] .configuration-section-nav button {
   color: var(--color-text-tertiary);
   text-align: left;
   cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
 }
 
 main[data-route-id='configuration'] .configuration-section-nav button:last-child {
   border-bottom: 0;
 }
 
-main[data-route-id='configuration'] .configuration-section-nav button:hover,
 main[data-route-id='configuration'] .configuration-section-nav button:focus-visible {
   background: var(--color-surface-subtle);
   color: var(--color-text-secondary);
@@ -101,13 +101,13 @@ main[data-route-id='configuration'] .configuration-destinations button {
   color: var(--color-text-secondary);
   text-align: left;
   cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
 }
 
 main[data-route-id='configuration'] .configuration-destinations button:nth-child(odd) {
   border-right: 1px solid var(--color-border);
 }
 
-main[data-route-id='configuration'] .configuration-destinations button:hover,
 main[data-route-id='configuration'] .configuration-destinations button:focus-visible {
   background: var(--color-surface-subtle);
   color: var(--color-text-primary);
@@ -193,6 +193,15 @@ main[data-route-id='configuration'] .configuration-details .mgmt-table-wrap {
   margin-bottom: var(--space-3);
 }
 
+main[data-route-id='configuration'] .configuration-provider-recovery-actions .ui-button {
+  min-height: 44px;
+}
+
+main[data-route-id='configuration'] .configuration-details:not([open]) > :not(summary),
+main[data-route-id='configuration'] .configuration-transfer:not([open]) > :not(summary) {
+  display: none !important;
+}
+
 main[data-route-id='configuration'] .configuration-portability {
   border-block: 1px solid var(--color-border);
 }
@@ -259,6 +268,18 @@ main[data-route-id='configuration'] .configuration-transfer > summary svg {
   transition: transform var(--motion-disclose) var(--ease-standard);
 }
 
+@media (hover: hover) and (pointer: fine) {
+  main[data-route-id='configuration'] .configuration-section-nav button:hover {
+    background: var(--color-surface-subtle);
+    color: var(--color-text-secondary);
+  }
+
+  main[data-route-id='configuration'] .configuration-destinations button:hover {
+    background: var(--color-surface-subtle);
+    color: var(--color-text-primary);
+  }
+}
+
 main[data-route-id='configuration'] .configuration-transfer[open] > summary svg {
   transform: rotate(90deg);
 }
@@ -304,7 +325,36 @@ main[data-route-id='configuration'] .configuration-transfer[open] > summary svg 
     border-right: 0;
   }
 
+  main[data-route-id='configuration'] .configuration-section-nav button {
+    min-height: 48px;
+    align-items: center;
+  }
+
+  main[data-route-id='configuration'] .configuration-section-nav small { display: none; }
+
   main[data-route-id='configuration'] .configuration-editor__review {
     grid-column: auto;
   }
+
+  main[data-route-id='configuration'] .configuration-editor__fields > .mgmt-list,
+  main[data-route-id='configuration'] .configuration-editor__review > .mgmt-table-wrap {
+    max-height: none;
+    overflow: visible;
+  }
+
+  main[data-route-id='configuration'] .mgmt-page__actions .ui-button,
+  main[data-route-id='configuration'] .configuration-search,
+  main[data-route-id='configuration'] .configuration-search input,
+  main[data-route-id='configuration'] .configuration-editor input.ui-input,
+  main[data-route-id='configuration'] .configuration-transfer .ui-button,
+  main[data-route-id='configuration'] .configuration-portability .ui-button { min-height: 44px; }
+
+  main[data-route-id='configuration'] .configuration-search,
+  main[data-route-id='configuration'] .configuration-search input { height: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  main[data-route-id='configuration'] .configuration-section-nav button,
+  main[data-route-id='configuration'] .configuration-destinations button,
+  main[data-route-id='configuration'] .configuration-transfer > summary svg { transition: none; }
 }

@@ -56,7 +56,6 @@ export function ControlConnectionMonitor() {
   return null;
 }
 
-function publicConnectionError(error: unknown): string {
-  if (error instanceof Error && error.message.trim()) return error.message.trim().slice(0, 240);
-  return '本机控制服务暂时不可用';
+function publicConnectionError(_error: unknown): string {
+  return '暂时无法连接本机控制服务';
 }

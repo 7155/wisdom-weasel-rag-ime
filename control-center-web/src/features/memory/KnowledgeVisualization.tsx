@@ -47,9 +47,9 @@ export function KnowledgeRouteVisualization({
       <section aria-label="回答生成">
         <header><Sparkles aria-hidden="true" size={15} /><strong>回答生成</strong><RouteState ready={modelReady} /></header>
         <dl>
-          <div><dt>用途</dt><dd>根据召回证据组织回答与长文</dd></div>
+          <div><dt>用途</dt><dd>根据找到的依据组织回答与长文</dd></div>
           <div><dt>启用方式</dt><dd>只在你明确启动知识任务时使用</dd></div>
-          <div><dt>后台自动调用</dt><dd>{booleanValue(deepseekRoute.passivePostCommitRemoteAllowed) ? '已允许' : '不会调用'}</dd></div>
+          <div><dt>自动使用</dt><dd>{booleanValue(deepseekRoute.passivePostCommitRemoteAllowed) ? '已允许' : '不会使用'}</dd></div>
           <div><dt>证据要求</dt><dd>回答与来源分开呈现</dd></div>
         </dl>
       </section>

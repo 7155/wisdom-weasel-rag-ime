@@ -1,6 +1,13 @@
 import { useMutation } from '@tanstack/react-query';
 import { Check, CircleDashed, RotateCcw, ShieldCheck } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react';
 import { Button } from '@/components/primitives';
 import {
   InlineNotice,
@@ -45,8 +52,8 @@ export type ManagementWorkReceipt = {
 export function ManagementMutationWorkflow<Context>({
   availability,
   description,
+  disabled = false,
   draftKey,
-  explicitConfirmation = true,
   mutationKey,
   onApply,
   onApplied,
@@ -58,6 +65,8 @@ export function ManagementMutationWorkflow<Context>({
 }: {
   availability: MutationAvailability;
   description: string;
+  disabled?: boolean;
+  /** @deprecated Confirmation follows the authoritative R3 server preview. */
   explicitConfirmation?: boolean;
   draftKey: string;
   mutationKey: readonly unknown[];
@@ -77,16 +86,21 @@ export function ManagementMutationWorkflow<Context>({
   const [preview, setPreview] = useState<ManagementWorkPreview<Context> | null>(null);
   const [receipt, setReceipt] = useState<ManagementWorkReceipt | null>(null);
   const [rollbackReceipt, setRollbackReceipt] = useState<ManagementWorkReceipt | null>(null);
+  const panelTitleId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const previewPanelRef = useRef<HTMLDivElement>(null);
+  const approvalCheckboxRef = useRef<HTMLInputElement>(null);
+  const receiptRef = useRef<HTMLDivElement>(null);
+  const previewErrorRef = useRef<HTMLDivElement>(null);
+  const applyErrorRef = useRef<HTMLDivElement>(null);
+  const rollbackErrorRef = useRef<HTMLDivElement>(null);
+  const previousStageRef = useRef(stage);
+  const declaredDangerous = risk === 'R3';
+  // The server preview is authoritative. A route may underestimate the risk,
+  // but a preview promoted to R3 must never fall through the direct path.
+  const effectiveRisk = preview?.summary.risk ?? risk;
+  const requiresConfirmation = effectiveRisk === 'R3';
 
-  const previewMutation = useMutation({
-    mutationKey: [...mutationKey, 'preview'],
-    mutationFn: onPreview,
-    onSuccess: (nextPreview) => {
-      setPreview(nextPreview);
-      setApproved(false);
-      setStage('preview');
-    },
-  });
   const applyMutation = useMutation({
     mutationKey: [...mutationKey, 'apply'],
     mutationFn: async (boundPreview: ManagementWorkPreview<Context>) => onApply(boundPreview),
@@ -94,6 +108,16 @@ export function ManagementMutationWorkflow<Context>({
       setReceipt(nextReceipt);
       setStage('receipt');
       onApplied?.(nextReceipt);
+    },
+  });
+  const previewMutation = useMutation({
+    mutationKey: [...mutationKey, 'preview'],
+    mutationFn: onPreview,
+    onSuccess: (nextPreview) => {
+      setPreview(nextPreview);
+      setApproved(false);
+      if (nextPreview.summary.risk === 'R3') setStage('preview');
+      else applyMutation.mutate(nextPreview);
     },
   });
   const rollbackMutation = useMutation({
@@ -114,6 +138,7 @@ export function ManagementMutationWorkflow<Context>({
 
   useEffect(() => {
     if (stage !== 'preview' && stage !== 'approval') return;
+    if (applyMutation.isPending) return;
     setPreview(null);
     setApproved(false);
     setStage('idle');
@@ -121,8 +146,29 @@ export function ManagementMutationWorkflow<Context>({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey]);
 
+  useEffect(() => {
+    const previousStage = previousStageRef.current;
+    previousStageRef.current = stage;
+    if (stage === 'preview') previewPanelRef.current?.focus();
+    else if (stage === 'approval') approvalCheckboxRef.current?.focus();
+    else if (stage === 'receipt' || stage === 'rolled-back') receiptRef.current?.focus();
+    else if (stage === 'idle' && previousStage !== 'idle') triggerRef.current?.focus();
+  }, [stage]);
+
+  useEffect(() => {
+    if (previewMutation.isError) previewErrorRef.current?.focus();
+  }, [previewMutation.isError, previewMutation.failureCount]);
+
+  useEffect(() => {
+    if (applyMutation.isError) applyErrorRef.current?.focus();
+  }, [applyMutation.isError, applyMutation.failureCount]);
+
+  useEffect(() => {
+    if (rollbackMutation.isError) rollbackErrorRef.current?.focus();
+  }, [rollbackMutation.isError, rollbackMutation.failureCount]);
+
   const steps = useMemo(() => (
-    explicitConfirmation
+    requiresConfirmation
       ? [
           { id: 'preview', label: '查看影响' },
           { id: 'approval', label: '确认' },
@@ -134,56 +180,89 @@ export function ManagementMutationWorkflow<Context>({
           { id: 'receipt', label: '完成' },
           { id: 'rolled-back', label: '撤销' },
         ] as const
-  ), [explicitConfirmation]);
+  ), [requiresConfirmation]);
   const stageIndex = stage === 'idle' ? -1 : steps.findIndex((step) => step.id === stage);
-  const actionable = availability.state === 'available';
+  const actionable = availability.state === 'available' && !disabled;
   const previewExpired = Boolean(preview && preview.expiresAtMs <= Date.now());
+  const isWorking = previewMutation.isPending || applyMutation.isPending || rollbackMutation.isPending;
+  const liveStatus = previewMutation.isPending
+    ? declaredDangerous ? '正在准备影响说明' : '正在准备更改'
+    : applyMutation.isPending
+      ? '正在保存更改'
+      : rollbackMutation.isPending
+        ? '正在撤销更改'
+        : '';
 
   return (
-    <div className="mgmt-workflow" data-availability={availability.state} data-stage={stage}>
+    <div
+      className="mgmt-workflow"
+      data-availability={availability.state}
+      data-confirmation={requiresConfirmation ? 'dangerous' : 'direct'}
+      data-stage={stage}
+    >
+      <span aria-atomic="true" aria-live="polite" className="mgmt-sr-only">
+        {liveStatus}
+      </span>
       <div className="mgmt-workflow__heading">
         <div>
-          <span className="mgmt-workflow__risk">{riskLabel(risk)}</span>
+          {requiresConfirmation ? <span className="mgmt-workflow__risk">{riskLabel(effectiveRisk)}</span> : null}
           <strong>{title}</strong>
           <p>{description}</p>
         </div>
         {stage === 'idle' && (availability.state === 'available' || availability.state === 'checking') ? (
           <Button
+            ref={triggerRef}
             disabled={!actionable}
-            leadingIcon={<ShieldCheck size={15} />}
-            loading={previewMutation.isPending || availability.state === 'checking'}
+            leadingIcon={declaredDangerous ? <ShieldCheck size={15} /> : <Check size={15} />}
+            loading={previewMutation.isPending || applyMutation.isPending || availability.state === 'checking'}
             onClick={() => previewMutation.mutate()}
             size="small"
+            variant={declaredDangerous ? 'danger' : 'primary'}
           >
-            查看影响
+            {previewMutation.isError ? '重新尝试' : declaredDangerous ? '查看影响' : title}
           </Button>
         ) : null}
       </div>
 
       {availability.state !== 'available' && availability.state !== 'checking' && availability.reason ? (
-        <InlineNotice title={availability.state === 'unsupported' ? '这项功能暂不可用' : '还需要一些信息'} tone="warning">
-          {availability.reason}
-        </InlineNotice>
+        availability.state === 'unsupported' || requiresConfirmation ? (
+          <InlineNotice title={availability.state === 'unsupported' ? '这项功能暂不可用' : '暂时无法执行'} tone="warning">
+            {availability.reason}
+          </InlineNotice>
+        ) : <p className="mgmt-workflow__hint">{availability.reason}</p>
       ) : null}
 
       {previewMutation.error ? (
-        <InlineNotice title="暂时无法查看影响" tone="danger">{publicErrorText(previewMutation.error)}</InlineNotice>
+        <div ref={previewErrorRef} className="mgmt-workflow__feedback" tabIndex={-1}>
+          <InlineNotice title={declaredDangerous ? '暂时无法查看影响' : '保存失败'} tone="danger">
+            {publicErrorText(previewMutation.error, declaredDangerous ? '暂时无法查看影响，请稍后重试。' : '暂时无法保存，请稍后重试。')}
+          </InlineNotice>
+        </div>
       ) : null}
 
-      {stage !== 'idle' ? (
+      {requiresConfirmation && stage !== 'idle' ? (
         <ol className="mgmt-workflow__steps" aria-label="操作进度">
           {steps.map((step, index) => (
-            <li data-state={index < stageIndex ? 'complete' : index === stageIndex ? 'current' : 'pending'} key={step.id}>
-              {index < stageIndex ? <Check size={13} /> : index === stageIndex ? <CircleDashed size={13} /> : <i />}
+            <li
+              aria-current={index === stageIndex ? 'step' : undefined}
+              data-state={index < stageIndex ? 'complete' : index === stageIndex ? 'current' : 'pending'}
+              key={step.id}
+            >
+              {index < stageIndex ? <Check aria-hidden="true" size={13} /> : index === stageIndex ? <CircleDashed aria-hidden="true" size={13} /> : <i aria-hidden="true" />}
               {step.label}
             </li>
           ))}
         </ol>
       ) : null}
 
-      {stage === 'preview' && preview ? (
-        <div className="mgmt-workflow__panel">
-          <strong>{preview.summary.title}</strong>
+      {requiresConfirmation && stage === 'preview' && preview ? (
+        <div
+          ref={previewPanelRef}
+          aria-labelledby={panelTitleId}
+          className="mgmt-workflow__panel"
+          tabIndex={-1}
+        >
+          <strong id={panelTitleId}>{preview.summary.title}</strong>
           <ul>{preview.summary.items.map((line) => <li key={line}>{line}</li>)}</ul>
           <div className="mgmt-workflow__binding">
             <span>已核对当前状态</span>
@@ -191,34 +270,36 @@ export function ManagementMutationWorkflow<Context>({
           </div>
           {previewExpired ? <InlineNotice title="请重新查看影响" tone="warning">页面状态已经变化，旧的影响说明不会继续执行。</InlineNotice> : null}
           <div className="mgmt-workflow__buttons">
-            <Button onClick={() => reset()} size="small" variant="quiet">先不更改</Button>
+            <Button disabled={isWorking} onClick={() => reset()} size="small" variant="quiet">先不更改</Button>
             <Button
-              disabled={previewExpired}
-              loading={!explicitConfirmation && applyMutation.isPending}
-              onClick={() => {
-                if (explicitConfirmation) setStage('approval');
-                else applyMutation.mutate(preview);
-              }}
+              disabled={previewExpired || !actionable || isWorking}
+              onClick={() => setStage('approval')}
               size="small"
               variant="primary"
             >
-              {explicitConfirmation ? '确认这些更改' : title}
+              继续确认
             </Button>
           </div>
         </div>
       ) : null}
 
-      {stage === 'approval' && preview ? (
+      {requiresConfirmation && stage === 'approval' && preview ? (
         <div className="mgmt-workflow__panel">
           <strong>请确认你已看过上方影响</strong>
           <label className="mgmt-workflow__confirm">
-            <input checked={approved} onChange={(event) => setApproved(event.target.checked)} type="checkbox" />
+            <input
+              ref={approvalCheckboxRef}
+              checked={approved}
+              disabled={!actionable || applyMutation.isPending || applyMutation.isError}
+              onChange={(event) => setApproved(event.target.checked)}
+              type="checkbox"
+            />
             <span>我确认只执行上方列出的更改</span>
           </label>
           <div className="mgmt-workflow__buttons">
-            <Button onClick={() => setStage('preview')} size="small" variant="quiet">返回查看</Button>
+            <Button disabled={applyMutation.isPending} onClick={() => setStage('preview')} size="small" variant="quiet">返回查看</Button>
             <Button
-              disabled={!approved}
+              disabled={!approved || previewExpired || !actionable || applyMutation.isError}
               loading={applyMutation.isPending}
               onClick={() => applyMutation.mutate(preview)}
               size="small"
@@ -231,25 +312,30 @@ export function ManagementMutationWorkflow<Context>({
       ) : null}
 
       {applyMutation.error ? (
-        <div className="mgmt-workflow__panel">
-          <InlineNotice title="更改未完成" tone="danger">{publicErrorText(applyMutation.error)}</InlineNotice>
+        <div ref={applyErrorRef} className="mgmt-workflow__panel" tabIndex={-1}>
+          <InlineNotice title="更改未完成" tone="danger">{publicErrorText(applyMutation.error, '暂时无法保存，请稍后重试。')}</InlineNotice>
           <div className="mgmt-workflow__buttons">
-            <Button onClick={() => reset()} size="small" variant="quiet">重新查看影响</Button>
+            <Button onClick={() => reset()} size="small" variant="quiet">{requiresConfirmation ? '重新查看影响' : '返回'}</Button>
           </div>
         </div>
       ) : null}
 
       {stage === 'receipt' && receipt && preview ? (
-        <WorkReceipt receipt={receipt} rolledBack={false}>
+        <WorkReceipt compact={!requiresConfirmation} focusRef={receiptRef} receipt={receipt} rolledBack={false}>
           {receipt.rollbackAvailable && onRollback ? (
-            <Button
-              leadingIcon={<RotateCcw size={14} />}
-              loading={rollbackMutation.isPending}
-              onClick={() => rollbackMutation.mutate({ applied: receipt, boundPreview: preview })}
-              size="small"
-            >
-              撤销这次更改
-            </Button>
+            <div className="mgmt-workflow__receipt-actions">
+              <Button disabled={rollbackMutation.isPending} onClick={() => reset()} size="small" variant="quiet">
+                完成
+              </Button>
+              <Button
+                leadingIcon={<RotateCcw size={14} />}
+                loading={rollbackMutation.isPending}
+                onClick={() => rollbackMutation.mutate({ applied: receipt, boundPreview: preview })}
+                size="small"
+              >
+                {requiresConfirmation ? '撤销这次更改' : '撤销'}
+              </Button>
+            </div>
           ) : (
             <Button onClick={() => reset()} size="small" variant="quiet">完成</Button>
           )}
@@ -257,11 +343,13 @@ export function ManagementMutationWorkflow<Context>({
       ) : null}
 
       {rollbackMutation.error ? (
-        <InlineNotice title="撤销失败" tone="danger">{publicErrorText(rollbackMutation.error)}</InlineNotice>
+        <div ref={rollbackErrorRef} className="mgmt-workflow__feedback" tabIndex={-1}>
+          <InlineNotice title="撤销失败" tone="danger">{publicErrorText(rollbackMutation.error)}</InlineNotice>
+        </div>
       ) : null}
 
       {stage === 'rolled-back' && rollbackReceipt ? (
-        <WorkReceipt receipt={rollbackReceipt} rolledBack>
+        <WorkReceipt compact={!requiresConfirmation} focusRef={receiptRef} receipt={rollbackReceipt} rolledBack>
           <Button onClick={() => reset()} size="small" variant="quiet">完成</Button>
         </WorkReceipt>
       ) : null}
@@ -291,16 +379,24 @@ export function UnsupportedWorkflow({
   risk: 'R1' | 'R2' | 'R3';
   title: string;
 }) {
+  const dangerous = risk === 'R3';
   return (
-    <div className="mgmt-workflow" data-availability="unsupported" data-stage="idle">
+    <div
+      className="mgmt-workflow"
+      data-availability="unsupported"
+      data-confirmation={dangerous ? 'dangerous' : 'direct'}
+      data-stage="idle"
+    >
       <div className="mgmt-workflow__heading">
         <div>
-          <span className="mgmt-workflow__risk">{riskLabel(risk)}</span>
+          {dangerous ? <span className="mgmt-workflow__risk">{riskLabel(risk)}</span> : null}
           <strong>{title}</strong>
           <p>{description}</p>
         </div>
       </div>
-      <InlineNotice title="暂不可用" tone="warning">{reason}</InlineNotice>
+      {dangerous ? (
+        <InlineNotice title="暂时无法执行" tone="warning">{reason}</InlineNotice>
+      ) : <p className="mgmt-workflow__hint">{reason}</p>}
     </div>
   );
 }
@@ -323,15 +419,15 @@ export function parseManagementWorkPreview<Context>(
     ? summary.items.filter((item): item is string => typeof item === 'string' && item.length > 0)
     : [];
   const risk = stringValue(summary.risk);
-  if (payload.ok !== true) throw new Error(stringValue(payload.message, stringValue(payload.error, '服务端拒绝生成预览。')));
+  if (payload.ok !== true) throw new Error(stringValue(payload.message, stringValue(payload.error, '暂时无法准备这次更改。')));
   if (!previewToken || !payloadSha256 || pathId !== expectedPathId || requiredConfirm !== 'apply' || !expiresAtMs) {
-    throw new Error('这份操作预览暂时无法确认，请刷新后重试。');
+    throw new Error('这次更改的信息不完整，请刷新后重试。');
   }
   if (!Number.isInteger(expectedRuntimeRevision) || expectedRuntimeRevision < 0) {
-    throw new Error('这份操作预览已经失效，请刷新后重试。');
+    throw new Error('页面内容已经变化，请刷新后重试。');
   }
   if (!stringValue(summary.title) || items.length === 0 || !['R1', 'R2', 'R3'].includes(risk)) {
-    throw new Error('这份操作预览没有可核对的影响，请重试。');
+    throw new Error('暂时无法核对这次更改，请重试。');
   }
   return {
     context,
@@ -394,18 +490,30 @@ export function parseManagementWorkReceipt(
 
 function WorkReceipt({
   children,
+  compact,
+  focusRef,
   receipt,
   rolledBack,
 }: {
   children: React.ReactNode;
+  compact?: boolean;
+  focusRef: RefObject<HTMLDivElement | null>;
   receipt: ManagementWorkReceipt;
   rolledBack: boolean;
 }) {
   return (
-    <div className="mgmt-workflow__receipt">
+    <div
+      ref={focusRef}
+      aria-atomic="true"
+      aria-live="polite"
+      className="mgmt-workflow__receipt"
+      data-compact={compact || undefined}
+      role="status"
+      tabIndex={-1}
+    >
       <div>
         <StatusBadge label={rolledBack ? '已撤销' : '已完成'} tone={rolledBack ? 'info' : 'success'} />
-        <strong>{rolledBack ? '已恢复到更改前' : '这次更改已安全记录'}</strong>
+        <strong>{rolledBack ? '已恢复到更改前' : compact ? '已保存' : '更改已记录'}</strong>
         <span>{rolledBack ? '原来的更改不再生效' : receipt.rollbackAvailable ? '仍可以撤销' : '这次更改不可撤销'}</span>
         <time>{formatTimestamp(receipt.appliedAtMs)}</time>
       </div>
@@ -419,5 +527,5 @@ function formatTimestamp(value: number): string {
 }
 
 function riskLabel(value: 'R1' | 'R2' | 'R3'): string {
-  return ({ R1: '需确认', R2: '较高风险', R3: '高风险' } as const)[value];
+  return ({ R1: '操作确认', R2: '重要更改', R3: '高风险' } as const)[value];
 }

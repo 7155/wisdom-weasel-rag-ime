@@ -1,0 +1,4 @@
+interface:
+  display_name: "Plan Implementation"
+  short_description: "Plan verifiable multi-step work without executing it"
+  default_prompt: "Use $implementation-planning to turn confirmed acceptance criteria into the smallest dependency-aware set of work items."

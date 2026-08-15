@@ -67,7 +67,7 @@ export function previewConfigurationValues(): Record<string, unknown> {
       provider: 'native_streaming',
       hotkey: 'middle_mouse',
       hotwordsEnabled: true,
-      hotwords: ['Pi', 'Agent', 'Tool'],
+      hotwords: ['伙伴工具'],
       refinementModel: 'inherit',
       refinementThinkingLevel: 'off',
     },

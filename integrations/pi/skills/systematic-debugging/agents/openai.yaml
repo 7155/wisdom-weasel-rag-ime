@@ -1,0 +1,4 @@
+interface:
+  display_name: "Debug Systematically"
+  short_description: "Reproduce and localize unknown failures before fixing"
+  default_prompt: "Use $systematic-debugging to reproduce this failure, distinguish hypotheses, localize its owner, and verify the smallest supported fix."

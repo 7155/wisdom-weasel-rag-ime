@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query';
-import { Check, CircleDashed, RefreshCw, RotateCcw } from 'lucide-react';
+import { Check, RefreshCw, RotateCcw } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Button, EmptyState } from '@/components/primitives';
 import { InlineNotice, StatusBadge, publicErrorText } from '@/features/overview/management-ui';
@@ -11,7 +11,7 @@ import {
   type LexiconReview,
 } from './api';
 
-type WorkflowStage = 'select' | 'preview' | 'confirm' | 'receipt' | 'rolled-back';
+type WorkflowStage = 'select' | 'receipt' | 'rolled-back';
 type TimedReceipt = LexiconMutationReceipt & { atMs: number };
 
 export function LexiconWorkflow({
@@ -26,14 +26,12 @@ export function LexiconWorkflow({
   transport: ControlTransport;
 }) {
   const [stage, setStage] = useState<WorkflowStage>('select');
-  const [approved, setApproved] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => defaultSelection(review));
   const [applyReceipt, setApplyReceipt] = useState<TimedReceipt | null>(null);
   const [rollbackReceipt, setRollbackReceipt] = useState<TimedReceipt | null>(null);
 
   useEffect(() => {
     setStage('select');
-    setApproved(false);
     setSelectedKeys(defaultSelection(review));
     setApplyReceipt(null);
     setRollbackReceipt(null);
@@ -69,26 +67,19 @@ export function LexiconWorkflow({
   });
 
   if (!review.applySupported || !review.reviewRequired) {
-    return <InlineNotice title="词库写入未开放" tone="warning">服务端没有开放受审词库写入，本页不会提交变更。</InlineNotice>;
+    return <InlineNotice title="词库写入暂不可用" tone="warning">当前服务不能安全保存审阅后的词条，本页不会提交任何更改。</InlineNotice>;
   }
   if (review.entries.length === 0) {
     return (
       <EmptyState
         action={<Button leadingIcon={<RefreshCw size={15} />} loading={isFetching} onClick={onRefresh} size="small">刷新审阅</Button>}
         description="当前没有待加入用户词库的条目。"
+        headingLevel={3}
         icon={Check}
         title="暂无待审词条"
       />
     );
   }
-
-  const steps = [
-    { id: 'preview', label: '核对词条' },
-    { id: 'confirm', label: '确认' },
-    { id: 'receipt', label: '完成' },
-    { id: 'rolled-back', label: '撤销' },
-  ] as const;
-  const stageIndex = stage === 'select' ? -1 : steps.findIndex((step) => step.id === stage);
 
   return (
     <div className="mgmt-stack">
@@ -97,9 +88,9 @@ export function LexiconWorkflow({
         <Button leadingIcon={<RefreshCw size={15} />} loading={isFetching} onClick={onRefresh} size="small">刷新审阅</Button>
       </div>
 
-      <InlineNotice title="常用词质量门" tone="info">
+      <InlineNotice title="筛选规则" tone="info">
         {selectionPolicyLabel(review.selectionPolicy)}
-        {review.filteredEntryCount ? ` 本轮已拦截 ${review.filteredEntryCount} 条单字、生僻噪声或证据不足的候选。` : ''}
+        {review.filteredEntryCount ? ` 本轮已拦截 ${review.filteredEntryCount} 条单字、生僻噪声或使用记录不足的候选。` : ''}
       </InlineNotice>
 
       {stage === 'select' ? (
@@ -114,7 +105,7 @@ export function LexiconWorkflow({
               />
               <span className="mgmt-list__content">
                 <strong>{entry.text}</strong>
-                <span>{entry.pinyin || '无拼音'} · 正向 {entry.positiveCount} · 负向 {entry.negativeCount} · {entry.riskLabel || '待人工确认'}</span>
+                <span>{entry.pinyin || '无拼音'} · 被采用 {entry.positiveCount} 次 · 被跳过 {entry.negativeCount} 次 · {entry.riskLabel || '待你判断'}</span>
               </span>
               <StatusBadge label={reviewSourceLabel(entry.reviewSource)} tone="info" />
             </label>
@@ -125,55 +116,21 @@ export function LexiconWorkflow({
       <div className="mgmt-workflow" data-stage={stage}>
         <div className="mgmt-workflow__heading">
           <div>
-            <span className="mgmt-workflow__risk">需要确认</span>
-            <strong>加入已审词条</strong>
-            <p>把所选词条加入用户词库；重载输入法后生效。</p>
+            <strong>加入所选词条</strong>
+            <p>保存后仍需重载输入法，并通过实际选词检查效果。</p>
           </div>
           {stage === 'select' ? (
-            <Button disabled={selectedEntries.length === 0} onClick={() => setStage('preview')} size="small">查看已选词条</Button>
+            <Button
+              disabled={selectedEntries.length === 0}
+              loading={applyMutation.isPending}
+              onClick={() => applyMutation.mutate()}
+              size="small"
+              variant="primary"
+            >
+              加入所选词条
+            </Button>
           ) : null}
         </div>
-
-        {stage !== 'select' ? (
-          <ol aria-label="词库更新进度" className="mgmt-workflow__steps">
-            {steps.map((step, index) => (
-              <li data-state={index < stageIndex ? 'complete' : index === stageIndex ? 'current' : 'pending'} key={step.id}>
-                {index < stageIndex ? <Check size={13} /> : index === stageIndex ? <CircleDashed size={13} /> : <i />}
-                {step.label}
-              </li>
-            ))}
-          </ol>
-        ) : null}
-
-        {stage === 'preview' ? (
-          <div className="mgmt-workflow__panel">
-            <strong>本次将写入的词条</strong>
-            <ul>{selectedEntries.map((entry) => <li key={entry.reviewKey}>{entry.text} · {entry.pinyin || '无拼音'}</li>)}</ul>
-            <div className="mgmt-workflow__binding">
-              <span>已选 {selectedEntries.length} 条</span>
-              <span>确认后只更新上方这些词条</span>
-            </div>
-            <InlineNotice title="生效状态" tone="warning">更新后还需重载输入法，并通过实际选词确认效果。</InlineNotice>
-            <div className="mgmt-workflow__buttons">
-              <Button onClick={() => setStage('select')} size="small" variant="quiet">返回选择</Button>
-              <Button onClick={() => { setApproved(false); setStage('confirm'); }} size="small" variant="primary">确认这些词条</Button>
-            </div>
-          </div>
-        ) : null}
-
-        {stage === 'confirm' ? (
-          <div className="mgmt-workflow__panel">
-            <strong>确认本次词条</strong>
-            <label className="mgmt-workflow__confirm">
-              <input checked={approved} onChange={(event) => setApproved(event.target.checked)} type="checkbox" />
-              <span>只加入上方 {selectedEntries.length} 条词条</span>
-            </label>
-            <div className="mgmt-workflow__buttons">
-              <Button onClick={() => setStage('preview')} size="small" variant="quiet">返回查看</Button>
-              <Button disabled={!approved} loading={applyMutation.isPending} onClick={() => applyMutation.mutate()} size="small" variant="primary">确认加入词库</Button>
-            </div>
-          </div>
-        ) : null}
 
         {applyMutation.error ? <InlineNotice title="更新失败" tone="danger">{publicErrorText(applyMutation.error)}</InlineNotice> : null}
 

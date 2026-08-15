@@ -1,9 +1,9 @@
 {
   "schemaVersion": "rag-ime.skill-routing-card-catalog.v1",
   "scope": {
-    "bundledSkillEntries": 14,
-    "projectedBundledCards": 3,
-    "canonicalCards": 40
+    "bundledSkillEntries": 12,
+    "projectedBundledCards": 2,
+    "canonicalCards": 39
   },
   "collisionPolicy": {
     "default": "reject",
@@ -11,24 +11,22 @@
       "configured": [],
       "pi-installed": [
         "alignment-and-decision",
-        "implementation-execution",
+        "facilitate-room",
         "implementation-planning",
         "improve-codebase-architecture",
         "independent-review",
         "memory-curation",
+        "orchestrate-session",
+        "organize-work-documents",
         "plugin-creator",
-        "quality-gate",
         "rag-retrieval-optimization",
-        "review-feedback-resolution",
-        "structured-handoff",
         "systematic-debugging",
-        "test-driven-implementation",
-        "work-document-archive"
+        "test-driven-implementation"
       ]
     }
   },
   "coverage": {
-    "representedSourceEntries": 49,
+    "representedSourceEntries": 48,
     "duplicateSourceMultiplicity": {
       "openai-docs": 2,
       "codeagent": 2,
@@ -432,19 +430,6 @@
       "does": "区分证据、记忆、主题与时间线，生成带来源的待审草案。",
       "input": "用户意图、已授权 Evidence、当前记忆状态、冲突、作用域和治理回执。",
       "output": "待审记忆变更、证据引用、冲突说明、审批状态和可用回滚点。"
-    },
-    {
-      "name": "work-document-archive",
-      "when": [
-        "明确请求工作文档归档、恢复或历史"
-      ],
-      "notFor": [
-        "文件、索引或生命周期归属",
-        "擦除或 Room 必经阶段"
-      ],
-      "does": "调用受管 WorkDocument API。",
-      "input": "Operation-specific query, document, authority, or transition refs.",
-      "output": "Normalized packet with the untouched backend response or receipt."
     }
   ]
 }

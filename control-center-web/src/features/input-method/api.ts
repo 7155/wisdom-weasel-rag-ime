@@ -158,7 +158,7 @@ export function useInputMethodQueries() {
     ) {
       return {
         state: 'blocked',
-        reason: '当前版本没有提供完整的设置预览、应用与撤销能力，本次修改不会发送。',
+        reason: '当前应用不支持安全保存这项设置，本次修改不会发送。',
       };
     }
     if (blockedReason) return { state: 'blocked', reason: blockedReason };
@@ -221,7 +221,7 @@ function parseLexiconReview(value: unknown): LexiconReview {
   const confirmText = requiredString(payload.confirmText, 'confirmText');
   const entries = Array.isArray(payload.entries) ? payload.entries.map(parseLexiconEntry) : [];
   const entryCount = nonNegativeInteger(payload.entryCount, 'entryCount');
-  if (entryCount !== entries.length) throw new Error('词库审阅条目数量与服务端摘要不一致。');
+  if (entryCount !== entries.length) throw new Error('词库审阅信息不一致，请刷新后重试。');
   return {
     schemaVersion: payload.schemaVersion,
     project: stringValue(payload.project),
@@ -316,9 +316,9 @@ function parseLexiconMutation(value: unknown, kind: 'apply' | 'rollback'): Lexic
 function failureMessage(value: unknown, payload: Record<string, unknown>): string {
   const reason = stringValue(value) || 'unknown_error';
   const message = ({
-    review_token_stale: '词库审阅已变化，请刷新后重新选择并确认。',
+    review_token_stale: '词库审阅已变化，请刷新后重新选择。',
     no_reviewed_entries: '没有可应用的已审词条。',
-    confirm_text_required: '服务端确认绑定已失效，请重新审阅。',
+    confirm_text_required: '本次词库审阅已失效，请刷新后重新选择。',
     rollback_manifest_missing: '找不到该词库操作记录。',
     rollback_manifest_invalid: '词库撤销记录已损坏，未执行撤销。',
     rollback_already_applied: '该词库操作已经撤销。',
@@ -336,7 +336,7 @@ function record(value: unknown): Record<string, unknown> {
 
 function requiredString(value: unknown, field: string): string {
   const text = stringValue(value);
-  if (!text) throw new Error(field === 'reviewKey' || field === 'text' ? '词库条目数据不完整。' : '词库审阅缺少必要凭据，未执行操作。');
+  if (!text) throw new Error(field === 'reviewKey' || field === 'text' ? '词库条目数据不完整。' : '词库审阅信息不完整，未执行操作。');
   return text;
 }
 

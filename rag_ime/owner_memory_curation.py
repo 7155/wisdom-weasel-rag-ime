@@ -1480,6 +1480,13 @@ def owner_memory_curation_status(
         canonical_personal=canonical_personal,
     )
     interval_ms = max(60_000, int(daily_interval_ms))
+    backlog = _owner_curation_backlog_projection(
+        conn,
+        project=compact_whitespace(project),
+        scopes=scopes,
+        current_ms=timestamp,
+        canonical_personal=canonical_personal,
+    )
     return {
         "schemaVersion": OWNER_CURATION_STATUS_SCHEMA_VERSION,
         "ok": True,
@@ -1517,7 +1524,176 @@ def owner_memory_curation_status(
         "needsReviewSourceCount": sum(
             int(item["needsReviewSourceCount"]) for item in scopes
         ),
+        "backlog": backlog,
         "scopes": scopes,
+    }
+
+
+def _owner_curation_backlog_projection(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    scopes: list[dict[str, object]],
+    current_ms: int,
+    canonical_personal: bool,
+) -> dict[str, object]:
+    """Return bounded, text-free backlog facets for the Control Center."""
+
+    rows: list[sqlite3.Row] = []
+    for scope in scopes:
+        owner_kind = str(scope.get("ownerKind") or "")
+        owner_id = str(scope.get("ownerId") or "")
+        cursor = dict(scope.get("lastSourceCursor") or {})
+        cursor_ms = int(cursor.get("createdAtMs") or 0)
+        cursor_id = str(cursor.get("sourceId") or "")
+        cursor_clause = (
+            ""
+            if canonical_personal
+            else """
+              AND (
+                  s.created_at_ms > ?
+                  OR (s.created_at_ms = ? AND s.source_id > ?)
+              )
+            """
+        )
+        params: list[object] = [
+            owner_kind,
+            owner_id,
+            project,
+            project,
+            *_ELIGIBLE_DISPOSITIONS,
+        ]
+        if not canonical_personal:
+            params.extend((cursor_ms, cursor_ms, cursor_id))
+        evidence_join = (
+            f"""
+              JOIN memory_evidence_input_event_links AS source_link
+                ON source_link.input_event_id = s.input_event_id
+               AND source_link.relation = 'source'
+              JOIN agent_memory_evidence AS evidence
+                ON evidence.evidence_id = source_link.evidence_id
+               AND {curatable_personal_evidence_sql('evidence')}
+            """
+            if canonical_personal
+            else ""
+        )
+        evidence_state = (
+            "MIN(evidence.admission_state)"
+            if canonical_personal
+            else "CASE WHEN s.disposition = 'needs_review' THEN 'needs_review' ELSE 'candidate' END"
+        )
+        having = (
+            "HAVING COUNT(DISTINCT evidence.evidence_id) = 1"
+            if canonical_personal
+            else ""
+        )
+        rows.extend(
+            conn.execute(
+                f"""
+                SELECT s.source_id, e.created_at_ms, e.app,
+                       e.source AS event_source,
+                       {evidence_state} AS admission_state
+                FROM agent_memory_sources AS s
+                JOIN input_events AS e ON e.id = s.input_event_id
+                {evidence_join}
+                WHERE s.owner_kind = ? AND s.owner_id = ?
+                  AND s.status = 'active'
+                  AND (? = '' OR e.project = ? OR e.project = '')
+                  AND s.disposition IN ({','.join('?' for _ in _ELIGIBLE_DISPOSITIONS)})
+                  {cursor_clause}
+                GROUP BY s.source_id, e.created_at_ms, e.app, e.source, s.disposition
+                {having}
+                ORDER BY e.created_at_ms ASC, s.source_id ASC
+                LIMIT 50000
+                """,  # noqa: S608 - predicates and placeholders are fixed above.
+                tuple(params),
+            ).fetchall()
+        )
+
+    day_facets: dict[str, dict[str, object]] = {}
+    application_facets: dict[str, dict[str, object]] = {}
+    channel_facets: dict[str, dict[str, object]] = {}
+    for row in rows:
+        occurred_at_ms = int(row["created_at_ms"] or 0)
+        timeline_date = local_date_for_timestamp(occurred_at_ms)
+        application = compact_whitespace(str(row["app"] or "")) or "未知应用"
+        channel = compact_whitespace(str(row["event_source"] or "")) or "未知来源"
+        needs_review = str(row["admission_state"] or "") == "needs_review"
+        day = day_facets.setdefault(
+            timeline_date,
+            {
+                "date": timeline_date,
+                "pendingSourceCount": 0,
+                "needsReviewSourceCount": 0,
+                "applications": {},
+                "channels": {},
+            },
+        )
+        day["pendingSourceCount"] = int(day["pendingSourceCount"]) + 1
+        day["needsReviewSourceCount"] = int(day["needsReviewSourceCount"]) + int(needs_review)
+        day_apps = day["applications"]
+        day_channels = day["channels"]
+        assert isinstance(day_apps, dict) and isinstance(day_channels, dict)
+        day_apps[application] = int(day_apps.get(application, 0)) + 1
+        day_channels[channel] = int(day_channels.get(channel, 0)) + 1
+        for facets, name in ((application_facets, application), (channel_facets, channel)):
+            facet = facets.setdefault(name, {"name": name, "count": 0, "lastSourceAtMs": 0})
+            facet["count"] = int(facet["count"]) + 1
+            facet["lastSourceAtMs"] = max(int(facet["lastSourceAtMs"]), occurred_at_ms)
+
+    def ranked(values: dict[str, dict[str, object]], limit: int) -> list[dict[str, object]]:
+        return sorted(
+            values.values(),
+            key=lambda item: (-int(item["count"]), str(item["name"])),
+        )[:limit]
+
+    days: list[dict[str, object]] = []
+    for timeline_date in sorted(day_facets):
+        item = day_facets[timeline_date]
+        day_apps = item.pop("applications")
+        day_channels = item.pop("channels")
+        assert isinstance(day_apps, dict) and isinstance(day_channels, dict)
+        days.append(
+            {
+                **item,
+                "applications": [
+                    {"name": name, "count": count}
+                    for name, count in sorted(
+                        day_apps.items(), key=lambda pair: (-int(pair[1]), str(pair[0]))
+                    )[:6]
+                ],
+                "channels": [
+                    {"name": name, "count": count}
+                    for name, count in sorted(
+                        day_channels.items(), key=lambda pair: (-int(pair[1]), str(pair[0]))
+                    )[:6]
+                ],
+            }
+        )
+
+    first_ms = int(rows[0]["created_at_ms"] or 0) if rows else 0
+    last_ms = int(rows[-1]["created_at_ms"] or 0) if rows else 0
+    cursors = [
+        int(dict(scope.get("lastSourceCursor") or {}).get("createdAtMs") or 0)
+        for scope in scopes
+    ]
+    covered_through_ms = max(cursors, default=0)
+    return {
+        "schemaVersion": "rag-ime.owner-memory-curation-backlog.v1",
+        "pendingSourceCount": len(rows),
+        "pendingDayCount": len(days),
+        "oldestPendingAtMs": first_ms,
+        "newestPendingAtMs": last_ms,
+        "coveredThroughAtMs": covered_through_ms,
+        "coveredThroughDate": (
+            local_date_for_timestamp(covered_through_ms) if covered_through_ms else ""
+        ),
+        "targetDate": local_date_for_timestamp(current_ms),
+        "caughtUpThroughToday": not rows,
+        "applications": ranked(application_facets, 12),
+        "channels": ranked(channel_facets, 12),
+        "days": days[-62:],
+        "truncated": len(rows) >= 50_000 or len(days) > 62,
     }
 
 

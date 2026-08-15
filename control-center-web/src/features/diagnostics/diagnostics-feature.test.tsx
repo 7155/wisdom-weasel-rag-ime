@@ -40,11 +40,53 @@ describe('DiagnosticsFeature runtime actions', () => {
   it('keeps backend failure reasons visible and names voice components', async () => {
     renderFeature(new MockControlTransport({ routes }));
 
-    expect(await screen.findByText('语音定稿')).toBeInTheDocument();
-    expect(screen.getByText('语音代理安装版本过旧，缺少完整定稿能力')).toBeInTheDocument();
-    expect(screen.getByText('安装一致性')).toBeInTheDocument();
-    expect(screen.getByText('voice was installed from another product commit')).toBeInTheDocument();
+    expect(await screen.findByText('实时转写')).toBeInTheDocument();
+    expect(screen.getByText('已安装的语音输入组件版本较旧，暂不支持完整转写。')).toBeInTheDocument();
+    expect(screen.getByText('安装状态')).toBeInTheDocument();
+    expect(screen.getByText('已安装的语音组件与当前版本不一致。')).toBeInTheDocument();
+    expect(screen.queryByText('voice was installed from another product commit')).not.toBeInTheDocument();
     expect(screen.queryByText('已返回运行信息')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '等待前台验证' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '重新检查' })).toBeInTheDocument();
+  });
+
+  it('keeps candidate source, install, connection, production, and foreground render evidence separate', async () => {
+    renderFeature(new MockControlTransport({
+      routes: {
+        ...routes,
+        'diagnostics.runtime': {
+          ok: true,
+          runtimeRevision: 7,
+          runtimeConfig: { postCommit: { enabled: true } },
+          components: {
+            assistantCandidateDelivery: {
+              ok: false,
+              status: 'unavailable',
+              detail: '候选已生成，但尚无近期前台显示凭证',
+              metadata: {
+                stages: {
+                  sourcePresent: { ok: true, detail: '候选框源码存在' },
+                  installedProvenance: { ok: true, detail: '已安装版本与当前源码一致' },
+                  sidecarConnected: { ok: true, detail: 'Sidecar 已响应' },
+                  candidateProduced: { ok: true, detail: '最近真实请求已生成候选' },
+                  foregroundRendered: { ok: false, detail: '前台 trace 没有近期显示事件' },
+                },
+              },
+            },
+          },
+        },
+      },
+    }));
+
+    expect(await screen.findByRole('heading', { name: '智能候选检查' })).toBeInTheDocument();
+    expect(screen.getByText('输入法功能已准备')).toBeInTheDocument();
+    expect(screen.getByText('已安装输入法版本')).toBeInTheDocument();
+    expect(screen.getByText('本机补全服务已连接')).toBeInTheDocument();
+    expect(screen.getByText('候选已生成')).toBeInTheDocument();
+    expect(screen.getByText('候选已显示')).toBeInTheDocument();
+    expect(screen.getByText('等待检查或实际输入验证')).toBeInTheDocument();
+    expect(screen.queryByText('前台 trace 没有近期显示事件')).not.toBeInTheDocument();
+    expect(screen.getByText('本机服务正常不代表候选已经显示。请依次检查输入法、已安装组件、本机补全服务、候选生成和前台显示。')).toBeInTheDocument();
   });
 
   it('runs the server-bound accessibility workflow and renders the terminal receipt', async () => {
@@ -60,13 +102,10 @@ describe('DiagnosticsFeature runtime actions', () => {
     renderFeature(transport);
 
     const workflow = await workflowFor('打开辅助功能设置');
-    await user.click(within(workflow).getByRole('button', { name: '查看影响' }));
-    expect(await within(workflow).findByText('不会自动授予或撤销任何权限。')).toBeInTheDocument();
-    await user.click(within(workflow).getByRole('button', { name: '确认这些更改' }));
-    await user.click(within(workflow).getByRole('checkbox'));
-    await user.click(within(workflow).getByRole('button', { name: '确认执行' }));
+    expect(workflow).toHaveAttribute('data-confirmation', 'direct');
+    await user.click(within(workflow).getByRole('button', { name: '打开辅助功能设置' }));
 
-    expect(await within(workflow).findByText('这次更改已安全记录')).toBeInTheDocument();
+    expect(await within(workflow).findByText('已保存')).toBeInTheDocument();
     expect(externalAction).toHaveBeenCalledWith({
       action: 'open_accessibility_settings',
       receiptId: 'runtime-job-1',
@@ -93,52 +132,80 @@ describe('DiagnosticsFeature runtime actions', () => {
     renderFeature(transport);
 
     const workflow = await workflowFor('暂停智能候选');
-    await user.click(within(workflow).getByRole('button', { name: '查看影响' }));
-    await user.click(await within(workflow).findByRole('button', { name: '确认这些更改' }));
-    await user.click(within(workflow).getByRole('checkbox'));
-    await user.click(within(workflow).getByRole('button', { name: '确认执行' }));
+    expect(workflow).toHaveAttribute('data-confirmation', 'direct');
+    await user.click(within(workflow).getByRole('button', { name: '暂停智能候选' }));
 
-    expect(await within(workflow).findByText('这次更改已安全记录')).toBeInTheDocument();
+    expect(await within(workflow).findByText('已保存')).toBeInTheDocument();
     expect(externalAction).not.toHaveBeenCalled();
     expect(transport.requests.some((item) => item.request.pathId === 'diagnostics.action.job')).toBe(true);
   });
 
-  it('exposes every migrated repair and fails closed for external actions without the native bridge', async () => {
+  it('keeps browser-preview repairs compact while still exposing every real action and its impact', async () => {
     renderFeature(runtimeTransport({ terminalStatus: 'succeeded', native: false }));
 
     expect(await screen.findByText('请在已安装的应用中操作')).toBeInTheDocument();
+    expect(screen.queryByText(/固定白名单/)).not.toBeInTheDocument();
     const actionList = document.querySelector('.diagnostics-action-list');
-    expect(actionList).not.toBeNull();
-    expect(actionList?.querySelectorAll('.mgmt-workflow')).toHaveLength(6);
+    expect(actionList).toBeNull();
+    const actionSummary = document.querySelector('.diagnostics-action-summary');
+    expect(actionSummary?.querySelectorAll('li')).toHaveLength(6);
 
     for (const title of [
       '重新连接输入法',
-      '重启后台服务',
+      '重新连接本机补全服务',
       '应用并重启本机模型',
-      '应用输入法前端设置',
+      '重新部署受管输入法',
       '打开辅助功能设置',
       '暂停智能候选',
     ]) {
       expect(await screen.findByText(title)).toBeInTheDocument();
     }
-    const accessibility = await workflowFor('打开辅助功能设置');
-    expect(within(accessibility).queryByRole('button', { name: '当前不可用' })).not.toBeInTheDocument();
-    const pause = await workflowFor('暂停智能候选');
-    expect(within(pause).getByRole('button', { name: '查看影响' })).toBeEnabled();
+    expect(screen.getByText('需要确认')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '暂停智能候选' })).not.toBeInTheDocument();
   });
 
   it('offers a fresh preview after a terminal job failure', async () => {
     const user = userEvent.setup();
-    renderFeature(runtimeTransport({ terminalStatus: 'failed' }));
+    renderFeature(runtimeTransport({ externalAction: vi.fn(), terminalStatus: 'failed' }));
     const workflow = await workflowFor('暂停智能候选');
 
-    await user.click(within(workflow).getByRole('button', { name: '查看影响' }));
-    await user.click(await within(workflow).findByRole('button', { name: '确认这些更改' }));
-    await user.click(within(workflow).getByRole('checkbox'));
-    await user.click(within(workflow).getByRole('button', { name: '确认执行' }));
+    await user.click(within(workflow).getByRole('button', { name: '暂停智能候选' }));
 
     expect(await within(workflow).findByText('修复任务失败')).toBeInTheDocument();
-    expect(within(workflow).getByRole('button', { name: '重新查看影响' })).toBeEnabled();
+    expect(within(workflow).getByRole('button', { name: '返回' })).toBeEnabled();
+  });
+
+  it('keeps preview-binding failures out of the user-facing repair feedback', async () => {
+    const user = userEvent.setup();
+    renderFeature(new MockControlTransport({
+      externalAction: vi.fn(),
+      routes: {
+        ...routes,
+        'diagnostics.action.preview': {
+          ok: true,
+          action: 'stop_ai',
+          commandSha256: 'sha256:not-a-real-binding',
+          previewToken: 'PRIVATE_PREVIEW_TOKEN',
+          payloadSha256,
+          requiredConfirm: 'apply',
+        },
+      },
+    }));
+    const workflow = await workflowFor('暂停智能候选');
+
+    await user.click(within(workflow).getByRole('button', { name: '暂停智能候选' }));
+
+    expect(await within(workflow).findByText('无法确认这项本机操作，请重新检查后再试。')).toBeInTheDocument();
+    expect(within(workflow).queryByText(/PRIVATE_PREVIEW_TOKEN|绑定/)).not.toBeInTheDocument();
+  });
+
+  it('marks managed input-method redeployment as the only dangerous browser-preview repair', async () => {
+    renderFeature(runtimeTransport({ native: false, terminalStatus: 'succeeded' }));
+
+    expect(await screen.findByText('重新部署受管输入法')).toBeInTheDocument();
+    const summary = document.querySelector('.diagnostics-action-summary');
+    expect(summary).not.toBeNull();
+    expect(within(summary as HTMLElement).getByText('需要确认')).toBeInTheDocument();
   });
 
   it('copies a support snapshot without internal contract metadata or local paths', async () => {
@@ -166,7 +233,62 @@ describe('DiagnosticsFeature runtime actions', () => {
     expect(report).not.toMatch(/schemaVersion|pathId|runtimeRevision|payloadSha|sha256:|\/Models\/private/);
     expect(report).toContain('"model": "已隐藏"');
   });
+
+  it('does not disguise a capability read failure as an unavailable desktop action', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({ routes });
+    const capabilities = vi.spyOn(transport, 'capabilities')
+      .mockRejectedValueOnce(new Error('native bridge timed out'))
+      .mockResolvedValue({
+        schemaVersion: 'rag-ime.control-frontend-capabilities.v1',
+        transport: 'mock',
+        routeIds: [],
+        features: {},
+        native: {
+          pickFiles: false,
+          managedAgentImageImport: false,
+          revealPath: false,
+          approvedExternalActions: false,
+          keychain: false,
+          tcc: false,
+        },
+      });
+    renderFeature(transport);
+
+    expect(await screen.findByText('无法确认本机操作能力')).toBeInTheDocument();
+    expect(screen.queryByText('请在已安装的应用中操作')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '重新检查操作能力' }));
+
+    await waitFor(() => expect(screen.queryByText('无法确认本机操作能力')).not.toBeInTheDocument());
+    expect(capabilities).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps report export disabled until every core diagnostic source is ready', async () => {
+    const runtime = deferred<typeof routes['diagnostics.runtime']>();
+    const transport = new MockControlTransport({
+      routes: { ...routes, 'diagnostics.runtime': () => runtime.promise },
+    });
+    renderFeature(transport);
+
+    const copyButton = screen.getByRole('button', { name: '复制排查报告' });
+    expect(copyButton).toBeDisabled();
+
+    runtime.resolve(routes['diagnostics.runtime']);
+
+    await waitFor(() => expect(copyButton).toBeEnabled());
+  });
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
 
 function runtimeTransport({
   externalAction,
@@ -238,8 +360,9 @@ function runtimeTransport({
 }
 
 async function workflowFor(title: string): Promise<HTMLElement> {
-  const heading = await screen.findByText(title);
-  const workflow = heading.closest<HTMLElement>('.mgmt-workflow');
+  const workflow = (await screen.findAllByText(title))
+    .map((element) => element.closest<HTMLElement>('.mgmt-workflow'))
+    .find((candidate): candidate is HTMLElement => Boolean(candidate));
   if (!workflow) throw new Error(`workflow not found for ${title}`);
   return workflow;
 }

@@ -49,7 +49,7 @@ export function previewMemoryPage(
         {
           id: 'evidence:preview-agent-capture',
           title: '桌面上下文默认读取 Accessibility Tree，截图仅作兜底。',
-          detail: 'Agent 主动记录',
+          detail: '伙伴主动记录',
           status: 'active',
           sourceChannel: 'agent_capture',
           source: { type: 'agent_memory_evidence', id: 'evidence:preview-agent-capture' },
@@ -57,7 +57,7 @@ export function previewMemoryPage(
           evidenceRefs: [{
             kind: 'event',
             referenceId: 'event:10003',
-            title: 'Agent 主动记录的用户长期边界',
+            title: '伙伴主动记录的长期记忆边界',
           }],
           type: 'session_digest',
           ownerKind: 'agent',
@@ -178,7 +178,7 @@ export function previewMemoryReference(kind: string, referenceId: string): Memor
       ref: makeReference('evidence', referenceId),
       item: {
         id: referenceId,
-        title: 'Agent 对话整理证据',
+        title: '伙伴对话整理依据',
         detail: '桌面上下文默认读取 Accessibility Tree，截图仅在语义不足时兜底。',
         status: 'active',
         ownerKind: 'agent',
@@ -196,7 +196,7 @@ export function previewMemoryReference(kind: string, referenceId: string): Memor
       ref: makeReference('atom', referenceId),
       item: {
         id: referenceId,
-        title: timelineBoundary ? '时间线召回边界' : '输入段封口规则',
+        title: timelineBoundary ? '时间线联想边界' : '输入段封口规则',
         text: timelineBoundary
           ? '已批准时间线可用于活动背景，但不能单独证明稳定事实。'
           : '输入框最终文本优先，Enter 或切换 App 后才形成完整输入段。',
@@ -207,7 +207,7 @@ export function previewMemoryReference(kind: string, referenceId: string): Memor
         updatedAtMs: now - 120_000,
       },
       evidenceRefs: timelineBoundary
-        ? [makeReference('evidence', 'evidence:preview-compaction', 'Agent 对话整理证据')]
+        ? [makeReference('evidence', 'evidence:preview-compaction', '伙伴对话整理依据')]
         : [makeReference('event', 'event:10003', '输入框最终文本采集记录')],
     };
   }
@@ -218,7 +218,7 @@ export function previewMemoryReference(kind: string, referenceId: string): Memor
       ref: makeReference('book', referenceId),
       item: {
         id: referenceId,
-        title: referenceId.includes('agent-runtime') ? 'Agent Runtime' : '输入法记忆与上下文',
+        title: referenceId.includes('agent-runtime') ? '伙伴运行' : '输入法记忆与上下文',
         summary: '聚合当前 Atom 和来源证据，作为主题检索入口。',
         status: 'active',
         type: 'topic',
@@ -228,7 +228,7 @@ export function previewMemoryReference(kind: string, referenceId: string): Memor
       },
       evidenceRefs: [
         makeReference('atom', 'atom:input-boundary', '输入段封口规则'),
-        makeReference('atom', 'atom:timeline-governance', '时间线召回边界'),
+        makeReference('atom', 'atom:timeline-governance', '时间线联想边界'),
       ],
     };
   }
@@ -342,7 +342,7 @@ export function previewActivityTimeline(date: string, status: string): Record<st
       startMs: dayStart + 9.2 * 3_600_000,
       endMs: dayStart + 12.1 * 3_600_000,
       eventCount: 27,
-      summary: '围绕 Evidence、Current Fact、Topic Book、Role Book 和 Timeline 的边界完成方案核对与资料查证。',
+      summary: '围绕来源记录、已整理记忆、主题、伙伴记忆和时间线的边界完成方案核对与资料查证。',
       sourceKinds: ['pi_agent', 'browser_extension', 'squirrel_input_segment'],
       contextGroupIds: ['group:personal-context', 'group:memory-evaluation'],
       redactedEventCount: 2,
@@ -355,7 +355,7 @@ export function previewActivityTimeline(date: string, status: string): Record<st
       startMs: dayStart + 13.2 * 3_600_000,
       endMs: dayStart + 17.1 * 3_600_000,
       eventCount: 36,
-      summary: '实现跨 App 任务聚合、记忆召回和逐层来源查看，并运行 Web、后端与输入法集成验证。',
+      summary: '实现跨 App 任务聚合、记忆联想和逐层来源查看，并运行 Web、后端与输入法集成验证。',
       sourceKinds: ['squirrel_input_segment', 'pi_agent'],
       contextGroupIds: ['group:input-method', 'group:personal-context', 'group:verification'],
     }),
@@ -393,6 +393,72 @@ export function previewActivityTimeline(date: string, status: string): Record<st
       explicitApprovalRequired: false,
       minimumConsolidatedSpanMs: 30 * 60_000,
     },
+  };
+}
+
+export function previewActivityTimelineCalendar(
+  month: string,
+  statuses: ReadonlyMap<string, string>,
+): Record<string, unknown> {
+  const monthStart = new Date(`${month}-01T00:00:00`);
+  const daysInMonth = Number.isNaN(monthStart.getTime())
+    ? 30
+    : new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0).getDate();
+  const today = new Date().toISOString().slice(0, 10);
+  const latestSeedDay = today.startsWith(`${month}-`)
+    ? Number(today.slice(-2))
+    : daysInMonth;
+  const seeded = [
+    { day: Math.max(1, latestSeedDay - 8), status: 'approved', sourceEventCount: 42, segmentCount: 3, needsRefresh: false },
+    { day: Math.max(1, latestSeedDay - 5), status: 'approved', sourceEventCount: 31, segmentCount: 2, needsRefresh: true },
+    { day: Math.max(1, latestSeedDay - 3), status: 'draft', sourceEventCount: 27, segmentCount: 3, needsRefresh: false },
+    { day: Math.max(1, latestSeedDay - 1), status: 'none', sourceEventCount: 18, segmentCount: 0, needsRefresh: false },
+  ];
+  const byDate = new Map(seeded.map((item) => [
+    `${month}-${String(item.day).padStart(2, '0')}`,
+    item,
+  ]));
+  for (const [date, status] of statuses) {
+    if (!date.startsWith(`${month}-`)) continue;
+    const current = byDate.get(date);
+    byDate.set(date, {
+      day: Number(date.slice(-2)),
+      status,
+      sourceEventCount: current?.sourceEventCount ?? (date === today ? 71 : 24),
+      segmentCount: current?.segmentCount ?? (date === today ? 3 : 2),
+      needsRefresh: false,
+    });
+  }
+  const days = [...byDate.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([date, item]) => {
+    const organized = (item.status === 'approved' || item.status === 'draft') && !item.needsRefresh;
+    return {
+      date,
+      status: item.status,
+      organized,
+      needsRefresh: item.needsRefresh,
+      sourceEventCount: item.sourceEventCount,
+      timelineId: item.status === 'none' ? '' : `timeline:${date}`,
+      timelineEventCount: item.needsRefresh ? Math.max(0, item.sourceEventCount - 6) : item.sourceEventCount,
+      segmentCount: item.segmentCount,
+      updatedAtMs: localPreviewDayStart(date) + 18 * 3_600_000,
+    };
+  });
+  return {
+    schemaVersion: 'rag-ime.activity-timeline-calendar.v1',
+    ok: true,
+    project: 'wisdom-weasel-rag-ime',
+    timezone: 'Asia/Shanghai',
+    month,
+    summary: {
+      sourceEventCount: days.reduce((sum, item) => sum + item.sourceEventCount, 0),
+      activityDayCount: days.length,
+      organizedDayCount: days.filter((item) => item.organized).length,
+      approvedDayCount: days.filter((item) => item.status === 'approved' && item.organized).length,
+      draftDayCount: days.filter((item) => item.status === 'draft' && item.organized).length,
+      waitingDayCount: days.filter((item) => !item.organized).length,
+      outdatedDayCount: days.filter((item) => item.needsRefresh).length,
+    },
+    days,
   };
 }
 
@@ -476,7 +542,7 @@ function previewMemoryCatalogPage(kind: string): Record<string, unknown> {
     return {
       ...common,
       items: [
-        { id: 'agent-runtime', tag: 'Agent Runtime', description: '会话、工具与执行边界', item_count: 18, edge_count: 2, color_token: 'teal', status: 'active', source: 'agent' },
+        { id: 'agent-runtime', tag: '伙伴运行', description: '会话、工具与执行边界', item_count: 18, edge_count: 2, color_token: 'teal', status: 'active', source: 'agent' },
         { id: 'memory-quality', tag: '记忆质量', description: '去噪、合并与来源约束', item_count: 14, edge_count: 2, color_token: 'green', status: 'active', source: 'agent' },
         { id: 'input-boundary', tag: '输入封口', description: 'Backspace 编辑，Enter 后持久化', item_count: 9, edge_count: 2, color_token: 'orange', status: 'active', source: 'agent' },
       ],
@@ -487,7 +553,7 @@ function previewMemoryCatalogPage(kind: string): Record<string, unknown> {
       ...common,
       items: [
         { id: 'group:input-method', title: '输入法', note: '输入质量、候选与上下文注入', tags: ['输入封口', '记忆质量'], event_count: 34, color_token: 'teal', status: 'active', source: 'agent' },
-        { id: 'group:agent', title: 'Agent 工程', note: '会话、工具和长期记忆', tags: ['Agent Runtime', '记忆质量'], event_count: 27, color_token: 'blue', status: 'active', source: 'agent' },
+        { id: 'group:agent', title: '伙伴运行资料', note: '会话、工具和长期记忆', tags: ['伙伴运行', '记忆质量'], event_count: 27, color_token: 'blue', status: 'active', source: 'agent' },
       ],
     };
   }
@@ -508,12 +574,12 @@ function previewMemoryCatalogPage(kind: string): Record<string, unknown> {
         },
         {
           id: 'atom:timeline-governance',
-          title: '时间线召回边界',
-          text: '活动时间线是经审批的活动衍生物，可参与 Session 启动上下文和工具检索，但不能单独证明长期事实。',
+          title: '时间线联想边界',
+          text: '活动时间线是经审批的活动衍生物，可用于对话启动时的上下文和工具检索，但不能单独证明长期事实。',
           status: 'active',
           source: { type: 'memory_atom', id: 'atom:timeline-governance' },
           ref: { type: 'atom', id: 'atom:timeline-governance' },
-          evidenceRefs: [{ kind: 'evidence', referenceId: 'evidence:preview-compaction', title: 'Agent 对话整理证据' }],
+          evidenceRefs: [{ kind: 'evidence', referenceId: 'evidence:preview-compaction', title: '伙伴对话整理依据' }],
           tags: ['时间线', '记忆治理'],
           updatedAtMs: Date.now() - 240_000,
         },
@@ -544,13 +610,13 @@ function previewMemoryCatalogPage(kind: string): Record<string, unknown> {
       {
         id: 'book:agent-runtime',
         type: 'topic',
-        title: 'Agent Runtime',
-        summary: 'Role Book、Session 启动注入、显式记忆工具与受控写入。',
+        title: '伙伴运行',
+        summary: '伙伴记忆、对话启动参考、记忆工具与受控写入。',
         status: 'active',
         source: { type: 'memory_book', id: 'book:agent-runtime' },
         ref: { type: 'book', id: 'book:agent-runtime' },
-        evidenceRefs: [{ kind: 'evidence', referenceId: 'evidence:preview-compaction', title: 'Agent 对话整理证据' }],
-        tags: ['Agent Runtime'],
+        evidenceRefs: [{ kind: 'evidence', referenceId: 'evidence:preview-compaction', title: '伙伴对话整理依据' }],
+        tags: ['伙伴运行'],
         updatedAtMs: Date.now() - 210_000,
       },
     ],
@@ -583,7 +649,7 @@ function previewAppMemory(
 }
 
 export function previewMemoryGraph(plane: 'groups' | 'tags'): Record<string, unknown> {
-  const runtime = previewMemoryGraphNode('tag:agent-runtime', 'tag', 'Agent Runtime', '会话、工具与执行边界', 18, 'teal');
+  const runtime = previewMemoryGraphNode('tag:agent-runtime', 'tag', '伙伴运行', '会话、工具与执行边界', 18, 'teal');
   const quality = previewMemoryGraphNode('tag:memory-quality', 'tag', '记忆质量', '去噪、合并与来源约束', 14, 'green');
   const boundary = previewMemoryGraphNode('tag:input-boundary', 'tag', '输入封口', 'Backspace 编辑，Enter 后持久化', 9, 'orange');
   const tags = [runtime, quality, boundary];
@@ -595,7 +661,7 @@ export function previewMemoryGraph(plane: 'groups' | 'tags'): Record<string, unk
     ]);
   }
   const inputGroup = previewMemoryGraphNode('group:input-method', 'group', '输入法', '输入质量、候选与上下文注入', 34, 'teal');
-  const agentGroup = previewMemoryGraphNode('group:agent', 'group', 'Agent 工程', '会话、工具和长期记忆', 27, 'blue');
+  const agentGroup = previewMemoryGraphNode('group:agent', 'group', '伙伴运行资料', '会话、工具和长期记忆', 27, 'blue');
   const book = previewMemoryGraphNode('book:input-memory', 'book', '输入法记忆与上下文', '完整输入段、App 来源和闪电联想边界', 12, 'green');
   return previewMemoryGraphEnvelope(plane, [inputGroup, agentGroup, book, ...tags], [
     previewMemoryGraphEdge('member:input-boundary', 'groupMember', 'group:input-method', 'tag:input-boundary', 'contains', 1, 1),
@@ -680,11 +746,11 @@ function previewMemoryGraphEdge(
 export function previewMemoryEntity(kindValue: string, entityId: string): Record<string, unknown> {
   const kind = kindValue === 'group' || kindValue === 'book' ? kindValue : 'tag';
   const catalog = {
-    'agent-runtime': previewMemoryGraphNode('tag:agent-runtime', 'tag', 'Agent Runtime', '会话、工具与执行边界', 18, 'teal'),
+    'agent-runtime': previewMemoryGraphNode('tag:agent-runtime', 'tag', '伙伴运行', '会话、工具与执行边界', 18, 'teal'),
     'memory-quality': previewMemoryGraphNode('tag:memory-quality', 'tag', '记忆质量', '去噪、合并与来源约束', 14, 'green'),
     'input-boundary': previewMemoryGraphNode('tag:input-boundary', 'tag', '输入封口', 'Backspace 编辑，Enter 后持久化', 9, 'orange'),
     'input-method': previewMemoryGraphNode('group:input-method', 'group', '输入法', '输入质量、候选与上下文注入', 34, 'teal'),
-    agent: previewMemoryGraphNode('group:agent', 'group', 'Agent 工程', '会话、工具和长期记忆', 27, 'blue'),
+    agent: previewMemoryGraphNode('group:agent', 'group', '伙伴运行资料', '会话、工具和长期记忆', 27, 'blue'),
     'input-memory': previewMemoryGraphNode('book:input-memory', 'book', '输入法记忆与上下文', '完整输入段、App 来源和闪电联想边界', 12, 'green'),
   } as const;
   const fallback = previewMemoryGraphNode(
@@ -734,10 +800,62 @@ export function previewMemoryEntity(kindValue: string, entityId: string): Record
 }
 
 export function previewMemoryCurationStatus(status: string): Record<string, unknown> {
+  const today = new Date().toISOString().slice(0, 10);
+  const dateBefore = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  const backlogDays = [
+    { date: dateBefore(6), pendingSourceCount: 38, needsReviewSourceCount: 0, applications: [{ name: 'Codex', count: 21 }, { name: 'Chrome', count: 11 }, { name: '系统输入框', count: 6 }], channels: [] },
+    { date: dateBefore(5), pendingSourceCount: 44, needsReviewSourceCount: 0, applications: [{ name: 'Codex', count: 27 }, { name: 'Chrome', count: 17 }], channels: [] },
+    { date: dateBefore(4), pendingSourceCount: 51, needsReviewSourceCount: 0, applications: [{ name: 'Codex', count: 31 }, { name: 'Terminal', count: 12 }, { name: 'Chrome', count: 8 }], channels: [] },
+    { date: dateBefore(3), pendingSourceCount: 63, needsReviewSourceCount: 0, applications: [{ name: 'Codex', count: 42 }, { name: 'Chrome', count: 21 }], channels: [] },
+    { date: dateBefore(2), pendingSourceCount: 48, needsReviewSourceCount: 0, applications: [{ name: 'Codex', count: 26 }, { name: 'Chrome', count: 15 }, { name: 'Terminal', count: 7 }], channels: [] },
+    { date: dateBefore(1), pendingSourceCount: 42, needsReviewSourceCount: 0, applications: [{ name: 'Codex', count: 25 }, { name: 'Chrome', count: 17 }], channels: [] },
+    { date: today, pendingSourceCount: 24, needsReviewSourceCount: 0, applications: [{ name: 'Codex', count: 15 }, { name: 'Chrome', count: 9 }], channels: [] },
+  ];
   return {
     ok: true,
-    policy: 'review',
+    policy: 'auto_governed',
     autoApply: false,
+    scheduledDraftOnly: true,
+    due: true,
+    compileState: { undraftedEventCount: 310 },
+    ownerCuration: {
+      pendingSourceCount: 310,
+      needsReviewSourceCount: 0,
+      backlog: {
+        schemaVersion: 'rag-ime.owner-memory-curation-backlog.v1',
+        pendingSourceCount: 310,
+        pendingDayCount: backlogDays.length,
+        oldestPendingAtMs: Date.now() - 6 * 86_400_000,
+        newestPendingAtMs: Date.now(),
+        coveredThroughAtMs: Date.now() - 7 * 86_400_000,
+        coveredThroughDate: dateBefore(7),
+        targetDate: today,
+        caughtUpThroughToday: false,
+        applications: [
+          { name: 'Codex', count: 187, lastSourceAtMs: Date.now() },
+          { name: 'Chrome', count: 98, lastSourceAtMs: Date.now() - 30_000 },
+          { name: 'Terminal', count: 19, lastSourceAtMs: Date.now() - 120_000 },
+          { name: '系统输入框', count: 6, lastSourceAtMs: Date.now() - 180_000 },
+        ],
+        channels: [],
+        days: backlogDays,
+        truncated: false,
+      },
+      scopes: [{
+        status: 'backoff',
+        pendingSourceCount: 310,
+        totalSourceCount: 339,
+        consecutiveFailures: 2,
+        lastSourceCursor: { createdAtMs: Date.now() - 7 * 86_400_000 },
+        lastError: 'managed memory model request failed: request failed',
+      }],
+    },
+    modelCuration: {
+      stateCounts: { running: 0, resumable: 2, completed: 9, cancelled: 1 },
+      runs: [{ state: 'resumable', lastError: 'request failed' }],
+    },
+    bookProjection: { inSync: true, unbookedAtomCount: 0 },
+    projection: { freshness: { fresh: true, retrievalDocuments: 76, vectorCoverage: .49, providerFingerprint: 'sha256:preview' } },
     pendingDraftCount: status === 'draft' ? 1 : 0,
     runs: [{ runId: 'memory_book_preview', status, diffCount: 3, createdAtMs: Date.now() - 180_000 }],
   };
@@ -750,7 +868,7 @@ export function previewMemoryCurationRun(
   const changes = [
     ['upsert_memory_atom', '更新记忆原子', '输入封口边界', 'Backspace 修改缓冲区，Enter 或切换 App 后才写入完整段落。', 18],
     ['merge_semantic_tag', '合并标签', '合并输入法同义标签', '保留清晰名称和别名，移除传输层标签。', 11],
-    ['supersede_memory', '归档噪声', '隔离旧 Rime 碎片', '未封口单词和短片段不再参与 Agent 上下文或长期记忆。', 4_887],
+    ['supersede_memory', '归档噪声', '隔离旧 Rime 碎片', '未封口单词和短片段不再用于伙伴上下文或长期记忆。', 4_887],
   ].map(([operation, operationLabel, title, detail, sourceCount], index) => {
     const diffId = index + 1;
     const selected = selections.get(diffId) === true;

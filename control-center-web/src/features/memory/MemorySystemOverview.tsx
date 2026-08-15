@@ -68,11 +68,10 @@ export function MemorySystemOverview({
     <section className="memory-system-overview" aria-labelledby="memory-system-overview-title">
       <div className="memory-system-overview__headline">
         <div>
-          <span>Governed memory · 可追溯记忆</span>
-          <h2 id="memory-system-overview-title">每条长期记忆，都能回到它的依据</h2>
+          <span>可追溯记忆</span>
+          <h2 id="memory-system-overview-title">把重要的事整理好，需要时随时找回</h2>
           <p>
-            <strong>Evidence</strong> 只接收输入法、语音和 Agent 主动记录，
-            <strong>Atom</strong> 承载可审阅的记忆单元，<strong>Book</strong> 只组织 Atom。
+            这里汇总记录来源、已整理记忆和主题；需要核对时，每条结论都能回到它的来源。
           </p>
         </div>
         <div className="memory-system-overview__primary-actions" aria-label="记忆辅助视图">
@@ -85,10 +84,10 @@ export function MemorySystemOverview({
         </div>
       </div>
 
-      <div className="memory-system-overview__signals" aria-label="记忆治理状态">
+      <div className="memory-system-overview__signals" aria-label="记忆整理状态">
         <StatusSignal
           detail={projectionSignal.detail}
-          label="检索投影"
+          label="检索索引"
           tone={projectionSignal.tone}
         />
         <StatusSignal
@@ -103,40 +102,40 @@ export function MemorySystemOverview({
         />
       </div>
 
-      <ol className="memory-architecture" aria-label="Evidence → Atom → Book">
+      <ol className="memory-architecture" aria-label="记忆内容分类">
         <MemoryLayerStage
           active={activeLayer === 'evidence'}
-          code="Evidence"
+          code="来源"
           count={evidenceCount}
-          description="只保留进入长期记忆链的用户来源；命令、工具过程和非持久审计不会计入。"
-          detail={`输入法 ${numberValue(summary.inputMethodEvidenceCount)} · 语音 ${numberValue(summary.voiceEvidenceCount)} · Agent 主动记录 ${agentCapturedEvidenceCount}`}
+          description="查看哪些输入、语音和主动记录可用于整理记忆。"
+          detail={`输入法 ${numberValue(summary.inputMethodEvidenceCount)} · 语音 ${numberValue(summary.voiceEvidenceCount)} · 伙伴主动记录 ${agentCapturedEvidenceCount}`}
           icon={Archive}
           index="01"
-          label="证据"
+          label="来源记录"
           onClick={() => onOpenLayer('evidence')}
         />
-        <MemoryLayerConnector label="派生并审核" />
+        <MemoryLayerConnector label="整理后可查看" />
         <MemoryLayerStage
           active={activeLayer === 'atoms'}
-          code="Atom"
+          code="记忆"
           count={currentAtomCount}
-          description="从 Evidence 派生的最小可审阅记忆单元；保留类型、状态与来源引用。"
+          description="查看已经整理好的长期记忆、当前状态和来源。"
           detail={`全部 ${atomTotalCount} · 历史 ${historicalAtomCount}`}
           icon={Tags}
           index="02"
-          label="记忆单元"
+          label="记忆"
           onClick={() => onOpenLayer('atoms')}
         />
-        <MemoryLayerConnector label="按主题聚合" />
+        <MemoryLayerConnector label="按主题归类" />
         <MemoryLayerStage
           active={activeLayer === 'books'}
-          code="Book"
+          code="主题"
           count={numberValue(summary.memoryBookCount)}
-          description="面向检索的主题聚合，只引用 Atom，不复制一份新的事实。"
+          description="按主题浏览相关记忆，不会丢失每条记忆的来源。"
           detail={`${numberValue(summary.memoryTagCount)} 个关系标签`}
           icon={BookOpen}
           index="03"
-          label="主题书"
+          label="长期主题"
           onClick={() => onOpenLayer('books')}
         />
       </ol>
@@ -144,8 +143,8 @@ export function MemorySystemOverview({
       <div className="memory-system-overview__trust-note">
         <ShieldCheck aria-hidden="true" size={17} />
         <div>
-          <strong>Book 不是第二真相源</strong>
-          <span>从任一 Book 打开引用，可沿 Atom 继续回到 Evidence；历史状态也保留稳定引用。</span>
+          <strong>主题不会替代原始记录</strong>
+          <span>从任一主题都能继续查看整理过的记忆和来源；历史状态也会保留。</span>
         </div>
         <Button leadingIcon={<CalendarClock size={14} />} onClick={onOpenTimeline} size="small" variant="quiet">
           查看时间线
@@ -184,7 +183,7 @@ function MemoryLayerStage({
   onClick,
 }: {
   active: boolean;
-  code: 'Evidence' | 'Atom' | 'Book';
+  code: '来源' | '记忆' | '主题';
   count: number;
   description: string;
   detail: string;

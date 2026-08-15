@@ -126,6 +126,7 @@ describe('Rooms experience', () => {
     expect(errorSlot?.nextElementSibling?.nextElementSibling).toHaveClass('room-composer-dock');
     expect(screen.getByTestId('virtuoso-list')).toHaveAttribute('data-initial-index', 'LAST');
     expect(screen.getByTestId('virtuoso-list')).toHaveAttribute('data-initial-align', 'end');
+    expect(screen.getByTestId('virtuoso-list')).not.toHaveAttribute('data-align-to-bottom');
     await user.type(composer, '并行核对边界');
     await user.click(screen.getByRole('button', { name: '立即干预当前回合' }));
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.participant.steer')).toBe(true));
@@ -350,11 +351,32 @@ describe('Rooms experience', () => {
     expect(await screen.findByText('修好伪空的任务界面')).toBeInTheDocument();
     await user.click(screen.getByRole('radio', { name: '任务' }));
 
-    expect(screen.getByRole('region', { name: '当前协作分工' })).toHaveTextContent('修好伪空的任务界面');
-    expect(screen.getByRole('region', { name: '当前协作分工' })).toHaveTextContent('执行中');
-    expect(screen.getByRole('region', { name: '当前协作分工' })).toHaveTextContent('1 位伙伴');
-    expect(screen.getByRole('region', { name: '当前协作分工' })).toHaveTextContent('1 个工具步骤');
+    expect(screen.getByRole('region', { name: '任务图' })).toHaveTextContent('修好伪空的任务界面');
+    expect(screen.getByRole('region', { name: '任务图' })).toHaveTextContent('正在执行');
+    expect(screen.getByRole('region', { name: '任务图' })).toHaveTextContent('1 位伙伴');
+    expect(screen.getByRole('region', { name: '任务图' })).toHaveTextContent('1 个工具步骤');
     expect(screen.queryByText(/还没有单独登记的工作项/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the task graph structure visible before the first WorkItem exists', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '空任务 Room')] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot('room-a', [], '空任务 Room'),
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    expect(await screen.findByRole('button', { name: '打开协作空间：空任务 Room' })).toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: '任务' }));
+
+    const graph = screen.getByRole('region', { name: '任务图' });
+    expect(graph.parentElement).toHaveClass('room-execution-workspace');
+    expect(graph).toHaveTextContent('共同目标');
+    expect(graph).toHaveTextContent('等待拆分任务');
+    expect(graph).toHaveTextContent('等待任务拆分');
+    expect(graph.querySelectorAll('.room-task-flow__node')).toHaveLength(2);
+    expect(graph.querySelector('.room-task-flow__edges path')).toBeInTheDocument();
   });
 
   it('shows the canonical blocked WorkItem state instead of claiming work is executing', async () => {
@@ -2434,7 +2456,14 @@ describe('Rooms experience', () => {
     expect(screen.queryByRole('button', { name: '保存权限' })).not.toBeInTheDocument();
     expect(screen.queryByText(/私有 Session：/)).not.toBeInTheDocument();
     await user.click(screen.getByText(/看看可以使用哪些工具/));
+    expect(screen.getByText('Session 基础工具')).toBeInTheDocument();
+    expect(screen.getByText('读取文件')).toBeInTheDocument();
+    expect(screen.getByText('编辑文件')).toBeInTheDocument();
+    expect(screen.getByText('写入文件')).toBeInTheDocument();
+    expect(screen.getByText('运行命令')).toBeInTheDocument();
     expect(screen.getByText('代码智能')).toBeInTheDocument();
+    expect(screen.queryByText('工作区读取')).not.toBeInTheDocument();
+    expect(screen.queryByText('受控命令')).not.toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.mode.update')).toBe(false);
   });
 

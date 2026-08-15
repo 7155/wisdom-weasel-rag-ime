@@ -28,9 +28,9 @@ export type RouteDefinition = {
 };
 
 export const routeGroupLabels: Record<RouteDefinition['group'], string> = {
-  work: '一起做事',
-  capability: '记忆与能力',
-  operations: '运行与安全',
+  work: '工作',
+  capability: '能力',
+  operations: '系统',
 };
 
 export const routeRegistry: readonly RouteDefinition[] = [

@@ -26,6 +26,7 @@ import {
   StatusBadge,
   asRecord,
   booleanValue,
+  publicErrorText,
   stringValue,
   valueAt,
 } from '@/features/overview/management-ui';
@@ -41,20 +42,20 @@ import './voice.css';
 const providers = [
   {
     value: 'native_streaming',
-    label: '流式 ASR',
-    description: '低延迟双向流式 ASR：边说边显示；当前内置适配器支持请求级热词和服务端最终稿。',
+    label: '实时听写',
+    description: '边说边显示，说完后补充完整文字，也支持本次热词。',
     supportsHotwords: true,
   },
   {
     value: 'realtime_websocket',
-    label: 'Realtime API',
-    description: 'OpenAI Realtime 协议兼容 WebSocket：边说边显示，可自定义地址、模型和请求头。',
+    label: '实时服务',
+    description: '边说边显示；可在高级连接设置中使用自定义服务。',
     supportsHotwords: false,
   },
   {
     value: 'http_transcription',
-    label: 'HTTP 转写 API',
-    description: 'OpenAI Audio Transcriptions 形状兼容 HTTP：松开按键后上传整段音频。',
+    label: '上传后转写',
+    description: '松开按键后再转写整段音频；可在高级连接设置中使用自定义服务。',
     supportsHotwords: false,
   },
 ] as const;
@@ -66,8 +67,8 @@ const hotkeys = [
 ] as const;
 
 const defaultSuggestedHotwords = [
-  'Pi', 'Codex', 'Agent', 'Runtime', 'Session', 'Tool', 'Skill', 'API Key', 'SK',
-  'MiniMind', '补全模型', 'GPT-5.6', 'Luna', 'Terra',
+  '澄助手', '个人计划', '常用联系人', '项目名称', '专业名词', '英文缩写',
+  '补全模型', 'GPT-5.6', 'Luna', 'Terra',
 ] as const;
 
 export function VoiceFeature() {
@@ -168,6 +169,7 @@ export function VoiceFeature() {
   const nativeActionsAvailable = queries.capabilities.data?.native.tcc === true
     && typeof queries.transport.runVoiceAction === 'function';
   const agentRunning = booleanValue(voiceAgent.ok) || booleanValue(valueAt(voiceControl, 'agent.running'));
+  const runtimeStatusUnavailable = Boolean(queries.runtime.error);
   const error = queries.capabilities.error as Error | null;
   const pending = queries.capabilities.isPending
     || (queries.modelCatalogSupported && queries.modelCatalog.isPending);
@@ -250,13 +252,18 @@ export function VoiceFeature() {
       <QueryState error={error} isPending={pending} onRetry={refresh}>
         <ManagementSection title="准备情况">
           <MetricStrip items={[
-            { label: '听写服务', value: queries.runtime.isPending ? '正在检查' : agentRunning ? '运行中' : '未运行', detail: stringValue(valueAt(voiceControl, 'agent.statusText')) || '随时按住快捷键开始听写', icon: Waves, tone: agentRunning ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
-            { label: '麦克风', value: queries.runtime.isPending ? '正在检查' : permissionLabel(microphone), detail: '需要系统授权', icon: Mic, tone: booleanValue(microphone.ok) ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
-            { label: '辅助功能', value: queries.runtime.isPending ? '正在检查' : permissionLabel(accessibility), detail: '用于将文字写回当前应用', icon: Shield, tone: booleanValue(accessibility.ok) ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
-            { label: '服务凭据', value: credentialState.label, detail: '按转写服务分别保存在钥匙串', icon: KeyRound, tone: credentialState.tone },
+            { label: '听写服务', value: queries.runtime.isPending ? '正在检查' : runtimeStatusUnavailable ? '状态未知' : agentRunning ? '运行中' : '未运行', detail: runtimeStatusUnavailable ? '暂时无法读取本机听写服务状态' : stringValue(valueAt(voiceControl, 'agent.statusText')) || '随时按住快捷键开始听写', icon: Waves, tone: agentRunning && !runtimeStatusUnavailable ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
+            { label: '麦克风', value: queries.runtime.isPending ? '正在检查' : runtimeStatusUnavailable ? '状态未知' : permissionLabel(microphone), detail: runtimeStatusUnavailable ? '暂时无法读取系统授权' : '需要系统授权', icon: Mic, tone: booleanValue(microphone.ok) && !runtimeStatusUnavailable ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
+            { label: '辅助功能', value: queries.runtime.isPending ? '正在检查' : runtimeStatusUnavailable ? '状态未知' : permissionLabel(accessibility), detail: runtimeStatusUnavailable ? '暂时无法读取系统授权' : '用于将文字写回当前应用', icon: Shield, tone: booleanValue(accessibility.ok) && !runtimeStatusUnavailable ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
+            { label: '连接信息', value: credentialState.label, detail: '按转写服务分别保存在钥匙串', icon: KeyRound, tone: credentialState.tone },
           ]} />
           <InlineNotice title="隐私保护" tone="info">页面不会显示已保存的密钥或请求头。没有取得明确状态时，相关操作保持关闭。</InlineNotice>
-          {queries.runtime.error ? <InlineNotice title="权限状态读取失败" tone="warning">暂时无法确认麦克风和辅助功能权限，请刷新后重试。</InlineNotice> : null}
+          {queries.runtime.error ? (
+            <div className="voice-runtime-issue">
+              <InlineNotice title="听写状态读取失败" tone="warning">暂时无法确认听写服务、麦克风和辅助功能状态；已保存设置不会改变。</InlineNotice>
+              <Button loading={queries.runtime.isFetching} onClick={() => void queries.runtime.refetch()} size="small">重试听写状态</Button>
+            </div>
+          ) : null}
         </ManagementSection>
 
         <ManagementSection title="启用听写" description="启动听写服务，并允许它使用麦克风、把文字送回你正在输入的应用。">
@@ -287,15 +294,15 @@ export function VoiceFeature() {
               <Button aria-describedby={!nativeActionsAvailable ? 'voice-native-actions-availability' : undefined} disabled={!nativeActionsAvailable} loading={voiceAction.isPending && voiceAction.variables === 'open_accessibility_settings'} onClick={() => voiceAction.mutate('open_accessibility_settings')} size="small" variant="quiet">打开设置</Button>
             </div>
           </div>
-          {!nativeActionsAvailable ? <div id="voice-native-actions-availability"><InlineNotice title="请在已安装的应用中操作" tone="warning">浏览器预览不能启动听写或打开系统授权；请回到已安装的{identity.productName}。</InlineNotice></div> : null}
-          {voiceAction.error ? <InlineNotice title="语音操作失败" tone="danger">{voiceAction.error instanceof Error ? voiceAction.error.message : '本机语音操作没有完成。'}</InlineNotice> : null}
-          {nativeReceipt && !nativeReceipt.accepted ? <InlineNotice title="这次操作没有完成" tone="danger">{nativeReceipt.error || '系统没有接受这次操作。'}</InlineNotice> : null}
+          {!nativeActionsAvailable ? <div id="voice-native-actions-availability"><InlineNotice title="请在已安装的应用中操作" tone="warning">网页端不能启动听写或打开系统授权；请回到已安装的{identity.productName}。</InlineNotice></div> : null}
+          {voiceAction.error ? <InlineNotice title="语音操作失败" tone="danger">{publicErrorText(voiceAction.error, '本机语音操作没有完成。')}</InlineNotice> : null}
+          {nativeReceipt && !nativeReceipt.accepted ? <InlineNotice title="这次操作没有完成" tone="danger">{publicErrorText(nativeReceipt.error, '系统没有接受这次操作。')}</InlineNotice> : null}
           {nativeReceipt?.accepted ? <InlineNotice title="听写状态已更新" tone="success">{nativeReceipt.status.statusText}</InlineNotice> : null}
         </ManagementSection>
 
         <ManagementSection
           title="转写引擎与按键"
-          description="选择真正处理音频的转写服务，以及按住哪个键开始说话。保存前会先让你确认变化。"
+          description="选择转写服务和按住说话的快捷键；保存后，下一次听写会使用新设置。"
           trailing={<StatusBadge label={currentProviderStatus(queries.settings.isPending, Boolean(queries.settings.error), configuredProvider)} tone={configuredProvider ? 'info' : 'warning'} />}
         >
           <div className="voice-service-layout">
@@ -309,9 +316,9 @@ export function VoiceFeature() {
             <ManagementMutationWorkflow
               availability={mutationBoundary.availability(
                 runtimeRevision === null
-                  ? '当前语音设置尚未同步，刷新后才能预览。'
+                  ? '当前语音设置尚未同步，刷新后才能继续保存。'
                   : !serviceDirty
-                    ? '选择不同的服务或快捷键后才能生成预览。'
+                    ? '选择不同的服务或快捷键后才能保存。'
                     : '',
               )}
               description="只更新转写引擎和快捷键；保存后，听写服务会自动重新载入。"
@@ -357,35 +364,40 @@ export function VoiceFeature() {
           {queries.settings.error ? <InlineNotice title="当前设置读取失败" tone="warning">暂时无法核对正在使用的转写引擎，请刷新后重试。</InlineNotice> : null}
         </ManagementSection>
 
-        <ManagementSection title="服务凭据" description="连接当前转写服务所需的信息只保存在 macOS 钥匙串中；保存后不会再次显示原值。">
+        <ManagementSection title="连接信息" description="连接当前转写服务所需的信息只保存在 macOS 钥匙串中；保存后不会再次显示原值。">
+          <details className="voice-connection-details">
+            <summary>配置服务连接</summary>
+            <div className="voice-connection-details__content">
           <div className="voice-credential-grid">
-            <Field description={credentialState.label === '已配置' ? '已配置；留空可保留现有凭据。' : '首次保存必须填写。'} htmlFor="voice-access-token" label="Access Token">
-              <Input autoComplete="new-password" id="voice-access-token" onChange={(event) => setCredentialDraft((current) => ({ ...current, accessToken: event.target.value }))} placeholder={credentialState.label === '已配置' ? '已配置，留空保持不变' : '输入 Access Token'} type="password" value={credentialDraft.accessToken} />
+            <Field description={credentialState.label === '已配置' ? '已配置；留空可保留现有连接信息。' : '首次保存必须填写。'} htmlFor="voice-access-token" label="访问令牌">
+              <Input autoComplete="new-password" id="voice-access-token" onChange={(event) => setCredentialDraft((current) => ({ ...current, accessToken: event.target.value }))} placeholder={credentialState.label === '已配置' ? '已配置，留空保持不变' : '输入访问令牌'} type="password" value={credentialDraft.accessToken} />
             </Field>
             {provider === 'native_streaming' ? (
               <>
-                <Field htmlFor="voice-app-id" label="App ID"><Input id="voice-app-id" onChange={(event) => setCredentialDraft((current) => ({ ...current, appId: event.target.value }))} value={credentialDraft.appId} /></Field>
-                <Field htmlFor="voice-resource-id" label="Resource ID"><Input id="voice-resource-id" onChange={(event) => setCredentialDraft((current) => ({ ...current, resourceId: event.target.value }))} value={credentialDraft.resourceId} /></Field>
+                <Field htmlFor="voice-app-id" label="应用编号"><Input id="voice-app-id" onChange={(event) => setCredentialDraft((current) => ({ ...current, appId: event.target.value }))} value={credentialDraft.appId} /></Field>
+                <Field htmlFor="voice-resource-id" label="资源编号"><Input id="voice-resource-id" onChange={(event) => setCredentialDraft((current) => ({ ...current, resourceId: event.target.value }))} value={credentialDraft.resourceId} /></Field>
               </>
             ) : (
               <>
-                <Field htmlFor="voice-endpoint" label={provider === 'realtime_websocket' ? 'WebSocket 地址' : 'HTTP 地址'}><Input id="voice-endpoint" onChange={(event) => setCredentialDraft((current) => ({ ...current, endpoint: event.target.value }))} value={credentialDraft.endpoint} /></Field>
+                <Field htmlFor="voice-endpoint" label={provider === 'realtime_websocket' ? '实时连接地址' : '转写服务地址'}><Input id="voice-endpoint" onChange={(event) => setCredentialDraft((current) => ({ ...current, endpoint: event.target.value }))} value={credentialDraft.endpoint} /></Field>
                 <Field htmlFor="voice-model" label="转写模型"><Input id="voice-model" onChange={(event) => setCredentialDraft((current) => ({ ...current, model: event.target.value }))} value={credentialDraft.model} /></Field>
-                <Field description="仅接受 JSON 字符串字典；不会在保存后重新显示。" htmlFor="voice-headers" label="请求头 JSON"><TextArea id="voice-headers" onChange={(event) => setCredentialDraft((current) => ({ ...current, headersJson: event.target.value }))} placeholder='{"X-Project":"..."}' rows={4} value={credentialDraft.headersJson} /></Field>
+                <Field description="按服务说明填写；保存后不会重新显示。" htmlFor="voice-headers" label="附加连接信息（JSON）"><TextArea id="voice-headers" onChange={(event) => setCredentialDraft((current) => ({ ...current, headersJson: event.target.value }))} placeholder='{"X-Project":"..."}' rows={4} value={credentialDraft.headersJson} /></Field>
               </>
             )}
           </div>
-          {serviceDirty ? <InlineNotice title="先保存引擎选择" tone="warning">凭据按引擎隔离保存。请先完成上方引擎切换，再保存该引擎的凭据。</InlineNotice> : null}
+          {serviceDirty ? <InlineNotice title="先保存引擎选择" tone="warning">连接信息按引擎分别保存。请先完成上方引擎切换，再保存当前引擎的连接信息。</InlineNotice> : null}
           {!credentials.supported ? <InlineNotice title="安全存储暂不可用" tone="warning">当前页面不能访问 macOS 钥匙串，因此不会发送或保存这些信息。</InlineNotice> : null}
           {credentials.status.error ? <InlineNotice title="账号状态读取失败" tone="danger">暂时无法确认钥匙串中是否已经保存账号信息，请刷新后重试。</InlineNotice> : null}
-          {credentialSave.error ? <InlineNotice title="账号保存失败" tone="danger">{credentialSave.error instanceof Error ? credentialSave.error.message : '账号信息没有保存完成。'}</InlineNotice> : null}
+          {credentialSave.error ? <InlineNotice title="账号保存失败" tone="danger">{publicErrorText(credentialSave.error, '账号信息没有保存完成。')}</InlineNotice> : null}
           {credentialSave.isSuccess ? <InlineNotice title="账号已安全保存" tone="success">访问令牌已经写入 macOS 钥匙串，页面没有读取或显示保存值。</InlineNotice> : null}
           <div className="voice-credential-actions">
             <Button disabled={!credentials.supported || serviceDirty} leadingIcon={<Save size={15} />} loading={credentialSave.isPending} onClick={() => credentialSave.mutate()} variant="primary">安全保存账号</Button>
           </div>
+            </div>
+          </details>
         </ManagementSection>
 
-        <ManagementSection title="按住说话与专有词" description="专有词只会随支持请求级热词的流式 ASR 发送；切换其他 API 时保留词表但不发送。">
+        <ManagementSection title="按住说话与专有词" description="在这里设置按住说话和常用专有词。词表会留在本机；只有当前服务支持时才会用于听写。">
           <div className="mgmt-grid-2">
             <OperationalList items={[
               { id: 'push-to-talk', title: '按住说话', detail: '按下开始、松开后形成最终文字', meta: hotkeyLabel(stringValue(valueAt(voiceControl, 'agent.hotkeyMode'), stringValue(voiceSettings.hotkey))), status: <StatusBadge label={booleanValue(voiceAgent.ok) ? '已就绪' : '待检查'} tone={booleanValue(voiceAgent.ok) ? 'success' : 'warning'} /> },
@@ -396,7 +408,7 @@ export function VoiceFeature() {
                 checked={hotwordsEnabled}
                 description={hotwordsSupported
                   ? '关闭时保留词表，但不会随识别请求发送。'
-                  : '当前转写引擎不支持请求级热词；切回支持热词的流式 ASR 后可继续使用现有词表。'}
+                  : '当前转写服务不支持本次专有词；切换到支持此功能的实时听写服务后，可继续使用现有词表。'}
                 disabled={!hotwordsSupported}
                 label="启用热词"
                 onCheckedChange={setHotwordsEnabled}
@@ -425,13 +437,13 @@ export function VoiceFeature() {
               <ManagementMutationWorkflow
                 availability={mutationBoundary.availability(
                   !hotwordsSupported
-                    ? '当前转写引擎不支持请求级热词。'
+                    ? '当前转写服务不支持本次专有词。'
                     : runtimeRevision === null
-                    ? '当前语音设置尚未同步，刷新后才能预览。'
+                    ? '当前语音设置尚未同步，刷新后才能继续保存。'
                     : hotwordDraft.error
                       ? '请先修正上方词表。'
                       : !hotwordDirty
-                        ? '修改词表或启用状态后才能生成预览。'
+                        ? '修改词表或启用状态后才能保存。'
                         : '',
                 )}
                 description="保存为语音输入实际使用的本地词表；下一次听写开始前会重新载入。"
@@ -490,21 +502,21 @@ export function VoiceFeature() {
               />
               {!hotwordsSupported ? (
                 <InlineNotice title={`${activeProvider.label} 不发送热词`} tone="info">
-                  词表仍保存在本机；只有支持请求级热词的流式 ASR 适配器会把它写入识别请求。
+                  词表仍保存在本机；支持本次专有词的当前实时听写服务会在听写时使用它。
                 </InlineNotice>
               ) : null}
             </div>
           </div>
         </ManagementSection>
 
-        <ManagementSection title="文字定稿" description="检查临时听写是否会被完整替换成最终文字，避免重复或半句话残留。">
+        <ManagementSection title="文字定稿" description="让临时听写在结束后替换为完整文字，避免重复或半句话残留。">
           <div className="mgmt-grid-2">
             <div className="mgmt-stack">
               <Field
                 description={
                   refinementModel === 'inherit'
-                    ? `跟随当前 Agent 默认模型${selectedRefinementModel ? `：${selectedRefinementModel.name}` : ''}`
-                    : '只影响语音识别结束后的独立、无工具校对 Session。'
+                    ? `跟随伙伴默认模型${selectedRefinementModel ? `：${selectedRefinementModel.name}` : ''}`
+                    : '只影响语音识别结束后的保守校对。'
                 }
                 htmlFor="voice-refinement-model"
                 label="保守校对模型"
@@ -517,8 +529,8 @@ export function VoiceFeature() {
                       {
                         value: 'inherit',
                         label: selectedRefinementModel && refinementModel === 'inherit'
-                          ? `跟随 Agent 默认模型（${selectedRefinementModel.name}）`
-                          : '跟随 Agent 默认模型',
+                          ? `跟随伙伴默认模型（${selectedRefinementModel.name}）`
+                          : '跟随伙伴默认模型',
                       },
                       ...modelCatalog.models.map((model) => ({
                         value: model.reference,
@@ -535,9 +547,9 @@ export function VoiceFeature() {
                 )}
               </Field>
               <Field
-                description="关闭思考时延迟最低；只有当前模型声明支持的档位才会出现。"
+                description="较低强度响应更快；这里只显示当前模型可用的选项。"
                 htmlFor="voice-refinement-thinking"
-                label="保守校对思考"
+                label="校对强度"
               >
                 {queries.modelCatalogSupported && refinementThinkingLevels.length ? (
                   <Select
@@ -557,16 +569,16 @@ export function VoiceFeature() {
             <ManagementMutationWorkflow
               availability={mutationBoundary.availability(
                 runtimeRevision === null
-                  ? '当前语音设置尚未同步，刷新后才能预览。'
+                  ? '当前语音设置尚未同步，刷新后才能继续保存。'
                   : !queries.modelCatalogSupported || !selectedRefinementModel
                     ? '当前无法确认保守校对模型，请刷新模型列表。'
                     : !refinementThinkingLevels.includes(refinementThinking)
-                      ? '当前模型不支持所选思考档位。'
+                      ? '当前模型不支持所选校对强度。'
                       : !refinementDirty
-                        ? '选择不同的模型或思考档位后才能生成预览。'
+                        ? '更改校对模型或校对强度后才能保存。'
                         : '',
               )}
-              description="保存后下一次语音定稿立即使用；不会改变普通 Agent、Room 或闪电生成的模型。"
+              description="保存后下一次语音定稿立即使用；不影响普通对话、多人协作或闪电生成。"
               draftKey={JSON.stringify({
                 model: refinementModel,
                 thinking: refinementThinking,
@@ -630,6 +642,9 @@ export function VoiceFeature() {
               title="保存保守校对模型"
             />
           </div>
+          <details className="voice-refinement-status">
+            <summary>文字定稿状态</summary>
+            <div className="voice-refinement-status__content">
           <MetricStrip items={[
             { label: '引擎最终稿', value: finalRevisionLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: '转写引擎会在结束时给出最终文字', icon: CheckCircle2, tone: deployedTone(deployedRecognition.secondPass) },
             { label: '保守校对', value: thirdPassLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: thirdPassDetail(deployedRecognition, lastRecognition), icon: Sparkles, tone: thirdPassTone(deployedRecognition, lastRecognition) },
@@ -641,16 +656,16 @@ export function VoiceFeature() {
               {recognitionNoticeText(deployedRecognitionState)}
             </InlineNotice>
           ) : !booleanValue(lastRecognition.finalReceived) ? (
-            <InlineNotice title="能力已部署，等待真实验证" tone="info">
-              三项定稿能力已经准备好；完成一次实际听写后，这里会显示真实定稿耗时。
+            <InlineNotice title="文字定稿等待首次验证" tone="info">
+              文字定稿已经准备好；完成一次实际听写后，这里会显示真实定稿耗时。
             </InlineNotice>
           ) : booleanValue(lastRecognition.thirdPassApplied) ? (
-            <InlineNotice title="已执行独立第三遍校对" tone="success">
+            <InlineNotice title="已完成保守校对" tone="success">
               {thirdPassResultSummary(lastRecognition)}
             </InlineNotice>
           ) : booleanValue(lastRecognition.thirdPassRequested) ? (
             <InlineNotice title="保守校对没有完成，已保留引擎最终稿" tone="warning">
-              {stringValue(lastRecognition.thirdPassError, '校对服务没有返回可安全采用的独立文本。')}
+              {publicErrorText(lastRecognition.thirdPassError, '校对服务没有返回可安全采用的文字。')}
             </InlineNotice>
           ) : lastRecognition.finalRevisedPartial !== true && lastRecognition.localSmoothingApplied !== true ? (
             <InlineNotice title="引擎最终稿与临时稿相同" tone="info">
@@ -660,10 +675,13 @@ export function VoiceFeature() {
             </InlineNotice>
           ) : null}
           {booleanValue(lastRecognition.finalReceived) && stringValue(lastRecognition.providerResponseStage) ? (
-            <InlineNotice title="本次识别详情" tone="info">
-              {providerMetadataDetail(lastRecognition)}
-            </InlineNotice>
+            <details className="voice-recognition-details">
+              <summary>高级：本次定稿记录</summary>
+              <p>{providerMetadataDetail(lastRecognition)}</p>
+            </details>
           ) : null}
+            </div>
+          </details>
         </ManagementSection>
       </QueryState>
     </ManagementPage>
@@ -698,18 +716,18 @@ function validateCredentialDraft(
   ) as unknown as VoiceCredentialDraft;
   if (provider === 'native_streaming') {
     if (!normalized.appId || !normalized.resourceId) {
-      throw new Error('当前流式 ASR 适配器需要 App ID 和 Resource ID。');
+      throw new Error('当前实时听写服务需要填写应用编号和资源编号。');
     }
   } else {
     let endpoint: URL;
     try {
       endpoint = new URL(normalized.endpoint);
     } catch {
-      throw new Error('请填写有效的转写 API 地址。');
+      throw new Error('请填写有效的转写服务地址。');
     }
     const acceptedSchemes = provider === 'realtime_websocket' ? ['ws:', 'wss:'] : ['http:', 'https:'];
     if (!acceptedSchemes.includes(endpoint.protocol) || !normalized.model) {
-      throw new Error('转写 API 地址协议或模型不完整。');
+      throw new Error('转写服务地址或模型未填写完整。');
     }
   }
   if (normalized.headersJson) {
@@ -915,7 +933,7 @@ function replacementLabel(
 
 function requestedCapabilityLabel(value: unknown, state: string): string {
   const label = deployedLabel(value, state);
-  return label === '当前可用' ? '服务端已请求' : label;
+  return label === '当前可用' ? '已请求' : label;
 }
 
 function enabledCapabilityLabel(value: unknown, state: string): string {
@@ -957,10 +975,9 @@ function durationLabel(value: unknown): string {
 
 function providerResponseSummary(last: Record<string, unknown>): string {
   const latency = finalLatencyLabel(last.finalLatencyMs);
-  const stage = stringValue(last.providerResponseStage);
   const count = typeof last.providerResponseCount === 'number' ? last.providerResponseCount : 0;
-  if (!stage) return latency;
-  return `${latency} · ${stage}${count > 0 ? ` · ${count} 帧响应` : ''}`;
+  if (!stringValue(last.providerResponseStage)) return latency;
+  return `${latency}${count > 0 ? ` · 收到 ${count} 次服务返回` : ''}`;
 }
 
 function providerMetadataDetail(last: Record<string, unknown>): string {
@@ -969,12 +986,9 @@ function providerMetadataDetail(last: Record<string, unknown>): string {
     ? last.providerUtteranceMetadata.length
     : 0;
   const additions = Object.keys(asRecord(last.providerAdditionFields));
-  const sequence = typeof last.providerResponseSequence === 'number'
-    ? `；最终序号 ${last.providerResponseSequence}`
-    : '';
-  const stageText = stages.length > 0 ? stages.join(' → ') : stringValue(last.providerResponseStage, '未知');
-  const additionText = additions.length > 0 ? additions.join('、') : '无';
-  return `响应阶段：${stageText}${sequence}；语句片段 ${utterances} 条；附加字段：${additionText}。听写正文不会写入诊断记录。`;
+  const stageCount = stages.length || (stringValue(last.providerResponseStage) ? 1 : 0);
+  const additionalInformation = additions.length > 0 ? '；服务返回了额外信息' : '';
+  return `本次处理经过 ${stageCount} 个阶段；识别到 ${utterances} 个语句片段${additionalInformation}。听写正文不会写入诊断记录。`;
 }
 
 function thirdPassResultSummary(last: Record<string, unknown>): string {

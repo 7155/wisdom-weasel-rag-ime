@@ -163,7 +163,7 @@ export function ConfigurationFeature() {
           <Button leadingIcon={<RefreshCw size={15} />} loading={queries.settings.isFetching} onClick={refresh} size="small">刷新</Button>
         </>
       }
-      description="调整称呼、本机模型、上下文和各项功能。每次变更都会先让你看清影响。"
+      description="调整称呼、本机模型、上下文和各项功能。普通设置可直接保存；涉及重启、部署或权限的更改会先说明影响。"
       eyebrow={`你的${identity.productName}`}
       routeId="configuration"
       title="设置"
@@ -227,7 +227,7 @@ export function ConfigurationFeature() {
                     <small>{(runtimeSectionMeta[stringValue(section?.id)] ?? runtimeSectionMeta.other).description}</small>
                   </span>
                   <StatusBadge
-                    label={runtimeRevision === null ? '等待刷新' : '已是最新状态'}
+                    label={runtimeRevision === null ? '等待刷新' : '已获取当前状态'}
                     tone={runtimeRevision === null ? 'warning' : 'success'}
                   />
                 </header>
@@ -247,7 +247,7 @@ export function ConfigurationFeature() {
                 </div>
               </div>
               <div className="configuration-editor__review mgmt-stack" data-has-changes={diffRows.length > 0 || hasSensitiveChanges}>
-                <h3 className="configuration-editor__title">准备保存</h3>
+                <h3 className="configuration-editor__title">保存设置</h3>
                 {diffRows.length ? (
                   <DataTable caption="准备保存的设置" columns={[
                     { key: 'key', label: '设置项', width: '32%' },
@@ -255,7 +255,7 @@ export function ConfigurationFeature() {
                     { key: 'after', label: '更改后' },
                     { key: 'applyMode', label: '生效方式', width: '18%' },
                   ]} rows={diffRows} />
-                ) : <p className="mgmt-muted configuration-editor__empty-review">更改设置后，会在这里列出将要保存的内容。</p>}
+                ) : <p className="mgmt-muted configuration-editor__empty-review">更改设置后，可以在这里直接保存；需要重启、部署或权限的更改会先说明需要采取的操作。</p>}
                 <ManagementMutationWorkflow
                   availability={mutationBoundary.availability(
                     runtimeRevision === null
@@ -266,7 +266,7 @@ export function ConfigurationFeature() {
                         ? '调整任一设置后，就可以在这里核对并保存。'
                         : '',
                   )}
-                  description="先核对这次更改，再一次保存；未列出的设置不会改变。"
+                  description="普通设置会直接保存；涉及重启、重新部署或权限的更改会在保存前说明影响。未列出的设置不会改变。"
                   draftKey={JSON.stringify({ changes: pendingChanges, runtimeRevision })}
                   mutationKey={['configuration', 'mutation', 'settings']}
                   onApply={async (preview) => parseManagementWorkReceipt(
@@ -404,7 +404,7 @@ function SettingField({
             onValueChange={onChange}
             options={available.map((model) => ({
               value: model.reference,
-              label: `${model.name} (${model.reference})`,
+              label: model.name,
             }))}
             value={stringValue(value)}
           />
@@ -501,7 +501,7 @@ function displayDraftValue(value: unknown, field: Record<string, unknown> = {}, 
 }
 
 function applyModeLabel(value: string): string {
-  return ({ live: '立即生效', reload: '重新载入后生效', restart: '重新启动后生效', restart_input_method: '重新载入输入法', redeploy_rime: '重新载入输入法', restart_sidecar: '重启后台服务', restart_agent_gateway: '重启对话服务', restart_predictor: '重启本机模型', next_voice_session: '下次语音输入时生效' } as Record<string, string>)[value] ?? '保存后生效';
+  return ({ live: '立即生效', reload: '重新载入后生效', restart: '重新启动后生效', restart_input_method: '重新载入输入法', redeploy_rime: '重新载入输入法', restart_sidecar: '重启本机补全服务', restart_agent_gateway: '重启对话服务', restart_predictor: '重启本机模型', next_voice_session: '下次语音输入时生效' } as Record<string, string>)[value] ?? '保存后生效';
 }
 
 function previewDiffItems(rows: readonly { key: string; before: string; after: string; applyMode: string }[]): string[] {
@@ -512,11 +512,46 @@ function previewDiffItems(rows: readonly { key: string; before: string; after: s
 }
 
 const sectionLabels: Record<string, string> = { identity: '称呼与外观', interaction: '输入体验', display: '候选窗口', rag: '知识检索', models: '模型分工', activeRag: '深度生成', memory: '记忆', context: '上下文', planning: '任务与规划', agent: '伙伴对话', voice: '语音', pinyin: '拼音', privacy: '隐私与安全' };
-const fieldLabels: Record<string, string> = { 'interaction.postCommit.numberKeys': '预测结果出现时的数字键', 'interaction.postCommit.tabAction': 'Tab 键行为', 'display.maxPostCommitCandidates': '续写候选数量', 'models.hot': '本机预测配置 ID', 'activeRag.quickModel': '闪电生成模型', 'activeRag.quickThinkingLevel': '闪电生成思考', 'managementSecurity.requireToken': '限制本机管理请求' };
+const fieldLabels: Record<string, string> = {
+  'interaction.postCommit.numberKeys': '预测结果出现时的数字键',
+  'interaction.postCommit.tabAction': 'Tab 键行为',
+  'display.maxPostCommitCandidates': '续写候选数量',
+  'models.hot': '本机预测配置',
+  'activeRag.quickModel': '闪电生成模型',
+  'activeRag.quickThinkingLevel': '闪电生成推理强度',
+  'memory.automaticOrganization.thinkingLevel': '自动整理推理强度',
+  'memory.dreaming.model': '后台整理模型',
+  'memory.dreaming.thinkingLevel': '后台整理推理强度',
+  'memory.recall.detailLevel': '联想内容详略',
+  'memory.recall.timelineEnabled': '参考时间线',
+  'planning.injectIntoContext': '向伙伴提供当前任务',
+  'agent.pi.enabled': '启用伙伴对话',
+  'agent.pi.idleTimeoutSeconds': '伙伴空闲休息时间',
+  'privacy.redactSecrets': '在诊断信息中隐藏敏感内容',
+  'managementSecurity.requireToken': '限制本机管理请求',
+};
 
 function publicSectionLabel(id: string, label: string): string { return sectionLabels[id] ?? (/[\u3400-\u9fff]/.test(label) ? label : '其他设置'); }
 function publicFieldLabel(key: string, label: string): string { return fieldLabels[key] ?? (label && !/pathId|schema|revision|hash|receipt|provider/i.test(label) ? publicDescription(label) : '设置项'); }
-function publicDescription(value: string): string { return value.replace(/Sidecar/gi, '后台服务').replace(/SQLite FTS5/gi, '本机索引').replace(/BM25/gi, '关键词检索').replace(/Hybrid RAG/gi, '多路知识检索').replace(/Active RAG/gi, '深度生成').replace(/RAG/gi, '知识检索').replace(/fallback/gi, '备用方式').replace(/TTL/gi, '保留时间').replace(/token/gi, '容量').replace(/POST/gi, '管理请求').replace(/patch/gi, '配置'); }
+function publicDescription(value: string): string {
+  return value
+    .replace(/Sidecar/gi, '本机补全服务')
+    .replace(/SQLite FTS5/gi, '本机索引')
+    .replace(/BM25/gi, '关键词检索')
+    .replace(/Hybrid RAG/gi, '多路知识检索')
+    .replace(/Active RAG/gi, '深度生成')
+    .replace(/RAG/gi, '知识检索')
+    .replace(/\bAgent\b/gi, '伙伴')
+    .replace(/\bSession\b/gi, '对话')
+    .replace(/\bRoom\b/gi, '协作空间')
+    .replace(/\bMemory\b/gi, '记忆')
+    .replace(/召回/g, '联想')
+    .replace(/fallback/gi, '备用方式')
+    .replace(/TTL/gi, '保留时间')
+    .replace(/token/gi, '容量')
+    .replace(/POST/gi, '管理请求')
+    .replace(/patch/gi, '配置');
+}
 function optionLabel(key: string, value: string, _field: Record<string, unknown> = {}): string { return ({ pass_through: '按原数字键处理', select_prediction: '选择对应候选', accept_top_prediction: '接受首个预测', rime_default: '保持输入法默认', disabled: '不使用', compact: '紧凑', expanded: '展开', replace_selection: '替换选中内容', insert_after_selection: '插入到选中内容后', show_only: '只显示不插入', lazy: '使用时启动', 'sichuan-mild': '四川轻度模糊音', none: '关闭', off: '关闭', minimal: '极低', low: '低', medium: '中', high: '高', xhigh: '很高', max: '最高' } as Record<string, string>)[value] ?? value; }
 
 const dedicatedSettingSections = new Set([
@@ -534,11 +569,11 @@ const runtimeSectionMeta: Record<string, { description: string; icon: typeof Bot
   agent: { description: '伙伴何时启动、多久后休息，以及是否继续上次对话', icon: Bot },
   context: { description: '近期输入、上下文容量与时间表达', icon: Gauge },
   rag: { description: '检索通道与响应时间预算', icon: Search },
-  memory: { description: '记忆保留、整理与按需召回', icon: Database },
-  models: { description: '输入热路径与后台整理模型', icon: BrainCircuit },
+  memory: { description: '记忆保留、整理与按需联想', icon: Database },
+  models: { description: '输入时快速建议与后台整理模型', icon: BrainCircuit },
   activeRag: { description: '闪电生成与显式深度生成', icon: Sparkles },
-  planning: { description: '任务状态、计划注入与完成识别', icon: FileCheck2 },
-  privacy: { description: '远程使用、调试文本与本机治理边界', icon: ShieldCheck },
+  planning: { description: '任务状态、计划引用与完成识别', icon: FileCheck2 },
+  privacy: { description: '远程连接、诊断记录与本机保护', icon: ShieldCheck },
   other: { description: '不常用的运行设置', icon: Settings2 },
 };
 

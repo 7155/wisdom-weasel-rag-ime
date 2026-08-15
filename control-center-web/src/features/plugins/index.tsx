@@ -17,7 +17,7 @@ import {
   Sparkles,
   Wrench,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Button,
@@ -86,7 +86,7 @@ const operationLabels: Record<string, string> = {
   profile_rollback: '撤销模型方案', provider_apply: '切换语音服务', provider_preview: '预览语音切换',
   provider_rollback: '撤销语音切换', provider_status: '查看语音服务', read: '读取内容', recall: '检索知识',
   recent: '查看最近内容', recent_activity: '查看最近活动', redeploy_rime: '重新部署输入法', restart_predictor: '重启预测服务',
-  restart_sidecar: '重启后台服务', restore_apply: '恢复备份', restore_preview: '预览恢复内容', resume_ai: '恢复智能功能',
+  restart_sidecar: '重新连接本机补全服务', restore_apply: '恢复备份', restore_preview: '预览恢复内容', resume_ai: '恢复智能功能',
   rollback_settings: '撤销输入设置', route_status: '检查检索连接', run: '运行受控命令', search: '搜索内容',
   status: '查看当前状态', task_action: '更新任务', trace: '查看来源链路', undo_task_event: '撤销任务更新',
   tabs: '查看浏览器标签页', snapshot: '读取页面快照', screenshot: '获取页面截图', navigate: '打开网页',
@@ -117,6 +117,7 @@ export function PluginsFeature() {
   const [kind, setKind] = useState<KindFilter>('all');
   const [availability, setAvailability] = useState<AvailabilityFilter>('all');
   const [selectedId, setSelectedId] = useState('');
+  const selectedTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [enableAfterInstall, setEnableAfterInstall] = useState(true);
   const [validation, setValidation] = useState<Record<string, unknown>>({});
   const [pendingChange, setPendingChange] = useState<Record<string, unknown>>({});
@@ -144,12 +145,22 @@ export function PluginsFeature() {
     });
   }, [availability, items, kind, query]);
   const selected = filtered.find((item) => itemKey(item) === selectedId);
+  useEffect(() => {
+    if (!selectedId) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      setSelectedId('');
+      selectedTriggerRef.current?.focus();
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [selectedId]);
   const installedItems = arrayRecords(asRecord(installed.data).items);
   const proposalItems = arrayRecords(asRecord(proposals.data).items);
   const versionItems = arrayRecords(asRecord(versions.data).items);
   const lifecyclePolicies = arrayRecords(asRecord(lifecycle.data).policies);
   const lifecycleEvents = arrayRecords(asRecord(lifecycle.data).recentEvents);
-  const authorizedCount = items.filter((item) => item.authorization.state === 'authorized').length;
+  const availableCount = items.filter((item) => ['online', 'ready', 'installed'].includes(item.status.toLowerCase())).length;
   const disclosedCount = items.filter((item) => item.disclosure.state === 'disclosed').length;
   const hiddenCount = items.filter((item) => item.disclosure.state === 'hidden').length;
   const pendingSummary = asRecord(pendingChange.summary);
@@ -198,7 +209,7 @@ export function PluginsFeature() {
         preference,
         scope: 'global',
         status: 'succeeded',
-        message: `后台已确认保存所有对话默认：${preferenceLabel(preference)}。`,
+        message: `所有对话默认已保存：${preferenceLabel(preference)}。`,
       });
     } catch (error) {
       setDefaultMutation({
@@ -240,7 +251,7 @@ export function PluginsFeature() {
         preference,
         scope: 'project',
         status: 'succeeded',
-        message: `后台已确认保存当前项目默认：${preferenceLabel(preference)}。`,
+        message: `当前项目默认已保存：${preferenceLabel(preference)}。`,
       });
     } catch (error) {
       setDefaultMutation({
@@ -268,7 +279,7 @@ export function PluginsFeature() {
       setDefaultMutation({
         ...defaultMutation,
         status: 'failed',
-        message: '后端目录已不再包含这项能力；未重发旧设置。',
+        message: '这项能力已不在可用目录中；旧设置没有再次发送。',
       });
       return;
     }
@@ -282,6 +293,20 @@ export function PluginsFeature() {
     setLifecycleError('');
     try {
       setPendingChange(asRecord(await preview.mutateAsync({ action, pluginId })));
+    } catch (error) {
+      setLifecycleError(errorMessage(error));
+    }
+  };
+
+  const applyInstalledAction = async (action: 'disable' | 'rollback', pluginId: string) => {
+    setLifecycleError('');
+    try {
+      const next = asRecord(await preview.mutateAsync({ action, pluginId }));
+      await apply.mutateAsync({
+        previewToken: stringValue(next.previewToken),
+        payloadSha256: stringValue(next.payloadSha256),
+        confirmText: 'apply',
+      });
     } catch (error) {
       setLifecycleError(errorMessage(error));
     }
@@ -332,38 +357,45 @@ export function PluginsFeature() {
   return (
     <ManagementPage
       actions={<Button leadingIcon={<RefreshCw size={15} />} loading={refreshing} onClick={() => void refreshAll()} size="small">刷新</Button>}
-      description="查看伙伴可使用的工具、技能和扩展，设置全局或当前项目默认，并核对这次对话的临时设置与最终结果。"
-      eyebrow="能力设置"
+      description="选择伙伴在对话中可以使用的技能与工具，并为所有对话或当前项目设置默认范围。"
+      eyebrow="伙伴能力"
       routeId="plugins"
-      title="工具、技能与扩展"
+      title="技能与工具"
     >
       <QueryState error={asError(catalog.error)} isPending={catalog.isPending} onRetry={() => void catalog.refetch()}>
         <ManagementSection
-          description="这里的开关只决定伙伴是否能看见或加载能力；它不会授予执行权限，也不会绕过审批、工作区授权或多人协作策略。"
-          title="能力目录"
+          description="在这里选择伙伴可以使用哪些能力。涉及文件、账户或其他敏感操作时，仍会在执行前征求你的同意。"
+          title="能力概览"
         >
           <MetricStrip items={[
-            { label: '目录项目', value: items.length, detail: '当前可查看', icon: Wrench },
-            { label: '工具', value: items.filter((item) => item.kind === 'tool').length, icon: Wrench },
-            { label: '技能', value: items.filter((item) => item.kind === 'skill').length, icon: Sparkles },
-            { label: '扩展', value: items.filter((item) => item.kind === 'extension').length, icon: Boxes },
-            { label: '已获授权', value: authorizedCount, detail: '独立于披露设置', icon: ShieldCheck },
-            { label: '已披露（可见）', value: disclosedCount, detail: `${hiddenCount} 项未披露`, icon: PackageCheck },
+            { label: '可查看', value: items.length, detail: '技能与工具', icon: Wrench },
+            { label: '当前可用', value: availableCount, detail: '连接正常', icon: ShieldCheck },
+            { label: '伙伴可见', value: disclosedCount, detail: hiddenCount ? `${hiddenCount} 项暂不显示` : '全部可见', icon: PackageCheck },
           ]} />
-          <div className="capability-policy-notices">
-            <InlineNotice title="披露不等于授权" tone="info">
-              开启后只会让伙伴在下一次打开对话或下一轮开始时看见该能力；危险操作仍按风险、权限和确认流程处理。
-            </InlineNotice>
-            {catalog.data?.projectScope.supported ? (
-              <InlineNotice title="当前项目默认可用" tone="success">
-                {projectScopeReason(catalog.data.projectScope.reason)} 当前项目默认优先于所有对话默认，当前对话临时设置仍可覆盖它。
+          <details className="plugins-policy-disclosure">
+            <summary>
+              <span>
+                <strong>能力如何生效</strong>
+                <small>{catalog.data?.projectScope.supported ? '当前项目有独立默认设置' : '当前使用所有对话的默认设置'}</small>
+              </span>
+              <ChevronRight aria-hidden="true" size={16} />
+            </summary>
+            <div className="capability-policy-notices">
+              <InlineNotice title="显示出来，不等于自动执行" tone="info">
+                开启后，伙伴会在下一轮对话中知道这项能力；涉及风险的操作仍会按原有规则询问你。
               </InlineNotice>
-            ) : null}
-            {!catalog.data?.projectScope.supported ? (
-              <InlineNotice title="当前页面没有项目上下文" tone="warning">
-                {projectScopeReason(catalog.data?.projectScope.reason ?? '')} 所有对话默认和当前对话临时设置仍然可用。
-              </InlineNotice>
-            ) : null}
+              {catalog.data?.projectScope.supported ? (
+                <InlineNotice title="当前项目默认可用" tone="success">
+                  {projectScopeReason(catalog.data.projectScope.reason)} 当前项目默认优先于所有对话默认，当前对话临时设置仍可覆盖它。
+                </InlineNotice>
+              ) : (
+                <InlineNotice title="当前只显示所有对话设置" tone="info">
+                  从某个项目的伙伴对话进入后，才能设置该项目的默认范围。所有对话设置仍可正常使用。
+                </InlineNotice>
+              )}
+            </div>
+          </details>
+          <div className="capability-policy-feedback">
             {defaults.error ? (
               <InlineNotice title="默认设置暂时无法读取" tone="danger">
                 当前目录仍可查看，但不会猜测默认值，也不会发送修改。
@@ -386,8 +418,8 @@ export function PluginsFeature() {
         </ManagementSection>
 
         <ManagementSection
-          description="选择一项查看来源、安装或在线状态、风险、所需权限，以及授权与披露为什么生效。"
-          title="全部能力"
+          description="选择一项查看它能做什么、当前是否可用，以及由哪一层设置决定伙伴能否使用。"
+          title="浏览技能与工具"
           trailing={<span className="plugins-count">{filtered.length} 项</span>}
         >
           <div className="plugins-filters">
@@ -416,11 +448,11 @@ export function PluginsFeature() {
                   const id = itemKey(item);
                   const selectedItem = id === selectedId;
                   return (
-                    <button aria-pressed={selectedItem} className="plugins-list__item" data-selected={selectedItem || undefined} key={id} onClick={() => setSelectedId(id)} type="button">
+                    <button aria-pressed={selectedItem} className="plugins-list__item" data-selected={selectedItem || undefined} key={id} onClick={(event) => { selectedTriggerRef.current = event.currentTarget; setSelectedId(id); }} type="button">
                       <span className="plugins-list__copy">
-                        <small>{capabilityKindLabel(item.kind)} · {item.source.label}</small>
-                        <strong>{item.displayName}</strong>
-                        <span>{item.description}</span>
+                        <small>{publicCapabilitySourceLabel(item.source.label)} · {capabilityKindLabel(item.kind)}</small>
+                        <strong>{publicCapabilityDisplayName(item)}</strong>
+                        <span>{publicCapabilityDescription(item)}</span>
                       </span>
                       <span className="plugins-list__aside"><StatusBadge {...availabilityBadge(item)} /><ChevronRight aria-hidden="true" size={15} /></span>
                     </button>
@@ -444,7 +476,7 @@ export function PluginsFeature() {
                   item={selected}
                   sessionOwnerId={catalog.data?.sessionPolicy?.sessionId}
                   sessionPreference={catalog.data?.sessionPolicy?.disclosurePreferences.session[selected.canonicalId] ?? 'inherit'}
-                  onClose={() => setSelectedId('')}
+                  onClose={() => { setSelectedId(''); selectedTriggerRef.current?.focus(); }}
                   onDefaultPreferenceChange={(preference) => void updateDefaultPreference(selected, preference)}
                   onProjectPreferenceChange={(preference) => void updateProjectPreference(selected, preference)}
                 />
@@ -452,11 +484,11 @@ export function PluginsFeature() {
                 <aside aria-label="能力详情占位" className="plugins-detail plugins-detail--empty">
                   <Wrench aria-hidden="true" size={20} />
                   <strong>选择一项能力查看详情</strong>
-                  <span>这里会显示来源、状态、风险、权限，以及全局和项目默认。</span>
+                  <span>这里会显示用途、可用状态、风险提示，以及对话和项目设置。</span>
                 </aside>
               )}
             </div>
-          ) : <EmptyState description={items.length ? '换一个关键词或筛选条件试试。' : '后端目录当前没有返回能力项目。'} icon={Search} title="没有找到能力" />}
+          ) : <EmptyState description={items.length ? '换一个关键词或筛选条件试试。' : '当前没有可用的技能或工具。'} icon={Search} title="没有找到能力" />}
         </ManagementSection>
       </QueryState>
 
@@ -477,7 +509,7 @@ export function PluginsFeature() {
       </div>
 
       {showMaintenance ? <ManagementSection
-        description="安装、更新或停用额外能力。每次更改都会先说明来源、权限和影响，再由你确认。"
+        description="安装或启用新能力前会先说明来源、权限和影响；停用与恢复上一版本会直接生效。"
         title="扩展管理"
         trailing={<StatusBadge label={pluginQueryError ? '暂时无法读取' : `${installedItems.length} 个已安装`} tone={pluginQueryError ? 'warning' : 'neutral'} />}
       >
@@ -494,12 +526,12 @@ export function PluginsFeature() {
                 return (
                   <article className="plugin-catalog__row" key={stringValue(item.id)}>
                     <span className="plugin-catalog__identity">
-                      <strong>{stringValue(item.displayName, stringValue(item.id))}</strong>
-                      <small>{stringValue(item.publisher)} · {stringValue(source.label)}</small>
+                      <strong>{publicPluginDisplayName(stringValue(item.displayName, stringValue(item.id)))}</strong>
+                      <small>{publicPluginSourceLabel(stringValue(item.publisher))} · {publicPluginSourceLabel(stringValue(source.label))}</small>
                       <span>{stringValue(item.description)}</span>
                     </span>
                     <span className="plugin-catalog__facts">
-                      <span><ShieldCheck size={14} />需要的权限：{stringArray(item.permissions).join('、') || '无额外权限'}</span>
+                      <span><ShieldCheck size={14} />需要的权限：{stringArray(item.permissions).map(publicPluginPermissionLabel).join('、') || '无额外权限'}</span>
                       <span><History size={14} />v{stringValue(item.latestVersion, '未发布')} · {arrayRecords(item.versions).length} 个版本</span>
                       <span><ShieldAlert size={14} />{stringValue(security.notes, '尚无安全说明')}</span>
                     </span>
@@ -539,7 +571,7 @@ export function PluginsFeature() {
                   const summary = asRecord(proposal.summary);
                   return (
                     <button className="plugin-proposal" key={stringValue(proposal.proposalId)} onClick={() => setPendingChange(proposal)} type="button">
-                      <span><strong>{stringValue(summary.displayName, stringValue(summary.pluginId))}</strong><small>{pluginActionLabel(stringValue(summary.action))}</small></span>
+                      <span><strong>{publicPluginDisplayName(stringValue(summary.displayName, stringValue(summary.pluginId)))}</strong><small>{pluginActionLabel(stringValue(summary.action))}</small></span>
                       <ChevronRight aria-hidden="true" size={16} />
                     </button>
                   );
@@ -551,18 +583,15 @@ export function PluginsFeature() {
               <InlineNotice title="等待你的批准" tone="warning">
                 <div className="plugin-lifecycle__approval">
                   <span>
-                    {pluginActionLabel(stringValue(pendingSummary.action))}：{pendingDisplayName}
+                    {pluginActionLabel(stringValue(pendingSummary.action))}：{publicPluginDisplayName(pendingDisplayName)}
                     <small>
                       {pendingCanonicalEvidence}
                       {stringValue(pendingSummary.version) ? `v${stringValue(pendingSummary.version)} · ` : ''}
                       {stringArray(pendingSummary.permissions).length
-                        ? `需要的权限：${stringArray(pendingSummary.permissions).join('、')}`
+                        ? `需要的权限：${stringArray(pendingSummary.permissions).map(publicPluginPermissionLabel).join('、')}`
                         : '无额外权限'}
                       {typeof pendingSummary.expectedEnabled === 'boolean'
                         ? ` · 当前${pendingSummary.expectedEnabled ? '已启用' : '已停用'}`
-                        : ''}
-                      {stringValue(pendingSummary.expectedActiveDigest)
-                        ? ` · 校验标记 ${shortDigest(stringValue(pendingSummary.expectedActiveDigest))}`
                         : ''}
                     </small>
                   </span>
@@ -579,20 +608,22 @@ export function PluginsFeature() {
             <div className="plugin-lifecycle__installed">
               {installedItems.length ? installedItems.map((plugin) => (
                 <article className="installed-plugin" key={stringValue(plugin.id)}>
-                  <div><strong>{stringValue(plugin.displayName, stringValue(plugin.id))}</strong><span>v{stringValue(plugin.version)}</span></div>
+                  <div><strong>{publicPluginDisplayName(stringValue(plugin.displayName, stringValue(plugin.id)))}</strong><span>v{stringValue(plugin.version)}</span></div>
                   <StatusBadge label={plugin.enabled === true ? '已启用' : '已停用'} tone={plugin.enabled === true ? 'success' : 'neutral'} />
                   <div className="installed-plugin__actions">
                     <Button
                       disabled={lifecyclePending}
                       leadingIcon={<Power size={15} />}
-                      onClick={() => void previewInstalledAction(plugin.enabled === true ? 'disable' : 'enable', stringValue(plugin.id))}
+                      onClick={() => void (plugin.enabled === true
+                        ? applyInstalledAction('disable', stringValue(plugin.id))
+                        : previewInstalledAction('enable', stringValue(plugin.id)))}
                       size="small"
                       variant="quiet"
                     >{plugin.enabled === true ? '停用' : '启用'}</Button>
                     <Button
                       disabled={plugin.rollbackAvailable !== true || lifecyclePending}
                       leadingIcon={<RotateCcw size={15} />}
-                      onClick={() => void previewInstalledAction('rollback', stringValue(plugin.id))}
+                      onClick={() => void applyInstalledAction('rollback', stringValue(plugin.id))}
                       size="small"
                       variant="quiet"
                     >恢复上一版本</Button>
@@ -623,7 +654,7 @@ export function PluginsFeature() {
                     <small>{lifecycleActionLabel(stringValue(policy.action))}</small>
                   </span>
                   <span className="lifecycle-policy__limits">
-                    <span><Sparkles size={14} />最多 {Number(policy.tokenLimit || 0)} 个模型词元</span>
+                    <span><Sparkles size={14} />摘要长度：{Number(policy.tokenLimit || 0) > 320 ? '标准' : '简短'}</span>
                     <span><Clock3 size={14} />{cooldownLabel(Number(policy.cooldownSeconds || 0))}</span>
                   </span>
                   <Switch
@@ -639,7 +670,7 @@ export function PluginsFeature() {
               <h3>最近状态</h3>
               {lifecycleEvents.length ? lifecycleEvents.slice(0, 8).map((event) => (
                 <div className="lifecycle-audit" key={stringValue(event.eventId)}>
-                  <span><strong>{lifecycleEventLabel(stringValue(event.eventType))}</strong><small>{stringValue(event.sessionId)}</small></span>
+                  <span><strong>{lifecycleEventLabel(stringValue(event.eventType))}</strong><small>最近一次对话</small></span>
                   <StatusBadge {...lifecycleStatusBadge(event)} />
                 </div>
               )) : <EmptyState description="功能在对话中触发后，运行记录会显示在这里。" icon={History} title="还没有触发记录" />}
@@ -709,9 +740,9 @@ function ToolDetail({
           <DetailIcon aria-hidden="true" size={18} />
         </span>
         <div>
-          <small>{capabilityKindLabel(item.kind)} · {item.source.label}</small>
-          <h3>{item.displayName}</h3>
-          <p>{item.description}</p>
+          <small>{publicCapabilitySourceLabel(item.source.label)} · {capabilityKindLabel(item.kind)}</small>
+          <h3>{publicCapabilityDisplayName(item)}</h3>
+          <p>{publicCapabilityDescription(item)}</p>
         </div>
         <StatusBadge {...availabilityBadge(item)} />
       </div>
@@ -738,9 +769,9 @@ function ToolDetail({
           </dd>
         </div>
         <div>
-          <dt><MessageCircle aria-hidden="true" size={15} />当前披露</dt>
+          <dt><MessageCircle aria-hidden="true" size={15} />伙伴可见范围</dt>
           <dd>
-            {item.disclosure.effective === 'enabled' ? `会向${assistantName}披露` : `不会向${assistantName}披露`}
+            {item.disclosure.effective === 'enabled' ? `会向${assistantName}显示` : `暂不向${assistantName}显示`}
             {item.disclosure.reason ? ` · ${item.disclosure.reason}` : ''}
           </dd>
         </div>
@@ -754,22 +785,21 @@ function ToolDetail({
         <section aria-label="固定能力策略" className="capability-precedence">
           <header>
             <span>
-              <small>产品内置规则</small>
-              <strong>固定加载</strong>
+              <small>可用范围</small>
+              <strong>默认可用</strong>
             </span>
             <StatusBadge label="基础能力" tone="success" />
           </header>
           <p>
-            普通伙伴会话始终加载此能力，不参与当前对话、当前项目或所有对话的披露开关；
-            执行权限仍由 Runtime 单独核对。
+            这项基础能力始终可用；实际执行前仍会检查当前权限。
           </p>
         </section>
       ) : (
         <>
-          <section aria-label="能力披露优先级" className="capability-precedence">
+          <section aria-label="能力可见范围" className="capability-precedence">
             <header>
               <span>
-                <small>后端核对的当前结果</small>
+              <small>当前生效的设置</small>
                 <strong>{capabilityEffectiveLabel(item.disclosure.effective)}</strong>
               </span>
               <StatusBadge
@@ -780,36 +810,36 @@ function ToolDetail({
             <dl>
               {sessionOwnerId ? (
                 <div>
-                  <dt>1 · 当前对话临时设置</dt>
-                  <dd>{preferenceLabel(sessionPreference)}<small>由当前对话控制 · {shortDigest(sessionOwnerId)}</small></dd>
+                  <dt>当前对话</dt>
+                  <dd>{preferenceLabel(sessionPreference)}<small>仅影响当前对话</small></dd>
                 </div>
               ) : null}
               {projectAvailable ? (
                 <div>
-                  <dt>{sessionOwnerId ? '2' : '1'} · 当前项目默认</dt>
-                  <dd>{preferenceLabel(projectPreference)}<small>由当前授权工作区控制 · {shortDigest(projectOwnerId ?? '')}</small></dd>
+                  <dt>当前项目</dt>
+                  <dd>{preferenceLabel(projectPreference)}<small>影响此项目的新对话</small></dd>
                 </div>
               ) : null}
               <div>
-                <dt>{sessionOwnerId ? (projectAvailable ? '3' : '2') : (projectAvailable ? '2' : '1')} · 所有对话默认</dt>
+                <dt>所有对话</dt>
                 <dd>{preferenceLabel(defaultPreference)}<small>由所有对话设置控制</small></dd>
               </div>
               <div>
-                <dt>最后 · 产品内置默认</dt>
-                <dd>{item.effectiveScope === 'built_in_default' ? capabilityEffectiveLabel(item.disclosure.effective) : '由后端目录决定'}<small>仅在上层全部继承时使用</small></dd>
+                <dt>默认设置</dt>
+                <dd>{item.effectiveScope === 'built_in_default' ? capabilityEffectiveLabel(item.disclosure.effective) : '由可用能力决定'}<small>仅在上层全部继承时使用</small></dd>
               </div>
             </dl>
-            <p>按上列顺序取第一个非“继承默认”的值；披露结果不会改变执行授权。</p>
+            <p>对话中的选择优先于项目和全局设置；可见范围不会改变执行权限。</p>
           </section>
 
           <Field
             className="capability-default-field"
-            description="由所有对话设置控制。影响未被当前项目默认或当前对话临时设置覆盖的对话；未在工作的对话会在下一轮重新加载时生效，不会取消运行中任务或授予执行权限。"
+            description="用于没有项目或临时设置的对话；正在进行的任务不会因此中断或获得额外权限。"
             htmlFor={`capability-global-default-${item.canonicalId.replace(/[^a-z0-9_-]/giu, '-')}`}
-            label="所有对话默认披露"
+            label="所有对话默认可见范围"
           >
             <Select
-              aria-label={`${item.displayName}的所有对话默认披露`}
+              aria-label={`${item.displayName}的所有对话默认可见范围`}
               disabled={!defaultsAvailable || defaultPending}
               id={`capability-global-default-${item.canonicalId.replace(/[^a-z0-9_-]/giu, '-')}`}
               onValueChange={onDefaultPreferenceChange}
@@ -820,12 +850,12 @@ function ToolDetail({
           {projectAvailable ? (
             <Field
               className="capability-default-field"
-              description={`由当前授权工作区${projectOwnerId ? `（${shortDigest(projectOwnerId)}）` : ''}控制。优先于所有对话默认；当前对话临时设置仍优先。`}
+              description="当前项目会优先采用这里的选择；当前对话的临时选择仍优先。"
               htmlFor={`capability-project-default-${item.canonicalId.replace(/[^a-z0-9_-]/giu, '-')}`}
-              label="当前项目默认披露"
+              label="当前项目默认可见范围"
             >
               <Select
-                aria-label={`${item.displayName}的当前项目默认披露`}
+                aria-label={`${item.displayName}的当前项目默认可见范围`}
                 disabled={projectPending}
                 id={`capability-project-default-${item.canonicalId.replace(/[^a-z0-9_-]/giu, '-')}`}
                 onValueChange={onProjectPreferenceChange}
@@ -840,7 +870,7 @@ function ToolDetail({
 
       {operations.length || unknownOperationCount ? (
         <div className="plugins-detail__capabilities">
-          <h4>后端声明的操作</h4>
+          <h4>支持的操作</h4>
           <ul>
             {operations.map((operation) => <li key={operation}>{operation}</li>)}
             {unknownOperationCount ? <li>其他 {unknownOperationCount} 项操作</li> : null}
@@ -869,6 +899,41 @@ function ToolDetail({
 
 
 function itemKey(item: ToolRecord): string { return item.canonicalId; }
+function publicCapabilityDisplayName(item: ToolRecord): string {
+  return ({ Ask: '向你提问', Todo: '任务清单' } as Record<string, string>)[item.displayName] ?? item.displayName;
+}
+function publicCapabilityDescription(item: ToolRecord): string {
+  const exact = ({
+    '维护当前 Session 的分阶段执行清单': '维护当前对话的分阶段任务清单',
+    '查看语音状态，并在批准后切换已配置的语音 Provider': '查看语音状态，并在你同意后切换已配置的语音服务',
+    '通过工作区语言服务器读取语义信息，并在审批后执行重命名或代码动作': '读取代码定义与引用，并在你同意后执行重命名等代码操作',
+  } as Record<string, string>)[item.description];
+  return exact ?? item.description
+    .replaceAll('Session', '对话')
+    .replaceAll('Provider', '服务')
+    .replaceAll('Agent', '伙伴');
+}
+function publicCapabilitySourceLabel(label: string): string {
+  return label === 'Personal Agent Workbench' ? '系统内置' : label;
+}
+function publicPluginDisplayName(label: string): string {
+  return ({
+    'Session Review': '对话复盘',
+    'Timeline Inspector': '时间线检查',
+  } as Record<string, string>)[label] ?? label;
+}
+function publicPluginSourceLabel(label: string): string {
+  return ({
+    'Personal Agent Workbench': '系统内置',
+    'Product bundle': '随产品提供',
+  } as Record<string, string>)[label] ?? label;
+}
+function publicPluginPermissionLabel(permission: string): string {
+  return ({
+    'session.read': '读取对话内容',
+    'memory.review': '提交记忆复盘建议',
+  } as Record<string, string>)[permission] ?? permission;
+}
 function stringArray(value: unknown): string[] { return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []; }
 function operationLabelsFor(item: ToolRecord): string[] { return stringArray(item.operations).map((operation) => operationLabels[operation]).filter((operation): operation is string => Boolean(operation)); }
 function availabilityBadge(item: ToolRecord): { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral' } {
@@ -887,4 +952,3 @@ function lifecycleStatusBadge(item: Record<string, unknown>): { label: string; t
 function errorMessage(error: unknown): string { return publicErrorText(error, '插件操作失败，请稍后重试。'); }
 function asError(error: unknown): Error | null { return error instanceof Error ? error : error ? new Error('暂时无法读取这部分内容。') : null; }
 function firstError(...errors: unknown[]): Error | null { return errors.map(asError).find((error): error is Error => Boolean(error)) ?? null; }
-function shortDigest(value: string): string { return value.length > 16 ? `${value.slice(0, 12)}…${value.slice(-4)}` : value; }

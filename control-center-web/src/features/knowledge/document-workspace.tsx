@@ -31,6 +31,7 @@ import type {
   KnowledgeSearchHit,
   KnowledgeTableArtifact,
 } from './api';
+import { publicKnowledgeText } from './public-copy';
 
 export interface KnowledgeUploadItem {
   id: string;
@@ -69,10 +70,10 @@ export function KnowledgeMaterialsPanel({
   error: Error | null;
   importError: Error | null;
   importing: boolean;
-  onDelete: (document: KnowledgeDocument) => void;
+  onDelete: (document: KnowledgeDocument, trigger: HTMLElement) => void;
   onImport: () => void;
   onOpen: (documentId: string) => void;
-  onReparse: (document: KnowledgeDocument) => void;
+  onReparse: (document: KnowledgeDocument, trigger: HTMLElement) => void;
   onRetryUpload: (item: KnowledgeUploadItem) => void;
   onClearUploads: () => void;
   onSelect: (documentId: string) => void;
@@ -100,7 +101,7 @@ export function KnowledgeMaterialsPanel({
       {documents.length ? (
         <div className="knowledge-material-workspace">
           <div className="knowledge-material-list" aria-label="知识库文件">
-            <div className="knowledge-material-list__head"><span>文件</span><span>状态</span><span>片段</span><span>操作</span></div>
+            <div className="knowledge-material-list__head"><span>文件</span><span>状态</span><span>段落</span><span>操作</span></div>
             <Virtuoso
               className="knowledge-material-list__body"
               data={documents}
@@ -113,9 +114,9 @@ export function KnowledgeMaterialsPanel({
                   <StatusBadge label={documentStatusLabel(document.status)} tone={documentTone(document.status)} />
                   <span className="knowledge-material-row__chunks">{document.chunkCount || '—'}</span>
                   <span className="knowledge-material-row__actions">
-                    <IconButton disabled={pendingDocumentId === document.id || ['queued', 'parsing', 'indexing'].includes(document.status)} icon={<RotateCcw size={13} />} label={`重新解析 ${document.name}`} onClick={() => onReparse(document)} size="small" tooltip />
+                    <IconButton disabled={pendingDocumentId === document.id || ['queued', 'parsing', 'indexing'].includes(document.status)} icon={<RotateCcw size={13} />} label={`重新解析 ${document.name}`} onClick={(event) => onReparse(document, event.currentTarget)} size="small" tooltip />
                     <IconButton icon={<PanelRightOpen size={13} />} label={`查看 ${document.name}`} onClick={() => onOpen(document.id)} size="small" tooltip />
-                    <IconButton icon={<Trash2 size={13} />} label={`删除 ${document.name}`} onClick={() => onDelete(document)} size="small" tooltip />
+                    <IconButton icon={<Trash2 size={13} />} label={`删除 ${document.name}`} onClick={(event) => onDelete(document, event.currentTarget)} size="small" tooltip />
                   </span>
                   {['queued', 'parsing', 'indexing'].includes(document.status) ? <i className="knowledge-material-row__progress" style={{ '--document-progress': document.progress } as React.CSSProperties} /> : null}
                 </div>
@@ -156,19 +157,18 @@ function DocumentSummary({ detail, document, error, loading }: { detail: Knowled
   if (!document) return null;
   return (
     <aside className="knowledge-document-summary" aria-label={`${document.name} 元数据`}>
-      <header><FileText size={17} /><div><strong>{document.name}</strong><span>{document.mimeType || '未知格式'}</span></div></header>
+      <header><FileText size={17} /><div><strong>{document.name}</strong><span>{fileFormatLabel(document.mimeType)}</span></div></header>
       {loading ? <p className="knowledge-detail-loading">正在读取材料详情…</p> : null}
       {error ? <InlineNotice title="详情暂不可用" tone="warning">{publicErrorText(error, '稍后重试。')}</InlineNotice> : null}
       <dl>
         <div><dt>解析状态</dt><dd>{documentStatusLabel(document.status)}</dd></div>
-        <div><dt>解析方式</dt><dd>{parserLabel(document.parser)}{document.parserVersion ? ` · ${document.parserVersion}` : ''}</dd></div>
+        <div><dt>解析方式</dt><dd>{parserLabel(document.parser)}</dd></div>
         <div><dt>页数</dt><dd>{document.pageCount || detail?.pages.length || '未提供'}</dd></div>
-        <div><dt>片段</dt><dd>{detail?.chunkTotal || document.chunkCount || 0}</dd></div>
-        <div><dt>Token</dt><dd>{document.tokenCount || '未提供'}</dd></div>
+        <div><dt>段落</dt><dd>{detail?.chunkTotal || document.chunkCount || 0}</dd></div>
         <div><dt>文件大小</dt><dd>{formatBytes(document.byteSize)}</dd></div>
         <div><dt>更新时间</dt><dd>{formatTime(document.updatedAtMs)}</dd></div>
-        <div><dt>内容指纹</dt><dd>{shortHash(document.sha256)}</dd></div>
       </dl>
+      <details className="knowledge-document-summary__advanced"><summary>高级：材料详情</summary><dl><div><dt>文件格式</dt><dd>{document.mimeType || '未提供'}</dd></div><div><dt>解析版本</dt><dd>{document.parserVersion || '未提供'}</dd></div><div><dt>内容容量</dt><dd>{document.tokenCount || '未提供'}</dd></div><div><dt>内容指纹</dt><dd>{shortHash(document.sha256)}</dd></div></dl></details>
       {document.error ? <p className="knowledge-document-summary__error">{document.error}</p> : null}
       <div className="knowledge-document-summary__counts">
         <span><FileImage size={13} />{detail?.assets.length ?? 0} 个图片/附件</span>
@@ -218,7 +218,7 @@ export function KnowledgeDocumentViewer({
     <div className="knowledge-panel knowledge-viewer">
       <div className="knowledge-viewer__bar">
         <label><span>材料</span><Select aria-label="材料" onValueChange={onSelectDocument} options={documents.map((item) => ({ value: item.id, label: item.name }))} value={selectedDocumentId || documents[0]?.id} /></label>
-        {detail ? <span>{detail.chunkTotal} 个片段 · {pageCount ? `${pageCount} 页` : '页码未提供'} · {detail.assets.length} 个产物</span> : null}
+        {detail ? <span>{detail.chunkTotal} 个段落 · {pageCount ? `${pageCount} 页` : '页码未提供'} · {detail.assets.length} 个产物</span> : null}
       </div>
       {loading ? <p className="knowledge-detail-loading">正在读取解析结果…</p> : null}
       {error ? <InlineNotice title="暂时无法查看材料" tone="warning">{publicErrorText(error, '稍后重试。')}</InlineNotice> : null}
@@ -227,7 +227,7 @@ export function KnowledgeDocumentViewer({
           <TabsList aria-label="材料查看方式">
             <TabsTrigger value="source"><FileText size={13} />源文件</TabsTrigger>
             <TabsTrigger value="markdown"><Rows3 size={13} />Markdown</TabsTrigger>
-            <TabsTrigger value="chunks"><Grid3X3 size={13} />Chunks</TabsTrigger>
+            <TabsTrigger value="chunks"><Grid3X3 size={13} />段落</TabsTrigger>
             <TabsTrigger value="artifacts"><GalleryHorizontalEnd size={13} />解析产物</TabsTrigger>
           </TabsList>
           <TabsContent value="source"><DocumentSource detail={detail} transport={transport} /></TabsContent>
@@ -253,7 +253,7 @@ function DocumentContent({ detail, hasMore, loadingMore, onLoadMore }: { detail:
               a: ({ children, href }) => { const safe = safeMarkdownLink(href); return safe ? <a href={safe} rel="noreferrer" target="_blank">{children}</a> : <span>{children}</span>; },
             }}
             remarkPlugins={[remarkGfm]}
-          >{markdown}</ReactMarkdown>
+          >{publicKnowledgeText(markdown)}</ReactMarkdown>
         </div>
         {hasMore ? <footer><span>已加载 {detail.contentWindow.length} / {detail.contentLineTotal} 行</span><Button loading={loadingMore} onClick={onLoadMore} size="small">继续加载 Markdown</Button></footer> : null}
       </div>
@@ -264,8 +264,8 @@ function DocumentContent({ detail, hasMore, loadingMore, onLoadMore }: { detail:
     <div className="knowledge-page-preview">
       {pages.map((page) => (
         <section key={page.key}>
-          <header><span>{page.page ? `第 ${page.page} 页` : '无页码内容'}</span><b>{page.chunks.length} 个片段</b></header>
-          {page.chunks.map((chunk) => <article key={chunk.id}>{chunk.heading ? <h4>{chunk.heading}</h4> : null}<p>{chunk.content}</p></article>)}
+          <header><span>{page.page ? `第 ${page.page} 页` : '无页码内容'}</span><b>{page.chunks.length} 个段落</b></header>
+          {page.chunks.map((chunk) => <article key={chunk.id}>{chunk.heading ? <h4>{publicKnowledgeText(chunk.heading)}</h4> : null}<p>{publicKnowledgeText(chunk.content)}</p></article>)}
         </section>
       ))}
     </div>
@@ -303,18 +303,18 @@ function ChunkGallery({ detail, focusHit, hasMore, loadingMore, onLoadMore }: { 
   }, [focusHit, focusedLoaded, detail.chunks.length]);
   return detail.chunks.length ? (
     <div className="knowledge-chunk-grid" ref={containerRef}>
-      {focusHit ? <div className="knowledge-focus-banner"><FileSearch size={14} /><span>{focusedLoaded ? `已定位检索命中：${focusHit.title}` : hasMore ? `正在加载命中片段：${focusHit.title}` : `命中来自较早的索引 revision：${focusHit.title}`}</span></div> : null}
+      {focusHit ? <div className="knowledge-focus-banner"><FileSearch size={14} /><span>{focusedLoaded ? `已定位检索命中：${publicKnowledgeText(focusHit.title)}` : hasMore ? `正在加载命中段落：${publicKnowledgeText(focusHit.title)}` : `命中来自较早索引：${publicKnowledgeText(focusHit.title)}；重新处理材料后可更新。`}</span></div> : null}
       {detail.chunks.map((chunk) => (
         <article data-focused={focusHit?.id === chunk.id || undefined} key={chunk.id}>
           <header><b>#{chunk.ordinal + 1}{focusHit?.id === chunk.id ? ' · 检索命中' : ''}</b><span>{chunk.page ? `第 ${chunk.page} 页` : chunk.lineStart ? `第 ${chunk.lineStart} 行` : '无页码'}</span></header>
-          {chunk.heading ? <h4>{chunk.heading}</h4> : null}
-          <p>{focusHit?.id === chunk.id ? <HighlightedChunkText content={chunk.content} excerpt={focusHit.excerpt} /> : chunk.content}</p>
-          <footer><span>{chunk.tokenCount ? `${chunk.tokenCount} tokens` : 'Token 未统计'}</span><span>{chunk.id}</span></footer>
+          {chunk.heading ? <h4>{publicKnowledgeText(chunk.heading)}</h4> : null}
+          <p>{focusHit?.id === chunk.id ? <HighlightedChunkText content={publicKnowledgeText(chunk.content)} excerpt={publicKnowledgeText(focusHit.excerpt)} /> : publicKnowledgeText(chunk.content)}</p>
+          <footer><span>文档段落</span><details><summary>高级：段落详情</summary><span>{chunk.tokenCount ? `${chunk.tokenCount} tokens` : 'Token 未统计'}</span><span>{chunk.id}</span></details></footer>
         </article>
       ))}
-      {hasMore ? <div className="knowledge-more-note"><span>已显示 {detail.chunks.length} / {detail.chunkTotal} 个片段</span><Button loading={loadingMore} onClick={onLoadMore} size="small">加载更多</Button></div> : <p className="knowledge-more-note">已加载全部 {detail.chunkTotal} 个片段。</p>}
+      {hasMore ? <div className="knowledge-more-note"><span>已显示 {detail.chunks.length} / {detail.chunkTotal} 个段落</span><Button loading={loadingMore} onClick={onLoadMore} size="small">加载更多</Button></div> : <p className="knowledge-more-note">已加载全部 {detail.chunkTotal} 个段落。</p>}
     </div>
-  ) : <EmptyState description="" icon={Grid3X3} title="暂无 Chunk" />;
+  ) : <EmptyState description="" icon={Grid3X3} title="暂无段落" />;
 }
 
 function HighlightedChunkText({ content, excerpt }: { content: string; excerpt: string }) {
@@ -350,7 +350,7 @@ function KnowledgeAssetImage({ asset, document, transport }: { asset: KnowledgeA
 
 function KnowledgeAssetAttachment({ asset, document, transport }: { asset: KnowledgeAsset; document: KnowledgeDocument; transport: ControlTransport }) {
   const binary = useKnowledgeAsset(document, asset, transport);
-  return <div><FileText size={14} /><span><strong>{asset.name}</strong><small>{asset.mimeType || '未知格式'} · {formatBytes(asset.byteSize)}{binary.error ? ' · 读取受限' : ''}</small></span>{binary.url ? <span className="knowledge-asset-actions"><a aria-label={`查看 ${asset.name}`} href={binary.url} rel="noreferrer" target="_blank"><Eye size={13} /></a><a aria-label={`下载 ${asset.name}`} download={asset.name} href={binary.url}><Download size={13} /></a></span> : null}</div>;
+  return <div><FileText size={14} /><span><strong>{asset.name}</strong><small>{fileFormatLabel(asset.mimeType)} · {formatBytes(asset.byteSize)}{binary.error ? ' · 读取受限' : ''}</small></span>{binary.url ? <span className="knowledge-asset-actions"><a aria-label={`查看 ${asset.name}`} href={binary.url} rel="noreferrer" target="_blank"><Eye size={13} /></a><a aria-label={`下载 ${asset.name}`} download={asset.name} href={binary.url}><Download size={13} /></a></span> : null}</div>;
 }
 
 interface BinaryViewState {
@@ -446,7 +446,7 @@ export function KnowledgeJobsPanel({ cancellingJobId, cancelError, error, jobs, 
       {cancelError ? <InlineNotice title="任务未取消" tone="warning">{publicErrorText(cancelError, '请刷新任务状态后重试。')}</InlineNotice> : null}
       {jobs.length ? <div className="knowledge-job-list">{jobs.map((job) => {
         const expanded = expandedId === job.id;
-        return <article data-expanded={expanded || undefined} key={job.id}><span className="knowledge-job-list__icon"><RotateCcw size={14} /></span><button aria-expanded={expanded} className="knowledge-job-list__summary" onClick={() => setExpandedId(expanded ? '' : job.id)} type="button"><span><strong>{job.documentName || job.kind}</strong><small>{jobStageLabel(job.stage)} · {formatTime(job.updatedAtMs || job.createdAtMs)}</small>{job.error ? <em>{job.error}</em> : null}<i style={{ '--job-progress': terminalJobStatus(job.status) ? 1 : job.progress } as React.CSSProperties} /></span><ChevronDown aria-hidden="true" size={14} /></button><StatusBadge label={jobStatusLabel(job.status)} tone={jobTone(job.status)} />{job.cancellable ? <IconButton disabled={cancellingJobId === job.id} icon={<CircleStop size={14} />} label="取消任务" onClick={() => onCancel(job.id)} size="small" tooltip /> : null}{expanded ? <JobDetails job={job} /> : null}</article>;
+        return <article data-expanded={expanded || undefined} key={job.id}><span className="knowledge-job-list__icon"><RotateCcw size={14} /></span><button aria-expanded={expanded} className="knowledge-job-list__summary" onClick={() => setExpandedId(expanded ? '' : job.id)} type="button"><span><strong>{job.documentName || job.kind}</strong><small>{jobStageLabel(job.stage)} · {formatTime(job.updatedAtMs || job.createdAtMs)}</small>{job.error ? <em>处理未完成，请展开查看详情。</em> : null}<i style={{ '--job-progress': terminalJobStatus(job.status) ? 1 : job.progress } as React.CSSProperties} /></span><ChevronDown aria-hidden="true" size={14} /></button><StatusBadge label={jobStatusLabel(job.status)} tone={jobTone(job.status)} />{job.cancellable ? <IconButton disabled={cancellingJobId === job.id} icon={<CircleStop size={14} />} label="取消任务" onClick={() => onCancel(job.id)} size="small" tooltip /> : null}{expanded ? <JobDetails job={job} /> : null}</article>;
       })}</div> : loading ? <p className="knowledge-detail-loading">正在读取处理记录…</p> : <EmptyState description="导入或重新处理材料后，进度和结果会显示在这里。" icon={RotateCcw} title="还没有处理记录" />}
     </div>
   );
@@ -455,7 +455,7 @@ export function KnowledgeJobsPanel({ cancellingJobId, cancelError, error, jobs, 
 function JobDetails({ job }: { job: KnowledgeIndexJob }) {
   const finished = job.finishedAtMs || (terminalJobStatus(job.status) ? job.updatedAtMs : 0);
   const started = job.startedAtMs || job.createdAtMs;
-  return <div className="knowledge-job-detail"><dl><div><dt>任务 ID</dt><dd>{job.id}</dd></div><div><dt>类型</dt><dd>{job.kind}</dd></div><div><dt>解析器</dt><dd>{parserLabel(job.parserMode)}</dd></div><div><dt>文档 ID</dt><dd>{job.documentId || '整库任务'}</dd></div><div><dt>索引 revision</dt><dd>{job.revision || '未提供'}</dd></div><div><dt>耗时</dt><dd>{finished && started ? formatDuration(finished - started) : '进行中'}</dd></div><div><dt>错误代码</dt><dd>{job.errorCode || '无'}</dd></div></dl><ol aria-label="任务阶段记录"><li><span>创建</span><time>{formatTime(job.createdAtMs)}</time></li>{job.startedAtMs ? <li><span>开始 · {jobStageLabel(job.stage)}</span><time>{formatTime(job.startedAtMs)}</time></li> : null}{finished ? <li><span>{jobStatusLabel(job.status)}</span><time>{formatTime(finished)}</time></li> : null}</ol>{job.error ? <p>{job.error}</p> : null}</div>;
+  return <div className="knowledge-job-detail"><dl><div><dt>当前进度</dt><dd>{jobStageLabel(job.stage)}</dd></div><div><dt>耗时</dt><dd>{finished && started ? formatDuration(finished - started) : '进行中'}</dd></div></dl><ol aria-label="任务阶段记录"><li><span>创建</span><time>{formatTime(job.createdAtMs)}</time></li>{job.startedAtMs ? <li><span>开始 · {jobStageLabel(job.stage)}</span><time>{formatTime(job.startedAtMs)}</time></li> : null}{finished ? <li><span>{jobStatusLabel(job.status)}</span><time>{formatTime(finished)}</time></li> : null}</ol>{job.error ? <p>{publicErrorText(job.error, '这项处理没有完成，请稍后重试。')}</p> : null}<details><summary>高级：处理详情</summary><dl><div><dt>任务 ID</dt><dd>{job.id}</dd></div><div><dt>类型</dt><dd>{job.kind}</dd></div><div><dt>解析器</dt><dd>{parserLabel(job.parserMode)}</dd></div><div><dt>文档 ID</dt><dd>{job.documentId || '整库任务'}</dd></div><div><dt>索引版本</dt><dd>{job.revision || '未提供'}</dd></div><div><dt>错误代码</dt><dd>{job.errorCode || '无'}</dd></div></dl></details></div>;
 }
 
 function summarizeDocuments(documents: readonly KnowledgeDocument[]) {
@@ -484,6 +484,19 @@ function documentStatusLabel(value: KnowledgeDocument['status']): string { retur
 function documentTone(value: KnowledgeDocument['status']): 'success' | 'warning' | 'danger' | 'info' { return value === 'ready' ? 'success' : value === 'failed' ? 'danger' : value === 'stale' ? 'warning' : 'info'; }
 function formatBytes(value: number): string { if (!value) return '0 B'; if (value < 1_024) return `${value} B`; if (value < 1_048_576) return `${(value / 1_024).toFixed(1)} KB`; return `${(value / 1_048_576).toFixed(1)} MB`; }
 function formatTime(value: number): string { return value ? new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(value) : '暂无'; }
+function fileFormatLabel(value: string): string {
+  const format = value.trim().toLowerCase();
+  if (!format) return '格式未报告';
+  if (format === 'text/markdown') return 'Markdown 文档';
+  if (format === 'application/pdf') return 'PDF 文档';
+  if (format === 'text/plain') return '文本文档';
+  if (format === 'application/json') return 'JSON 文件';
+  if (format.startsWith('image/')) return '图片';
+  if (format.includes('wordprocessingml')) return 'Word 文档';
+  if (format.includes('spreadsheetml') || format.includes('excel')) return '表格文件';
+  if (format.includes('presentationml') || format.includes('powerpoint')) return '演示文稿';
+  return '其他文件';
+}
 function shortHash(value: string): string { return value ? `${value.slice(0, 8)}…${value.slice(-6)}` : '未记录'; }
 function jobStageLabel(value: string): string { return (({ queued: '等待开始', parsing: '解析材料', embedding: '生成向量', indexing: '写入索引', ready: '完成' } as Record<string, string>)[value] ?? value) || '处理中'; }
 function jobStatusLabel(value: string): string { return ({ queued: '等待中', running: '进行中', parsing: '进行中', embedding: '进行中', indexing: '进行中', ready: '已完成', succeeded: '已完成', success: '已完成', completed: '已完成', failed: '失败', cancelled: '已取消', canceled: '已取消' } as Record<string, string>)[value.toLowerCase()] ?? value; }

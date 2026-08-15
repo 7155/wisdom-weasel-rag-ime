@@ -77,9 +77,9 @@ export function PersonalKnowledgeWorkbench() {
         <Button leadingIcon={<RefreshCw size={15} />} loading={queries.route.isFetching || queries.session.isFetching} onClick={refresh} size="small">刷新</Button>
       </div>
       <QueryState error={error} isPending={pending} onRetry={refresh}>
-        <ManagementSection title="知识来源" description="先使用本机证据；回答生成和远程笔记只在你启动任务时使用。">
+        <ManagementSection title="知识来源" description="先使用本机内容；回答生成和远程笔记只在你启动任务时使用。">
           <MetricStrip items={[
-            { label: '本机证据', value: '优先使用', detail: '记忆与知识库', icon: FileSearch, tone: 'success' },
+            { label: '本机来源', value: '优先使用', detail: '记忆与知识库', icon: FileSearch, tone: 'success' },
             { label: '回答生成', value: booleanValue(route.deepseekReady) ? '可用' : '暂不可用', detail: '仅在明确任务中启用', icon: Sparkles, tone: booleanValue(route.deepseekReady) ? 'success' : 'warning' },
             { label: '远程笔记', value: notionReady ? '可选' : '未连接', detail: notionReady ? '由你逐次开启' : '不会发送请求', icon: Network, tone: notionReady ? 'success' : 'neutral' },
             { label: '当前任务', value: knowledgeStatusLabel(stringValue(session.status)), detail: knowledgeStageLabel(stringValue(session.stage)), icon: RefreshCw, tone: ['ready', 'completed'].includes(stringValue(session.status)) ? 'success' : stringValue(session.status) === 'error' ? 'warning' : 'info' },
@@ -110,9 +110,9 @@ export function PersonalKnowledgeWorkbench() {
               availability={mutationBoundary.routeAvailability(
                 [knowledgeMutationPathIds.start, knowledgeMutationPathIds.cancel],
                 !question.trim()
-                  ? '填写明确的问题后才能预览任务。'
+                  ? '请输入一个明确的问题。'
                   : !booleanValue(route.deepseekReady)
-                    ? '当前知识生成路由尚未就绪。'
+                    ? '知识整理暂时不可用，请稍后重试。'
                     : '',
               )}
               description="先检查敏感内容，再按所选模式运行检索或生成。"
@@ -139,7 +139,7 @@ export function PersonalKnowledgeWorkbench() {
           </div>
         </ManagementSection>
 
-        <ManagementSection title="当前任务" description="进度、回答和证据会在任务开始后自动更新。" trailing={sessionId ? <Button loading={queries.session.isFetching} onClick={() => void queries.session.refetch()} size="small" variant="quiet">刷新结果</Button> : null}>
+        <ManagementSection title="当前任务" description="进度、回答和引用来源会在任务开始后自动更新。" trailing={sessionId ? <Button loading={queries.session.isFetching} onClick={() => void queries.session.refetch()} size="small" variant="quiet">刷新结果</Button> : null}>
           {sessionId ? (
             <div className="mgmt-stack">
               {queries.session.error ? (
@@ -153,10 +153,10 @@ export function PersonalKnowledgeWorkbench() {
                 <dt>回答</dt><dd>{stringValue(session.answer, stringValue(session.localDraft, queries.session.error ? '上一次内容仍然保留。' : '任务仍在处理中。'))}</dd>
               </dl>
             </div>
-          ) : <InlineNotice title="还没有开始任务" tone="info">在上方填写问题并确认后，这里会显示处理进度与回答。</InlineNotice>}
+          ) : <InlineNotice title="还没有开始任务" tone="info">在上方填写问题并开始后，这里会显示处理进度与回答。</InlineNotice>}
         </ManagementSection>
 
-        <ManagementSection title="召回证据与引用" trailing={<StatusBadge label={`${evidenceItems.length} 条`} tone="info" />}>
+        <ManagementSection title="回答来源" trailing={<StatusBadge label={`${evidenceItems.length} 条`} tone="info" />}>
           <KnowledgeEvidenceExplorer items={evidenceItems} />
         </ManagementSection>
       </QueryState>

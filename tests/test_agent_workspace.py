@@ -568,7 +568,7 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
         self.assertEqual(result["matches"][0]["lineNumber"], 1)
         self.assertNotIn("must-not-leak", str(result))
         self.assertNotIn("outside-secret-content", str(result))
-        with self.assertRaisesRegex(WorkspaceHarnessError, "coordinator"):
+        with self.assertRaisesRegex(WorkspaceHarnessError, "协调模式"):
             harness.search(self.assistant, {"query": "hello"})
 
     def test_native_search_supports_regex_glob_and_context_without_shell_round_trips(

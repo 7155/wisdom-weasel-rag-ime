@@ -208,9 +208,9 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("http_transcription", page)
         self.assertIn("saveVoiceCredentials", page)
         self.assertIn("useVoiceCredentialStatus", page)
-        self.assertIn("低延迟双向流式 ASR", page)
-        self.assertIn("OpenAI Realtime 协议兼容 WebSocket", page)
-        self.assertIn("OpenAI Audio Transcriptions 形状兼容 HTTP", page)
+        self.assertIn("边说边显示，说完后补充完整文字", page)
+        self.assertIn("实时服务", page)
+        self.assertIn("上传后转写", page)
         self.assertNotIn("内置流式识别", page)
         self.assertIn('case .nativeStreaming: return "流式 ASR"', keychain)
         self.assertNotIn("providerHandoffAvailable", page)
@@ -334,7 +334,7 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("Color(nsColor: .windowBackgroundColor).opacity(0.98)", overlay)
         self.assertIn("scheduleDismiss(after: 1.4)", overlay)
         self.assertIn("overlay.showRecording()", coordinator)
-        self.assertIn("服务凭据", page)
+        self.assertIn("连接信息", page)
         self.assertIn("页面不会显示已保存的密钥或请求头", page)
 
         with tempfile.TemporaryDirectory(prefix="rag-ime-voice-hotkey-") as directory:
@@ -370,7 +370,7 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("VoiceHotwordConfigStore.read()", coordinator)
         self.assertIn("allowedTechnicalSeparators", config)
         self.assertIn('".-_+#/&"', config)
-        self.assertIn("专有词只会随支持请求级热词的流式 ASR 发送", page)
+        self.assertIn("支持本次专有词的当前实时听写服务会在听写时使用它", page)
         self.assertIn("每行一个词", page)
         self.assertNotIn("rime", config.lower())
 

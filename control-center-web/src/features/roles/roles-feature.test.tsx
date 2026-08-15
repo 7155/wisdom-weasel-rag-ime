@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -27,6 +27,8 @@ describe('Roles experience', () => {
     expect(await screen.findByText(previewPersonas[0]!.tagline)).toBeInTheDocument();
     expect(screen.getByText('适合交给她')).toBeInTheDocument();
     expect(screen.getByText('不建议交给她')).toBeInTheDocument();
+    expect(screen.getByText('多伙伴主持和独立验收')).toBeInTheDocument();
+    expect(screen.queryByText('多 Agent 主持和独立验收')).not.toBeInTheDocument();
     expect((await screen.findAllByText('GPT-5.6 Sol · GPT')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('内置伙伴').length).toBeGreaterThan(0);
     expect(screen.getByText('默认')).toBeInTheDocument();
@@ -50,6 +52,20 @@ describe('Roles experience', () => {
     expect(screen.queryByText('协作配置')).not.toBeInTheDocument();
     expect(screen.queryByText('协作主持')).not.toBeInTheDocument();
     expect(screen.getByText('内置伙伴 · 复制后可以调整')).toBeInTheDocument();
+  });
+
+  it('takes the user to settings when no reasoning model is available', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({ routes: {
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.role.models': { ok: true, providers: [] },
+    } });
+    render(<MemoryRouter initialEntries={['/roles']}><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /><LocationProbe /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
+
+    await user.click(await screen.findByText('新对话设置'));
+    expect(await screen.findByText('当前没有可用的推理模型。请先完成模型配置，再回来设置新对话默认值。')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '打开设置' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/configuration');
   });
 
   it('copies the selected built-in partner without changing her lifecycle phase', async () => {
@@ -97,7 +113,7 @@ describe('Roles experience', () => {
     });
   });
 
-  it('reviews and activates selected Role Book proposals through an R1 preview', async () => {
+  it('applies reviewed Role Book proposals directly through the preview-bound backend contract', async () => {
     const user = userEvent.setup();
     const persona = previewPersonas[0]!;
     const roleBook = {
@@ -162,26 +178,20 @@ describe('Roles experience', () => {
     await screen.findByText(persona.tagline);
     await user.click(screen.getByRole('button', { name: '她记住的成长' }));
     const lesson = await screen.findByRole('checkbox', { name: /工具返回缺失字段时先验证边界契约/ });
-    const previewButton = screen.getByRole('button', { name: '查看改动' });
-    expect(previewButton).toBeDisabled();
+    const applyButton = screen.getByRole('button', { name: '采用所选内容' });
+    expect(applyButton).toBeDisabled();
     expect(screen.getByRole('group', { name: '经验与边界' })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: '当前承诺' })).toBeInTheDocument();
     await user.click(lesson);
-    expect(previewButton).toBeEnabled();
+    expect(applyButton).toBeEnabled();
     await user.click(lesson);
-    expect(previewButton).toBeDisabled();
+    expect(applyButton).toBeDisabled();
     await user.click(screen.getByRole('checkbox', { name: /沟通时先给出具体例子/ }));
     await user.click(screen.getByRole('checkbox', { name: /能修复 SQLite 事务恢复问题/ }));
     await user.click(lesson);
     await user.click(screen.getByRole('checkbox', { name: /下一轮发布前完成端到端回归/ }));
-    await user.click(previewButton);
-
-    const dialog = await screen.findByRole('dialog', { name: '采用这些成长建议？' });
-    expect(dialog).toHaveTextContent('只会采用你勾选的内容');
-    expect(dialog).toHaveTextContent('采用 1 条能力证据');
-    expect(dialog).toHaveTextContent('沟通时先给出具体例子');
-    expect(dialog).toHaveTextContent('已经核对 1 条来源');
-    await user.click(screen.getByRole('button', { name: '采用这些内容' }));
+    await user.click(applyButton);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.roleBook.activation.apply')).toBe(true));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.roleBook.activation.preview')?.request.body).toEqual({
@@ -239,7 +249,7 @@ describe('Roles experience', () => {
     await screen.findByText(persona.tagline);
     await user.click(screen.getByRole('button', { name: '她记住的成长' }));
     expect(await screen.findByText(/没有符合长期成长档案条件的变化/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '查看改动' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '采用所选内容' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: '忽略' }));
 
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
@@ -358,7 +368,8 @@ describe('Roles experience', () => {
     });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
-    expect(await screen.findByText('本机还没有可用伙伴。')).toBeInTheDocument();
+    expect(await screen.findByText('还没有伙伴')).toBeInTheDocument();
+    expect(screen.getByText('添加后，可以为不同类型的工作选择更合适的陪伴方式。')).toBeInTheDocument();
     expect(screen.queryByText('此刻陪你输入，也陪你把事情想清楚')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '开始对话' })).not.toBeInTheDocument();
   });
@@ -380,15 +391,42 @@ describe('Roles experience', () => {
     ]);
   });
 
-  it('makes a role catalog failure visible without inventing fallback partners', async () => {
+  it('keeps a pending role catalog distinct from a genuinely empty catalog', async () => {
+    const roles = deferred<unknown>();
     const transport = new StubControlTransport('native', {
-      'agent.roles.list': () => { throw new Error('role service unavailable'); },
+      'agent.roles.list': () => roles.promise,
+      'agent.role.models': { ok: true, providers: [] },
+      'agent.configuration.get': { ok: true },
     });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
-    expect(await screen.findByRole('status')).toHaveTextContent('角色目录：暂时无法读取，请稍后重试。');
+    expect(screen.getByText('正在读取伙伴')).toBeInTheDocument();
+    expect(screen.queryByText('还没有伙伴')).not.toBeInTheDocument();
+    await act(async () => roles.resolve({ ok: true, items: [] }));
+    expect(await screen.findByText('还没有伙伴')).toBeInTheDocument();
+  });
+
+  it('makes a role catalog failure recoverable without inventing fallback partners', async () => {
+    const user = userEvent.setup();
+    let attempts = 0;
+    const transport = new StubControlTransport('native', {
+      'agent.roles.list': () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('role service unavailable secret=abc');
+        return { ok: true, items: previewPersonas };
+      },
+      'agent.role.models': { ok: true, providers: [] },
+      'agent.configuration.get': { ok: true },
+    });
+    render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('伙伴目录没有打开');
+    expect(screen.queryByText(/secret=abc/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '开始对话' })).not.toBeInTheDocument();
-    expect(screen.getByText('本机还没有可用伙伴。')).toBeInTheDocument();
+    expect(screen.queryByText('还没有伙伴')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '重新读取伙伴' }));
+    expect(await screen.findByText(previewPersonas[0]!.tagline)).toBeInTheDocument();
+    expect(attempts).toBe(2);
   });
 
   it('creates a user-defined role through the real role creation contract', async () => {
@@ -659,4 +697,10 @@ describe('Roles experience', () => {
 function LocationProbe() {
   const location = useLocation();
   return <output data-testid="location">{location.pathname}{location.search}</output>;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
 }

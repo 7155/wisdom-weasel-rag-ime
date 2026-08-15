@@ -1,26 +1,79 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import {
+  createContext,
   forwardRef,
+  useContext,
+  useRef,
   type ComponentPropsWithoutRef,
   type ComponentRef,
   type HTMLAttributes,
+  type MutableRefObject,
 } from 'react';
 import { IconButton } from './IconButton';
 import { cn } from './utils';
 
-export const Dialog = DialogPrimitive.Root;
+type DialogRootProps = ComponentPropsWithoutRef<typeof DialogPrimitive.Root>;
+type DialogContentProps = ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { hideClose?: boolean };
+
+const DialogOpenerContext = createContext<MutableRefObject<HTMLElement | null> | null>(null);
+
+/**
+ * Radix restores focus automatically when a DialogTrigger is present. Many
+ * product workflows are controlled dialogs opened from an existing list row,
+ * though, so there is no trigger for Radix to remember. Keep the active
+ * control per dialog and let DialogContent return focus after dismissal.
+ */
+export function Dialog(props: DialogRootProps) {
+  const openerRef = useRef<HTMLElement | null>(null);
+  return (
+    <DialogOpenerContext.Provider value={openerRef}>
+      <DialogPrimitive.Root {...props} />
+    </DialogOpenerContext.Provider>
+  );
+}
 export const DialogTrigger = DialogPrimitive.Trigger;
 export const DialogClose = DialogPrimitive.Close;
 
 export const DialogContent = forwardRef<
   ComponentRef<typeof DialogPrimitive.Content>,
-  ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { hideClose?: boolean }
->(function DialogContent({ children, className, hideClose = false, ...props }, ref) {
+  DialogContentProps
+>(function DialogContent(
+  {
+    children,
+    className,
+    hideClose = false,
+    onCloseAutoFocus,
+    onOpenAutoFocus,
+    ...props
+  },
+  ref,
+) {
+  const openerRef = useContext(DialogOpenerContext);
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="ui-dialog__overlay" />
-      <DialogPrimitive.Content ref={ref} className={cn('ui-dialog', className)} {...props}>
+      <DialogPrimitive.Content
+        ref={ref}
+        className={cn('ui-dialog', className)}
+        onOpenAutoFocus={(event) => {
+          const activeElement = document.activeElement;
+          if (activeElement instanceof HTMLElement && activeElement !== document.body) {
+            if (openerRef) openerRef.current = activeElement;
+          }
+          onOpenAutoFocus?.(event);
+        }}
+        onCloseAutoFocus={(event) => {
+          onCloseAutoFocus?.(event);
+          if (event.defaultPrevented) return;
+          const opener = openerRef?.current;
+          if (!opener?.isConnected) return;
+          event.preventDefault();
+          opener.focus({ preventScroll: true });
+          if (openerRef) openerRef.current = null;
+        }}
+        {...props}
+      >
         {children}
         {!hideClose ? (
           <DialogPrimitive.Close asChild>

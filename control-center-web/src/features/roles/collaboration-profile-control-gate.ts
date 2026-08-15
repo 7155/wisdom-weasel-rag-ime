@@ -62,16 +62,16 @@ export async function evaluateCollaborationProfileControlGate(
     expectedProfileRouteHash,
     profileRouteHash: projectionRouteHash,
     reason: commandEnabled
-      ? 'canonical routes, Profile route hash and authorization verified'
+      ? '角色书设置与权限已核对'
       : !readEnabled
-        ? 'CollaborationProfile read route is unavailable or changed'
+        ? '角色书管理暂时不可用'
         : !commandMatches
-          ? 'CollaborationProfile command route hash mismatch'
+          ? '当前版本不能安全修改角色书'
           : !profileHashMatches
-            ? 'CollaborationProfile projection route hash mismatch'
+            ? '角色书内容已经变化，请刷新后重试'
             : !remoteAuthorized
-              ? 'remote caller requires authentication plus agent.write and agent.approve'
-              : 'CollaborationProfile command capability is not advertised',
+              ? '请先完成设备验证，并授予角色书管理权限'
+              : '当前版本未开放角色书修改',
   };
 }
 

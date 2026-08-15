@@ -85,8 +85,6 @@
   font-weight: 650;
   text-decoration: none;
 }
-.context-debug-back:hover { border-color: var(--color-border-strong); background: var(--color-surface-hover); }
-
 .context-debug-notice {
   padding: 8px var(--space-4);
   border-bottom: 1px solid var(--color-border);
@@ -94,6 +92,43 @@
 }
 .context-debug-notice[data-tone='warning'] { color: var(--color-warning); background: var(--color-warning-soft); }
 .context-debug-notice[data-tone='danger'] { color: var(--color-danger); background: var(--color-danger-soft); }
+.context-debug-notice-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 7px var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-paper);
+}
+.context-debug-notice-bar .context-debug-notice {
+  flex: 1 1 auto;
+  padding: 0;
+  border: 0;
+}
+.context-debug-notice-bar__link,
+.context-debug-empty-action {
+  display: inline-flex;
+  min-height: var(--control-height-sm);
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-2);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  text-decoration: none;
+}
+.context-debug-empty-action { min-height: var(--control-height); }
+
+@media (hover: hover) and (pointer: fine) {
+  .context-debug-notice-bar__link:hover,
+  .context-debug-empty-action:hover { background: var(--color-surface-hover); }
+}
+
+.context-debug-notice-bar__link:focus-visible,
+.context-debug-empty-action:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
 .context-xray-summary { display: grid; gap: 11px; padding: 14px var(--space-4); border-bottom: 1px solid var(--color-border-strong); background: var(--color-surface-subtle); }
 .context-xray-summary > header { align-items: center; display: flex; justify-content: space-between; gap: 10px; }
@@ -200,7 +235,6 @@
   text-align: left;
   cursor: pointer;
 }
-.context-debug-call-rail li > button:hover { background: var(--color-surface-hover); }
 .context-debug-call-rail li > button[aria-current='true'] {
   border-color: color-mix(in srgb, var(--color-project) 52%, var(--color-border));
   background: var(--color-project-soft);
@@ -297,7 +331,6 @@
   font-weight: 650;
   cursor: pointer;
 }
-.context-debug-tabs button:hover { color: var(--color-text); background: var(--color-surface-hover); }
 .context-debug-tabs button[aria-selected='true'] {
   box-shadow: inset 0 -2px var(--color-project);
   color: var(--color-project);
@@ -344,7 +377,6 @@
   padding: 6px 12px;
   cursor: pointer;
 }
-.context-debug-message-list summary:hover { background: var(--color-surface-hover); }
 .context-debug-message-list summary > span {
   overflow: hidden;
   padding: 2px 5px;
@@ -410,7 +442,6 @@
   padding: 6px 8px;
   cursor: pointer;
 }
-.context-debug-tool summary:hover { background: var(--color-surface-hover); }
 .context-debug-tool summary > span:nth-child(2) { display: grid; min-width: 0; }
 .context-debug-tool summary strong { overflow: hidden; font-family: var(--font-mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .context-debug-tool summary small { overflow: hidden; color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
@@ -470,6 +501,9 @@
   .context-debug-payload { min-height: 620px; }
   .context-debug-tools { min-height: 380px; }
   .context-debug-tools__body { min-height: 300px; }
+  .context-debug-notice-bar { align-items: stretch; flex-direction: column; }
+  .context-debug-notice-bar .ui-button,
+  .context-debug-notice-bar__link { min-height: var(--control-height-lg); }
 }
 
 @media (max-width: 520px) {
@@ -535,9 +569,6 @@
   color: var(--color-text-primary);
   text-decoration: none;
 }
-.context-debug-html-dialog__footer a:hover { background: var(--color-surface-hover); }
-
-
 /* Phones: the console sheet goes full-bleed, like every framed route. */
 @media (max-width: 760px) {
   .context-debug-html-dialog__footer a {
@@ -582,7 +613,6 @@
   background: var(--color-paper);
   transition: background var(--duration-fast) var(--ease-standard);
 }
-.context-debug-audit > summary:hover { background: var(--color-surface-hover); }
 .context-debug-audit > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 .context-debug-audit[open] > summary {
   border-bottom-color: var(--color-border-strong);
@@ -786,8 +816,6 @@
   font-size: 11px;
   cursor: pointer;
 }
-.context-debug-reader__messages > li > details > summary:hover { color: var(--color-text-secondary); }
-
 .context-debug-reader__tool-flow > div { display: grid; min-width: 0; gap: var(--space-3); }
 .context-debug-reader__tool-batch {
   min-width: 0;
@@ -846,7 +874,6 @@
   transition: background var(--duration-fast) var(--ease-standard);
 }
 .context-debug-reader__disclosure > summary::-webkit-details-marker { display: none; }
-.context-debug-reader__disclosure > summary:hover { background: var(--color-surface-hover); }
 .context-debug-reader__disclosure > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 .context-debug-reader__disclosure > summary > span { display: grid; min-width: 0; gap: 1px; }
 .context-debug-reader__disclosure > summary strong { color: var(--color-text-secondary); font-size: 12px; }
@@ -897,7 +924,10 @@
 
 @media (prefers-reduced-motion: reduce) {
   .context-debug-audit > summary,
-  .context-debug-reader__disclosure > summary { transition: none; }
+  .context-debug-reader__disclosure > summary,
+  .context-debug-session-tree label,
+  .context-debug-session-tree button,
+  .context-debug-turns button { transition: none; }
 }
 
 /* OMP-style session viewer. This uses the local OMP export source as the
@@ -915,7 +945,7 @@
   align-items: start;
   color: var(--color-text-primary);
   background: var(--color-canvas);
-  font: 12px/18px var(--font-mono);
+  font: 12px/1.5 var(--font-mono);
 }
 
 .context-debug-session-tree {
@@ -948,7 +978,7 @@
   border-radius: 6px;
   background: color-mix(in srgb, var(--color-paper) 70%, transparent);
   color: var(--color-text-tertiary);
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  transition: border-color var(--duration-fast) var(--ease-standard);
 }
 
 .context-debug-session-tree label:focus-within {
@@ -985,13 +1015,7 @@
   background: transparent;
   font: 10px/1.4 var(--font-mono);
   cursor: pointer;
-  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
-}
-
-.context-debug-session-tree > header button:hover {
-  border-color: var(--context-reader-hairline-strong);
-  color: var(--color-text-primary);
-  background: var(--context-reader-hover);
+  transition: color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
 }
 
 .context-debug-session-tree > header button[aria-pressed='true'] {
@@ -1026,7 +1050,6 @@
   cursor: pointer;
 }
 
-.context-debug-session-tree > ol button:hover { background: var(--context-reader-hover); }
 .context-debug-session-tree > ol button[aria-current='location'] {
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   box-shadow: inset 2px 0 0 var(--color-accent);
@@ -1058,8 +1081,6 @@
 .context-debug-session-tree li[data-kind='assistant'] button > strong { color: var(--color-success); }
 .context-debug-session-tree li[data-kind='tool'] button > strong { color: var(--color-text-tertiary); }
 .context-debug-session-tree li[data-kind='context'] { opacity: .55; }
-.context-debug-session-tree li[data-kind='context']:hover { opacity: 1; }
-
 .context-debug-session-tree > footer {
   padding: 5px 12px;
   border-top: 1px solid var(--context-reader-hairline-soft);
@@ -1086,7 +1107,7 @@
 .context-debug-session-header h2 {
   margin: 0 0 2px;
   color: var(--color-text-primary);
-  font: 650 12.5px/18px var(--font-mono);
+  font: 650 12.5px/1.45 var(--font-mono);
   letter-spacing: .01em;
   overflow-wrap: anywhere;
 }
@@ -1171,7 +1192,7 @@
 .context-debug-session-call__marker > h3 {
   margin: 0;
   color: var(--color-accent-strong);
-  font: 600 10px/18px var(--font-mono);
+  font: 600 10px/1.5 var(--font-mono);
   letter-spacing: .04em;
   text-transform: uppercase;
 }
@@ -1219,7 +1240,7 @@
   font-size: 9.5px;
   font-weight: 600;
   letter-spacing: .08em;
-  line-height: 14px;
+  line-height: 1.45;
   text-transform: uppercase;
 }
 
@@ -1267,7 +1288,7 @@
 .context-debug-session-message__body {
   min-width: 0;
   color: inherit;
-  font: 12px/18px var(--font-mono);
+  font: 12px/1.5 var(--font-mono);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
@@ -1314,7 +1335,6 @@
   font-size: 10px;
   cursor: pointer;
 }
-.context-debug-session-message-list > li > details > summary:hover { color: var(--color-text-primary); text-decoration: underline; }
 .context-debug-session-message-list[data-nested='true'] > li { padding: 7px 10px; border: 1px solid var(--context-reader-hairline-soft); }
 
 .context-debug-session-tools {
@@ -1363,22 +1383,21 @@
   padding: 6px 9px;
   background: var(--color-paper);
 }
-.context-debug-session-viewer .context-debug-tool summary:hover { background: var(--context-reader-hover); }
 .context-debug-session-viewer .context-debug-tool__state {
   width: 18px;
   height: 18px;
   color: var(--color-success);
   background: transparent;
 }
-.context-debug-session-viewer .context-debug-tool summary strong { font: 600 11.5px/18px var(--font-mono); }
+.context-debug-session-viewer .context-debug-tool summary strong { font: 600 11.5px/1.5 var(--font-mono); }
 .context-debug-session-viewer .context-debug-tool summary small,
-.context-debug-session-viewer .context-debug-tool summary em { font: 10px/18px var(--font-mono); }
+.context-debug-session-viewer .context-debug-tool summary em { font: 10px/1.5 var(--font-mono); }
 .context-debug-session-viewer .context-debug-tool__payloads { border-top-color: var(--context-reader-hairline-soft); }
 .context-debug-session-viewer .context-debug-tool__payloads h4 {
   padding: 5px 9px;
   color: var(--color-text-tertiary);
   background: var(--context-reader-inset);
-  font: 600 9.5px/18px var(--font-mono);
+  font: 600 9.5px/1.5 var(--font-mono);
   letter-spacing: .06em;
 }
 .context-debug-session-viewer .context-debug-tool__payloads pre {
@@ -1386,7 +1405,7 @@
   padding: 7px 9px;
   color: var(--color-text-secondary);
   background: var(--color-paper);
-  font: 11.5px/18px var(--font-mono);
+  font: 11.5px/1.55 var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1420,30 +1439,31 @@
   background: transparent;
   font-family: var(--font-mono);
 }
-.context-debug-session-viewer .context-debug-reader__disclosure > summary:hover { background: var(--context-reader-hover); }
 .context-debug-session-viewer .context-debug-reader__disclosure > summary strong {
   color: var(--color-text-secondary);
-  font: 600 10px/18px var(--font-mono);
+  font: 600 10px/1.5 var(--font-mono);
   letter-spacing: .06em;
   text-transform: uppercase;
 }
 .context-debug-session-viewer .context-debug-reader__disclosure > summary small {
   overflow: hidden;
   color: var(--color-text-tertiary);
-  font: 10px/18px var(--font-mono);
+  font: 10px/1.5 var(--font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .context-debug-session-viewer .context-debug-reader__disclosure > summary::after {
-  content: 'expand';
+  content: '展开';
   color: var(--color-text-tertiary);
-  font: 10px/18px var(--font-mono);
+  font: 10px/1.5 var(--font-mono);
 }
-.context-debug-session-viewer .context-debug-reader__disclosure[open] > summary::after { content: 'collapse'; }
+.context-debug-session-viewer .context-debug-reader__disclosure[open] > summary::after { content: '收起'; }
 .context-debug-session-viewer .context-debug-reader__disclosure > div {
   padding: 0 14px 10px;
   border-top: 1px solid var(--context-reader-hairline-soft);
 }
+
+.context-debug-feature details:not([open]) > :not(summary) { display: none !important; }
 .context-debug-session-viewer .context-debug-reader__disclosure .context-debug-reader__disclosure {
   margin-top: 6px;
   border-radius: 6px;
@@ -1458,11 +1478,11 @@
   border-radius: 4px;
   color: var(--color-text-secondary);
   background: var(--context-reader-inset);
-  font: 11.5px/18px var(--font-mono);
+  font: 11.5px/1.55 var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.context-debug-session-viewer .context-debug-reader__code--text { font: 11px/18px var(--font-mono); }
+.context-debug-session-viewer .context-debug-reader__code--text { font: 11px/1.65 var(--font-mono); }
 
 .context-debug-session-tool-chips {
   display: flex;
@@ -1476,7 +1496,7 @@
   color: var(--color-text-tertiary);
   background: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
   font-size: 10px;
-  line-height: 17px;
+  line-height: 1.5;
 }
 
 .context-debug-session-footer {
@@ -1664,13 +1684,7 @@
   background: transparent;
   text-align: left;
   cursor: pointer;
-  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
-}
-
-.context-debug-turns button:hover {
-  border-color: var(--context-reader-hairline);
-  background: var(--context-reader-hover);
-  transform: translateX(2px);
+  transition: border-color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
 }
 
 .context-debug-turns button[aria-current='step'] {
@@ -1722,9 +1736,9 @@
 
 .context-debug-session-tree label { min-height: 36px; border-radius: 7px; }
 .context-debug-session-tree input { height: 34px; font: 13px/1 var(--font-sans); }
-.context-debug-session-tree > header button { min-height: 28px; padding-inline: 10px; font: 12px/1.4 var(--font-sans); }
+.context-debug-session-tree > header button { min-height: 36px; padding-inline: 10px; font: 12px/1.4 var(--font-sans); }
 .context-debug-session-tree > ol { padding: 8px 0; }
-.context-debug-session-tree > ol button { gap: 7px; padding: 5px 14px; }
+.context-debug-session-tree > ol button { min-height: 40px; gap: 7px; padding: 5px 14px; }
 .context-debug-session-tree > ol button > strong { font-size: 12.5px; }
 .context-debug-session-tree > ol button > small { font-size: 12px; }
 .context-debug-session-tree > footer { padding: 8px 14px; font-size: 11.5px; }
@@ -1841,7 +1855,7 @@
 .context-debug-session-call { gap: 18px; scroll-margin-top: 24px; }
 .context-debug-session-call + .context-debug-session-call { padding-top: 28px; }
 .context-debug-session-call__marker { gap: 10px; font-size: 12px; }
-.context-debug-session-call__marker > h3 { font: 650 12px/18px var(--font-mono); }
+.context-debug-session-call__marker > h3 { font: 650 12px/1.5 var(--font-mono); }
 .context-debug-session-call__warning { font-size: 12.5px; }
 .context-debug-session-message-list { gap: 18px; }
 .context-debug-session-message-list > li[data-role='user'],
@@ -1881,18 +1895,123 @@
   .context-debug-assembly__metrics > div:nth-child(3) { border-right: 0; }
 }
 
-@media (max-width: 620px) {
+@media (max-width: 760px) {
   .context-debug-heading small { display: none; }
-  .context-debug-controls .ui-button span { display: none; }
   .context-debug-assembly__title { grid-template-columns: 38px minmax(0, 1fr); }
   .context-debug-assembly__title > em { display: none; }
   .context-debug-assembly__metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .context-debug-assembly__metrics > div { border-right: 0; padding-inline: 0; }
   .context-debug-assembly__layers { grid-template-columns: minmax(0, 1fr); }
   .context-debug-assembly__layers li:last-child { grid-column: auto; }
+  .context-debug-session-tree > header button,
+  .context-debug-session-tree > ol button,
+  .context-debug-controls .ui-button,
+  .context-debug-controls .ui-select__trigger,
+  .context-debug-live-switch,
+  .context-debug-session-message-list > li > details > summary,
+  .context-debug-reader__messages > li > details > summary,
+  .context-debug-session-viewer .context-debug-reader__disclosure > summary { min-height: 44px; }
+  .context-debug-session-tree label { min-height: 44px; }
+  .context-debug-session-tree input { height: 44px; }
+  .context-debug-session-message-list > li > details > summary,
+  .context-debug-reader__messages > li > details > summary { padding-inline: 8px; }
+}
+
+@media (max-width: 980px) {
+  /* The compact layout is one reading document. The desktop viewer clips its
+     two independent panes, but keeping that overflow rule here would make the
+     long document unreachable in landscape and at 200% browser zoom. */
+  .context-debug-feature > .context-debug-session-viewer {
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .context-debug-feature .context-debug-session-content {
+    overflow: visible;
+  }
+}
+
+@media (max-width: 760px) {
+  .context-debug-feature .context-debug-session-content {
+    padding-bottom: calc(80px + env(safe-area-inset-bottom));
+  }
+}
+
+/* Browser text-only zoom enlarges glyphs without proportionally enlarging a
+   fixed pixel line box. Keep navigation and disclosure copy readable at 200%
+   by letting rows grow and wrapping the real label instead of clipping it. */
+.context-debug-session-tree > ol button > strong,
+.context-debug-session-tree > ol button > small,
+.context-debug-turns__copy strong,
+.context-debug-turns__copy small,
+.context-debug-tool-stage > header small,
+.context-debug-session-viewer .context-debug-tool summary strong,
+.context-debug-session-viewer .context-debug-tool summary small,
+.context-debug-session-viewer .context-debug-reader__disclosure > summary small {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.context-debug-assembly__layers small {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .context-debug-back:hover {
+    border-color: var(--color-border-strong);
+    background: var(--color-surface-hover);
+  }
+
+  .context-debug-call-rail li > button:hover,
+  .context-debug-message-list summary:hover,
+  .context-debug-tool summary:hover,
+  .context-debug-html-dialog__footer a:hover,
+  .context-debug-audit > summary:hover,
+  .context-debug-reader__disclosure > summary:hover {
+    background: var(--color-surface-hover);
+  }
+
+  .context-debug-tabs button:hover {
+    background: var(--color-surface-hover);
+    color: var(--color-text);
+  }
+
+  .context-debug-reader__messages > li > details > summary:hover {
+    color: var(--color-text-secondary);
+  }
+
+  .context-debug-session-tree > header button:hover {
+    border-color: var(--context-reader-hairline-strong);
+    background: var(--context-reader-hover);
+    color: var(--color-text-primary);
+  }
+
+  .context-debug-session-tree > ol button:hover,
+  .context-debug-session-viewer .context-debug-tool summary:hover,
+  .context-debug-session-viewer .context-debug-reader__disclosure > summary:hover {
+    background: var(--context-reader-hover);
+  }
+
+  .context-debug-session-tree li[data-kind='context']:hover {
+    opacity: 1;
+  }
+
+  .context-debug-session-message-list > li > details > summary:hover {
+    color: var(--color-text-primary);
+    text-decoration: underline;
+  }
+
+  .context-debug-turns button:hover {
+    border-color: var(--context-reader-hairline);
+    background: var(--context-reader-hover);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .context-debug-turns button { transition: none; }
-  .context-debug-turns button:hover { transform: none; }
 }

@@ -63,7 +63,7 @@ export function modeSettingLabel(key: string): string {
     'memory.enabled': '记忆增强',
     'activeRag.allowRemoteModel': '远程生成',
     'rag.lanes.tagMemo': '标签记忆',
-    'rag.lanes.timeDailyBook': '时间与日记召回',
+    'rag.lanes.timeDailyBook': '时间与日记联想',
     'diagnostics.liveTrace': '实时诊断',
     'diagnostics.candidateExplain': '候选解释',
     'display.showDiagnosticsInline': '候选行内诊断',
@@ -127,18 +127,18 @@ export function inputFieldFallback(key: string): string {
     'pinyin.fuzzyProfile': '模糊音方案',
     'lexiconOrganization.enabled': '定期整理',
     'lexiconOrganization.runsPerDay': '每天整理次数',
-    'models.modelId': '注册模型 ID',
-    'models.hot': '推理 Profile',
+    'models.modelId': '本机补全模型',
+    'models.hot': '补全模式',
     'models.path': '本机模型目录',
-    'models.promptMode': 'Prompt 模式',
-    'models.maxTokens': '最大生成 Token',
-    'models.temperature': 'Temperature',
-    'models.topP': 'Top P',
+    'models.promptMode': '补全方式',
+    'models.maxTokens': '单次补全长度',
+    'models.temperature': '表达变化程度',
+    'models.topP': '表达变化范围',
   } as Record<string, string>)[key] ?? '输入设置';
 }
 
 export function sectionLabel(value: string): string {
-  return ({ interaction: '输入体验', display: '候选界面', activeRag: '主动知识生成', pinyin: '拼音设置', models: '本机预测', lexiconOrganization: '词库定期整理' } as Record<string, string>)[value] ?? publicInputText(value, '输入设置');
+  return ({ interaction: '输入体验', display: '候选界面', activeRag: '知识建议', pinyin: '拼音习惯', models: '本机补全', lexiconOrganization: '词库整理' } as Record<string, string>)[value] ?? publicInputText(value, '输入设置');
 }
 
 export function inputOptionLabel(value: string): string {
@@ -156,9 +156,9 @@ export function inputOptionLabel(value: string): string {
     insert_after_selection: '插入到选中内容后',
     show_only: '只显示，不插入',
     'sichuan-mild': '四川轻度模糊音',
-    minimind_ime_v2: 'MiniMind IME v2',
+    minimind_ime_v2: 'MiniMind 输入法 v2',
     qwen3_06b_ime_hot: 'Qwen3 0.6B IME Hot',
-    'base-completion': 'Base Completion',
+    'base-completion': '基础续写',
     'chat-json': 'Chat JSON',
     none: '关闭',
   } as Record<string, string>)[value] ?? (/[\u3400-\u9fff]/u.test(value) ? value : '自定义设置');
@@ -175,8 +175,8 @@ export function modelConfigValue(value: unknown): string {
 
 export function modelTokenLabel(value: unknown): string {
   return typeof value === 'number' && Number.isInteger(value) && value > 0
-    ? `${value} token`
-    : '由模型 Profile 决定';
+    ? `单次最多补全 ${value} 段`
+    : '按所选补全模式确定';
 }
 
 export function readinessLabel(source: Record<string, unknown>): string {
@@ -207,7 +207,7 @@ export function applyModeLabel(value: string): string {
     restart: '需重启',
     restart_input_method: '重新载入输入法',
     redeploy_rime: '重新部署输入法',
-    restart_sidecar: '重启后台服务',
+    restart_sidecar: '重新连接本机补全服务',
     restart_predictor: '应用并重启本机模型',
   } as Record<string, string>)[value] ?? '应用后生效';
 }

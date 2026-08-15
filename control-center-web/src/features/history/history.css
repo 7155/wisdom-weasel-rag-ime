@@ -27,6 +27,9 @@
   font-size: 13px;
 }
 
+.history-detail__advanced-context { margin-top: var(--space-3); }
+.history-detail__advanced-context > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-size: 13px; font-weight: var(--font-weight-semibold); }
+
 .history-filter-toolbar .ui-input,
 .history-filter-toolbar .ui-select__trigger { padding-block: 4px; }
 .history-table-wrap {
@@ -81,12 +84,13 @@
 }
 
 .history-table tbody tr {
-  cursor: pointer;
   transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
-.history-table tbody tr:hover {
-  background: var(--color-surface-hover);
+@media (hover: hover) and (pointer: fine) {
+  .history-table tbody tr:hover {
+    background: var(--color-surface-hover);
+  }
 }
 
 .history-table__preview { color: var(--color-text-primary); }
@@ -105,9 +109,17 @@
   color: var(--color-text-secondary);
   cursor: pointer;
   font: inherit;
+  touch-action: manipulation;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-press) var(--ease-press);
 }
 
-.history-table__open:hover { background: var(--color-surface-raised); color: var(--color-accent); }
+@media (hover: hover) and (pointer: fine) {
+  .history-table__open:hover { background: var(--color-surface-raised); color: var(--color-accent); }
+}
+.history-table__open:active { transform: scale(.97); }
 .history-table__open:focus-visible { background: var(--color-surface-raised); box-shadow: var(--shadow-focus); color: var(--color-accent); outline: none; }
 
 .ui-dialog.history-detail-dialog {
@@ -116,7 +128,8 @@
   overflow: auto;
 }
 
-.history-detail__state { margin: 22px 0; color: var(--color-text-secondary); }
+.history-detail__state { display: grid; justify-items: start; gap: var(--space-3); margin: 22px 0; color: var(--color-text-secondary); }
+.history-detail__state p { margin: 0; }
 .history-detail__state--error { color: var(--color-danger); }
 .history-detail__body { display: grid; gap: 20px; min-width: 0; }
 
@@ -185,12 +198,44 @@
 .history-detail__empty { margin: 8px 0 0; color: var(--color-text-secondary); font-size: 13px; }
 .history-detail__copy-error { color: var(--color-danger); }
 
+@media (prefers-reduced-motion: reduce) {
+  .history-table tbody tr,
+  .history-table__open { transition: none; }
+  .history-table__open:active { transform: none; }
+}
+
 @media (max-width: 640px) {
+  .history-filter-toolbar .ui-input,
+  .history-filter-toolbar .ui-select__trigger,
+  .history-filter-toolbar > .ui-button { min-height: 44px; font-size: 16px; }
+  main[data-route-id='history'] .mgmt-page__actions .ui-button,
+  main[data-route-id='history'] .mgmt-pagination .ui-button,
+  main[data-route-id='history'] #history-record,
+  main[data-route-id='history'] .mgmt-workflow .ui-button,
+  .history-detail-dialog .ui-button {
+    min-height: 44px;
+  }
+  .history-detail-dialog .ui-dialog__close {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .history-table-wrap { max-height: none; }
+  .history-table { min-width: 0; }
+  .history-table th:nth-child(2),
+  .history-table td:nth-child(2),
+  .history-table th:nth-child(4),
+  .history-table td:nth-child(4),
+  .history-table th:nth-child(5),
+  .history-table td:nth-child(5) { display: none; }
+  .history-table th:nth-child(1) { width: 26%; }
+  .history-table th:nth-child(3) { width: auto; }
+  .history-table th:nth-child(6) { width: 96px; }
+  .history-table__open { min-height: 44px; }
   .history-filter-toolbar {
     width: 100%;
     grid-template-areas:
-      'search search'
-      'source submit';
+      'search submit'
+      'source source';
     grid-template-columns: minmax(0, 1fr) auto;
   }
   .ui-dialog.history-detail-dialog { width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
@@ -198,4 +243,5 @@
   .history-detail__context-grid,
   .history-detail__feedback-grid { grid-template-columns: 1fr; }
   .history-detail__section-heading { align-items: flex-start; }
+  .history-detail__section-heading > .ui-button { flex: 0 0 auto; }
 }

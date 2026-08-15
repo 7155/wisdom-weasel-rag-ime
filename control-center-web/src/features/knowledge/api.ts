@@ -1106,7 +1106,7 @@ function normalizeEmbeddingProfileState(value: unknown): KnowledgeEmbeddingProfi
 function normalizeEmbeddingProbe(value: unknown): KnowledgeEmbeddingProbe {
   const payload = record(value);
   if (payload.ready !== true || payload.secretsVisible !== false) {
-    throw new Error('Embedding Probe 没有返回可验证的无密钥收据。');
+    throw new Error('向量模型连接测试没有返回可验证的无密钥结果。');
   }
   return {
     ready: true,
@@ -1124,7 +1124,7 @@ function normalizeEmbeddingProbe(value: unknown): KnowledgeEmbeddingProbe {
 function normalizeEmbeddingImpact(value: unknown): KnowledgeEmbeddingImpact {
   const payload = record(value);
   if (payload.approvalRequiredForApply !== true || payload.secretsVisible !== false) {
-    throw new Error('Embedding 影响预览没有通过安全边界。');
+    throw new Error('向量模型影响预览没有通过安全检查。');
   }
   const candidate = embeddingCandidate(record(payload.candidate));
   return {

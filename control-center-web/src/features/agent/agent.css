@@ -1470,7 +1470,7 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 .agent-tool-picker button i[data-risk='R3'] { color: var(--color-danger); }
 
 .agent-status-panel { z-index: 10; display: grid; width: 100%; min-width: 0; min-height: 0; overflow: hidden; grid-column: 3; grid-row: 1; grid-template-rows: var(--workspace-header-height) minmax(0, 1fr); border-left: 1px solid var(--color-border); background: var(--color-chrome); opacity: 0; pointer-events: none; transform: translateX(100%); transition: opacity var(--duration-enter) var(--ease-standard), transform var(--duration-panel) var(--ease-standard); }
-.agent-status-panel:not([data-open='true']) { border-left: 0; }
+.agent-status-panel:not([data-open='true']) { visibility: hidden; border-left: 0; transform: translateX(0); }
 .agent-status-panel[data-open='true'] { opacity: 1; pointer-events: auto; transform: translateX(0); }
 .agent-status-panel > header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 9px 6px 14px; border-bottom: 1px solid color-mix(in srgb, var(--color-border) 76%, transparent); background: var(--color-workspace-header-overlay); }
 .agent-status-panel > header > span { display: grid; min-width: 0; gap: 1px; }
@@ -1479,7 +1479,7 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 .agent-status-panel__body { min-height: 0; overflow-y: auto; }
 
 .agent-files-panel { z-index: 10; display: grid; width: 100%; min-width: 0; min-height: 0; overflow: hidden; grid-column: 3; grid-row: 1; grid-template-rows: var(--workspace-header-height) minmax(0, 1fr); border-left: 1px solid var(--color-border); background: var(--color-chrome); opacity: 0; pointer-events: none; transform: translateX(100%); transition: opacity var(--duration-enter) var(--ease-standard), transform var(--duration-panel) var(--ease-standard); }
-.agent-files-panel:not([data-open='true']) { border-left: 0; }
+.agent-files-panel:not([data-open='true']) { visibility: hidden; border-left: 0; transform: translateX(0); }
 .agent-files-panel[data-open='true'] { opacity: 1; pointer-events: auto; transform: translateX(0); }
 .agent-files-panel > header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 9px 6px 14px; border-bottom: 1px solid color-mix(in srgb, var(--color-border) 76%, transparent); background: var(--color-workspace-header-overlay); }
 .agent-files-panel > header > span { display: grid; min-width: 0; gap: 1px; }

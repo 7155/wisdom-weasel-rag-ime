@@ -33,6 +33,18 @@ from scripts.build_managed_pi_runtime_v2 import (
 from rag_ime.managed_pi_runtime import ManagedPiRuntimeError
 
 
+SESSION_FLOW_SKILLS = {
+    "alignment-and-decision",
+    "facilitate-room",
+    "implementation-planning",
+    "independent-review",
+    "orchestrate-session",
+    "organize-work-documents",
+    "systematic-debugging",
+    "test-driven-implementation",
+}
+
+
 class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
     def test_control_extension_keeps_full_desktop_receipt_out_of_model_context(self) -> None:
         source = (ROOT / "integrations" / "pi" / "rag-ime-control.ts").read_text(
@@ -285,17 +297,15 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             skill_names,
             sorted({
                 "alignment-and-decision",
-                "implementation-execution",
+                "facilitate-room",
                 "implementation-planning",
                 "improve-codebase-architecture",
                 "independent-review",
-                "quality-gate",
                 "rag-retrieval-optimization",
                 "memory-curation",
+                "orchestrate-session",
+                "organize-work-documents",
                 "plugin-creator",
-                "work-document-archive",
-                "review-feedback-resolution",
-                "structured-handoff",
                 "systematic-debugging",
                 "test-driven-implementation",
             }),
@@ -304,10 +314,25 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             content = (skills_root / name / "SKILL.md").read_text(encoding="utf-8")
             self.assertIn(f"name: {name}", content)
             self.assertIn("\ndescription: ", content)
-            if name != "rag-retrieval-optimization":
-                self.assertIn("\nwhen:\n", content)
-                self.assertIn("\ndoes: ", content)
-                self.assertIn("\nnotFor:\n", content)
+            if name in SESSION_FLOW_SKILLS:
+                frontmatter = yaml.safe_load(content.split("---", 2)[1])
+                self.assertEqual(set(frontmatter), {"name", "description"})
+                description = frontmatter["description"]
+                self.assertIn("Use when", description)
+                self.assertIn("Do not use", description)
+                self.assertIn("e.g.,", description)
+                self.assertLessEqual(len(description), 600)
+                self.assertIn("\n## Not For\n", content)
+                self.assertIn("\nExample:", content)
+                agent_metadata = yaml.safe_load(
+                    (skills_root / name / "agents" / "openai.yaml").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                self.assertIn(
+                    f"${name}",
+                    agent_metadata["interface"]["default_prompt"],
+                )
 
         routing_catalog = _validated_skill_routing_catalog(
             SKILL_ROUTING_CARDS,
@@ -336,7 +361,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             },
         )
         cards = routing_catalog["cards"]
-        self.assertEqual(len(cards), 40)
+        self.assertEqual(len(cards), 39)
         self.assertEqual(len({card["name"] for card in cards}), len(cards))
         self.assertNotIn("structured-result-presentation", {card["name"] for card in cards})
         for card in cards:
@@ -474,7 +499,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         skills_root = ROOT / "integrations" / "pi" / "skills"
         catalog = json.loads(SKILL_ROUTING_CARDS.read_text(encoding="utf-8"))
         project_card = next(
-            card for card in catalog["cards"] if card["name"] == "work-document-archive"
+            card for card in catalog["cards"] if card["name"] == "memory-curation"
         )
         project_card["does"] = "drifted duplicate truth"
         with tempfile.TemporaryDirectory(prefix="rag-ime-routing-card-drift-") as temporary:
@@ -485,7 +510,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(
                 ManagedPiRuntimeError,
-                "project routing card drift for 'work-document-archive'",
+                "project routing card drift for 'memory-curation'",
             ):
                 _validated_skill_routing_catalog(cards_path, skills_root)
 
@@ -514,7 +539,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn("explicitBundledWinner", banner)
         self.assertNotIn("--no-skills", banner)
 
-    def test_managed_payload_copies_memory_curation_governance_contract(self) -> None:
+    def test_managed_payload_copies_session_skills_and_memory_contract(self) -> None:
         source_root = ROOT / "integrations" / "pi" / "skills"
         with tempfile.TemporaryDirectory(prefix="rag-ime-runtime-skill-copy-") as temporary:
             runtime_root = Path(temporary) / "runtime-host" / "skills"
@@ -524,44 +549,42 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             alignment = (runtime_root / "alignment-and-decision" / "SKILL.md").read_text(
                 encoding="utf-8"
             )
-            implementation_execution = (
-                runtime_root / "implementation-execution" / "SKILL.md"
+            orchestration = (
+                runtime_root / "orchestrate-session" / "SKILL.md"
             ).read_text(encoding="utf-8")
-            continuity_contract = (
-                runtime_root
-                / "implementation-execution"
-                / "references"
-                / "execution-continuity-contract.md"
+            facilitation = (
+                runtime_root / "facilitate-room" / "SKILL.md"
+            ).read_text(encoding="utf-8")
+            organization = (
+                runtime_root / "organize-work-documents" / "SKILL.md"
             ).read_text(encoding="utf-8")
             agent_prompt = (skill_root / "agents" / "openai.yaml").read_text(
                 encoding="utf-8"
             )
-            execution_prompt = (
-                runtime_root / "implementation-execution" / "agents" / "openai.yaml"
+            orchestration_prompt = (
+                runtime_root / "orchestrate-session" / "agents" / "openai.yaml"
             ).read_text(encoding="utf-8")
 
         self.assertIn("memory-curation", copied)
         self.assertIn("alignment-and-decision", copied)
-        self.assertIn("implementation-execution", copied)
+        self.assertIn("orchestrate-session", copied)
+        self.assertIn("facilitate-room", copied)
+        self.assertIn("organize-work-documents", copied)
+        for retired in (
+            "implementation-execution",
+            "quality-gate",
+            "review-feedback-resolution",
+            "structured-handoff",
+            "work-document-archive",
+        ):
+            self.assertNotIn(retired, copied)
         self.assertIn("name: alignment-and-decision", alignment)
-        self.assertIn("the decision, not the user", alignment)
-        self.assertIn("Write a glossary, ADR, or decision record only", alignment)
-        self.assertIn("one continuous suite", implementation_execution)
-        self.assertIn("docs/agent/chat-summary.md", implementation_execution)
-        self.assertIn("one conditional inner", implementation_execution)
-        self.assertIn("implementation-continuity:start", continuity_contract)
-        self.assertIn(
-            "One Small Project Index",
-            continuity_contract,
-        )
-        self.assertIn(
-            "One Work Item, One WorkDocument",
-            continuity_contract,
-        )
-        self.assertIn("Original User Request", continuity_contract)
-        self.assertIn("Original User Vision", continuity_contract)
-        self.assertIn("no automatic expiry or deletion", continuity_contract)
-        self.assertIn("preserve the original request and vision", execution_prompt)
+        self.assertIn("material user-owned choices", alignment)
+        self.assertIn("Session's native subagent capability", orchestration)
+        self.assertIn("does not define another event bus", orchestration)
+        self.assertIn("Partners remain ordinary Sessions", facilitation)
+        self.assertIn("document gardener", organization)
+        self.assertIn("$orchestrate-session", orchestration_prompt)
         for required in (
             "authorized Evidence -> one Current Atom",
             "Task Timeline for continuity only",

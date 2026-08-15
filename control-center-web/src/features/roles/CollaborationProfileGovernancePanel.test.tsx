@@ -15,27 +15,36 @@ describe('CollaborationProfileGovernancePanel', () => {
   it('loads the canonical projection and renders long Profile text, diff, signature, pointer and receipts accessibly', async () => {
     const projection = profileProjection();
     projection.inspection = inspection({ promptGuidance: ['先核验证据。'.repeat(30), '再独立复核。'] });
-    renderPanel(transport({ projection }));
+    const mock = transport({ projection });
+    renderPanel(mock);
 
-    const plane = await screen.findByRole('region', { name: '角色书正式控制面' });
-    await screen.findByText('canonical projection 已同步');
-    expect(plane).toHaveTextContent('Pointer revisionr4');
+    const plane = await screen.findByRole('region', { name: '高级：角色书管理' });
+    const details = screen.getByText('高级：角色书管理').closest('details');
+    expect(details).not.toHaveAttribute('open');
+    await openAdvanced();
+    await screen.findByText('角色书当前设置已同步');
+    expect(plane).toHaveTextContent('当前版本第 4 版');
     expect(plane).toHaveTextContent('sha256:aaaaaaa');
     expect(screen.getByRole('region', { name: '角色书能力差异' })).toHaveTextContent('基线rag · review · control有效rag · review收窄control拒绝control');
-    const prompt = screen.getByLabelText('角色书提示词只读文本');
+    const prompt = screen.getByLabelText('角色书说明（高级只读）');
     prompt.focus();
     expect(prompt).toHaveFocus();
     expect(prompt).toHaveTextContent('先核验证据');
-    expect(screen.getByText(/new-roots-only 默认保护活动 Root/)).toBeInTheDocument();
-    expect(screen.getByText(/活动 Root blocker：root-running/)).toBeInTheDocument();
-    expect(screen.getByText(/普通 Agent 和无 Room Agent 不受影响/)).toBeInTheDocument();
+    expect(screen.getByText(/默认只影响新开始的对话/)).toBeInTheDocument();
+    expect(screen.getByText(/正在进行的任务：root-running/)).toBeInTheDocument();
+    expect(screen.getByText(/普通伙伴和未绑定角色书的协作不会受影响/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '撤销…' }));
+    expect(screen.getByRole('dialog', { name: '确认撤销' })).toHaveTextContent('这个版本不能再次启用');
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    expect(mock.requests.some((call) => call.request.pathId === 'agent.collaborationProfile.command')).toBe(false);
   });
 
   it('fails closed on route hash mismatch and an unauthenticated remote caller', async () => {
     const projection = profileProjection({ routeHash: `sha256:${'0'.repeat(64)}` });
     renderPanel(transport({ projection }));
-    expect(await screen.findByText('CollaborationProfile projection route hash mismatch')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '回滚' })).toBeDisabled();
+    await openAdvanced();
+    expect(await screen.findByText('角色书内容已经变化，请刷新后重试')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '恢复上个版本' })).toBeDisabled();
 
     cleanup();
     const capabilities = capabilityValue();
@@ -43,8 +52,9 @@ describe('CollaborationProfileGovernancePanel', () => {
       remote: true, deviceAuthenticated: false, grantedScopes: ['agent.write', 'agent.approve'],
     };
     renderPanel(transport({ capabilities }));
-    expect(await screen.findByText(/remote caller requires authentication/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '回滚' })).toBeDisabled();
+    await openAdvanced();
+    expect(await screen.findByText('请先完成设备验证，并授予角色书管理权限')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '恢复上个版本' })).toBeDisabled();
   });
 
   it('submits one typed pipeline command on a double click and verifies the receipt binding', async () => {
@@ -56,8 +66,9 @@ describe('CollaborationProfileGovernancePanel', () => {
     }));
     const mock = transport({ command });
     renderPanel(mock);
-    await screen.findByText('canonical projection 已同步');
-    fireEvent.change(screen.getByLabelText('声明式 Profile bundle JSON'), { target: { value: JSON.stringify(bundle()) } });
+    await openAdvanced();
+    await screen.findByText('角色书当前设置已同步');
+    fireEvent.change(screen.getByLabelText('角色书配置（高级 JSON）'), { target: { value: JSON.stringify(bundle()) } });
     const inspect = screen.getByRole('button', { name: '检查' });
     fireEvent.click(inspect);
     fireEvent.click(inspect);
@@ -65,8 +76,8 @@ describe('CollaborationProfileGovernancePanel', () => {
     expect(command.mock.calls[0]?.[0].body).toMatchObject({
       schemaVersion: 'rag-ime.collaboration-profile-command.v1', action: 'inspect', actorRef: 'control-center:administrator',
     });
-    expect(await screen.findByText(/检查 · applied/)).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole('button', { name: '校验签名' })).toBeEnabled());
+    expect(await screen.findByText(/检查 · 已应用/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: '验证签名' })).toBeEnabled());
   });
 
   it('carries the typed candidate through validate, compile, dry-run, stage and new-roots-only activate', async () => {
@@ -80,18 +91,19 @@ describe('CollaborationProfileGovernancePanel', () => {
       return receipt(body, result, await commandHash(body));
     });
     renderPanel(transport({ command }));
-    await screen.findByText('canonical projection 已同步');
-    fireEvent.change(screen.getByLabelText('声明式 Profile bundle JSON'), { target: { value: JSON.stringify(bundle()) } });
-    for (const label of ['检查', '校验签名', '编译', '试运行', '暂存']) {
+    await openAdvanced();
+    await screen.findByText('角色书当前设置已同步');
+    fireEvent.change(screen.getByLabelText('角色书配置（高级 JSON）'), { target: { value: JSON.stringify(bundle()) } });
+    for (const label of ['检查', '验证签名', '准备内容', '试运行', '待启用']) {
       const button = screen.getByRole('button', { name: label });
       await waitFor(() => expect(button).toBeEnabled());
       fireEvent.click(button);
     }
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     const activate = screen.getByRole('button', { name: '启用' });
     await waitFor(() => expect(activate).toBeEnabled());
     fireEvent.click(activate);
-    expect(await screen.findByText(/启用 · applied/)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(await screen.findByText(/启用 · 已应用/)).toBeInTheDocument();
     const body = command.mock.calls.at(-1)?.[0].body as unknown as Record<string, unknown>;
     expect(body).toMatchObject({
       action: 'activate', activationScope: 'new_roots_only', expectedPointerRevision: 4,
@@ -109,12 +121,13 @@ describe('CollaborationProfileGovernancePanel', () => {
     for (const [index, error] of errors.entries()) {
       const command = vi.fn(() => { throw error; });
       renderPanel(transport({ command }));
-      await screen.findByText('canonical projection 已同步');
-      vi.spyOn(window, 'confirm').mockReturnValue(true);
-      fireEvent.click(screen.getByRole('button', { name: '回滚' }));
-      const expected = index === 0 ? /stale revision/ : index === 1 ? /hash\/signature mismatch/ : index === 2 ? /active Root blocker/ : /unknown/;
+      await openAdvanced();
+      await screen.findByText('角色书当前设置已同步');
+      fireEvent.click(screen.getByRole('button', { name: '恢复上个版本' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      const expected = index === 0 ? /当前版本已经变化/ : index === 1 ? /内容或签名校验未通过/ : index === 2 ? /仍有进行中的任务/ : /操作结果暂时无法确认/;
       expect(await screen.findByText(expected)).toBeInTheDocument();
-      expect(screen.queryByText(/回滚 · applied/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/恢复上个版本 · 已应用/)).not.toBeInTheDocument();
       cleanup();
       vi.restoreAllMocks();
     }
@@ -123,14 +136,19 @@ describe('CollaborationProfileGovernancePanel', () => {
   it('keeps missing Profile and ordinary non-Room Agents on the fallback path', async () => {
     const missing = Object.assign(new Error('not found'), { status: 404 });
     renderPanel(transport({ get: () => { throw missing; } }));
-    expect(await screen.findByText(/该角色书尚未安装/)).toBeInTheDocument();
-    expect(screen.getByText(/普通 Agent、无 Profile Agent 和无 Room Agent/)).toBeInTheDocument();
+    await openAdvanced();
+    expect(await screen.findByText(/这份角色书尚未安装/)).toBeInTheDocument();
+    expect(screen.getByText(/普通伙伴和未绑定角色书的协作会继续/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '启用' })).not.toBeInTheDocument();
   });
 });
 
 function renderPanel(mock: MockControlTransport) {
   return render(<ControlTransportProvider transport={mock}><CollaborationProfileGovernancePanel profileId="evidence-review" /></ControlTransportProvider>);
+}
+
+async function openAdvanced() {
+  fireEvent.click(await screen.findByText('高级：角色书管理'));
 }
 
 function transport(options: { projection?: CollaborationProfileProjectionV1; command?: (request: ControlRequest) => unknown; capabilities?: FrontendCapabilities; get?: () => unknown } = {}) {

@@ -1,6 +1,6 @@
 import { useMutation } from '@tanstack/react-query';
-import { Check, CircleDashed, ShieldCheck, Square } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { Play, Square } from 'lucide-react';
+import { useState } from 'react';
 import { Button } from '@/components/primitives';
 import type { JsonValue } from '@/platform/transport';
 import type { MutationAvailability } from '@/features/overview/management-mutation';
@@ -22,12 +22,9 @@ export function KnowledgeSessionWorkflow({
   availability,
   description,
   draft,
-  draftKey,
   onCancel,
   onSessionStarted,
   onStart,
-  previewLines,
-  risk,
   title,
 }: {
   availability: MutationAvailability;
@@ -41,9 +38,7 @@ export function KnowledgeSessionWorkflow({
   risk: 'R1' | 'R2';
   title: string;
 }) {
-  const [stage, setStage] = useState<'idle' | 'preview' | 'approval' | 'receipt' | 'cancelled'>('idle');
-  const [approved, setApproved] = useState(false);
-  const [boundDraft, setBoundDraft] = useState<Record<string, JsonValue> | null>(null);
+  const [stage, setStage] = useState<'idle' | 'receipt' | 'cancelled'>('idle');
   const [receipt, setReceipt] = useState<KnowledgeSessionReceipt | null>(null);
   const [cancelReceipt, setCancelReceipt] = useState<KnowledgeSessionReceipt | null>(null);
 
@@ -65,90 +60,33 @@ export function KnowledgeSessionWorkflow({
     },
   });
 
-  useEffect(() => {
-    if (stage !== 'preview' && stage !== 'approval') return;
-    setBoundDraft(null);
-    setApproved(false);
-    setStage('idle');
-  // draftKey invalidates the local request preview before the job is submitted.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftKey]);
-
-  const steps = useMemo(() => [
-    { id: 'preview', label: '核对内容' },
-    { id: 'approval', label: '确认' },
-    { id: 'receipt', label: '整理中' },
-    { id: 'cancelled', label: '停止' },
-  ] as const, []);
-  const stageIndex = stage === 'idle' ? -1 : steps.findIndex((step) => step.id === stage);
   const actionable = availability.state === 'available';
 
   return (
-    <div className="mgmt-workflow" data-availability={availability.state} data-stage={stage}>
+    <div className="mgmt-workflow" data-availability={availability.state} data-confirmation="direct" data-stage={stage}>
       <div className="mgmt-workflow__heading">
         <div>
-          <span className="mgmt-workflow__risk">{risk === 'R2' ? '谨慎确认' : '确认后执行'}</span>
           <strong>{title}</strong>
           <p>{description}</p>
         </div>
         {stage === 'idle' && (availability.state === 'available' || availability.state === 'checking') ? (
           <Button
             disabled={!actionable}
-            leadingIcon={<ShieldCheck size={15} />}
-            loading={availability.state === 'checking'}
-            onClick={() => {
-              setBoundDraft({ ...draft });
-              setStage('preview');
-            }}
+            leadingIcon={<Play size={15} />}
+            loading={availability.state === 'checking' || startMutation.isPending}
+            onClick={() => startMutation.mutate({ ...draft })}
             size="small"
+            variant="primary"
           >
-            查看任务内容
+            {title}
           </Button>
         ) : null}
       </div>
 
       {availability.state !== 'available' && availability.state !== 'checking' && availability.reason ? (
-        <InlineNotice title={availability.state === 'unsupported' ? '当前不可用' : '等待必要信息'} tone="warning">
-          {availability.reason}
-        </InlineNotice>
-      ) : null}
-
-      {stage !== 'idle' ? (
-        <ol className="mgmt-workflow__steps" aria-label="知识任务进度">
-          {steps.map((step, index) => (
-            <li data-state={index < stageIndex ? 'complete' : index === stageIndex ? 'current' : 'pending'} key={step.id}>
-              {index < stageIndex ? <Check size={13} /> : index === stageIndex ? <CircleDashed size={13} /> : <i />}
-              {step.label}
-            </li>
-          ))}
-        </ol>
-      ) : null}
-
-      {stage === 'preview' ? (
-        <div className="mgmt-workflow__panel">
-          <strong>这次会整理什么</strong>
-          <ul>{previewLines.map((line) => <li key={line}>{line}</li>)}</ul>
-          <div className="mgmt-workflow__buttons">
-            <Button onClick={() => reset()} size="small" variant="quiet">返回修改</Button>
-            <Button onClick={() => setStage('approval')} size="small" variant="primary">确认任务内容</Button>
-          </div>
-        </div>
-      ) : null}
-
-      {stage === 'approval' && boundDraft ? (
-        <div className="mgmt-workflow__panel">
-          <strong>准备开始这项整理</strong>
-          <label className="mgmt-workflow__confirm">
-            <input checked={approved} onChange={(event) => setApproved(event.target.checked)} type="checkbox" />
-            <span>我确认按上方内容开始整理</span>
-          </label>
-          <div className="mgmt-workflow__buttons">
-            <Button onClick={() => setStage('preview')} size="small" variant="quiet">返回查看</Button>
-            <Button disabled={!approved} loading={startMutation.isPending} onClick={() => startMutation.mutate(boundDraft)} size="small" variant="primary">
-              开始整理
-            </Button>
-          </div>
-        </div>
+        availability.state === 'unsupported' ? (
+          <InlineNotice title="当前不可用" tone="warning">{availability.reason}</InlineNotice>
+        ) : <p className="mgmt-workflow__hint">{availability.reason}</p>
       ) : null}
 
       {startMutation.error ? (
@@ -187,8 +125,6 @@ export function KnowledgeSessionWorkflow({
 
   function reset() {
     setStage('idle');
-    setApproved(false);
-    setBoundDraft(null);
     setReceipt(null);
     setCancelReceipt(null);
     startMutation.reset();
@@ -202,7 +138,7 @@ function parseKnowledgeSession(value: unknown, expectedSessionId = ''): Knowledg
   const status = stringValue(payload.status);
   if (payload.ok !== true) throw new Error(knowledgeRequestError(payload));
   if (!sessionId || (expectedSessionId && sessionId !== expectedSessionId) || !status) {
-    throw new Error('服务端返回了无法验证的知识任务状态。');
+    throw new Error('知识任务状态暂时无法确认。');
   }
   return { sessionId, status };
 }

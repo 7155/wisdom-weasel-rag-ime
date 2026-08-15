@@ -92,6 +92,9 @@ function ConfigurationImportWorkflow({
     () => configurationDiff(currentSettings, preview?.settings ?? {}),
     [currentSettings, preview?.settings],
   );
+  const requiresConfirmation = Boolean(
+    preview && (preview.requiresRemoteModelConfirmation || Object.keys(preview.providers).length),
+  );
 
   async function chooseAndPreview() {
     if (!transport.pickFiles || !pickerReady || !routeReady) return;
@@ -123,7 +126,7 @@ function ConfigurationImportWorkflow({
   }
 
   async function applyImport() {
-    if (!selected?.path || !preview?.valid || !confirmed) return;
+    if (!selected?.path || !preview?.valid || (requiresConfirmation && !confirmed)) return;
     setWorking(true);
     setError('');
     try {
@@ -162,7 +165,7 @@ function ConfigurationImportWorkflow({
       <div className="mgmt-workflow__heading">
         <div>
           <strong>导入配置</strong>
-          <p>从本机选择 JSON 或 YAML；校验和差异确认完成前不会写入。</p>
+          <p>从本机选择 JSON 或 YAML，先核对差异再导入；只有远程模型或账号信息变更需要额外确认。</p>
         </div>
         <Button
           disabled={Boolean(blockedReason)}
@@ -214,11 +217,14 @@ function ConfigurationImportWorkflow({
           <div className="mgmt-workflow__buttons">
             <Button
               disabled={!preview.valid || working}
-              onClick={() => setConfirmOpen(true)}
+              onClick={() => {
+                if (requiresConfirmation) setConfirmOpen(true);
+                else void applyImport();
+              }}
               size="small"
               variant="primary"
             >
-              查看并确认导入
+              {requiresConfirmation ? '查看影响并继续' : '导入配置'}
             </Button>
           </div>
         </div>
@@ -295,10 +301,10 @@ function BackupExportWorkflow({ capabilities, transport }: PortabilityProps) {
   return (
     <div className="mgmt-workflow" data-availability={blocked ? 'unsupported' : 'available'}>
       <div className="mgmt-workflow__heading">
-        <div><strong>导出可移植备份</strong><p>包含本地数据库、非敏感设置和安全的 Rime 自定义文件。</p></div>
+        <div><strong>导出可移植备份</strong><p>包含本地数据库、非敏感设置和安全的输入法自定义文件。</p></div>
         <Button disabled={blocked} leadingIcon={<Download size={15} />} loading={working} onClick={() => void exportBackup()} size="small">选择目录并导出</Button>
       </div>
-      <InlineNotice title="固定排除项" tone="info">不包含 API Key、令牌、模型权重、缓存和日志。</InlineNotice>
+      <InlineNotice title="备份不会包含" tone="info">不包含账号密钥、访问令牌、模型文件、缓存和日志。</InlineNotice>
       {receipt ? (
         <Receipt
           detail={`${formatBytes(numberValue(receipt.sizeBytes))} · ${numberValue(receipt.rimeFileCount)} 个 Rime 文件 · 不含密钥`}
@@ -382,7 +388,7 @@ function BackupRestoreWorkflow({ capabilities, onConfigurationChanged, transport
   return (
     <div className="mgmt-workflow" data-availability={blocked ? 'unsupported' : 'available'}>
       <div className="mgmt-workflow__heading">
-        <div><strong>恢复可移植备份</strong><p>校验范围和校验和后，再由你明确确认恢复。</p></div>
+        <div><strong>恢复可移植备份</strong><p>确认备份范围和文件完整性后，再由你明确确认恢复。</p></div>
         <Button disabled={blocked} leadingIcon={<ArchiveRestore size={15} />} loading={working && !confirmOpen} onClick={() => void chooseAndPreview()} size="small">选择并校验</Button>
       </div>
       {preview && selected ? (
@@ -415,7 +421,7 @@ function BackupRestoreWorkflow({ capabilities, onConfigurationChanged, transport
             <DialogTitle>确认恢复“{selected?.name ?? ''}”？</DialogTitle>
             <DialogDescription>恢复令牌绑定了备份内容，本机数据版本也必须与预览时一致。</DialogDescription>
           </DialogHeader>
-          <InlineNotice title="高风险操作" tone="danger">当前数据库、设置和 Rime 自定义文件会被备份包内容替换；执行前会生成回滚包。</InlineNotice>
+          <InlineNotice title="危险操作" tone="danger">当前数据库、设置和输入法自定义文件会被备份包内容替换；执行前会生成回滚包。</InlineNotice>
           <label className="mgmt-workflow__confirm">
             <input checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} type="checkbox" />
             我已核对恢复范围，并确认替换当前本机数据。
@@ -553,7 +559,7 @@ function configurationKeyLabel(key: string): string {
     'privacy.allowRemoteModelForActiveRag': '允许向远程模型发送内容',
   };
   if (labels[key]) return labels[key];
-  return key.split('.').map((part) => part.replace(/([a-z])([A-Z])/g, '$1 $2')).join(' / ');
+  return '其他设置';
 }
 
 function providerLabel(id: string): string {

@@ -1,5 +1,6 @@
 import { ExternalLink, KeyRound, LogOut, RefreshCw, Unplug, UserRoundCheck } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Button,
   Dialog,
@@ -18,6 +19,7 @@ import { usePiProviderCatalog } from './api';
 type ProviderAction = 'set_api_key' | 'logout' | 'oauth_browser' | 'oauth_device_code';
 
 export function PiProviderCredentials() {
+  const navigate = useNavigate();
   const {
     authChangesSupported,
     capabilities,
@@ -114,8 +116,13 @@ export function PiProviderCredentials() {
         pathId: 'agent.provider.auth.preview',
         body: { provider: providerId, action },
       });
+      const nextPreview = parseProviderPreview(value, providerId, action);
       setPreviewAction(action);
-      setPreview(parseProviderPreview(value, providerId, action));
+      if (action !== 'logout') {
+        await applyPreview(nextPreview, action);
+      } else {
+        setPreview(nextPreview);
+      }
     } catch (nextError) {
       setError(errorText(nextError, apiKey));
     } finally {
@@ -123,19 +130,22 @@ export function PiProviderCredentials() {
     }
   }
 
-  async function applyPreview(): Promise<void> {
-    if (!preview) return;
+  async function applyPreview(
+    pendingPreview: Record<string, unknown> | null = preview,
+    action: ProviderAction = previewAction,
+  ): Promise<void> {
+    if (!pendingPreview) return;
     setWorking(true);
     setError('');
     try {
       const value = parseProviderApplyResult(await transport.request({
         pathId: 'agent.provider.auth.apply',
         body: {
-          previewToken: stringValue(preview.previewToken),
-          confirmText: stringValue(preview.requiredConfirm),
-          ...(previewAction === 'set_api_key' ? { apiKey: apiKey.trim() } : {}),
+          previewToken: stringValue(pendingPreview.previewToken),
+          confirmText: stringValue(pendingPreview.requiredConfirm),
+          ...(action === 'set_api_key' ? { apiKey: apiKey.trim() } : {}),
         },
-      }), providerId, previewAction);
+      }), providerId, action);
       setReceipt(value);
       setPreview(null);
       const nextLogin = asRecord(value.login);
@@ -147,7 +157,7 @@ export function PiProviderCredentials() {
       setPreview(null);
       setError(errorText(nextError, apiKey));
     } finally {
-      if (previewAction === 'set_api_key') setApiKey('');
+      if (action === 'set_api_key') setApiKey('');
       setWorking(false);
     }
   }
@@ -205,25 +215,54 @@ export function PiProviderCredentials() {
   }
 
   if (capabilities.isPending) {
-    return <ManagementSection title="模型账号"><InlineNotice title="正在检查">正在确认本机是否支持安全登录。</InlineNotice></ManagementSection>;
+    return <ManagementSection title="模型账号"><InlineNotice title="正在检查模型账号">正在确认这台 Mac 是否可以连接和管理远程模型账号。</InlineNotice></ManagementSection>;
   }
   if (capabilities.error) {
-    return <ManagementSection title="模型账号"><InlineNotice title="无法检查" tone="danger">无法读取本机登录能力，请刷新页面后重试。</InlineNotice></ManagementSection>;
+    return <ManagementSection title="模型账号"><InlineNotice title="模型账号检查失败" tone="danger">
+      没有读到这台 Mac 的账号管理能力。请重新检查；如果仍然失败，可打开问题排查查看本机服务状态。
+      <div className="mgmt-toolbar configuration-provider-recovery-actions">
+        <Button leadingIcon={<RefreshCw size={15} />} loading={capabilities.isFetching} onClick={() => void capabilities.refetch()} size="small">重新检查</Button>
+        <Button onClick={() => navigate('/diagnostics')} size="small" variant="quiet">打开问题排查</Button>
+      </div>
+    </InlineNotice></ManagementSection>;
   }
   if (!supported) {
-    return <ManagementSection title="模型账号"><InlineNotice title="这里暂时不可用" tone="warning">更新应用后，就能在这里连接和管理模型账号。</InlineNotice></ManagementSection>;
+    return <ManagementSection title="模型账号"><InlineNotice title="模型账号管理仍不可用" tone="warning">
+      当前本机服务未提供模型账号管理。已保存的模型连接不会因此丢失；重新检查后仍不可用时，可前往问题排查。
+      <div className="mgmt-toolbar configuration-provider-recovery-actions">
+        <Button leadingIcon={<RefreshCw size={15} />} loading={capabilities.isFetching} onClick={() => void capabilities.refetch()} size="small">重新检查</Button>
+        <Button onClick={() => navigate('/diagnostics')} size="small" variant="quiet">打开问题排查</Button>
+      </div>
+    </InlineNotice></ManagementSection>;
   }
   if (catalog.isPending) {
     return <ManagementSection title="模型账号"><InlineNotice title="正在读取">正在读取模型服务和可用模型。</InlineNotice></ManagementSection>;
   }
   if (catalog.error || envelope.ok === false) {
-    return <ManagementSection title="模型账号"><InlineNotice title="读取失败" tone="danger">{errorText(catalog.error ?? envelope.error)}</InlineNotice></ManagementSection>;
+    return <ManagementSection title="模型账号"><InlineNotice title="读取失败" tone="danger">
+      {errorText(catalog.error ?? envelope.error)}
+      <div className="mgmt-toolbar configuration-provider-recovery-actions">
+        <Button leadingIcon={<RefreshCw size={15} />} loading={catalog.isFetching} onClick={() => void catalog.refetch()} size="small">重新读取</Button>
+        <Button onClick={() => navigate('/diagnostics')} size="small" variant="quiet">打开问题排查</Button>
+      </div>
+    </InlineNotice></ManagementSection>;
   }
   if (envelope.available === false) {
-    return <ManagementSection title="模型账号"><InlineNotice title="当前不可用" tone="warning">{catalogUnavailableText(envelope.unavailableReason)}</InlineNotice></ManagementSection>;
+    return <ManagementSection title="模型账号"><InlineNotice title="当前不可用" tone="warning">
+      {catalogUnavailableText(envelope.unavailableReason)}
+      <div className="mgmt-toolbar configuration-provider-recovery-actions">
+        <Button leadingIcon={<RefreshCw size={15} />} loading={catalog.isFetching} onClick={() => void catalog.refetch()} size="small">重新检查</Button>
+        <Button onClick={() => navigate('/diagnostics')} size="small" variant="quiet">打开问题排查</Button>
+      </div>
+    </InlineNotice></ManagementSection>;
   }
   if (!providers.length) {
-    return <ManagementSection title="模型账号"><InlineNotice title="还没有模型服务" tone="warning">先添加一个模型服务，再回到这里刷新。</InlineNotice></ManagementSection>;
+    return <ManagementSection title="模型账号"><InlineNotice title="还没有模型服务" tone="warning">
+      请先在下方运行设置中配置模型服务，再重新读取账号列表。
+      <div className="mgmt-toolbar configuration-provider-recovery-actions">
+        <Button leadingIcon={<RefreshCw size={15} />} loading={catalog.isFetching} onClick={() => void catalog.refetch()} size="small">重新读取</Button>
+      </div>
+    </InlineNotice></ManagementSection>;
   }
 
   return (
@@ -241,10 +280,10 @@ export function PiProviderCredentials() {
           </Field>
           <div className="mgmt-toolbar">
             <StatusBadge label={auth.configured === true ? '已连接' : '未连接'} tone={auth.configured === true ? 'success' : 'neutral'} />
-            {stringValue(auth.type) ? <StatusBadge label={stringValue(auth.type) === 'oauth' ? 'ChatGPT 登录' : 'API Key'} tone="info" /> : null}
+            {stringValue(auth.type) ? <StatusBadge label={stringValue(auth.type) === 'oauth' ? 'ChatGPT 登录' : 'API 密钥'} tone="info" /> : null}
           </div>
-          <Field description="输入内容只会在确认时交给本机安全保存；页面不会读回现有密钥。" htmlFor="pi-api-key" label="API Key">
-            <Input autoComplete="new-password" disabled={!authChangesSupported || loginWaiting} id="pi-api-key" onChange={(event) => setApiKey(event.target.value)} placeholder={authChangesSupported ? '输入新的 API Key' : '当前版本仅支持查看状态'} type="password" value={apiKey} />
+          <Field description="输入内容只会在保存时交给本机安全存储；页面不会读回现有密钥。" htmlFor="pi-api-key" label="API 密钥">
+            <Input autoComplete="new-password" disabled={!authChangesSupported || loginWaiting} id="pi-api-key" onChange={(event) => setApiKey(event.target.value)} placeholder={authChangesSupported ? '输入新的 API 密钥' : '当前版本仅支持查看状态'} type="password" value={apiKey} />
           </Field>
           <div className="mgmt-toolbar">
             <Button disabled={!authChangesSupported || !apiKey.trim() || loginWaiting} leadingIcon={<KeyRound size={15} />} loading={working} onClick={() => void openPreview('set_api_key')} size="small" variant="primary">{auth.configured === true ? '替换密钥' : '保存密钥'}</Button>
@@ -374,7 +413,7 @@ function providerReceiptNotice(
     };
   }
   return {
-    title: 'API Key 已保存',
+    title: 'API 密钥已保存',
     body: '密钥没有回显。结束当前回复后重新打开对话，新凭据会统一生效。',
     tone: 'success',
   };
@@ -393,7 +432,7 @@ function previewTitle(action: ProviderAction): string {
   if (action === 'logout') return '断开这个模型账号？';
   if (action === 'oauth_browser') return '连接 ChatGPT？';
   if (action === 'oauth_device_code') return '使用设备码连接 ChatGPT？';
-  return '替换 API Key？';
+  return '替换 API 密钥？';
 }
 
 function previewDescription(action: ProviderAction): string {

@@ -12,6 +12,10 @@ assistant identity. Input-method, voice, and browser integrations are optional
 interaction surfaces around the same Agent runtime rather than the center of
 the product.
 
+For self-hosted development, start with [PROJECT.md](PROJECT.md) and the active
+focus in [OUTCOMES.md](OUTCOMES.md); [AGENTS.md](AGENTS.md) routes progressively
+to the glossary, decisions, architecture, source, and Skills.
+
 The input path remains deliberately conservative: ordinary Pinyin composition
 is still Rime's job, and remote generation is never used for passive
 per-keystroke prediction.
@@ -28,8 +32,8 @@ per-keystroke prediction.
 | Capability | Current boundary |
 | --- | --- |
 | Agent Sessions and Providers | Each companion keeps a private, resumable Session with an optional phased Todo that the Agent updates as work advances. Todo tracks progress but grants no execution authority; Pi adapters normalize configured Providers and models without exposing one protocol's private implementation to another. |
-| Structured Rooms | A Room starts as normal chronological chat with one default/opening-`@` Facilitator. A stage-resident alignment Skill asks one material question at a time only when needed; a complete request starts without an extra confirmation. `room_define` fences intake and the Kernel creates a new implementation Dispatch with the execution Skill. Peer Room companions may own parallel WorkItems and each may use bounded private subagents shown under its task. Integration, policy-selected independent review, receipts, one ReportDispatch, and one facilitator final remain backend-governed. |
-| Tools and Skills | Tools are progressively disclosed, policy-checked, approval-aware, and recorded as typed receipts. Skills are loaded for the current work stage instead of being dumped into every prompt. |
+| Structured Rooms | A Room is a lightweight composition of ordinary Partner Sessions led by one Facilitator. Partners use the same task Skills and native subagent events as standalone Sessions; the Facilitator integrates their results, chooses optional review, and emits one final result while the Runtime owns identity, cancellation, ordering, and terminal settlement. |
+| Tools and Skills | Tools are progressively disclosed, policy-checked, approval-aware, and recorded as typed receipts. Skills are task-scoped reusable methods: simple work needs none, ordinary work normally loads one responsibility Skill plus at most one complementary task method, and no Skill becomes a Kernel stage. |
 | Control Center | The native macOS workspace exposes conversations, projects, companions, memory, knowledge, planning, diagnostics, Provider settings, and bounded context inspection. |
 | Governed memory | SQLite evidence, Atoms, Books, tags, projections, revision fences, and retrieval keep long-term context reviewable and reversible rather than silently rewriting chat history. |
 | Optional interaction adapters | Patched Squirrel, push-to-talk voice, and Browser Co-pilot feed the same local workspace without owning Agent or memory semantics. |
@@ -243,9 +247,9 @@ participants are recorded by stable ID rather than by inserting fake speaker
 prefixes into message text.
 Choose the tier that matches the accountability you want:
 
-- **Facilitator/reporter:** coordinates the Room, settles requirements, assigns and integrates work, decides whether independent review is needed, and owns the one final user-facing report. In a Room this is the only user-question owner: material questions go through `room_commit(wait)`; native Ask is reserved for a standalone parent Session outside a Room.
+- **Facilitator/reporter:** coordinates the Room, settles material questions, assigns and integrates work, decides whether independent review is needed, and owns the one final user-facing report. It publishes necessary questions through the ordinary chronological Room path rather than opening competing participant prompts.
 - **Room partner Session:** a durable participant with a collaboration role and an accountable WorkItem/Dispatch. Choose a partner when the work needs a public Room responsibility, directed reassignment or cancellation, and an evidence-backed handoff. Multiple partners may run in parallel only for genuinely independent, non-overlapping slices; dependent work stays serial. Progress, accepted evidence, and handoffs may be public; the participant's transcript and reasoning remain private.
-- **Nested subagent:** a bounded private child Session for a narrow research, planning, or implementation check. It is not a Room member, cannot own or settle a Room Root/Task, and cannot publish its private transcript. It returns a bounded result to its parent as evidence; the parent must verify and integrate it rather than treating the return as automatic acceptance. The parent or Kernel may cancel it, and late output cannot revive cancelled work.
+- **Nested subagent:** a bounded private child Session for a narrow research, planning, or implementation check. It is not a Room member, cannot own or settle a Room Root/Task, and cannot publish its private transcript. It returns a bounded result to its parent as evidence; the parent must verify and integrate it rather than treating the return as automatic acceptance. The parent or Runtime may cancel it, and late output cannot revive cancelled work.
 
 Use a Room partner for durable, publicly accountable collaboration; use a nested
 subagent when the parent only needs a private, bounded result. A Room partner
@@ -263,12 +267,10 @@ brief; it does not reorder system, model, or Tool prompts merely to personalize
 the branch. Both modes keep the child Session private.
 
 Room partners and nested children do not open competing native Ask prompts. A
-Room partner uses `room_commit(wait)` for its assigned Room work; a nested
-child has no Room authority and returns only a structured blocker to its
-parent. The Facilitator/Reporter decides whether to publish a Room wait.
-Outside a Room, a standalone parent Session may combine one to four independent
-material questions into one native Ask; questions with dependencies are asked
-separately.
+Partner returns a bounded blocker or result to the Facilitator; a Tool Agent
+returns it to its parent. The Facilitator decides whether a material user-owned
+question should enter the chronological Room conversation. Outside a Room, a
+standalone parent Session may use native Ask when a real user choice remains.
 
 `workspace_lsp` is role- and authorization-scoped. Read-only roles may inspect
 status, symbols, hover, definitions, references, and diagnostics. A writable
@@ -286,63 +288,41 @@ When a nested batch is Room-bound, its causal metadata links it to the Room
 `taskId`. The task read model may show each child beneath that task using only
 template, ordinal, task, state, budget, result/error, and timing. Protocol IDs,
 private transcript content, and child reasoning are not normal Room graph
-content; the Room Kernel still owns lifecycle and settlement.
+content; the Runtime still owns lifecycle and settlement.
 
 The three tiers use a conditional conversation-first sequence. `澄·远` is the
 default initial Facilitator; one explicit `@` in the opening message may select
 another Room companion. Later mentions are communication, not ownership.
 
-The opening user bytes are preserved as an immutable RequirementAnchor and an
-explicit-user RequirementItem with its source span. The canonical sequence is:
+The opening user bytes remain the immutable request source. The canonical Skill
+flow is deliberately conditional rather than a fixed pipeline:
 
-1. The receiving Facilitator inspects reachable facts under an `align` Dispatch
-   whose managed Pi Session requires the stage-resident
-   `alignment-and-decision` Skill.
-2. If no material user-owned choice is missing, do not ask for confirmation.
-   The opening request authorizes definition and execution.
-3. If a material choice is missing, `room_commit(wait, waitingFor=user)`
-   publishes one structured question at a time. The next ordinary user Room
-   message appends an answer revision, publishes the chronological user post,
-   and creates one idempotent resume for that `(questionId, answerRevision)`.
-   One Root may resume for several different questions.
-4. After the final necessary answer, the Facilitator summarizes the aligned
-   goal and asks `现在开始行动吗？`. Only that clarification branch requires the
-   user's chronological `开始行动` message before execution.
-5. `room_define` atomically and idempotently binds the current immutable
-   RequirementCatalog revision, objective, requirements, and acceptance
-   criteria to the existing Root/Task; creates or confirms one accountable root
-   WorkItem; completes/fences the intake Dispatch; and records the transition.
-6. The Kernel creates a new execute-capable Facilitator Dispatch with a new
-   lease/epoch. Its managed Pi Session requires `implementation-execution`.
-   The old align Dispatch never gains execute Tools and cannot resume late.
-7. The Facilitator owns decomposition, assignment, reassignment, dependency
-   handling, integration, and the final report. Keep a small coherent change
-   with one Implementer. Split into multiple child WorkItems only when at least
-   two slices are genuinely independent, have no unmet prerequisite, and
-   parallel execution materially reduces waiting; do not use round-robin,
-   free-text `@` mentions, or extra Agents as an assignment mechanism.
-8. Workers act through directed Kernel Dispatches and their bound workspace
-   harnesses. Read-only work may share a baseline; concurrent writable work
-   must use separately receipted isolated workspaces based on the same Root
-   baseline, with one Facilitator-owned integration workspace. Dependent work
-   stays serial. A Worker may reject an assignment with a structured reason;
-   the Facilitator repairs or reassigns it rather than silently widening scope.
-9. Workers return artifacts and evidence to the Facilitator, who integrates the
-   accepted results in the authoritative workspace. Only after integration does
-   the Facilitator decide whether independent review is warranted. If review is
-   chosen, the Kernel hands the existing WorkItem to a distinct Reviewer; the
-   Reviewer never reviews its own or the Integrator's work, and a failed review
-   returns the WorkItem to the Facilitator for repair. Review is risk-based, not
-   mandatory for every task.
-10. Required stage Skills change with authoritative Dispatch intent:
-    `independent-review` for review, `quality-gate` for close, and
-    `structured-handoff` for handoff. The runtime pins Skill hash and
-    Root/Task/Dispatch/Session/capability-epoch receipts; a stage change reopens
-    the idle managed Pi Session with the new exact Skill.
-11. The Kernel validates evidence, terminal receipts, permissions, and work
-    quiescence. It then creates one read-only ReportDispatch; only the
-    facilitator/reporter emits one final public summary. The reporter receipt
-    and runtime quiescence are required before Root completion.
+1. The Facilitator uses `facilitate-room` and inspects reachable facts. It adds
+   `alignment-and-decision` only when an unresolved material user choice would
+   change scope, acceptance, authority, cost, compatibility, or behavior.
+2. A complete request starts without an extra confirmation. A necessary
+   question is published through the Room's chronological user-message path;
+   ordinary progress and answers keep their real event order.
+3. The Facilitator uses `implementation-planning` only for genuinely multi-step
+   or multi-owner work. A small coherent change stays in one Session.
+4. Each Partner receives one bounded TaskBrief with exact ContextRefs,
+   SkillRefs, workspace binding, capabilities, acceptance, and expected output.
+   The Partner then uses the same task Skills as a standalone Session:
+   `systematic-debugging` for an unknown cause or
+   `test-driven-implementation` for a known behavior with a real test seam.
+5. A Facilitator or Partner may add `orchestrate-session` when private child
+   work has a concrete benefit. Children return bounded native Session events;
+   they do not become Room partners or inherit the full parent transcript.
+6. Shared writable work is allowed when the Facilitator accepts the conflict
+   risk; independent workspaces remain an explicit option rather than a
+   mandatory per-task ceremony. Runtime permissions and workspace receipts,
+   not Skill prose, define the actual authority.
+7. `independent-review` is a fixed-scope, read-only option when the user asks or
+   risk warrants it. It is not a default quality gate. The Facilitator owns
+   repair routing, integration, acceptance evidence, and the one final result.
+8. `organize-work-documents` lets the existing background organizer link and
+   condense accepted document updates after the work. It neither performs the
+   task nor blocks Session or Room completion.
 
 Participant Session/Dispatch ownership is distinct from filesystem roots.
 Each participant acts only through its own bound workspace harness and accepted
@@ -352,29 +332,28 @@ Private participant reasoning and internal references stay private.
 `room_post` is not a second clarification channel; it is for material progress,
 not completion or acceptance evidence; a model's prose cannot settle a Root.
 
-Personal Agent Workbench is the Room authority: the Room Kernel, contracts,
-durable snapshots/events, and managed Pi Skills define this lifecycle. The
+Personal Agent Workbench is the Room authority: the Runtime owns identity,
+events, permissions, cancellation, workspaces, and the unique terminal result;
+managed Pi Skills guide Agent work without becoming lifecycle gates. The
 local `clowder-ai` Cat Cafe reference checkout is a
 reference-only source of mechanism lessons, not an implementation dependency.
 Its thread queue, event/reducer, handoff-recovery, and independent-review
 ideas are compared in `ARCHITECTURE.md`; its protocol, IDs, reducer/source,
 schemas, and routes are not copied.
 
-After definition and the new ExecuteDispatch, the Room may use `room_collaborate` only for a
-bounded, non-overlapping implementation child while the current Facilitator
-retains responsibility. It is never an intake fanout, assignment-by-mention,
-review child, or replacement for a Kernel handoff. The shared result remains
-private until the Facilitator integrates required results and any chosen review
-evidence is accepted. Each participant keeps a private Session; only
-intentionally public progress, accepted evidence, handoffs, and results enter
-the Room timeline.
+The Facilitator uses the Room Partner dispatch only for a bounded responsibility
+with an explicit brief and expected result. It is not intake fan-out,
+assignment-by-mention, or a replacement for the Facilitator's integration
+responsibility. Each participant keeps a private Session; only intentionally
+public progress, accepted evidence, handoffs, and results enter the Room
+timeline.
 
 The **Tasks** view in the Control Center is a dedicated work surface and leads
 with a live flow diagram:
 
 ```text
-Created -> assigned WorkItems -> participant execution -> Facilitator integration
-         -> optional independent review -> Kernel settlement -> Reporter summary
+Created -> optional Partner work -> Facilitator integration
+         -> optional independent review -> Runtime settlement -> one final
 ```
 
 Every work item gets its own path. Nodes show the responsible companion,
@@ -405,11 +384,10 @@ shows durable background-task state, bounded logs, refresh, and cancel controls.
 Hiding `workspace_job` from a later model turn does not hide or orphan a job
 that is already running.
 
-Managed Pi preloads only the Room responsibility loop (`room_state`,
-`room_post`, and `room_commit`). `room_define`, `room_collaborate`, workspace
-Tools, and other product capabilities use the same progressive
-`tool_search`/`tool_load` path as ordinary Agent work. A successful load receipt
-adds the requested Tool without replacing already available built-ins.
+Managed Pi keeps its base Session capabilities available. Room Partner,
+workspace, and other product capabilities use the same progressive Tool
+disclosure path as ordinary Agent work; loading an additional capability does
+not replace the base tools.
 
 Each Room also owns a versioned common scenario, independent topics, and
 workspace-scoped shared artifacts. Topic changes only alter subsequent working
@@ -759,6 +737,12 @@ See the [release-manifest template](release/release-manifest.example.json).
 
 | Path | Purpose |
 | --- | --- |
+| `AGENTS.md` | Pi's bounded self-hosting bootstrap, Skill router, and repository work rules. |
+| `PROJECT.md` | Durable vision, current destination, product boundaries, and non-goals. |
+| `OUTCOMES.md` | Bounded current focus, honest progress, and next acceptance frontiers. |
+| `DECISIONS.md` | Cross-outcome architectural and workflow decisions. |
+| `CONTEXT.md` | Shared domain glossary without implementation detail. |
+| `ARCHITECTURE.md` | Runtime ownership, dependency direction, and primary flows. |
 | `rag_ime/` | Python sidecar, local RAG/memory core, model runtime adapters, management API, and release audit. |
 | `squirrel-patches/` | Pinned Squirrel patch, Swift overlay, and patch application checks. |
 | `control-center-web/` | React settings, diagnostics, knowledge, planning, and Agent UI. |

@@ -86,45 +86,39 @@ class CollaborationProfileControlTests(unittest.TestCase):
                 expected_revision=1, confirmation="", suffix="no-admin",
             ))
 
-    def test_active_root_is_pinned_and_rollback_revoke_epoch_cancel_and_fence_bindings(self) -> None:
+    def test_profiles_configure_future_sessions_and_revoke_existing_session_bindings(self) -> None:
         one = self._stage("1")
         two = self._stage("2")
         self.control.execute(self._command(
             "activate", profile_id="evidence-review", content_hash=one,
             expected_revision=0, confirmation="ACTIVATE PROFILE",
         ))
-        self._active_binding(one)
-        with self.assertRaisesRegex(ValueError, "active Root pins"):
-            self.control.execute(self._command(
-                "activate", profile_id="evidence-review", content_hash=two,
-                expected_revision=1, confirmation="ACTIVATE PROFILE", suffix="pinned",
-            ))
+        self._active_session_binding(one)
         activated = self.control.execute(self._command(
             "activate", profile_id="evidence-review", content_hash=two,
-            expected_revision=1, confirmation="ACTIVATE PROFILE",
-            activation_scope="new_roots_only", suffix="new-roots",
+            expected_revision=1, confirmation="ACTIVATE PROFILE", suffix="future-sessions",
         ))
-        self.assertEqual(activated["result"]["affectedRootIds"], ["root-1"])
+        self.assertEqual(activated["result"]["affectedRootIds"], [])
 
         rolled = self.control.execute(self._command(
             "rollback", profile_id="evidence-review", expected_revision=2,
             confirmation="ROLLBACK PROFILE",
         ))
         self.assertGreaterEqual(rolled["guardEpoch"], 3)
-        self.assertEqual(self.cancelled, [])  # old Root remains pinned to version one
+        self.assertEqual(self.cancelled, [])
 
         revoked = self.control.execute(self._command(
             "revoke", content_hash=one, expected_revision=3,
             confirmation="REVOKE PROFILE", payload={"reason": "compromised"},
         ))
-        self.assertEqual(revoked["result"]["affectedRootIds"], ["root-1"])
+        self.assertEqual(revoked["result"]["affectedRootIds"], [])
         self.assertEqual(self.cancelled, [])
         cancel = self.conn.execute(
             """SELECT source_kind,root_id,state FROM room_v2_managed_cancel_outbox
                WHERE source_receipt_id=?""",
             (revoked["receiptId"],),
         ).fetchone()
-        self.assertEqual(cancel, ("profile_revoke", "root-1", "pending"))
+        self.assertIsNone(cancel)
         state, epoch = self.conn.execute(
             "SELECT state, capability_epoch FROM room_v2_capability_runtime_bindings WHERE session_id = 'session-1'"
         ).fetchone()
@@ -182,29 +176,7 @@ class CollaborationProfileControlTests(unittest.TestCase):
         staged = self.control.execute(self._command("stage", candidate_id=candidate, suffix=version))
         return staged["result"]["contentHash"]
 
-    def _active_binding(self, content_hash: str) -> None:
-        self.conn.execute(
-            "INSERT INTO room_kernel_roots("
-            "root_id,room_id,generation,state,facilitator_participant_id,"
-            "requirement_anchor_ref,budget_remaining,budget_reserved,max_hops,max_depth,"
-            "acceptance_criteria_json,covered_criteria_json,terminal_receipt_id,payload_json,"
-            "created_at_ms,updated_at_ms"
-            ") VALUES ('root-1','room-1',1,'running','owner','req',10,0,4,4,"
-            "'[]','[]',NULL,'{}',1,1)"
-        )
-        self.conn.execute(
-            "INSERT INTO room_kernel_tasks("
-            "task_id,root_id,parent_task_id,state,payload_json,updated_at_ms"
-            ") VALUES ('task-1','root-1',NULL,'running','{}',1)"
-        )
-        self.conn.execute(
-            "INSERT INTO room_kernel_dispatches("
-            "dispatch_id,root_id,task_id,parent_dispatch_id,generation,hop_count,depth,"
-            "budget_cost,target_session_id,target_participant_id,trigger_id,intent_kind,"
-            "idempotency_key,state,payload_json,created_at_ms,updated_at_ms"
-            ") VALUES ('dispatch-1','root-1','task-1',NULL,1,1,1,1,'session-1',"
-            "'participant-1','trigger','delegation','idem','running','{}',1,1)"
-        )
+    def _active_session_binding(self, content_hash: str) -> None:
         participant = '{"collaborationProfileRef":"rag-ime-definition://collaboration-profile/evidence-review?version=1&contentHash=' + content_hash + '"}'
         self.conn.execute(
             """INSERT INTO room_v2_capability_runtime_bindings VALUES

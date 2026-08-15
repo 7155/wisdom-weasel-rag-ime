@@ -3,6 +3,35 @@ import { parseRoomRequirementsReadProjection } from '@/features/rooms/requiremen
 import { createPreviewTransport } from './preview-control-transport';
 
 describe('preview control transport', () => {
+  it('keeps Memory preview labels product-facing without changing stable identifiers', async () => {
+    const transport = createPreviewTransport();
+    const graph = record(await transport.request({
+      pathId: 'memory.graph.get',
+      query: { plane: 'tags' },
+    }));
+    expect(arrayRecords(graph.nodes)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'tag:agent-runtime', label: '伙伴运行' }),
+    ]));
+    expect(JSON.stringify(graph)).not.toMatch(/\bAgent\b|\bRuntime\b/);
+
+    const timelineEnvelope = record(await transport.request({
+      pathId: 'memory.activityTimeline.get',
+      query: { date: '2026-08-10' },
+    }));
+    const timeline = record(timelineEnvelope.timeline);
+    expect(arrayRecords(timeline.segments)[1]?.summary).toContain(
+      '来源记录、已整理记忆、主题、伙伴记忆和时间线',
+    );
+    expect(JSON.stringify(timeline)).not.toMatch(/Evidence|Current Fact|Topic Book|Role Book|Timeline/);
+
+    const curationRun = record(await transport.request({
+      pathId: 'agent.memoryMaintenance.run',
+      query: { runId: 'memory_book_preview' },
+    }));
+    expect(JSON.stringify(curationRun)).toContain('不再用于伙伴上下文或长期记忆');
+    expect(JSON.stringify(curationRun)).not.toContain('Agent 上下文');
+  });
+
   it('imports real browser clipboard Files into owner-scoped preview media receipts', async () => {
     const transport = createPreviewTransport();
     const image = new File(
@@ -414,7 +443,7 @@ describe('preview control transport', () => {
     expect(jobs).toEqual([
       expect.objectContaining({
         fileId: 'file:preview-yuxi',
-        fileName: 'agent-runtime-notes.md',
+        fileName: '伙伴运行笔记.md',
         kind: 'reparse',
         status: 'succeeded',
         progress: 1,

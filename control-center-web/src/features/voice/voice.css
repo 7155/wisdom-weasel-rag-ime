@@ -78,6 +78,23 @@ main[data-route-id='voice'] .voice-native-actions + .mgmt-notice {
   margin-top: var(--space-3);
 }
 
+main[data-route-id='voice'] .voice-runtime-issue {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+main[data-route-id='voice'] .voice-runtime-issue .mgmt-notice {
+  min-width: 0;
+  flex: 1;
+}
+
+main[data-route-id='voice'] .voice-runtime-issue .ui-button {
+  flex: none;
+}
+
 main[data-route-id='voice'] .voice-credential-grid .ui-field {
   min-width: 0;
 }
@@ -127,7 +144,7 @@ main[data-route-id='voice'] .voice-hotword-suggestions {
 
 main[data-route-id='voice'] .voice-hotword-suggestions button {
   display: inline-flex;
-  min-height: 28px;
+  min-height: 32px;
   align-items: center;
   gap: 5px;
   padding: 5px 8px;
@@ -145,10 +162,12 @@ main[data-route-id='voice'] .voice-hotword-suggestions button {
     transform var(--duration-press) var(--ease-press);
 }
 
-main[data-route-id='voice'] .voice-hotword-suggestions button:hover {
-  border-color: var(--color-border-strong);
-  background: var(--color-surface-hover);
-  color: var(--color-text);
+@media (hover: hover) and (pointer: fine) {
+  main[data-route-id='voice'] .voice-hotword-suggestions button:hover {
+    border-color: var(--color-border-strong);
+    background: var(--color-surface-hover);
+    color: var(--color-text);
+  }
 }
 
 main[data-route-id='voice'] .voice-hotword-suggestions button:active {
@@ -158,6 +177,72 @@ main[data-route-id='voice'] .voice-hotword-suggestions button:active {
 main[data-route-id='voice'] .voice-hotword-suggestions button:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
+}
+
+main[data-route-id='voice'] .voice-connection-details > summary,
+main[data-route-id='voice'] .voice-recognition-details > summary,
+main[data-route-id='voice'] .voice-refinement-status > summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: var(--font-weight-semibold);
+  list-style: none;
+}
+
+main[data-route-id='voice'] .voice-connection-details > summary::-webkit-details-marker,
+main[data-route-id='voice'] .voice-recognition-details > summary::-webkit-details-marker,
+main[data-route-id='voice'] .voice-refinement-status > summary::-webkit-details-marker { display: none; }
+
+main[data-route-id='voice'] .voice-connection-details > summary::after,
+main[data-route-id='voice'] .voice-recognition-details > summary::after,
+main[data-route-id='voice'] .voice-refinement-status > summary::after {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-right: 1.5px solid currentcolor;
+  border-bottom: 1.5px solid currentcolor;
+  content: '';
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform var(--motion-disclose) var(--ease-standard);
+}
+
+main[data-route-id='voice'] .voice-connection-details[open] > summary,
+main[data-route-id='voice'] .voice-recognition-details[open] > summary,
+main[data-route-id='voice'] .voice-refinement-status[open] > summary {
+  color: var(--color-text-primary);
+}
+
+main[data-route-id='voice'] .voice-connection-details[open] > summary::after,
+main[data-route-id='voice'] .voice-recognition-details[open] > summary::after,
+main[data-route-id='voice'] .voice-refinement-status[open] > summary::after {
+  transform: rotate(225deg) translateY(-2px);
+}
+
+main[data-route-id='voice'] .voice-connection-details[open] > .voice-connection-details__content,
+main[data-route-id='voice'] .voice-recognition-details[open] > p,
+main[data-route-id='voice'] .voice-refinement-status[open] > .voice-refinement-status__content {
+  animation: voice-details-content-enter var(--duration-enter) var(--ease-standard) both;
+}
+
+@keyframes voice-details-content-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  main[data-route-id='voice'] .voice-hotword-suggestions button,
+  main[data-route-id='voice'] .voice-connection-details > summary::after,
+  main[data-route-id='voice'] .voice-recognition-details > summary::after,
+  main[data-route-id='voice'] .voice-refinement-status > summary::after { transition: none; }
+  main[data-route-id='voice'] .voice-hotword-suggestions button:active { transform: none; }
+  main[data-route-id='voice'] .voice-connection-details[open] > .voice-connection-details__content,
+  main[data-route-id='voice'] .voice-recognition-details[open] > p,
+  main[data-route-id='voice'] .voice-refinement-status[open] > .voice-refinement-status__content { animation: none; }
 }
 
 @media (max-width: 900px) {
@@ -181,6 +266,15 @@ main[data-route-id='voice'] .voice-hotword-suggestions button:focus-visible {
 }
 
 @media (max-width: 560px) {
+  main[data-route-id='voice'] .voice-runtime-issue {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  main[data-route-id='voice'] .voice-runtime-issue .ui-button {
+    align-self: flex-start;
+  }
+
   main[data-route-id='voice'] .voice-native-action-group {
     flex-wrap: wrap;
   }
@@ -194,7 +288,7 @@ main[data-route-id='voice'] .voice-hotword-suggestions button:focus-visible {
   main[data-route-id='voice'] .ui-select__trigger,
   main[data-route-id='voice'] .ui-segmented__item,
   main[data-route-id='voice'] .voice-hotword-suggestions button {
-    min-height: 40px;
+    min-height: 44px;
   }
 
   main[data-route-id='voice'] .voice-service-choice .ui-segmented {
@@ -219,4 +313,8 @@ main[data-route-id='voice'] .voice-hotword-suggestions button:focus-visible {
   main[data-route-id='voice'] .ui-switch__thumb[data-state='checked'] {
     transform: translateX(19px);
   }
+}
+
+main[data-route-id='voice'] details:not([open]) > :not(summary) {
+  display: none;
 }

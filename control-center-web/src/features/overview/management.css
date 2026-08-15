@@ -42,6 +42,7 @@
   color: var(--color-text-secondary);
   font-size: var(--font-size-ui-strong);
   line-height: 1.55;
+  text-wrap: pretty;
 }
 
 /* Eyebrows are usually Chinese, where a mono/uppercase treatment just falls
@@ -74,6 +75,7 @@
 .mgmt-page__body {
   display: grid;
   align-content: start;
+  container-type: inline-size;
 }
 
 /* No border, no fill, no shadow: space does the separating, and a soft rule
@@ -130,17 +132,18 @@
   max-width: 100%;
   align-items: center;
   gap: 6px;
-  overflow: hidden;
   color: var(--color-text-secondary);
   font-size: 13px;
   font-weight: var(--font-weight-semibold);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .mgmt-status i {
   width: 7px;
   height: 7px;
   flex: 0 0 auto;
+  align-self: flex-start;
+  margin-top: .55em;
   border-radius: 50%;
   background: var(--color-text-tertiary);
 }
@@ -307,13 +310,38 @@
 .mgmt-notice[data-tone='warning'] { border-left-color: var(--color-warning); background: color-mix(in srgb, var(--color-warning-soft) 68%, var(--color-paper)); }
 .mgmt-notice[data-tone='danger'] { border-left-color: var(--color-danger); background: color-mix(in srgb, var(--color-danger-soft) 68%, var(--color-paper)); }
 .mgmt-notice[data-tone='success'] { border-left-color: var(--color-success); background: color-mix(in srgb, var(--color-success-soft) 68%, var(--color-paper)); }
-.mgmt-notice span { color: var(--color-text-secondary); }
+.mgmt-notice__body {
+  display: grid;
+  gap: var(--space-2);
+  color: var(--color-text-secondary);
+}
+
+.mgmt-notice__body > :is(p, ul, ol) { margin-block: 0; }
 
 .mgmt-workflow {
   padding: var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-2);
   background: var(--color-surface-subtle);
+}
+
+.mgmt-workflow[data-confirmation='direct'] {
+  padding: var(--space-3) 0;
+  border: 0;
+  border-top: 1px solid var(--color-border-soft);
+  border-radius: 0;
+  background: transparent;
+}
+
+.mgmt-workflow[data-confirmation='direct']:first-child { border-top: 0; }
+.mgmt-workflow[data-confirmation='direct'] .mgmt-workflow__heading { align-items: center; }
+.mgmt-workflow[data-confirmation='direct'] .mgmt-workflow__heading p { margin-top: 2px; font-size: 13px; }
+
+.mgmt-workflow__hint {
+  margin-top: var(--space-2);
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .mgmt-workflow + .mgmt-workflow { margin-top: var(--space-2); }
@@ -365,6 +393,13 @@
   background: var(--color-surface);
 }
 
+.mgmt-workflow__panel:focus-visible,
+.mgmt-workflow__feedback:focus-visible,
+.mgmt-workflow__receipt:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
 .mgmt-workflow__panel strong { font-size: 13px; }
 .mgmt-workflow__panel ul { margin: 0; padding-left: 18px; color: var(--color-text-secondary); font-size: 13px; line-height: 1.55; }
 .mgmt-workflow__binding {
@@ -378,7 +413,7 @@
 }
 .mgmt-workflow__confirm {
   display: flex;
-  min-height: 34px;
+  min-height: 44px;
   align-items: center;
   gap: var(--space-2);
   padding: 7px 9px;
@@ -408,9 +443,26 @@
 }
 
 .mgmt-workflow__receipt > div { display: grid; min-width: 0; gap: 3px; }
+.mgmt-workflow__receipt > .mgmt-workflow__receipt-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
 .mgmt-workflow__receipt strong { font-family: var(--font-mono); font-size: 13px; overflow-wrap: anywhere; }
 .mgmt-workflow__receipt span,
 .mgmt-workflow__receipt time { color: var(--color-text-secondary); font-size: 13px; }
+
+.mgmt-workflow__receipt[data-compact='true'] {
+  margin-top: var(--space-2);
+  padding: 9px 10px;
+  border: 0;
+  background: color-mix(in srgb, var(--color-success-soft) 48%, transparent);
+  box-shadow: inset 2px 0 var(--color-success);
+}
+
+.mgmt-workflow__receipt[data-compact='true'] time { display: none; }
 .mgmt-grid-2 { display: grid; gap: var(--space-5); grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .mgmt-grid-3 { display: grid; gap: var(--space-3); grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .mgmt-stack { display: grid; gap: var(--space-3); }
@@ -449,14 +501,18 @@
 @media (max-width: 760px) {
   .mgmt-page { min-height: calc(100dvh - 52px - var(--mobile-nav-height)); padding: var(--space-4) 12px calc(var(--mobile-nav-height) + var(--space-5)); }
   .mgmt-page__header { display: grid; }
+  .mgmt-section__header { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .mgmt-section__trailing { justify-self: start; }
   .mgmt-page__actions { width: 100%; }
   /* Grow to share a row when several actions are present, but never blow a
      lone secondary action up to full width. */
   .mgmt-page__actions .ui-button { flex: 1 1 auto; }
-  .mgmt-page__actions:has(> .ui-button:only-child) { justify-content: flex-start; }
-  .mgmt-page__actions > .ui-button:only-child { flex: 0 0 auto; }
+  .mgmt-page__actions:has(> .ui-button:only-of-type) { justify-content: flex-start; }
+  .mgmt-page__actions > .ui-button:only-of-type { flex: 0 0 auto; }
   .mgmt-workflow__heading,
   .mgmt-workflow__receipt { display: grid; }
+  .mgmt-workflow__buttons { width: 100%; }
+  .mgmt-workflow__buttons .ui-button { flex: 1 1 128px; }
   .mgmt-workflow__steps li { justify-content: center; padding-inline: 3px; }
   .mgmt-input-row { grid-template-columns: 1fr; }
   .mgmt-kv { grid-template-columns: 1fr; }
@@ -494,7 +550,7 @@
    A management route is one sheet of paper lifted off the canvas — the canvas
    must actually show around it for the material ladder to exist. */
 @media (min-width: 761px) {
-  .mgmt-page {
+  .shell-route-stage > main.mgmt-page[data-layout='sheet'] {
     width: min(100% - 2 * var(--workspace-gutter), calc(var(--workspace-measure) + 200px));
     min-height: 0;
     margin: 0 auto var(--space-8);
@@ -546,6 +602,205 @@
 
 main[data-route-id='overview'] .mgmt-section { padding-block: var(--space-5); }
 main[data-route-id='overview'] .ui-empty-state { padding-block: var(--space-3); }
+
+.mgmt-query-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.mgmt-query-actions .ui-button { min-height: 44px; }
+
+.mgmt-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+main[data-route-id='overview'] .overview-primary-actions .ui-button {
+  min-height: 44px;
+}
+
+main[data-route-id='overview'] .overview-auxiliary-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+main[data-route-id='overview'] .overview-auxiliary-state > .mgmt-notice {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+main[data-route-id='overview'] .overview-auxiliary-state > .ui-button {
+  flex: 0 0 auto;
+}
+
+/* A single framed matrix replaces the old full-width service log. The seams
+   make rows and columns easy to scan without turning every item into a raised
+   card. Healthy services remain visible; only problem cells gain an action. */
+main[data-route-id='overview'] .overview-status-matrix {
+  display: grid;
+  margin: 0;
+  padding: 1px;
+  border-radius: var(--radius-lg);
+  background: var(--color-border-soft);
+  gap: 1px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  list-style: none;
+  overflow: hidden;
+}
+
+main[data-route-id='overview'] .overview-status-cell {
+  display: grid;
+  min-width: 0;
+  min-height: 128px;
+  align-content: start;
+  padding: 15px;
+  background: var(--color-paper);
+  gap: 9px;
+  grid-column: span 2;
+}
+
+/* Balance an incomplete final row instead of leaving a large dead cell. */
+main[data-route-id='overview'] .overview-status-cell:nth-child(3n + 1):last-child { grid-column: 1 / -1; }
+main[data-route-id='overview'] .overview-status-cell:nth-child(3n + 1):nth-last-child(2),
+main[data-route-id='overview'] .overview-status-cell:nth-child(3n + 2):last-child { grid-column: span 3; }
+
+main[data-route-id='overview'] .overview-status-cell[data-state='attention'],
+main[data-route-id='overview'] .overview-status-cell[data-state='unavailable'] {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--color-warning) 72%, transparent);
+}
+
+main[data-route-id='overview'] .overview-status-cell__header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+main[data-route-id='overview'] .overview-status-cell__header strong {
+  min-width: 0;
+  font-size: 15px;
+  letter-spacing: -.006em;
+  overflow-wrap: anywhere;
+}
+
+main[data-route-id='overview'] .overview-status-cell p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+main[data-route-id='overview'] .overview-status-cell__action {
+  justify-self: start;
+  margin-top: auto;
+  min-height: 44px;
+}
+
+main[data-route-id='overview'] .overview-capability-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+main[data-route-id='overview'] .overview-capability-actions .ui-button { min-height: 44px; }
+
+@container (max-width: 900px) {
+  main[data-route-id='overview'] .overview-status-matrix { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  main[data-route-id='overview'] .overview-status-matrix > .overview-status-cell.overview-status-cell { grid-column: span 1; }
+  main[data-route-id='overview'] .overview-status-matrix > .overview-status-cell.overview-status-cell:nth-child(odd):last-child { grid-column: 1 / -1; }
+}
+
+@container (max-width: 599px) {
+  main[data-route-id='overview'] .overview-status-matrix { grid-template-columns: 1fr; }
+  main[data-route-id='overview'] .overview-status-matrix > .overview-status-cell.overview-status-cell {
+    min-height: 112px;
+    grid-column: 1;
+  }
+}
+
+@media (max-width: 760px) {
+  main[data-route-id='overview'] .overview-auxiliary-state {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  main[data-route-id='overview'] .overview-auxiliary-state > .ui-button {
+    min-height: 44px;
+    align-self: stretch;
+  }
+
+  main[data-route-id='overview'] .mgmt-page__actions .ui-button { min-height: 44px; }
+
+  /* Compact type may stay compact on phones, but the physical target may not.
+     This baseline covers the shared controls used across every management
+     page; feature-specific tab bars only need to handle their custom buttons. */
+  .mgmt-page .ui-button.ui-button,
+  .mgmt-page .ui-input,
+  .mgmt-page .ui-textarea,
+  .mgmt-page .ui-select__trigger.ui-select__trigger,
+  .mgmt-page details > summary {
+    min-height: 44px;
+  }
+
+  .mgmt-page .ui-icon-button.ui-icon-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* Dialogs render in a body-level portal, so the .mgmt-page descendant rule
+     above cannot reach them. Scope the touch baseline to routes that actually
+     contain a management page; Session and Room dialogs remain untouched. */
+  body:has(.mgmt-page) .ui-dialog .ui-button,
+  body:has(.mgmt-page) .ui-dialog .ui-input,
+  body:has(.mgmt-page) .ui-dialog .ui-textarea,
+  body:has(.mgmt-page) .ui-dialog .ui-select__trigger,
+  body:has(.mgmt-page) .ui-dialog .ui-segmented,
+  body:has(.mgmt-page) .ui-dialog details > summary {
+    min-height: 44px;
+  }
+
+  body:has(.mgmt-page) .ui-dialog .ui-icon-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  body:has(.mgmt-page) .ui-dialog .ui-dialog__header { padding-right: 48px; }
+  body:has(.mgmt-page) .ui-dialog .ui-dialog__footer { flex-wrap: wrap; }
+  body:has(.mgmt-page) .ui-dialog .ui-dialog__footer .ui-button { flex: 1 1 132px; }
+
+  /* Menus and Select lists also render in body-level portals. Their desktop
+     32px rows are intentionally dense. On a narrow viewport, 46px keeps the
+     transformed hit area at least 44px during the subtle .97 entrance. */
+  body:has(.mgmt-page) .ui-menu__item,
+  body:has(.mgmt-page) .ui-select__item {
+    min-height: 46px;
+  }
+
+  body:has(.mgmt-page) .ui-select__item > span:last-child {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .mgmt-page .ui-input,
+  .mgmt-page .ui-textarea,
+  .mgmt-page .ui-select__trigger,
+  body:has(.mgmt-page) .ui-dialog .ui-input,
+  body:has(.mgmt-page) .ui-dialog .ui-textarea,
+  body:has(.mgmt-page) .ui-dialog .ui-select__trigger {
+    font-size: 16px;
+  }
+}
 
 
 /* ===================== overview: report, not dashboard =====================
@@ -618,7 +873,7 @@ main[data-route-id='overview'] .mgmt-metric .mgmt-metric__detail { margin-top: 1
 .mgmt-metric .mgmt-metric__detail { grid-column: 2; line-height: 1.45; }
 
 /* Status chips share the caption tier and the same icon box. */
-.mgmt-status { font-size: var(--text-label); line-height: var(--text-label-lh); font-weight: var(--font-weight-medium); letter-spacing: .03em; }
+.mgmt-status { font-size: var(--text-label); line-height: 1.4; font-weight: var(--font-weight-medium); letter-spacing: .03em; }
 .mgmt-status > svg { width: 14px; height: 14px; flex: 0 0 14px; }
 
 /* Key/value rows share one label column and one baseline across routes. */

@@ -78,8 +78,11 @@ class AgentPromptAuditTests(unittest.TestCase):
 
         for item in agent_template_catalog():
             template = agent_template(item["templateId"], item["version"])
-            self.assertIn("适用任务", template.prompt)
-            self.assertIn("产物格式", template.prompt)
+            self.assertIn("<responsibility-profile", template.prompt)
+            self.assertIn("职责：", template.prompt)
+            self.assertIn("AgentResult", template.prompt)
+            self.assertNotIn("适用任务", template.prompt)
+            self.assertNotIn("产物格式", template.prompt)
             self.assertNotIn("收工前", template.prompt)
             self.assertNotIn("已交付、已交接", template.prompt)
             policy = progressive_capability_policy()
@@ -115,18 +118,18 @@ class AgentPromptAuditTests(unittest.TestCase):
     ) -> None:
         policy = progressive_capability_policy()
 
-        self.assertLessEqual(len(policy), 669)
-        self.assertLessEqual(len(policy.encode("utf-8")), 1_383)
+        self.assertLessEqual(len(policy), 1_100)
+        self.assertLessEqual(len(policy.encode("utf-8")), 2_400)
         for token in (
             "routing card",
             "catalog revision",
             "元数据",
             "nextCandidates 仅建议",
-            "加载精确正文一次",
+            "精确正文一次",
             "<loaded_skill> 同 revision 不重载",
-            "禁止重构",
-            "注入无关正文",
-            "另建/取代 Runtime owner",
+            "Skill 是可复用方法，不拥有 Runtime 状态",
+            "TaskBrief、ContextRefs、SkillRefs",
+            "结果统一返回状态、摘要",
             "Runtime 实际能力/审批/取消/工作区/生命周期/owner",
             "deliverable",
             "新鲜、权威 evidence receipt",
@@ -140,19 +143,28 @@ class AgentPromptAuditTests(unittest.TestCase):
     ) -> None:
         policy = progressive_capability_policy()
 
-        self.assertIn("通常一主 Skill，最多两个", policy)
-        self.assertIn("代码切片用 test-driven-implementation", policy)
-        self.assertIn("故障先 systematic-debugging", policy)
+        self.assertIn("简单任务不加载流程 Skill", policy)
+        self.assertIn("一个职责 Skill 加一个任务方法", policy)
+        self.assertIn("最多两个互补 Skill", policy)
+        self.assertIn("已知行为且有测试缝隙用 test-driven-implementation", policy)
+        self.assertIn("未知故障用 systematic-debugging", policy)
+        self.assertIn("只有委派确有收益时用 orchestrate-session", policy)
 
     def test_skill_composition_prompt_rejects_overlapping_authority(self) -> None:
         policy = progressive_capability_policy()
 
-        self.assertIn("禁止重复", policy)
-        execution = policy.index("项目连续性归 implementation-execution")
-        memory = policy.index("memory-curation")
-        authority_overlap = policy.index("争夺同一持久化事实")
-        self.assertLess(execution, memory)
-        self.assertLess(memory, authority_overlap)
+        self.assertIn("禁止固定流水线和重复职责", policy)
+        self.assertIn("facilitate-room 仅供 Room Facilitator", policy)
+        self.assertIn("Partner 继续使用普通 Session Skill", policy)
+        self.assertIn("Review 由用户要求或风险决定，不是必经门槛", policy)
+        for retired in (
+            "implementation-execution",
+            "quality-gate",
+            "review-feedback-resolution",
+            "structured-handoff",
+            "work-document-archive",
+        ):
+            self.assertNotIn(retired, policy)
 
     def test_routing_prompt_does_not_gate_clear_reversible_work_on_confirmation(
         self,

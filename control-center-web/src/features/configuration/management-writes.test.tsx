@@ -31,24 +31,21 @@ describe('Configuration settings WorkContract UI', () => {
     expect(document.querySelector('.configuration-portability')).not.toBeNull();
     await user.clear(input);
     await user.type(input, '4096');
+    expect(await screen.findByText('重启本机补全服务')).toBeInTheDocument();
     const workflow = screen.getByText('保存这些设置', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
+    expect(workflow).toHaveAttribute('data-confirmation', 'direct');
 
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '查看影响' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '保存这些设置' }));
     await waitFor(() => expect(findRequest(transport, 'configuration.settings.preview')).toMatchObject({
       body: {
         changes: { 'context.tokenBudget': 4096 },
         expectedRuntimeRevision: 12,
       },
     }));
-    expect(await within(workflow as HTMLElement).findByText('保存这些设置？')).toBeInTheDocument();
-    expect(within(workflow as HTMLElement).getByText('上下文容量：2048 → 4096（重启后台服务）')).toBeInTheDocument();
-    expect(within(workflow as HTMLElement).queryByText(/context\.tokenBudget|sidecar|R2/)).not.toBeInTheDocument();
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认这些更改' }));
-    await user.click(within(workflow as HTMLElement).getByRole('checkbox'));
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认执行' }));
-
-    expect(await within(workflow as HTMLElement).findByText('这次更改已安全记录')).toBeInTheDocument();
+    expect(within(workflow as HTMLElement).queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(within(workflow as HTMLElement).queryByRole('button', { name: '确认执行' })).not.toBeInTheDocument();
+    expect(await within(workflow as HTMLElement).findByText('已保存')).toBeInTheDocument();
     expect(findRequest(transport, 'configuration.settings.apply')).toMatchObject({
       body: {
         changes: { 'context.tokenBudget': 4096 },
@@ -59,9 +56,9 @@ describe('Configuration settings WorkContract UI', () => {
       },
     });
     await waitFor(() => expect(transport.settingsReads).toBeGreaterThanOrEqual(2));
-    expect(await screen.findByText('更改设置后，会在这里列出将要保存的内容。')).toBeInTheDocument();
+    expect(await screen.findByText('更改设置后，可以在这里直接保存；需要重启、部署或权限的更改会先说明需要采取的操作。')).toBeInTheDocument();
 
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '撤销这次更改' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '撤销' }));
     expect(await within(workflow as HTMLElement).findByText('已恢复到更改前')).toBeInTheDocument();
     expect(findRequest(transport, 'configuration.settings.rollback')).toMatchObject({
       body: {
@@ -124,7 +121,8 @@ describe('Configuration settings WorkContract UI', () => {
 
     const workflow = screen.getByText('保存这些设置', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '查看影响' }));
+    expect(workflow).toHaveAttribute('data-confirmation', 'direct');
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '保存这些设置' }));
 
     await waitFor(() => expect(findRequest(transport, 'configuration.settings.preview')).toMatchObject({
       body: {
@@ -136,9 +134,20 @@ describe('Configuration settings WorkContract UI', () => {
         expectedRuntimeRevision: 12,
       },
     }));
-    expect(await within(workflow as HTMLElement).findByText('应用名称：澄 → 记川（立即生效）')).toBeInTheDocument();
-    expect(within(workflow as HTMLElement).getByText('通用伙伴称呼：澄 → 阿川（立即生效）')).toBeInTheDocument();
-    expect(within(workflow as HTMLElement).getByText('侧栏短句：记得你，也陪你做事 → 记得你，也陪你完成（立即生效）')).toBeInTheDocument();
+    expect(await within(workflow as HTMLElement).findByText('已保存')).toBeInTheDocument();
+    expect(findRequest(transport, 'configuration.settings.apply')).toMatchObject({
+      body: {
+        changes: {
+          'identity.productName': '记川',
+          'identity.assistantName': '阿川',
+          'identity.tagline': '记得你，也陪你完成',
+        },
+        expectedRuntimeRevision: 12,
+        previewToken: 'preview-configuration-settings',
+        payloadSha256: hash,
+        confirmText: 'apply',
+      },
+    });
   });
 
   it('finds settings by human wording and recovers cleanly from an empty result', async () => {
@@ -194,9 +203,9 @@ describe('Configuration settings WorkContract UI', () => {
     await user.click(screen.getByRole('button', { name: /^深度生成/ }));
 
     expect(await screen.findByRole('combobox', { name: '闪电生成模型' })).toHaveTextContent('DeepSeek V4 Flash');
-    expect(screen.getByRole('combobox', { name: '闪电生成思考' })).toHaveTextContent('高');
+    expect(screen.getByRole('combobox', { name: '闪电生成推理强度' })).toHaveTextContent('高');
 
-    await user.click(screen.getByRole('combobox', { name: '闪电生成思考' }));
+    await user.click(screen.getByRole('combobox', { name: '闪电生成推理强度' }));
     expect(await screen.findByRole('option', { name: '高' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: '最高' })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: '关闭' })).not.toBeInTheDocument();
@@ -204,9 +213,9 @@ describe('Configuration settings WorkContract UI', () => {
 
     await user.click(screen.getByRole('button', { name: /^记忆/ }));
     expect(await screen.findByRole('combobox', { name: '自动整理模型' })).toHaveTextContent('GPT-5.6 Luna');
-    expect(screen.getByRole('combobox', { name: '自动整理思考' })).toHaveTextContent('最高');
-    expect(screen.getByRole('combobox', { name: '做梦模型' })).toHaveTextContent('GPT-5.6 Luna');
-    expect(screen.getByRole('combobox', { name: '做梦思考' })).toHaveTextContent('最高');
+    expect(screen.getByRole('combobox', { name: '自动整理推理强度' })).toHaveTextContent('最高');
+    expect(screen.getByRole('combobox', { name: '后台整理模型' })).toHaveTextContent('GPT-5.6 Luna');
+    expect(screen.getByRole('combobox', { name: '后台整理推理强度' })).toHaveTextContent('最高');
 
     expect(screen.queryByRole('combobox', { name: '看图模型' })).not.toBeInTheDocument();
   });

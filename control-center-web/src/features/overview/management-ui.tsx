@@ -33,6 +33,7 @@ export function ManagementPage({
   children,
   description,
   eyebrow,
+  layout = 'sheet',
   routeId,
   title,
 }: {
@@ -40,11 +41,12 @@ export function ManagementPage({
   children: ReactNode;
   description: string;
   eyebrow?: string;
+  layout?: 'sheet' | 'workbench';
   routeId: string;
   title: string;
 }) {
   return (
-    <main className="mgmt-page" data-route-id={routeId}>
+    <main className="mgmt-page" data-layout={layout} data-route-id={routeId}>
       <header className="mgmt-page__header">
         <div className="mgmt-page__heading">
           {eyebrow ? <span className="mgmt-page__eyebrow">{eyebrow}</span> : null}
@@ -87,6 +89,8 @@ export function QueryState({
   children,
   empty,
   error,
+  errorAction,
+  headingLevel = 2,
   isEmpty = false,
   isPending,
   onRetry,
@@ -94,6 +98,8 @@ export function QueryState({
   children: ReactNode;
   empty?: ReactNode;
   error: Error | null;
+  errorAction?: ReactNode;
+  headingLevel?: 2 | 3 | 4;
   isEmpty?: boolean;
   isPending: boolean;
   onRetry: () => void;
@@ -109,12 +115,20 @@ export function QueryState({
   }
   if (error) {
     return (
-      <EmptyState
-        action={<Button onClick={onRetry}>重试</Button>}
-        description={publicErrorText(error, '暂时无法读取这部分内容，请稍后重试。')}
-        icon={AlertTriangle}
-        title="读取失败"
-      />
+      <div aria-atomic="true" role="alert">
+        <EmptyState
+          action={(
+            <div className="mgmt-query-actions">
+              <Button onClick={onRetry}>重试</Button>
+              {errorAction}
+            </div>
+          )}
+          description={publicErrorText(error, '暂时无法读取这部分内容，请稍后重试。')}
+          headingLevel={headingLevel}
+          icon={AlertTriangle}
+          title="读取失败"
+        />
+      </div>
     );
   }
   if (isEmpty && empty) return <>{empty}</>;
@@ -167,8 +181,10 @@ export function MetricStrip({
 }
 
 export function OperationalList({
+  className,
   items,
 }: {
+  className?: string;
   items: readonly {
     id: string;
     title: ReactNode;
@@ -180,7 +196,7 @@ export function OperationalList({
   }[];
 }) {
   return (
-    <div className="mgmt-list">
+    <div className={['mgmt-list', className].filter(Boolean).join(' ')}>
       {items.map((item) => {
         const content = (
           <>
@@ -222,10 +238,11 @@ export function DataTable({
   columns: readonly { key: string; label: string; width?: string }[];
   rows: readonly JsonRecord[];
 }) {
+  const captionId = useId();
   return (
-    <div className="mgmt-table-wrap" tabIndex={0}>
+    <div aria-labelledby={captionId} className="mgmt-table-wrap" role="region" tabIndex={0}>
       <table className="mgmt-table">
-        <caption>{caption}</caption>
+        <caption id={captionId}>{caption}</caption>
         <thead>
           <tr>
             {columns.map((column) => (
@@ -282,7 +299,7 @@ export function InlineNotice({
   return (
     <div className="mgmt-notice" data-tone={tone} role={tone === 'danger' ? 'alert' : 'status'}>
       <strong>{title}</strong>
-      <span>{children}</span>
+      <div className="mgmt-notice__body">{children}</div>
     </div>
   );
 }

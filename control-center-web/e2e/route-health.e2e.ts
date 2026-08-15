@@ -34,7 +34,9 @@ test.describe('full route layout health', () => {
       await page.goto(`/#/${route.id}`);
       const main = page.locator(`main[data-route-id="${route.id}"]`);
       await expect(main).toBeVisible();
-      await expect(page.locator('.shell-topbar__title h1')).toHaveText(route.label);
+      await expect(page.locator('.shell-route-stage')).toHaveAttribute('aria-label', `${route.label}主内容`);
+      if (route.id === 'project-field') await expect(page.locator('.shell-topbar')).toHaveCount(0);
+      else await expect(page.locator('.shell-topbar__title > :is(h1, strong)')).toHaveText(route.label);
       await expectNoHorizontalPageOverflow(page);
       await page.waitForTimeout(120);
       if (route.id === 'agent') {
@@ -95,7 +97,7 @@ test.describe('full route layout health', () => {
 
     await page.locator('.shell-sidebar [data-route="memory"]').click();
     await expect(page.locator('main[data-route-id="memory"]')).toBeVisible();
-    await expect(page.locator('.shell-topbar__title h1')).toHaveText('我的记忆');
+    await expect(page.locator('.shell-topbar__title > :is(h1, strong)')).toHaveText('我的记忆');
     await expectNoHorizontalPageOverflow(page);
 
     await page.getByRole('button', { name: '展开侧边栏' }).click();

@@ -66,8 +66,8 @@ const modeItems = [
 ] as const;
 
 const modeCopy: Record<BrowserMode, string> = {
-  observe: 'Agent 只能读取按需快照，不能操作页面。',
-  codrive: '页面操作先在对话中确认，并保留完整执行轨迹。',
+  observe: '伙伴只能按需读取页面内容，不能操作页面。',
+  codrive: '敏感操作会在对话中征求你的同意，并保留完整记录。',
   managed: '操作优先发送到隔离的托管 Chrome，不接管你的日常窗口。',
 };
 
@@ -111,6 +111,7 @@ export function BrowserFeature() {
   const refresh = () => {
     void Promise.all([
       control.status.refetch(),
+      control.pairing.refetch(),
       control.tabs.refetch(),
       control.snapshot.refetch(),
       control.permissions.refetch(),
@@ -220,6 +221,7 @@ export function BrowserFeature() {
       )}
       description="让伙伴在你允许的范围内查看网页、截图和操作。你的日常浏览器与托管浏览器始终分开。"
       eyebrow="一起看网页"
+      layout="workbench"
       routeId="browser"
       title="浏览器"
     >
@@ -264,17 +266,22 @@ export function BrowserFeature() {
             <div className="browser-workbench">
               <BrowserRail
                 clients={clients}
+                error={control.tabs.error as Error | null}
+                isRefreshing={control.tabs.isFetching}
                 productName={identity.productName}
                 onSelect={(deviceId, tabId) => {
                   setSelectedDeviceId(deviceId);
                   setSelectedTabId(tabId);
                 }}
+                onRetry={() => void control.tabs.refetch()}
                 selectedDeviceId={selectedDeviceId}
                 selectedTabId={selectedTabId}
                 tabs={tabs}
               />
               <PageWorkspace
+                error={control.snapshot.error as Error | null}
                 isPending={control.snapshot.isFetching}
+                onRetry={() => void control.snapshot.refetch()}
                 selectedTab={selectedTab}
                 snapshot={pageSnapshot}
                 screenshotUrl={screenshotUrl}
@@ -284,7 +291,9 @@ export function BrowserFeature() {
 
           <TabsContent value="permissions">
             <PermissionsView
-              isPending={control.decidePermission.isPending}
+              decisionPending={control.decidePermission.isPending}
+              error={control.permissions.error as Error | null}
+              isRefreshing={control.permissions.isFetching}
               items={permissions}
               onDecision={(promptId, decision) => void performBrowserAction({
                 area: 'permissions',
@@ -297,12 +306,18 @@ export function BrowserFeature() {
                 request: () => control.decidePermission.mutateAsync({ promptId, decision }),
                 waitingDetail: '决定已送达，但浏览器尚未返回匹配回执；该请求仍显示为待处理。',
               })}
+              onRetry={() => void control.permissions.refetch()}
               receipt={actionReceipt?.area === 'permissions' ? actionReceipt : null}
             />
           </TabsContent>
 
           <TabsContent value="traces">
-            <TraceView items={traces} />
+            <TraceView
+              error={control.traces.error as Error | null}
+              isRefreshing={control.traces.isFetching}
+              items={traces}
+              onRetry={() => void control.traces.refetch()}
+            />
           </TabsContent>
 
           <TabsContent value="setup">
@@ -315,10 +330,10 @@ export function BrowserFeature() {
                   (Boolean(stringValue(response.pairingToken)) && stringValue(response.pairingToken) !== stringValue(pairing.pairingToken))
                   || (Boolean(stringValue(response.tokenFingerprint)) && stringValue(response.tokenFingerprint) !== stringValue(pairing.tokenFingerprint))
                 ),
-                confirmedDetail: '浏览器已返回新的配对凭据；只把它复制给正在配对的本机插件。',
-                label: '轮换配对凭据',
+                confirmedDetail: '新的配对码已生成；只把它复制给正在配对的本机插件。',
+                label: '更换配对码',
                 request: () => control.rotatePairing.mutateAsync(),
-                waitingDetail: '轮换请求已送达，但浏览器尚未返回新的凭据或指纹；现有凭据保持有效。',
+                waitingDetail: '更换请求已送达，但浏览器尚未返回新的配对信息；现有配对码仍可使用。',
               })}
               onStartManaged={() => void performBrowserAction({
                 area: 'managed',
@@ -336,6 +351,10 @@ export function BrowserFeature() {
                 request: () => control.stopManaged.mutateAsync(),
                 waitingDetail: '停止请求已送达，但浏览器尚未确认进程退出；当前运行状态保持不变。',
               })}
+              onRetryPairing={() => void control.pairing.refetch()}
+              pairingError={control.pairing.error as Error | null}
+              pairingPending={control.rotatePairing.isPending}
+              pairingRefreshing={control.pairing.isFetching}
               pairing={pairing}
               receipt={actionReceipt && ['pairing', 'managed'].includes(actionReceipt.area) ? actionReceipt : null}
             />
@@ -348,14 +367,20 @@ export function BrowserFeature() {
 
 function BrowserRail({
   clients,
+  error,
+  isRefreshing,
   onSelect,
+  onRetry,
   productName,
   selectedDeviceId,
   selectedTabId,
   tabs,
 }: {
   clients: Record<string, unknown>[];
+  error: Error | null;
+  isRefreshing: boolean;
   onSelect: (deviceId: string, tabId: number) => void;
+  onRetry: () => void;
   productName: string;
   selectedDeviceId: string;
   selectedTabId: number;
@@ -364,6 +389,14 @@ function BrowserRail({
   return (
     <aside className="browser-rail" aria-label="浏览器与标签页">
       <header><strong>浏览器</strong><span>{clients.length}</span></header>
+      <BrowserQueryIssue
+        actionLabel="重新加载标签页"
+        description="浏览器连接状态仍然可见。重新加载后再选择需要查看的页面。"
+        error={error}
+        isRefreshing={isRefreshing}
+        onRetry={onRetry}
+        title="标签页暂时未同步"
+      />
       {clients.length ? clients.map((client) => {
         const deviceId = stringValue(client.deviceId);
         const deviceTabs = tabs.filter((item) => stringValue(item.deviceId) === deviceId);
@@ -400,12 +433,16 @@ function BrowserRail({
 }
 
 function PageWorkspace({
+  error,
   isPending,
+  onRetry,
   screenshotUrl,
   selectedTab,
   snapshot,
 }: {
+  error: Error | null;
   isPending: boolean;
+  onRetry: () => void;
   screenshotUrl: string;
   selectedTab?: Record<string, unknown>;
   snapshot: Record<string, unknown>;
@@ -413,10 +450,30 @@ function PageWorkspace({
   const markdown = stringValue(snapshot.markdown);
   const lines = useMemo(() => markdown.split('\n').filter(Boolean).slice(0, 260), [markdown]);
   if (!selectedTab && !snapshot.snapshotId) {
-    return <div className="browser-page-empty"><EmptyState description="选择左侧标签页后查看实时页面结构。" icon={Globe2} title="等待页面" /></div>;
+    return (
+      <div className="browser-page-empty">
+        <BrowserQueryIssue
+          actionLabel="重新加载页面快照"
+          description="重新加载只会读取当前页面，不会执行点击、输入或跳转。"
+          error={error}
+          isRefreshing={isPending}
+          onRetry={onRetry}
+          title="页面快照暂时未同步"
+        />
+        {!error ? <EmptyState description="选择左侧标签页后查看实时页面结构。" icon={Globe2} title="等待页面" /> : null}
+      </div>
+    );
   }
   return (
-    <section className="browser-page-view">
+    <section className="browser-page-view" data-query-error={Boolean(error) || undefined}>
+      <BrowserQueryIssue
+        actionLabel="重新加载页面快照"
+        description="上一次加载的页面内容仍可查看。重新加载只会读取当前页面，不会执行操作。"
+        error={error}
+        isRefreshing={isPending}
+        onRetry={onRetry}
+        title="页面快照未更新"
+      />
       <header className="browser-page-view__header">
         <div>
           <span>{hostname(stringValue(snapshot.url || selectedTab?.url))}</span>
@@ -458,19 +515,33 @@ function PageWorkspace({
 }
 
 function PermissionsView({
-  isPending,
+  decisionPending,
+  error,
+  isRefreshing,
   items,
   onDecision,
+  onRetry,
   receipt,
 }: {
-  isPending: boolean;
+  decisionPending: boolean;
+  error: Error | null;
+  isRefreshing: boolean;
   items: Record<string, unknown>[];
   onDecision: (promptId: string, decision: 'allow_once' | 'allow_site' | 'deny') => void;
+  onRetry: () => void;
   receipt: BrowserActionReceipt | null;
 }) {
   return (
     <section className="browser-list-view">
-      <header><div><h2>页面权限</h2><p>跨站访问或高影响页面操作会在这里等待你的决定。</p></div><StatusBadge label={`${items.filter((item) => stringValue(item.status) === 'pending').length} 个待处理`} tone="neutral" /></header>
+      <header><div><h2>页面权限</h2><p>跨站访问或高影响页面操作会在这里等待你的决定。</p></div><StatusBadge label={error ? '状态未知' : `${items.filter((item) => stringValue(item.status) === 'pending').length} 个待处理`} tone={error ? 'warning' : 'neutral'} /></header>
+      <BrowserQueryIssue
+        actionLabel="重新加载权限请求"
+        description="当前列表可能不是最新状态。重新加载只会读取权限请求，不会替你作出决定。"
+        error={error}
+        isRefreshing={isRefreshing}
+        onRetry={onRetry}
+        title="权限请求未同步"
+      />
       <BrowserActionNotice receipt={receipt} />
       {items.length ? (
         <div className="browser-permission-list">
@@ -480,27 +551,45 @@ function PermissionsView({
             return (
               <article key={promptId}>
                 <span className="browser-list-icon"><KeyRound size={16} /></span>
-                <div><strong>{stringValue(item.origin, '未知站点')}</strong><span>{stringValue(item.reason, stringValue(item.action))}</span><small>{formatTime(Number(item.createdAtMs || 0))}</small></div>
+                <div><strong>{stringValue(item.origin, '未知站点')}</strong><span>{permissionReasonLabel(stringValue(item.action))}</span><small>{formatTime(Number(item.createdAtMs || 0))}</small></div>
                 {pending ? (
                   <div className="browser-permission-actions">
-                    <Button disabled={isPending} onClick={() => onDecision(promptId, 'deny')} size="small" variant="quiet">拒绝</Button>
-                    <Button disabled={isPending} onClick={() => onDecision(promptId, 'allow_once')} size="small">仅本次</Button>
-                    <Button disabled={isPending} onClick={() => onDecision(promptId, 'allow_site')} size="small" variant="primary">允许站点</Button>
+                    <Button disabled={decisionPending} onClick={() => onDecision(promptId, 'deny')} size="small" variant="quiet">拒绝</Button>
+                    <Button disabled={decisionPending} onClick={() => onDecision(promptId, 'allow_once')} size="small">仅本次</Button>
+                    <Button disabled={decisionPending} onClick={() => onDecision(promptId, 'allow_site')} size="small" variant="primary">允许站点</Button>
                   </div>
                 ) : <StatusBadge label={permissionDecisionLabel(stringValue(item.decision))} tone={stringValue(item.decision) === 'deny' ? 'danger' : 'success'} />}
               </article>
             );
           })}
         </div>
-      ) : <EmptyState description="浏览器尚未请求额外站点权限。" icon={ShieldCheck} title="没有待处理权限" />}
+      ) : error ? null : <EmptyState description="浏览器尚未请求额外站点权限。" icon={ShieldCheck} title="没有待处理权限" />}
     </section>
   );
 }
 
-function TraceView({ items }: { items: Record<string, unknown>[] }) {
+function TraceView({
+  error,
+  isRefreshing,
+  items,
+  onRetry,
+}: {
+  error: Error | null;
+  isRefreshing: boolean;
+  items: Record<string, unknown>[];
+  onRetry: () => void;
+}) {
   return (
     <section className="browser-list-view">
-      <header><div><h2>执行轨迹</h2><p>每次 Agent 浏览、截图和页面操作都保留状态与耗时。</p></div><StatusBadge label={`${items.length} 条`} tone="neutral" /></header>
+      <header><div><h2>执行轨迹</h2><p>伙伴查看网页、获取截图和操作页面时，都会留下状态与耗时。</p></div><StatusBadge label={error ? '状态未知' : `${items.length} 条`} tone={error ? 'warning' : 'neutral'} /></header>
+      <BrowserQueryIssue
+        actionLabel="重新加载执行轨迹"
+        description="已经加载的记录仍可查看。重新加载只会读取最新执行记录。"
+        error={error}
+        isRefreshing={isRefreshing}
+        onRetry={onRetry}
+        title="执行轨迹未同步"
+      />
       {items.length ? (
         <div className="browser-trace-list">
           {items.map((item) => {
@@ -509,13 +598,13 @@ function TraceView({ items }: { items: Record<string, unknown>[] }) {
             return (
               <article key={stringValue(item.commandId)}>
                 <span className="browser-list-icon" data-ok={ok || undefined}>{ok ? <Check size={16} /> : <Activity size={16} />}</span>
-                <div><strong>{actionLabel(stringValue(item.action))}</strong><span>{stringValue(result.summary, stringValue(item.failureReason, '等待浏览器返回'))}</span><small>{stringValue(item.commandId)}</small></div>
+                <div><strong>{actionLabel(stringValue(item.action))}</strong><span>{stringValue(result.summary, stringValue(item.failureReason, '等待浏览器返回'))}</span><small>已记录本次操作</small></div>
                 <div className="browser-trace-meta"><StatusBadge label={statusLabel(stringValue(item.status))} tone={ok ? 'success' : stringValue(item.status) === 'failed' ? 'danger' : 'neutral'} /><span>{formatDuration(Number(item.durationMs || 0))}</span></div>
               </article>
             );
           })}
         </div>
-      ) : <EmptyState description="Agent 调用浏览器工具后，轨迹会出现在这里。" icon={Activity} title="暂无执行轨迹" />}
+      ) : error ? null : <EmptyState description="伙伴使用浏览器后，相关记录会出现在这里。" icon={Activity} title="暂无执行轨迹" />}
     </section>
   );
 }
@@ -524,16 +613,24 @@ function SetupView({
   control,
   managed,
   onRotatePairing,
+  onRetryPairing,
   onStartManaged,
   onStopManaged,
+  pairingError,
+  pairingPending,
+  pairingRefreshing,
   pairing,
   receipt,
 }: {
   control: ReturnType<typeof useBrowserControl>;
   managed: Record<string, unknown>;
   onRotatePairing: () => void;
+  onRetryPairing: () => void;
   onStartManaged: () => void;
   onStopManaged: () => void;
+  pairingError: Error | null;
+  pairingPending: boolean;
+  pairingRefreshing: boolean;
   pairing: Record<string, unknown>;
   receipt: BrowserActionReceipt | null;
 }) {
@@ -551,14 +648,28 @@ function SetupView({
   return (
     <section className="browser-setup">
       <div className="browser-setup__section">
-        <header><div><h2>Chrome 插件</h2><p>插件目录随产品安装，Chrome 首次需要手动加载一次。</p></div><StatusBadge label={token ? '凭据已生成' : '等待运行时'} tone={token ? 'success' : 'warning'} /></header>
+        <header><div><h2>连接 Chrome</h2><p>首次使用时，在 Chrome 中加载浏览器助手即可连接。</p></div><StatusBadge label={pairingError ? '状态未知' : token ? '配对码已生成' : '等待连接'} tone={token && !pairingError ? 'success' : 'warning'} /></header>
+        <BrowserQueryIssue
+          actionLabel="重新加载配对信息"
+          description="浏览器连接和托管浏览器状态不受影响。重新加载只会读取本机配对信息。"
+          error={pairingError}
+          isRefreshing={pairingRefreshing}
+          onRetry={onRetryPairing}
+          title="配对信息未同步"
+        />
         <dl>
-          <div><dt>插件目录</dt><dd>{stringValue(pairing.extensionPath, '尚未安装')}</dd></div>
-          <div><dt>桥接地址</dt><dd>{stringValue(pairing.bridgeUrl, '等待运行时')}</dd></div>
-          <div><dt>凭据指纹</dt><dd>{stringValue(pairing.tokenFingerprint, '未生成')}</dd></div>
+          <div><dt>浏览器助手</dt><dd>{stringValue(pairing.extensionPath) ? '文件已就绪，等待在 Chrome 中加载' : '尚未安装'}</dd></div>
         </dl>
+        <details className="browser-setup__advanced-details">
+          <summary>高级连接详情</summary>
+          <dl>
+            <div><dt>浏览器助手文件</dt><dd>{stringValue(pairing.extensionPath, '尚未安装')}</dd></div>
+            <div><dt>本机连接地址</dt><dd>{stringValue(pairing.bridgeUrl, '等待本机服务')}</dd></div>
+            <div><dt>配对状态标识</dt><dd>{stringValue(pairing.tokenFingerprint, '未生成')}</dd></div>
+          </dl>
+        </details>
         <div className="browser-pairing-token">
-          <label htmlFor="browser-pairing-token">配对凭据</label>
+          <label htmlFor="browser-pairing-token">配对码</label>
           <input aria-describedby="browser-pairing-guidance" autoComplete="off" id="browser-pairing-token" readOnly type="password" value={token} />
           <Button
             disabled={!token}
@@ -569,32 +680,36 @@ function SetupView({
             {copyState === 'copied' ? '已复制' : '复制'}
           </Button>
           <IconButton
+            disabled={pairingPending}
             icon={<RotateCcw size={15} />}
-            label="轮换配对凭据"
+            label="更换配对码"
             onClick={onRotatePairing}
             tooltip
           />
         </div>
         <p className="browser-pairing-guidance" id="browser-pairing-guidance">
-          这项凭据可以授权插件连接浏览器。默认隐藏；只复制给你正在配对的本机插件，不再使用时请立即轮换。
+          配对码只用于连接这台设备上的浏览器助手。默认隐藏；只复制给正在配对的本机插件，不再使用时请立即更换。
         </p>
         <BrowserActionNotice receipt={receipt?.area === 'pairing' ? receipt : null} />
         {copyState === 'error' ? (
           <InlineNotice title="复制失败" tone="warning">
-            当前宿主没有授予剪贴板权限，请选中凭据后使用系统复制命令。
+            当前环境不能直接写入剪贴板，请选中配对码后使用系统复制命令。
           </InlineNotice>
         ) : null}
         <InlineNotice title="加载方式" tone="info">
-          在 Chrome 打开 chrome://extensions，启用开发者模式，然后加载上面的插件目录。
+          展开“高级连接详情”查看浏览器助手文件位置；然后在 Chrome 打开 chrome://extensions，启用开发者模式并加载该文件夹。
         </InlineNotice>
       </div>
 
       <div className="browser-setup__section">
         <header><div><h2>托管浏览器</h2><p>使用独立的浏览器资料和插件，与日常浏览分开，适合让伙伴进行较长时间的调研。</p></div><StatusBadge label={managed.running === true ? '运行中' : '已停止'} tone={managed.running === true ? 'success' : 'neutral'} /></header>
-        <dl>
-          <div><dt>隔离资料目录</dt><dd>{stringValue(managed.profilePath, '未创建')}</dd></div>
-          <div><dt>进程</dt><dd>{managed.running === true ? `PID ${Number(managed.pid || 0)}` : '无'}</dd></div>
-        </dl>
+        <details className="browser-setup__advanced-details">
+          <summary>高级运行详情</summary>
+          <dl>
+            <div><dt>独立浏览数据位置</dt><dd>{stringValue(managed.profilePath, '未创建')}</dd></div>
+            <div><dt>运行进程编号</dt><dd>{managed.running === true ? String(Number(managed.pid || 0)) : '无'}</dd></div>
+          </dl>
+        </details>
         <div className="browser-managed-actions">
           {managed.running === true ? (
             <Button leadingIcon={<Octagon size={15} />} loading={control.stopManaged.isPending} onClick={onStopManaged}>停止托管浏览器</Button>
@@ -619,6 +734,41 @@ function BrowserActionNotice({ receipt }: { receipt: BrowserActionReceipt | null
   return (
     <div aria-live="polite" className="browser-action-receipt">
       <InlineNotice title={receipt.title} tone={tone}>{receipt.detail}</InlineNotice>
+    </div>
+  );
+}
+
+function BrowserQueryIssue({
+  actionLabel,
+  description,
+  error,
+  isRefreshing,
+  onRetry,
+  title,
+}: {
+  actionLabel: string;
+  description: string;
+  error: Error | null;
+  isRefreshing: boolean;
+  onRetry: () => void;
+  title: string;
+}) {
+  if (!error) return null;
+  return (
+    <div className="browser-query-issue" role="alert">
+      <div>
+        <strong>{title}</strong>
+        <span>{description}</span>
+      </div>
+      <Button
+        leadingIcon={<RefreshCw size={15} />}
+        loading={isRefreshing}
+        onClick={onRetry}
+        size="small"
+        variant="quiet"
+      >
+        {actionLabel}
+      </Button>
     </div>
   );
 }
@@ -666,6 +816,15 @@ function statusLabel(value: string): string {
 
 function permissionDecisionLabel(value: string): string {
   return { allow_once: '已允许一次', allow_site: '已允许站点', deny: '已拒绝' }[value] || '已处理';
+}
+
+function permissionReasonLabel(action: string): string {
+  return {
+    navigate: '打开此站点',
+    screenshot: '读取当前页面',
+    click: '操作当前页面',
+    type: '在当前页面输入内容',
+  }[action] || '浏览器请求访问此站点';
 }
 
 async function copyText(value: string): Promise<void> {

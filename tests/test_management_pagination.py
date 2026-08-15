@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import tempfile
@@ -120,6 +121,79 @@ class ManagementPaginationTests(unittest.TestCase):
         self.assertTrue(auxiliary["hasAdditionalText"])
         self.assertFalse(auxiliary["modelRequestLinked"])
         self.assertNotIn("selectedTextSha256", auxiliary)
+
+    def test_history_detail_explains_voice_capture_zero_ime_buffer_and_model_non_applicability(self) -> None:
+        text = "语音定稿不经过输入法缓冲区"
+        capture_metadata = {
+            "schemaVersion": "rag-ime.input-capture.v2",
+            "captureId": "capture:voice:detail:1",
+            "transactionId": "transaction:voice:detail",
+            "sequence": 1,
+            "channel": "voice",
+            "boundaryKind": "voice_final",
+            "boundaryConfidence": "strong",
+            "nativeCompositionBefore": False,
+            "rimeHandled": False,
+            "hostForwarded": True,
+            "modifiedReturn": False,
+            "finalCommitted": True,
+            "controllerEpoch": 3,
+            "focusEpoch": 8,
+            "appBundleId": "com.openai.codex",
+            "fieldIdentitySha256": hashlib.sha256(b"field:voice").hexdigest(),
+            "privacyRevision": "foreground-privacy.v1",
+            "occurredStartMs": 1_900_000_030_000,
+            "occurredEndMs": 1_900_000_030_100,
+            "contentSha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "captureSource": "voice_insertion",
+            "fallbackReason": "",
+            "fieldContextChars": 14,
+            "imeBufferChars": 0,
+            "selectionRule": "voice_final_inserted_text",
+        }
+        event_ref = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_030_100,
+                source="voice_final",
+                committed_text=text,
+                privacy_disposition="allowed",
+                app="com.openai.codex",
+                project="wisdom-weasel-rag-ime",
+                provider_name="voice_streaming_asr",
+                capture_metadata=capture_metadata,
+            )
+        )
+
+        detail = self.service.management.history_detail(int(event_ref.split(":", 1)[1]))
+        auxiliary = detail["item"]["auxiliaryContext"]
+
+        self.assertEqual(auxiliary["captureSource"], "voice_insertion")
+        self.assertTrue(auxiliary["fieldContextRecorded"])
+        self.assertEqual(auxiliary["fieldContextChars"], 14)
+        self.assertTrue(auxiliary["imeBufferRecorded"])
+        self.assertEqual(auxiliary["imeBufferChars"], 0)
+        self.assertEqual(auxiliary["modelRequestAssociation"], "not_applicable")
+        self.assertEqual(
+            auxiliary["modelRequestReason"],
+            "voice_capture_does_not_request_assistant_candidates",
+        )
+        self.assertEqual(
+            auxiliary["captureReceipt"],
+            {
+                "available": True,
+                "channel": "voice",
+                "boundaryKind": "voice_final",
+                "boundaryConfidence": "strong",
+                "outcome": "stored",
+                "reason": "strong_final_boundary",
+                "evidenceState": "candidate",
+                "evidenceReason": "awaiting_luna_adjudication",
+            },
+        )
+        summary = self.service.management.memory_summary()
+        self.assertEqual(summary["pendingGovernedEvidenceCount"], 1)
+        self.assertEqual(summary["governedNeedsReviewEvidenceCount"], 0)
 
     def test_memory_apps_only_count_complete_inputs_and_keep_app_provenance(self) -> None:
         self.core.record_event(

@@ -1052,7 +1052,12 @@ export function previewAgentEvents(sessionId: string): UiAgentEvent[] {
   if (sessionId === 'session-report') return [];
   const turnId = `${sessionId}:turn-media`;
   const entries: Array<[UiAgentEvent['eventType'], Record<string, unknown>]> = [
-    ['reasoning_summary', { summary: '核对迁移计划与当前前端边界' }],
+    ['reasoning_summary', {
+      summary: '核对迁移计划与当前前端边界',
+      items: ['核对迁移计划与当前前端边界'],
+      source: 'provider_reasoning_summary',
+      state: 'completed',
+    }],
     [
       'tool_started',
       {

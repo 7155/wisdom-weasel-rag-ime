@@ -1,5 +1,5 @@
 import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Flag, ListTodo, Plus, RefreshCw, Sparkles } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Button,
@@ -19,7 +19,6 @@ import {
 import type { JsonValue } from '@/platform/transport';
 import {
   ManagementMutationWorkflow,
-  UnsupportedWorkflow,
   parseManagementWorkPreview,
   parseManagementWorkReceipt,
 } from '@/features/overview/management-mutation';
@@ -54,13 +53,18 @@ export function PlanningFeature() {
   const goals = arrayRecords(payload.goals);
   const suggestions = arrayRecords(payload.pendingCompletionSuggestions);
   const completion = asRecord(payload.recentDetectedCompletion);
+  const selectedDayIsToday = date === today();
+  const selectedDayLabel = selectedDayIsToday ? '今天' : planningDayLabel(date);
+  const selectedDayNoun = selectedDayIsToday ? '今天' : '这一天';
   const [taskTitle, setTaskTitle] = useState('');
+  const [taskTitleTouched, setTaskTitleTouched] = useState(false);
   const [taskDetail, setTaskDetail] = useState('');
   const [selectedTask, setSelectedTask] = useState('');
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
-  const [hintsDialogOpen, setHintsDialogOpen] = useState(false);
   const [planDialogOpen, setPlanDialogOpen] = useState(false);
+  const planDialogTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [goalTitle, setGoalTitle] = useState('');
+  const [goalTitleTouched, setGoalTitleTouched] = useState(false);
   const [goalDetail, setGoalDetail] = useState('');
   const [goalHorizon, setGoalHorizon] = useState('long_term');
   const [goalStatus, setGoalStatus] = useState('active');
@@ -112,7 +116,7 @@ export function PlanningFeature() {
     const dueAtMs = numberValue(task.dueAtMs);
     return dueAtMs > 0 && dueAtMs < now.getTime();
   });
-  const focus = stringValue(plan.intention, stringValue(openTasks[0]?.title, '今天没有未完成任务'));
+  const focus = stringValue(plan.intention, stringValue(openTasks[0]?.title, '还没有设置今日重点'));
   const companionHints = planningHints({
     assistantName: identity.assistantName,
     assistantMessage: stringValue(asRecord(payload.assistant).message),
@@ -129,6 +133,7 @@ export function PlanningFeature() {
     setSelectedTask(stringValue(task.id));
     setTaskTitle(stringValue(task.title));
     setTaskDetail(stringValue(task.detail));
+    setTaskTitleTouched(false);
     setTaskDialogOpen(true);
   };
 
@@ -140,6 +145,7 @@ export function PlanningFeature() {
     setGoalStatus(stringValue(goal.status, 'active'));
     setGoalPriority(numberValue(goal.priority, 1));
     setGoalTargetDate(stringValue(goal.targetDate));
+    setGoalTitleTouched(false);
     setGoalDialogOpen(true);
     requestAnimationFrame(() => document.getElementById('planning-goal-title')?.focus());
   };
@@ -154,6 +160,7 @@ export function PlanningFeature() {
     setSelectedTask('');
     setTaskTitle('');
     setTaskDetail('');
+    setTaskTitleTouched(false);
     setTaskDialogOpen(true);
     requestAnimationFrame(() => document.getElementById('planning-task-title')?.focus());
   };
@@ -166,6 +173,7 @@ export function PlanningFeature() {
     setGoalStatus('active');
     setGoalPriority(1);
     setGoalTargetDate('');
+    setGoalTitleTouched(false);
     setGoalDialogOpen(true);
     requestAnimationFrame(() => document.getElementById('planning-goal-title')?.focus());
   };
@@ -193,29 +201,35 @@ export function PlanningFeature() {
           <IconButton icon={<RefreshCw size={16} />} label="刷新" onClick={() => void dashboard.refetch()} tooltip />
         </>
       }
-      description="把想做的事整理成可以一步步完成、也能真正验收的任务。"
-      eyebrow="要做的事"
+      description="安排今天的任务，跟进目标，并在完成后留下清楚的结果。"
+      eyebrow="工作计划"
       routeId="planning"
       title="任务"
     >
       <QueryState error={dashboard.error as Error | null} isPending={dashboard.isPending} onRetry={() => void dashboard.refetch()}>
         <ManagementSection
-          title="今天"
-          description={`${timeGreeting(now)}。${stringValue(asRecord(payload.assistant).message, focus)}`}
-          trailing={<StatusBadge label={stringValue(payload.date, date)} tone="info" />}
+          title={selectedDayLabel}
+          description={selectedDayIsToday
+            ? openTasks.length
+              ? `${timeGreeting(now)}。先完成最重要的一项，再安排其余工作。`
+              : `${timeGreeting(now)}。今天还没有待办，从一项小而明确的任务开始。`
+            : openTasks.length
+              ? '先完成最重要的一项，再安排其余工作。'
+              : '这一天还没有待办，可以添加一项清楚的任务。'}
+          trailing={<StatusBadge label={date} tone="info" />}
         >
           <div className="planning-companion">
             <div className="planning-companion__focus">
-              <span>今日重点</span>
+              <span>{selectedDayIsToday ? '今日重点' : '当天重点'}</span>
               <strong>{focus}</strong>
             </div>
             <div className="planning-companion__actions">
-              <Button leadingIcon={<Sparkles size={15} />} onClick={() => handoffToAgent('organize')} size="small" variant="primary">安排今天</Button>
+              <Button leadingIcon={<Sparkles size={15} />} onClick={() => handoffToAgent('organize')} size="small" variant="primary">{selectedDayIsToday ? '安排今天' : '整理这一天'}</Button>
               <Button leadingIcon={<ListTodo size={15} />} onClick={() => handoffToAgent('breakdown')} size="small">拆解当前重点</Button>
               <Button leadingIcon={<CheckCircle2 size={15} />} onClick={() => handoffToAgent('review')} size="small" variant="quiet">一起复盘</Button>
             </div>
           </div>
-          <div aria-label="今日进度" className="planning-summary-strip">
+          <div aria-label={selectedDayIsToday ? '今日进度' : '当天进度'} className="planning-summary-strip">
             <PlanningSummaryItem detail={`${inProgressTasks.length} 个进行中`} icon={ListTodo} label="待继续" value={openTasks.length} />
             <PlanningSummaryItem
               detail={overdueTasks.length ? stringValue(overdueTasks[0]?.title, '需要重新安排') : '节奏正常'}
@@ -225,34 +239,29 @@ export function PlanningFeature() {
               value={overdueTasks.length}
             />
             <PlanningSummaryItem detail={`${Math.round(numberValue(summary.progress) * 100)}%`} icon={CheckCircle2} label="已完成" tone="success" value={numberValue(summary.completedTaskCount)} />
-            <PlanningSummaryItem detail={suggestions.length ? `${suggestions.length} 条待确认完成` : '根据今天的安排'} icon={Sparkles} label="建议" value={companionHints.length} />
           </div>
           <div className="planning-secondary-actions">
-            <Button onClick={() => setHintsDialogOpen(true)} size="small" variant="quiet">看看下一步 · {companionHints.length}</Button>
-            <Button onClick={() => setPlanDialogOpen(true)} size="small" variant="quiet">查看今天的安排</Button>
+            <Button onClick={(event) => { planDialogTriggerRef.current = event.currentTarget; setPlanDialogOpen(true); }} size="small" variant="quiet">{selectedDayIsToday ? '查看今日安排' : '查看当天安排'}</Button>
           </div>
         </ManagementSection>
 
         {Object.keys(completion).length ? (
-          <ManagementSection title="最近检测到完成" trailing={<StatusBadge label="待你确认" tone="success" />}>
-            <InlineNotice title={stringValue(completion.message, '检测到任务完成')} tone="success">
-              任务：{stringValue(asRecord(completion.task).title, '未命名')} · {formatTime(completion.createdAtMs)}。确认前不会静默改写计划。
+          <ManagementSection title="需要核对的完成记录" trailing={<StatusBadge label="待核对" tone="info" />}>
+            <InlineNotice title={stringValue(completion.message, '检测到任务完成')} tone="info">
+              {stringValue(asRecord(completion.task).title, '未命名任务')} · {formatTime(completion.createdAtMs)}。核对后再更新任务状态。
             </InlineNotice>
-            <UnsupportedWorkflow
-              description="只有从当前页面完成的任务，才能从对应操作结果中安全撤销。"
-              reason="这条完成记录来自其他入口，当前页面无法确认它的原始操作，因此不会执行撤销。"
-              risk="R1"
-              title="撤销完成事件"
-            />
+            <InlineNotice title="请在原操作处处理" tone="info">
+              这条记录不能在这里撤销；如需更改，请回到创建它的操作处处理。
+            </InlineNotice>
           </ManagementSection>
         ) : null}
 
         <div className="planning-overview-grid">
-          <ManagementSection title="今天的安排" description="今天想做什么、过程备注和复盘都放在这里。">
+          <ManagementSection title={`${selectedDayLabel}的安排`} description={`${selectedDayNoun}想做什么、过程备注和复盘都放在这里。`}>
             <div className="planning-plan-summary">
-              <span>今日意图</span>
+              <span>{selectedDayIsToday ? '今日意图' : '当天意图'}</span>
               <strong>{stringValue(plan.intention, '尚未设置')}</strong>
-              <Button onClick={() => setPlanDialogOpen(true)} size="small" variant="quiet">查看备注与复盘</Button>
+              <Button onClick={(event) => { planDialogTriggerRef.current = event.currentTarget; setPlanDialogOpen(true); }} size="small" variant="quiet">查看备注与复盘</Button>
             </div>
           </ManagementSection>
           <ManagementSection
@@ -285,6 +294,7 @@ export function PlanningFeature() {
               description={goalEntryAvailability.state === 'unsupported'
                 ? `先和${identity.assistantName}聊聊长期想完成的事，她会帮你梳理方向。`
                 : '现在还没有正在推进的目标。'}
+              headingLevel={3}
               icon={Flag}
               title="暂无目标"
             />}
@@ -293,7 +303,7 @@ export function PlanningFeature() {
 
         <ManagementSection
           title="任务"
-          description="选择一项任务以查看、完成或继续编辑。"
+          description="选择任务即可编辑内容或更新状态。"
           trailing={taskEntryAvailability.state !== 'unsupported' ? (
             <Button
               disabled={taskEntryAvailability.state !== 'available'}
@@ -322,6 +332,7 @@ export function PlanningFeature() {
             description={taskEntryAvailability.state === 'unsupported'
               ? `先把想做的事告诉${identity.assistantName}，她会帮你拆成可以执行和验收的下一步。`
               : '添加一个清楚、做完后能确认结果的下一步。'}
+            headingLevel={3}
             icon={ListTodo}
             title="还没有任务"
           />}
@@ -329,13 +340,25 @@ export function PlanningFeature() {
 
         <AgentWakeSchedules tasks={tasks} />
 
-        <Dialog onOpenChange={setHintsDialogOpen} open={hintsDialogOpen}>
-          <DialogContent className="planning-dialog planning-detail-dialog">
+        <Dialog onOpenChange={setPlanDialogOpen} open={planDialogOpen}>
+          <DialogContent
+            className="planning-dialog planning-detail-dialog"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              planDialogTriggerRef.current?.focus();
+            }}
+          >
             <DialogHeader>
-              <DialogTitle>今日建议</DialogTitle>
-              <DialogDescription>建议来自当前日计划、任务状态和待确认完成项；选择后再决定是否执行。</DialogDescription>
+              <DialogTitle>{selectedDayLabel}的安排</DialogTitle>
+              <DialogDescription>{planningFullDateLabel(date)}想做的事、过程备注和复盘。</DialogDescription>
             </DialogHeader>
-            <div className="planning-list planning-list--hints">
+            <dl className="mgmt-kv planning-plan">
+              <dt>{selectedDayIsToday ? '今日意图' : '当天意图'}</dt><dd>{stringValue(plan.intention, '尚未设置')}</dd>
+              <dt>备注</dt><dd>{stringValue(plan.notes, '暂无')}</dd>
+              <dt>复盘</dt><dd>{stringValue(plan.reflection, '暂无')}</dd>
+            </dl>
+            <section aria-label="下一步" className="planning-next-steps">
+              <h3>下一步</h3>
               <OperationalList items={companionHints.map((hint, index) => ({
                 id: `planning-hint-${index}`,
                 title: hint.title,
@@ -343,34 +366,17 @@ export function PlanningFeature() {
                 meta: hint.meta,
                 onClick: hint.task
                   ? () => {
-                    setHintsDialogOpen(false);
+                    setPlanDialogOpen(false);
                     selectTask(hint.task!);
                   }
                   : hint.action === 'new-task'
                     ? () => {
-                      setHintsDialogOpen(false);
+                      setPlanDialogOpen(false);
                       beginNewTask();
                     }
                     : () => handoffToAgent('organize'),
               }))} />
-            </div>
-            <DialogFooter>
-              <Button onClick={() => setHintsDialogOpen(false)} size="small">返回</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        <Dialog onOpenChange={setPlanDialogOpen} open={planDialogOpen}>
-          <DialogContent className="planning-dialog planning-detail-dialog">
-            <DialogHeader>
-              <DialogTitle>今天的安排</DialogTitle>
-              <DialogDescription>{date} 想做的事、过程备注和复盘。</DialogDescription>
-            </DialogHeader>
-            <dl className="mgmt-kv planning-plan">
-              <dt>今日意图</dt><dd>{stringValue(plan.intention, '尚未设置')}</dd>
-              <dt>备注</dt><dd>{stringValue(plan.notes, '暂无')}</dd>
-              <dt>复盘</dt><dd>{stringValue(plan.reflection, '暂无')}</dd>
-            </dl>
+            </section>
             <DialogFooter>
               <Button onClick={() => setPlanDialogOpen(false)} size="small">返回</Button>
             </DialogFooter>
@@ -382,7 +388,7 @@ export function PlanningFeature() {
             <DialogHeader>
               <DialogTitle>{selectedTask ? '编辑任务' : '添加任务'}</DialogTitle>
               <DialogDescription>
-                {selectedTask ? '查看任务细节，修改内容或更新完成状态。' : '填写一个清晰、可以完成的下一步。'}
+                {selectedTask ? '修改内容后直接保存，也可以在右侧更新完成状态。' : '填写任务信息后直接保存。'}
               </DialogDescription>
             </DialogHeader>
             <div className="planning-dialog__context">
@@ -396,8 +402,21 @@ export function PlanningFeature() {
             </div>
             <div className={selectedTask ? 'planning-dialog__grid' : 'planning-dialog__grid planning-dialog__grid--single'}>
               <div className="mgmt-stack">
-                <Field htmlFor="planning-task-title" label="任务标题" required>
-                  <Input id="planning-task-title" onChange={(event) => setTaskTitle(event.target.value)} placeholder="例如：整理今天的工作清单" value={taskTitle} />
+                <Field
+                  error={taskTitleTouched && !taskTitle.trim() ? '请输入任务标题。' : undefined}
+                  htmlFor="planning-task-title"
+                  label="任务标题"
+                  required
+                >
+                  <Input
+                    aria-describedby={taskTitleTouched && !taskTitle.trim() ? 'planning-task-title-error' : undefined}
+                    aria-invalid={taskTitleTouched && !taskTitle.trim() ? true : undefined}
+                    id="planning-task-title"
+                    onBlur={() => setTaskTitleTouched(true)}
+                    onChange={(event) => setTaskTitle(event.target.value)}
+                    placeholder="例如：整理今天的工作清单"
+                    value={taskTitle}
+                  />
                 </Field>
                 <Field htmlFor="planning-task-detail" label="说明">
                   <TextArea id="planning-task-detail" onChange={(event) => setTaskDetail(event.target.value)} rows={4} value={taskDetail} />
@@ -405,9 +424,10 @@ export function PlanningFeature() {
                 <ManagementMutationWorkflow
                   availability={mutationBoundary.availability(
                     [planningMutationPathIds.preview, planningMutationPathIds.taskSave, planningMutationPathIds.rollback],
-                    revisionBlock || (!taskTitle.trim() ? '填写任务标题后才能生成服务端预览。' : ''),
+                    revisionBlock || (!taskTitle.trim() ? '请输入任务标题。' : ''),
                   )}
-                  description="创建任务或更新标题、说明与日期。"
+                  description={selectedTask ? '保存标题、说明和日期。' : '添加到当天的任务清单。'}
+                  disabled={!taskTitle.trim()}
                   draftKey={JSON.stringify(taskSaveDraft)}
                   mutationKey={['planning', 'mutation', 'task-save']}
                   onApply={async (preview) => parseManagementWorkReceipt(
@@ -525,7 +545,7 @@ export function PlanningFeature() {
           <DialogContent className="planning-dialog planning-dialog--goal">
             <DialogHeader>
               <DialogTitle>{selectedGoal ? '编辑目标' : '添加目标'}</DialogTitle>
-              <DialogDescription>保存前会先让你确认具体改动，不会悄悄改写计划。</DialogDescription>
+              <DialogDescription>填写目标信息后直接保存，完成后仍可撤销。</DialogDescription>
             </DialogHeader>
             <div className="planning-dialog__context">
               <span><Flag aria-hidden="true" size={15} />{goalHorizonLabel(goalHorizon)}</span>
@@ -534,8 +554,21 @@ export function PlanningFeature() {
             </div>
             <div className="planning-dialog__grid">
               <div className="mgmt-stack">
-                <Field htmlFor="planning-goal-title" label="目标标题" required>
-                  <Input id="planning-goal-title" onChange={(event) => setGoalTitle(event.target.value)} placeholder="例如：完成控制中心迁移" value={goalTitle} />
+                <Field
+                  error={goalTitleTouched && !goalTitle.trim() ? '请输入目标标题。' : undefined}
+                  htmlFor="planning-goal-title"
+                  label="目标标题"
+                  required
+                >
+                  <Input
+                    aria-describedby={goalTitleTouched && !goalTitle.trim() ? 'planning-goal-title-error' : undefined}
+                    aria-invalid={goalTitleTouched && !goalTitle.trim() ? true : undefined}
+                    id="planning-goal-title"
+                    onBlur={() => setGoalTitleTouched(true)}
+                    onChange={(event) => setGoalTitle(event.target.value)}
+                    placeholder="例如：完成控制中心迁移"
+                    value={goalTitle}
+                  />
                 </Field>
                 <Field htmlFor="planning-goal-detail" label="说明">
                   <TextArea id="planning-goal-detail" onChange={(event) => setGoalDetail(event.target.value)} rows={4} value={goalDetail} />
@@ -573,9 +606,10 @@ export function PlanningFeature() {
                 <ManagementMutationWorkflow
                   availability={mutationBoundary.availability(
                     [planningMutationPathIds.preview, planningMutationPathIds.goalSave, planningMutationPathIds.rollback],
-                    revisionBlock || (!goalTitle.trim() ? '填写目标标题后才能生成服务端预览。' : ''),
+                    revisionBlock || (!goalTitle.trim() ? '请输入目标标题。' : ''),
                   )}
-                  description="创建目标或更新目标的周期、状态与优先级。"
+                  description={selectedGoal ? '保存周期、状态和优先级。' : '添加到正在推进的目标。'}
+                  disabled={!goalTitle.trim()}
                   draftKey={JSON.stringify(goalSaveDraft)}
                   mutationKey={['planning', 'mutation', 'goal-save']}
                   onApply={async (preview) => parseManagementWorkReceipt(
@@ -669,6 +703,18 @@ function localDate(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function planningDayLabel(value: string): string {
+  const [, month, day] = value.match(/^\d{4}-(\d{2})-(\d{2})$/u) ?? [];
+  if (!month || !day) return value;
+  return `${Number(month)}月${Number(day)}日`;
+}
+
+function planningFullDateLabel(value: string): string {
+  const [year, month, day] = value.match(/^(\d{4})-(\d{2})-(\d{2})$/u)?.slice(1) ?? [];
+  if (!year || !month || !day) return value;
+  return `${year}年${Number(month)}月${Number(day)}日`;
 }
 
 function timeGreeting(date: Date): string {

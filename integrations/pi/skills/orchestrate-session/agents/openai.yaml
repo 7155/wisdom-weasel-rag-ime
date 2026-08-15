@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orchestrate Session"
+  short_description: "Delegate Session subagents and integrate their event results"
+  default_prompt: "Use $orchestrate-session to decide whether bounded subagent work helps, pass exact context and skills, and integrate returned events."

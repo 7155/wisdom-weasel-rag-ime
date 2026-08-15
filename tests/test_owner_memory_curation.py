@@ -24,6 +24,7 @@ from rag_ime.owner_memory_curation import (
     _deterministic_personal_v2_disposition,
     _owner_scope_statuses,
     _pending_source_count,
+    owner_memory_curation_status,
 )
 from rag_ime.personal_context import (
     AgentMemoryEvidenceStore,
@@ -718,6 +719,54 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+
+    def test_status_projects_pending_days_applications_without_source_text(self) -> None:
+        first = self._checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:backlog-codex",
+            turn_id="turn:backlog-codex",
+            text="记忆整理页需要显示按应用划分的积压。",
+            created_at_ms=100,
+        )
+        second = self._checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:backlog-browser",
+            turn_id="turn:backlog-browser",
+            text="整理进度需要明确推进到哪一天。",
+            created_at_ms=86_400_100,
+        )
+        self.assertTrue(first["source"])
+        self.assertTrue(second["source"])
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.execute(
+                "UPDATE input_events SET app = 'Codex' WHERE committed_text = ?",
+                ("记忆整理页需要显示按应用划分的积压。",),
+            )
+            conn.execute(
+                "UPDATE input_events SET app = 'Chrome' WHERE committed_text = ?",
+                ("整理进度需要明确推进到哪一天。",),
+            )
+            conn.commit()
+            conn.row_factory = sqlite3.Row
+            status = owner_memory_curation_status(
+                conn,
+                project="wisdom-weasel-rag-ime",
+                current_ms=86_500_000,
+                initial_settle_ms=0,
+                canonical_personal=False,
+            )
+
+        backlog = status["backlog"]
+        self.assertEqual(backlog["pendingSourceCount"], 2)
+        self.assertEqual(backlog["pendingDayCount"], 2)
+        self.assertEqual(
+            [(item["name"], item["count"]) for item in backlog["applications"]],
+            [("Chrome", 1), ("Codex", 1)],
+        )
+        self.assertEqual([item["pendingSourceCount"] for item in backlog["days"]], [1, 1])
+        serialized = json.dumps(backlog, ensure_ascii=False)
+        self.assertNotIn("按应用划分的积压", serialized)
+        self.assertNotIn("推进到哪一天", serialized)
 
     def test_historical_reconstruction_filters_short_fragments_before_luna(self) -> None:
         base = {

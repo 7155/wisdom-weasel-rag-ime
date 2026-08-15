@@ -223,7 +223,7 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
         date={date}
         days={calendarDays}
         error={calendar.error as Error | null}
-        isLoading={capabilities.isPending || calendar.isPending}
+        isLoading={capabilities.isPending || (canReadCalendar && calendar.isPending)}
         onMoveMonth={moveMonth}
         onOrganizeThroughToday={() => build.mutate({ targetDate: today, throughToday: true })}
         onSelect={chooseDate}
@@ -237,7 +237,7 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
         canWrite={canWrite}
         date={date}
         hasError={Boolean(timeline.error)}
-        isLoading={capabilities.isPending || calendar.isPending || (canRead && timeline.isPending)}
+        isLoading={capabilities.isPending || (canRead && timeline.isPending)}
         item={item}
         semanticReady={semanticReady}
         onBuild={() => build.mutate({ targetDate: date })}
@@ -276,7 +276,7 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
         </InlineNotice>
       ) : null}
 
-      {capabilities.isPending || calendar.isPending || (canRead && timeline.isPending) ? (
+      {capabilities.isPending || (canRead && timeline.isPending) ? (
         <div className="activity-timeline__loading" role="status">
           <RefreshCw aria-hidden="true" size={18} />
           <span>正在读取当天活动</span>

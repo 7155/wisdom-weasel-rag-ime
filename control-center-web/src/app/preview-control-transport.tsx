@@ -14,6 +14,7 @@ import { createPreviewHistoryRoutes } from './preview-history-routes';
 import { createPreviewWorkDocumentRoutes } from './preview-work-document-routes';
 import {
   previewActivityTimeline,
+  previewActivityTimelineCalendar,
   previewMemoryApplyPreview,
   previewMemoryCurationRun,
   previewMemoryCurationStatus,
@@ -46,11 +47,14 @@ export function createPreviewTransport(): MockControlTransport {
   ]);
   let previewEvidenceDisposition = 'not_for_memory';
   let previewMemoryRunStatus = 'draft';
+  let previewMemoryJob: Record<string, unknown> = {};
   let previewWorkflow = previewWorkflowState('session-preview');
   let previewInstalledExtensions = previewInstalledExtensionItems();
   let previewExtensionChange: Record<string, unknown> = {};
   let previewLifecyclePolicies = previewLifecyclePolicyItems();
-  const previewTimelineStatuses = new Map<string, string>();
+  const previewTimelineStatuses = new Map<string, string>([
+    [new Date().toISOString().slice(0, 10), 'draft'],
+  ]);
   const previewMemorySelections = new Map<number, boolean>([[1, true], [2, false], [3, true]]);
   let previewConfiguration = previewConfigurationValues();
   let previousPreviewConfiguration: Record<string, unknown> | undefined;
@@ -62,7 +66,7 @@ export function createPreviewTransport(): MockControlTransport {
   const previewKnowledgeDocuments: Record<string, unknown>[] = [{
     id: 'file:preview-yuxi',
     baseId: 'kb:preview-project-docs',
-    fileName: 'agent-runtime-notes.md',
+    fileName: '伙伴运行笔记.md',
     mimeType: 'text/markdown',
     byteSize: 48_320,
     status: 'ready',
@@ -288,6 +292,10 @@ export function createPreviewTransport(): MockControlTransport {
       timeline: previewActivityTimeline(date, previewTimelineStatuses.get(date) || 'draft'),
     };
   };
+  routes['memory.activityTimeline.calendar'] = (request: ControlRequest) => {
+    const month = stringValue(record(request.query).month) || new Date().toISOString().slice(0, 7);
+    return previewActivityTimelineCalendar(month, previewTimelineStatuses);
+  };
   routes['memory.activityTimeline.build'] = (request: ControlRequest) => {
     const date = stringValue(record(request.body).date) || new Date().toISOString().slice(0, 10);
     previewTimelineStatuses.set(date, 'draft');
@@ -332,9 +340,32 @@ export function createPreviewTransport(): MockControlTransport {
       stringValue(record(request.params).referenceId),
     );
   routes['agent.memoryMaintenance.run'] = (request: ControlRequest) =>
-    stringValue(record(request.query).runId)
+    stringValue(record(request.query).jobId)
+      ? previewMemoryJob
+      : stringValue(record(request.query).runId)
       ? previewMemoryCurationRun(previewMemorySelections, previewMemoryRunStatus)
       : previewMemoryCurationStatus(previewMemoryRunStatus);
+  routes['agent.memoryMaintenance.trigger'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    const jobId = `memory-maintenance:preview:${Date.now()}`;
+    previewMemoryJob = {
+      schemaVersion: 'rag-ime.gateway-memory-maintenance-job.v1',
+      ok: true,
+      jobId,
+      state: 'completed',
+      reused: false,
+      result: {
+        ok: true,
+        results: [],
+        requestedSourceCount: Number(body.maxSources) || 4,
+      },
+      error: '',
+      createdAtMs: Date.now(),
+      updatedAtMs: Date.now(),
+      completedAtMs: Date.now(),
+    };
+    return { ...previewMemoryJob, state: 'queued', completedAtMs: 0 };
+  };
   routes['knowledge.database.draft.edit'] = (request: ControlRequest) => {
     const body = record(request.body);
     const diffId = Number(body.diffId);
@@ -1312,7 +1343,7 @@ function previewResponse(pathId: ControlPathId): unknown {
           {
             id: 'file:preview-yuxi',
             baseId: 'kb:preview-project-docs',
-            fileName: 'agent-runtime-notes.md',
+            fileName: '伙伴运行笔记.md',
             mimeType: 'text/markdown',
             byteSize: 48_320,
             status: 'ready',
@@ -1333,7 +1364,7 @@ function previewResponse(pathId: ControlPathId): unknown {
           {
             chunkId: 'chunk:preview-agent-loop',
             documentId: 'file:preview-yuxi',
-            documentName: 'agent-runtime-notes.md',
+            documentName: '伙伴运行笔记.md',
             heading: 'Agent Tool 边界',
             content: '文档知识库通过只读 Tool 按需检索，不会进入输入法候选热路径。',
             score: 0.92,
@@ -1350,7 +1381,7 @@ function previewResponse(pathId: ControlPathId): unknown {
         status: 'ready',
         updatedAtMs: Date.now() - 60_000,
         nodes: [
-          { id: 'doc:runtime', label: 'agent-runtime-notes.md', kind: 'document', documentId: 'file:preview-yuxi', documentName: 'agent-runtime-notes.md', weight: 1 },
+          { id: 'doc:runtime', label: '伙伴运行笔记.md', kind: 'document', documentId: 'file:preview-yuxi', documentName: '伙伴运行笔记.md', weight: 1 },
           { id: 'topic:tools', label: 'Agent Tool 边界', kind: 'topic', weight: .9 },
           { id: 'entity:worker', label: 'Knowledge Worker', kind: 'entity', weight: .84 },
         ],
@@ -1414,8 +1445,8 @@ function previewResponse(pathId: ControlPathId): unknown {
         items: [{
           deviceId: 'chrome-preview',
           tabId: 23,
-          title: 'Agent Runtime 架构',
-          url: 'https://docs.example.com/agent-runtime',
+          title: '浏览器协作指南',
+          url: 'https://docs.example.com/browser-guide',
           active: true,
         }],
       };
@@ -1443,7 +1474,7 @@ function previewResponse(pathId: ControlPathId): unknown {
           action: 'snapshot',
           status: 'completed',
           durationMs: 184,
-          result: { summary: '已读取 3 个 Frame 和 18 个可交互元素' },
+          result: { summary: '已读取 3 个页面区域和 18 个可交互元素' },
         }],
       };
     case 'browser.mode.update':
@@ -1513,17 +1544,17 @@ function previewBrowserSnapshot(): Record<string, unknown> {
     snapshotId: 'snap-preview-runtime',
     deviceId: 'chrome-preview',
     tabId: 23,
-    url: 'https://docs.example.com/agent-runtime',
-    title: 'Agent Runtime 架构',
-    summary: '3 个 Frame · 18 个可交互元素',
+    url: 'https://docs.example.com/browser-guide',
+    title: '浏览器协作指南',
+    summary: '3 个页面区域 · 18 个可交互元素',
     markdown: [
-      '# Agent Runtime 架构',
-      'URL: https://docs.example.com/agent-runtime',
-      '当前页面说明浏览器快照如何进入 Agent Tool。',
+      '# 浏览器协作指南',
+      '网址：https://docs.example.com/browser-guide',
+      '当前页面说明如何安全地共享页面内容与操作。',
       '## 页面操作',
-      '- [0:e1] button "运行验证"',
-      '- [0:e2] link "查看执行轨迹"',
-      '- [0:e3] textbox "输入检索问题"',
+      '- [0:e1] 按钮“运行验证”',
+      '- [0:e2] 链接“查看执行轨迹”',
+      '- [0:e3] 输入框“输入检索问题”',
       '## 安全边界',
       '密码字段不会进入页面快照，跨站导航需要单独批准。',
     ].join('\n'),
@@ -1688,7 +1719,7 @@ function previewObservationSnapshot(filters: Record<string, unknown> = {}) {
 function previewKnowledgeBase(): Record<string, unknown> {
   return {
     id: 'kb:preview-project-docs',
-    name: 'Agent Runtime 资料',
+    name: '伙伴运行资料',
     description: '独立加载的项目文档与上游源码笔记。',
     documentCount: 1,
     chunkCount: 36,

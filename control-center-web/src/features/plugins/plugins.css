@@ -80,10 +80,17 @@ main[data-route-id='plugins'] .plugins-count {
   cursor: pointer;
   grid-template-columns: minmax(0, 1fr) max-content;
   text-align: left;
+  touch-action: manipulation;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-press) var(--ease-press);
 }
 
 .plugins-list__item:last-child { border-bottom: 0; }
-.plugins-list__item:hover { background: var(--color-surface-hover); }
+@media (hover: hover) and (pointer: fine) {
+  .plugins-list__item:hover { background: var(--color-surface-hover); }
+}
+.plugins-list__item:active { transform: scale(.995); }
 .plugins-list__item[data-selected='true'] {
   box-shadow: inset 3px 0 0 var(--color-accent);
   background: var(--color-accent-soft);
@@ -109,13 +116,11 @@ main[data-route-id='plugins'] .plugins-count {
 }
 
 .plugins-list__copy > span {
-  display: -webkit-box;
-  overflow: hidden;
+  display: block;
   color: var(--color-text-secondary);
   font-size: 13px;
   line-height: 1.5;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
 }
 
 .plugins-list__aside {
@@ -135,11 +140,12 @@ main[data-route-id='plugins'] .plugins-count {
 }
 
 .plugins-detail--empty {
-  align-content: center;
-  justify-items: center;
+  display: grid;
+  align-content: start;
+  justify-items: start;
   gap: var(--space-2);
   color: var(--color-text-tertiary);
-  text-align: center;
+  text-align: left;
 }
 
 .plugins-detail--empty strong {
@@ -246,11 +252,51 @@ main[data-route-id='plugins'] .plugins-count {
 .capability-policy-notices {
   display: grid;
   gap: var(--space-2);
-  margin-top: var(--space-4);
+  padding-bottom: var(--space-3);
 }
 
-.capability-policy-notices .mgmt-inline-notice .ui-button {
+.capability-policy-notices .mgmt-notice { margin-block: 0; }
+
+.capability-policy-feedback {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.capability-policy-feedback .mgmt-notice .ui-button {
   margin-top: var(--space-2);
+}
+
+.plugins-policy-disclosure {
+  margin-top: var(--space-3);
+  border-block: 1px solid var(--color-border-soft);
+}
+
+.plugins-policy-disclosure > summary {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  list-style: none;
+}
+
+.plugins-policy-disclosure > summary::-webkit-details-marker { display: none; }
+
+.plugins-policy-disclosure > summary > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.plugins-policy-disclosure > summary strong { color: var(--color-text); font-size: 13px; }
+.plugins-policy-disclosure > summary small { font-size: 12px; line-height: 1.4; }
+.plugins-policy-disclosure > summary svg { flex: 0 0 auto; transition: transform 160ms var(--ease-standard); }
+.plugins-policy-disclosure[open] > summary svg { transform: rotate(90deg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .plugins-policy-disclosure > summary svg { transition: none; }
 }
 
 .capability-default-field {
@@ -480,7 +526,9 @@ main[data-route-id='plugins'] .plugins-count {
   text-align: left;
 }
 
-.plugin-proposal:hover { border-color: var(--color-border-strong); }
+@media (hover: hover) and (pointer: fine) {
+  .plugin-proposal:hover { border-color: var(--color-border-strong); }
+}
 .plugin-proposal span,
 .installed-plugin > div:first-child { display: grid; min-width: 0; gap: 2px; }
 .plugin-proposal small,
@@ -614,7 +662,7 @@ main[data-route-id='plugins'] .plugins-count {
 .capability-disclosure dt { color: var(--color-text-tertiary); font-size: 12px; }
 .capability-disclosure dd { font-size: 12px; margin: 0; overflow-wrap: anywhere; }
 .capability-disclosure details { margin-top: 12px; }
-.capability-disclosure summary { cursor: pointer; font-size: 12px; font-weight: 700; }
+.capability-disclosure summary { display: flex; min-height: 44px; align-items: center; cursor: pointer; font-size: 12px; font-weight: 700; }
 .capability-disclosure pre { max-height: 240px; overflow: auto; padding: 9px; border: 1px solid var(--color-border); font-size: 12px; white-space: pre-wrap; }
 .capability-disclosure > p { color: var(--color-text-tertiary); font-size: 12px; }
 
@@ -626,3 +674,29 @@ main[data-route-id='plugins'] .plugins-count {
    noise, not information — the section description already carries it. */
 main[data-route-id='plugins'] .mgmt-metrics .mgmt-metric__detail { display: none; }
 main[data-route-id='plugins'] .mgmt-metrics { grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .plugins-list__item { transition: none; }
+  .plugins-list__item:active { transform: none; }
+}
+
+@media (max-width: 760px) {
+  main[data-route-id='plugins'] .mgmt-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    column-gap: var(--space-2);
+  }
+
+  main[data-route-id='plugins'] .mgmt-metric {
+    grid-template-columns: 14px minmax(0, 1fr);
+    column-gap: 5px;
+  }
+
+  main[data-route-id='plugins'] .ui-button,
+  main[data-route-id='plugins'] .ui-icon-button,
+  main[data-route-id='plugins'] .ui-input,
+  main[data-route-id='plugins'] .ui-select__trigger,
+  main[data-route-id='plugins'] .ui-segmented__item,
+  main[data-route-id='plugins'] details > summary {
+    min-height: 44px;
+  }
+}

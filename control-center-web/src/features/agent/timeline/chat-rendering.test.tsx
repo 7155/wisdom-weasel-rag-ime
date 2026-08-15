@@ -254,17 +254,15 @@ describe('Agent chat rendering', () => {
       <AgentTurn sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
     );
 
-    expect(screen.queryByRole('button', { name: /查看 Agent 思考摘要/ })).not.toBeInTheDocument();
-    const group = document.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
-    expect(group).not.toHaveAttribute('open');
-    fireEvent.click(group.querySelector('summary')!);
-    const activityBlock = screen.getByRole('region', { name: '操作与思考过程' });
-    expect(activityBlock).toHaveAttribute('data-bounded-scroll', 'true');
-    expect(activityBlock).toHaveAttribute('tabindex', '0');
-    fireEvent.click(activityBlock.querySelector('.agent-activity-row summary')!);
-    expect(activityBlock).toHaveTextContent('Analyzing session message discrepancies');
-    expect(activityBlock).toHaveTextContent('Implementing durable history reconstruction');
-    expect(activityBlock).not.toHaveTextContent('provider_reasoning_summary');
+    const summary = screen.getByRole('button', { name: /查看 Agent 思考摘要/ });
+    expect(summary).toHaveTextContent('思考摘要');
+    expect(summary).toHaveTextContent('Implementing durable history reconstruction');
+    fireEvent.click(summary);
+    const reasoningDetails = screen.getByRole('region', { name: '可公开的思考摘要' });
+    expect(reasoningDetails).toHaveTextContent('Analyzing session message discrepancies');
+    expect(reasoningDetails).toHaveTextContent('Implementing durable history reconstruction');
+    expect(reasoningDetails).not.toHaveTextContent('provider_reasoning_summary');
+    expect(document.querySelector('details.agent-activity--inline')).not.toBeInTheDocument();
   });
 
   it('keeps reasoning out of Tool counts but inside the same bounded activity block', () => {
@@ -309,15 +307,14 @@ describe('Agent chat rendering', () => {
     const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
     expect(group.querySelector('summary')).toHaveTextContent('1 项操作');
     expect(group).not.toHaveAttribute('open');
+    expect(screen.getByRole('button', { name: /查看 Agent 思考摘要/ })).toHaveTextContent('先分析代码路径');
     fireEvent.click(group.querySelector('summary')!);
     expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
     const details = within(group).getByRole('region', { name: '操作与思考过程' });
-    expect(details.querySelectorAll('.agent-activity-row')).toHaveLength(2);
+    expect(details.querySelectorAll('.agent-activity-row')).toHaveLength(1);
     for (const summary of details.querySelectorAll('.agent-activity-row summary')) {
       fireEvent.click(summary);
     }
-    expect(details).toHaveTextContent('处理说明');
-    expect(details).toHaveTextContent('先分析代码路径');
     expect(details).toHaveTextContent('AgentTimeline.tsx:342:export function AgentTurn');
   });
 

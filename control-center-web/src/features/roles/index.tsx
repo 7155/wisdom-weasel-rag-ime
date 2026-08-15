@@ -47,7 +47,6 @@ import {
   personaPhase,
   record,
   roleBookDailyDrafts,
-  roleBookDiffSections,
   roleBookHistory,
   roleModelCatalog,
   textValue,
@@ -57,8 +56,6 @@ import {
   type AgentDefaultCompanion,
   type RoleBookActivationSelection,
   type RoleBookDailyDraft,
-  type RoleBookDiffItem,
-  type RoleBookDiffSection,
   type RoleBookProposal,
   type RoleModelCatalog,
   type TimelineModel,
@@ -66,6 +63,7 @@ import {
 import './roles.css';
 
 type ReasoningLevel = Exclude<NonNullable<AgentPersonaV1['defaults']['thinkingLevel']>, 'off'>;
+type CatalogLoadState = 'loading' | 'ready' | 'error';
 
 function isReasoningLevel(level: string | undefined): level is ReasoningLevel {
   return Boolean(level) && level !== 'off';
@@ -94,6 +92,10 @@ export function RolesFeature() {
   const [traitDraft, setTraitDraft] = useState('');
   const [timelineModel, setTimelineModel] = useState<TimelineModel>('terra');
   const [roomEnabled, setRoomEnabled] = useState(false);
+  const [catalogReload, setCatalogReload] = useState(0);
+  const [roleCatalogState, setRoleCatalogState] = useState<CatalogLoadState>(() => (
+    __CONTROL_PREVIEW__ && transport.kind === 'mock' ? 'ready' : 'loading'
+  ));
   const [catalogNotice, setCatalogNotice] = useState('');
   const [actionNotice, setActionNotice] = useState('');
   const [createError, setCreateError] = useState('');
@@ -107,6 +109,8 @@ export function RolesFeature() {
   });
   useEffect(() => {
     let active = true;
+    setRoleCatalogState('loading');
+    setCatalogNotice('');
     void Promise.allSettled([
       transport.request({ pathId: 'agent.roles.list' }),
       transport.request({ pathId: 'agent.role.models' }),
@@ -116,25 +120,30 @@ export function RolesFeature() {
       const errors: string[] = [];
       if (roleResult.status === 'fulfilled') {
         const roles = roleItems(roleResult.value);
+        setRoleCatalogState('ready');
         if (roles.length || !(__CONTROL_PREVIEW__ && transport.kind === 'mock')) {
           setPersonas(roles);
           setSelectedPersona((current) => roles.some((item) => item.roleId === current) ? current : roles[0]?.roleId ?? '');
         }
       } else {
-        errors.push(`角色目录：${publicErrorText(roleResult.reason, '暂时无法读取，请稍后重试。')}`);
+        setRoleCatalogState('error');
+        errors.push('伙伴目录暂时无法读取。');
       }
       if (modelResult.status === 'fulfilled') {
         setModelCatalog(roleModelCatalog(modelResult.value));
+      } else {
+        errors.push('默认模型暂时未读取，新对话设置可能不完整。');
       }
       if (configurationResult.status === 'fulfilled') {
         setDefaultCompanion(agentDefaultCompanion(configurationResult.value));
+      } else {
+        errors.push('默认伙伴暂时未读取。');
       }
-      setCatalogNotice(errors.join('；'));
+      setCatalogNotice(errors.join(' '));
     });
     return () => { active = false; };
-  }, [transport]);
+  }, [catalogReload, transport]);
   const persona = personas.find((item) => item.roleId === selectedPersona);
-  const notice = [catalogNotice, actionNotice].filter(Boolean).join('；');
   const personaIsDefault = Boolean(persona && defaultCompanion
     && persona.roleId === defaultCompanion.roleId
     && persona.version === defaultCompanion.roleVersion);
@@ -264,7 +273,7 @@ export function RolesFeature() {
         },
       });
       const [created] = roleItems({ items: [record(response).role] });
-      if (!created) throw new Error('服务端没有返回可验证的角色。');
+      if (!created) throw new Error('新伙伴的保存结果暂时无法确认，请刷新后重试。');
       setPersonas((current) => [
         created,
         ...current.filter((item) => item.roleId !== created.roleId || item.version !== created.version),
@@ -297,7 +306,7 @@ export function RolesFeature() {
         },
       });
       const [updated] = roleItems({ items: [record(response).role] });
-      if (!updated) throw new Error('服务端没有返回可验证的角色默认设置。');
+      if (!updated) throw new Error('伙伴默认设置的保存结果暂时无法确认，请刷新后重试。');
       setPersonas((current) => current.map((item) => (
         item.roleId === updated.roleId && item.version === updated.version ? updated : item
       )));
@@ -326,7 +335,7 @@ export function RolesFeature() {
         },
       });
       const updated = agentDefaultCompanion(response);
-      if (!updated) throw new Error('服务端没有返回可验证的默认伙伴设置。');
+      if (!updated) throw new Error('默认伙伴的保存结果暂时无法确认，请刷新后重试。');
       setDefaultCompanion(updated);
       setActionNotice(`${persona.displayName} 已设为新对话的默认伙伴。`);
     } catch (error) {
@@ -367,10 +376,14 @@ export function RolesFeature() {
   return <>
     <main className="roles-feature" data-route-id="roles">
       <header className="roles-header"><span><h1>伙伴</h1><p>挑一位更合适的伙伴开始聊；需要多人一起做事时，再邀请她参与协作。</p></span>{view === 'companions' ? <div className="roles-header-actions"><Button variant="quiet" size="small" leadingIcon={<UserRoundPlus size={15} />} onClick={beginRoleCreation}>添加伙伴</Button></div> : null}</header>
-      {notice ? <p className="roles-notice" role="status">{notice}</p> : null}
+      {actionNotice ? <p className="roles-notice" role="status">{actionNotice}</p> : null}
+      {catalogNotice && (personas.length > 0 || roleCatalogState !== 'error') ? <div className="roles-catalog-notice">
+        <span><strong>部分伙伴信息没有读完</strong><small>{catalogNotice}</small></span>
+        <Button variant="quiet" size="small" leadingIcon={<RotateCcw size={14} />} onClick={() => setCatalogReload((current) => current + 1)}>重新读取伙伴信息</Button>
+      </div> : null}
       <div className="roles-layout">
-          <section className="persona-grid" aria-label="伙伴目录">{personas.length ? personas.map((item) => { const builtin = item.defaults.modelPolicy === 'fixed'; const isDefault = item.roleId === defaultCompanion?.roleId && item.version === defaultCompanion.roleVersion; return <button type="button" key={`${item.roleId}:${item.version}`} data-accent={item.visualProfile.accentToken} aria-current={item.roleId === selectedPersona} onClick={() => { setSelectedPersona(item.roleId); setActionNotice(''); }}><PersonaAvatar persona={item} size="large" /><span className="persona-grid__copy"><strong>{item.displayName}</strong><small>{item.tagline}</small></span><div className="persona-grid__badges"><i className="persona-grid__kind" data-kind={builtin ? 'builtin' : 'custom'}>{builtin ? '内置伙伴' : '我的伙伴'}</i>{isDefault ? <em className="persona-grid__default">默认</em> : null}</div></button>; }) : <p className="roles-empty">本机还没有可用伙伴。</p>}</section>
-          {persona && view === 'companions' ? <PersonaInspector canChangeDefault={Boolean(defaultCompanion && defaultCompanion.revision > 0)} catalog={modelCatalog} defaulted={personaIsDefault} defaultSaving={defaultSaving} persona={persona} saving={roleDefaultsSaving} onSave={saveRoleRuntimeDefaults} onOpenGrowth={() => setView('growth')} onEdit={() => beginRoleEdit(persona)} onCopy={() => beginRoleCopy(persona)} onSetDefault={() => void makeDefaultCompanion()} onArchive={() => { setArchiveError(''); setArchiveTarget(persona); }} onStart={() => void startPersonaSession()} starting={sessionCreating} /> : null}
+          <section className="persona-grid" aria-label="伙伴目录">{personas.length ? personas.map((item) => { const builtin = item.defaults.modelPolicy === 'fixed'; const isDefault = item.roleId === defaultCompanion?.roleId && item.version === defaultCompanion.roleVersion; return <button type="button" key={`${item.roleId}:${item.version}`} data-accent={item.visualProfile.accentToken} aria-current={item.roleId === selectedPersona} onClick={() => { setSelectedPersona(item.roleId); setActionNotice(''); }}><PersonaAvatar persona={item} size="large" /><span className="persona-grid__copy"><strong>{item.displayName}</strong><small>{item.tagline}</small></span><div className="persona-grid__badges"><i className="persona-grid__kind" data-kind={builtin ? 'builtin' : 'custom'}>{builtin ? '内置伙伴' : '我的伙伴'}</i>{isDefault ? <em className="persona-grid__default">默认</em> : null}</div></button>; }) : roleCatalogState === 'loading' ? <div className="roles-catalog-state" aria-live="polite" aria-busy="true"><span className="roles-catalog-spinner" aria-hidden="true" /><span><strong>正在读取伙伴</strong><small>很快就会显示本机已有的伙伴。</small></span></div> : roleCatalogState === 'error' ? <div className="roles-catalog-state roles-catalog-state--error" role="alert"><span><strong>伙伴目录没有打开</strong><small>本机服务暂时没有返回伙伴信息。重新读取不会更改已有伙伴。</small></span><Button variant="quiet" size="small" leadingIcon={<RotateCcw size={14} />} onClick={() => setCatalogReload((current) => current + 1)}>重新读取伙伴</Button></div> : <div className="roles-catalog-state"><span><strong>还没有伙伴</strong><small>添加后，可以为不同类型的工作选择更合适的陪伴方式。</small></span></div>}</section>
+          {persona && view === 'companions' ? <PersonaInspector canChangeDefault={Boolean(defaultCompanion && defaultCompanion.revision > 0)} catalog={modelCatalog} defaulted={personaIsDefault} defaultSaving={defaultSaving} persona={persona} saving={roleDefaultsSaving} onSave={saveRoleRuntimeDefaults} onOpenGrowth={() => setView('growth')} onOpenSettings={() => navigate('/configuration')} onEdit={() => beginRoleEdit(persona)} onCopy={() => beginRoleCopy(persona)} onSetDefault={() => void makeDefaultCompanion()} onArchive={() => { setArchiveError(''); setArchiveTarget(persona); }} onStart={() => void startPersonaSession()} starting={sessionCreating} /> : null}
           {persona && view === 'growth' ? <PersonaGrowthInspector persona={persona} onBack={() => setView('companions')} /> : null}
       </div>
     </main>
@@ -402,7 +415,7 @@ export function RolesFeature() {
       </DialogContent>
     </Dialog>
     <Dialog open={Boolean(archiveTarget)} onOpenChange={(open) => { if (!open && !roleArchiving) { setArchiveTarget(null); setArchiveError(''); } }}>
-      <DialogContent><DialogHeader><DialogTitle>移除这个伙伴？</DialogTitle><DialogDescription>“{archiveTarget?.displayName}”会从新对话和协作空间的伙伴目录中移除；已有对话仍保留并可继续。</DialogDescription></DialogHeader>{archiveError ? <p className="role-create-error" role="alert">{archiveError}</p> : null}<DialogFooter><Button variant="quiet" disabled={roleArchiving} onClick={() => setArchiveTarget(null)}>取消</Button><Button variant="danger" leadingIcon={<Trash2 size={14} />} loading={roleArchiving} onClick={() => void archiveCompanion()}>移除伙伴</Button></DialogFooter></DialogContent>
+      <DialogContent className="role-archive-dialog"><DialogHeader><DialogTitle>移除这个伙伴？</DialogTitle><DialogDescription>“{archiveTarget?.displayName}”会从新对话和协作空间的伙伴目录中移除；已有对话仍保留并可继续。</DialogDescription></DialogHeader>{archiveError ? <p className="role-create-error" role="alert">{archiveError}</p> : null}<DialogFooter><Button variant="quiet" disabled={roleArchiving} onClick={() => setArchiveTarget(null)}>取消</Button><Button variant="danger" leadingIcon={<Trash2 size={14} />} loading={roleArchiving} onClick={() => void archiveCompanion()}>移除伙伴</Button></DialogFooter></DialogContent>
     </Dialog>
   </>;
 }
@@ -422,6 +435,7 @@ function PersonaInspector({
   saving,
   starting,
   onOpenGrowth,
+  onOpenSettings,
 }: {
   canChangeDefault: boolean;
   catalog: RoleModelCatalog;
@@ -437,6 +451,7 @@ function PersonaInspector({
   saving: boolean;
   starting: boolean;
   onOpenGrowth: () => void;
+  onOpenSettings: () => void;
 }) {
   const phase = personaPhase(persona);
   const expressionTraits = personaExpressionTraits(persona);
@@ -482,7 +497,7 @@ function PersonaInspector({
         <PersonaAvatar persona={persona} size="hero" />
         <span>
           <small>{fixed ? '内置伙伴 · 复制后可以调整' : '我的伙伴 · 可以调整'}</small>
-          <h3>{persona.displayName}</h3>
+          <h2>{persona.displayName}</h2>
           <p>{persona.summary}</p>
         </span>
       </div>
@@ -491,7 +506,7 @@ function PersonaInspector({
         <Button variant="quiet" size="small" onClick={fixed ? onCopy : onEdit}>{fixed ? '复制为我的伙伴' : '编辑伙伴'}</Button>
       </div>
       <section className="companion-fit" aria-label="伙伴能力边界">
-        <div><header><Sparkles size={15} /><strong>适合交给她</strong></header><ul>{persona.runtimeCharacteristics.suitableTasks.map((task) => <li key={task}>{task}</li>)}</ul></div>
+        <div><header><Sparkles size={15} /><strong>适合交给她</strong></header><ul>{persona.runtimeCharacteristics.suitableTasks.map((task) => <li key={task}>{publicTaskLabel(task)}</li>)}</ul></div>
         <div><header><ShieldCheck size={15} /><strong>不建议交给她</strong></header><ul>{persona.runtimeCharacteristics.unsuitableTasks.map((task) => <li key={task}>{task}</li>)}</ul></div>
       </section>
       <section className="companion-expression">
@@ -544,7 +559,7 @@ function PersonaInspector({
                 </label>
                 <Button variant="primary" size="small" leadingIcon={<Save size={14} />} loading={saving} disabled={!changed || !modelProfile || !thinkingLevel} onClick={() => void onSave(modelProfile, thinkingLevel)}>保存默认设置</Button>
               </>
-            ) : <p><BrainCircuit size={15} />当前没有可用的推理模型，请先在配置页完成模型配置。</p>}
+            ) : <div className="role-runtime-model-empty"><p><BrainCircuit size={15} />当前没有可用的推理模型。请先完成模型配置，再回来设置新对话默认值。</p><Button onClick={onOpenSettings} size="small" variant="quiet">打开设置</Button></div>}
           </section>
           <DefinitionAudit kind="伙伴定义" summary={`${persona.tagline}；${persona.summary}`} version={persona.version} source={fixed ? '内置伙伴目录' : '用户自定义伙伴'} />
         </div>
@@ -564,8 +579,6 @@ function PersonaGrowthInspector({ persona, onBack }: { persona: AgentPersonaV1; 
   const [capabilityIndexes, setCapabilityIndexes] = useState<number[]>([]);
   const [lessonIndexes, setLessonIndexes] = useState<number[]>([]);
   const [commitmentIndexes, setCommitmentIndexes] = useState<number[]>([]);
-  const [pendingPreview, setPendingPreview] = useState<Record<string, unknown> | null>(null);
-  const [pendingSelection, setPendingSelection] = useState<RoleBookActivationSelection | null>(null);
   const [mutationPending, setMutationPending] = useState(false);
   const [receipt, setReceipt] = useState<Record<string, unknown> | null>(null);
 
@@ -597,8 +610,6 @@ function PersonaGrowthInspector({ persona, onBack }: { persona: AgentPersonaV1; 
     setCapabilityIndexes([]);
     setLessonIndexes([]);
     setCommitmentIndexes([]);
-    setPendingPreview(null);
-    setPendingSelection(null);
   }, [selectedDraftId, persona.roleId, persona.version]);
 
   const activeRevision = record(catalog?.active);
@@ -608,41 +619,25 @@ function PersonaGrowthInspector({ persona, onBack }: { persona: AgentPersonaV1; 
   const selectedDraft = drafts.find((draft) => draft.draftId === selectedDraftId);
   const history = roleBookHistory(catalog);
 
-  async function previewActivation(selection: RoleBookActivationSelection): Promise<void> {
+  async function activateSelection(selection: RoleBookActivationSelection): Promise<void> {
     if (mutationPending) return;
     setMutationPending(true);
     setError('');
     try {
-      const response = ensureControlOk(await transport.request<Record<string, unknown>>({
+      const preview = ensureControlOk(await transport.request<Record<string, unknown>>({
         pathId: 'agent.roleBook.activation.preview',
         body: selection,
       }));
-      setPendingSelection(selection);
-      setPendingPreview(response);
-    } catch (cause) {
-      setError(publicErrorText(cause, '暂时无法查看这些成长建议。'));
-    } finally {
-      setMutationPending(false);
-    }
-  }
-
-  async function applyActivation(): Promise<void> {
-    if (!pendingPreview || !pendingSelection || mutationPending) return;
-    setMutationPending(true);
-    setError('');
-    try {
       const response = ensureControlOk(await transport.request<Record<string, unknown>>({
         pathId: 'agent.roleBook.activation.apply',
         body: {
-          ...pendingSelection,
-          previewToken: textValue(pendingPreview.previewToken),
-          payloadSha256: textValue(pendingPreview.payloadSha256),
+          ...selection,
+          previewToken: textValue(preview.previewToken),
+          payloadSha256: textValue(preview.payloadSha256),
           confirmText: 'apply',
         },
       }));
       setReceipt(response);
-      setPendingPreview(null);
-      setPendingSelection(null);
       setRefreshVersion((value) => value + 1);
     } catch (cause) {
       setError(publicErrorText(cause, '暂时无法采用这些成长建议。'));
@@ -706,10 +701,8 @@ function PersonaGrowthInspector({ persona, onBack }: { persona: AgentPersonaV1; 
       + selectedDraft.lessonProposals.length
       + selectedDraft.commitmentProposals.length
     : 0;
-  const previewSummary = record(pendingPreview?.summary);
-  const previewDiff = roleBookDiffSections(previewSummary.diff);
   return <aside className="role-inspector role-book-inspector" data-accent={persona.visualProfile.accentToken}>
-    <div className="role-inspector__hero"><PersonaAvatar persona={persona} size="hero" /><span><small>成长档案</small><h3>{persona.displayName}</h3><p>{loading ? '正在读取…' : hasActiveRevision ? `第 ${numberValue(activeRevision.revisionNumber)} 版` : '还没有成长记录'}</p></span></div>
+    <div className="role-inspector__hero"><PersonaAvatar persona={persona} size="hero" /><span><small>成长档案</small><h2>{persona.displayName}</h2><p>{loading ? '正在读取…' : hasActiveRevision ? `第 ${numberValue(activeRevision.revisionNumber)} 版` : '还没有成长记录'}</p></span></div>
     <Button variant="quiet" size="small" onClick={onBack}>返回伙伴</Button>
     {error ? <p className="role-book-error" role="alert">{error}</p> : null}
     {!loading && catalog ? <>
@@ -732,28 +725,13 @@ function PersonaGrowthInspector({ persona, onBack }: { persona: AgentPersonaV1; 
             {selectedDraft.lessonProposals.length ? <fieldset><legend>经验与边界</legend>{selectedDraft.lessonProposals.map((proposal, index) => <label key={`${proposal.text}:${index}`}><input type="checkbox" checked={lessonIndexes.includes(index)} onChange={() => setLessonIndexes(toggleIndex(lessonIndexes, index))} /><span>{proposal.text}</span><small>{Math.round(proposal.confidence * 100)}%</small></label>)}</fieldset> : null}
             {selectedDraft.commitmentProposals.length ? <fieldset><legend>当前承诺</legend>{selectedDraft.commitmentProposals.map((proposal, index) => <label key={`${proposal.text}:${index}`}><input type="checkbox" checked={commitmentIndexes.includes(index)} onChange={() => setCommitmentIndexes(toggleIndex(commitmentIndexes, index))} /><span>{proposal.text}</span><small>{Math.round(proposal.confidence * 100)}%</small></label>)}</fieldset> : null}
             {!availableProposalCount ? <p className="roles-empty">{roleBookDraftEmptyText(selectedDraft.proposalStatus)}</p> : null}
-            <div className="role-book-actions"><Button variant="quiet" size="small" disabled={mutationPending} onClick={() => void decideDraft('deferred')}>稍后</Button><Button variant="quiet" size="small" disabled={mutationPending} onClick={() => void decideDraft('rejected')}>忽略</Button><Button variant="primary" size="small" leadingIcon={<Check size={14} />} loading={mutationPending} disabled={!selectedCount} onClick={() => void previewActivation({ roleId: persona.roleId, roleVersion: persona.version, revisionId: '', draftId: selectedDraft.draftId, traitIndexes, capabilityIndexes, lessonIndexes, commitmentIndexes })}>查看改动</Button></div>
+            <div className="role-book-actions"><Button variant="quiet" size="small" disabled={mutationPending} onClick={() => void decideDraft('deferred')}>稍后</Button><Button variant="quiet" size="small" disabled={mutationPending} onClick={() => void decideDraft('rejected')}>忽略</Button><Button variant="primary" size="small" leadingIcon={<Check size={14} />} loading={mutationPending} disabled={!selectedCount} onClick={() => void activateSelection({ roleId: persona.roleId, roleVersion: persona.version, revisionId: '', draftId: selectedDraft.draftId, traitIndexes, capabilityIndexes, lessonIndexes, commitmentIndexes })}>采用所选内容</Button></div>
           </div> : null}
         </> : <p className="roles-empty">当前没有待审草案。</p>}
       </section>
-      {history.some((revision) => revision.status === 'draft') ? <section className="role-book-history" aria-label={`${persona.displayName}整理的成长建议`}><header><span><BrainCircuit size={15} /><strong>{persona.displayName}整理的建议</strong></span></header>{history.filter((revision) => revision.status === 'draft').map((revision) => <div key={revision.revisionId}><span><b>第 {revision.revisionNumber} 版</b><small>{revision.changeSummary || '等待你确认'}</small></span><Button variant="quiet" size="small" disabled={mutationPending} onClick={() => void previewActivation({ roleId: persona.roleId, roleVersion: persona.version, revisionId: revision.revisionId, draftId: '', traitIndexes: [], capabilityIndexes: [], lessonIndexes: [], commitmentIndexes: [] })}>查看</Button></div>)}</section> : null}
+      {history.some((revision) => revision.status === 'draft') ? <section className="role-book-history" aria-label={`${persona.displayName}整理的成长建议`}><header><span><BrainCircuit size={15} /><strong>{persona.displayName}整理的建议</strong></span></header>{history.filter((revision) => revision.status === 'draft').map((revision) => <div key={revision.revisionId}><span><b>第 {revision.revisionNumber} 版</b><small>{revision.changeSummary || '等待你确认'}</small></span><Button variant="quiet" size="small" loading={mutationPending} onClick={() => void activateSelection({ roleId: persona.roleId, roleVersion: persona.version, revisionId: revision.revisionId, draftId: '', traitIndexes: [], capabilityIndexes: [], lessonIndexes: [], commitmentIndexes: [] })}>采用这版</Button></div>)}</section> : null}
       {receipt && Boolean(receipt.rollbackAvailable) ? <Button variant="quiet" size="small" leadingIcon={<RotateCcw size={14} />} loading={mutationPending} onClick={() => void rollbackActivation()}>撤销本次采用</Button> : null}
     </> : null}
-    <Dialog open={Boolean(pendingPreview)} onOpenChange={(open) => { if (!open && !mutationPending) { setPendingPreview(null); setPendingSelection(null); } }}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>采用这些成长建议？</DialogTitle><DialogDescription>已经核对 {numberValue(previewSummary.evidenceCount)} 条来源；确认后只会采用你勾选的内容。</DialogDescription></DialogHeader>
-        <ul className="role-book-preview-items">{arrayValue(previewSummary.items).map((item, index) => <li key={`${textValue(item)}:${index}`}>{textValue(item)}</li>)}</ul>
-        <div className="role-book-preview-diff" aria-label="成长建议逐项变化">
-          {previewDiff.map((section) => <section key={section.section}>
-            <header><strong>{section.label}</strong><small>+{section.added.length} / -{section.removed.length} / ~{section.changed.length}</small></header>
-            {section.added.map((item) => <p key={`added:${item.itemId}`} data-change="added"><b>新增</b><span>{item.text}</span><small>{item.evidenceIds.length} 条证据</small></p>)}
-            {section.removed.map((item) => <p key={`removed:${item.itemId}`} data-change="removed"><b>删除</b><span>{item.text}</span><small>{item.evidenceIds.length} 条证据</small></p>)}
-            {section.changed.map((item) => <p key={`changed:${item.itemId}`} data-change="changed"><b>修改</b><span><del>{item.before.text}</del><ins>{item.after.text}</ins></span><small>{item.after.evidenceIds.length} 条证据</small></p>)}
-          </section>)}
-        </div>
-        <DialogFooter><Button variant="quiet" disabled={mutationPending} onClick={() => { setPendingPreview(null); setPendingSelection(null); }}>取消</Button><Button variant="primary" loading={mutationPending} onClick={() => void applyActivation()}>采用这些内容</Button></DialogFooter>
-      </DialogContent>
-    </Dialog>
   </aside>;
 }
 
@@ -767,8 +745,12 @@ function roleBookDraftEmptyText(status: string): string {
   }[status] ?? '这份草案没有可采用的变化；原有成长档案未被修改。';
 }
 
+function publicTaskLabel(value: string): string {
+  return value === '多 Agent 主持和独立验收' ? '多伙伴主持和独立验收' : value;
+}
+
 function DefinitionAudit({ kind, source, summary, version }: { kind: string; source: string; summary: string; version: string }) {
-  return <details className="definition-audit"><summary><ShieldCheck size={14} /><span><strong>查看定义与提示词摘要</strong><small>已检查 · 没有占位内容</small></span></summary><dl><div><dt>类型</dt><dd>{kind}</dd></div><div><dt>版本</dt><dd>{version}</dd></div><div><dt>来源</dt><dd>{source}</dd></div><div><dt>摘要</dt><dd>{summary}</dd></div></dl><p>这里只展示便于理解的摘要。完整系统提示词会按固定版本装配，不会在伙伴目录中临时拼接。</p></details>;
+  return <details className="definition-audit"><summary><ShieldCheck size={14} /><span><strong>查看伙伴设定说明</strong><small>已检查 · 内容完整</small></span></summary><dl><div><dt>类型</dt><dd>{kind}</dd></div><div><dt>版本</dt><dd>{version}</dd></div><div><dt>来源</dt><dd>{source}</dd></div><div><dt>摘要</dt><dd>{summary}</dd></div></dl><p>这里只展示便于理解的设定摘要。新对话会稳定使用这份已保存的伙伴设定。</p></details>;
 }
 
 function taskBoundaryItems(value: string): string[] {

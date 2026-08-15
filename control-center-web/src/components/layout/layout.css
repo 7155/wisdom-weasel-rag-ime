@@ -4,7 +4,6 @@
   min-height: 100dvh;
   grid-template-columns: var(--sidebar-wide) minmax(0, 1fr);
   background: var(--color-canvas);
-  transition: grid-template-columns var(--duration-normal) var(--ease-standard);
 }
 
 .control-shell[data-resizing-sidebar='true'] {
@@ -55,7 +54,10 @@
   z-index: 200;
   top: 8px;
   left: 8px;
-  padding: 7px 10px;
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  padding: 8px 12px;
   border: 1px solid var(--color-accent);
   border-radius: var(--radius-2);
   background: var(--color-surface);
@@ -65,7 +67,6 @@
   font-weight: 700;
   text-decoration: none;
   transform: translateY(calc(-100% - 12px));
-  transition: transform var(--duration-enter) var(--ease-standard);
 }
 
 .shell-skip-link:focus-visible {
@@ -110,8 +111,8 @@
   width: 1px;
   background: transparent;
   content: '';
-  transform: translateX(-50%);
-  transition: width var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
+  transform: translateX(-50%) scaleX(1);
+  transition: transform var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
 }
 
 .shell-sidebar-resizer > svg {
@@ -125,14 +126,12 @@
   transition: opacity var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
 }
 
-.shell-sidebar-resizer:hover::before,
 .shell-sidebar-resizer:focus-visible::before,
 .control-shell[data-resizing-sidebar='true'] .shell-sidebar-resizer::before {
-  width: 2px;
   background: var(--color-accent);
+  transform: translateX(-50%) scaleX(2);
 }
 
-.shell-sidebar-resizer:hover > svg,
 .shell-sidebar-resizer:focus-visible > svg,
 .control-shell[data-resizing-sidebar='true'] .shell-sidebar-resizer > svg {
   opacity: 1;
@@ -165,8 +164,8 @@
   width: 1px;
   background: transparent;
   content: '';
-  transform: translateX(-50%);
-  transition: width var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
+  transform: translateX(-50%) scaleX(1);
+  transition: transform var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
 }
 
 .workspace-pane-resizer > svg {
@@ -184,14 +183,12 @@
   transition: opacity var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
 }
 
-.workspace-pane-resizer:hover::before,
 .workspace-pane-resizer:focus-visible::before,
 [data-resizing] > .workspace-pane-resizer::before {
-  width: 2px;
   background: var(--color-accent);
+  transform: translateX(-50%) scaleX(2);
 }
 
-.workspace-pane-resizer:hover > svg,
 .workspace-pane-resizer:focus-visible > svg,
 [data-resizing] > .workspace-pane-resizer > svg {
   opacity: 1;
@@ -265,6 +262,8 @@
   padding: 12px 9px;
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .shell-nav__group {
@@ -284,7 +283,7 @@
 .shell-nav__link {
   position: relative;
   display: flex;
-  min-height: 38px;
+  min-height: 44px;
   min-width: 0;
   align-items: center;
   gap: 10px;
@@ -298,7 +297,6 @@
   text-decoration: none;
   transition:
     transform var(--duration-press) var(--ease-press),
-    box-shadow var(--duration-enter) var(--ease-standard),
     opacity var(--duration-fast) var(--ease-standard);
 }
 
@@ -342,11 +340,15 @@
 
 .shell-sidebar__footer {
   display: flex;
-  min-height: 52px;
+  min-height: 60px;
   align-items: center;
   justify-content: space-between;
   padding: 8px 10px 8px 14px;
   border-top: 1px solid var(--color-border);
+}
+
+.shell-sidebar:has(.shell-nav[data-can-scroll-down='true']) .shell-sidebar__footer {
+  box-shadow: 0 -14px 22px color-mix(in srgb, var(--color-chrome) 90%, transparent);
 }
 
 .shell-sidebar__environment {
@@ -364,6 +366,11 @@
   height: 6px;
   border-radius: 50%;
   background: var(--color-success);
+}
+
+.shell-sidebar__collapse {
+  width: 44px;
+  height: 44px;
 }
 
 .control-shell[data-sidebar-collapsed='true'] .shell-brand__copy,
@@ -454,13 +461,19 @@
   min-width: 0;
   align-items: baseline;
   gap: var(--space-2);
-  animation: shell-title-enter var(--duration-enter) var(--ease-standard) both;
 }
 
-.shell-topbar__title h1 {
+.shell-topbar__title > svg {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+}
+
+.shell-topbar__title h1,
+.shell-topbar__title strong {
   overflow: hidden;
   font-size: var(--font-size-ui-strong);
   font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-compact);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -476,6 +489,11 @@
   flex: 0 0 auto;
   align-items: center;
   gap: var(--space-2);
+}
+
+.shell-topbar__actions .ui-icon-button {
+  width: 44px;
+  height: 44px;
 }
 
 @media (max-width: 1100px) and (min-width: 761px) {
@@ -517,6 +535,42 @@
   backdrop-filter: blur(1px);
 }
 
+.shell-route-pending__slow,
+.shell-route-loading__slow {
+  display: grid;
+  max-width: 420px;
+  justify-items: center;
+  gap: var(--space-2);
+  padding-inline: var(--space-4);
+  text-align: center;
+}
+
+.shell-route-pending__slow strong,
+.shell-route-loading__slow strong {
+  color: var(--color-text);
+  font-size: 15px;
+}
+
+.shell-route-pending__slow > span,
+.shell-route-loading__slow > span {
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+
+.shell-route-pending__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.shell-route-pending__actions .ui-button,
+.shell-route-loading__slow .ui-button {
+  min-height: 44px;
+}
+
 .shell-route-loading {
   display: flex;
   min-height: min(420px, calc(100dvh - var(--topbar-height)));
@@ -526,13 +580,77 @@
   color: var(--color-text-tertiary);
   font-size: 14px;
 }
+
+.shell-route-error {
+  display: grid;
+  min-height: min(560px, calc(100dvh - var(--topbar-height)));
+  place-items: start center;
+}
+
+.shell-route-error__surface {
+  display: grid;
+  width: min(520px, 100%);
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-3);
+  margin-top: clamp(32px, 10vh, 88px);
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-paper);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-1);
+}
+
+.shell-route-error__icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-2);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.shell-route-error__copy {
+  display: grid;
+  gap: var(--space-1);
+  align-content: center;
+}
+
+.shell-route-error__copy h1 {
+  color: var(--color-text);
+  font-size: var(--font-size-title);
+  line-height: 1.3;
+}
+
+.shell-route-error__copy p {
+  max-width: 44ch;
+  color: var(--color-text-secondary);
+  line-height: 1.65;
+  text-wrap: pretty;
+}
+
+.shell-route-error__actions {
+  display: flex;
+  grid-column: 2;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.shell-route-error__actions .ui-button { min-height: 44px; }
+
+/* Route changes move screen-reader focus to the workspace container so the
+   new page is announced. The container itself is not interactive; drawing
+   the global focus ring around a multi-screen page creates a stray blue edge
+   while every real control keeps its own visible focus treatment. */
+.shell-route-stage:focus-visible { outline: none; }
+
 .shell-route-stage > main {
   width: min(100%, var(--content-max));
   min-height: calc(100dvh - var(--topbar-height));
   margin-inline: auto;
   padding: var(--space-6);
-  transform-origin: 50% 0;
-  animation: shell-route-enter var(--duration-enter) var(--ease-standard) both;
 }
 
 .shell-route-stage > main[data-route-id] > h1:only-child {
@@ -548,26 +666,51 @@
 
 .shell-mobile-menu__routes {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
   margin-top: var(--space-4);
+}
+
+.shell-mobile-menu__group {
+  display: grid;
+  align-content: start;
+  gap: var(--space-1);
+}
+
+.shell-mobile-menu__group h3 {
+  padding: 4px 9px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: .04em;
+}
+
+.shell-mobile-menu__group-links {
+  display: grid;
+  gap: 2px;
 }
 
 .shell-mobile-menu__routes .shell-nav__link[aria-current='page']::before {
   left: -1px;
 }
 
-@keyframes shell-route-enter {
-  from { opacity: 0; transform: translateY(var(--distance-enter)); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes shell-title-enter {
-  from { opacity: 0; transform: translateY(2px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
 @media (hover: hover) and (pointer: fine) {
+  .shell-sidebar-resizer:hover::before,
+  .workspace-pane-resizer:hover::before {
+    background: var(--color-accent);
+    transform: translateX(-50%) scaleX(2);
+  }
+
+  .shell-sidebar-resizer:hover > svg {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+
+  .workspace-pane-resizer:hover > svg {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.08);
+  }
+
   .shell-nav__link:hover {
     background: var(--color-surface-hover);
     box-shadow: var(--shadow-control-hover);
@@ -614,7 +757,8 @@
   }
 
   .shell-topbar {
-    min-height: 52px;
+    min-height: calc(52px + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
     padding-inline: 12px;
   }
 
@@ -628,15 +772,16 @@
     margin-left: 4px;
   }
 
-  .shell-topbar__title span { display: none; }
+  .shell-topbar__title span,
+  .shell-topbar__title > svg { display: none; }
 
   .shell-route-stage {
-    min-height: calc(100dvh - 52px - var(--mobile-nav-height));
-    padding-bottom: var(--mobile-nav-height);
+    min-height: calc(100dvh - 52px - env(safe-area-inset-top) - var(--mobile-nav-height) - env(safe-area-inset-bottom));
+    padding-bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom));
   }
 
   .shell-route-stage > main {
-    min-height: calc(100dvh - 52px - var(--mobile-nav-height));
+    min-height: calc(100dvh - 52px - env(safe-area-inset-top) - var(--mobile-nav-height) - env(safe-area-inset-bottom));
     padding: var(--space-4);
   }
 
@@ -673,7 +818,6 @@
     text-decoration: none;
     transition:
       transform var(--duration-press) var(--ease-press),
-      box-shadow var(--duration-enter) var(--ease-standard),
       opacity var(--duration-fast) var(--ease-standard);
   }
 
@@ -688,6 +832,12 @@
     color: var(--color-accent);
   }
 
+  .shell-mobile-nav > .ui-icon-button[data-current-page='true'],
+  .shell-mobile-nav > .ui-icon-button[data-state='open'] {
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
+  }
+
   .shell-mobile-nav > .ui-icon-button::after {
     content: '全部';
     font-size: 13px;
@@ -696,13 +846,27 @@
   .shell-mobile-menu__routes {
     grid-template-columns: 1fr;
     max-height: min(62dvh, 520px);
+    padding-right: 2px;
     overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+
+  .shell-mobile-menu__routes .shell-nav__link,
+  .shell-mobile-menu .ui-dialog__close {
+    min-height: 44px;
+  }
+
+  .shell-mobile-menu .ui-dialog__close {
+    width: 44px;
+    height: 44px;
   }
 }
 
 @media (max-width: 380px) {
   .shell-topbar__actions { gap: 2px; }
-  .shell-topbar__title h1 { font-size: 14px; }
+  .shell-topbar__title h1,
+  .shell-topbar__title strong { font-size: 14px; }
   .shell-mobile-nav__link span { font-size: 13px; }
 }
 
@@ -712,13 +876,12 @@
    accent rule for the current place. Content owns the light. */
 .shell-sidebar { background: var(--color-chrome); }
 .shell-nav__link {
-  min-height: 34px;
   color: var(--color-text-secondary);
   font-size: var(--font-size-ui);
   font-weight: var(--font-weight-medium);
 }
 .shell-nav__link[aria-current='page'] {
-  background: transparent;
+  background: color-mix(in srgb, var(--color-accent-soft) 58%, transparent);
   box-shadow: none;
   color: var(--color-text);
   font-weight: var(--font-weight-semibold);

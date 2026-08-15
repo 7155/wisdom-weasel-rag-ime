@@ -14,12 +14,13 @@ function subscribe(callback: () => void) {
 }
 
 function getPath(): string {
-  if (typeof window === 'undefined') return '/planning';
+  if (typeof window === 'undefined') return '/agent';
   const raw = window.location.hash.replace(/^#/, '').split('?')[0];
-  return raw || '/planning';
+  return raw || '/agent';
 }
 
 export function useHashRoute(): RouteDefinition {
-  const path = useSyncExternalStore(subscribe, getPath, () => '/planning');
-  return routeRegistry.find((route) => route.path === path) ?? routeRegistry[0];
+  const path = useSyncExternalStore(subscribe, getPath, () => '/agent');
+  return routeRegistry.find((route) => route.path === path)
+    ?? routeRegistry.find((route) => route.id === 'agent')!;
 }
