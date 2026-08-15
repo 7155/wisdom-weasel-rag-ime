@@ -516,6 +516,37 @@ ensure_librime_source_headers() {
   rm -rf "$restore_dir"
 }
 
+run_squirrel_action_install() {
+  local original_developer_dir="${DEVELOPER_DIR:-}"
+  local effective_developer_dir="$original_developer_dir"
+  local alias_root=""
+  local action_status=0
+
+  if [[ "$original_developer_dir" == *" "* ]]; then
+    alias_root="$(mktemp -d "${TMPDIR:-/tmp}/rag-ime-xcode-developer.XXXXXX")"
+    effective_developer_dir="$alias_root/Developer"
+    ln -s "$original_developer_dir" "$effective_developer_dir"
+    printf '[INFO] using a space-safe Xcode developer alias for Squirrel dependencies\n'
+  fi
+
+  if [[ -n "$effective_developer_dir" ]]; then
+    if bool_true "$NO_DOWNLOAD"; then
+      (cd "$SQUIRREL_WORKDIR" && DEVELOPER_DIR="$effective_developer_dir" no_download=1 ./action-install.sh) || action_status=$?
+    else
+      (cd "$SQUIRREL_WORKDIR" && DEVELOPER_DIR="$effective_developer_dir" ./action-install.sh) || action_status=$?
+    fi
+  elif bool_true "$NO_DOWNLOAD"; then
+    (cd "$SQUIRREL_WORKDIR" && no_download=1 ./action-install.sh) || action_status=$?
+  else
+    (cd "$SQUIRREL_WORKDIR" && ./action-install.sh) || action_status=$?
+  fi
+
+  if [[ -n "$alias_root" ]]; then
+    rm -rf -- "$alias_root"
+  fi
+  return "$action_status"
+}
+
 prepare_squirrel_dependencies() {
   if [[ "$ACTION" == "list" ]]; then
     return 0
@@ -535,11 +566,7 @@ prepare_squirrel_dependencies() {
       echo "[WARN] Squirrel action-install.sh not found; skipping dependency preinstall" >&2
     else
       printf '[INFO] preparing Squirrel binary dependencies with action-install.sh\n'
-      if bool_true "$NO_DOWNLOAD"; then
-        (cd "$SQUIRREL_WORKDIR" && no_download=1 ./action-install.sh)
-      else
-        (cd "$SQUIRREL_WORKDIR" && ./action-install.sh)
-      fi
+      run_squirrel_action_install
     fi
   fi
 

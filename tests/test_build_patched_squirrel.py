@@ -1900,6 +1900,55 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("CODE_SIGNING_ALLOWED=NO", xcodebuild_log)
         self.assertIn("INFOPLIST_KEY_LSRegisterProhibited=YES", xcodebuild_log)
 
+    def test_dependency_preinstall_aliases_spaceful_developer_dir(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-squirrel-xcode-space-") as tmp:
+            tmp_path = Path(tmp)
+            workdir = _fake_patched_squirrel_workdir(tmp_path)
+            developer_dir = tmp_path / "Xcode Beta" / "Contents" / "Developer"
+            developer_dir.mkdir(parents=True)
+            effective_developer_dir = tmp_path / "effective-developer-dir.txt"
+            action_install = workdir / "action-install.sh"
+            action_install.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "[[ \"$DEVELOPER_DIR\" != *' '* ]]\n"
+                "[[ -d \"$DEVELOPER_DIR\" ]]\n"
+                "printf '%s' \"$DEVELOPER_DIR\" > \"$EFFECTIVE_DEVELOPER_DIR_LOG\"\n"
+                "mkdir -p lib Frameworks/Sparkle.framework bin\n"
+                "touch lib/librime.1.dylib bin/rime-install\n",
+                encoding="utf-8",
+            )
+            action_install.chmod(0o755)
+            fake_xcodebuild = tmp_path / "xcodebuild"
+            fake_xcodebuild.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"$1\" == '-version' ]]; then echo 'Xcode 27.0'; exit 0; fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake_xcodebuild.chmod(0o755)
+
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "build_patched_squirrel.sh"), "build"],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "DEVELOPER_DIR": str(developer_dir),
+                    "EFFECTIVE_DEVELOPER_DIR_LOG": str(effective_developer_dir),
+                    "RAG_IME_XCODEBUILD": str(fake_xcodebuild),
+                    "RAG_IME_SQUIRREL_PREINSTALL": "1",
+                    "RAG_IME_SQUIRREL_WORKDIR": str(workdir),
+                    "RAG_IME_SQUIRREL_DERIVED_DATA": str(tmp_path / "derived-data"),
+                },
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            observed = effective_developer_dir.read_text(encoding="utf-8")
+            self.assertNotIn(" ", observed)
+
     def test_install_action_copies_app_and_installs_rag_config(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-squirrel-install-") as tmp:
