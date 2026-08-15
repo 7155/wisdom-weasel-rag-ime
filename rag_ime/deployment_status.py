@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import plistlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -194,16 +193,6 @@ def audit_installed_product(
         installed_root=app_support / "Agent" / "config" / "skills",
         required="piRuntime" in required or "piSkills" in required,
     )
-    components["roomRuntimeResources"] = _room_runtime_resources_component(
-        source_root=repo_root / "integrations" / "pi",
-        installed_root=app_support / "app" / "integrations" / "pi",
-        required="sidecar" in required or "roomRuntimeResources" in required,
-    )
-    components["roomKernelMode"] = _room_kernel_mode_component(
-        plist_path=home / "Library" / "LaunchAgents" / "com.rag-ime.sidecar.plist",
-        required="sidecar" in required or "roomKernelMode" in required,
-    )
-
     issues = [
         {"component": name, "code": item["code"], "detail": item["detail"]}
         for name, item in components.items()
@@ -232,47 +221,6 @@ def audit_installed_product(
             if issues
             else "No canonical installed product commit was found."
         ),
-    }
-
-
-def _room_kernel_mode_component(*, plist_path: Path, required: bool) -> dict[str, Any]:
-    try:
-        with plist_path.open("rb") as source:
-            payload = plistlib.load(source)
-    except (FileNotFoundError, OSError, plistlib.InvalidFileException):
-        payload = None
-    environment = _mapping(
-        payload.get("EnvironmentVariables") if isinstance(payload, Mapping) else None
-    )
-    mode = _text(environment.get("RAG_IME_ROOM_KERNEL_MODE"))
-    installed = isinstance(payload, Mapping)
-    active = mode == "kernel_only"
-    if not installed:
-        ok = not required
-        code = "not_installed"
-        detail = "Room Kernel launch configuration is not installed."
-    elif not mode:
-        ok = False
-        code = "legacy_fallback"
-        detail = "Sidecar has no Room Kernel mode and will silently run the legacy Room route."
-    elif not active:
-        ok = False
-        code = "inactive_mode"
-        detail = f"Sidecar Room Kernel mode is {mode!r}; the release requires 'kernel_only'."
-    else:
-        ok = True
-        code = "ready"
-        detail = "Sidecar is pinned to the single production Room V2 Kernel route."
-    return {
-        "id": "roomKernelMode",
-        "ok": ok,
-        "code": code,
-        "detail": detail,
-        "required": required,
-        "installed": installed,
-        "current": active,
-        "plistPath": str(plist_path),
-        "mode": mode,
     }
 
 
@@ -528,62 +476,6 @@ def _pi_skills_component(
         "current": current,
         "sourcePath": str(source_root),
         "installedPath": str(installed_root),
-        "skills": sorted(source_skills or {}),
-    }
-
-
-def _room_runtime_resources_component(
-    *,
-    source_root: Path,
-    installed_root: Path,
-    required: bool,
-) -> dict[str, Any]:
-    source_policy = sha256_file(source_root / "room-skill-policy.json")
-    source_skills = _product_skill_digests(source_root / "skills")
-    installed_policy = sha256_file(installed_root / "room-skill-policy.json")
-    installed_skills = (
-        _selected_skill_digests(installed_root / "skills", tuple(source_skills))
-        if source_skills
-        else None
-    )
-    source_available = bool(source_policy and source_skills)
-    installed = bool(installed_policy and installed_skills)
-    current = bool(
-        source_available
-        and installed_policy == source_policy
-        and installed_skills == source_skills
-    )
-    if not source_available:
-        ok = not required
-        code = "source_unavailable"
-        detail = "Room runtime resources are unavailable" + (
-            " but are required." if required else "."
-        )
-    elif not installed:
-        ok = not required
-        code = "not_installed"
-        detail = "Room runtime resources are not installed" + (
-            " but are required." if required else "."
-        )
-    elif not current:
-        ok = False
-        code = "source_mismatch"
-        detail = "Room runtime policy or skills do not match this source tree."
-    else:
-        ok = True
-        code = "ready"
-        detail = "Room runtime policy and skills match this source tree."
-    return {
-        "id": "roomRuntimeResources",
-        "ok": ok,
-        "code": code,
-        "detail": detail,
-        "required": required,
-        "installed": installed,
-        "current": current,
-        "sourcePath": str(source_root),
-        "installedPath": str(installed_root),
-        "policySha256": source_policy or "",
         "skills": sorted(source_skills or {}),
     }
 

@@ -93,21 +93,21 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("../pi/packages/rag-ime-runtime-host", installer)
         self.assertIn("install_managed_pi_runtime.py", installer)
         self.assertIn("--no-activate", installer)
-        self.assertIn("smoke_room_v2_staged_runtime.py", installer)
+        self.assertIn("smoke_pi_session_staged_runtime.py", installer)
         self.assertIn("--deterministic-test-gate", installer)
         self.assertIn("--acceptance-report", installer)
         self.assertLess(
             installer.index("--no-activate"),
-            installer.index("smoke_room_v2_staged_runtime.py"),
+            installer.index("smoke_pi_session_staged_runtime.py"),
         )
         self.assertLess(
-            installer.index("smoke_room_v2_staged_runtime.py"),
+            installer.index("smoke_pi_session_staged_runtime.py"),
             installer.index("--acceptance-report"),
         )
         self.assertIn("--require piSkills", installer)
-        self.assertIn("--require roomKernelMode", installer)
+        self.assertNotIn("--require roomKernelMode", installer)
         self.assertIn("RAG_IME_INSTALL_AGENT_GATEWAY=0", installer)
-        self.assertIn("RAG_IME_ROOM_KERNEL_MODE=kernel_only", installer)
+        self.assertNotIn("RAG_IME_ROOM_KERNEL_MODE", installer)
         self.assertIn('"$ROOT/scripts/install_sidecar_launch_agent.sh"', installer)
         self.assertLess(
             installer.index('"$ROOT/scripts/install_mlx_predictor_launch_agent.sh"'),

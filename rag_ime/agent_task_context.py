@@ -3,9 +3,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from .agent_prompt_support import bounded_text
-
-
 class AgentTaskContextResolver:
     """Resolve the one authoritative task bound to a Session."""
 
@@ -14,15 +11,9 @@ class AgentTaskContextResolver:
         *,
         delegation: Any,
         rooms: Any,
-        room_capabilities: Any,
-        room_kernel: Any,
-        room_requirements: Any,
     ) -> None:
         self.delegation = delegation
         self.rooms = rooms
-        self.room_capabilities = room_capabilities
-        self.room_kernel = room_kernel
-        self.room_requirements = room_requirements
 
     def trigger(self, session_id: str) -> str:
         if self.delegation.owns_session(session_id):
@@ -48,10 +39,7 @@ class AgentTaskContextResolver:
         subagent = self._subagent_task(session_id)
         if subagent:
             return subagent
-        kernel_task = self._kernel_task(session_id)
-        if kernel_task:
-            return kernel_task
-        return self._legacy_room_work(session_id)
+        return self._room_work(session_id)
 
     def _subagent_task(
         self,
@@ -71,89 +59,7 @@ class AgentTaskContextResolver:
             "state": str(run.get("state") or ""),
         }
 
-    def _kernel_task(
-        self,
-        session_id: str,
-    ) -> dict[str, object]:
-        identity = self.room_capabilities.runtime_identity(
-            session_id
-        )
-        if not isinstance(identity, Mapping):
-            return {}
-        task_id = str(identity.get("taskId") or "")
-        dispatch_id = str(identity.get("dispatchId") or "")
-        try:
-            task = self.room_kernel.task(task_id)
-        except (KeyError, ValueError):
-            return {}
-        requirement_context = (
-            self.room_requirements.dispatch_context(
-                dispatch_id
-            )
-            if dispatch_id
-            else None
-        )
-        criterion_ids = [
-            str(value)
-            for value in task.get(
-                "acceptanceCriterionIds"
-            )
-            or []
-            if str(value).strip()
-        ]
-        catalog = (
-            requirement_context.get("catalog")
-            if isinstance(requirement_context, Mapping)
-            and isinstance(
-                requirement_context.get("catalog"), Mapping
-            )
-            else {}
-        )
-        criteria_by_id = {
-            str(value.get("criterionId") or ""): value
-            for value in catalog.get("acceptanceCriteria") or []
-            if isinstance(value, Mapping)
-        }
-        criteria = [
-            str(
-                criteria_by_id.get(criterion_id, {}).get(
-                    "statement"
-                )
-                or criterion_id
-            )
-            for criterion_id in criterion_ids
-        ]
-        originals = [
-            bounded_text(value.get("text"), maximum=2_000)
-            for value in (
-                requirement_context.get("originalRequirements")
-                if isinstance(requirement_context, Mapping)
-                else []
-            )
-            if isinstance(value, Mapping)
-            and bounded_text(value.get("text"), maximum=2_000)
-        ]
-        return {
-            "kind": "room_kernel_task",
-            "objective": str(task.get("objective") or ""),
-            "expectedOutput": str(
-                task.get("expectedOutput") or ""
-            ),
-            "acceptanceCriteria": criteria,
-            "originalRequirements": originals,
-            "requirementCatalogRevisionId": str(
-                catalog.get("catalogRevisionId") or ""
-            ),
-            "blockers": [
-                str(value.get("statement") or "")
-                for value in catalog.get("openObstacles") or []
-                if isinstance(value, Mapping)
-                and str(value.get("statement") or "").strip()
-            ],
-            "state": str(task.get("state") or ""),
-        }
-
-    def _legacy_room_work(
+    def _room_work(
         self,
         session_id: str,
     ) -> dict[str, object]:

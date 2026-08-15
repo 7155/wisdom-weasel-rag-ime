@@ -26,6 +26,7 @@ const groupedQuestionsSchemaVersion = "rag-ime.grouped-questions.v2";
 const resolvedReviewRunIds = new Set<string>();
 const nonRetryableFailureTtlMs = 30_000;
 const maxInlineToolResultBytes = 24 * 1024;
+const maxTurnToolResultBytes = 48 * 1024;
 const maxStoredToolOutputs = 32;
 const maxStoredToolOutputBytes = 4 * 1024 * 1024;
 const toolOutputPrefix = "tool-output://";
@@ -41,6 +42,7 @@ const recentNonRetryableFailures = new Map<
   string,
   { atMs: number; errorCode: string; message: string }
 >();
+let turnInlineToolResultBytes = 0;
 
 class GatewayToolError extends Error {
   readonly errorCode: string;
@@ -215,6 +217,13 @@ type ToolParams = {
   expectedOutput?: string;
   acceptanceCriteria?: string[];
   outputSchema?: Record<string, unknown>;
+  modelProfile?: string;
+  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  access?: "inherit" | "read_only" | "write";
+  allowedTools?: string[];
+  piSkillsEnabled?: boolean;
+  codexSkillsEnabled?: boolean;
+  workspaceRoots?: string[];
   tasks?: Array<{
     agent: "researcher" | "planner" | "worker" | "reviewer" | "delegate";
     version?: "1";
@@ -222,6 +231,13 @@ type ToolParams = {
     expectedOutput: string;
     acceptanceCriteria: string[];
     outputSchema?: Record<string, unknown>;
+    modelProfile?: string;
+    thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+    access?: "inherit" | "read_only" | "write";
+    allowedTools?: string[];
+    piSkillsEnabled?: boolean;
+    codexSkillsEnabled?: boolean;
+    workspaceRoots?: string[];
   }>;
   todoTask?: string;
   todoPhase?: string;
@@ -231,6 +247,8 @@ type ToolParams = {
   contextMode?: "fresh" | "fork";
   wait?: boolean;
   batchId?: string;
+  targetRunId?: string;
+  message?: string;
   itemId?: string;
   title?: string;
   status?: string;
@@ -1201,12 +1219,13 @@ const toolSpecs: ToolSpec[] = [
   {
     name: "agents",
     label: "多 Agent 协作",
-    description: "管理当前 Session 的有界子 Agent 委派；Room 使用独立的受管工具目录。",
-    operations: ["catalog", "delegate", "status", "artifact", "abort"],
+    description: "管理当前 Session 的有界子 Agent 委派，并允许同一委派树内的子 Agent 直接互调；Room 使用独立的受管工具目录。",
+    operations: ["catalog", "delegate", "status", "call", "artifact", "abort"],
     progress: {
       catalog: "正在读取可用协作角色",
       delegate: "正在启动受限子 Agent",
       status: "正在检查协作进度",
+      call: "正在直接调用目标子 Agent",
       artifact: "正在读取有界协作记录",
       abort: "正在停止协作任务",
     },
@@ -1215,8 +1234,9 @@ const toolSpecs: ToolSpec[] = [
       "fresh 只携带任务，fork 继承当前会话上下文；涉及当前讨论的复核或规划时才使用 fork。",
       "用户明确要求先规划再执行时，优先委派只读 planner：它只返回带依赖、风险、产物和验收证据的方案；用户确认后再把可执行步骤写入 todo，不能把规划结果当作已经执行。",
       "当前 Session 已有 Todo 时，delegate 必须携带当前 in_progress 的 todoTask 和 todoPhase；先更新 Todo，再让一个或两个子 Agent 共同处理该项。",
-      "子 Agent 是临时执行单元，结果交回当前会话，不要把它描述成长期群聊成员。",
-      "Room 中只使用当前 Dispatch 披露的 room_state、room_collaborate、room_post、room_commit；并行伙伴工作必须由 room_collaborate 的 child Dispatch 回执证明，不要通过 agents 或本地重复检索模拟 Room 分工。",
+      "子 Agent 是临时执行单元；status 返回同一委派树的 peers。需要即时协作时，使用 call 和目标 runId 直接把消息投递到对方 Pi Session；对方也可用 call 回调。",
+      "call 只负责点对点投递，不创建第二套消息总线，不改变目标状态，也不替代最终结果回传和主持 Session 验收。",
+      "Room 中通过 room_partner 查看正式伙伴、委派有界子任务并接收其普通 Pi Session 结果；临时微型子 Agent 仍使用 agents。不要通过本地重复检索模拟正式 Room 分工。",
       "worker 仍没有任意文件或 Shell 权限；所有控制中心写操作继续经过原生审批。",
       "子 Agent 返回只代表证据已交回。主持伙伴必须按验收条件核对结果，再用 todo 更新关联任务；失败、取消或未核验结果不得标记 completed。",
     ],
@@ -1979,7 +1999,9 @@ function modelVisibleResult(value: unknown, depth = 0): unknown {
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
-      .filter(([key]) => key !== "agentBlocks")
+      // Full native/action receipts remain durable for audit and UI recovery,
+      // but only the compact verification projection enters model context.
+      .filter(([key]) => key !== "agentBlocks" && key !== "auditReceipt")
       .map(([key, item]) => [key, modelVisibleResult(item, depth + 1)]),
   );
 }
@@ -2050,8 +2072,19 @@ function storeToolOutput(toolCallId: string, value: unknown): {
 
 function boundedToolResult(toolCallId: string, value: unknown): unknown {
   const visible = modelVisibleResult(value);
-  const serialized = JSON.stringify(visible);
-  if (Buffer.byteLength(serialized, "utf8") <= maxInlineToolResultBytes) return visible;
+  const serialized = JSON.stringify(visible) ?? "null";
+  const serializedBytes = Buffer.byteLength(serialized, "utf8");
+  const remainingTurnBytes = Math.max(
+    0,
+    maxTurnToolResultBytes - turnInlineToolResultBytes,
+  );
+  if (
+    serializedBytes <= maxInlineToolResultBytes
+    && serializedBytes <= remainingTurnBytes
+  ) {
+    turnInlineToolResultBytes += serializedBytes;
+    return visible;
+  }
   const stored = storeToolOutput(toolCallId, value);
   const summary = (
     visible
@@ -2061,12 +2094,19 @@ function boundedToolResult(toolCallId: string, value: unknown): unknown {
   )
     ? String((visible as Record<string, unknown>).summary)
     : "工具已完成，结果过长，以下仅显示有界预览。";
-  const preview = utf8Prefix(toolResultText(value), Math.floor(maxInlineToolResultBytes / 2));
-  return {
+  const resultText = toolResultText(value);
+  const previewBudget = Math.max(
+    0,
+    Math.min(
+      Math.floor(maxInlineToolResultBytes / 2),
+      remainingTurnBytes - 1_024,
+    ),
+  );
+  const bounded = {
     summary,
-    preview,
+    ...(previewBudget > 0 ? { preview: utf8Prefix(resultText, previewBudget) } : {}),
     truncated: true,
-    originalBytes: Buffer.byteLength(toolResultText(value), "utf8"),
+    originalBytes: Buffer.byteLength(resultText, "utf8"),
     ...(stored
       ? {
           fullOutputRef: stored.ref,
@@ -2077,6 +2117,11 @@ function boundedToolResult(toolCallId: string, value: unknown): unknown {
           omissionReason: "result exceeds the managed local output limit",
         }),
   };
+  turnInlineToolResultBytes = Math.min(
+    maxTurnToolResultBytes,
+    turnInlineToolResultBytes + Buffer.byteLength(JSON.stringify(bounded), "utf8"),
+  );
+  return bounded;
 }
 
 function readStoredToolOutput(params: ToolParams): unknown {
@@ -2274,6 +2319,33 @@ function parametersFor(spec: ToolSpec) {
         maxProperties: 128,
         additionalProperties: true,
       },
+      modelProfile: {
+        type: "string",
+        minLength: 3,
+        maxLength: 240,
+        pattern: "^[^\\s/]+/[^\\s/]+$",
+      },
+      thinkingLevel: {
+        type: "string",
+        enum: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+      },
+      access: { type: "string", enum: ["inherit", "read_only", "write"] },
+      allowedTools: {
+        type: "array",
+        minItems: 1,
+        maxItems: 64,
+        uniqueItems: true,
+        items: { type: "string", minLength: 1, maxLength: 120 },
+      },
+      piSkillsEnabled: { type: "boolean" },
+      codexSkillsEnabled: { type: "boolean" },
+      workspaceRoots: {
+        type: "array",
+        minItems: 1,
+        maxItems: 4,
+        uniqueItems: true,
+        items: { type: "string", minLength: 1, maxLength: 1024 },
+      },
       tasks: {
         type: "array",
         minItems: 1,
@@ -2302,6 +2374,33 @@ function parametersFor(spec: ToolSpec) {
               maxProperties: 128,
               additionalProperties: true,
             },
+            modelProfile: {
+              type: "string",
+              minLength: 3,
+              maxLength: 240,
+              pattern: "^[^\\s/]+/[^\\s/]+$",
+            },
+            thinkingLevel: {
+              type: "string",
+              enum: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+            },
+            access: { type: "string", enum: ["inherit", "read_only", "write"] },
+            allowedTools: {
+              type: "array",
+              minItems: 1,
+              maxItems: 64,
+              uniqueItems: true,
+              items: { type: "string", minLength: 1, maxLength: 120 },
+            },
+            piSkillsEnabled: { type: "boolean" },
+            codexSkillsEnabled: { type: "boolean" },
+            workspaceRoots: {
+              type: "array",
+              minItems: 1,
+              maxItems: 4,
+              uniqueItems: true,
+              items: { type: "string", minLength: 1, maxLength: 1024 },
+            },
           },
         },
       },
@@ -2310,6 +2409,8 @@ function parametersFor(spec: ToolSpec) {
       contextMode: { type: "string", enum: ["fresh", "fork"] },
       wait: { type: "boolean" },
       batchId: { type: "string", maxLength: 240 },
+      targetRunId: { type: "string", minLength: 1, maxLength: 240 },
+      message: { type: "string", minLength: 1, maxLength: 4000 },
       artifactId: { type: "string", maxLength: 240 },
       status: { type: "string", maxLength: 40 },
     },
@@ -2342,6 +2443,13 @@ function parametersFor(spec: ToolSpec) {
           ],
         },
       },
+      {
+        if: {
+          properties: { op: { const: "call" } },
+          required: ["op"],
+        },
+        then: { required: ["targetRunId", "message"] },
+      },
     ];
   }
   return schema;
@@ -2369,7 +2477,7 @@ function specsForToolProfile(specs: ToolSpec[]) {
         knowledge: ["list_bases", "search", "find", "open", "status"],
         models: ["status", "profiles", "probe", "cache_stats"],
         runtime: ["health", "components", "diagnose"],
-        agents: ["catalog", "delegate", "status", "artifact", "abort"],
+        agents: ["catalog", "delegate", "status", "call", "artifact", "abort"],
         agent_schedule: ["list", "runs"],
         todo: ["view"],
         agent_goal: ["list"],
@@ -2698,6 +2806,9 @@ export default function (pi: any) {
 
   if (typeof pi.getAllTools === "function" && typeof pi.on === "function") {
     let registered = false;
+    pi.on("before_agent_start", () => {
+      turnInlineToolResultBytes = 0;
+    });
     pi.on("session_start", () => {
       if (registered) return;
       registerEnabledSpecs();

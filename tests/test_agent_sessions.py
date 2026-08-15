@@ -1109,32 +1109,10 @@ class AgentSessionStoreTests(unittest.TestCase):
         self.assertEqual(approval["state"], "pending")
         self.assertEqual(self.store.list_approvals(session_id=session_id, now_ms=2_000), [approval])
 
-        rebound = self.store.rebind_pending_approval(
-            str(approval["approvalId"]),
-            expected_payload_sha256="a" * 64,
-            payload_sha256="f" * 64,
-            preview={
-                "summary": "关闭模糊音",
-                "baseState": {"roomInvocationReceiptId": "invoke:room:1"},
-            },
-            now_ms=1_500,
-            causal_turn_id="root:room:1",
-        )
-        self.assertEqual(rebound["payloadSha256"], "f" * 64)
-        self.assertEqual(
-            rebound["preview"]["baseState"]["roomInvocationReceiptId"],
-            "invoke:room:1",
-        )
-        self.assertTrue(rebound["causalMetadata"]["roomBound"])
-        self.assertEqual(
-            rebound["causalMetadata"]["turnId"],
-            "root:room:1",
-        )
-
         decided = self.store.decide_approval(
             str(approval["approvalId"]),
             approved=True,
-            payload_sha256="f" * 64,
+            payload_sha256="a" * 64,
             decided_at_ms=2_000,
         )
         self.assertEqual(decided["state"], "approved")

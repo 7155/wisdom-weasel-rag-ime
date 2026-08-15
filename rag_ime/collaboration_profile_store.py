@@ -417,28 +417,10 @@ class CollaborationProfileStore:
         return next_epoch
 
     def _affected_active_roots(self, profile_id: str, content_hash: str | None) -> list[str]:
-        if not content_hash:
-            return []
-        marker = f"rag-ime-definition://collaboration-profile/{profile_id}"
-        rows = self.conn.execute(
-            """SELECT root_id FROM (
-                 SELECT DISTINCT d.root_id AS root_id
-               FROM room_v2_capability_runtime_bindings b
-               JOIN room_kernel_dispatches d ON d.target_session_id = b.session_id
-               WHERE b.state IN ('prepared', 'active')
-                 AND d.state IN ('pending', 'leased', 'running', 'retry_wait', 'timer_wait')
-                 AND instr(b.participant_binding_json, ?) > 0
-                 AND instr(b.participant_binding_json, ?) > 0
-                 UNION
-                 SELECT p.root_id
-                 FROM room_v2_root_profile_pins p
-                 JOIN room_kernel_roots r ON r.root_id=p.root_id
-                 WHERE p.profile_id=? AND p.bundle_content_hash=?
-                   AND r.state NOT IN ('completed','cancelled','failed')
-               ) ORDER BY root_id""",
-            (marker, content_hash, profile_id, content_hash),
-        ).fetchall()
-        return [str(row[0]) for row in rows]
+        del profile_id, content_hash
+        # Profiles configure future Session participants. A profile update no
+        # longer walks a parallel Room Kernel graph.
+        return []
 
     def _revoke_profile_bindings(self, profile_id: str, content_hash: str | None, now: int) -> None:
         if not content_hash:

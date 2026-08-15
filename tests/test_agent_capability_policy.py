@@ -109,59 +109,23 @@ class _Extensions:
             ],
         }
 class _RoomCapabilityGateway:
-    def __init__(self, *, workspace_access: str = "") -> None:
+    def __init__(self, *, dispatch_active: bool = False) -> None:
         self.room_calls: list[tuple[str, dict[str, object]]] = []
-        self.product_authorization_calls = 0
-        self.product_execution_calls: list[dict[str, object]] = []
-        self.workspace_access = workspace_access
+        self.dispatch_active = dispatch_active
 
-    def execute_room_capability_tool(
+    def execute_room_partner_tool(
         self,
         session_id: str,
-        tool: str,
         args: dict[str, object],
         *,
         tool_call_id: str,
-        load_receipt_id: str,
     ) -> dict[str, object]:
-        del session_id, tool_call_id, load_receipt_id
-        self.room_calls.append((tool, dict(args)))
-        return {"ok": True, "tool": tool}
+        del session_id, tool_call_id
+        self.room_calls.append(("room_partner", dict(args)))
+        return {"operation": str(args.get("op") or "list")}
 
-    def authorize_room_product_tool(
-        self,
-        session_id: str,
-        tool: str,
-        args: dict[str, object],
-        *,
-        tool_call_id: str,
-        load_receipt_id: str,
-    ) -> dict[str, object]:
-        del session_id, tool, args, tool_call_id, load_receipt_id
-        self.product_authorization_calls += 1
-        result: dict[str, object] = {
-            "invocationReceipt": {"receiptId": "invocation:blocked"}
-        }
-        if self.workspace_access:
-            result["workspaceAccess"] = self.workspace_access
-        return result
-
-    def record_room_product_tool_execution(
-        self,
-        session_id: str,
-        invocation_receipt_id: str,
-        *,
-        status: str,
-        result_hash: str,
-    ) -> dict[str, object]:
-        receipt = {
-            "sessionId": session_id,
-            "invocationReceiptId": invocation_receipt_id,
-            "status": status,
-            "resultHash": result_hash,
-        }
-        self.product_execution_calls.append(receipt)
-        return {"executionReceipt": receipt}
+    def _active_room_dispatch_authorizes_work(self, _session_id: str) -> bool:
+        return self.dispatch_active
 
 
 
@@ -662,59 +626,6 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
         self.assertTrue(captured[0].source_read_only)
         self.assertFalse(captured[0].allow_network)
 
-    def test_room_pre_collaboration_shell_uses_the_source_read_only_sandbox(
-        self,
-    ) -> None:
-        session = self.sessions.create(
-            title="Facilitator before peer lanes",
-            mode="coordinator",
-            tool_profile_version="control-center-v1",
-            execution_mode="full_trust",
-            workspace_roots=[str(self.root)],
-        )
-        captured = []
-
-        def execute(prepared):
-            captured.append(prepared)
-            return {
-                "schemaVersion": "rag-ime.workspace-command-receipt.v1",
-                "mutationApplied": False,
-                "exitCode": 0,
-                "output": "OK\n",
-                "sourceReadOnly": prepared.source_read_only,
-            }
-
-        room_gateway = _RoomCapabilityGateway(
-            workspace_access="source_read_only"
-        )
-        gateway = self._gateway(
-            collaboration=room_gateway,
-            workspace_harness=WorkspaceHarness(executor=execute),
-        )
-
-        response = gateway.execute(
-            {
-                "schemaVersion": "rag-ime.agent-tool-call.v1",
-                "sessionId": str(session["id"]),
-                "tool": "workspace_shell",
-                "toolCallId": "tool:facilitator-pre-collaboration",
-                "args": {
-                    "op": "run",
-                    "command": "python3 -m unittest tests.test_example",
-                    "cwd": str(self.root),
-                },
-            }
-        )
-
-        self.assertTrue(response["ok"])
-        self.assertNotIn("approvalRequired", response["result"])
-        self.assertEqual(len(captured), 1)
-        self.assertTrue(captured[0].source_read_only)
-        self.assertFalse(captured[0].allow_network)
-        self.assertEqual(room_gateway.product_authorization_calls, 1)
-        self.assertEqual(len(room_gateway.product_execution_calls), 1)
-
-
     def test_read_only_room_public_and_workspace_read_surfaces_remain_usable(
         self,
     ) -> None:
@@ -733,20 +644,19 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
         gateway = self._gateway(collaboration=room_gateway)
         session_id = str(session["id"])
 
-        for index, tool in enumerate(("room_state", "room_post", "room_commit")):
-            result = gateway.execute(
-                {
-                    "schemaVersion": "rag-ime.agent-tool-call.v1",
-                    "sessionId": session_id,
-                    "tool": tool,
-                    "toolCallId": f"tool:room-public:{index}",
-                    "args": {},
-                }
-            )
-            self.assertTrue(result["ok"])
+        result = gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": session_id,
+                "tool": "room_partner",
+                "toolCallId": "tool:room-partner:list",
+                "args": {"op": "list"},
+            }
+        )
+        self.assertTrue(result["ok"])
         self.assertEqual(
             [tool for tool, _args in room_gateway.room_calls],
-            ["room_state", "room_post", "room_commit"],
+            ["room_partner"],
         )
 
         read_result = gateway.execute(
@@ -781,10 +691,6 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
         self.assertIn(
             lsp_status["result"]["state"],
             {"ready", "available", "unavailable"},
-        )
-        self.assertEqual(
-            [receipt["status"] for receipt in room_gateway.product_execution_calls],
-            ["applied", "applied", "applied"],
         )
 
     def test_live_read_only_policy_rejects_stale_grant_before_room_auth_and_apply(
@@ -853,7 +759,6 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
             )
         collaboration = gateway.collaboration
         self.assertIsInstance(collaboration, _RoomCapabilityGateway)
-        self.assertEqual(collaboration.product_authorization_calls, 0)
         with self.assertRaisesRegex(ValueError, "read-only policy"):
             gateway._execute_product_tool(
                 request={},
@@ -862,7 +767,6 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
                 args={"op": "apply"},
                 spec=_TOOL_SPEC_BY_ID["workspace_patch"],
                 operation="apply",
-                room_authorization=None,
             )
         with self.assertRaisesRegex(ValueError, "read-only policy"):
             gateway.apply_approval(approved)

@@ -1,6 +1,6 @@
 ---
 name: quality-gate
-description: Gather fresh evidence for a delivery claim and map it to the confirmed acceptance checks; the Kernel, not the model, decides whether work may settle.
+description: Gather fresh evidence for a delivery claim and map it to the confirmed acceptance checks; evidence, not model prose, decides what may be claimed.
 when:
   - 即将交付、移交、复核或发布结果
 does: 按原始需求和验收收集新鲜证据。
@@ -12,14 +12,14 @@ notFor:
 
 # Quality Gate
 
-This Skill prepares evidence; it neither approves delivery nor computes the
-authoritative result.
+This Skill prepares evidence; it does not manufacture approval or completion.
 
 ## Core Principle
 
 No completion claim without fresh, claim-shaped evidence. Tests, diffs, UI
 inspection, Provider payloads, installed-runtime receipts, and external results
-prove different things. The Kernel binds aliases and derives coverage and readiness.
+prove different things. The Facilitator maps them to acceptance and owns the
+user-facing claim.
 For code, a complete matrix is evidence-ready. Review is optional:
 the Facilitator decides whether risk warrants `independent-review` after
 integration; review is not mandatory for every task.
@@ -40,15 +40,10 @@ integration; review is not mandatory for every task.
    and rollback.
 6. Separate product defects, test/canary defects, and external Provider
    instability. Record residual risk and its owner.
-7. Translate the result into the active lifecycle Tool's exact private
-   schema. For `room_commit`, put only verified items in `evidence` as
-   `{"acceptance":"AC-1","refs":["<evidenceRef>"]}`. Put failures and unknowns
-   in private summary and risk fields. The user-facing
-   `publicSummary` states outcome, behavioral verification, uncertainty, and
-   next step without internal aliases or refs.
-8. For `decision=deliver`, send only loaded-schema fields. Do not send
-   `acceptanceAliases`; it belongs to `decision=handoff`, while current-task
-   coverage belongs in `evidence`.
+7. Return a bounded evidence matrix to the caller. Put failures and unknowns in
+   the result instead of hiding them behind a success summary.
+8. The Facilitator integrates the matrix, decides whether optional independent
+   review is warranted, and makes only claims supported by fresh evidence.
 
 ## Evidence Matrix
 
@@ -65,7 +60,7 @@ For a user-facing result, also record the visibility delta:
 | Surface | Target | Observed | Missing/degraded behavior | Evidence | Disposition |
 |---|---|---|---|---|---|
 
-This table cites existing criteria and has no authority to set a result or Kernel verdict.
+This table cites existing criteria and has no authority to waive a requirement.
 A missing named surface remains unverified unless a confirmed requirement
 revision removes it; an internal-only item may state a visibility exemption.
 
@@ -80,16 +75,14 @@ Match evidence to the claim:
 
 ## Managed Room Boundary
 
-- Work only on the current participant's bounded responsibility. The Kernel
-  owns WorkItem settlement and any review handoff; the Facilitator owns
-  integration and decides whether review is warranted. This Skill cannot
-  complete the Root or choose the Reviewer.
+- Work only on the current participant's bounded responsibility. The
+  Facilitator owns integration and decides whether review is warranted. This
+  Skill cannot emit the Room final or silently expand scope.
 - When review is chosen, implementation evidence hands off after integration
-  to a distinct Reviewer. Do not self-review or use `room_collaborate` as the
-  review route. When review is not chosen, integrated evidence proceeds to the
-  same Kernel gates without manufacturing a review stage.
-- Use `room_state` for current authority and `room_commit` for evidence, wait,
-  block, or handoff. Rejected/stale authority cannot be replaced by model state.
+  to a distinct Reviewer through a bounded formal partner delegation. Do not
+  self-review. When review is not chosen, do not manufacture a review stage.
+- Return the evidence matrix through the partner Session result. Use
+  `room_partner(operation="post")` only for material public progress.
 - Keep private summaries, refs, workspace paths, and participant details
   private. Only the Facilitator/reporter owns the final public Room summary.
 - Only the Facilitator/reporter emits the final public summary.
@@ -98,13 +91,13 @@ Match evidence to the claim:
 
 - `deliver recommendation`: all required evidence is fresh and unblocked; if
   the Facilitator chose review, advance to the distinct post-integration
-  Reviewer, otherwise advance to Kernel settlement with integration evidence;
+  Reviewer, otherwise let the Facilitator produce an evidence-backed result;
 - `continue`: a legal action can produce missing evidence;
 - `handoff`: another capability or owner is needed;
 - `wait`: a user, permission, credential, or external signal is needed;
 - `blocked`: bounded alternatives are exhausted.
 
-These are proposals, never the Kernel's verdict.
+These are proposals, never automatic approval.
 
 ## Output Contract
 

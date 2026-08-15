@@ -1075,27 +1075,23 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "agent-tool-result.v1.json",
             )
 
-    def test_room_define_contract_routes_through_the_room_gateway(self) -> None:
+    def test_room_partner_contract_routes_through_the_room_gateway(self) -> None:
         calls = []
 
-        def execute_room_capability_tool(
+        def execute_room_partner_tool(
             session_id,
-            tool_name,
             args,
             *,
             tool_call_id,
-            load_receipt_id,
         ):
             calls.append(
                 {
                     "sessionId": session_id,
-                    "tool": tool_name,
                     "args": args,
                     "toolCallId": tool_call_id,
-                    "loadReceiptId": load_receipt_id,
                 }
             )
-            return {"ok": True, "result": {"created": True}}
+            return {"operation": "list", "partners": []}
 
         gateway = ControlToolGateway(
             sessions=self.store,
@@ -1105,31 +1101,28 @@ class ControlToolGatewayTests(unittest.TestCase):
             facade=self.facade,
             knowledge_client=self.knowledge,
             collaboration=SimpleNamespace(
-                execute_room_capability_tool=execute_room_capability_tool
+                execute_room_partner_tool=execute_room_partner_tool
             ),
         )
         request = {
             "schemaVersion": "rag-ime.agent-tool-call.v1",
             "sessionId": str(self.session["id"]),
-            "tool": "room_define",
-            "toolCallId": "tool:room-define",
-            "loadReceiptId": "load:room-define",
-            "args": {
-                "objective": "完成实现",
-                "expectedOutput": "可验证结果",
-            },
+            "tool": "room_partner",
+            "toolCallId": "tool:room-partner",
+            "args": {"op": "list"},
         }
 
-        self.assertEqual(gateway.execute(request)["result"], {"created": True})
+        self.assertEqual(
+            gateway.execute(request)["result"],
+            {"operation": "list", "partners": []},
+        )
         self.assertEqual(
             calls,
             [
                 {
                     "sessionId": str(self.session["id"]),
-                    "tool": "room_define",
                     "args": request["args"],
-                    "toolCallId": "tool:room-define",
-                    "loadReceiptId": "load:room-define",
+                    "toolCallId": "tool:room-partner",
                 }
             ],
         )
@@ -1378,6 +1371,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "runtime",
                 "configuration",
                 "agents",
+                "room_partner",
                 "browser",
                 "todo",
                 "agent_goal",
@@ -1485,7 +1479,13 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(desktop["riskLevel"], "R2")
         self.assertEqual(
             desktop["operationRisks"],
-            {"status": "R0", "list": "R0", "inspect": "R0", "act": "R2"},
+            {
+                "status": "R0",
+                "list": "R0",
+                "inspect": "R0",
+                "find": "R0",
+                "act": "R2",
+            },
         )
         self.assertTrue(
             all(
@@ -1724,6 +1724,54 @@ class ControlToolGatewayTests(unittest.TestCase):
         )["result"]
         self.assertEqual(other_todo["todo"]["phases"], [])
 
+    def test_subagent_profile_exposes_direct_peer_call(self) -> None:
+        class Delegation:
+            def __init__(self):
+                self.calls = []
+
+            def call(self, session_id, args):
+                self.calls.append((session_id, dict(args)))
+                return {
+                    "accepted": True,
+                    "targetRunId": args["targetRunId"],
+                    "delivery": "steer",
+                }
+
+        delegation = Delegation()
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            delegation=delegation,
+        )
+        self.session = self.store.set_runtime_policy(
+            str(self.session["id"]),
+            mode="assistant",
+            tool_profile_version="subagent-readonly-v1",
+            allowed_tools=["agents"],
+        )
+        manifest = next(
+            item
+            for item in gateway.runtime_manifests(self.session)
+            if item["name"] == "agents"
+        )
+        self.assertIn('"call"', json.dumps(manifest["parameters"]))
+
+        result = gateway.execute(
+            self._tool_call(
+                "agents",
+                "call",
+                targetRunId="subagent-run:peer",
+                message="请核对当前发现",
+            )
+        )["result"]
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["delivery"], "steer")
+        self.assertEqual(delegation.calls[0][0], str(self.session["id"]))
+        self.assertEqual(delegation.calls[0][1]["_toolCallId"], "tool:1")
+
     def test_coordinator_workspace_read_and_shell_use_hash_bound_native_approval(self) -> None:
         workspace = Path(self.tmp.name) / "workspace"
         workspace.mkdir()
@@ -1804,6 +1852,31 @@ class ControlToolGatewayTests(unittest.TestCase):
             self.store.agent_todo(str(coordinator["id"]))["counts"]["inProgress"],
             1,
         )
+
+    def test_native_workspace_browser_reuses_bounded_list_and_read_harness(self) -> None:
+        workspace = Path(self.tmp.name) / "browser-workspace"
+        (workspace / "src").mkdir(parents=True)
+        (workspace / "README.md").write_text("# Browser\n", encoding="utf-8")
+        coordinator = self.store.create(
+            title="workspace browser",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=3,
+        )
+
+        listed = self.gateway.workspace_list(
+            str(coordinator["id"]),
+            {"path": str(workspace), "depth": 1, "limit": 20},
+        )
+        read = self.gateway.workspace_read(
+            str(coordinator["id"]),
+            {"path": str(workspace / "README.md"), "limit": 65_536},
+        )
+
+        self.assertEqual(listed["schemaVersion"], "rag-ime.agent-workspace-list.v1")
+        self.assertEqual([item["name"] for item in listed["items"]], ["src", "README.md"])
+        self.assertEqual(read["schemaVersion"], "rag-ime.agent-workspace-read.v1")
+        self.assertEqual(read["content"], "# Browser\n")
 
     def test_workspace_read_routes_managed_resource_refs_to_authoritative_owners(self) -> None:
         coordinator = self.store.create(
@@ -2291,7 +2364,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertTrue(response["result"]["autoApproved"])
         self.assertFalse(response["result"]["approvalRequired"])
 
-    def test_room_per_action_tool_keeps_native_approval_and_seals_a_receipt(self) -> None:
+    def test_room_per_action_tool_uses_the_session_approval_only(self) -> None:
         self.session = self.store.set_runtime_policy(
             str(self.session["id"]),
             mode="coordinator",
@@ -2299,72 +2372,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             execution_mode="per_action",
             allowed_tools=None,
         )
-        auto_approvals: list[dict[str, object]] = []
-        executions: list[dict[str, object]] = []
-
-        class _RoomCollaboration:
-            def authorize_room_product_tool(
-                self,
-                _session_id,
-                _tool,
-                _args,
-                *,
-                tool_call_id,
-                load_receipt_id,
-            ):
-                if not load_receipt_id:
-                    raise AssertionError("Room product Tool requires a load receipt")
-                return {
-                    "invocationReceipt": {
-                        "receiptId": f"invoke:{tool_call_id}",
-                        "canonicalCommand": {"rootId": "root:room-planning"},
-                    }
-                }
-
-            def record_room_product_tool_execution(
-                self,
-                session_id,
-                invocation_receipt_id,
-                *,
-                status,
-                result_hash,
-            ):
-                receipt = {
-                    "sessionId": session_id,
-                    "invocationReceiptId": invocation_receipt_id,
-                    "status": status,
-                    "resultHash": result_hash,
-                }
-                executions.append(receipt)
-                return {"executionReceipt": receipt}
-
-            def validate_room_product_tool_approval(
-                self,
-                session_id,
-                invocation_receipt_id,
-                *,
-                tool_name,
-            ):
-                return {
-                    "sessionId": session_id,
-                    "receiptId": invocation_receipt_id,
-                    "tool": tool_name,
-                }
-
-        gateway = ControlToolGateway(
-            sessions=self.store,
-            management=self.management,
-            core=_Core(),
-            project="wisdom-weasel-rag-ime",
-            facade=self.facade,
-            collaboration=_RoomCollaboration(),
-        )
-        gateway.bind_auto_approval_executor(
-            lambda approval: auto_approvals.append(dict(approval))
-            or {"autoApproved": True}
-        )
-
-        response = gateway.execute(
+        response = self.gateway.execute(
             {
                 **self._tool_call(
                     "planning",
@@ -2379,30 +2387,23 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
 
         self.assertTrue(response["result"]["approvalRequired"])
-        self.assertEqual(auto_approvals, [])
-        self.assertEqual(executions, [])
-        self.assertIn("roomInvocationReceipt", response)
+        self.assertNotIn("roomInvocationReceipt", response)
         self.assertNotIn("roomExecutionReceipt", response)
         approval = response["result"]["approval"]
-        self.assertEqual(
-            approval["preview"]["baseState"]["roomInvocationReceiptId"],
-            "invoke:tool:room-planning",
+        self.assertNotIn(
+            "roomInvocationReceiptId",
+            approval["preview"]["baseState"],
         )
         decided = self.store.decide_approval(
             approval["approvalId"],
             approved=True,
             payload_sha256=approval["payloadSha256"],
         )
-        receipt = gateway.apply_approval(decided)
+        receipt = self.gateway.apply_approval(decided)
+        self.assertTrue(receipt["mutationApplied"])
+        self.assertNotIn("roomExecutionReceipt", receipt)
 
-        self.assertEqual(executions[0]["status"], "applied")
-        self.assertEqual(len(str(executions[0]["resultHash"])), 64)
-        self.assertEqual(
-            receipt["roomExecutionReceipt"]["invocationReceiptId"],
-            "invoke:tool:room-planning",
-        )
-
-    def test_room_workspace_managed_auto_approval_seals_exactly_one_execution_receipt(self) -> None:
+    def test_room_workspace_managed_auto_approval_uses_session_receipt(self) -> None:
         workspace = Path(self.tmp.name) / "room-managed"
         workspace.mkdir()
         target = workspace / "room.py"
@@ -2416,64 +2417,12 @@ class ControlToolGatewayTests(unittest.TestCase):
             allowed_tools=None,
             workspace_roots=[str(workspace)],
         )
-        executions: list[dict[str, object]] = []
-
-        class _RoomCollaboration:
-            def authorize_room_product_tool(
-                self,
-                _session_id,
-                _tool,
-                _args,
-                *,
-                tool_call_id,
-                load_receipt_id,
-            ):
-                if not load_receipt_id:
-                    raise AssertionError("Room product Tool requires a load receipt")
-                return {
-                    "invocationReceipt": {
-                        "receiptId": f"invoke:{tool_call_id}",
-                        "canonicalCommand": {"rootId": "root:room-managed"},
-                    }
-                }
-
-            def validate_room_product_tool_approval(
-                self,
-                session_id,
-                invocation_receipt_id,
-                *,
-                tool_name,
-            ):
-                return {
-                    "sessionId": session_id,
-                    "receiptId": invocation_receipt_id,
-                    "tool": tool_name,
-                }
-
-            def record_room_product_tool_execution(
-                self,
-                session_id,
-                invocation_receipt_id,
-                *,
-                status,
-                result_hash,
-            ):
-                receipt = {
-                    "sessionId": session_id,
-                    "invocationReceiptId": invocation_receipt_id,
-                    "status": status,
-                    "resultHash": result_hash,
-                }
-                executions.append(receipt)
-                return {"executionReceipt": receipt}
-
         gateway = ControlToolGateway(
             sessions=self.store,
             management=self.management,
             core=_Core(),
             project="wisdom-weasel-rag-ime",
             facade=self.facade,
-            collaboration=_RoomCollaboration(),
         )
 
         def auto_approve(approval):
@@ -2509,65 +2458,31 @@ class ControlToolGatewayTests(unittest.TestCase):
 
         self.assertTrue(response["result"]["autoApproved"])
         self.assertEqual(target.read_text(encoding="utf-8"), "state = 'after'\n")
-        self.assertEqual(len(executions), 1)
-        self.assertEqual(executions[0]["status"], "applied")
-        self.assertEqual(
-            executions[0]["invocationReceiptId"],
-            "invoke:tool:room-managed-patch",
-        )
-        self.assertEqual(
-            response["roomExecutionReceipt"]["invocationReceiptId"],
-            "invoke:tool:room-managed-patch",
-        )
+        self.assertTrue(response["result"]["receipt"]["mutationApplied"])
+        self.assertNotIn("roomExecutionReceipt", response)
         self.assertNotIn("roomInvocationReceipt", response)
 
-    def test_failed_room_approval_records_a_failed_execution_receipt(self) -> None:
-        executions: list[dict[str, object]] = []
-
-        class _RoomCollaboration:
-            def record_room_product_tool_execution(
-                self,
-                session_id,
-                invocation_receipt_id,
-                *,
-                status,
-                result_hash,
-            ):
-                receipt = {
-                    "sessionId": session_id,
-                    "invocationReceiptId": invocation_receipt_id,
-                    "status": status,
-                    "resultHash": result_hash,
-                }
-                executions.append(receipt)
-                return {"executionReceipt": receipt}
-
-        gateway = ControlToolGateway(
-            sessions=self.store,
-            management=self.management,
-            core=_Core(),
-            project="wisdom-weasel-rag-ime",
-            facade=self.facade,
-            collaboration=_RoomCollaboration(),
-        )
-
-        result = gateway._seal_room_approval_execution(
-            approval={
-                "sessionId": self.session["id"],
-                "preview": {
-                    "baseState": {
-                        "roomInvocationReceiptId": "invoke:failed-shell",
-                    }
+    def test_legacy_room_bound_approval_must_be_retried_in_session(self) -> None:
+        approval = self.store.create_approval(
+            session_id=str(self.session["id"]),
+            tool_name="workspace_shell",
+            operation="run",
+            payload_sha256="a" * 64,
+            preview={
+                "actionPayload": {},
+                "baseState": {
+                    "roomInvocationReceiptId": "invoke:legacy-room",
                 },
             },
-            result={"mutationApplied": False, "exitCode": 71},
+            risk_level="R2",
         )
-
-        self.assertEqual(executions[0]["status"], "failed")
-        self.assertEqual(
-            result["roomExecutionReceipt"]["invocationReceiptId"],
-            "invoke:failed-shell",
+        decided = self.store.decide_approval(
+            str(approval["approvalId"]),
+            approved=True,
+            payload_sha256=str(approval["payloadSha256"]),
         )
+        with self.assertRaisesRegex(ValueError, "legacy Room-bound"):
+            self.gateway.apply_approval(decided)
 
     def test_coordinator_search_and_patch_require_native_hash_bound_approval(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-patch"
@@ -3844,6 +3759,9 @@ class ControlToolGatewayTests(unittest.TestCase):
             self.assertIn(f'gatewayName: "{gateway_name}"', extension)
         self.assertIn("gatewayParamsFor(spec, params)", extension)
         self.assertIn("const maxInlineToolResultBytes = 24 * 1024", extension)
+        self.assertIn("const maxTurnToolResultBytes = 48 * 1024", extension)
+        self.assertIn("turnInlineToolResultBytes", extension)
+        self.assertIn('pi.on("before_agent_start"', extension)
         self.assertIn('const toolOutputPrefix = "tool-output://"', extension)
         self.assertIn("function boundedToolResult(", extension)
         self.assertIn("function readStoredToolOutput(", extension)

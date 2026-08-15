@@ -67,6 +67,42 @@ class AgentPromptApplicationService:
     def runtime(self) -> Any:
         return self._runtime_provider()
 
+    def _reserve_prompt_admission(
+        self,
+        session_id: str,
+        request: Mapping[str, object],
+    ) -> Any | None:
+        if str(request.get("delivery") or "prompt") != "prompt":
+            return None
+        runtime = self.runtime
+        reserve = getattr(runtime, "reserve_prompt_admission", None)
+        if not callable(reserve):
+            return None
+        reserve(
+            session_id,
+            client_message_id=str(
+                request.get("clientMessageId") or ""
+            ),
+        )
+        return runtime
+
+    @staticmethod
+    def _release_prompt_admission(
+        runtime: Any | None,
+        session_id: str,
+        request: Mapping[str, object],
+    ) -> None:
+        if runtime is None:
+            return
+        release = getattr(runtime, "release_prompt_admission", None)
+        if callable(release):
+            release(
+                session_id,
+                client_message_id=str(
+                    request.get("clientMessageId") or ""
+                ),
+            )
+
     def prompt(
         self,
         session_id: str,
@@ -78,10 +114,21 @@ class AgentPromptApplicationService:
         )
         if not client_message_id:
             self.sessions.require_goal_execution(session_id)
-            return dict(self.dispatch_checkpoint(
-                session_id=session_id,
-                **_checkpoint_arguments(request),
-            ))
+            reserved_runtime = self._reserve_prompt_admission(
+                session_id,
+                request,
+            )
+            try:
+                return dict(self.dispatch_checkpoint(
+                    session_id=session_id,
+                    **_checkpoint_arguments(request),
+                ))
+            finally:
+                self._release_prompt_admission(
+                    reserved_runtime,
+                    session_id,
+                    request,
+                )
         receipt_payload = {
             "message": request["message"],
             "attachments": request["attachmentIds"],
@@ -134,11 +181,22 @@ class AgentPromptApplicationService:
                     ),
                 )
 
-            response = dict(self.dispatch_checkpoint(
-                session_id=session_id,
-                on_accepted=record_acceptance,
-                **_checkpoint_arguments(request),
-            ))
+            reserved_runtime = self._reserve_prompt_admission(
+                session_id,
+                request,
+            )
+            try:
+                response = dict(self.dispatch_checkpoint(
+                    session_id=session_id,
+                    on_accepted=record_acceptance,
+                    **_checkpoint_arguments(request),
+                ))
+            finally:
+                self._release_prompt_admission(
+                    reserved_runtime,
+                    session_id,
+                    request,
+                )
         except Exception as exc:
             recovered = self._recover_accepted_prompt(
                 session_id=session_id,

@@ -76,6 +76,13 @@ class AgentMessageSnapshotService:
             if callable(snapshot_provider)
             else None
         )
+        # Inspecting Pi can reconcile an open-but-idle transcript back to idle.
+        # Refetch after that boundary so snapshot replay never resurrects a
+        # completed turn from the bounded event journal.
+        session = self._reconcile_session_status(
+            session_id,
+            self.sessions.get(session_id),
+        )
         messages = (
             list(runtime_snapshot.get("messages") or [])
             if isinstance(runtime_snapshot, Mapping)
@@ -125,14 +132,24 @@ class AgentMessageSnapshotService:
             observed_tool_events,
         )
         replayed, _gap = self.events.replay(session_id)
+        # Streaming deltas are deliberately not persisted one-by-one, but they
+        # still own the live replay cursor while this process is running. Using
+        # only SQLite's durable high-water mark dropped every active delta from
+        # a refresh until a later terminal event happened to advance it.
+        last_sequence = max(
+            last_sequence,
+            max((event.sequence for event in replayed), default=0),
+        )
         replay_events = [
             event.to_payload()
             for event in replayed
             if event.sequence <= last_sequence
         ]
-        live_events = _merge_tool_events(
+        live_events = _snapshot_live_events(
             tool_history_events,
             replay_events,
+            session_active=str(session.get("status") or "idle")
+            in {"active", "busy"},
         )
         self._append_pending_approvals(
             session_id=session_id,
@@ -143,10 +160,6 @@ class AgentMessageSnapshotService:
             session_id=session_id,
             live_events=live_events,
             last_sequence=last_sequence,
-        )
-        session = self._reconcile_session_status(
-            session_id,
-            session,
         )
         # Runtime Host message counts describe Provider-loop entries (including
         # tool calls), not the human transcript.  Reconcile only after the
@@ -692,6 +705,107 @@ def _merge_tool_events(
             continue
         merged.append(event)
     return merged
+
+
+def _snapshot_live_events(
+    tool_history_events: Sequence[object],
+    replay_events: Sequence[object],
+    *,
+    session_active: bool,
+) -> list[dict[str, object]]:
+    """Restore durable activities plus only the genuinely live event tail.
+
+    Pi's durable transcript owns completed messages, reasoning summaries and
+    Tool receipts. Replaying the old streaming journal as well used to send
+    hundreds of settled ``text_delta`` records back to the browser, duplicate
+    turns whose live ids differ from history ids, and revive stale spinners.
+    """
+
+    replay = [
+        dict(item)
+        for item in replay_events
+        if isinstance(item, Mapping)
+    ]
+    terminal_turn_ids = {
+        str(event.get("turnId") or "")
+        for event in replay
+        if str(event.get("eventType") or "")
+        in {"turn_completed", "turn_failed"}
+        and str(event.get("turnId") or "")
+    }
+    live_tail = [
+        event
+        for event in replay
+        if str(event.get("eventType") or "")
+        in {"approval_required", "user_input_required"}
+        or (
+            session_active
+            and (
+                not str(event.get("turnId") or "")
+                or str(event.get("turnId") or "")
+                not in terminal_turn_ids
+            )
+        )
+    ]
+    return _compact_text_delta_events(
+        _merge_tool_events(tool_history_events, live_tail)
+    )
+
+
+def _compact_text_delta_events(
+    events: Sequence[object],
+) -> list[dict[str, object]]:
+    """Coalesce one active streaming run without changing its final text."""
+
+    compacted: list[dict[str, object]] = []
+    for value in events:
+        if not isinstance(value, Mapping):
+            continue
+        event = dict(value)
+        if str(event.get("eventType") or "") != "text_delta":
+            compacted.append(event)
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, Mapping):
+            compacted.append(event)
+            continue
+        previous = compacted[-1] if compacted else None
+        previous_payload = (
+            previous.get("payload")
+            if isinstance(previous, Mapping)
+            else None
+        )
+        same_stream = (
+            isinstance(previous, Mapping)
+            and str(previous.get("eventType") or "") == "text_delta"
+            and isinstance(previous_payload, Mapping)
+            and str(previous.get("turnId") or "")
+            == str(event.get("turnId") or "")
+            and str(previous_payload.get("messageId") or "")
+            == str(payload.get("messageId") or "")
+            and str(previous_payload.get("blockId") or "")
+            == str(payload.get("blockId") or "")
+            and previous_payload.get("contentIndex")
+            == payload.get("contentIndex")
+            and payload.get("replaceBlock") is not True
+        )
+        if not same_stream:
+            compacted.append(event)
+            continue
+        merged_payload = dict(previous_payload)
+        merged_payload["delta"] = (
+            str(previous_payload.get("delta") or "")
+            + str(payload.get("delta") or "")
+        )
+        compacted[-1] = {
+            **dict(previous),
+            "eventId": event.get("eventId"),
+            "sequence": event.get("sequence"),
+            "createdAtMs": event.get("createdAtMs"),
+            "resumeToken": event.get("resumeToken"),
+            "payload": merged_payload,
+        }
+    return compacted
 
 
 def _apply_observed_times(

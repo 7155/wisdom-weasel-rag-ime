@@ -17,9 +17,9 @@ from scripts.build_managed_pi_runtime_v2 import (
     SKILL_ROUTING_CARDS,
     _OAUTH_RUNTIME_MODULES,
     ROOT,
-    REQUIRED_GOAL_RUNTIME_SOURCE_MARKERS,
     REQUIRED_PI_RUNTIME_BASE_COMMIT,
-    _ROOM_RUNTIME_SOURCE_KEYS,
+    SESSION_RUNTIME_CONTRACT,
+    _SESSION_RUNTIME_SOURCE_KEYS,
     _copy_product_skills,
     _default_pi_worktree,
     _default_node,
@@ -28,120 +28,99 @@ from scripts.build_managed_pi_runtime_v2 import (
     _runtime_host_banner,
     _smoke_oauth_runtime_modules,
     _validated_skill_routing_catalog,
-    _verified_room_runtime_contract,
+    _verified_session_runtime_contract,
 )
 from rag_ime.managed_pi_runtime import ManagedPiRuntimeError
 
 
 class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
-    def test_room_runtime_source_contract_pins_all_required_runtime_surfaces(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="rag-ime-room-host-contract-") as temporary:
+    def test_control_extension_keeps_full_desktop_receipt_out_of_model_context(self) -> None:
+        source = (ROOT / "integrations" / "pi" / "rag-ime-control.ts").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('key !== "auditReceipt"', source)
+        self.assertIn("boundedToolResult(toolCallId", source)
+
+    def test_session_runtime_source_contract_pins_required_session_surfaces(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="rag-ime-session-host-contract-"
+        ) as temporary:
             root = Path(temporary)
             relative_sources = {
-                "protocol": Path("packages/rag-ime-runtime-host/src/protocol.ts"),
-                "runtimeHost": Path("packages/rag-ime-runtime-host/src/runtime-host.ts"),
-                "providerContextHook": Path("packages/coding-agent/src/core/sdk.ts"),
-                "agentLoop": Path("packages/agent/src/agent-loop.ts"),
-                "agentCore": Path("packages/agent/src/agent.ts"),
-                "agentTypes": Path("packages/agent/src/types.ts"),
-                "agentSession": Path("packages/coding-agent/src/core/agent-session.ts"),
-                "contextInspection": Path("packages/rag-ime-runtime-host/src/debug-context.ts"),
-                "skills": Path("packages/coding-agent/src/core/skills.ts"),
-                "discoveryTools": Path("packages/rag-ime-runtime-host/src/discovery-tools.ts"),
-                "memoryCapture": Path(
-                    "packages/rag-ime-runtime-host/src/memory-capture-tool.ts"
+                "protocol": Path(
+                    "packages/rag-ime-runtime-host/src/protocol.ts"
                 ),
-                "roomToolBootstrap": Path(
-                    "packages/rag-ime-runtime-host/src/room-tool-bootstrap.ts"
+                "runtimeHost": Path(
+                    "packages/rag-ime-runtime-host/src/runtime-host.ts"
                 ),
-                "runtimeToolNames": Path(
-                    "packages/rag-ime-runtime-host/src/runtime-tool-names.ts"
+                "contextInspection": Path(
+                    "packages/rag-ime-runtime-host/src/debug-context.ts"
                 ),
-                "ask": Path("packages/rag-ime-runtime-host/src/ask.ts"),
-                "toolBridge": Path("packages/rag-ime-runtime-host/src/tool-bridge.ts"),
-                "toolArtifacts": Path("packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts"),
-                "providerContextJournal": Path(
-                    "packages/rag-ime-runtime-host/src/provider-context-journal.ts"
+                "toolBridge": Path(
+                    "packages/rag-ime-runtime-host/src/tool-bridge.ts"
                 ),
-                "sessionContextRefresh": Path(
-                    "packages/rag-ime-runtime-host/src/session-context-refresh.ts"
+                "session": Path(
+                    "packages/rag-ime-runtime-host/src/pi-session.ts"
                 ),
-                "summarizationCompletion": Path(
-                    "packages/coding-agent/src/core/compaction/summarization-completion.ts"
-                ),
-                "cancellationReceipts": Path(
-                    "packages/rag-ime-runtime-host/src/cancellation-receipts.ts"
-                ),
-                "roomSettleLifecycle": Path(
-                    "packages/rag-ime-runtime-host/src/room-settle-lifecycle.ts"
-                ),
-                "workflowControl": Path(
-                    "packages/rag-ime-runtime-host/src/workflow-control.ts"
-                ),
-                "lifecycleHooks": Path(
-                    "packages/rag-ime-runtime-host/src/lifecycle-hooks.ts"
-                ),
-                "deterministicTestAdapter": Path(
-                    "packages/rag-ime-runtime-host/src/deterministic-test-adapter.ts"
-                ),
-                "session": Path("packages/rag-ime-runtime-host/src/pi-session.ts"),
             }
-            self.assertEqual(set(relative_sources), set(_ROOM_RUNTIME_SOURCE_KEYS))
-            markers = {key: [f"marker:{key}"] for key in _ROOM_RUNTIME_SOURCE_KEYS}
+            self.assertEqual(
+                set(relative_sources),
+                set(_SESSION_RUNTIME_SOURCE_KEYS),
+            )
+            methods = [
+                "session.open",
+                "session.prompt",
+                "session.steer",
+                "session.debug.context",
+                "session.abort",
+                "session.snapshot",
+            ]
+            markers = {
+                key: [f"marker:{key}"]
+                for key in _SESSION_RUNTIME_SOURCE_KEYS
+            }
             for key, relative in relative_sources.items():
                 source = root / relative
                 source.parent.mkdir(parents=True, exist_ok=True)
                 extra = ""
                 if key == "protocol":
                     extra = (
-                        'export type RuntimeMethod = | "session.control_state" '
-                        '| "room.dispatch" | "room.cancel";\n'
+                        "export type RuntimeMethod = "
+                        + " ".join(f'| "{method}"' for method in methods)
+                        + ";\n"
                     )
                 elif key == "runtimeHost":
                     extra = (
-                        'switch (method) { case "session.control_state": break; '
-                        'case "room.dispatch": break; '
-                        'case "room.cancel": break; }\n'
+                        "switch (method) { "
+                        + " ".join(
+                            f'case "{method}": break;'
+                            for method in methods
+                        )
+                        + " }\n"
                     )
-                source.write_text(f"// marker:{key}\n{extra}", encoding="utf-8")
-            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-            subprocess.run(["git", "add", "."], cwd=root, check=True)
-            subprocess.run(
-                [
-                    "git",
-                    "-c",
-                    "user.name=Room Test",
-                    "-c",
-                    "user.email=room@example.invalid",
-                    "commit",
-                    "-qm",
-                    "room handlers",
-                ],
-                cwd=root,
-                check=True,
-            )
-            commit = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=root,
-                check=True,
-                text=True,
-                stdout=subprocess.PIPE,
-            ).stdout.strip()
-            contract_path = root / "room-runtime-host-contract.json"
-            adapter_path = root / "room-runtime-host.ts"
+                source.write_text(
+                    f"// marker:{key}\n{extra}",
+                    encoding="utf-8",
+                )
+            contract_path = root / "session-runtime-host-contract.json"
             contract_path.write_text(
                 json.dumps(
                     {
-                        "schemaVersion": "rag-ime.pi-room-runtime-host-contract.v1",
-                        "sourceRepository": "https://github.com/7155/pi.git",
-                        "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
+                        "schemaVersion": (
+                            "rag-ime.pi-session-runtime-host-contract.v1"
+                        ),
+                        "sourceRepository": (
+                            "https://github.com/7155/pi.git"
+                        ),
+                        "sourcePackage": (
+                            "@earendil-works/pi-rag-ime-runtime-host"
+                        ),
                         "protocolVersion": "2",
-                        "minimumHandlersCommit": commit,
-                        "requiredMethods": [
-                            "session.control_state",
-                            "room.dispatch",
-                            "room.cancel",
-                        ],
+                        "minimumHandlersCommit": "a" * 40,
+                        "requiredMethods": methods,
                         "handlerSources": {
                             key: relative.as_posix()
                             for key, relative in relative_sources.items()
@@ -152,69 +131,59 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            adapter_path.write_text(
-                (
-                    'export const methods = ["session.control_state", '
-                    '"room.dispatch", "room.cancel"] as const;\n'
-                ),
-                encoding="utf-8",
-            )
             with (
-                patch("scripts.build_managed_pi_runtime_v2.ROOM_RUNTIME_CONTRACT", contract_path),
-                patch("scripts.build_managed_pi_runtime_v2.ROOM_RUNTIME_ADAPTER", adapter_path),
                 patch(
-                    "scripts.build_managed_pi_runtime_v2.REQUIRED_PI_RUNTIME_BASE_COMMIT",
-                    commit,
+                    "scripts.build_managed_pi_runtime_v2."
+                    "SESSION_RUNTIME_CONTRACT",
+                    contract_path,
                 ),
                 patch(
-                    "scripts.build_managed_pi_runtime_v2.REQUIRED_GOAL_RUNTIME_SOURCE_MARKERS",
-                    {
-                        key: (f"marker:{key}",)
-                        for key in ("providerContextJournal", "workflowControl", "session")
-                    },
+                    "scripts.build_managed_pi_runtime_v2."
+                    "REQUIRED_PI_RUNTIME_BASE_COMMIT",
+                    "a" * 40,
                 ),
             ):
-                contract, digest = _verified_room_runtime_contract(root)
-                (root / relative_sources["skills"]).write_text(
-                    "// required marker removed\n",
+                contract, digest = (
+                    _verified_session_runtime_contract(root)
+                )
+                (root / relative_sources["session"]).write_text(
+                    "// marker removed\n",
                     encoding="utf-8",
                 )
                 with self.assertRaisesRegex(
                     RuntimeError,
-                    "source marker is missing: skills",
+                    "source marker is missing: session",
                 ):
-                    _verified_room_runtime_contract(root)
+                    _verified_session_runtime_contract(root)
 
-        self.assertEqual(contract["minimumHandlersCommit"], commit)
+        self.assertEqual(
+            contract["minimumHandlersCommit"],
+            "a" * 40,
+        )
         self.assertEqual(len(digest), 64)
 
-    def test_public_pi_pin_requires_goal_settle_and_memory_refresh_hooks(self) -> None:
-        contract_path = ROOT / "integrations" / "pi" / "room-runtime-host-contract.json"
-        contract = json.loads(contract_path.read_text(encoding="utf-8"))
-        release_guide = (ROOT / "release" / "README.md").read_text(encoding="utf-8")
-        product_status = json.loads(
-            (ROOT / "release" / "product-status.json").read_text(encoding="utf-8")
+    def test_public_pi_pin_uses_session_runtime_contract(self) -> None:
+        contract = json.loads(
+            SESSION_RUNTIME_CONTRACT.read_text(encoding="utf-8")
         )
-
         self.assertEqual(
             contract["minimumHandlersCommit"],
             REQUIRED_PI_RUNTIME_BASE_COMMIT,
         )
-        self.assertIn(f"git checkout {REQUIRED_PI_RUNTIME_BASE_COMMIT}", release_guide)
-        declared_markers = contract["requiredSourceMarkers"]
-        for key, required in REQUIRED_GOAL_RUNTIME_SOURCE_MARKERS.items():
-            with self.subTest(source=key):
-                self.assertTrue(set(required).issubset(declared_markers[key]))
-
-        blockers = {item["id"] for item in product_status["blockers"]}
-        self.assertIn("managed_pi_0fd0564_runtime_acceptance_pending", blockers)
-        source_contract = next(
-            item
-            for item in product_status["resolvedBlockers"]
-            if item["id"] == "managed_pi_v2_source_contract"
+        self.assertEqual(
+            contract["requiredMethods"],
+            [
+                "session.open",
+                "session.prompt",
+                "session.steer",
+                "session.debug.context",
+                "session.abort",
+                "session.snapshot",
+            ],
         )
-        self.assertIn(REQUIRED_PI_RUNTIME_BASE_COMMIT, source_contract["evidence"])
-        self.assertIn("not runtime acceptance evidence", source_contract["evidence"])
+        serialized = json.dumps(contract, sort_keys=True)
+        self.assertNotIn("room.dispatch", serialized)
+        self.assertNotIn("room.cancel", serialized)
 
     def test_default_pi_worktree_prefers_canonical_main_checkout(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-pi-worktree-") as temporary:
@@ -270,68 +239,65 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         script = (ROOT / "scripts" / "build_managed_pi_runtime_v2.py").read_text(
             encoding="utf-8"
         )
-        adapter = (ROOT / "integrations" / "pi" / "room-runtime-host.ts").read_text(
-            encoding="utf-8"
-        )
+        contract = SESSION_RUNTIME_CONTRACT.read_text(encoding="utf-8")
 
         self.assertIn('product_commit.encode("ascii")', script)
         self.assertIn('"productCommit": product_commit', script)
         self.assertIn('manifest["createdAtMs"] = product_commit_ms', script)
-        self.assertIn("_verified_room_runtime_contract", script)
-        self.assertIn("source_contract_sha256=room_runtime_contract_sha256", script)
-        for method in ("session.control_state", "room.dispatch", "room.cancel"):
-            self.assertIn(f'"{method}"', adapter)
+        self.assertIn("_verified_session_runtime_contract", script)
+        self.assertIn(
+            "source_contract_sha256=session_runtime_contract_sha256",
+            script,
+        )
+        for method in (
+            "session.open",
+            "session.prompt",
+            "session.steer",
+            "session.debug.context",
+            "session.abort",
+            "session.snapshot",
+        ):
+            self.assertIn(f'"{method}"', contract)
 
-    def test_staged_smoke_uses_current_dispatch_and_continuation_contract(self) -> None:
-        script = (ROOT / "scripts" / "smoke_room_v2_staged_runtime.py").read_text(
+    def test_staged_smoke_uses_session_lifecycle_contract(self) -> None:
+        script = (ROOT / "scripts" / "smoke_pi_session_staged_runtime.py").read_text(
             encoding="utf-8"
         )
 
-        self.assertEqual(script.count('"capabilityEpoch": 1,'), 4)
-        self.assertEqual(script.count('"dispatchId": "dispatch:a"'), 3)
-        self.assertEqual(script.count('"dispatchAttempt": 0,'), 2)
-        self.assertIn('"idempotencyKey": "root:staged-e2e/continuation-b"', script)
-        self.assertIn('"roomContext": room_context', script)
-        self.assertIn('"roomRecoveryContext": room_context', script)
-        self.assertIn('"manifestSha256": manifest_sha256', script)
-        self.assertIn('"stage": "implementation"', script)
-        self.assertIn('"workspace_read",', script)
-        self.assertIn('"modelVisible": False', script)
-        self.assertIn('"nativeCodingToolSchemas": sorted(native_schema_names)', script)
-        self.assertIn('forbidden_native_schema_names = {"edit", "write"}', script)
-        self.assertIn("active_schema_names & forbidden_native_schema_names", script)
-        self.assertNotIn('"name": "room_post"', script)
         for method in (
             "session.open",
-            "room.dispatch",
+            "session.prompt",
+            "session.steer",
             "session.debug.context",
-            "room.cancel",
+            "session.abort",
+            "session.snapshot",
         ):
             self.assertIn(f'"{method}"', script)
+        self.assertNotIn('"room.dispatch"', script)
+        self.assertNotIn('"room.cancel"', script)
 
     def test_product_owns_all_managed_skills(self) -> None:
         skills_root = ROOT / "integrations" / "pi" / "skills"
         skill_dirs = _product_skill_dirs(skills_root)
         skill_names = [item.name for item in skill_dirs]
 
-        room_policy = json.loads(
-            (ROOT / "integrations" / "pi" / "room-skill-policy.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        room_skill_names = sorted(entry["skillId"] for entry in room_policy["skills"])
         self.assertEqual(
             skill_names,
             sorted({
+                "alignment-and-decision",
                 "implementation-execution",
+                "implementation-planning",
                 "improve-codebase-architecture",
+                "independent-review",
                 "quality-gate",
                 "rag-retrieval-optimization",
                 "memory-curation",
                 "plugin-creator",
                 "work-document-archive",
                 "review-feedback-resolution",
-                *room_skill_names,
+                "structured-handoff",
+                "systematic-debugging",
+                "test-driven-implementation",
             }),
         )
         for name in skill_names:
@@ -372,7 +338,6 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         cards = routing_catalog["cards"]
         self.assertEqual(len(cards), 40)
         self.assertEqual(len({card["name"] for card in cards}), len(cards))
-        self.assertTrue(set(room_skill_names).isdisjoint({card["name"] for card in cards}))
         self.assertNotIn("structured-result-presentation", {card["name"] for card in cards})
         for card in cards:
             self.assertTrue(card["when"])

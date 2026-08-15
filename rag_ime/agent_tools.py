@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -325,9 +326,27 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
             "catalog",
             "delegate",
             "status",
+            "call",
             "artifact",
             "abort",
         ),
+        "resultPresentation": "tool_result",
+    },
+    {
+        "id": "room_partner",
+        "domain": "agents",
+        "displayName": "Room 伙伴协作",
+        "description": "查看当前 Room 伙伴、委派一个有界子任务并接收其 Session 结果，或发布公开进展",
+        "when": (
+            "当前 Session 正在 Room 中主持任务，且需要另一位正式伙伴独立处理有界子任务",
+        ),
+        "notFor": (
+            "普通 Session 的临时微型子 Agent，或主伙伴自己即可完成的单步工作",
+        ),
+        "input": "list；或目标伙伴、任务、预期输出与验收条件；或公开进展",
+        "output": "伙伴模型/状态、子 Session 终态结果或公开进展回执",
+        "does": "把正式 Room Partner 作为普通 Pi Session 调用，并将子事件归入当前 Room turn。",
+        "operations": ("list", "delegate", "post"),
         "resultPresentation": "tool_result",
     },
     {
@@ -469,7 +488,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "input": "应用或窗口目标、语义节点与动作",
         "output": "可访问性树、差分、状态或操作回执",
         "does": "通过可访问性语义读取并受控操作桌面应用。",
-        "operations": ("status", "list", "inspect", "act"),
+        "operations": ("status", "list", "inspect", "find", "act"),
         "operationRisks": {"act": "R2"},
         "resultPresentation": "tool_result",
     },
@@ -698,6 +717,64 @@ _KNOWLEDGE_RETRIEVAL_PARAMETER_SCHEMA: dict[str, object] = {
 }
 
 _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
+    "room_partner": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "op": {
+                "type": "string",
+                "enum": ["list", "delegate", "post"],
+            },
+            "targetParticipantId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240,
+                "description": "必须原样使用 list 返回的 participantId。",
+            },
+            "task": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8_000,
+            },
+            "expectedOutput": {
+                "type": "string",
+                "maxLength": 1_200,
+            },
+            "acceptanceCriteria": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 320,
+                },
+            },
+            "timeoutSeconds": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 300,
+            },
+            "content": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8_000,
+            },
+        },
+        "oneOf": [
+            {
+                "required": ["op"],
+                "properties": {"op": {"const": "list"}},
+            },
+            {
+                "required": ["op", "targetParticipantId", "task"],
+                "properties": {"op": {"const": "delegate"}},
+            },
+            {
+                "required": ["op", "content"],
+                "properties": {"op": {"const": "post"}},
+            },
+        ],
+    },
     "planning": {
         "type": "object",
         "oneOf": [
@@ -1182,79 +1259,93 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
     },
     "desktop_semantic": {
         "type": "object",
-        "oneOf": [
-            {
+        "additionalProperties": False,
+        "properties": {
+            "op": {
+                "type": "string",
+                "enum": ["status", "list", "inspect", "find", "act"],
+            },
+            "includeBackground": {"type": "boolean"},
+            "bundleId": {"type": "string", "maxLength": 300},
+            "pid": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+            "match": {
                 "type": "object",
                 "additionalProperties": False,
+                "minProperties": 1,
+                "properties": {
+                    "role": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "subrole": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "identifier": {"type": "string", "minLength": 1, "maxLength": 240},
+                    "label": {"type": "string", "minLength": 1, "maxLength": 240},
+                    "query": {"type": "string", "minLength": 1, "maxLength": 300},
+                },
+            },
+            "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+            "maxNodes": {"type": "integer", "minimum": 1, "maximum": 500},
+            "maxDepth": {"type": "integer", "minimum": 1, "maximum": 12},
+            "sinceSnapshotId": {"type": "string", "maxLength": 200},
+            "incremental": {"type": "boolean"},
+            "snapshotId": {"type": "string", "minLength": 1, "maxLength": 200},
+            "revision": {"type": "integer", "minimum": 1},
+            "nodeRef": {"type": "string", "minLength": 1, "maxLength": 200},
+            "action": {
+                "type": "string",
+                "enum": [
+                    "press", "click", "double_click", "right_click", "long_press",
+                    "focus", "set_text", "type_text", "key", "increment", "decrement",
+                    "show_menu", "scroll"
+                ],
+            },
+            "text": {"type": "string", "maxLength": 8000},
+            "key": {
+                "type": "string",
+                "enum": [
+                    "return", "enter", "tab", "escape", "space", "delete",
+                    "forward_delete", "left", "right", "up", "down", "home",
+                    "end", "page_up", "page_down"
+                ],
+            },
+            "modifiers": {
+                "type": "array",
+                "maxItems": 5,
+                "uniqueItems": True,
+                "items": {
+                    "type": "string",
+                    "enum": ["command", "option", "control", "shift", "fn"],
+                },
+            },
+            "durationMs": {"type": "integer", "minimum": 100, "maximum": 3000},
+            "scrollDelta": {
+                "type": "integer",
+                "minimum": -20,
+                "maximum": 20,
+                "not": {"const": 0},
+            },
+        },
+        "oneOf": [
+            {
                 "required": ["op"],
                 "properties": {"op": {"const": "status"}},
             },
             {
-                "type": "object",
-                "additionalProperties": False,
                 "required": ["op"],
-                "properties": {
-                    "op": {"const": "list"},
-                    "includeBackground": {"type": "boolean"},
-                },
+                "properties": {"op": {"const": "list"}},
             },
             {
-                "type": "object",
-                "additionalProperties": False,
                 "required": ["op"],
-                "properties": {
-                    "op": {"const": "inspect"},
-                    "bundleId": {"type": "string", "maxLength": 300},
-                    "pid": {"type": "integer", "minimum": 1, "maximum": 2147483647},
-                    "query": {"type": "string", "maxLength": 300},
-                    "maxNodes": {"type": "integer", "minimum": 1, "maximum": 500},
-                    "maxDepth": {"type": "integer", "minimum": 1, "maximum": 12},
-                    "sinceSnapshotId": {"type": "string", "maxLength": 200},
-                },
+                "properties": {"op": {"const": "inspect"}},
             },
             {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["op", "snapshotId", "revision", "nodeRef", "action"],
-                "properties": {
-                    "op": {"const": "act"},
-                    "snapshotId": {"type": "string", "minLength": 1, "maxLength": 200},
-                    "revision": {"type": "integer", "minimum": 1},
-                    "nodeRef": {"type": "string", "minLength": 1, "maxLength": 200},
-                    "action": {
-                        "type": "string",
-                        "enum": [
-                            "press", "click", "double_click", "right_click", "long_press",
-                            "focus", "set_text", "type_text", "key", "increment", "decrement",
-                            "show_menu", "scroll"
-                        ],
-                    },
-                    "text": {"type": "string", "maxLength": 8000},
-                    "key": {
-                        "type": "string",
-                        "enum": [
-                            "return", "enter", "tab", "escape", "space", "delete",
-                            "forward_delete", "left", "right", "up", "down", "home",
-                            "end", "page_up", "page_down"
-                        ],
-                    },
-                    "modifiers": {
-                        "type": "array",
-                        "maxItems": 5,
-                        "uniqueItems": True,
-                        "items": {
-                            "type": "string",
-                            "enum": ["command", "option", "control", "shift", "fn"],
-                        },
-                    },
-                    "durationMs": {"type": "integer", "minimum": 100, "maximum": 3000},
-                    "scrollDelta": {
-                        "type": "integer",
-                        "minimum": -20,
-                        "maximum": 20,
-                        "not": {"const": 0},
-                    },
-                },
+                "required": ["op", "match"],
+                "properties": {"op": {"const": "find"}},
+            },
+            {
+                "required": ["op", "action"],
+                "oneOf": [
+                    {"required": ["snapshotId", "revision", "nodeRef"]},
+                    {"required": ["match"]},
+                ],
+                "properties": {"op": {"const": "act"}},
             },
         ],
     },
@@ -1328,6 +1419,8 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "bookId": {"type": "string", "minLength": 1, "maxLength": 240},
     "traceId": {"type": "string", "minLength": 1, "maxLength": 240},
     "runId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "targetRunId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "message": {"type": "string", "minLength": 1, "maxLength": 4_000},
     "proposalId": {"type": "string", "minLength": 1, "maxLength": 240},
     "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 240},
     "claimKey": {"type": "string", "minLength": 1, "maxLength": 240},
@@ -1461,6 +1554,36 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
         "items": {"type": "string", "minLength": 1, "maxLength": 1_000},
     },
     "outputSchema": {"type": "object"},
+    "modelProfile": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 240,
+        "pattern": r"^[^\s/]+/[^\s/]+$",
+    },
+    "thinkingLevel": {
+        "type": "string",
+        "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+    },
+    "access": {
+        "type": "string",
+        "enum": ["inherit", "read_only", "write"],
+    },
+    "allowedTools": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 64,
+        "uniqueItems": True,
+        "items": {"type": "string", "minLength": 1, "maxLength": 120},
+    },
+    "piSkillsEnabled": {"type": "boolean"},
+    "codexSkillsEnabled": {"type": "boolean"},
+    "workspaceRoots": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 4,
+        "uniqueItems": True,
+        "items": {"type": "string", "minLength": 1, "maxLength": 1_024},
+    },
     "tasks": {
         "type": "array",
         "minItems": 1,
@@ -1494,6 +1617,36 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
                     },
                 },
                 "outputSchema": {"type": "object"},
+                "modelProfile": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 240,
+                    "pattern": r"^[^\s/]+/[^\s/]+$",
+                },
+                "thinkingLevel": {
+                    "type": "string",
+                    "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+                },
+                "access": {
+                    "type": "string",
+                    "enum": ["inherit", "read_only", "write"],
+                },
+                "allowedTools": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 64,
+                    "uniqueItems": True,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 120},
+                },
+                "piSkillsEnabled": {"type": "boolean"},
+                "codexSkillsEnabled": {"type": "boolean"},
+                "workspaceRoots": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "uniqueItems": True,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 1_024},
+                },
             },
         },
     },
@@ -1644,7 +1797,7 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
     "agents": (
         "agent", "version", "task", "tasks", "expectedOutput",
         "acceptanceCriteria", "outputSchema", "todoTask", "contextMode", "wait",
-        "runId", "batchId", "artifactId", "limit",
+        "runId", "batchId", "targetRunId", "message", "artifactId", "limit",
     ),
     "plugins": ("draftId", "manifest", "files", "sourcePath", "validationToken", "enable"),
     "browser": (
@@ -1720,6 +1873,7 @@ _RUNTIME_TOOL_REQUIRED_ARGUMENTS: dict[tuple[str, str], tuple[str, ...]] = {
     ("configuration", "restore_preview"): ("sourceApprovalId",),
     ("configuration", "restore_apply"): ("sourceApprovalId",),
     ("agents", "artifact"): ("artifactId",),
+    ("agents", "call"): ("targetRunId", "message"),
     ("plugins", "create_draft"): ("draftId", "manifest", "files"),
     ("plugins", "validate"): ("sourcePath",),
     ("plugins", "propose_install"): ("validationToken",),
@@ -1923,6 +2077,8 @@ class ControlToolGateway:
         self.workflow_publisher = workflow_publisher
         self._role_book_tool_adapter: AgentRoleBookToolAdapter | None = None
         self._memory_governance_store: MemoryGovernanceProposalStore | None = None
+        self._desktop_cursor_lock = threading.Lock()
+        self._desktop_snapshot_cursors: dict[tuple[str, str, int, int], str] = {}
         self._auto_approval_executor: (
             Callable[[Mapping[str, object]], Mapping[str, object]] | None
         ) = None
@@ -1950,6 +2106,36 @@ class ControlToolGateway:
             governed_skills=self.governed_skills,
             extensions=self.extensions,
         )
+
+    def workspace_list(
+        self,
+        session_id: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Project the existing bounded WorkspaceHarness for the native file tree."""
+        session = self.sessions.get(session_id)
+        result = self.workspace_harness.list(session, dict(payload or {}))
+        return {
+            "schemaVersion": "rag-ime.agent-workspace-list.v1",
+            "ok": True,
+            "sessionId": session_id,
+            **result,
+        }
+
+    def workspace_read(
+        self,
+        session_id: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Read a bounded UTF-8 workspace file for the native preview surface."""
+        session = self.sessions.get(session_id)
+        result = self.workspace_harness.read(session, dict(payload or {}))
+        return {
+            "schemaVersion": "rag-ime.agent-workspace-read.v1",
+            "ok": True,
+            "sessionId": session_id,
+            **result,
+        }
 
     def runtime_manifests(self, session: Mapping[str, object]) -> list[Mapping[str, object]]:
         # The runtime callback may retain a Prompt-time Session mapping. Reload
@@ -2037,6 +2223,24 @@ class ControlToolGateway:
                     and self.background_jobs.execution_owner
                 )
             )
+            if str(spec["id"]) == "room_partner":
+                room_store = getattr(self.collaboration, "rooms", None)
+                participant_for_session = getattr(
+                    room_store,
+                    "participant_for_session",
+                    None,
+                )
+                participant = (
+                    participant_for_session(
+                        str(session.get("id") or ""),
+                        active_only=True,
+                    )
+                    if callable(participant_for_session)
+                    and isinstance(session, Mapping)
+                    and str(session.get("id") or "")
+                    else None
+                )
+                available = participant is not None
             manifest = {
                 "schemaVersion": "rag-ime.control-tool-manifest.v1",
                 "id": spec["id"],
@@ -2146,26 +2350,15 @@ class ControlToolGateway:
         tool = str(request["tool"])
         raw_args = request.get("args") if isinstance(request.get("args"), Mapping) else {}
         args = _normalize_runtime_tool_args(tool, raw_args)
-        if tool in {
-            "room_state",
-            "room_define",
-            "room_collaborate",
-            "room_integrate",
-            "room_post",
-            "room_commit",
-        }:
+        if tool == "room_partner":
             if self.collaboration is None:
                 raise ValueError("managed room collaboration is unavailable")
-            result = self.collaboration.execute_room_capability_tool(  # type: ignore[attr-defined]
+            result = self.collaboration.execute_room_partner_tool(  # type: ignore[attr-defined]
                 session_id,
-                tool,
                 args,
                 tool_call_id=str(request["toolCallId"]),
-                load_receipt_id=str(request.get("loadReceiptId") or ""),
             )
-            if result is None:
-                raise ValueError("canonical Room tools require an active RoomBinding")
-            return dict(result)
+            return {"ok": True, "result": dict(result)}
         spec = _TOOL_SPEC_BY_ID.get(tool)
         if spec is None:
             raise ValueError("tool is not enabled for this session")
@@ -2183,83 +2376,14 @@ class ControlToolGateway:
                 "workspace mutation is blocked by the active read-only policy"
             )
 
-        room_authorization = self._authorize_room_product_tool(
-            session_id=session_id,
+        response = self._execute_product_tool(
+            request=request,
+            session=session,
             tool=tool,
             args=args,
-            tool_call_id=str(request["toolCallId"]),
-            load_receipt_id=str(request.get("loadReceiptId") or ""),
+            spec=spec,
+            operation=operation,
         )
-        try:
-            response = self._execute_product_tool(
-                request=request,
-                session=session,
-                tool=tool,
-                args=args,
-                spec=spec,
-                operation=operation,
-                room_authorization=room_authorization,
-            )
-        except Exception as exc:
-            self._record_failed_room_product_tool(
-                session_id=session_id,
-                authorization=room_authorization,
-                error=exc,
-            )
-            raise
-
-        pending_room_approval = (
-            room_authorization is not None
-            and isinstance(response.get("result"), Mapping)
-            and response["result"].get("approvalRequired") is True
-        )
-        if pending_room_approval:
-            invocation = room_authorization.get("invocationReceipt")
-            if not isinstance(invocation, Mapping):
-                raise ValueError(
-                    "Room product Tool authorization has no invocation receipt"
-                )
-            response["roomInvocationReceipt"] = dict(invocation)
-        elif room_authorization is not None:
-            sealed_receipt = _auto_approved_room_execution_receipt(response)
-            auto_approved = (
-                isinstance(response.get("result"), Mapping)
-                and response["result"].get("autoApproved") is True
-            )
-            if auto_approved:
-                if sealed_receipt is None:
-                    raise ValueError(
-                        "automatic Room Tool approval completed without "
-                        "an execution receipt"
-                    )
-                response["roomExecutionReceipt"] = sealed_receipt
-                validate_contract(response, "agent-tool-result.v1.json")
-                return response
-            model_decided = (
-                isinstance(response.get("result"), Mapping)
-                and response["result"].get("modelDecided") is True
-            )
-            if model_decided:
-                execution = self._record_room_product_tool_execution(
-                    session_id=session_id,
-                    authorization=room_authorization,
-                    status="rejected",
-                    result_hash=_sha256_json(response),
-                )
-                receipt = execution.get("executionReceipt")
-                if isinstance(receipt, Mapping):
-                    response["roomExecutionReceipt"] = dict(receipt)
-                validate_contract(response, "agent-tool-result.v1.json")
-                return response
-            execution = self._record_room_product_tool_execution(
-                session_id=session_id,
-                authorization=room_authorization,
-                status="applied",
-                result_hash=_sha256_json(response),
-            )
-            receipt = execution.get("executionReceipt")
-            if isinstance(receipt, Mapping):
-                response["roomExecutionReceipt"] = dict(receipt)
         validate_contract(response, "agent-tool-result.v1.json")
         return response
 
@@ -2272,7 +2396,6 @@ class ControlToolGateway:
         args: Mapping[str, object],
         spec: Mapping[str, object],
         operation: str,
-        room_authorization: Mapping[str, object] | None,
     ) -> dict[str, object]:
         session_id = str(session["id"])
         # Re-read immediately before authorization/approval so a waiting Room
@@ -2288,13 +2411,8 @@ class ControlToolGateway:
             )
         if not _tool_profile_allows(session, tool=tool, operation=operation, spec=spec):
             raise ValueError("tool operation is not enabled for this session tool profile")
-        room_source_read_only = bool(
-            room_authorization is not None
-            and room_authorization.get("workspaceAccess")
-            == "source_read_only"
-        )
         read_only_validation_command = (
-            (read_only_policy_active(session) or room_source_read_only)
+            read_only_policy_active(session)
             and (tool, operation) == ("workspace_shell", "run")
         )
         if (tool, operation) in {
@@ -2310,7 +2428,9 @@ class ControlToolGateway:
             # transition to executing only when an approved write is applied.
             self.sessions.require_workspace_act(
                 session_id,
-                room_dispatch_authorized=(room_authorization is not None),
+                room_dispatch_authorized=self._room_dispatch_authorized(
+                    session_id
+                ),
             )
         handlers = {
             "overview": self._overview,
@@ -2333,13 +2453,8 @@ class ControlToolGateway:
         }
         risk_level = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
         if read_only_validation_command:
-            command_session = (
-                {**session, "executionMode": "read_only"}
-                if room_source_read_only
-                else session
-            )
             prepared = self.workspace_harness.prepare_command(
-                command_session,
+                session,
                 args,
             )
             result = self.workspace_harness.execute(prepared)
@@ -2407,11 +2522,6 @@ class ControlToolGateway:
                 operation=operation,
                 args=args,
                 risk_level=risk_level,
-                room_invocation_receipt_id=(
-                    _room_invocation_receipt_id(room_authorization)
-                ),
-                room_root_id=_room_invocation_root_id(room_authorization),
-                room_lineage=_room_invocation_lineage(room_authorization),
             )
             approval = (
                 result.get("approval")
@@ -2438,6 +2548,22 @@ class ControlToolGateway:
             "result": result,
         }
         return response
+
+    def _room_dispatch_authorized(self, session_id: str) -> bool:
+        """Let an active Room Session use the ordinary Session Act gate.
+
+        Room no longer issues a second per-Tool capability receipt. The Room
+        adapter only proves that this Session currently owns a live dispatch;
+        the Session execution mode, workspace scope and approval strategy stay
+        authoritative for every actual Tool call.
+        """
+
+        check = getattr(
+            self.collaboration,
+            "_active_room_dispatch_authorizes_work",
+            None,
+        )
+        return bool(callable(check) and check(session_id))
 
     def _read_internal_resource(
         self,
@@ -2489,7 +2615,7 @@ class ControlToolGateway:
                 raise ValueError("governed Skill reader is unavailable")
             payload = dict(load_exact(resource_id))
             content = str(payload.pop("body", ""))
-            metadata = {"owner": "RoomSkillPolicy", **payload}
+            metadata = {"owner": "SessionSkillRegistry", **payload}
         else:
             rooms = getattr(self.collaboration, "rooms", None)
             participant_for_session = getattr(rooms, "participant_for_session", None)
@@ -2557,230 +2683,6 @@ class ControlToolGateway:
             "size": len(encoded),
             "resourceRevision": hashlib.sha256(encoded).hexdigest(),
         }
-
-    def _authorize_room_product_tool(
-        self,
-        *,
-        session_id: str,
-        tool: str,
-        args: Mapping[str, object],
-        tool_call_id: str,
-        load_receipt_id: str,
-    ) -> Mapping[str, object] | None:
-        authorize = getattr(
-            self.collaboration,
-            "authorize_room_product_tool",
-            None,
-        )
-        if not callable(authorize):
-            return None
-        result = authorize(
-            session_id,
-            tool,
-            args,
-            tool_call_id=tool_call_id,
-            load_receipt_id=load_receipt_id,
-        )
-        if result is None:
-            return None
-        if not isinstance(result, Mapping):
-            raise ValueError("Room product Tool authorization returned an invalid receipt")
-        return dict(result)
-
-    def _record_room_product_tool_execution(
-        self,
-        *,
-        session_id: str,
-        authorization: Mapping[str, object],
-        status: str,
-        result_hash: str,
-    ) -> Mapping[str, object]:
-        invocation = authorization.get("invocationReceipt")
-        if not isinstance(invocation, Mapping):
-            raise ValueError("Room product Tool authorization has no invocation receipt")
-        invocation_receipt_id = str(invocation.get("receiptId") or "").strip()
-        if not invocation_receipt_id:
-            raise ValueError("Room product Tool invocation receipt has no id")
-        record = getattr(
-            self.collaboration,
-            "record_room_product_tool_execution",
-            None,
-        )
-        if not callable(record):
-            raise ValueError("Room product Tool execution receipt owner is unavailable")
-        result = record(
-            session_id,
-            invocation_receipt_id,
-            status=status,
-            result_hash=result_hash,
-        )
-        if not isinstance(result, Mapping):
-            raise ValueError("Room product Tool execution returned an invalid receipt")
-        return dict(result)
-
-    def _record_failed_room_product_tool(
-        self,
-        *,
-        session_id: str,
-        authorization: Mapping[str, object] | None,
-        error: Exception,
-    ) -> None:
-        if authorization is None:
-            return
-        try:
-            self._record_room_product_tool_execution(
-                session_id=session_id,
-                authorization=authorization,
-                status="failed",
-                result_hash=_sha256_json(
-                    {
-                        "errorType": type(error).__name__,
-                        "message": str(error),
-                    }
-                ),
-            )
-        except Exception:
-            # Preserve the original Tool failure. A revoked binding still keeps
-            # this late result from being returned on the success path.
-            return
-
-    def _validate_room_product_tool_approval(
-        self,
-        *,
-        session_id: str,
-        invocation_receipt_id: str,
-        tool: str,
-    ) -> Mapping[str, object]:
-        validate = getattr(
-            self.collaboration,
-            "validate_room_product_tool_approval",
-            None,
-        )
-        if not callable(validate):
-            raise ValueError("Room approval fence owner is unavailable")
-        result = validate(
-            session_id,
-            invocation_receipt_id,
-            tool_name=tool,
-        )
-        if not isinstance(result, Mapping):
-            raise ValueError("Room approval fence returned an invalid receipt")
-        return dict(result)
-
-    def _bind_room_invocation_to_approval(
-        self,
-        prepared: Mapping[str, object],
-        *,
-        session_id: str,
-        tool: str,
-        operation: str,
-        invocation_receipt_id: str,
-        root_id: str,
-        room_lineage: Mapping[str, object] | None = None,
-    ) -> dict[str, object]:
-        if not invocation_receipt_id:
-            return dict(prepared)
-        room_root_id = _bounded_text(root_id, maximum=240)
-        if not room_root_id:
-            raise ValueError(
-                "Room product Tool authorization has no root id"
-            )
-        approval = prepared.get("approval")
-        if not isinstance(approval, Mapping):
-            raise ValueError(
-                "Room approval preparation returned no approval record"
-            )
-        preview = approval.get("preview")
-        if not isinstance(preview, Mapping):
-            raise ValueError("Room approval has no hash-bound preview")
-        action_payload = preview.get("actionPayload")
-        base_state = preview.get("baseState")
-        if not isinstance(action_payload, Mapping) or not isinstance(
-            base_state, Mapping
-        ):
-            raise ValueError(
-                "Room approval preview has no action payload or base state"
-            )
-        existing_receipt_id = _bounded_text(
-            base_state.get("roomInvocationReceiptId"), maximum=240
-        )
-        if existing_receipt_id and existing_receipt_id != invocation_receipt_id:
-            raise ValueError(
-                "Room approval is already bound to another invocation"
-            )
-        rebound_base_state = {
-            **base_state,
-            "roomInvocationReceiptId": invocation_receipt_id,
-            **(
-                {"roomLineage": dict(room_lineage)}
-                if isinstance(room_lineage, Mapping)
-                and room_lineage.get("rootId")
-                else {}
-            ),
-        }
-        rebound_preview = {
-            **preview,
-            "baseState": rebound_base_state,
-        }
-        payload_sha256 = _approval_payload_digest(
-            session_id=session_id,
-            tool=tool,
-            operation=operation,
-            action_payload=action_payload,
-            base_state=rebound_base_state,
-        )
-        rebound = self.sessions.rebind_pending_approval(
-            str(approval.get("approvalId") or ""),
-            expected_payload_sha256=str(
-                approval.get("payloadSha256") or ""
-            ),
-            payload_sha256=payload_sha256,
-            preview=rebound_preview,
-            causal_turn_id=room_root_id,
-        )
-        return {
-            **prepared,
-            "approvalId": rebound["approvalId"],
-            "approval": rebound,
-        }
-
-    def _seal_room_approval_execution(
-        self,
-        *,
-        approval: Mapping[str, object],
-        result: Mapping[str, object],
-    ) -> dict[str, object]:
-        invocation_receipt_id = _approval_room_invocation_receipt_id(
-            approval
-        )
-        sealed = dict(result)
-        if not invocation_receipt_id:
-            return sealed
-        if sealed.get("externalActionPending") is True:
-            # The native supervisor is the execution owner from this point.
-            # Keep the Room invocation open until its final, verified receipt.
-            return sealed
-        execution = self._record_room_product_tool_execution(
-            session_id=str(approval.get("sessionId") or ""),
-            authorization={
-                "invocationReceipt": {
-                    "receiptId": invocation_receipt_id,
-                }
-            },
-            status=(
-                "applied"
-                if sealed.get("mutationApplied") is True
-                else "failed"
-            ),
-            result_hash=_sha256_json(sealed),
-        )
-        receipt = execution.get("executionReceipt")
-        if not isinstance(receipt, Mapping):
-            raise ValueError(
-                "Room approval execution returned no execution receipt"
-            )
-        sealed["roomExecutionReceipt"] = dict(receipt)
-        return sealed
 
     def _plugins(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         if self.extensions is None:
@@ -2854,17 +2756,56 @@ class ControlToolGateway:
                 )
             )
         if operation == "inspect":
-            return dict(
+            session_id = _bounded_text(args.get("_sessionId"), maximum=240)
+            bundle_id = _bounded_text(args.get("bundleId"), maximum=300)
+            pid = _bounded_int(args.get("pid"), default=0, minimum=0, maximum=2_147_483_647)
+            query = _bounded_text(args.get("query"), maximum=300)
+            max_nodes = _bounded_int(args.get("maxNodes"), default=160, minimum=1, maximum=500)
+            max_depth = _bounded_int(args.get("maxDepth"), default=8, minimum=1, maximum=12)
+            target = bundle_id or (f"pid:{pid}" if pid > 0 else "frontmost")
+            cursor_key = (session_id, target, max_nodes, max_depth)
+            since_snapshot_id = _bounded_text(args.get("sinceSnapshotId"), maximum=200)
+            if not since_snapshot_id and not query and args.get("incremental") is not False:
+                with self._desktop_cursor_lock:
+                    since_snapshot_id = self._desktop_snapshot_cursors.get(cursor_key, "")
+            result = dict(
                 self.desktop_client.inspect(  # type: ignore[attr-defined]
-                    bundle_id=_bounded_text(args.get("bundleId"), maximum=300),
-                    pid=_bounded_int(args.get("pid"), default=0, minimum=0, maximum=2_147_483_647),
-                    query=_bounded_text(args.get("query"), maximum=300),
-                    max_nodes=_bounded_int(args.get("maxNodes"), default=160, minimum=1, maximum=500),
-                    max_depth=_bounded_int(args.get("maxDepth"), default=8, minimum=1, maximum=12),
-                    since_snapshot_id=_bounded_text(args.get("sinceSnapshotId"), maximum=200),
+                    bundle_id=bundle_id,
+                    pid=pid,
+                    query=query,
+                    max_nodes=max_nodes,
+                    max_depth=max_depth,
+                    since_snapshot_id=since_snapshot_id,
                 )
             )
+            snapshot_id = _bounded_text(result.get("snapshotId"), maximum=200)
+            if snapshot_id and not query:
+                with self._desktop_cursor_lock:
+                    self._desktop_snapshot_cursors[cursor_key] = snapshot_id
+                    while len(self._desktop_snapshot_cursors) > 256:
+                        self._desktop_snapshot_cursors.pop(
+                            next(iter(self._desktop_snapshot_cursors))
+                        )
+            return result
+        if operation == "find":
+            return dict(self._find_desktop_target(args))
         raise ValueError("unsupported desktop_semantic operation")
+
+    def _find_desktop_target(self, args: Mapping[str, object]) -> dict[str, object]:
+        match = args.get("match") if isinstance(args.get("match"), Mapping) else {}
+        result = self.desktop_client.find(  # type: ignore[attr-defined]
+            bundle_id=_bounded_text(args.get("bundleId"), maximum=300),
+            pid=_bounded_int(args.get("pid"), default=0, minimum=0, maximum=2_147_483_647),
+            role=_bounded_text(match.get("role"), maximum=80),
+            subrole=_bounded_text(match.get("subrole"), maximum=80),
+            identifier=_bounded_text(match.get("identifier"), maximum=240),
+            label=_bounded_text(match.get("label"), maximum=240),
+            query=_bounded_text(match.get("query"), maximum=300),
+            limit=_bounded_int(args.get("limit"), default=5, minimum=1, maximum=20),
+            max_nodes=_bounded_int(args.get("maxNodes"), default=500, minimum=1, maximum=500),
+            max_depth=_bounded_int(args.get("maxDepth"), default=12, minimum=1, maximum=12),
+        )
+        return dict(result) if isinstance(result, Mapping) else {}
 
     def _agents(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         if self.delegation is None:
@@ -2878,6 +2819,8 @@ class ControlToolGateway:
             return dict(self.delegation.delegate(session_id, args))  # type: ignore[attr-defined]
         if operation == "status":
             return dict(self.delegation.status(session_id, args))  # type: ignore[attr-defined]
+        if operation == "call":
+            return dict(self.delegation.call(session_id, args))  # type: ignore[attr-defined]
         if operation == "artifact":
             return dict(
                 self.delegation.inspect_artifact(  # type: ignore[attr-defined]
@@ -3156,16 +3099,12 @@ class ControlToolGateway:
             raise ValueError(
                 "workspace mutation is blocked by the active read-only policy"
             )
-        room_invocation_receipt_id = _approval_room_invocation_receipt_id(
-            approval
-        )
-        if room_invocation_receipt_id:
-            self._validate_room_product_tool_approval(
-                session_id=session_id,
-                invocation_receipt_id=room_invocation_receipt_id,
-                tool=tool,
+        if _legacy_room_invocation_receipt_id(approval):
+            raise ValueError(
+                "legacy Room-bound approvals are no longer executable; "
+                "retry the Tool call in the active Session"
             )
-        elif (tool, operation) in {
+        if (tool, operation) in {
             ("workspace_edit", "apply"),
             ("workspace_patch", "apply"),
             ("workspace_shell", "run"),
@@ -3174,12 +3113,13 @@ class ControlToolGateway:
             ("workspace_lsp", "rename"),
             ("workspace_lsp", "code_action_apply"),
         }:
-            self.sessions.require_workspace_act(session_id)
-        result = self._apply_approved_operation(approval)
-        return self._seal_room_approval_execution(
-            approval=approval,
-            result=result,
-        )
+            self.sessions.require_workspace_act(
+                session_id,
+                room_dispatch_authorized=self._room_dispatch_authorized(
+                    session_id
+                ),
+            )
+        return self._apply_approved_operation(approval)
 
     def _apply_approved_operation(
         self,
@@ -3470,25 +3410,13 @@ class ControlToolGateway:
         operation: str,
         args: Mapping[str, object],
         risk_level: str,
-        room_invocation_receipt_id: str = "",
-        room_root_id: str = "",
-        room_lineage: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
-        prepared = self._prepare_approval_operation(
+        return self._prepare_approval_operation(
             session_id=session_id,
             tool=tool,
             operation=operation,
             args=args,
             risk_level=risk_level,
-        )
-        return self._bind_room_invocation_to_approval(
-            prepared,
-            session_id=session_id,
-            tool=tool,
-            operation=operation,
-            invocation_receipt_id=room_invocation_receipt_id,
-            root_id=room_root_id,
-            room_lineage=room_lineage,
         )
 
     def _prepare_approval_operation(
@@ -3721,10 +3649,33 @@ class ControlToolGateway:
         args: Mapping[str, object],
         risk_level: str,
     ) -> dict[str, object]:
+        snapshot_id = _bounded_text(args.get("snapshotId"), maximum=200)
+        revision = _bounded_int(args.get("revision"), default=0, minimum=0, maximum=2_147_483_647)
+        node_ref = _bounded_text(args.get("nodeRef"), maximum=200)
+        selector_used = not (snapshot_id and revision > 0 and node_ref)
+        if selector_used:
+            found = self._find_desktop_target({**dict(args), "limit": 2})
+            matches = found.get("matches") if isinstance(found.get("matches"), list) else []
+            match_count = _safe_int(found.get("matchCount"))
+            if match_count == 0 or not matches:
+                raise ValueError("desktop semantic selector matched no nodes")
+            match = args.get("match") if isinstance(args.get("match"), Mapping) else {}
+            exact_identifier = _bounded_text(match.get("identifier"), maximum=240)
+            if found.get("truncated") is True and not exact_identifier:
+                raise ValueError(
+                    "desktop semantic selector uniqueness is unknown because the tree was truncated; "
+                    "use an exact identifier"
+                )
+            if match_count != 1:
+                raise ValueError("desktop semantic selector must match exactly one node")
+            match = matches[0] if isinstance(matches[0], Mapping) else {}
+            snapshot_id = _bounded_text(found.get("snapshotId"), maximum=200)
+            revision = _bounded_int(found.get("revision"), default=0, minimum=0, maximum=2_147_483_647)
+            node_ref = _bounded_text(match.get("nodeRef"), maximum=200)
         prepared = self.desktop_client.prepare_action(  # type: ignore[attr-defined]
-            snapshot_id=_bounded_text(args.get("snapshotId"), maximum=200),
-            revision=_bounded_int(args.get("revision"), default=0, minimum=0, maximum=2_147_483_647),
-            node_ref=_bounded_text(args.get("nodeRef"), maximum=200),
+            snapshot_id=snapshot_id,
+            revision=revision,
+            node_ref=node_ref,
             action=_bounded_text(args.get("action"), maximum=80),
             text=str(args.get("text"))[:8_000] if isinstance(args.get("text"), str) else None,
             key=_bounded_text(args.get("key"), maximum=40),
@@ -3797,6 +3748,7 @@ class ControlToolGateway:
             "changes": changes,
             "actionPayload": action_payload,
             "baseState": base_state,
+            "selectorResolved": selector_used,
         }
         approval = self.sessions.create_approval(
             session_id=session_id,
@@ -3841,14 +3793,39 @@ class ControlToolGateway:
         )
         if not isinstance(receipt, Mapping):
             raise ValueError("desktop action receipt is invalid")
+        native_receipt = dict(receipt)
+        post_snapshot = (
+            native_receipt.get("postSnapshot")
+            if isinstance(native_receipt.get("postSnapshot"), Mapping)
+            else {}
+        )
+        compact_receipt = {
+            key: native_receipt[key]
+            for key in ("schemaVersion", "applied", "action", "nodeRef", "method")
+            if key in native_receipt
+        }
+        if post_snapshot:
+            diff = post_snapshot.get("diff") if isinstance(post_snapshot.get("diff"), Mapping) else {}
+            compact_receipt["verification"] = {
+                "snapshotId": post_snapshot.get("snapshotId") or "",
+                "revision": post_snapshot.get("revision") or 0,
+                "changedNodeCount": sum(
+                    len(diff.get(key) or [])
+                    for key in ("added", "updated", "removed")
+                    if isinstance(diff.get(key), list)
+                ),
+                "focusChanged": diff.get("focusChanged") is True,
+            }
         return {
             "summary": (
                 f"桌面动作 {_bounded_text(action_payload.get('action'), maximum=80)} 已执行，"
                 "并已重新读取窗口语义状态"
             ),
-            "presentationKind": "desktop_snapshot",
+            "presentationKind": "desktop_action",
             "approvalId": str(approval.get("approvalId") or ""),
-            "receipt": dict(receipt),
+            "mutationApplied": native_receipt.get("applied") is True,
+            "receipt": compact_receipt,
+            "auditReceipt": native_receipt,
         }
 
     def _prepare_memory_mutation(
@@ -8784,70 +8761,7 @@ def _sha256_json(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _room_invocation_receipt_id(
-    authorization: Mapping[str, object] | None,
-) -> str:
-    if not isinstance(authorization, Mapping):
-        return ""
-    invocation = authorization.get("invocationReceipt")
-    if not isinstance(invocation, Mapping):
-        return ""
-    return _bounded_text(invocation.get("receiptId"), maximum=240)
-
-
-def _room_invocation_root_id(
-    authorization: Mapping[str, object] | None,
-) -> str:
-    if not isinstance(authorization, Mapping):
-        return ""
-    invocation = authorization.get("invocationReceipt")
-    if not isinstance(invocation, Mapping):
-        return ""
-    command = invocation.get("canonicalCommand")
-    if not isinstance(command, Mapping):
-        return ""
-    return _bounded_text(command.get("rootId"), maximum=240)
-
-
-def _room_invocation_lineage(
-    authorization: Mapping[str, object] | None,
-) -> dict[str, object]:
-    if not isinstance(authorization, Mapping):
-        return {}
-    invocation = authorization.get("invocationReceipt")
-    if not isinstance(invocation, Mapping):
-        return {}
-    command = invocation.get("canonicalCommand")
-    if not isinstance(command, Mapping):
-        return {}
-    root_id = _bounded_text(command.get("rootId"), maximum=240)
-    if not root_id:
-        return {}
-    return {
-        "roomId": _bounded_text(command.get("roomId"), maximum=240),
-        "rootId": root_id,
-        "generation": _bounded_int(
-            command.get("generation"), default=0, minimum=0, maximum=2_147_483_647
-        ),
-        "taskId": _bounded_text(command.get("taskId"), maximum=240),
-        "dispatchId": _bounded_text(command.get("dispatchId"), maximum=240),
-    }
-
-
-def _auto_approved_room_execution_receipt(
-    response: Mapping[str, object],
-) -> dict[str, object] | None:
-    result = response.get("result")
-    if not isinstance(result, Mapping) or result.get("autoApproved") is not True:
-        return None
-    receipt = result.get("receipt")
-    if not isinstance(receipt, Mapping):
-        return None
-    room_receipt = receipt.get("roomExecutionReceipt")
-    return dict(room_receipt) if isinstance(room_receipt, Mapping) else None
-
-
-def _approval_room_invocation_receipt_id(
+def _legacy_room_invocation_receipt_id(
     approval: Mapping[str, object],
 ) -> str:
     preview = approval.get("preview")
@@ -9082,6 +8996,9 @@ def _tool_profile_allows(
                 "catalog",
                 "status",
                 "artifact",
+                "delegate",
+                "call",
+                "abort",
             }
         ),
         "agent_schedule": frozenset({"list", "runs"}),
@@ -9105,7 +9022,7 @@ def _tool_profile_allows(
         ),
         "workspace_job": frozenset({"list", "status", "logs"}),
         "workspace_shell": frozenset({"run"}),
-        "desktop_semantic": frozenset({"status", "list", "inspect"}),
+        "desktop_semantic": frozenset({"status", "list", "inspect", "find"}),
     }
     operation_risk = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
     return operation_risk == "R0" and operation in allowed.get(tool, frozenset())

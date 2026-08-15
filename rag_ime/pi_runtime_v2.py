@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import queue
@@ -11,7 +10,6 @@ import time
 import uuid
 from collections import deque
 from collections.abc import Callable, Mapping
-from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -35,6 +33,7 @@ from .pi_runtime_public import (
     REVIEW_TITLE_PREFIX,
     canonical_grouped_answers,
     grouped_questions_from_wire,
+    inspectable_tool_result,
     last_assistant_error,
     last_assistant_preview,
     pi_message_id,
@@ -50,6 +49,7 @@ from .pi_runtime_public import (
     redact_mapping,
     runtime_tool_result_is_error,
     ui_confirmation_value,
+    visible_message_text,
 )
 from .pi_runtime_values import (
     PiRuntimeTurnConflict,
@@ -69,113 +69,8 @@ __all__ = ["PiRuntimeHostManager"]
 
 
 _PROTOCOL_VERSION = "2"
-_CANCELLATION_SURFACES = (
-    "provider", "tool", "exec", "retry", "compaction",
-    "branch_summary", "timer", "continuation", "session",
-)
-_CANCELLATION_SURFACE_STATES = {"requested", "acknowledged", "terminated", "unknown"}
 _MODEL_CATALOG_CACHE_SECONDS = 1_800.0
-
-
-def _room_generation(value: object) -> int:
-    generation = as_integer(value)
-    if generation < 0:
-        raise ValueError("Room generation must be non-negative")
-    return generation
-
-
-def _room_dispatch_host_key(
-    *,
-    session_id: str,
-    root_id: str,
-    dispatch_id: str,
-    turn_id: str,
-    capability_epoch: int,
-) -> tuple[str, str, str, str, int]:
-    return (
-        session_id,
-        root_id,
-        dispatch_id,
-        turn_id,
-        int(capability_epoch),
-    )
-
-
-def _cancel_receipt_from_terminated_host(
-    kill_receipt: Mapping[str, object],
-    *,
-    expected_host_identity: str,
-    cancel_id: str,
-    session_id: str,
-    root_id: str,
-    dispatch_id: str,
-    generation: int,
-    turn_id: str,
-    capability_epoch: int,
-) -> dict[str, object] | None:
-    """Close an exact cancel only from a terminal process-tree receipt."""
-
-    pending_targets = kill_receipt.get("pendingTargets")
-    requested_at_ms = as_integer(kill_receipt.get("requestedAtMs"))
-    acknowledged_at_ms = as_integer(kill_receipt.get("acknowledgedAtMs"))
-    terminated_at_ms = as_integer(kill_receipt.get("terminatedAtMs"))
-    if (
-        kill_receipt.get("schemaVersion")
-        != "wisdom-weasel.runtime-host-kill-receipt.v1"
-        or kill_receipt.get("hostIdentity") != expected_host_identity
-        or kill_receipt.get("requestKind") != "cancel_timeout"
-        or kill_receipt.get("requestedBy") != f"session:{session_id}"
-        or kill_receipt.get("state") != "terminated"
-        or not isinstance(pending_targets, list)
-        or pending_targets
-        or requested_at_ms <= 0
-        or acknowledged_at_ms < requested_at_ms
-        or terminated_at_ms < acknowledged_at_ms
-        or not str(kill_receipt.get("killReceiptId") or "").strip()
-    ):
-        return None
-    termination = dict(kill_receipt)
-    proof_ref = {
-        "kind": "runtime_host_process_tree",
-        "killReceiptId": str(termination["killReceiptId"]),
-        "hostIdentity": expected_host_identity,
-        "terminatedAtMs": terminated_at_ms,
-    }
-    return {
-        "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
-        "receiptKind": "cancel_applied",
-        "status": "applied",
-        "cancelId": cancel_id,
-        "sessionId": session_id,
-        "rootId": root_id,
-        "dispatchId": dispatch_id,
-        "generation": int(generation),
-        "turnId": turn_id,
-        "capabilityEpoch": int(capability_epoch),
-        "activeRunAborted": True,
-        "cancelledContinuationIds": [],
-        "cancellationSurfaces": {
-            surface: {
-                "schemaVersion": (
-                    "wisdom-weasel.runtime-surface-termination-receipt.v1"
-                ),
-                "surface": surface,
-                # The Host kill owns Provider/session activity, but governed
-                # workspace Tools execute in the Sidecar. Their exact
-                # invocation registry must settle before the cancel owner can
-                # upgrade these two surfaces to terminated.
-                "state": (
-                    "unknown" if surface in {"tool", "exec"}
-                    else "terminated"
-                ),
-                "targetIds": [session_id],
-                "terminationProof": dict(proof_ref),
-            }
-            for surface in _CANCELLATION_SURFACES
-        },
-        "pendingTargets": ["tool", "exec"],
-        "runtimeHostTermination": termination,
-    }
+_PROMPT_TIMEOUT_SECONDS = 60.0 * 60.0
 
 
 def _failed_settlement_receipt(
@@ -217,81 +112,6 @@ def _failed_settlement_receipt(
     return terminal, error
 
 
-def _room_runtime_idempotency_key(
-    logical_key: str,
-    *,
-    attempt: int,
-) -> str:
-    """Keep logical Dispatch identity while fencing each durable delivery.
-
-    Pi Runtime Host deduplicates ``room.dispatch`` for the life of the Host
-    process by ``rootId + idempotencyKey``. Replaying a failed Provider turn
-    with the logical key would therefore return the first acceptance receipt
-    without starting another turn. The Kernel persists ``attempt`` before
-    delivery, so process-crash replays of one attempt retain the same key while
-    a confirmed final failure advances to a new one.
-    """
-
-    if attempt <= 0:
-        return logical_key
-    suffix = f":runtime-attempt:{attempt}"
-    if len(logical_key) + len(suffix) <= 512:
-        return f"{logical_key}{suffix}"
-    digest = hashlib.sha256(logical_key.encode("utf-8")).hexdigest()[:24]
-    prefix_limit = max(0, 512 - len(suffix) - len(digest) - 1)
-    return f"{logical_key[:prefix_limit]}:{digest}{suffix}"
-
-
-def _room_context_rebind(
-    current: Mapping[str, object],
-    desired: Mapping[str, object],
-) -> dict[str, object]:
-    """Validate one in-place managed Room binding transition."""
-
-    current_epoch = as_integer(current.get("contextEpoch"))
-    desired_epoch = as_integer(desired.get("contextEpoch"))
-    if current_epoch < 1 or desired_epoch < 1:
-        raise PiRuntimeError("managed Room binding has no positive context epoch")
-    if desired_epoch == current_epoch:
-        current_root = str(current.get("rootId") or "").strip()
-        desired_root = str(desired.get("rootId") or "").strip()
-        current_generation = as_integer(current.get("generation"))
-        desired_generation = as_integer(desired.get("generation"))
-        if (
-            not current_root
-            or current_root != desired_root
-            or current_generation != desired_generation
-        ):
-            raise PiRuntimeError(
-                "managed Room binding changed task without advancing context epoch"
-            )
-        return {"contextEpochChanged": False, "contextEpoch": desired_epoch}
-    if (
-        desired_epoch == current_epoch + 1
-        and str(desired.get("contextEpochReason") or "") == "task_switch"
-    ):
-        return {"contextEpochChanged": True, "contextEpoch": desired_epoch}
-    raise PiRuntimeError("managed Room context epoch transition is not monotonic")
-
-
-def _same_room_runtime_surface(
-    current: Mapping[str, object],
-    desired: Mapping[str, object],
-) -> bool:
-    """Allow in-place Room reuse only for one identical Provider tool surface."""
-
-    current_hash = str(current.get("runtimeBindingHash") or "").strip()
-    desired_hash = str(desired.get("runtimeBindingHash") or "").strip()
-    return bool(current_hash and current_hash == desired_hash)
-
-
-def _live_room_capability(value: object) -> dict[str, object]:
-    capability = as_mapping(value)
-    if str(capability.get("status") or "") == "revoked":
-        return {}
-    return capability
-
-
 def _runtime_primitive_capabilities(value: object) -> dict[str, object]:
     source = as_mapping(value)
     operations = as_mapping(source.get("sessionCancelOperations"))
@@ -324,7 +144,6 @@ def _runtime_primitive_capabilities(value: object) -> dict[str, object]:
                 "continuationTimer",
             )
         },
-        "roomTypes": bool(source.get("roomTypes")),
     }
 
 
@@ -636,6 +455,9 @@ class PiRuntimeHostClient:
 class _HostedSessionState:
     turn_id: str = ""
     client_message_id: str = ""
+    prompt_admission_in_flight: bool = False
+    admission_client_message_id: str = ""
+    abort_pending_admission: bool = False
     stream_pi_message_id: str = ""
     tool_blocks: AgentToolBlockBuffer = field(default_factory=AgentToolBlockBuffer)
     last_agent_messages: list[object] = field(default_factory=list)
@@ -649,7 +471,6 @@ class _HostedSessionState:
     settle_extension_failed: bool = False
     abort_requested_turn_id: str = ""
     retired_turn_ids: set[str] = field(default_factory=set)
-    room_skill_policy: dict[str, object] = field(default_factory=dict)
 
 
 class PiRuntimeHostManager:
@@ -675,10 +496,6 @@ class PiRuntimeHostManager:
         self._compaction_observer = compaction_observer
         self._lifecycle_lock = threading.RLock()
         self._lock = threading.RLock()
-        self._room_session_lifecycle_locks: dict[
-            str,
-            AbstractContextManager[object],
-        ] = {}
         self._client: PiRuntimeHostClient | None = None
         self._states: dict[str, _HostedSessionState] = {}
         self._open_sessions: set[str] = set()
@@ -697,9 +514,6 @@ class PiRuntimeHostManager:
             now_ms=int(time.time() * 1000),
         )
         self._last_kill_receipt: dict[str, object] | None = None
-        self._room_dispatch_hosts: dict[
-            tuple[str, str, str, str, int], tuple[int, str]
-        ] = {}
         self._retired_host_turns: set[tuple[str, str]] = set()
         self._available_models_cache: tuple[dict[str, object], ...] = ()
         self._available_models_cached_at = 0.0
@@ -732,7 +546,11 @@ class PiRuntimeHostManager:
                 str(self._last_kill_receipt["killReceiptId"])
             )
         with self._lock:
-            busy = sorted(session_id for session_id, state in self._states.items() if state.turn_id)
+            busy = sorted(
+                session_id
+                for session_id, state in self._states.items()
+                if state.turn_id or state.prompt_admission_in_flight
+            )
             open_sessions = sorted(self._open_sessions)
             active_completions = sorted(self._active_completion_ids)
             status = "busy" if busy or active_completions else self._status
@@ -882,80 +700,32 @@ class PiRuntimeHostManager:
         return client
 
     def ensure(self, session_id: str) -> dict[str, object]:
-        return self._ensure_session(
-            session_id,
-            lightweight_existing=False,
-        )
-
-    def _ensure_room_dispatch(self, session_id: str) -> dict[str, object]:
-        """Prepare a Dispatch without serializing the resident transcript.
-
-        Room delivery only needs the Session lifecycle fence and current Room
-        capability. The full snapshot also contains messages, entries,
-        telemetry, and Tool manifests; reading it on the hot handoff path can
-        hold a short Dispatch lease behind unrelated transcript work.
-        """
-
-        return self._ensure_session(
-            session_id,
-            lightweight_existing=True,
-            lifecycle_lock=self._room_session_lifecycle_lock(session_id),
-        )
-
-    def _room_session_lifecycle_lock(
-        self,
-        session_id: str,
-    ) -> AbstractContextManager[object]:
-        with self._lock:
-            lock = self._room_session_lifecycle_locks.get(session_id)
-            if lock is None:
-                lock = threading.RLock()
-                self._room_session_lifecycle_locks[session_id] = lock
-            return lock
-
-    def _ensure_session(
-        self,
-        session_id: str,
-        *,
-        lightweight_existing: bool,
-        lifecycle_lock: AbstractContextManager[object] | None = None,
-    ) -> dict[str, object]:
-        with lifecycle_lock or self._lifecycle_lock:
+        with self._lifecycle_lock:
             if not self.config.model_configured:
-                raise PiRuntimeError(self.config.model_configuration_error or "Pi model is not configured")
+                raise PiRuntimeError(
+                    self.config.model_configuration_error
+                    or "Pi model is not configured"
+                )
             client = self._host()
             session = dict(self.sessions.get(session_id))
             binding = self.sessions.runtime_binding(session_id)
             if binding is not None:
-                if binding.get("driverId") != self.driver_id or binding.get("runtimeKind") != self.runtime_kind:
-                    raise PiRuntimeError("Agent session belongs to another runtime driver")
+                if (
+                    binding.get("driverId") != self.driver_id
+                    or binding.get("runtimeKind") != self.runtime_kind
+                ):
+                    raise PiRuntimeError(
+                        "Agent session belongs to another runtime driver"
+                    )
                 session["_runtimeBinding"] = binding
             if self._session_context_provider is not None:
                 session.update(dict(self._session_context_provider(session)))
-            desired_room = _live_room_capability(
-                session.get("roomCapability")
-            )
-            desired_room_skill_policy = as_mapping(
-                session.get("roomSkillPolicy")
-            )
-            if desired_room_skill_policy.get("selection") != "required":
-                desired_room_skill_policy = {}
+
             with self._lock:
                 already_open = session_id in self._open_sessions
-                hosted_state = self._states.get(session_id)
-                current_room_skill_policy = (
-                    dict(hosted_state.room_skill_policy)
-                    if hosted_state is not None
-                    else {}
-                )
             if already_open:
-                use_control_state = (
-                    lightweight_existing
-                    and bool(
-                        self._host_capabilities.get(
-                            "sessionControlState"
-                        )
-                    )
+                use_control_state = bool(
+                    self._host_capabilities.get("sessionControlState")
                 )
                 snapshot = dict(
                     client.send(
@@ -976,111 +746,35 @@ class PiRuntimeHostManager:
                     raise PiRuntimeError(
                         "Pi Runtime Host returned an invalid Session control state"
                     )
-                current_room = _live_room_capability(
-                    snapshot.get("roomCapability")
-                )
-                active_room = as_mapping(snapshot.get("activeRoom"))
-                stale_active_room = bool(active_room) and (
-                    str(active_room.get("dispatchId") or "")
-                    != str(desired_room.get("dispatchId") or "")
-                )
-                rebind = (
-                    _room_context_rebind(current_room, desired_room)
-                    if current_room
-                    and desired_room
-                    and not stale_active_room
-                    else None
-                )
-                same_runtime_surface = bool(
-                    current_room
-                    and desired_room
-                    and _same_room_runtime_surface(
-                        current_room,
-                        desired_room,
-                    )
-                )
-                same_mode_binding = bool(
-                    current_room
-                    and desired_room
-                    and not stale_active_room
-                    and rebind is not None
-                    and not bool(rebind["contextEpochChanged"])
-                    and same_runtime_surface
-                    and current_room_skill_policy == desired_room_skill_policy
-                )
-                if (
-                    (not current_room and not desired_room)
-                    or same_mode_binding
-                ):
-                    self._sync_idle_snapshot(session_id, snapshot)
-                    with self._lock:
-                        self._schedule_idle_locked()
-                    return {"state": snapshot, "reused": True}
-                if not bool(snapshot.get("isIdle")):
-                    if bool(current_room) != bool(desired_room):
-                        raise PiRuntimeError(
-                            "Session must settle before switching between "
-                            "Agent and Room modes"
-                        )
-                    raise PiRuntimeError(
-                        "managed Room Session must settle before rebinding PromptPlan"
-                    )
-                if (
-                    current_room
-                    and desired_room
-                    and rebind is not None
-                    and not stale_active_room
-                    and bool(rebind["contextEpochChanged"])
-                    and same_runtime_surface
-                    and current_room_skill_policy == desired_room_skill_policy
-                ):
-                    self._sync_idle_snapshot(session_id, snapshot)
-                    with self._lock:
-                        self._schedule_idle_locked()
-                    return {
-                        "state": snapshot,
-                        "reused": True,
-                        "roomRebind": True,
-                        **rebind,
-                    }
-                client.send("session.close", {"sessionId": session_id})
+                self._sync_idle_snapshot(session_id, snapshot)
                 with self._lock:
-                    self._open_sessions.discard(session_id)
-                    self._states.pop(session_id, None)
-            roots = [str(value) for value in session.get("workspaceRoots") or [] if str(value).strip()]
+                    self._schedule_idle_locked()
+                return {"state": snapshot, "reused": True}
+
+            roots = [
+                str(value)
+                for value in session.get("workspaceRoots") or []
+                if str(value).strip()
+            ]
             cwd = roots[0] if roots else str(self.config.agent_dir)
             provider, model_id = self.config.resolved_model_reference(session)
-            session_file = str((binding or {}).get("transcriptRef") or session.get("sessionFile") or "").strip()
-            managed_system_prompt = (
-                str(session.get("managedSystemPrompt") or "")
-                if desired_room
-                else ""
-            )
-            if desired_room and not managed_system_prompt:
-                raise PiRuntimeError("managed Room Session has no live PromptPlan payload")
+            session_file = str(
+                (binding or {}).get("transcriptRef")
+                or session.get("sessionFile")
+                or ""
+            ).strip()
             memory_curation_session = (
                 str(session.get("toolProfileVersion") or "")
                 == MEMORY_CURATION_TOOL_PROFILE
             )
-            runtime_tool_manifest = session.get("runtimeToolManifest")
-            tool_manifest = (
-                [
-                    dict(item)
-                    for item in runtime_tool_manifest
-                    if isinstance(item, Mapping)
-                ]
-                if desired_room
-                and isinstance(runtime_tool_manifest, list)
-                else self.tool_catalog(session_id)
-            )
             params: dict[str, object] = {
                 "sessionId": session_id,
                 "cwd": cwd,
-                "systemPrompt": managed_system_prompt or self.config.system_prompt_for_session(session),
+                "systemPrompt": self.config.system_prompt_for_session(session),
                 "toolManifest": (
                     []
                     if memory_curation_session
-                    else tool_manifest
+                    else self.tool_catalog(session_id)
                 ),
                 "noContextFiles": (
                     str(session.get("toolProfileVersion") or "")
@@ -1102,50 +796,41 @@ class PiRuntimeHostManager:
                     else bool(session.get("codexSkillsEnabled", False))
                 ),
             }
-            session_context = str(
-                session.get("sessionContext") or ""
-            ).strip()
+            session_context = str(session.get("sessionContext") or "").strip()
             if session_context:
                 params["sessionContext"] = session_context
-            if desired_room:
-                params["roomCapability"] = dict(desired_room)
-                params.setdefault("sessionContext", "")
-                room_bootstrap = str(
-                    session.get("providerContext") or ""
-                )
-                room_recovery = str(
-                    session.get("roomRecoveryContext")
-                    or room_bootstrap
-                )
-                params["roomContext"] = room_bootstrap
-                # Provider delivery may use only a delta after the first
-                # Dispatch. Keep the current full bounded projection out of
-                # band so Pi can rebase a new context epoch after compaction.
-                params["roomRecoveryContext"] = room_recovery
-                if isinstance(session.get("roomProviderContext"), Mapping):
-                    params["roomProviderContext"] = dict(session["roomProviderContext"])
-                if isinstance(session.get("roomResourceLimits"), Mapping):
-                    params["roomResourceLimits"] = dict(session["roomResourceLimits"])
-                room_skill = session.get("roomSkillPolicy")
-                if isinstance(room_skill, Mapping) and room_skill.get("selection") == "required":
-                    params["roomSkillPolicy"] = dict(room_skill)
             if provider and model_id:
                 params.update({"provider": provider, "modelId": model_id})
-            thinking_level = str(session.get("thinkingLevel") or "").strip().lower()
+            thinking_level = str(
+                session.get("thinkingLevel") or ""
+            ).strip().lower()
             if thinking_level:
                 params["thinkingLevel"] = thinking_level
             if session_file:
                 params["sessionFile"] = session_file
-            result = client.send("session.open", params, timeout=max(60.0, self.config.command_timeout_seconds))
+
+            result = client.send(
+                "session.open",
+                params,
+                timeout=max(
+                    60.0,
+                    self.config.command_timeout_seconds,
+                ),
+            )
             snapshot = dict(as_mapping(result.get("snapshot")))
             model = as_mapping(snapshot.get("model"))
             if model.get("provider") and model.get("id"):
-                self.sessions.set_model_profile(session_id, f"{model['provider']}/{model['id']}")
+                self.sessions.set_model_profile(
+                    session_id,
+                    f"{model['provider']}/{model['id']}",
+                )
             bound = self.sessions.bind_runtime_session(
                 session_id,
                 driver_id=self.driver_id,
                 runtime_kind=self.runtime_kind,
-                external_session_id=str(snapshot.get("piSessionId") or session_id),
+                external_session_id=str(
+                    snapshot.get("piSessionId") or session_id
+                ),
                 transcript_ref=str(snapshot.get("sessionFile") or ""),
                 branch_anchor=str(snapshot.get("leafId") or ""),
                 binding_state="active",
@@ -1158,7 +843,10 @@ class PiRuntimeHostManager:
                     ),
                 ),
             )
-            idle_session = self._sync_idle_snapshot(session_id, snapshot)
+            idle_session = self._sync_idle_snapshot(
+                session_id,
+                snapshot,
+            )
             if idle_session is not None:
                 bound = idle_session
             evicted = str(result.get("evictedSessionId") or "")
@@ -1168,9 +856,6 @@ class PiRuntimeHostManager:
                     session_id,
                     _HostedSessionState(),
                 )
-                hosted_state.room_skill_policy = dict(
-                    desired_room_skill_policy
-                )
                 if evicted:
                     self._open_sessions.discard(evicted)
                     evicted_state = self._states.pop(evicted, None)
@@ -1179,14 +864,28 @@ class PiRuntimeHostManager:
                             evicted_state.abort_timer.cancel()
                         if evicted_state.settle_timer is not None:
                             evicted_state.settle_timer.cancel()
-                self._status = "ready"
-                self._schedule_idle_locked()
-            self.events.publish(session_id, "status_changed", {"status": "ready"})
+                admission_in_flight = (
+                    hosted_state.prompt_admission_in_flight
+                )
+                self._status = (
+                    "busy" if admission_in_flight else "ready"
+                )
+                if not admission_in_flight:
+                    self._schedule_idle_locked()
+            # Opening a cold Pi Session is part of prompt admission. Do not
+            # publish a late `ready` after a concurrent Stop already exposed
+            # `aborting`; that would regress the UI while the same admission
+            # is still being fenced.
+            if not admission_in_flight:
+                self.events.publish(
+                    session_id,
+                    "status_changed",
+                    {"status": "ready"},
+                )
             return {
                 "state": snapshot,
                 "session": bound,
                 "evictedSessionId": evicted or None,
-                "roomSkillLoad": result.get("roomSkillLoad"),
                 "reused": False,
             }
 
@@ -1201,7 +900,9 @@ class PiRuntimeHostManager:
             return None
         with self._lock:
             state = self._states.get(session_id)
-            if state is not None and state.turn_id:
+            if state is not None and (
+                state.turn_id or state.prompt_admission_in_flight
+            ):
                 return None
         session = self.sessions.get(session_id)
         if str(session.get("status") or "") == "idle":
@@ -1211,6 +912,79 @@ class PiRuntimeHostManager:
         # transcript count after projection; writing the Provider count here
         # caused two competing SQLite updates on every history poll.
         return self.sessions.set_status(session_id, "idle")
+
+    def reserve_prompt_admission(
+        self,
+        session_id: str,
+        *,
+        client_message_id: str = "",
+    ) -> dict[str, object]:
+        """Fence Stop before prompt preparation reaches the Pi Host.
+
+        The application service can spend noticeable time assembling context
+        before ``prompt()`` is called. Reserving that admission here gives a
+        concurrent Stop request one Runtime-owned state to mark, without
+        inventing a second turn or cancellation state machine.
+        """
+
+        normalized_client_message_id = str(client_message_id).strip()
+        with self._lock:
+            state = self._states.setdefault(
+                session_id,
+                _HostedSessionState(),
+            )
+            same_reservation = (
+                state.prompt_admission_in_flight
+                and state.admission_client_message_id
+                == normalized_client_message_id
+            )
+            if state.turn_id or (
+                state.prompt_admission_in_flight
+                and not same_reservation
+            ):
+                raise PiRuntimeTurnConflict(
+                    "Pi 正在处理上一轮，请等待结束或停止完成后再发送"
+                )
+            if not same_reservation:
+                state.prompt_admission_in_flight = True
+                state.admission_client_message_id = (
+                    normalized_client_message_id
+                )
+                state.abort_pending_admission = False
+            self._cancel_idle_locked()
+        self.sessions.set_status(session_id, "busy")
+        return {
+            "reserved": True,
+            "reused": same_reservation,
+            "sessionId": session_id,
+            "clientMessageId": normalized_client_message_id,
+        }
+
+    def release_prompt_admission(
+        self,
+        session_id: str,
+        *,
+        client_message_id: str = "",
+    ) -> bool:
+        """Release an unconsumed application admission after preparation fails."""
+
+        normalized_client_message_id = str(client_message_id).strip()
+        with self._lock:
+            state = self._states.get(session_id)
+            if (
+                state is None
+                or state.turn_id
+                or not state.prompt_admission_in_flight
+                or state.admission_client_message_id
+                != normalized_client_message_id
+            ):
+                return False
+            state.prompt_admission_in_flight = False
+            state.admission_client_message_id = ""
+            state.abort_pending_admission = False
+            self._schedule_idle_locked()
+        self.sessions.set_status(session_id, "idle")
+        return True
 
     def prompt(
         self,
@@ -1225,6 +999,7 @@ class PiRuntimeHostManager:
         if not text:
             raise ValueError("agent prompt must not be empty")
         normalized_delivery = message_delivery(delivery)
+        public_prompt_preview = visible_message_text("user", text)
         params: dict[str, object] = {
             "sessionId": session_id,
             "message": text,
@@ -1258,13 +1033,27 @@ class PiRuntimeHostManager:
             return result
         self.ensure(session_id)
         client = self._require_client()
+        normalized_client_message_id = str(client_message_id).strip()
         with self._lock:
             state = self._states.setdefault(session_id, _HostedSessionState())
-            if state.turn_id:
+            pre_reserved = (
+                state.prompt_admission_in_flight
+                and state.admission_client_message_id
+                == normalized_client_message_id
+            )
+            if state.turn_id or (
+                state.prompt_admission_in_flight and not pre_reserved
+            ):
                 raise PiRuntimeTurnConflict(
                     "Pi 正在处理上一轮，请等待结束或停止完成后再发送"
                 )
             self._cancel_idle_locked()
+            if not pre_reserved:
+                state.prompt_admission_in_flight = True
+                state.admission_client_message_id = (
+                    normalized_client_message_id
+                )
+                state.abort_pending_admission = False
             state.stream_pi_message_id = ""
             state.tool_blocks.clear()
             state.last_agent_messages = []
@@ -1272,25 +1061,90 @@ class PiRuntimeHostManager:
             state.had_tool_activity = False
             state.settle_extension_failed = False
             state.abort_requested_turn_id = ""
+        # The browser renders Stop from its optimistic turn before the Host
+        # returns a turnId. Persist the admission as busy so a concurrent Stop
+        # and snapshot cannot mistake that short window for an idle Session.
+        self.sessions.set_status(
+            session_id,
+            "busy",
+            last_message_preview=public_prompt_preview,
+        )
         try:
-            accepted = client.send("session.prompt", params)
+            # The Runtime Host resolves `session.prompt` after the complete Pi
+            # agent/tool loop.  It is intentionally not a short control ACK;
+            # Stop and Steer remain responsive through the Host's concurrent
+            # request dispatcher while this call is pending.
+            accepted = client.send(
+                "session.prompt",
+                params,
+                timeout=max(
+                    _PROMPT_TIMEOUT_SECONDS,
+                    self.config.command_timeout_seconds,
+                ),
+            )
         except Exception as exc:
+            with self._lock:
+                state = self._states.setdefault(
+                    session_id,
+                    _HostedSessionState(),
+                )
+                state.prompt_admission_in_flight = False
+                state.admission_client_message_id = ""
+                state.abort_pending_admission = False
             self._turn_failed(session_id, "", exc)
             raise
         turn_id = str(accepted.get("turnId") or "")
         with self._lock:
             state = self._states.setdefault(session_id, _HostedSessionState())
-            state.turn_id = turn_id
-            state.client_message_id = str(client_message_id).strip()
-            self._status = "busy"
-        self.sessions.set_status(session_id, "busy", last_message_preview=text)
-        self.events.publish(session_id, "status_changed", {"status": "busy"}, turn_id=turn_id)
+            abort_after_admission = state.abort_pending_admission
+            state.prompt_admission_in_flight = False
+            state.admission_client_message_id = ""
+            state.abort_pending_admission = False
+            already_retired = (
+                turn_id in state.retired_turn_ids
+                or (session_id, turn_id) in self._retired_host_turns
+            )
+            already_aborting = state.abort_requested_turn_id == turn_id
+            if not already_retired:
+                state.turn_id = turn_id
+                state.client_message_id = normalized_client_message_id
+                self._status = "busy"
+        if not already_retired:
+            self.sessions.set_status(
+                session_id,
+                "busy",
+                last_message_preview=public_prompt_preview,
+            )
+            if not already_aborting and not abort_after_admission:
+                self.events.publish(
+                    session_id,
+                    "status_changed",
+                    {"status": "busy"},
+                    turn_id=turn_id,
+                )
+            if abort_after_admission:
+                # The original Stop request already returned immediately. Now
+                # that Pi supplied the exact turn fence, deliver cancellation
+                # through the ordinary Pi Session abort path. Its timer owns
+                # the existing one-second escalation if the Host never settles.
+                try:
+                    self.abort(session_id)
+                except Exception:
+                    pass
+        else:
+            self.sessions.set_status(
+                session_id,
+                "idle",
+                last_message_preview="已停止。",
+            )
         result: dict[str, object] = {
             "accepted": True,
             "turnId": turn_id,
             "piEntryId": turn_id,
             "response": accepted,
         }
+        if abort_after_admission or already_aborting or already_retired:
+            result["abortRequested"] = True
         if client_message_id:
             result["clientMessageId"] = str(client_message_id).strip()
         return result
@@ -1435,11 +1289,7 @@ class PiRuntimeHostManager:
                 with self._lock:
                     self._schedule_idle_locked()
                 return snapshot
-            prepared = self._ensure_for_sealed_room_operation(
-                session_id,
-                operation="message inspection",
-                ordinary_fallback=True,
-            )
+            prepared = self.ensure(session_id)
             prepared_state = prepared.get("state")
             if isinstance(prepared_state, Mapping):
                 return dict(prepared_state)
@@ -1552,11 +1402,7 @@ class PiRuntimeHostManager:
         with self._lock:
             already_open = session_id in self._open_sessions
         if not already_open:
-            self._ensure_for_sealed_room_operation(
-                session_id,
-                operation="debug context",
-                ordinary_fallback=True,
-            )
+            self.ensure(session_id)
         params: dict[str, object] = {"sessionId": session_id}
         if str(turn_id).strip():
             params["turnId"] = str(turn_id).strip()
@@ -2129,127 +1975,6 @@ class PiRuntimeHostManager:
         )
         return result.get("cancelled") is True
 
-    def record_room_turn_settled(
-        self,
-        session_id: str,
-        turn_id: str,
-        dispatch_id: str,
-        created_at_ms: int,
-    ) -> dict[str, object]:
-        """Durably close the exact Provider turn that committed a Room task.
-
-        `room_commit` is consumed by Pi's `agent_settled` extension.  The Host
-        normally emits its own terminal event immediately afterwards, but a
-        broken JSONL stream can lose that last envelope after the Room commit
-        is already durable.  Close only the correlated Provider turn here so a
-        recent partial snapshot never has to infer completion from Session
-        idle or Room task state.
-        """
-
-        normalized_session_id = str(session_id).strip()
-        normalized_turn_id = str(turn_id).strip()
-        if not normalized_session_id or not normalized_turn_id:
-            raise ValueError("Room settlement requires Session and Provider turn IDs")
-        with self._lock:
-            existing = self.sessions.runtime_turn_terminal_event(
-                normalized_session_id,
-                normalized_turn_id,
-            )
-            if (
-                existing is not None
-                and existing.get("eventType") == "turn_completed"
-            ):
-                return {"replayed": True, "event": existing}
-            corrected_failure_event_id = (
-                str(existing.get("eventId") or "")
-                if existing is not None
-                and existing.get("eventType") == "turn_failed"
-                else ""
-            )
-
-            state = self._states.setdefault(
-                normalized_session_id,
-                _HostedSessionState(),
-            )
-            settled_messages = (
-                list(state.last_agent_messages)
-                if state.turn_id == normalized_turn_id
-                else []
-            )
-            newer_turn_active = bool(
-                state.turn_id and state.turn_id != normalized_turn_id
-            )
-            if state.turn_id == normalized_turn_id:
-                if state.abort_timer is not None:
-                    state.abort_timer.cancel()
-                    state.abort_timer = None
-                if state.settle_timer is not None:
-                    state.settle_timer.cancel()
-                    state.settle_timer = None
-                state.turn_id = ""
-                state.client_message_id = ""
-                state.stream_pi_message_id = ""
-                state.tool_blocks.clear()
-                state.last_agent_messages = []
-                state.final_error = ""
-                state.had_tool_activity = False
-                state.settle_extension_failed = False
-                state.abort_requested_turn_id = ""
-                state.pending_approvals.clear()
-                state.pending_reviews.clear()
-                state.pending_ui_requests.clear()
-                self._status = "ready"
-                self._schedule_idle_locked()
-            if len(state.retired_turn_ids) >= 64:
-                state.retired_turn_ids.pop()
-            state.retired_turn_ids.add(normalized_turn_id)
-            if len(self._retired_host_turns) >= 256:
-                self._retired_host_turns.pop()
-            self._retired_host_turns.add(
-                (normalized_session_id, normalized_turn_id)
-            )
-
-            public_message_count = sum(
-                isinstance(message, Mapping)
-                and pi_message_is_public(message)
-                for message in settled_messages
-            )
-            if not newer_turn_active:
-                status_fields: dict[str, object] = {
-                    "message_count": public_message_count,
-                    "updated_at_ms": int(created_at_ms),
-                }
-                preview = last_assistant_preview(settled_messages)
-                if preview:
-                    status_fields["last_message_preview"] = preview
-                self.sessions.set_status(
-                    normalized_session_id,
-                    "idle",
-                    **status_fields,
-                )
-            terminal_payload: dict[str, object] = {
-                "status": "completed",
-                "messageCount": public_message_count,
-                "terminalEvent": "room_commit_settlement",
-            }
-            if dispatch_id:
-                terminal_payload["dispatchId"] = str(dispatch_id)
-            if corrected_failure_event_id:
-                terminal_payload.update(
-                    {
-                        "terminalCorrection": True,
-                        "correctsTerminalEventId": corrected_failure_event_id,
-                    }
-                )
-            terminal = self.events.publish(
-                normalized_session_id,
-                "turn_completed",
-                terminal_payload,
-                turn_id=normalized_turn_id,
-                created_at_ms=int(created_at_ms),
-            )
-        return {"replayed": False, "event": terminal.to_payload()}
-
     def set_model(self, session_id: str, *, provider: str, model_id: str) -> dict[str, object]:
         normalized_provider = model_reference_part(provider, field="provider", maximum=80)
         normalized_model = model_reference_part(model_id, field="modelId", maximum=160)
@@ -2285,11 +2010,41 @@ class PiRuntimeHostManager:
         return [dict(item) for item in self._tool_manifest_provider(session)]
 
     def abort(self, session_id: str) -> dict[str, object]:
-        client = self._require_client()
         with self._lock:
             state = self._states.setdefault(session_id, _HostedSessionState())
             turn_id = state.turn_id
             if not turn_id:
+                if state.prompt_admission_in_flight:
+                    state.abort_pending_admission = True
+                    self.events.publish(
+                        session_id,
+                        "status_changed",
+                        {
+                            "status": "aborting",
+                            "pendingAdmission": True,
+                        },
+                    )
+                    return {
+                        "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
+                        "sessionId": session_id,
+                        "turnId": "",
+                        "pendingAdmission": True,
+                        "cancelledDecisionIds": [],
+                        "cancelledUIRequestIds": [],
+                        "lifecycle": {
+                            "schemaVersion": "pi.agent-abort-receipt.v1",
+                            "scopeId": session_id,
+                            "generation": 0,
+                            "reason": "user_abort",
+                            "cancelledContinuationIds": [],
+                            "cancelledOperationIds": [],
+                            "failedOperationIds": [],
+                            "operations": [],
+                            "pendingOperations": ["prompt_admission"],
+                            "drained": False,
+                            "idle": False,
+                        },
+                    }
                 self.sessions.set_status(session_id, "idle")
                 return {
                     "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
@@ -2324,6 +2079,17 @@ class PiRuntimeHostManager:
             timer.daemon = True
             state.abort_timer = timer
             timer.start()
+            # Publish the user-visible transition before waiting up to one
+            # second for the Host ACK. Stop feedback must not depend on a
+            # provider, Tool, or process that is precisely what we are
+            # attempting to cancel.
+            self.events.publish(
+                session_id,
+                "status_changed",
+                {"status": "aborting"},
+                turn_id=turn_id,
+            )
+        client = self._require_client()
         try:
             result = client.send(
                 "session.abort",
@@ -2403,7 +2169,11 @@ class PiRuntimeHostManager:
                     self._schedule_idle_locked()
                     retired = True
             if retired:
-                self.sessions.set_status(session_id, "idle")
+                self.sessions.set_status(
+                    session_id,
+                    "idle",
+                    last_message_preview="已停止。",
+                )
                 self.events.publish(
                     session_id,
                     "turn_completed",
@@ -2421,358 +2191,10 @@ class PiRuntimeHostManager:
             # Do not regress an already terminal turn back to "aborting".
             if state.turn_id != turn_id:
                 return dict(result)
-            self.events.publish(session_id, "status_changed", {"status": "aborting"}, turn_id=turn_id)
-        return dict(result)
-
-    def dispatch_room(
-        self,
-        payload: Mapping[str, object],
-        *,
-        message: str,
-        images: list[Mapping[str, str]] | None = None,
-        lease_token: str,
-        record_intent: Callable[[], None] | None = None,
-    ) -> dict[str, object]:
-        """Deliver one Kernel-leased Dispatch through Pi's typed Room RPC."""
-
-        session_id = str(payload.get("targetSessionId") or "").strip()
-        root_id = str(payload.get("rootId") or "").strip()
-        dispatch_id = str(payload.get("dispatchId") or "").strip()
-        idempotency_key = str(payload.get("idempotencyKey") or "").strip()
-        if not all((session_id, root_id, dispatch_id, idempotency_key, message.strip(), lease_token.strip())):
-            raise ValueError("Room dispatch requires target, identity, message, and lease token")
-        generation = as_integer(payload.get("generation"))
-        if generation < 0:
-            raise ValueError("Room dispatch generation must be non-negative")
-        capability_epoch = as_integer(payload.get("capabilityEpoch"))
-        if capability_epoch < 0:
-            raise ValueError("Room dispatch capabilityEpoch must be non-negative")
-        dispatch_attempt_value = payload.get("attempt")
-        if (
-            isinstance(dispatch_attempt_value, bool)
-            or not isinstance(dispatch_attempt_value, int)
-            or dispatch_attempt_value < 0
-        ):
-            raise ValueError("Room dispatch attempt must be a non-negative integer")
-        dispatch_attempt = dispatch_attempt_value
-        client = self._host()
-        try:
-            opened = self._ensure_room_dispatch(session_id)
-        except PiRuntimeError as exc:
-            if str(exc).startswith("Pi Runtime Host command timed out:"):
-                with self._lock:
-                    sibling_turns = any(
-                        candidate_session_id != session_id
-                        and bool(state.turn_id)
-                        for candidate_session_id, state in self._states.items()
-                    )
-                    sibling_dispatches = any(
-                        candidate_key[0] != session_id
-                        and candidate_host[1] == client.host_identity
-                        for candidate_key, candidate_host in (
-                            self._room_dispatch_hosts.items()
-                        )
-                    )
-                    active_completions = bool(self._active_completion_ids)
-                if not (
-                    sibling_turns
-                    or sibling_dispatches
-                    or active_completions
-                ):
-                    self._retire_timed_out_host(
-                        client,
-                        requested_by=f"room:{dispatch_id}",
-                        error=exc,
-                    )
-            raise
-        client = self._require_client()
-        session = dict(self.sessions.get(session_id))
-        if self._session_context_provider is not None:
-            session.update(
-                dict(self._session_context_provider(session))
-            )
-        with self._lock:
-            negotiated = _runtime_primitive_capabilities(
-                self._host_capabilities.get("runtimePrimitives")
-            )
-        if not negotiated["roomTypes"]:
-            raise PiRuntimeError("Pi Runtime Host did not negotiate typed Room RPC")
-        dispatch_params: dict[str, object] = {
-            "sessionId": session_id,
-            "rootId": root_id,
-            "dispatchId": dispatch_id,
-            "generation": generation,
-            "capabilityEpoch": capability_epoch,
-            "dispatchAttempt": dispatch_attempt,
-            "idempotencyKey": _room_runtime_idempotency_key(
-                idempotency_key,
-                attempt=dispatch_attempt,
-            ),
-            "leaseToken": lease_token,
-            "message": message,
-        }
-        if images:
-            dispatch_params["images"] = [dict(image) for image in images]
-        session_context = str(
-            session.get("sessionContext") or ""
-        ).strip()
-        delta_available = "providerContextDelta" in session
-        full_room_context = str(
-            session.get("providerContext") or ""
-        ).strip()
-        use_delta = (
-            opened.get("reused") is True
-            and opened.get("contextEpochChanged") is not True
-            and delta_available
-        )
-        context_value = (
-            session.get("providerContextDelta")
-            if use_delta
-            else full_room_context
-        )
-        room_context = str(context_value or "").strip()
-        if session_context and opened.get("reused") is True:
-            dispatch_params["sessionContext"] = session_context
-        if not full_room_context and not use_delta:
-            raise PiRuntimeError(
-                "managed Room Dispatch has no provider-only task context"
-            )
-        if not room_context and not use_delta:
-            raise PiRuntimeError(
-                "managed Room Dispatch has no provider-only task context"
-            )
-        dispatch_params["roomContext"] = room_context
-        dispatch_params["roomRecoveryContext"] = str(
-            session.get("roomRecoveryContext")
-            or full_room_context
-        ).strip()
-        if isinstance(session.get("roomProviderContext"), Mapping):
-            dispatch_params["roomProviderContext"] = dict(
-                session["roomProviderContext"]
-            )
-        if isinstance(session.get("roomCapability"), Mapping):
-            dispatch_params["roomCapability"] = dict(session["roomCapability"])
-        if isinstance(session.get("roomResourceLimits"), Mapping):
-            dispatch_params["roomResourceLimits"] = dict(
-                session["roomResourceLimits"]
-            )
-        result = client.send(
-            "room.dispatch",
-            dispatch_params,
-            before_write=record_intent,
-        )
-        if (
-            result.get("schemaVersion") != "wisdom-weasel.room-runtime-receipt.v1"
-            or result.get("rootId") != root_id
-            or result.get("dispatchId") != dispatch_id
-            or int(result.get("generation", -1)) != generation
-            or int(result.get("capabilityEpoch", -1)) != capability_epoch
-            or not str(result.get("turnId") or "").strip()
-            or result.get("status") != "accepted"
-        ):
-            raise PiRuntimeError("Pi Runtime Host returned an invalid Room dispatch receipt")
-        if "roomSkillLoad" not in result and isinstance(opened.get("roomSkillLoad"), Mapping):
-            result["roomSkillLoad"] = dict(opened["roomSkillLoad"])
-        with self._lock:
-            self._room_dispatch_hosts[
-                _room_dispatch_host_key(
-                    session_id=session_id,
-                    root_id=root_id,
-                    dispatch_id=dispatch_id,
-                    turn_id=str(result["turnId"]),
-                    capability_epoch=capability_epoch,
-                )
-            ] = (generation, client.host_identity)
-        return dict(result)
-
-
-    def cancel_room(
-        self,
-        *,
-        cancel_id: str,
-        session_id: str,
-        root_id: str,
-        dispatch_id: str,
-        generation: int,
-        turn_id: str,
-        capability_epoch: int,
-    ) -> dict[str, object]:
-        # Cancellation must target the already-running host Session exactly as
-        # it exists. Calling ensure() here can try to rebind a revoked Room
-        # PromptPlan before the active turn has settled, preventing abort.
-        with self._lock:
-            negotiated = _runtime_primitive_capabilities(
-                self._host_capabilities.get("runtimePrimitives")
-            )
-        if not negotiated["roomTypes"]:
-            raise PiRuntimeError("Pi Runtime Host did not negotiate typed Room RPC")
-        normalized_cancel_id = str(cancel_id or "").strip()
-        normalized_session_id = str(session_id or "").strip()
-        normalized_root_id = str(root_id or "").strip()
-        normalized_dispatch_id = str(dispatch_id or "").strip()
-        normalized_turn_id = str(turn_id or "").strip()
-        normalized_generation = _room_generation(generation)
-        normalized_capability_epoch = as_integer(capability_epoch)
-        if not all(
-            (
-                normalized_cancel_id,
-                normalized_session_id,
-                normalized_root_id,
-                normalized_dispatch_id,
-                normalized_turn_id,
-            )
-        ):
-            raise ValueError("Room cancellation requires exact runtime lineage")
-        if normalized_capability_epoch < 0:
-            raise ValueError("Room cancellation capabilityEpoch must be non-negative")
-        host_key = _room_dispatch_host_key(
-            session_id=normalized_session_id,
-            root_id=normalized_root_id,
-            dispatch_id=normalized_dispatch_id,
-            turn_id=normalized_turn_id,
-            capability_epoch=normalized_capability_epoch,
-        )
-        with self._lock:
-            accepted_host = self._room_dispatch_hosts.get(host_key)
-        if (
-            accepted_host is None
-            or accepted_host[0] > normalized_generation
-        ):
-            raise PiRuntimeError(
-                "Room cancellation has no exact accepted Runtime Host lineage"
-            )
-        client = self._require_client()
-        if client.host_identity != accepted_host[1]:
-            raise PiRuntimeError(
-                "Room cancellation Runtime Host no longer owns the accepted Dispatch"
-            )
-        try:
-            result = client.send(
-                "room.cancel",
-                {
-                    "cancelId": normalized_cancel_id,
-                    "sessionId": normalized_session_id,
-                    "rootId": normalized_root_id,
-                    "dispatchId": normalized_dispatch_id,
-                    "generation": normalized_generation,
-                    "turnId": normalized_turn_id,
-                    "capabilityEpoch": normalized_capability_epoch,
-                },
-            )
-        except PiRuntimeError as exc:
-            if "timed out" in str(exc).lower():
-                with self._lock:
-                    sibling_turns = [
-                        (candidate_session_id, state.turn_id)
-                        for candidate_session_id, state in self._states.items()
-                        if state.turn_id
-                        and (
-                            candidate_session_id,
-                            state.turn_id,
-                        )
-                        != (normalized_session_id, normalized_turn_id)
-                    ]
-                    sibling_dispatches = [
-                        candidate_key
-                        for candidate_key, candidate_host in (
-                            self._room_dispatch_hosts.items()
-                        )
-                        if candidate_key != host_key
-                        and candidate_host[1] == accepted_host[1]
-                    ]
-                    active_completions = bool(self._active_completion_ids)
-                if (
-                    sibling_turns
-                    or sibling_dispatches
-                    or active_completions
-                ):
-                    # The kill gate is process-wide. Preserve the original
-                    # timeout as unknown/retry when any sibling work shares
-                    # this Host; never fault it to close one Room target.
-                    raise
-                receipt = self._kill_gate.request_kill(
-                    client.host_identity,
-                    request_kind="cancel_timeout",
-                    requested_by=f"session:{normalized_session_id}",
-                    reason=f"room.cancel timeout for {normalized_root_id}",
-                    now_ms=int(time.time() * 1000),
-                )
-                with self._lock:
-                    self._last_kill_receipt = dict(receipt)
-                recovered = _cancel_receipt_from_terminated_host(
-                    receipt,
-                    expected_host_identity=accepted_host[1],
-                    cancel_id=normalized_cancel_id,
-                    session_id=normalized_session_id,
-                    root_id=normalized_root_id,
-                    dispatch_id=normalized_dispatch_id,
-                    generation=normalized_generation,
-                    turn_id=normalized_turn_id,
-                    capability_epoch=normalized_capability_epoch,
-                )
-                if recovered is not None:
-                    result = recovered
-                else:
-                    raise
-            else:
-                raise
-        try:
-            receipt_generation = int(result.get("generation", -1))
-            receipt_capability_epoch = int(result.get("capabilityEpoch", -1))
-        except (TypeError, ValueError) as exc:
-            raise PiRuntimeError(
-                "Pi Runtime Host returned an invalid Room cancellation receipt"
-            ) from exc
-        if (
-            result.get("schemaVersion") != "wisdom-weasel.room-runtime-receipt.v1"
-            or result.get("receiptKind") != "cancel_applied"
-            or result.get("cancelId") != normalized_cancel_id
-            or result.get("sessionId") != normalized_session_id
-            or result.get("rootId") != normalized_root_id
-            or result.get("dispatchId") != normalized_dispatch_id
-            or receipt_generation != normalized_generation
-            or str(result.get("turnId") or "").strip() != normalized_turn_id
-            or receipt_capability_epoch != normalized_capability_epoch
-        ):
-            raise PiRuntimeError("Pi Runtime Host returned an invalid Room cancellation receipt")
-        surfaces = dict(as_mapping(result.get("cancellationSurfaces")))
-        if set(surfaces) != set(_CANCELLATION_SURFACES):
-            raise PiRuntimeError("Pi Runtime Host cancellation lacks typed per-surface proof")
-        typed_surfaces: dict[str, dict[str, object]] = {}
-        for surface in _CANCELLATION_SURFACES:
-            proof = dict(as_mapping(surfaces.get(surface)))
-            if (
-                proof.get("schemaVersion")
-                != "wisdom-weasel.runtime-surface-termination-receipt.v1"
-                or proof.get("surface") != surface
-                or str(proof.get("state")) not in _CANCELLATION_SURFACE_STATES
-                or not isinstance(proof.get("targetIds", []), list)
-            ):
-                raise PiRuntimeError("Pi Runtime Host cancellation lacks typed per-surface proof")
-            typed_surfaces[surface] = proof
-        derived_pending = [
-            surface for surface in _CANCELLATION_SURFACES
-            if typed_surfaces[surface]["state"] in {"requested", "acknowledged", "unknown"}
-        ]
-        declared_pending = [
-            str(value) for value in result.get("pendingTargets") or [] if str(value).strip()
-        ]
-        if sorted(declared_pending) != sorted(derived_pending):
-            raise PiRuntimeError("Pi Runtime Host cancellation pendingTargets mismatch")
-        result["pendingTargets"] = derived_pending
-        result["cancellationSurfaces"] = typed_surfaces
-        if not derived_pending:
-            with self._lock:
-                if self._room_dispatch_hosts.get(host_key) == accepted_host:
-                    self._room_dispatch_hosts.pop(host_key, None)
         return dict(result)
 
     def compact(self, session_id: str, instructions: str = "") -> dict[str, object]:
-        self._ensure_for_sealed_room_operation(
-            session_id,
-            operation="compaction",
-            ordinary_fallback=True,
-        )
+        self.ensure(session_id)
         result = self._require_client().send(
             "session.compact",
             {"sessionId": session_id, "instructions": str(instructions).strip()[:2000]},
@@ -2782,108 +2204,6 @@ class PiRuntimeHostManager:
         if checkpoint:
             result["memoryCheckpoint"] = checkpoint
         return result
-
-    def _ensure_for_sealed_room_operation(
-        self,
-        session_id: str,
-        *,
-        operation: str,
-        ordinary_fallback: bool = False,
-    ) -> dict[str, object]:
-        """Reuse an idle settled Room Session for a read/maintenance operation.
-
-        A successful Room Commit revokes the product capability before the user
-        can inspect or compact the sealed Session. Rebinding that tombstone as a
-        live Room capability would be unsafe, while closing the resident Pi
-        Session would discard the exact context and Skill/Tool receipts.
-        """
-
-        with self._lifecycle_lock:
-            if not self.config.model_configured:
-                raise PiRuntimeError(
-                    self.config.model_configuration_error
-                    or "Pi model is not configured"
-                )
-            client = self._host()
-            session = dict(self.sessions.get(session_id))
-            binding = self.sessions.runtime_binding(session_id)
-            if binding is not None:
-                if (
-                    binding.get("driverId") != self.driver_id
-                    or binding.get("runtimeKind") != self.runtime_kind
-                ):
-                    raise PiRuntimeError(
-                        "Agent session belongs to another runtime driver"
-                    )
-                session["_runtimeBinding"] = binding
-            if self._session_context_provider is not None:
-                session.update(dict(self._session_context_provider(session)))
-            desired_room = as_mapping(session.get("roomCapability"))
-            with self._lock:
-                already_open = session_id in self._open_sessions
-            if str(desired_room.get("status") or "") != "revoked":
-                return self.ensure(session_id)
-            if not already_open:
-                if ordinary_fallback:
-                    return self.ensure(session_id)
-                raise PiRuntimeError(
-                    "settled managed Room Session is no longer resident; "
-                    f"its sealed {operation} context cannot be reopened as a live capability"
-                )
-            use_control_state = bool(
-                self._host_capabilities.get("sessionControlState")
-            )
-            snapshot = dict(
-                client.send(
-                    (
-                        "session.control_state"
-                        if use_control_state
-                        else "session.snapshot"
-                    ),
-                    {"sessionId": session_id},
-                )
-            )
-            if use_control_state and (
-                snapshot.get("schemaVersion")
-                != "rag-ime.pi-session-control-state.v1"
-                or snapshot.get("sessionId") != session_id
-                or not isinstance(snapshot.get("isIdle"), bool)
-            ):
-                raise PiRuntimeError(
-                    "Pi Runtime Host returned an invalid Session control state"
-                )
-            current_room = as_mapping(snapshot.get("roomCapability"))
-            same_manifest = (
-                current_room.get("manifestId") == desired_room.get("manifestId")
-                and current_room.get("manifestHash")
-                == desired_room.get("manifestHash")
-            )
-            if not current_room and ordinary_fallback:
-                self._sync_idle_snapshot(session_id, snapshot)
-                with self._lock:
-                    self._schedule_idle_locked()
-                return {
-                    "state": snapshot,
-                    "reused": True,
-                    "ordinaryAfterRoom": True,
-                }
-            if not same_manifest:
-                if ordinary_fallback:
-                    return self.ensure(session_id)
-                raise PiRuntimeError(
-                    f"settled managed Room Session {operation} fence changed"
-                )
-            if not bool(snapshot.get("isIdle")):
-                raise PiRuntimeError(
-                    f"managed Room Session must be idle before {operation}"
-                )
-            with self._lock:
-                self._schedule_idle_locked()
-            return {
-                "state": snapshot,
-                "reused": True,
-                "sealedRoomOperation": operation,
-            }
 
     def has_pending_approval(self, session_id: str, approval_id: str) -> bool:
         with self._lock:
@@ -3182,7 +2502,6 @@ class PiRuntimeHostManager:
                 self._open_sessions.clear()
                 self._active_completion_ids.clear()
                 self._completion_sinks.clear()
-                self._room_dispatch_hosts.clear()
                 self._states.clear()
                 self._status = "stopped" if self.config.enabled else "disabled"
             if client is not None:
@@ -3219,9 +2538,6 @@ class PiRuntimeHostManager:
                     )
             with self._lock:
                 self._open_sessions.discard(normalized)
-                for host_key in tuple(self._room_dispatch_hosts):
-                    if host_key[0] == normalized:
-                        self._room_dispatch_hosts.pop(host_key, None)
                 retired = self._states.pop(normalized, None)
                 if retired is not None:
                     if retired.abort_timer is not None:
@@ -3482,12 +2798,9 @@ class PiRuntimeHostManager:
             if public_result:
                 payload["publicResult"] = public_result
             if raw_result is not None:
-                # The public projection is the bounded client contract for
-                # coding tools. Do not send a second, larger raw carrier.
-                if not public_result or (
-                    result_is_error
-                    and not public_result.get("outputPreview")
-                ):
+                if event_type == "tool_execution_end":
+                    payload[result_key] = inspectable_tool_result(raw_result)
+                elif not public_result:
                     payload[result_key] = redact_mapping(as_mapping(raw_result))
             if event_type == "tool_execution_end" and not result_is_error:
                 captured = state.tool_blocks.capture(
@@ -3664,7 +2977,11 @@ class PiRuntimeHostManager:
                     self._status = "ready"
                     self._schedule_idle_locked()
             if aborted:
-                self.sessions.set_status(session_id, "idle")
+                self.sessions.set_status(
+                    session_id,
+                    "idle",
+                    last_message_preview="已停止。",
+                )
                 self.events.publish(
                     session_id,
                     "turn_completed",
@@ -4011,7 +3328,11 @@ class PiRuntimeHostManager:
             session_id,
             "idle",
             message_count=public_message_count,
-            last_message_preview=last_assistant_preview(messages),
+            last_message_preview=(
+                "已停止。"
+                if aborted
+                else last_assistant_preview(messages)
+            ),
         )
         self.events.publish(
             session_id,
@@ -4053,6 +3374,7 @@ class PiRuntimeHostManager:
         message = redact_runtime_text(str(error))
         with self._lock:
             state = self._states.setdefault(session_id, _HostedSessionState())
+            aborted = bool(turn_id and state.abort_requested_turn_id == turn_id)
             classification = classify_runtime_failure(
                 error,
                 had_tool_activity=state.had_tool_activity,
@@ -4075,9 +3397,30 @@ class PiRuntimeHostManager:
             state.pending_approvals.clear()
             state.pending_reviews.clear()
             state.pending_ui_requests.clear()
-            self._last_error = message
+            if not aborted:
+                self._last_error = message
             self._status = "ready" if self._client is not None and self._client.running else "faulted"
             self._schedule_idle_locked()
+        if aborted:
+            # A cancelled Provider request may report a transport error after
+            # Stop fenced this exact turn. The user action owns the terminal
+            # meaning; late cancellation noise must not become a model error.
+            self.sessions.set_status(
+                session_id,
+                "idle",
+                last_message_preview="已停止。",
+            )
+            self.events.publish(
+                session_id,
+                "turn_completed",
+                {
+                    "status": "aborted",
+                    "aborted": True,
+                    "terminalEvent": "abort_failure_race",
+                },
+                turn_id=turn_id,
+            )
+            return
         self.sessions.set_status(session_id, "faulted", last_message_preview=message)
         self.events.publish(
             session_id,
@@ -4102,7 +3445,6 @@ class PiRuntimeHostManager:
                     state.settle_timer.cancel()
             self._client = None
             self._open_sessions.clear()
-            self._room_dispatch_hosts.clear()
             self._states.clear()
             self._status = "faulted"
             self._last_error = message
@@ -4154,7 +3496,11 @@ class PiRuntimeHostManager:
                 state.pending_approvals.clear()
                 state.pending_reviews.clear()
                 state.pending_ui_requests.clear()
-        self.sessions.set_status(session_id, "idle")
+        self.sessions.set_status(
+            session_id,
+            "idle",
+            last_message_preview="已停止。",
+        )
         self.events.publish(
             session_id,
             "turn_completed",
@@ -4290,6 +3636,7 @@ def _pi_tool_history_events(
     session_id: str,
     raw_entries: list[object] | None = None,
     maximum_tools: int = 256,
+    maximum_public_chars: int = 48_000,
 ) -> list[dict[str, object]]:
     """Rebuild the public tool timeline from Pi's durable transcript.
 
@@ -4399,7 +3746,40 @@ def _pi_tool_history_events(
         }
         events.append((tool_call_id, "tool_finished", turn_id, created_at_ms, payload))
 
-    allowed_ids = set(activity_order[-max(1, maximum_tools) :])
+    events_by_activity: dict[
+        str,
+        list[tuple[str, str, str, int, dict[str, object]]],
+    ] = {}
+    for event in events:
+        events_by_activity.setdefault(event[0], []).append(event)
+    allowed_order: list[str] = []
+    used_chars = 0
+    for activity_id in reversed(activity_order[-max(1, maximum_tools) :]):
+        activity_events = events_by_activity.get(activity_id, [])
+        activity_chars = sum(
+            len(
+                json.dumps(
+                    {
+                        "eventType": event_type,
+                        "turnId": turn_id,
+                        "payload": payload,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
+            + 320
+            for _identity, event_type, turn_id, _created_at_ms, payload
+            in activity_events
+        )
+        if allowed_order and used_chars + activity_chars > max(
+            4_000,
+            int(maximum_public_chars),
+        ):
+            break
+        allowed_order.append(activity_id)
+        used_chars += activity_chars
+    allowed_ids = set(allowed_order)
     selected = [event for event in events if event[0] in allowed_ids]
     result: list[dict[str, object]] = []
     for sequence, (tool_call_id, event_type, turn_id, created_at_ms, payload) in enumerate(selected, start=1):
@@ -4546,16 +3926,8 @@ def _pi_tool_result(raw: Mapping[str, object]) -> dict[str, object]:
     for key in ("details", "result"):
         value = raw.get(key)
         if isinstance(value, Mapping):
-            return redact_mapping(value)
+            return dict(inspectable_tool_result(value))
     content = raw.get("content")
-    values = content if isinstance(content, list) else [content]
-    fragments: list[str] = []
-    for value in values[:16]:
-        if isinstance(value, Mapping):
-            text = str(value.get("text") or value.get("content") or "").strip()
-        else:
-            text = str(value or "").strip()
-        if text:
-            fragments.append(text)
-    summary = redact_runtime_text(" ".join(fragments))
-    return {"summary": summary} if summary else {}
+    if content is not None:
+        return {"content": inspectable_tool_result(content)}
+    return {}

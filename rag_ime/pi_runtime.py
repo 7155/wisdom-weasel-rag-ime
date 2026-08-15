@@ -37,6 +37,7 @@ from .pi_runtime_public import (
     REVIEW_TITLE_PREFIX,
     canonical_grouped_answers,
     grouped_questions_from_wire,
+    inspectable_tool_result,
     last_assistant_error,
     last_assistant_preview,
     pi_message_id,
@@ -126,6 +127,12 @@ _DEFAULT_DEBUG_CONTEXT_MAX_BYTES = 5 * 1024 * 1024 * 1024
 _MAX_DEBUG_CONTEXT_MAX_BYTES = 64 * 1024 * 1024 * 1024
 _DEFAULT_DEBUG_CONTEXT_MAX_CALLS = 128
 _MAX_DEBUG_CONTEXT_MAX_CALLS = 256
+# `prompt` is a whole Pi agent turn, not a control-plane acknowledgement.  It
+# can legitimately span provider retries and many sequential tool calls while
+# Stop and Steer continue through Pi's concurrent request lane.  Keep the
+# short command timeout for snapshots/control RPCs, but give one turn a bounded
+# one-hour fuse so ordinary long-running work is not faulted after 15 seconds.
+_PROMPT_TIMEOUT_SECONDS = 60.0 * 60.0
 _IME_SURFACE_SYSTEM_PROMPT = """你是输入法中的连续联想引擎，只处理用户明确点击触发的文字生成。
 
 输出规则：
@@ -1195,7 +1202,13 @@ class PiRuntimeManager:
             command: dict[str, object] = {"type": "prompt", "message": text}
             if images:
                 command["images"] = [dict(image) for image in images]
-            response = client.send(command)
+            response = client.send(
+                command,
+                timeout=max(
+                    _PROMPT_TIMEOUT_SECONDS,
+                    self.config.command_timeout_seconds,
+                ),
+            )
             pi_entry_id = ""
             try:
                 command: dict[str, object] = {"type": "get_entries"}
@@ -2001,15 +2014,9 @@ class PiRuntimeManager:
             if public_result:
                 payload["publicResult"] = public_result
             if raw_result is not None:
-                # Coding tools already have a bounded semantic projection.
-                # Duplicating their raw carrier made every tool event heavier
-                # and forced the client to retain content it never rendered.
-                # Keep the generic carrier only when projection is unavailable
-                # or a failed mutation has no safe error preview.
-                if not public_result or (
-                    result_is_error
-                    and not public_result.get("outputPreview")
-                ):
+                if event_type == "tool_execution_end":
+                    payload[result_key] = inspectable_tool_result(raw_result)
+                elif not public_result:
                     payload[result_key] = redact_mapping(as_mapping(raw_result))
             if event_type == "tool_execution_end" and not result_is_error:
                 captured = self._tool_blocks.capture(

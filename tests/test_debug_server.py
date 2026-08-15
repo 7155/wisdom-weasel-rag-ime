@@ -358,7 +358,7 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertTrue(seeded["ok"])
         self.assertGreaterEqual(seeded["seeded"], 1)
 
-    def test_only_agent_gateway_owns_room_runtime_effects(self) -> None:
+    def test_only_agent_gateway_owns_pi_runtime_execution(self) -> None:
         sidecar_db = Path(self.tmp.name) / "passive-sidecar.sqlite"
         gateway_db = Path(self.tmp.name) / "active-gateway.sqlite"
         for db_path in (sidecar_db, gateway_db):
@@ -370,7 +370,6 @@ class DebugImeServiceTests(unittest.TestCase):
             os.environ,
             {
                 "RAG_IME_AGENT_GATEWAY_ENABLED": "1",
-                "RAG_IME_ROOM_KERNEL_MODE": "kernel_only",
             },
             clear=False,
         ):
@@ -389,16 +388,12 @@ class DebugImeServiceTests(unittest.TestCase):
                 )
             )
         try:
-            self.assertFalse(sidecar.agent.room_kernel_worker_loop.running)
-            self.assertFalse(
-                sidecar.agent.room_kernel_commands.runtime_effects_enabled
-            )
+            self.assertFalse(hasattr(sidecar.agent, "room_kernel_worker_loop"))
+            self.assertFalse(hasattr(sidecar.agent, "room_kernel_commands"))
             self.assertFalse(sidecar.agent.runtime.runtime_status()["enabled"])
             self.assertFalse(sidecar.agent.runtime_factory.execution_owner)
-            self.assertTrue(gateway.agent.room_kernel_worker_loop.running)
-            self.assertTrue(
-                gateway.agent.room_kernel_commands.runtime_effects_enabled
-            )
+            self.assertFalse(hasattr(gateway.agent, "room_kernel_worker_loop"))
+            self.assertFalse(hasattr(gateway.agent, "room_kernel_commands"))
             self.assertTrue(gateway.agent.runtime.runtime_status()["enabled"])
             self.assertTrue(gateway.agent.runtime_factory.execution_owner)
         finally:

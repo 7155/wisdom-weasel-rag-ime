@@ -51,6 +51,7 @@ __all__ = [
     "REVIEW_TITLE_PREFIX",
     "canonical_grouped_answers",
     "grouped_questions_from_wire",
+    "inspectable_tool_result",
     "last_assistant_error",
     "last_assistant_preview",
     "managed_media_content_url",
@@ -320,9 +321,25 @@ def canonical_grouped_answers(
     )
 
 
+_TRANSIENT_CONTEXT_PREFIX = "RAG_IME_TRANSIENT_CONTEXT_V1\n"
+_TRANSIENT_CONTEXT_SCHEMA = "rag-ime.runtime-prompt.v1"
+
+
 def visible_message_text(role: str, text: str) -> str:
     if role != "user":
         return text
+    if text.startswith(_TRANSIENT_CONTEXT_PREFIX):
+        try:
+            envelope = json.loads(text[len(_TRANSIENT_CONTEXT_PREFIX) :])
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return ""
+        if (
+            not isinstance(envelope, Mapping)
+            or envelope.get("schemaVersion") != _TRANSIENT_CONTEXT_SCHEMA
+            or not isinstance(envelope.get("message"), str)
+        ):
+            return ""
+        return str(envelope["message"]).strip()
     tagged = re.search(
         r"<(?:agent|rag-ime)-user-query>\s*(.*?)\s*</(?:agent|rag-ime)-user-query>",
         text,
@@ -778,6 +795,15 @@ def public_code_tool_activity(
             result.update({"lineCount": line_count, "additions": line_count})
             if file_name:
                 result["summary"] = f"{file_name} +{line_count}"
+    if normalized_tool in {
+        "edit", "edit_file", "workspace_edit_file", "workspace_edit",
+        "workspace_patch",
+    }:
+        additions, deletions = _public_mutation_line_counts(effective_args)
+        if additions is not None:
+            result["additions"] = additions
+        if deletions is not None:
+            result["deletions"] = deletions
     preview_tools = (
         file_tools
         - {
@@ -808,6 +834,40 @@ def public_code_tool_activity(
         result["automatic"] = True
 
     return result
+
+
+def _public_mutation_line_counts(
+    args: Mapping[str, object],
+) -> tuple[int | None, int | None]:
+    pairs: list[tuple[str, str]] = []
+    edits = args.get("edits")
+    if isinstance(edits, list):
+        for value in edits[:64]:
+            edit = as_mapping(value)
+            old_text = edit.get("oldText")
+            new_text = edit.get("newText")
+            if isinstance(old_text, str) and isinstance(new_text, str):
+                pairs.append((old_text, new_text))
+    else:
+        old_text = args.get("oldText")
+        new_text = args.get("newText")
+        if isinstance(old_text, str) and isinstance(new_text, str):
+            pairs.append((old_text, new_text))
+    if not pairs:
+        return None, None
+    return (
+        sum(_public_text_line_count(new_text) for _, new_text in pairs),
+        sum(_public_text_line_count(old_text) for old_text, _ in pairs),
+    )
+
+
+def _public_text_line_count(value: str) -> int:
+    if not value:
+        return 0
+    lines = value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    while lines and not lines[-1]:
+        lines.pop()
+    return max(1, len(lines))
 
 
 def runtime_tool_result_is_error(
@@ -1102,6 +1162,59 @@ def redact_mapping(value: Mapping[str, object], *, depth: int = 0) -> dict[str, 
     return result
 
 
+_TOOL_RESULT_SECRET_KEY = re.compile(
+    r"token|secret|password|api.?key|authorization|cookie",
+    re.IGNORECASE,
+)
+
+
+def inspectable_tool_result(value: object) -> object:
+    """Keep the complete JSON-shaped Tool receipt available to local UI.
+
+    Unlike ``redact_mapping`` this projection intentionally preserves paths,
+    nested fields, long text and list contents so the result inspector can be
+    used for debugging. Credential values remain masked because a local Tool
+    result can still contain provider or browser authentication material.
+    """
+
+    if isinstance(value, Mapping):
+        return {
+            str(raw_key): (
+                "[REDACTED_SECRET]"
+                if _TOOL_RESULT_SECRET_KEY.search(str(raw_key))
+                else inspectable_tool_result(raw_value)
+            )
+            for raw_key, raw_value in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [inspectable_tool_result(item) for item in value]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return _redact_tool_result_credentials(str(value))
+
+
+def _redact_tool_result_credentials(value: str) -> str:
+    redacted = re.sub(
+        r"\bsk-[A-Za-z0-9_-]{6,}\b",
+        "[REDACTED_SECRET]",
+        value,
+    )
+    redacted = re.sub(
+        r"\b([A-Za-z0-9_]*(?:api[_-]?key|access[_-]?token|password|secret|authorization))"
+        r"(\s*(?:=|:)\s*)([^\s;'\"\\]+|\"[^\"]*\"|'[^']*')",
+        r"\1\2[REDACTED_SECRET]",
+        redacted,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(
+        r"(--(?:api[_-]?key|token|password|secret)\s+)"
+        r"([^\s;'\"\\]+|\"[^\"]*\"|'[^']*')",
+        r"\1[REDACTED_SECRET]",
+        redacted,
+        flags=re.IGNORECASE,
+    )
+
+
 def managed_media_content_url(session_id: str, media_id: str) -> str:
     return (
         f"/api/agent/media/{quote(str(media_id), safe='')}/content"
@@ -1222,8 +1335,10 @@ def pi_message_payload(
                 # Do not duplicate Pi protocol blocks or their arguments in
                 # the human transcript message.
                 continue
+    stop_reason = str(raw.get("stopReason") or "").lower()
+    aborted = stop_reason == "aborted"
     error_message = redact_runtime_text(str(raw.get("errorMessage") or "").strip())
-    failed = str(raw.get("stopReason") or "").lower() == "error" or bool(error_message)
+    failed = not aborted and (stop_reason == "error" or bool(error_message))
     if failed:
         blocks.append(
             normalize_agent_block(
@@ -1233,6 +1348,18 @@ def pi_message_payload(
                     "status": "failed",
                     "presentationKind": "error",
                     "data": {"message": error_message or "模型请求失败，请重试"},
+                }
+            )
+        )
+    if aborted and not blocks:
+        blocks.append(
+            normalize_agent_block(
+                {
+                    "id": f"{turn_id}:aborted:0",
+                    "type": "text",
+                    "status": "aborted",
+                    "presentationKind": "markdown",
+                    "data": {"text": "已停止。"},
                 }
             )
         )
@@ -1254,7 +1381,7 @@ def pi_message_payload(
         session_id=session_id,
         turn_id=turn_id,
         role=role,
-        status="failed" if failed else "completed",
+        status="aborted" if aborted else "failed" if failed else "completed",
         blocks=tuple(blocks),
         attachments=tuple(dict.fromkeys(attachments)),
         created_at_ms=created_at,

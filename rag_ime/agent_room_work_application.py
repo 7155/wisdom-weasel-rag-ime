@@ -244,7 +244,7 @@ class RoomWorkApplicationService:
         session_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
-        self.host._guard_legacy_room_route("work_item.assign", session_id)
+        self.host._guard_room_session_route("work_item.assign", session_id)
         participant = self.host.rooms.participant_for_session(session_id)
         if participant is None:
             raise ValueError("session is not an active Room participant")
@@ -315,7 +315,7 @@ class RoomWorkApplicationService:
         session_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
-        self.host._guard_legacy_room_route("work_item.submit", session_id)
+        self.host._guard_room_session_route("work_item.submit", session_id)
         actor = self.host._require_room_participant(session_id)
         work = self.host.room_work.submit(session_id, payload)
         self.host._publish_room_work_activity(work, phase="submitted", actor=actor)
@@ -338,7 +338,7 @@ class RoomWorkApplicationService:
         session_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
-        self.host._guard_legacy_room_route("work_item.accept", session_id)
+        self.host._guard_room_session_route("work_item.accept", session_id)
         actor = self.host._require_room_participant(session_id)
         work = self.host.room_work.accept(session_id, payload)
         self.host._publish_room_work_activity(work, phase="completed", actor=actor)
@@ -356,7 +356,7 @@ class RoomWorkApplicationService:
         session_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
-        self.host._guard_legacy_room_route("work_item.return", session_id)
+        self.host._guard_room_session_route("work_item.return", session_id)
         actor = self.host._require_room_participant(session_id)
         work = self.host.room_work.return_for_revision(session_id, payload)
         self.host._publish_room_work_activity(work, phase="returned", actor=actor)
@@ -378,7 +378,7 @@ class RoomWorkApplicationService:
         session_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
-        self.host._guard_legacy_room_route("work_item.block", session_id)
+        self.host._guard_room_session_route("work_item.block", session_id)
         actor = self.host._require_room_participant(session_id)
         work = self.host.room_work.block(session_id, payload)
         self.host._publish_room_work_activity(work, phase="blocked", actor=actor)
@@ -400,7 +400,7 @@ class RoomWorkApplicationService:
         session_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
-        self.host._guard_legacy_room_route("work_item.escalate", session_id)
+        self.host._guard_room_session_route("work_item.escalate", session_id)
         actor = self.host._require_room_participant(session_id)
         work = self.host.room_work.escalate(session_id, payload)
         self.host._publish_room_work_activity(work, phase="escalated", actor=actor)
@@ -484,8 +484,8 @@ class RoomWorkApplicationService:
         route = self.host.room_intercom.store.resolve_route(source_session_id, payload)
         kind = str(payload.get("kind") or "send")
         route_id = f"intercom.{kind}"
-        self.host._guard_legacy_room_route(route_id, str(route["source"]["sessionId"]))
-        self.host._guard_legacy_room_route(route_id, str(route["target"]["sessionId"]))
+        self.host._guard_room_session_route(route_id, str(route["source"]["sessionId"]))
+        self.host._guard_room_session_route(route_id, str(route["target"]["sessionId"]))
         return self.host.room_intercom.enqueue(source_session_id, payload)
 
     def _room_work_operation(

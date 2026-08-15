@@ -140,11 +140,6 @@ class _Rooms:
         return []
 
 
-class _RoomKernelProjection:
-    def sync_room(self, _room_id: str) -> None:
-        return None
-
-
 def _service(
     store: AgentSessionStore,
     *,
@@ -162,7 +157,6 @@ def _service(
     service.room_turns = _RoomTurns(room_active)
     service.work_documents = _WorkDocuments()
     service.rooms = _Rooms()
-    service.room_kernel_projection = _RoomKernelProjection()
     service._active_room_dispatch_authorizes_work = lambda _session_id: room_active
     return service
 
@@ -688,17 +682,9 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
                 "objective": "finish",
             },
         )["workflow"]["goal"]
-        room_approval = self.store.create_approval(
-            session_id=self.session_id,
-            tool_name="workspace_write",
-            operation="apply",
-            payload_sha256="b" * 64,
-            preview={"baseState": {"roomInvocationReceiptId": "room-invocation-1"}},
-            risk_level="R2",
-        )
         service = _service(
             self.store,
-            runtime=_Runtime(error=AssertionError("Room Runtime must not be aborted")),
+            runtime=_Runtime(),
             jobs=_Jobs(excluded=["bg_room"]),
             room_active=True,
         )
@@ -708,14 +694,12 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
         )
         pause_audit = self._latest_lifecycle_audit(action="pause")
         self.assertEqual(pause_audit["action"], "pause")
-        self.assertEqual(pause_audit["owners"]["runtime"]["status"], "excluded")
+        self.assertEqual(pause_audit["owners"]["runtime"]["status"], "succeeded")
         self.assertEqual(
             pause_audit["owners"]["delegation"]["status"],
-            "excluded",
+            "succeeded",
         )
         self.assertIsNone(paused["goal"]["cancellationAudit"])
-        self.assertEqual(self.store.get_approval(str(room_approval["approvalId"]))["state"], "pending")
-
         resumed = self.store.mutate_agent_goal(
             self.session_id,
             {"action": "resume", "expectedRevision": paused["goal"]["revision"]},
@@ -1122,6 +1106,7 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
         runtime = DelegatedRuntime()
         active = _ActiveDelegatedRun(
             runtime=runtime,
+            owns_runtime=True,
             child_session_id=str(target_run["childSessionId"]),
             terminal=terminal,
             forced=threading.Event(),

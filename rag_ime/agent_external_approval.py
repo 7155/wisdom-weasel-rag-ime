@@ -22,16 +22,6 @@ class ExternalApprovalHost(Protocol):
         approval: Mapping[str, object],
     ) -> dict[str, object]: ...
 
-    def record_room_product_tool_execution(
-        self,
-        session_id: str,
-        invocation_receipt_id: str,
-        *,
-        status: str,
-        result_hash: str,
-    ) -> dict[str, object]: ...
-
-
 class ExternalApprovalFinalizer:
     """Verify supervisor receipts and close external approval operations."""
 
@@ -106,10 +96,7 @@ class ExternalApprovalFinalizer:
             state="applied" if succeeded else "failed",
             receipt=final_receipt,
         )
-        runtime_warning = self._seal_room_external_execution(
-            final,
-            result_hash=_sha256_json(final_receipt),
-        )
+        runtime_warning = ""
         memory_checkpoint: dict[str, object] = {}
         memory_evidence: dict[str, object] = {}
         if succeeded:
@@ -155,33 +142,6 @@ class ExternalApprovalFinalizer:
             "memoryCheckpoint": memory_checkpoint,
             "memoryEvidence": memory_evidence,
         }
-
-    def _seal_room_external_execution(
-        self,
-        approval: Mapping[str, object],
-        *,
-        result_hash: str,
-    ) -> str:
-        invocation_receipt_id = _room_invocation_receipt_id(approval)
-        if not invocation_receipt_id:
-            return ""
-        try:
-            self.host.record_room_product_tool_execution(
-                str(approval.get("sessionId") or ""),
-                invocation_receipt_id,
-                status=(
-                    "applied"
-                    if approval.get("state") == "applied"
-                    else "failed"
-                ),
-                result_hash=result_hash,
-            )
-        except Exception as exc:
-            return (
-                "Room 外部工具终态未写入，请停止或刷新 Room："
-                + _public_error(exc)
-            )
-        return ""
 
     @staticmethod
     def _validate_action(
@@ -417,20 +377,6 @@ def _approval_turn_id(approval: Mapping[str, object]) -> str:
     if not isinstance(causal, Mapping):
         return ""
     return str(causal.get("turnId") or "").strip()
-
-def _room_invocation_receipt_id(
-    approval: Mapping[str, object],
-) -> str:
-    preview = approval.get("preview")
-    if not isinstance(preview, Mapping):
-        return ""
-    base_state = preview.get("baseState")
-    if not isinstance(base_state, Mapping):
-        return ""
-    return " ".join(
-        str(base_state.get("roomInvocationReceiptId") or "").split()
-    )[:240]
-
 
 def _required_text(payload: Mapping[str, object], key: str) -> str:
     value = " ".join(str(payload.get(key) or "").split())

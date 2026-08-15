@@ -7,8 +7,6 @@ from typing import Any
 from .agent_blocks import bind_block_scope
 from .agent_prompt_support import bounded_text
 from .agent_protocol import AgentEventEnvelope
-from .agent_room_kernel import kernel_owns_room_execution
-from .agent_room_public_timeline import RoomPublicTimelineProjector
 from .pi_runtime_public import (
     GROUPED_QUESTIONS_SCHEMA_VERSION,
     grouped_questions_from_wire,
@@ -33,13 +31,10 @@ class AgentEventProjectionService:
         self,
         *,
         sessions: Any,
-        room_kernel: Any,
         rooms: Any,
         agent_blocks: Any,
         observations: Any,
-        room_kernel_projection: Any,
         room_events: Any,
-        public_timeline: RoomPublicTimelineProjector,
         room_turns: Any,
         append_recent_message: Callable[
             [str, Mapping[str, object]],
@@ -50,24 +45,18 @@ class AgentEventProjectionService:
             Mapping[str, object],
         ],
         notify_intercom: Callable[[], None],
-        record_runtime_failure: Callable[..., Mapping[str, object]]
-        | None = None,
     ) -> None:
         self.sessions = sessions
-        self.room_kernel = room_kernel
         self.rooms = rooms
         self.agent_blocks = agent_blocks
         self.observations = observations
-        self.room_kernel_projection = room_kernel_projection
         self.room_events = room_events
-        self.public_timeline = public_timeline
         self.room_turns = room_turns
         self.append_recent_message = append_recent_message
         self.record_assistant_evidence = (
             record_assistant_evidence
         )
         self.notify_intercom = notify_intercom
-        self.record_runtime_failure = record_runtime_failure
 
     def record(self, event: AgentEventEnvelope) -> None:
         # Token and progress deltas already live in the bounded in-memory SSE
@@ -131,9 +120,6 @@ class AgentEventProjectionService:
             )
         if participant is None:
             return
-        binding = self.room_kernel.session_binding(
-            event.session_id
-        )
         registered_turn_for_event = getattr(
             self.room_turns,
             "registered_turn_for_event",
@@ -144,189 +130,6 @@ class AgentEventProjectionService:
             if callable(registered_turn_for_event)
             else ""
         )
-        if kernel_owns_room_execution(self.room_kernel.mode) and binding is not None:
-            runtime_turn_id = str(
-                binding.get("runtimeTurnId") or ""
-            )
-            if not runtime_turn_id or event.turn_id != runtime_turn_id:
-                return
-            mapped_type, public_data = room_event_projection(event)
-            if event.event_type == "message_completed":
-                mapped_type = "participant_activity"
-                dispatch_id = str(binding["dispatchId"])
-                if _completed_message_failed(event):
-                    # Provider diagnostics stay private. The public Room only
-                    # needs one coalesced lifecycle signal until turn_failed
-                    # publishes the authoritative terminal state.
-                    public_data = {
-                        "status": "provider_error",
-                        "summary": "模型响应中断，正在按运行策略处理",
-                        "requestId": f"{dispatch_id}:provider",
-                        "isError": True,
-                    }
-                else:
-                    public_data = {
-                        "status": "draft_ready",
-                        "summary": "正在整理正式 Post",
-                        "requestId": f"{dispatch_id}:provider",
-                    }
-                message = event.payload.get("message")
-                usage = _public_token_usage(
-                    message.get("usage")
-                    if isinstance(message, Mapping)
-                    else None
-                )
-                response_post = self.room_kernel.post_for_dispatch(
-                    dispatch_id
-                )
-                public_data["runtimeTurnId"] = event.turn_id
-                usage_reported = (
-                    event.payload.get("usageReported") is True
-                )
-                cache_usage_reported = (
-                    event.payload.get("cacheUsageReported") is True
-                )
-                public_data["usageReported"] = usage_reported
-                public_data["cacheUsageReported"] = (
-                    cache_usage_reported
-                    if usage_reported
-                    else False
-                )
-                if isinstance(message, Mapping):
-                    provider = bounded_text(
-                        message.get("provider"),
-                        maximum=80,
-                    )
-                    model = bounded_text(
-                        message.get("model"),
-                        maximum=160,
-                    )
-                    if provider:
-                        public_data["provider"] = provider
-                    if model:
-                        public_data["model"] = model
-                if usage_reported and usage is not None:
-                    public_data["usage"] = usage
-                if response_post is not None:
-                    public_data["responsePostId"] = str(
-                        response_post.get("postId") or ""
-                    )
-            elif event.event_type == "turn_failed":
-                dispatch_id = str(binding["dispatchId"])
-                public_data = _public_turn_failure(
-                    event,
-                    dispatch_id=dispatch_id,
-                )
-            room_id = str(binding["roomId"])
-            room = self.rooms.get(room_id)
-            runtime_failure_receipt: Mapping[str, object] | None = None
-            missing_commit = (
-                event.event_type == "turn_completed"
-                and str(binding.get("state") or "") == "running"
-            )
-            if (
-                (
-                    event.event_type == "turn_failed"
-                    or missing_commit
-                )
-                and self.record_runtime_failure is not None
-            ):
-                runtime_failure_receipt = self.record_runtime_failure(
-                    room_id=room_id,
-                    dispatch_id=str(binding["dispatchId"]),
-                    generation=int(binding["generation"]),
-                    source_event_id=event.event_id,
-                    runtime_turn_id=event.turn_id,
-                    dispatch_attempt=int(binding["attempt"]),
-                    created_at_ms=event.created_at_ms,
-                    retryable=(
-                        True
-                        if missing_commit
-                        else event.payload.get("retryable") is True
-                    ),
-                    had_tool_activity=(
-                        event.payload.get("hadToolActivity") is not False
-                    ),
-                    reason_code=(
-                        "room_commit_missing"
-                        if missing_commit
-                        else str(event.payload.get("reasonCode") or "")
-                    ),
-                )
-                if (
-                    runtime_failure_receipt.get("receiptKind")
-                    == "runtime_retry_scheduled"
-                ):
-                    mapped_type = "participant_activity"
-                    details = runtime_failure_receipt.get("details")
-                    retry_at_ms = (
-                        int(details.get("availableAtMs") or 0)
-                        if isinstance(details, Mapping)
-                        else 0
-                    )
-                    public_data = {
-                        "status": "retry_wait",
-                        "summary": (
-                            "当前回合未形成权威提交，已进入有界恢复等待"
-                            if missing_commit
-                            else "模型连接中断，已进入有界重试等待"
-                        ),
-                        "requestId": (
-                            f"{str(binding['dispatchId'])}:provider"
-                        ),
-                        "retryAttempt": (
-                            int(details.get("attempt") or 0)
-                            if isinstance(details, Mapping)
-                            else 0
-                        ),
-                        **(
-                            {
-                                "retryAtMs": retry_at_ms,
-                                "retryDelayMs": max(
-                                    0,
-                                    retry_at_ms - event.created_at_ms,
-                                ),
-                            }
-                            if retry_at_ms
-                            else {}
-                        ),
-                    }
-                elif missing_commit:
-                    mapped_type = "participant_activity"
-                    public_data = {
-                        "status": "blocked",
-                        "summary": "当前回合未形成权威提交，任务已安全阻塞",
-                        "requestId": (
-                            f"{str(binding['dispatchId'])}:provider"
-                        ),
-                        "isError": True,
-                    }
-            self.public_timeline.publish_runtime(
-                event=event,
-                binding=binding,
-                participant=participant,
-                event_type=mapped_type,
-                public_data=public_data,
-                topic_id=str(room.get("activeTopicId") or ""),
-                allow_after_terminal=(
-                    event.event_type == "message_completed"
-                    and str(binding.get("state") or "") == "committed"
-                ),
-            )
-            if event.event_type not in _TRANSIENT_RUNTIME_EVENT_TYPES:
-                self.room_kernel_projection.sync_room(
-                    room_id,
-                    now_ms=event.created_at_ms,
-                )
-            return
-        if (
-            kernel_owns_room_execution(self.room_kernel.mode)
-            and not conversation_turn_id
-        ):
-            # A committed/revoked managed Dispatch may still emit trailing
-            # private deltas. Only an explicitly registered conversation is
-            # allowed to use the Session-backed public mapper.
-            return
         room_turn_id = (
             conversation_turn_id
             or self.room_turns.turn_for_event(event)
@@ -342,6 +145,26 @@ class AgentEventProjectionService:
         dispatch_id = self.room_turns.dispatch_for_event(
             event
         )
+        child_event = self.room_turns.child_for_event(event)
+        if child_event and event.event_type in {
+            "turn_completed",
+            "turn_failed",
+        }:
+            status = str(event.payload.get("status") or "")
+            phase = (
+                "failed"
+                if event.event_type == "turn_failed"
+                else "aborted"
+                if status == "aborted"
+                else "completed"
+            )
+            mapped_type = "participant_activity"
+            public_data = {
+                "activityKind": "child",
+                "phase": phase,
+                "status": status or phase,
+                "summary": str(event.payload.get("summary") or "")[:500],
+            }
         self.room_events.publish(
             room_id=str(participant["roomId"]),
             event_type=mapped_type,
@@ -381,38 +204,7 @@ class AgentEventProjectionService:
         event: AgentEventEnvelope,
         message: Mapping[str, object],
     ) -> bool:
-        binding = self.room_kernel.session_binding(
-            event.session_id
-        )
-        managed_turn_lookup = getattr(
-            self.room_kernel,
-            "is_managed_runtime_turn",
-            None,
-        )
-        managed_turn = (
-            bool(
-                managed_turn_lookup(
-                    event.session_id,
-                    event.turn_id,
-                )
-            )
-            if callable(managed_turn_lookup)
-            else (
-                binding is not None
-                and binding.get("runtimeTurnId") == event.turn_id
-            )
-        )
-        active_exact_turn = (
-            binding is not None
-            and binding.get("state") == "running"
-            and binding.get("runtimeTurnId") == event.turn_id
-        )
-        write_allowed = not managed_turn or active_exact_turn
-        generation = (
-            int(binding.get("generation") or 0)
-            if binding
-            else 0
-        )
+        generation = 0
         bound_message = dict(message)
         bound_message["blocks"] = bind_block_scope(
             [
@@ -427,12 +219,11 @@ class AgentEventProjectionService:
             generation=generation,
         )
         event.payload["message"] = bound_message
-        if write_allowed:
-            self.append_recent_message(
-                event.session_id,
-                bound_message,
-            )
-        if write_allowed and any(
+        self.append_recent_message(
+            event.session_id,
+            bound_message,
+        )
+        if any(
             isinstance(block, Mapping)
             and block.get("schemaVersion")
             == "rag-ime.agent-block.v1"
@@ -440,25 +231,13 @@ class AgentEventProjectionService:
         ):
             self.agent_blocks.persist_message(
                 bound_message,
-                root_id=(
-                    str(binding.get("rootId") or "")
-                    if binding
-                    else ""
-                ),
-                task_id=(
-                    str(binding.get("taskId") or "")
-                    if binding
-                    else ""
-                ),
-                invocation_id=(
-                    str(binding.get("dispatchId") or "")
-                    if binding
-                    else ""
-                ),
+                root_id="",
+                task_id="",
+                invocation_id="",
                 generation=generation,
                 created_at_ms=event.created_at_ms,
             )
-        return write_allowed
+        return True
 
 
 def room_event_projection(
@@ -860,110 +639,60 @@ _ROOM_TOOL_RESULT_KEYS = (
 
 _ROOM_TOOL_NAMES = frozenset(
     {
-        "room_state",
-        "room_define",
-        "room_collaborate",
-        "room_integrate",
-        "room_post",
-        "room_commit",
+        "room_partner",
     }
 )
 
 _ROOM_REQUEST_TEXT_LIMITS = {
-    "targetParticipantRef": 240,
-    "childTaskId": 240,
-    "workspacePolicy": 120,
-    "intent": 120,
-    "objective": 1_000,
-    "expectedOutput": 1_000,
-    "kind": 120,
-    "action": 120,
-    "summary": 500,
-    "waitingFor": 120,
-    "blocker": 1_000,
+    "op": 40,
+    "targetParticipantId": 240,
+    "task": 1_200,
+    "expectedOutput": 1_200,
+    "content": 1_200,
 }
 
 _ROOM_REQUEST_LIST_KEYS = frozenset(
     {
-        "acceptance",
-        "mentions",
+        "acceptanceCriteria",
     }
 )
 
 _ROOM_RESULT_KEYS_BY_TOOL = {
-    "room_state": (
-        "ok",
-        "created",
-        "evidenceRef",
-        "unchanged",
-        "stateRevision",
-        "currentResponsibility",
-        "summary",
-        "status",
-    ),
-    "room_collaborate": (
-        "accepted",
-        "enqueued",
-        "deduplicated",
-        "childTaskId",
+    "room_partner": (
+        "operation",
+        "roomId",
+        "rootId",
+        "dispatchId",
         "childDispatchId",
-        "workspacePolicy",
-        "targetParticipantRef",
-        "currentResponsibilityContinues",
-    ),
-    "room_integrate": (
-        "integrated",
-        "idempotent",
-        "noChanges",
-        "childTaskId",
-        "workspaceIntegrationRef",
-    ),
-    "room_post": (
+        "participantId",
+        "displayName",
+        "status",
+        "result",
+        "partners",
         "published",
-        "postRef",
-        "deduplicated",
-        "currentResponsibilityContinues",
-    ),
-    "room_commit": (
-        "accepted",
-        "executionPerformed",
-        "settlementStaged",
-        "terminalForModelTurn",
-        "canonicalTool",
+        "postId",
+        "idempotentReplay",
     ),
 }
 
 _ROOM_RESULT_BOOLEAN_KEYS = frozenset(
     {
-        "ok",
-        "created",
-        "unchanged",
-        "accepted",
-        "enqueued",
-        "deduplicated",
         "published",
-        "integrated",
-        "idempotent",
-        "noChanges",
-        "currentResponsibilityContinues",
-        "executionPerformed",
-        "settlementStaged",
-        "terminalForModelTurn",
+        "idempotentReplay",
     }
 )
 
 _ROOM_RESULT_TEXT_LIMITS = {
-    "evidenceRef": 240,
-    "stateRevision": 160,
-    "summary": 500,
-    "status": 160,
-    "childTaskId": 240,
+    "operation": 40,
+    "roomId": 240,
+    "rootId": 240,
+    "dispatchId": 240,
     "childDispatchId": 240,
-    "workspacePolicy": 120,
-    "workspaceIntegrationRef": 240,
-    "targetParticipantRef": 240,
-    "postRef": 240,
-    "canonicalTool": 120,
+    "participantId": 240,
+    "displayName": 160,
+    "status": 160,
+    "result": 2_000,
+    "postId": 240,
 }
 
 
@@ -990,6 +719,9 @@ def _room_tool_request_projection(
         ]
         if values:
             projected[key] = values
+    timeout_seconds = raw_args.get("timeoutSeconds")
+    if isinstance(timeout_seconds, int) and not isinstance(timeout_seconds, bool):
+        projected["timeoutSeconds"] = max(5, min(300, timeout_seconds))
     return projected
 
 
@@ -1014,19 +746,6 @@ def _room_tool_result_layers(
     return tuple(layers)
 
 
-def _room_current_responsibility(
-    value: object,
-) -> dict[str, str] | str | None:
-    if isinstance(value, Mapping):
-        state = _redacted_room_text(
-            value.get("state"),
-            maximum=160,
-        )
-        return {"state": state} if state else None
-    text = _redacted_room_text(value, maximum=500)
-    return text or None
-
-
 def _room_tool_result_projection(
     tool_name: str,
     raw_result: object,
@@ -1041,26 +760,39 @@ def _room_tool_result_projection(
         return {}
     projected: dict[str, object] = {}
     for key in keys:
-        value = next(
-            (
-                layer[key]
-                for layer in layers
-                if key in layer
-            ),
-            None,
-        )
-        if value is None:
-            continue
-        if key == "currentResponsibility":
-            current = _room_current_responsibility(value)
-            if current is not None:
-                projected[key] = current
+        values = [layer[key] for layer in layers if key in layer]
+        if key == "partners":
+            value = next((item for item in values if isinstance(item, list)), None)
+            if not isinstance(value, list):
+                continue
+            projected[key] = [
+                {
+                    field: bounded
+                    for field in (
+                        "participantId",
+                        "displayName",
+                        "collaborationRole",
+                        "modelProfile",
+                        "thinkingLevel",
+                        "status",
+                    )
+                    if (
+                        bounded := _redacted_room_text(
+                            item.get(field), maximum=240
+                        )
+                    )
+                }
+                for item in value[:16]
+                if isinstance(item, Mapping)
+            ]
             continue
         if key in _ROOM_RESULT_BOOLEAN_KEYS:
+            value = next((item for item in values if isinstance(item, bool)), None)
             if isinstance(value, bool):
                 projected[key] = value
             continue
         maximum = _ROOM_RESULT_TEXT_LIMITS.get(key)
+        value = next((item for item in values if isinstance(item, str)), None)
         if maximum is None or not isinstance(value, str):
             continue
         text = _redacted_room_text(value, maximum=maximum)

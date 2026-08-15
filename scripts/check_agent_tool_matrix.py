@@ -81,14 +81,12 @@ def run_matrix(*, keep_workspace: bool = False) -> dict[str, object]:
         for key in (
             "RAG_IME_PI_ENABLED",
             "RAG_IME_AGENT_GATEWAY_ENABLED",
-            "RAG_IME_ROOM_KERNEL_MODE",
         )
     }
     os.environ.update(
         {
             "RAG_IME_PI_ENABLED": "1",
             "RAG_IME_AGENT_GATEWAY_ENABLED": "1",
-            "RAG_IME_ROOM_KERNEL_MODE": "kernel_only",
         }
     )
     service = DebugImeService(

@@ -1694,6 +1694,79 @@ class PiRuntimeTests(unittest.TestCase):
 
         self.assertEqual(message["blocks"][0]["data"]["text"], "最近做了什么？")
 
+    def test_transient_context_envelope_projects_only_the_user_message(self) -> None:
+        internal_context = "private-workspace-context-must-not-render"
+        message = pi_message_payload(
+            {
+                "role": "user",
+                "timestamp": 105,
+                "content": [{
+                    "type": "text",
+                    "text": (
+                        "RAG_IME_TRANSIENT_CONTEXT_V1\n"
+                        + json.dumps(
+                            {
+                                "schemaVersion": "rag-ime.runtime-prompt.v1",
+                                "message": "立即干预：只回复 STEER-OK。",
+                                "sessionContext": internal_context,
+                                "transientContext": "another-private-context",
+                            },
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                    ),
+                }],
+            },
+            session_id=str(self.session["id"]),
+            turn_id="turn:steer",
+        ).to_payload()
+
+        self.assertEqual(
+            message["blocks"][0]["data"]["text"],
+            "立即干预：只回复 STEER-OK。",
+        )
+        serialized = json.dumps(message, ensure_ascii=False)
+        self.assertNotIn("RAG_IME_TRANSIENT_CONTEXT_V1", serialized)
+        self.assertNotIn(internal_context, serialized)
+
+    def test_malformed_transient_context_envelope_fails_closed(self) -> None:
+        message = pi_message_payload(
+            {
+                "role": "user",
+                "content": [{
+                    "type": "text",
+                    "text": "RAG_IME_TRANSIENT_CONTEXT_V1\n{not-json",
+                }],
+            },
+            session_id=str(self.session["id"]),
+            turn_id="turn:malformed",
+        ).to_payload()
+
+        serialized = json.dumps(message, ensure_ascii=False)
+        self.assertIn("本轮没有可展示正文", serialized)
+        self.assertNotIn("RAG_IME_TRANSIENT_CONTEXT_V1", serialized)
+        self.assertNotIn("not-json", serialized)
+
+    def test_aborted_pi_message_projects_a_stopped_terminal_turn(self) -> None:
+        message = pi_message_payload(
+            {
+                "role": "assistant",
+                "content": [],
+                "provider": "openai-codex",
+                "model": "gpt-5.6-luna",
+                "stopReason": "aborted",
+                "errorMessage": "Request was aborted",
+                "timestamp": 106,
+            },
+            session_id=str(self.session["id"]),
+            turn_id="turn:aborted",
+        ).to_payload()
+
+        self.assertEqual(message["status"], "aborted")
+        self.assertEqual(message["blocks"][0]["status"], "aborted")
+        self.assertEqual(message["blocks"][0]["data"]["text"], "已停止。")
+        self.assertNotIn("Request was aborted", json.dumps(message))
+
     def test_native_approval_response_unblocks_pi_extension_ui(self) -> None:
         session_id = str(self.session["id"])
         approval = self.store.create_approval(

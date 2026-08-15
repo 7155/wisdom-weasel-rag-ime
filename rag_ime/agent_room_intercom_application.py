@@ -21,7 +21,7 @@ class RoomIntercomApplicationService:
         runtime_provider: Callable[[], Any],
         user_priority_sessions: set[str],
         turn_lock: Any,
-        guard_legacy_room_route: Callable[[str, str], None],
+        guard_room_session_route: Callable[[str, str], None],
         runtime_prompt_with_context: Callable[..., tuple],
         room_intercom_prompt: Callable[..., str],
         room_participant_prompt: Callable[..., str],
@@ -36,8 +36,8 @@ class RoomIntercomApplicationService:
         self._runtime_provider = runtime_provider
         self.user_priority_sessions = user_priority_sessions
         self.turn_lock = turn_lock
-        self.guard_legacy_room_route = (
-            guard_legacy_room_route
+        self.guard_room_session_route = (
+            guard_room_session_route
         )
         self.runtime_prompt_with_context = (
             runtime_prompt_with_context
@@ -136,7 +136,7 @@ class RoomIntercomApplicationService:
         target_session_id = str(
             item.get("targetSessionId") or ""
         )
-        self.guard_legacy_room_route(
+        self.guard_room_session_route(
             "intercom.delivery",
             target_session_id,
         )

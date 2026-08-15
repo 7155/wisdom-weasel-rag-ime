@@ -227,7 +227,6 @@ def _configure_private_gateway_environment(
                 private_app_support / "Agent" / "debug-context"
             ),
             "RAG_IME_AGENT_TOOL_URL": "http://127.0.0.1:1/api/agent/tool/execute",
-            "RAG_IME_ROOM_KERNEL_MODE": "off",
             "RAG_IME_KNOWLEDGE_SHARED_WORKER": "0",
         }
     )

@@ -20,6 +20,7 @@ export interface AgentToolCallV1 {
     | 'runtime'
     | 'configuration'
     | 'agents'
+    | 'room_partner'
     | 'browser'
     | 'todo'
     | 'agent_goal'
@@ -34,13 +35,7 @@ export interface AgentToolCallV1 {
     | 'workspace_edit'
     | 'workspace_write'
     | 'workspace_shell'
-    | 'workspace_job'
-    | 'room_state'
-    | 'room_define'
-    | 'room_collaborate'
-    | 'room_integrate'
-    | 'room_post'
-    | 'room_commit';
+    | 'workspace_job';
   toolCallId: string;
   args: {
     [k: string]: unknown;

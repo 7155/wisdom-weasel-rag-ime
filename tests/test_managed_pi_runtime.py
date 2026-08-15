@@ -406,7 +406,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         plan = build_managed_pi_runtime_retention_plan(self.app_support)
         self.assertEqual(plan["plannedRemovalCount"], 0)
 
-    def test_acceptance_requires_real_prompt_skill_tool_and_cancel_proofs(self) -> None:
+    def test_acceptance_requires_real_prompt_steer_abort_and_context_proofs(self) -> None:
         payload, _ = self._payload("runtime-claims", protocol_version="2")
         staged = install_managed_pi_runtime(
             payload,
@@ -414,11 +414,11 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             activate=False,
         )
         receipt = self._acceptance(staged)
-        receipt.pop("roomSkillLoad")
+        receipt.pop("debugContextAvailable")
 
         with self.assertRaisesRegex(
             ManagedPiRuntimeError,
-            "required Skill revision",
+            "Provider context",
         ):
             install_managed_pi_runtime(
                 payload,
@@ -427,13 +427,10 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             )
 
         wrong_revision = self._acceptance(staged)
-        wrong_revision["roomSkillLoad"] = {
-            **wrong_revision["roomSkillLoad"],
-            "contentRevision": "0" * 64,
-        }
+        wrong_revision["steerDelivery"] = "followUp"
         with self.assertRaisesRegex(
             ManagedPiRuntimeError,
-            "required Skill revision",
+            "steer delivery",
         ):
             install_managed_pi_runtime(
                 payload,
@@ -761,14 +758,20 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             config = PiRuntimeConfig.from_environment()
 
         self.assertEqual(discovered.protocol_version, "2")
-        self.assertEqual(discovered.runtime_methods, ("room.dispatch", "room.cancel"))
+        self.assertEqual(
+            discovered.runtime_methods,
+            managed_runtime.REQUIRED_SESSION_RUNTIME_METHODS,
+        )
         self.assertEqual(config.protocol_version, "2")
 
-    def test_protocol_v2_manifest_without_complete_room_methods_fails_closed(self) -> None:
+    def test_protocol_v2_manifest_without_complete_session_methods_fails_closed(self) -> None:
         payload, manifest = self._payload("runtime-v2-incomplete", protocol_version="2")
-        manifest["runtimeMethods"] = ["room.dispatch"]
+        manifest["runtimeMethods"] = ["session.open"]
 
-        with self.assertRaisesRegex(ManagedPiRuntimeError, "omits required Room runtime methods"):
+        with self.assertRaisesRegex(
+            ManagedPiRuntimeError,
+            "omits required Session runtime methods",
+        ):
             write_managed_pi_runtime_manifest(payload / MANIFEST_NAME, manifest)
 
     def test_pi_runtime_config_discovers_managed_install_without_path_fallback(self) -> None:
@@ -858,37 +861,6 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             )
         )
         source = manifest["source"]
-        skill_path = (
-            installation.runtime_dir
-            / "runtime-host"
-            / "skills"
-            / "implementation-execution"
-            / "SKILL.md"
-        )
-        skill_body = managed_runtime._native_skill_body(
-            skill_path.read_text(encoding="utf-8")
-        )
-        surfaces = {
-            surface: {
-                "schemaVersion": (
-                    "wisdom-weasel.runtime-surface-termination-receipt.v1"
-                ),
-                "surface": surface,
-                "state": "terminated",
-                "targetIds": [],
-            }
-            for surface in (
-                "provider",
-                "tool",
-                "exec",
-                "retry",
-                "compaction",
-                "branch_summary",
-                "timer",
-                "continuation",
-                "session",
-            )
-        }
         return {
             "schemaVersion": ACCEPTANCE_SCHEMA_VERSION,
             "status": "passed_not_installed",
@@ -899,35 +871,17 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             "protocolVersion": installation.protocol_version,
             "verifiedMethods": [
                 "session.open",
-                "room.dispatch",
+                "session.prompt",
+                "session.steer",
                 "session.debug.context",
-                "room.cancel",
+                "session.abort",
+                "session.snapshot",
             ],
-            "cachePrefixHash": hashlib.sha256(
-                b"room-v2-staged-prompt"
-            ).hexdigest(),
-            "roomSkillLoad": {
-                "name": "implementation-execution",
-                "contentRevision": hashlib.sha256(
-                    skill_body.encode("utf-8")
-                ).hexdigest(),
-                "loadReason": "stage_required",
-            },
-            "toolCatalogFields": [
-                "does",
-                "input",
-                "name",
-                "notFor",
-                "output",
-                "when",
-            ],
-            "toolSchemaInitiallyHidden": True,
-            "loadedSkillCount": 1,
-            "firstDelivery": "prompt",
-            "secondDelivery": "followUp",
-            "cancellationSurfaces": surfaces,
-            "pendingTargets": [],
-            "cancelledSurfaceCount": len(surfaces),
+            "promptDelivery": "prompt",
+            "steerDelivery": "steer",
+            "abortAcknowledged": True,
+            "debugContextAvailable": True,
+            "terminalSessionIdle": True,
         }
 
     def _install_accepted(
@@ -1002,7 +956,11 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             source_commit=hashlib.sha256(runtime_version.encode("utf-8")).hexdigest()[:12],
             source_package="@earendil-works/pi-coding-agent",
             protocol_version=protocol_version,
-            runtime_methods=("room.dispatch", "room.cancel") if protocol_v2 else (),
+            runtime_methods=(
+                managed_runtime.REQUIRED_SESSION_RUNTIME_METHODS
+                if protocol_v2
+                else ()
+            ),
             source_contract_sha256="a" * 64 if protocol_v2 else "",
             handlers_commit="b" * 40 if protocol_v2 else "",
         )

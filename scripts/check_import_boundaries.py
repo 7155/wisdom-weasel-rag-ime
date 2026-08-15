@@ -407,10 +407,9 @@ def _rag_ime_modules(root: Path) -> list[tuple[str, Path]]:
 def flat_layer_of(module: str) -> str:
     """Layer of one flat Agent/Room module.
 
-    Application is tested before domain on purpose: `agent_room_application`
-    and `agent_room_kernel_application` start with the domain prefix but are
-    application modules, and mis-ordering these would let a real upward edge
-    pass unnoticed.
+    Application is tested before domain on purpose because Room application
+    modules start with the domain prefix; mis-ordering them would let a real
+    upward edge pass unnoticed.
     """
 
     if module in ENTRY_MODULES:

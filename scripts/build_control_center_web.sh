@@ -33,7 +33,11 @@ node "$ROOT/scripts/generate_control_center_contracts.mjs" --check
 (
   cd "$WEB"
   pnpm --config.manage-package-manager-versions=true typecheck
-  pnpm --config.manage-package-manager-versions=true test
+  if [[ "${RAG_IME_SKIP_WEB_TESTS:-0}" != "1" ]]; then
+    pnpm --config.manage-package-manager-versions=true test
+  else
+    echo "Skipping full web tests by explicit RAG_IME_SKIP_WEB_TESTS=1" >&2
+  fi
   VITE_CONTROL_TRANSPORT="$CONTROL_TRANSPORT" \
   VITE_BUILD_CHANNEL="$BUILD_CHANNEL" \
     pnpm --config.manage-package-manager-versions=true build

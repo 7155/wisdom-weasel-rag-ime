@@ -676,6 +676,33 @@ class AgentDelegationTests(unittest.TestCase):
         )
         coordinator.close()
 
+    def test_session_room_tool_agent_result_is_deliverable_without_kernel_root(self) -> None:
+        coordinator = self.coordinator(
+            room_context_provider=lambda _session_id: {
+                "roomBound": True,
+                "roomId": "room:session-composed",
+                "rootId": "room-turn:session-composed",
+                "taskId": "",
+                "dispatchId": "room-dispatch:session-composed",
+                "generation": 0,
+            }
+        )
+        try:
+            response = coordinator.delegate(
+                str(self.parent["id"]),
+                {
+                    "agent": "researcher",
+                    "task": "返回一条事件结果",
+                    **_TASK_CONTRACT,
+                },
+            )
+            run = response["batch"]["runs"][0]
+            self.assertTrue(
+                coordinator.store.room_delivery_allowed(str(run["id"]))
+            )
+        finally:
+            coordinator.close()
+
     def test_room_bound_child_prompt_routes_handoff_without_private_room_ownership(
         self,
     ) -> None:
@@ -692,7 +719,8 @@ class AgentDelegationTests(unittest.TestCase):
         }
         fork_prompt = _subagent_prompt(run, fork_batch)
         self.assertIn("私有、有界助手", fork_prompt)
-        self.assertIn("不得 settle Room、room_post 或直接打开原生 Ask", fork_prompt)
+        self.assertIn("不得发布 Room 进展、委派正式 Room Partner", fork_prompt)
+        self.assertIn("不得代替 parent 给用户最终答复", fork_prompt)
         self.assertIn("exact managed Pi transcript prefix", fork_prompt)
         self.assertIn("不承诺 provider cache hit", fork_prompt)
         self.assertIn("只用 status/symbols/hover/definition/references/diagnostics", fork_prompt)
@@ -1191,6 +1219,52 @@ class AgentDelegationTests(unittest.TestCase):
         self.assertEqual(child["allowedTools"], ["overview", "memory"])
         coordinator.close()
 
+    def test_parent_can_spawn_a_configured_writable_tool_agent_session(self) -> None:
+        parent_id = str(self.parent["id"])
+        self.parent = self.sessions.set_runtime_policy(
+            parent_id,
+            mode="coordinator",
+            tool_profile_version="control-center-v1",
+            execution_mode="workspace_managed",
+            grant_workspace_scope=True,
+            allowed_tools=None,
+            pi_skills_enabled=True,
+            codex_skills_enabled=False,
+            workspace_roots=[str(self.root)],
+        )
+        coordinator = self.coordinator()
+        try:
+            batch = coordinator.delegate(
+                parent_id,
+                {
+                    "agent": "worker",
+                    "task": "在共享工作区完成一个有界修复",
+                    "modelProfile": "openai-codex/gpt-5.6-luna",
+                    "thinkingLevel": "low",
+                    "access": "write",
+                    "allowedTools": ["workspace_read", "workspace_patch"],
+                    "piSkillsEnabled": True,
+                    "codexSkillsEnabled": False,
+                    **_TASK_CONTRACT,
+                },
+            )["batch"]
+            child = self.sessions.get(str(batch["runs"][0]["childSessionId"]))
+
+            self.assertEqual(child["mode"], "coordinator")
+            self.assertEqual(child["modelProfile"], "openai-codex/gpt-5.6-luna")
+            self.assertEqual(child["thinkingLevel"], "low")
+            self.assertEqual(child["toolProfileVersion"], "subagent-worker-v1")
+            self.assertEqual(child["executionMode"], "workspace_managed")
+            self.assertEqual(child["workspaceRoots"], [str(self.root.resolve())])
+            self.assertEqual(
+                child["allowedTools"],
+                ["workspace_read", "workspace_patch"],
+            )
+            self.assertTrue(child["piSkillsEnabled"])
+            self.assertFalse(child["codexSkillsEnabled"])
+        finally:
+            coordinator.close()
+
     def test_retention_defaults_to_72_hours_and_gc_runs_on_startup(self) -> None:
         self.config.session_dir.mkdir(parents=True)
         child_file = self.config.session_dir / "expired-on-startup.jsonl"
@@ -1282,6 +1356,76 @@ class AgentDelegationTests(unittest.TestCase):
                 str(second_child),
                 {"agent": "reviewer", "task": "第三层", **_TASK_CONTRACT},
             )
+        coordinator.close()
+
+    def test_live_subagents_can_call_each_other_directly_within_one_tree(self) -> None:
+        _InteractiveRuntime.instances.clear()
+        coordinator = self.coordinator(_InteractiveRuntime)
+        response = coordinator.delegate(
+            str(self.parent["id"]),
+            {
+                "contextMode": "fresh",
+                "wait": False,
+                "tasks": [
+                    {"agent": "researcher", "task": "调查问题", **_TASK_CONTRACT},
+                    {"agent": "reviewer", "task": "复核发现", **_TASK_CONTRACT},
+                ],
+            },
+        )
+        first, second = response["batch"]["runs"]
+        first_run_id = str(first["id"])
+        second_run_id = str(second["id"])
+        first_session_id = str(first["childSessionId"])
+        second_session_id = str(second["childSessionId"])
+        _wait_until(lambda: len(coordinator._active_runs) == 2)
+
+        status = coordinator.status(first_session_id, {})
+        self.assertIn(
+            second_run_id,
+            {str(item["runId"]) for item in status["peers"]},
+        )
+        sent = coordinator.call(
+            first_session_id,
+            {
+                "targetRunId": second_run_id,
+                "message": "请立即核对接口边界。",
+                "_toolCallId": "tool:peer-a-to-b",
+            },
+        )
+        self.assertEqual(sent["targetSessionId"], second_session_id)
+        self.assertEqual(sent["delivery"], "steer")
+        target_runtime = next(
+            item for item in _InteractiveRuntime.instances if item.session_id == second_session_id
+        )
+        self.assertIn(
+            ("steer", f"[子 Agent {first_run_id} 直接调用]\n请立即核对接口边界。"),
+            target_runtime.deliveries,
+        )
+
+        replied = coordinator.call(
+            second_session_id,
+            {
+                "targetRunId": first_run_id,
+                "message": "已核对，边界成立。",
+                "_toolCallId": "tool:peer-b-to-a",
+            },
+        )
+        self.assertEqual(replied["targetSessionId"], first_session_id)
+        source_runtime = next(
+            item for item in _InteractiveRuntime.instances if item.session_id == first_session_id
+        )
+        self.assertIn(
+            ("steer", f"[子 Agent {second_run_id} 直接调用]\n已核对，边界成立。"),
+            source_runtime.deliveries,
+        )
+
+        outsider = self.sessions.create(title="另一个委派树")
+        with self.assertRaisesRegex(ValueError, "does not belong"):
+            coordinator.call(
+                str(outsider["id"]),
+                {"targetRunId": second_run_id, "message": "越权调用"},
+            )
+        coordinator.abort(str(self.parent["id"]), {"batchId": response["batch"]["id"]})
         coordinator.close()
 
     def test_fork_accepts_only_native_0600_session_and_preserves_safe_thinking(self) -> None:

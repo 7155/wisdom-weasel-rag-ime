@@ -14,7 +14,7 @@ from .agent_room_cancellation_proofs import (
 from .agent_room_turn_registry import RoomTurnRegistry
 
 
-class LegacyCancellationHost(Protocol):
+class RoomSessionCancellationHost(Protocol):
     rooms: Any
     room_events: Any
     delegation: Any
@@ -38,10 +38,10 @@ class LegacyCancellationHost(Protocol):
     def _room_topic_for_turn(self, room_turn_id: str) -> str: ...
 
 
-class RoomLegacyCancellationService:
-    """Root cancellation compatibility for pre-Kernel Room turns."""
+class RoomSessionCancellationService:
+    """Cancel a Room turn and every Pi Session child owned by that turn."""
 
-    def __init__(self, host: LegacyCancellationHost) -> None:
+    def __init__(self, host: RoomSessionCancellationHost) -> None:
         self.host = host
 
     def abort_turn(

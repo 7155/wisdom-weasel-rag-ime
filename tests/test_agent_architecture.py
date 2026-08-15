@@ -13,8 +13,8 @@ AGENT_SERVICE = ROOT / "rag_ime" / "agent_service.py"
 # is welcome; adding one requires an explicit architecture decision.
 TRANSITIONAL_WHOLE_FACADE_DEPENDENCIES = {
     "AgentApprovalApplicationService",
-    "RoomLegacyCancellationService",
-    "RoomLegacyDispatchService",
+    "RoomSessionCancellationService",
+    "RoomSessionDispatchService",
     "RoomWorkApplicationService",
 }
 RETIRED_ROLE_IDS = {

@@ -45,23 +45,20 @@ context, leaving an explicit redaction marker when material.
 ## Managed Room Boundary
 
 - The Facilitator owns decomposition, assignment, reassignment, dependency
-  handling, and integration for the existing WorkItem. The Kernel owns the
-  accepted Dispatch and validates the transfer; only an accepted
-  `room_commit`, not free text or a path, creates a Dispatch.
-- The receiver uses its own Session, Dispatch, and bound workspace harness.
+  handling, and integration. A formal transfer is a new bounded
+  `room_partner(operation="delegate")` call, not a free-text mention.
+- The receiver uses its own Session and the workspace mode selected for that
+  delegation.
   Participant identity is distinct from a filesystem root. For concurrent
   writable children, require separately receipted isolated workspaces from the
   same Root baseline and one Facilitator-owned integration workspace. Do not
   claim automatic Git worktree cloning without a receipt.
-- `room_collaborate` remains a non-overlapping implementation child while the
-  Facilitator keeps responsibility; it is not intake fanout, assignment by
-  mention, or implementation-to-review transfer.
+- Temporary Session micro-agents may call peers directly inside their bounded
+  Session tree, but remain private at the Room boundary. Use a formal Room
+  partner when attribution and visible lifecycle matter.
 - Review is optional and begins only after integration when the Facilitator
-  chooses it by risk. The Kernel then hands the WorkItem to a distinct
-  Reviewer; self-review is forbidden. If review is not chosen, do not
-  manufacture a review stage.
-- Preserve Root, Task, WorkItem, source anchors, and identity after rejection.
-  Re-read `room_state`; never make a replacement route or task store.
+  chooses it by risk. Delegate a fixed review scope to a distinct participant;
+  self-review is forbidden. If review is not chosen, do not manufacture it.
 - Keep private refs and takeover details private. Only the Facilitator/reporter
   owns the Root's final public summary.
 - Transfer only accepted evidence receipts; a filesystem path or participant
@@ -90,8 +87,9 @@ uncertain. What user-visible result should happen next.
 Return two distinct products: a private five-part receiver packet containing
 exact aliases, artifacts, evidence, receiver, and takeover fields; and a
 plain-language public report containing completed behavior, transfer reason,
-useful attempt results, open risk, and next action. Only the accepted Runtime
-receipt changes ownership.
+useful attempt results, open risk, and next action. Ownership changes only
+after the Facilitator accepts the delegated result and stops editing the
+transferred scope concurrently.
 
 ## Self-Check
 

@@ -2828,35 +2828,6 @@ class DebugManagementApiTests(unittest.TestCase):
                     message_status = response.status
                     accepted = json.loads(response.read().decode("utf-8"))
 
-            start_receipt = {
-                "schemaVersion": "rag-ime.room-start-execution.v1",
-                "ok": True,
-                "accepted": True,
-                "created": True,
-                "roomId": room_id,
-                "rootId": "room-root:http",
-            }
-            with patch.object(
-                self.service.agent,
-                "start_room_execution",
-                return_value=start_receipt,
-            ) as start_room_execution:
-                start_request = Request(
-                    f"{base_url}/rooms/{room_id}/start-execution",
-                    data=json.dumps(
-                        {
-                            "action": "start_execution",
-                            "rootId": "room-root:http",
-                            "clientActionId": "room-start:http",
-                        }
-                    ).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                with urlopen(start_request, timeout=5) as response:
-                    start_status = response.status
-                    started = json.loads(response.read().decode("utf-8"))
-
             abort_receipt = {
                 "schemaVersion": "rag-ime.agent-room-abort.v1",
                 "ok": True,
@@ -2910,16 +2881,6 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(message_status, 202)
         self.assertEqual(accepted["participant"]["roleId"], "companion-firstlight-v1")
         self.assertEqual(accepted["clientMessageId"], "room-http-client-1")
-        self.assertEqual(start_status, 202)
-        self.assertEqual(started, start_receipt)
-        start_room_execution.assert_called_once_with(
-            room_id,
-            {
-                "action": "start_execution",
-                "rootId": "room-root:http",
-                "clientActionId": "room-start:http",
-            },
-        )
         self.assertEqual(abort_status, 200)
         self.assertEqual(aborted, abort_receipt)
         abort_room_turn.assert_called_once_with(

@@ -18,6 +18,8 @@ def agent_session_route(path: str) -> tuple[str, str]:
     if not session_id or action not in {
         "",
         "messages",
+        "workspace",
+        "workspace-file",
         "events",
         "prompt",
         "rewrite",
@@ -187,7 +189,6 @@ def agent_room_route(path: str) -> tuple[str, str]:
         "",
         "events",
         "messages",
-        "start-execution",
         "steer",
         "abort",
         "snapshot",
@@ -196,20 +197,6 @@ def agent_room_route(path: str) -> tuple[str, str]:
         "topics",
         "artifacts",
     }:
-        return "", ""
-    return room_id, action
-
-
-def agent_room_kernel_route(path: str) -> tuple[str, str]:
-    prefix = "/api/agent/rooms/"
-    if not path.startswith(prefix):
-        return "", ""
-    parts = path[len(prefix) :].strip("/").split("/")
-    if len(parts) != 3 or parts[1] != "kernel":
-        return "", ""
-    room_id = unquote(parts[0]).strip()
-    action = parts[2]
-    if not room_id or action not in {"snapshot", "events", "commands", "settle", "create", "dispatch", "finalize"}:
         return "", ""
     return room_id, action
 

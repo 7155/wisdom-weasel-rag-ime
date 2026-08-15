@@ -25,7 +25,7 @@ MANIFEST_SCHEMA_VERSION = "rag-ime.pi-runtime-manifest.v1"
 POINTER_SCHEMA_VERSION = "rag-ime.pi-runtime-pointer.v1"
 RETENTION_SCHEMA_VERSION = "rag-ime.pi-runtime-retention.v1"
 LIFECYCLE_SCHEMA_VERSION = "rag-ime.pi-runtime-lifecycle.v1"
-ACCEPTANCE_SCHEMA_VERSION = "rag-ime.room-v2-staged-runtime-e2e.v1"
+ACCEPTANCE_SCHEMA_VERSION = "rag-ime.pi-session-staged-runtime-e2e.v1"
 MANIFEST_NAME = "manifest.json"
 POINTER_NAME = "current.json"
 LOCK_NAME = ".managed-pi-runtime.lock"
@@ -42,36 +42,15 @@ _GIT_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 _MAX_JSON_BYTES = 2 * 1024 * 1024
 _MAX_RUNTIME_FILES = 100_000
 _MAX_RETIRED_GENERATIONS = 64
-REQUIRED_ROOM_RUNTIME_METHODS = ("room.dispatch", "room.cancel")
 REQUIRED_ACCEPTANCE_METHODS = (
     "session.open",
-    "room.dispatch",
+    "session.prompt",
+    "session.steer",
     "session.debug.context",
-    "room.cancel",
+    "session.abort",
+    "session.snapshot",
 )
-REQUIRED_ACCEPTANCE_TOOL_FIELDS = (
-    "does",
-    "input",
-    "name",
-    "notFor",
-    "output",
-    "when",
-)
-REQUIRED_ACCEPTANCE_CANCELLATION_SURFACES = (
-    "provider",
-    "tool",
-    "exec",
-    "retry",
-    "compaction",
-    "branch_summary",
-    "timer",
-    "continuation",
-    "session",
-)
-_STAGED_ACCEPTANCE_SKILL = "implementation-execution"
-_STAGED_ACCEPTANCE_CACHE_PREFIX_HASH = hashlib.sha256(
-    b"room-v2-staged-prompt"
-).hexdigest()
+REQUIRED_SESSION_RUNTIME_METHODS = REQUIRED_ACCEPTANCE_METHODS
 
 
 class ManagedPiRuntimeError(RuntimeError):
@@ -1255,80 +1234,25 @@ def _accepted_generation_entry(
         raise ManagedPiRuntimeError(
             "managed Pi acceptance receipt targets another source commit"
         )
-    if acceptance.get("cachePrefixHash") != _STAGED_ACCEPTANCE_CACHE_PREFIX_HASH:
+    if acceptance.get("promptDelivery") != "prompt":
         raise ManagedPiRuntimeError(
-            "managed Pi acceptance receipt did not prove the PromptPlan cache prefix"
+            "managed Pi acceptance receipt did not prove Session prompt delivery"
         )
-    skill_load = acceptance.get("roomSkillLoad")
-    skill_source = (
-        installation.runtime_dir
-        / "runtime-host"
-        / "skills"
-        / _STAGED_ACCEPTANCE_SKILL
-        / "SKILL.md"
-    )
-    expected_skill_revision = hashlib.sha256(
-        _native_skill_body(skill_source.read_text(encoding="utf-8")).encode("utf-8")
-    ).hexdigest()
-    if (
-        not isinstance(skill_load, Mapping)
-        or skill_load.get("name") != _STAGED_ACCEPTANCE_SKILL
-        or skill_load.get("contentRevision") != expected_skill_revision
-        or skill_load.get("loadReason") != "stage_required"
-    ):
+    if acceptance.get("steerDelivery") != "steer":
         raise ManagedPiRuntimeError(
-            "managed Pi acceptance receipt did not prove the required Skill revision"
+            "managed Pi acceptance receipt did not prove Session steer delivery"
         )
-    if acceptance.get("toolCatalogFields") != list(
-        REQUIRED_ACCEPTANCE_TOOL_FIELDS
-    ):
+    if acceptance.get("abortAcknowledged") is not True:
         raise ManagedPiRuntimeError(
-            "managed Pi acceptance receipt did not prove the compact Tool catalog"
+            "managed Pi acceptance receipt did not prove Session abort"
         )
-    if (
-        acceptance.get("toolSchemaInitiallyHidden") is not True
-        or acceptance.get("loadedSkillCount") != 1
-    ):
+    if acceptance.get("debugContextAvailable") is not True:
         raise ManagedPiRuntimeError(
-            "managed Pi acceptance receipt did not prove progressive disclosure"
+            "managed Pi acceptance receipt did not expose Provider context"
         )
-    if (
-        acceptance.get("firstDelivery") != "prompt"
-        or acceptance.get("secondDelivery") != "followUp"
-    ):
+    if acceptance.get("terminalSessionIdle") is not True:
         raise ManagedPiRuntimeError(
-            "managed Pi acceptance receipt did not prove bounded Room delivery"
-        )
-    surfaces = acceptance.get("cancellationSurfaces")
-    if (
-        not isinstance(surfaces, Mapping)
-        or set(surfaces) != set(REQUIRED_ACCEPTANCE_CANCELLATION_SURFACES)
-        or acceptance.get("pendingTargets") != []
-    ):
-        raise ManagedPiRuntimeError(
-            "managed Pi acceptance receipt omits cancellation surface proofs"
-        )
-    for surface in REQUIRED_ACCEPTANCE_CANCELLATION_SURFACES:
-        proof = surfaces.get(surface)
-        if (
-            not isinstance(proof, Mapping)
-            or proof.get("schemaVersion")
-            != "wisdom-weasel.runtime-surface-termination-receipt.v1"
-            or proof.get("surface") != surface
-            or proof.get("state") != "terminated"
-            or not isinstance(proof.get("targetIds"), list)
-        ):
-            raise ManagedPiRuntimeError(
-                f"managed Pi acceptance receipt has invalid {surface} cancellation proof"
-            )
-    cancelled_count = acceptance.get("cancelledSurfaceCount")
-    if (
-        not isinstance(cancelled_count, int)
-        or isinstance(cancelled_count, bool)
-        or cancelled_count != len(REQUIRED_ACCEPTANCE_CANCELLATION_SURFACES)
-    ):
-        raise ManagedPiRuntimeError(
-            "managed Pi acceptance receipt omits cancellation surfaces"
+            "managed Pi acceptance receipt did not settle the Session"
         )
     return {
         "version": installation.runtime_version,
@@ -2697,8 +2621,10 @@ def _runtime_methods(value: object, protocol_version: str) -> tuple[str, ...]:
         not _RUNTIME_METHOD_PATTERN.fullmatch(method) for method in methods
     ):
         raise ManagedPiRuntimeError("managed Pi runtime method list is invalid")
-    if protocol_version == "2" and not set(REQUIRED_ROOM_RUNTIME_METHODS).issubset(methods):
-        raise ManagedPiRuntimeError("managed Pi protocol v2 omits required Room runtime methods")
+    if protocol_version == "2" and not set(REQUIRED_SESSION_RUNTIME_METHODS).issubset(methods):
+        raise ManagedPiRuntimeError(
+            "managed Pi protocol v2 omits required Session runtime methods"
+        )
     return methods
 
 

@@ -29,8 +29,9 @@ from rag_ime.managed_pi_runtime import (
 )
 
 
-ROOM_RUNTIME_CONTRACT = ROOT / "integrations" / "pi" / "room-runtime-host-contract.json"
-ROOM_RUNTIME_ADAPTER = ROOT / "integrations" / "pi" / "room-runtime-host.ts"
+SESSION_RUNTIME_CONTRACT = (
+    ROOT / "integrations" / "pi" / "session-runtime-host-contract.json"
+)
 SKILL_ROUTING_CARDS = ROOT / "integrations" / "pi" / "skill-routing-cards.json"
 BUNDLED_SKILL_SUPPORT_DIRS: frozenset[str] = frozenset()
 PROJECT_ROUTING_SKILLS = frozenset(
@@ -40,48 +41,11 @@ ROUTING_CARD_FIELDS = ("name", "when", "notFor", "does", "input", "output")
 MAX_ROUTING_CARD_CHARS = 420
 SKILL_SOURCE_KINDS = ("bundled", "configured", "pi-installed")
 REQUIRED_PI_RUNTIME_BASE_COMMIT = "0fd0564af34cb40bbcd6b8903c01b36191c4f90d"
-REQUIRED_GOAL_RUNTIME_SOURCE_MARKERS = {
-    "providerContextJournal": (
-        '"session_memory_refresh"',
-    ),
-    "workflowControl": (
-        'const MAX_GOAL_SETTLE_ATTEMPTS_PER_SCOPE = 5;',
-        'pi.on("before_agent_settle"',
-        'event.settleAttempt >= MAX_GOAL_SETTLE_ATTEMPTS_PER_SCOPE',
-        '"goal-settle"',
-        'freshToolEvidenceSha256: evidenceDigest',
-        'freshToolEvidenceFingerprints.clear();',
-        'origin: "goal_supervisor"',
-    ),
-    "session": (
-        'this.providerContextJournal.beginEpoch("session_memory_refresh"',
-    ),
-}
-_ROOM_RUNTIME_SOURCE_KEYS = (
+_SESSION_RUNTIME_SOURCE_KEYS = (
     "protocol",
     "runtimeHost",
-    "providerContextHook",
-    "agentLoop",
-    "agentCore",
-    "agentTypes",
-    "agentSession",
     "contextInspection",
-    "skills",
-    "discoveryTools",
-    "memoryCapture",
-    "roomToolBootstrap",
-    "runtimeToolNames",
-    "ask",
     "toolBridge",
-    "toolArtifacts",
-    "providerContextJournal",
-    "sessionContextRefresh",
-    "summarizationCompletion",
-    "cancellationReceipts",
-    "roomSettleLifecycle",
-    "workflowControl",
-    "lifecycleHooks",
-    "deterministicTestAdapter",
     "session",
 )
 _OAUTH_RUNTIME_MODULES = {
@@ -225,69 +189,93 @@ def _source_revision(pi_root: Path) -> tuple[str, str]:
     return f"{commit}+dirty.{dirty_digest}", dirty_digest
 
 
-def _verified_room_runtime_contract(pi_root: Path) -> tuple[dict[str, object], str]:
+def _verified_session_runtime_contract(pi_root: Path) -> tuple[dict[str, object], str]:
     try:
-        contract_bytes = ROOM_RUNTIME_CONTRACT.read_bytes()
+        contract_bytes = SESSION_RUNTIME_CONTRACT.read_bytes()
         contract = json.loads(contract_bytes)
     except (OSError, json.JSONDecodeError) as exc:
-        raise ManagedPiRuntimeError(f"Room runtime source contract is unreadable: {exc}") from exc
+        raise ManagedPiRuntimeError(
+            f"Session runtime source contract is unreadable: {exc}"
+        ) from exc
     if not isinstance(contract, dict) or contract.get("schemaVersion") != (
-        "rag-ime.pi-room-runtime-host-contract.v1"
+        "rag-ime.pi-session-runtime-host-contract.v1"
     ):
-        raise ManagedPiRuntimeError("Room runtime source contract schema is unsupported")
+        raise ManagedPiRuntimeError(
+            "Session runtime source contract schema is unsupported"
+        )
     if (
         contract.get("sourceRepository") != "https://github.com/7155/pi.git"
         or contract.get("sourcePackage") != "@earendil-works/pi-rag-ime-runtime-host"
         or contract.get("protocolVersion") != "2"
     ):
-        raise ManagedPiRuntimeError("Room runtime source provenance is unsupported")
+        raise ManagedPiRuntimeError(
+            "Session runtime source provenance is unsupported"
+        )
     methods = contract.get("requiredMethods")
-    if methods != ["session.control_state", "room.dispatch", "room.cancel"]:
-        raise ManagedPiRuntimeError("Room runtime source contract methods are incomplete")
+    if methods != [
+        "session.open",
+        "session.prompt",
+        "session.steer",
+        "session.debug.context",
+        "session.abort",
+        "session.snapshot",
+    ]:
+        raise ManagedPiRuntimeError(
+            "Session runtime source contract methods are incomplete"
+        )
     minimum_commit = str(contract.get("minimumHandlersCommit") or "").strip()
     if len(minimum_commit) != 40 or any(
         character not in "0123456789abcdef" for character in minimum_commit
     ):
-        raise ManagedPiRuntimeError("Room runtime minimum handlers commit is invalid")
+        raise ManagedPiRuntimeError(
+            "Session runtime minimum handlers commit is invalid"
+        )
     if minimum_commit != REQUIRED_PI_RUNTIME_BASE_COMMIT:
         raise ManagedPiRuntimeError(
-            "Room runtime minimum handlers commit does not include the reviewed "
-            "Goal-settlement and Session-memory-refresh hooks"
+            "Session runtime minimum handlers commit is not the reviewed baseline"
         )
     # The product Pi fork can be rebased onto a newer upstream history. The
     # baseline commit identifies the reviewed capability contract; current
     # source is proven below by the complete handler map and exact markers,
     # while the payload records its real HEAD plus dirty-tree digest.
     sources = contract.get("handlerSources")
-    if not isinstance(sources, dict) or set(sources) != set(_ROOM_RUNTIME_SOURCE_KEYS):
-        raise ManagedPiRuntimeError("Room runtime handler source map is missing")
+    if not isinstance(sources, dict) or set(sources) != set(
+        _SESSION_RUNTIME_SOURCE_KEYS
+    ):
+        raise ManagedPiRuntimeError(
+            "Session runtime handler source map is missing"
+        )
     source_texts: dict[str, str] = {}
-    for key in _ROOM_RUNTIME_SOURCE_KEYS:
+    for key in _SESSION_RUNTIME_SOURCE_KEYS:
         relative = Path(str(sources.get(key) or ""))
         if not relative.parts or relative.is_absolute() or ".." in relative.parts:
-            raise ManagedPiRuntimeError("Room runtime handler source path is unsafe")
+            raise ManagedPiRuntimeError(
+                "Session runtime handler source path is unsafe"
+            )
         resolved = (pi_root / relative).resolve()
         if not resolved.is_relative_to(pi_root.resolve()):
-            raise ManagedPiRuntimeError("Room runtime handler source escaped the Pi worktree")
+            raise ManagedPiRuntimeError(
+                "Session runtime handler source escaped the Pi worktree"
+            )
         try:
             source_texts[key] = resolved.read_text(encoding="utf-8")
         except OSError as exc:
-            raise ManagedPiRuntimeError(f"Room runtime handler source is missing: {exc}") from exc
+            raise ManagedPiRuntimeError(
+                f"Session runtime handler source is missing: {exc}"
+            ) from exc
     required_markers = contract.get("requiredSourceMarkers")
     if not isinstance(required_markers, dict) or set(required_markers) != set(
-        _ROOM_RUNTIME_SOURCE_KEYS
+        _SESSION_RUNTIME_SOURCE_KEYS
     ):
-        raise ManagedPiRuntimeError("Room runtime source marker map is incomplete")
-    for key, expected_markers in REQUIRED_GOAL_RUNTIME_SOURCE_MARKERS.items():
-        declared = required_markers.get(key)
-        if not isinstance(declared, list) or not set(expected_markers).issubset(declared):
-            raise ManagedPiRuntimeError(
-                f"Room runtime source contract omits required Goal lifecycle markers: {key}"
-            )
-    for key in _ROOM_RUNTIME_SOURCE_KEYS:
+        raise ManagedPiRuntimeError(
+            "Session runtime source marker map is incomplete"
+        )
+    for key in _SESSION_RUNTIME_SOURCE_KEYS:
         markers = required_markers.get(key)
         if not isinstance(markers, list) or not markers:
-            raise ManagedPiRuntimeError(f"Room runtime source markers are missing: {key}")
+            raise ManagedPiRuntimeError(
+                f"Session runtime source markers are missing: {key}"
+            )
         for marker in markers:
             if not isinstance(marker, str) or not marker or marker not in source_texts[key]:
                 raise ManagedPiRuntimeError(
@@ -298,10 +286,6 @@ def _verified_room_runtime_contract(pi_root: Path) -> tuple[dict[str, object], s
     for method in methods:
         if f'| "{method}"' not in protocol_source or f'case "{method}"' not in runtime_host_source:
             raise ManagedPiRuntimeError(f"Pi Runtime Host does not implement {method}")
-    adapter_source = ROOM_RUNTIME_ADAPTER.read_text(encoding="utf-8")
-    for method in methods:
-        if f'"{method}"' not in adapter_source:
-            raise ManagedPiRuntimeError(f"product Room runtime adapter omits {method}")
     return contract, hashlib.sha256(contract_bytes).hexdigest()
 
 
@@ -854,7 +838,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         pi_version = str(json.loads(package_json.read_text(encoding="utf-8"))["version"])
-        room_runtime_contract, room_runtime_contract_sha256 = _verified_room_runtime_contract(
+        session_runtime_contract, session_runtime_contract_sha256 = _verified_session_runtime_contract(
             pi_root
         )
         source_commit, dirty_digest = _source_revision(pi_root)
@@ -877,8 +861,7 @@ def main(argv: list[str] | None = None) -> int:
             + Path(__file__).read_bytes()
             + _hash_tree(product_skills)
             + routing_catalog_bytes
-            + ROOM_RUNTIME_CONTRACT.read_bytes()
-            + ROOM_RUNTIME_ADAPTER.read_bytes()
+            + SESSION_RUNTIME_CONTRACT.read_bytes()
             + json.dumps(CONTROL_TOOL_IDS, separators=(",", ":")).encode("utf-8")
             + product_commit.encode("ascii")
         ).hexdigest()[:10]
@@ -906,8 +889,10 @@ def main(argv: list[str] | None = None) -> int:
             (runtime_dir / "skill-routing-cards.json").write_bytes(
                 routing_catalog_bytes
             )
-            shutil.copy2(ROOM_RUNTIME_CONTRACT, runtime_dir / "room-runtime-host-contract.json")
-            shutil.copy2(ROOM_RUNTIME_ADAPTER, runtime_dir / "room-runtime-host.ts")
+            shutil.copy2(
+                SESSION_RUNTIME_CONTRACT,
+                runtime_dir / "session-runtime-host-contract.json",
+            )
             bundled_entrypoint = runtime_dir / "cli.mjs"
             _run(
                 [
@@ -970,12 +955,12 @@ def main(argv: list[str] | None = None) -> int:
                 node_entrypoint="bin/node",
                 extension_entrypoint="runtime-host/extension-placeholder.mjs",
                 tools=CONTROL_TOOL_IDS,
-                source_repository=str(room_runtime_contract["sourceRepository"]),
+                source_repository=str(session_runtime_contract["sourceRepository"]),
                 source_commit=source_commit,
-                source_package=str(room_runtime_contract["sourcePackage"]),
+                source_package=str(session_runtime_contract["sourcePackage"]),
                 protocol_version="2",
-                runtime_methods=tuple(room_runtime_contract["requiredMethods"]),
-                source_contract_sha256=room_runtime_contract_sha256,
+                runtime_methods=tuple(session_runtime_contract["requiredMethods"]),
+                source_contract_sha256=session_runtime_contract_sha256,
                 handlers_commit=source_commit.split("+", 1)[0],
             )
             manifest["source"] = {
@@ -1002,8 +987,8 @@ def main(argv: list[str] | None = None) -> int:
         "piVersion": pi_version,
         "protocolVersion": "2",
         "sourceCommit": source_commit,
-        "sourceContractSha256": room_runtime_contract_sha256,
-        "runtimeMethods": room_runtime_contract["requiredMethods"],
+        "sourceContractSha256": session_runtime_contract_sha256,
+        "runtimeMethods": session_runtime_contract["requiredMethods"],
         "productCommit": product_commit,
         "payload": str(destination),
         "manifest": str(destination / MANIFEST_NAME),

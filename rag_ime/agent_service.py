@@ -27,8 +27,6 @@ from .agent_background_jobs import AgentBackgroundJobService
 from .agent_context_runtime import AgentContextRuntime
 from .agent_execution_policy import (
     execution_policy_prompt,
-    read_only_blocks_effect,
-    read_only_policy_active,
 )
 from .work_documents import WorkDocumentService
 from .agent_command_receipts import (
@@ -68,49 +66,23 @@ from .agent_room_intercom import (
 from .agent_room_intercom_application import (
     RoomIntercomApplicationService,
 )
-from .agent_room_legacy_dispatch import RoomLegacyDispatchService
-from .agent_room_legacy_cancellation import RoomLegacyCancellationService
+from .agent_room_session_dispatch import RoomSessionDispatchService
+from .agent_room_session_cancellation import RoomSessionCancellationService
 from .agent_room_management import RoomManagementService
+from .agent_room_partner_application import (
+    RoomPartnerApplicationService,
+)
 from .agent_room_prompt_context import (
     agent_message_text as _agent_message_text,
     room_intercom_prompt as _room_intercom_prompt,
     room_participant_prompt as _room_participant_prompt,
 )
-from .agent_room_recovery_context import room_compaction_recovery_context
-from .agent_room_capabilities import (
-    RoomCapabilityManifestStore,
-    room_runtime_registry,
-)
-from .agent_room_application import RoomApplicationService
-from .agent_definition_compiler import AgentDefinitionCompiler
 from .collaboration_profile_control import CollaborationProfileControl
-from .agent_definitions import CollaborationProfileManifest
 from .agent_task_context import AgentTaskContextResolver
-from .agent_prompt_plans import RoomPromptPlanStore
-from .agent_room_context import ProviderProjectionJournalStore, RoomContextLedgerStore
-from .agent_room_context_epochs import RoomSessionContextEpochStore
-from .agent_room_skills import RoomSkillPolicy, RoomSkillPolicyStore
-from .agent_room_requirements import RequirementGovernanceStore
-from .agent_room_peer_review import RoomPeerReviewStore
-from .agent_room_route_owners import room_message_owner, room_route_owner
 from .agent_room_work import AgentRoomWorkStore
 from .agent_room_work_application import RoomWorkApplicationService
-from .agent_room_kernel import (
-    KernelMode,
-    RoomKernelFenceError,
-    RoomKernelStore,
-    kernel_owns_room_execution,
-)
-from .agent_room_kernel_application import RoomKernelApplicationService
-from .agent_room_settlement import RoomSettleLifecycleService
-from .agent_room_kernel_projection import RoomKernelProjection
-from .agent_room_kernel_worker import KernelCommandBus, RoomKernelWorker, RoomKernelWorkerLoop
-from .agent_room_workspaces import RoomWorkspaceCoordinator
-from .agent_room_runtime_coordinator import RoomKernelRuntimeCoordinator
 from .agent_room_turn_registry import RoomTurnRegistry
-from .agent_room_learning_governance import RoomLearningGovernanceStore
 from .agent_governance_projection import GovernanceProjectionStore
-from .agent_room_learning_runtime import ReflectionProvider, RoomLearningRuntime
 from .agent_knowledge_promotion import KNOWLEDGE_ROUTE_HASH, KnowledgePromotionStore
 from .knowledge_scope import bound_session_knowledge_caller
 from .agent_runtime_driver import (
@@ -121,7 +93,6 @@ from .agent_runtime_driver import (
     ToolManifestProvider,
 )
 from .agent_rooms import AgentRoomEventHub, AgentRoomNotFound, AgentRoomStore
-from .agent_room_public_timeline import RoomPublicTimelineProjector
 from .agent_roles import PersonaManifest
 from .agent_sessions import AgentSessionStore
 from .agent_tool_ids import (
@@ -144,9 +115,8 @@ ROOM_CONTEXT_UNREAD_MESSAGE_LIMIT = 12
 ROOM_CONTEXT_HISTORY_CHAR_BUDGET = 3_600
 ROOM_CONTEXT_PROMPT_CHAR_BUDGET = 24_000
 ROOM_MESSAGE_CHAR_LIMIT = 8_000
-# Ordinary Goal recovery uses the same bounded-repair posture as the managed
-# Room Kernel (`SYSTEM_MAX_REPAIRS = 4`): four native follow-up opportunities,
-# followed by one final settle decision that must stop the cancel scope.
+# Ordinary Goal recovery allows four native follow-up opportunities, followed
+# by one final settle decision that must stop the cancel scope.
 GOAL_SETTLE_ATTEMPT_LIMIT = 5
 GOAL_CONTINUATION_LIMIT = 4
 
@@ -167,16 +137,7 @@ class AgentService:
         wake_scheduler_enabled: bool = False,
         wake_scheduler_poll_seconds: float = 1.0,
         background_job_execution_owner: bool = True,
-        room_kernel_mode: KernelMode = "off",
-        room_kernel_worker_enabled: bool = True,
-        room_runner_secrets: Mapping[str, bytes | str] | None = None,
-        room_delivery_gate_enforcement: bool = False,
-        room_artifact_hash_provider: Callable[[str], str] | None = None,
-        room_kernel_poll_seconds: float = 0.25,
         collaboration_profile_signers: Mapping[str, bytes] | None = None,
-        room_learning_authority_secrets: Mapping[str, bytes | str] | None = None,
-        room_guard_config_secret: bytes | str | None = None,
-        room_reflection_provider: ReflectionProvider | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self.project = str(project or "")
@@ -254,75 +215,18 @@ class AgentService:
             ),
         )
         self.rooms.initialize()
-        self.room_workspaces = RoomWorkspaceCoordinator(
-            root_dir=(
-                self.runtime_factory.session_root.expanduser().resolve(strict=False).parent
-                / "room-workspaces"
-            ),
-            sessions=self.sessions,
-            writer_quiescence_provider=self._room_workspace_writer_quiescence,
-        )
         self.room_work = AgentRoomWorkStore(db_path)
         self.room_work.initialize()
-        self.room_kernel = RoomKernelStore(
-            db_path,
-            mode=room_kernel_mode,
-            enforce_test_delivery_gate=room_delivery_gate_enforcement,
-        )
-        self.room_kernel.initialize()
-        self.room_kernel_projection = RoomKernelProjection(db_path)
-        self.room_kernel_projection.initialize()
-        self.room_capabilities = RoomCapabilityManifestStore(db_path)
-        self.room_capabilities.initialize()
-        self.room_prompt_plans = RoomPromptPlanStore(db_path)
-        self.room_prompt_plans.initialize()
-        self.room_projection_journals = ProviderProjectionJournalStore(db_path)
-        self.room_projection_journals.initialize()
-        self.room_context_ledger = RoomContextLedgerStore(db_path)
-        self.room_context_ledger.initialize()
-        self.room_context_epochs = RoomSessionContextEpochStore(db_path)
-        self.room_context_epochs.initialize()
-        room_skill_root = Path(__file__).resolve().parents[1] / "integrations" / "pi"
-        self.room_skill_policy = RoomSkillPolicy(
-            room_skill_root / "room-skill-policy.json",
-            room_skill_root / "skills",
-        )
-        self.room_skill_receipts = RoomSkillPolicyStore(db_path, self.room_skill_policy)
-        self.room_skill_receipts.initialize()
-        self.room_requirements = RequirementGovernanceStore(db_path)
-        self.room_requirements.initialize()
-        self.room_peer_review = RoomPeerReviewStore(db_path, runner_secrets=room_runner_secrets)
-        self.room_peer_review.initialize()
-        self.room_learning = RoomLearningGovernanceStore(
-            db_path,
-            authority_secrets=room_learning_authority_secrets,
-            config_secret=room_guard_config_secret,
-        )
-        self.room_learning.initialize()
         self.governance_projection = GovernanceProjectionStore(db_path)
         self.governance_projection.initialize()
-        self.room_learning_runtime = RoomLearningRuntime(
-            self.room_learning,
-            reflection_provider=room_reflection_provider,
-        )
         self.knowledge_promotion = KnowledgePromotionStore(db_path)
         self.knowledge_promotion.initialize()
-        self._room_artifact_hash_provider = room_artifact_hash_provider
-        self.agent_definition_compiler = AgentDefinitionCompiler()
         self._collaboration_profile_signers = {
             str(signer_id): bytes(key)
             for signer_id, key in (collaboration_profile_signers or {}).items()
         }
-        self._room_kernel_poll_seconds = room_kernel_poll_seconds
-        self._room_kernel_worker_enabled = bool(
-            room_kernel_worker_enabled
-        )
         self.observations = ObservationHub(db_path)
         self.room_events = AgentRoomEventHub(self.rooms)
-        self.room_public_timeline = RoomPublicTimelineProjector(
-            self.room_events,
-            root_is_terminal=self.room_kernel.is_root_terminal,
-        )
         self._remove_observation_room_observer = self.room_events.add_observer(
             self.observations.enqueue_room_event
         )
@@ -346,9 +250,6 @@ class AgentService:
         self.work_documents.initialize()
         self.room_work.set_terminal_observer(
             self.work_documents.observe_authority
-        )
-        startup_room_runtime_targets = (
-            self._capture_startup_room_runtime_targets()
         )
         self.runtime: AgentRuntimeDriver = self.runtime_factory.create(
             RuntimeDriverContext(
@@ -399,10 +300,6 @@ class AgentService:
             compaction_observer=self._checkpoint_runtime_compaction,
             room_context_provider=self._room_delegation_context,
         )
-        # Build the Room runtime graph only after every callback owner needed
-        # by startup cleanup recovery exists; keep its worker stopped until
-        # the remaining on_change consumers have been constructed.
-        self._bind_room_kernel_runtime(start_worker=False)
         self.session_application = AgentSessionApplicationService(
             sessions=self.sessions,
             runtime_provider=lambda: self.runtime,
@@ -454,9 +351,6 @@ class AgentService:
         self.task_context = AgentTaskContextResolver(
             delegation=self.delegation,
             rooms=self.rooms,
-            room_capabilities=self.room_capabilities,
-            room_kernel=self.room_kernel,
-            room_requirements=self.room_requirements,
         )
         self.memory_context_application = (
             AgentMemoryContextService(
@@ -466,12 +360,6 @@ class AgentService:
                 memory_bootstrap=self.memory_bootstrap,
                 context_runtime=self.context_runtime,
                 task_context=self.task_context,
-                room_capabilities=self.room_capabilities,
-                room_skill_receipts=self.room_skill_receipts,
-                room_context_epochs=self.room_context_epochs,
-                room_recovery_context_provider=(
-                    self._room_compaction_recovery_context
-                ),
                 runtime_provider=lambda: self.runtime,
             )
         )
@@ -523,15 +411,10 @@ class AgentService:
         self.event_projection_application = (
             AgentEventProjectionService(
                 sessions=self.sessions,
-                room_kernel=self.room_kernel,
                 rooms=self.rooms,
                 agent_blocks=self.agent_blocks,
                 observations=self.observations,
-                room_kernel_projection=(
-                    self.room_kernel_projection
-                ),
                 room_events=self.room_events,
-                public_timeline=self.room_public_timeline,
                 room_turns=self.room_turns,
                 append_recent_message=(
                     lambda session_id, message: (
@@ -552,9 +435,6 @@ class AgentService:
                     getattr(self, "room_intercom", None)
                     and self.room_intercom.notify()
                 ),
-                record_runtime_failure=(
-                    self.room_kernel_application.record_runtime_failure
-                ),
             )
         )
         self.room_intercom_application = (
@@ -572,9 +452,9 @@ class AgentService:
                     self.room_turns.user_priority_sessions
                 ),
                 turn_lock=self.room_turns.lock,
-                guard_legacy_room_route=(
+                guard_room_session_route=(
                     lambda route_id, session_id: (
-                        self._guard_legacy_room_route(
+                        self._guard_room_session_route(
                             route_id,
                             session_id,
                         )
@@ -628,8 +508,8 @@ class AgentService:
                 session_id,
                 payload,
             ),
-            guard_legacy_room_route=lambda route_id, session_id: (
-                self._guard_legacy_room_route(route_id, session_id)
+                guard_room_session_route=lambda route_id, session_id: (
+                self._guard_room_session_route(route_id, session_id)
             ),
             context_source_token=self._context_source_token,
         )
@@ -644,12 +524,25 @@ class AgentService:
         self._remove_wake_observer = self.events.add_observer(
             self.wake_scheduler.observe_event
         )
-        self.room_legacy_dispatch = RoomLegacyDispatchService(
+        self.room_dispatch = RoomSessionDispatchService(
             self,
             build_participant_prompt=_room_participant_prompt,
             resolve_attachments=self._resolve_room_attachments,
         )
-        self.room_legacy_cancellation = RoomLegacyCancellationService(self)
+        self.room_cancellation = RoomSessionCancellationService(self)
+        self.room_partner_application = RoomPartnerApplicationService(
+            rooms=self.rooms,
+            room_turns=self.room_turns,
+            runtime_status=self.runtime.runtime_status,
+            sessions=self.sessions,
+            room_events=self.room_events,
+            room_target_idle=self._room_target_idle,
+            begin_room_turn=self._begin_room_turn,
+            room_dispatch=self.room_dispatch,
+            cancel_room_turn=self._cancel_room_turn,
+            abort_session=self.abort,
+            room_topic_for_turn=self._room_topic_for_turn,
+        )
         self.room_work_application = RoomWorkApplicationService(self)
         self.approval_application = AgentApprovalApplicationService(self)
         self.message_snapshot = AgentMessageSnapshotService(
@@ -687,12 +580,6 @@ class AgentService:
                 self.room_turns.user_priority_sessions
             ),
         )
-        self._recover_startup_room_runtime_targets(
-            startup_room_runtime_targets
-        )
-        self._reconcile_room_work_from_kernel()
-        if self._room_kernel_worker_enabled:
-            self.room_kernel_worker_loop.start()
 
     def bind_approval_executor(
         self,
@@ -791,125 +678,12 @@ class AgentService:
             # Prompt/runtime callbacks may retain an earlier Session mapping.
             # The durable lease policy is authoritative for this disclosure.
             session = self.sessions.get(session_id)
-        runtime_capability = self.room_capabilities.manifest_for_runtime(session_id)
-        if runtime_capability is not None:
-            manifest, _binding = runtime_capability
-            return self._project_room_runtime_tools(manifest, session)
-        historical_binding = self.room_capabilities.runtime_binding(
-            session_id,
-            active_only=False,
-        )
-        if (
-            historical_binding is not None
-            and historical_binding.get("state") == "prepared"
-        ):
-            return []
         provider = self._tool_manifest_provider
         if provider is None:
             return []
         return [dict(item) for item in provider(session)]
 
-    @staticmethod
-    def _project_room_runtime_tools(
-        manifest: Mapping[str, object],
-        session: Mapping[str, object],
-    ) -> list[Mapping[str, object]]:
-        projected: list[dict[str, object]] = []
-        for raw_tool in manifest["tools"]:
-            if (
-                not isinstance(raw_tool, Mapping)
-                or raw_tool.get("authorized") is not True
-            ):
-                continue
-            tool = dict(raw_tool)
-            if read_only_policy_active(session):
-                tool = _project_read_only_room_tool(tool)
-                if tool is None:
-                    continue
-            projected.append(
-                {
-                    "name": tool["name"],
-                    "description": tool["description"],
-                    "parameters": dict(tool["inputSchema"]),
-                    "when": list(tool["when"]),
-                    "notFor": list(tool["notFor"]),
-                    "input": tool["input"],
-                    "output": tool["output"],
-                    "does": tool["does"],
-                    "profile": "room-kernel-v2",
-                    "risk": tool["risk"],
-                    **(
-                        {"modelVisible": False}
-                        if tool.get("modelVisible") is False
-                        else {}
-                    ),
-                    **(
-                        {
-                            "runtimeProjections": [
-                                dict(item)
-                                for item in tool["runtimeProjections"]
-                                if isinstance(item, Mapping)
-                            ]
-                        }
-                        if tool.get("runtimeProjections")
-                        else {}
-                    ),
-                }
-            )
-        return projected
 
-    def _room_product_tool_manifests(
-        self,
-        session_id: str,
-    ) -> Mapping[str, Sequence[Mapping[str, object]]]:
-        provider = self._tool_manifest_provider
-        if provider is None:
-            return {
-                "available": (),
-                "userAuthorized": (),
-                "effective": (),
-            }
-        session = self.sessions.get(session_id)
-        effective_profile = _room_effective_tool_profile(
-            str(session.get("toolProfileVersion") or ""),
-        )
-
-        def manifests(
-            profile: str,
-            *,
-            preserve_user_allowlist: bool,
-        ) -> tuple[Mapping[str, object], ...]:
-            policy = {
-                **session,
-                "toolProfileVersion": profile,
-            }
-            if not preserve_user_allowlist:
-                policy.update(
-                    {
-                        "toolAllowlistMode": "profile",
-                        "allowedTools": [],
-                    }
-                )
-            return tuple(dict(item) for item in provider(policy))
-
-        return {
-            # Availability is a backend fact, independent from the current
-            # user's allowlist or the template selected for this Dispatch.
-            "available": manifests(
-                CONTROL_CENTER_TOOL_PROFILE,
-                preserve_user_allowlist=False,
-            ),
-            "userAuthorized": manifests(
-                str(session.get("toolProfileVersion") or CONTROL_CENTER_TOOL_PROFILE),
-                preserve_user_allowlist=True,
-            ),
-            # Room keeps the Session's complete Tool surface but never inherits
-            # dangerous automatic approval.
-            "effective": manifests(
-                effective_profile,
-                preserve_user_allowlist=True,
-            ),
-        }
 
     def _approval_model_context(
         self,
@@ -951,85 +725,21 @@ class AgentService:
                         "createdAtMs": int(event.get("createdAtMs") or 0),
                     }
                 )
-            identity = self.room_capabilities.runtime_identity(session_id)
-            task_context: dict[str, object] = {}
-            dispatch_id = (
-                str(identity.get("dispatchId") or "")
-                if isinstance(identity, Mapping)
-                else ""
-            )
-            task_id = (
-                str(identity.get("taskId") or "")
-                if isinstance(identity, Mapping)
-                else ""
-            )
-            task: Mapping[str, object] = {}
-            if dispatch_id:
-                try:
-                    dispatch = self.room_kernel.dispatch(dispatch_id)
-                    resolved_task_id = str(
-                        dispatch.get("taskId") or task_id
-                    )
-                    task = self.room_kernel.task(resolved_task_id)
-                    task_id = resolved_task_id
-                except (KeyError, ValueError):
-                    task = {}
-            if not task_id and isinstance(identity, Mapping):
-                task_id = str(identity.get("taskId") or "")
-            if not task and task_id:
-                try:
-                    task = self.room_kernel.task(task_id)
-                except (KeyError, ValueError):
-                    task = {}
-            if isinstance(task, Mapping) and task:
-                task_context = {
-                    "kind": "room_task",
-                    "roomId": room_id,
-                    "rootId": str(
-                        task.get("rootId")
-                        or (
-                            identity.get("rootId")
-                            if isinstance(identity, Mapping)
-                            else ""
-                        )
-                        or ""
-                    ),
-                    "dispatchId": dispatch_id,
-                    "taskId": str(task.get("taskId") or task_id),
-                    "state": str(task.get("state") or ""),
-                    "objective": str(task.get("objective") or ""),
-                    "expectedOutput": str(
-                        task.get("expectedOutput") or ""
-                    ),
-                    "acceptanceCriterionIds": list(
-                        task.get("acceptanceCriterionIds") or []
-                    ),
-                }
-                durable_requests = self.room_kernel.user_request_posts(
-                    str(task_context["rootId"]),
-                    limit=8,
-                )
-                known_requests = {
-                    (
-                        str(request.get("turnId") or ""),
-                        str(request.get("text") or ""),
-                        int(request.get("createdAtMs") or 0),
-                    )
-                    for request in requests
-                }
-                for request in durable_requests:
-                    identity_key = (
-                        str(request.get("turnId") or ""),
-                        str(request.get("text") or ""),
-                        int(request.get("createdAtMs") or 0),
-                    )
-                    if identity_key not in known_requests:
-                        requests.append(dict(request))
-                        known_requests.add(identity_key)
-                requests.sort(key=lambda item: int(item.get("createdAtMs") or 0))
+            task = self.task_context.resolve(session_id)
+            root_id, dispatch_id = self.room_turns.active_turn(session_id)
+            task_context = {
+                "kind": str(task.get("kind") or "room_task"),
+                "roomId": room_id,
+                "rootId": root_id,
+                "dispatchId": dispatch_id,
+                "taskId": str(task.get("workItemId") or ""),
+                "state": str(task.get("state") or ""),
+                "objective": str(task.get("objective") or ""),
+                "expectedOutput": str(task.get("expectedOutput") or ""),
+            }
             return {
                 "contextKind": "room",
-                "contextAvailable": bool(requests and task_context),
+                "contextAvailable": bool(requests),
                 "contextId": room_id,
                 "userRequests": requests[-8:],
                 "currentTask": task_context,
@@ -1042,9 +752,7 @@ class AgentService:
                         else ""
                     ),
                     "dispatchId": (
-                        str(identity.get("dispatchId") or "")
-                        if isinstance(identity, Mapping)
-                        else ""
+                        dispatch_id
                     ),
                 },
             }
@@ -1133,181 +841,15 @@ class AgentService:
             "actor": {"sessionId": session_id},
         }
 
-    def _settled_room_public_recovery_context(
-        self,
-        session_id: str,
-        tombstone: Mapping[str, object],
-    ) -> str:
-        if str(tombstone.get("state") or "") != "revoked":
-            return ""
-        materialized = self.context_runtime.materialize(session_id)
-        if any(
-            isinstance(item, Mapping)
-            and item.get("sourceKind") == "room_compaction_recovery"
-            for item in materialized.get("items") or []
-        ):
-            return ""
-        identity = self.room_capabilities.runtime_identity(session_id)
-        participant = self.rooms.participant_for_session(
-            session_id,
-            active_only=False,
-        )
-        if identity is None or participant is None:
-            return ""
-        room_id = str(identity.get("roomId") or "")
-        root_id = str(identity.get("rootId") or "")
-        dispatch_id = str(identity.get("dispatchId") or "")
-        generation = int(identity.get("generation") or 0)
-        participant_id = str(participant.get("id") or "")
-        if (
-            not room_id
-            or not root_id
-            or not dispatch_id
-            or generation < 1
-            or not participant_id
-            or str(participant.get("roomId") or "") != room_id
-        ):
-            return ""
-        records: list[dict[str, object]] = []
-        seen_event_ids: set[str] = set()
-        seen_post_ids: set[str] = set()
-        for event in self.rooms.list_events(room_id, limit=2_000):
-            if str(event.get("turnId") or "") != root_id:
-                continue
-            event_id = str(event.get("eventId") or "")
-            payload = event.get("payload")
-            if not event_id or not isinstance(payload, Mapping):
-                continue
-            event_type = str(event.get("eventType") or "")
-            if event_type == "user_message":
-                if event_id in seen_event_ids:
-                    continue
-                text = " ".join(
-                    str(payload.get("text") or "").split()
-                )[:1_000]
-                if not text:
-                    continue
-                seen_event_ids.add(event_id)
-                records.append(
-                    {
-                        "eventId": event_id,
-                        "sequence": int(event.get("sequence") or 0),
-                        "turnId": root_id,
-                        "role": "user",
-                        "text": text,
-                    }
-                )
-                continue
-            if (
-                event_type != "room_post"
-                or str(event.get("participantId") or "")
-                != participant_id
-                or str(event.get("sourceSessionId") or "")
-                != session_id
-            ):
-                continue
-            post = payload.get("post")
-            if not isinstance(post, Mapping):
-                continue
-            post_id = str(post.get("postId") or "")
-            post_root_id = str(post.get("rootId") or root_id)
-            post_dispatch_id = str(
-                post.get("dispatchId") or dispatch_id
-            )
-            raw_post_generation = post.get("generation")
-            post_generation = (
-                int(raw_post_generation)
-                if isinstance(raw_post_generation, int)
-                and not isinstance(raw_post_generation, bool)
-                else generation
-            )
-            text = " ".join(
-                str(post.get("content") or "").split()
-            )[:1_000]
-            if (
-                not post_id
-                or post_id in seen_post_ids
-                or post_root_id != root_id
-                or post_dispatch_id != dispatch_id
-                or post_generation != generation
-                or not text
-            ):
-                continue
-            seen_post_ids.add(post_id)
-            records.append(
-                {
-                    "eventId": event_id,
-                    "postId": post_id,
-                    "sequence": int(event.get("sequence") or 0),
-                    "turnId": root_id,
-                    "role": "assistant",
-                    "kind": str(post.get("kind") or "message"),
-                    "text": text,
-                }
-            )
-        if not records:
-            return ""
-        records = records[-ROOM_CONTEXT_UNREAD_MESSAGE_LIMIT:]
-        packet: dict[str, object] = {
-            "schemaVersion": (
-                "rag-ime.room-session-public-recovery.v1"
-            ),
-            "authority": "room_public_ledger_read_projection",
-            "activeRoomDispatch": False,
-            "roomId": room_id,
-            "rootId": root_id,
-            "dispatchId": dispatch_id,
-            "generation": generation,
-            "capabilityEpoch": int(
-                tombstone.get("capabilityEpoch") or 0
-            ),
-            "messages": records,
-        }
-        rendered = json.dumps(
-            packet,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        while (
-            records
-            and len(rendered.encode("utf-8"))
-            > ROOM_CONTEXT_HISTORY_CHAR_BUDGET
-        ):
-            records.pop(0)
-            rendered = json.dumps(
-                packet,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-        if not records:
-            return ""
-        return (
-            "<room-public-recovery>\n"
-            f"{rendered}\n"
-            "</room-public-recovery>"
-        )
 
 
     def _room_public_recovery_context_for_session(
         self,
         session_id: str,
     ) -> str:
-        if self.room_capabilities.manifest_for_runtime(
-            session_id
-        ) is not None:
-            return ""
-        tombstone = self.room_capabilities.runtime_binding(
-            session_id,
-            active_only=False,
-        )
-        if tombstone is None:
-            return ""
-        return self._settled_room_public_recovery_context(
-            session_id,
-            tombstone,
-        )
+        # Room partners are ordinary Pi Sessions. Pi's own compaction summary
+        # is the recovery source; there is no second Kernel recovery packet.
+        return ""
 
 
     def _runtime_session_context(self, session: Mapping[str, object]) -> Mapping[str, object]:
@@ -1316,192 +858,16 @@ class AgentService:
             delegated = delegation.runtime_session_context(session)
             if delegated:
                 return delegated
-        bound = self.room_capabilities.manifest_for_runtime(str(session.get("id") or ""))
-        if bound is None:
-            tombstone = self.room_capabilities.runtime_binding(
-                str(session.get("id") or ""), active_only=False
+        session_id = str(session.get("id") or "")
+        session_context = "\n\n".join(
+            value
+            for value in (
+                execution_policy_prompt(session),
+                self.memory_context_application.provider_context(session_id),
             )
-            if tombstone is not None:
-                session_id = str(session.get("id") or "")
-                return {
-                    "roomCapability": {
-                        "manifestId": tombstone["manifestId"],
-                        "manifestHash": tombstone["manifestHash"],
-                        "capabilityEpoch": tombstone["capabilityEpoch"],
-                        "status": tombstone["state"],
-                    },
-                    "sessionContext": "\n\n".join(
-                        value
-                        for value in (
-                            execution_policy_prompt(session),
-                            self.memory_context_application.provider_context(
-                                session_id,
-                                include_room_recovery=True,
-                            ),
-                        )
-                        if value
-                    ),
-                }
-            return {}
-        manifest, binding = bound
-        prompt = self.room_prompt_plans.provider_payload(
-            str(binding["promptCompileReceiptId"])
+            if value
         )
-        context_epoch = self.room_context_epochs.current(
-            str(session.get("id") or "")
-        )
-        if (
-            context_epoch is None
-            or int(context_epoch["contextEpoch"])
-            != int(prompt["contextEpoch"])
-        ):
-            raise RoomKernelFenceError(
-                "managed Room PromptPlan context epoch is not current"
-            )
-        dispatch = self.room_kernel.dispatch(str(manifest["dispatchId"]))
-        root_limits = self.room_kernel.resource_limits(str(dispatch["rootId"]))
-        skill_selection = self.room_skill_policy.select_stage(
-            _room_skill_stage(dispatch)
-        )
-        room_skill_policy: dict[str, object]
-        if skill_selection["selection"] == "required":
-            skill_id = str(skill_selection["skillId"])
-            room_skill_policy = {
-                **skill_selection,
-                "skillHash": self.room_skill_policy.skill_hash(skill_id),
-                "policyId": self.room_skill_policy.policy_id,
-                "policyVersion": self.room_skill_policy.version,
-                "nextCandidates": self.room_skill_receipts.next_candidates(skill_id),
-            }
-        else:
-            room_skill_policy = dict(skill_selection)
-        runtime_tool_manifest = self._project_room_runtime_tools(
-            manifest,
-            session,
-        )
-        runtime_binding_hash = _room_runtime_binding_hash(
-            root_id=str(dispatch["rootId"]),
-            generation=int(dispatch["generation"]),
-            capability_epoch=int(binding["capabilityEpoch"]),
-            static_system_prompt_hash=str(prompt["staticSystemPromptHash"]),
-            compiled_runtime_profile_ref=binding["compiledRuntimeProfileRef"],
-            tool_manifest=runtime_tool_manifest,
-            room_skill_policy=room_skill_policy,
-        )
-        result: dict[str, object] = {
-            "roomCapability": {
-                "manifestId": manifest["manifestId"],
-                "manifestHash": manifest["manifestHash"],
-                "rootId": dispatch["rootId"],
-                "dispatchId": dispatch["dispatchId"],
-                "generation": dispatch["generation"],
-                "promptCompileReceiptId": binding["promptCompileReceiptId"],
-                "promptPlanHash": binding["promptPlanHash"],
-                "compiledRuntimeProfileRef": binding["compiledRuntimeProfileRef"],
-                "capabilityEpoch": binding["capabilityEpoch"],
-                "contextEpoch": context_epoch["contextEpoch"],
-                "contextEpochReason": context_epoch["epochReason"],
-                # A PromptPlan is dispatch-specific because it audits the current
-                # projection tail. This hash changes only when the Provider-visible
-                # static surface must start a new cache/context epoch.
-                "runtimeBindingHash": runtime_binding_hash,
-            },
-            "managedSystemPrompt": prompt["stableSystemPrompt"],
-            "sessionContext": "\n\n".join(
-                value
-                for value in (
-                    execution_policy_prompt(session),
-                    self.memory_context_application.provider_context(
-                        str(session.get("id") or "")
-                    ),
-                )
-                if value
-            ),
-            "providerContext": prompt["providerContext"],
-            "providerContextDelta": prompt["providerContextDelta"],
-            "roomRecoveryContext": (
-                self._room_compaction_recovery_context(
-                    str(session.get("id") or "")
-                )
-            ),
-            "roomProviderContext": {
-                "journalId": prompt["journalId"],
-                "throughSequence": prompt["throughSequence"],
-                "projectionHash": prompt["projectionHash"],
-                "generation": prompt["generation"],
-                "contextEpoch": context_epoch["contextEpoch"],
-                "contextEpochReason": context_epoch["epochReason"],
-                "reusedSealedCount": len(prompt["reusedSealedRefs"]),
-            },
-            "roomResourceLimits": {
-                "deadlineAtMs": root_limits["deadline_at_ms"],
-                "maxOutputTokens": 16_000,
-                "maxToolCost": 10_000,
-                "retryRemaining": max(0, int(root_limits["retry_limit"]) - int(root_limits["retry_used"])),
-                "repairRemaining": max(0, int(root_limits["repair_limit"]) - int(root_limits["repair_used"])),
-            },
-            "runtimeToolManifest": runtime_tool_manifest,
-        }
-        result["roomSkillPolicy"] = room_skill_policy
-        return result
-
-    def _room_compaction_recovery_context(
-        self,
-        session_id: str,
-        skill_receipt: Mapping[str, object] | None = None,
-        tool_receipt: Mapping[str, object] | None = None,
-    ) -> str:
-        bound = self.room_capabilities.manifest_for_runtime(session_id)
-        if bound is None:
-            bound = self.room_capabilities.manifest_for_runtime(
-                session_id,
-                active_only=False,
-            )
-        if bound is None:
-            return ""
-        manifest, _binding = bound
-        dispatch = self.room_kernel.dispatch(str(manifest["dispatchId"]))
-        task = self.room_kernel.task(str(dispatch["taskId"]))
-        root = self.room_kernel.root(str(dispatch["rootId"]))
-        task_context = self.room_kernel_runtime.task_context.render(
-            task,
-            dispatch,
-            room_id=str(root["roomId"]),
-        )
-        return room_compaction_recovery_context(
-            task_context,
-            skill_receipt=skill_receipt,
-            tool_receipt=tool_receipt,
-            covered_criterion_ids=tuple(
-                str(value)
-                for value in root.get("coveredCriteria", [])
-                if str(value).strip()
-            ),
-        )
-
-    def _prepare_room_memory_context(
-        self,
-        dispatch: Mapping[str, object],
-        _prepared_at_ms: int,
-    ) -> Mapping[str, object]:
-        """Initialize generic Agent RAG once for this context epoch."""
-
-        session_id = str(
-            dispatch.get("targetSessionId") or ""
-        ).strip()
-        task_id = str(dispatch.get("taskId") or "").strip()
-        if not session_id or not task_id:
-            raise RoomKernelFenceError(
-                "Room Dispatch cannot initialize Agent RAG without Session and Task"
-            )
-        task = self.room_kernel.task(task_id)
-        query = str(task.get("objective") or "").strip()
-        if not query:
-            query = "继续当前 Room 任务"
-        return self.memory_context_application.ensure_bootstrap(
-            self.sessions.get(session_id),
-            query_text=query,
-        )
+        return {"sessionContext": session_context} if session_context else {}
 
     def runtime_status(self) -> dict[str, object]:
         payload = self.runtime.runtime_status()
@@ -1618,22 +984,21 @@ class AgentService:
         self,
         session_id: str,
     ) -> dict[str, object] | None:
-        live = self.room_kernel.session_binding(session_id)
-        bound = self.room_capabilities.manifest_for_runtime(session_id)
-        if live is None or bound is None:
+        participant = self.rooms.participant_for_session(
+            session_id,
+            active_only=False,
+        )
+        root_id, dispatch_id = self.room_turns.active_turn(session_id)
+        if participant is None or not root_id:
             return None
-        manifest, binding = bound
-        if (
-            str(binding.get("state") or "") != "active"
-            or str(manifest.get("dispatchId") or "")
-            != str(live.get("dispatchId") or "")
-            or str(manifest.get("rootId") or "")
-            != str(live.get("rootId") or "")
-            or int(manifest.get("generation", -1))
-            != int(live.get("generation", -2))
-        ):
-            return None
-        return dict(live)
+        task = self.task_context.resolve(session_id)
+        return {
+            "roomId": str(participant.get("roomId") or ""),
+            "rootId": root_id,
+            "taskId": str(task.get("workItemId") or ""),
+            "dispatchId": dispatch_id,
+            "generation": 0,
+        }
 
     def _active_room_dispatch_authorizes_work(
         self,
@@ -1647,10 +1012,6 @@ class AgentService:
     ) -> dict[str, object]:
         live = self._active_room_dispatch_context(session_id)
         if live is None:
-            if self.room_turns.session_turn_active(session_id):
-                raise RoomKernelFenceError(
-                    "Room-bound delegation has no canonical Kernel Dispatch lineage"
-                )
             return {
                 "roomBound": False,
                 "roomId": "",
@@ -1665,10 +1026,6 @@ class AgentService:
             "taskId": str(live.get("taskId") or ""),
             "dispatchId": str(live.get("dispatchId") or ""),
         }
-        if not all(lineage.values()) or "generation" not in live:
-            raise RoomKernelFenceError(
-                "Room-bound delegation has incomplete Kernel Dispatch lineage"
-            )
         return {
             "roomBound": True,
             **lineage,
@@ -1773,41 +1130,26 @@ class AgentService:
 
         runtime_owner = _lifecycle_owner(current, "runtime")
         if runtime_owner["status"] not in {"succeeded", "excluded"}:
-            room_active = (
-                self.room_turns.session_turn_active(session_id)
-                or self._active_room_dispatch_authorizes_work(session_id)
+            try:
+                raw_runtime_receipt = self.runtime.abort(session_id)
+                runtime_receipt = _lifecycle_public_receipt(
+                    raw_runtime_receipt
+                )
+                runtime_status = _runtime_lifecycle_status(
+                    runtime_receipt
+                )
+            except Exception as exc:
+                runtime_status = "unknown"
+                runtime_receipt = {
+                    "reason": "runtime_owner_request_failed",
+                    "errorType": type(exc).__name__,
+                }
+            current = self.sessions.record_lifecycle_owner_receipt(
+                request_id,
+                owner="runtime",
+                status=runtime_status,
+                receipt=runtime_receipt,
             )
-            if room_active:
-                current = self.sessions.record_lifecycle_owner_receipt(
-                    request_id,
-                    owner="runtime",
-                    status="excluded",
-                    receipt={
-                        "reason": "active_room_dispatch_owned_by_room_kernel",
-                        "sessionId": session_id,
-                    },
-                )
-            else:
-                try:
-                    raw_runtime_receipt = self.runtime.abort(session_id)
-                    runtime_receipt = _lifecycle_public_receipt(
-                        raw_runtime_receipt
-                    )
-                    runtime_status = _runtime_lifecycle_status(
-                        runtime_receipt
-                    )
-                except Exception as exc:
-                    runtime_status = "unknown"
-                    runtime_receipt = {
-                        "reason": "runtime_owner_request_failed",
-                        "errorType": type(exc).__name__,
-                    }
-                current = self.sessions.record_lifecycle_owner_receipt(
-                    request_id,
-                    owner="runtime",
-                    status=runtime_status,
-                    receipt=runtime_receipt,
-                )
 
         approval_owner = _lifecycle_owner(current, "approval")
         if approval_owner["status"] not in {"succeeded", "excluded"}:
@@ -1860,35 +1202,24 @@ class AgentService:
             )
         delegation_owner = _lifecycle_owner(current, "delegation")
         if delegation_owner["status"] not in {"succeeded", "excluded"}:
-            room_active = (
-                self.room_turns.session_turn_active(session_id)
-                or self._active_room_dispatch_authorizes_work(session_id)
-            )
-            if room_active:
-                delegation_status = "excluded"
+            try:
+                delegation_receipt = self.delegation.cancel_causal(
+                    session_id,
+                    request_id=request_id,
+                    scope_kind=scope_kind,
+                    scope_id=scope_id,
+                    source_revision=source_revision,
+                    reason=reason,
+                )
+                delegation_status = _delegation_lifecycle_status(
+                    delegation_receipt
+                )
+            except Exception as exc:
+                delegation_status = "unknown"
                 delegation_receipt = {
-                    "reason": "active_room_dispatch_owned_by_room_kernel",
-                    "sessionId": session_id,
+                    "reason": "delegation_owner_request_failed",
+                    "errorType": type(exc).__name__,
                 }
-            else:
-                try:
-                    delegation_receipt = self.delegation.cancel_causal(
-                        session_id,
-                        request_id=request_id,
-                        scope_kind=scope_kind,
-                        scope_id=scope_id,
-                        source_revision=source_revision,
-                        reason=reason,
-                    )
-                    delegation_status = _delegation_lifecycle_status(
-                        delegation_receipt
-                    )
-                except Exception as exc:
-                    delegation_status = "unknown"
-                    delegation_receipt = {
-                        "reason": "delegation_owner_request_failed",
-                        "errorType": type(exc).__name__,
-                    }
             current = self.sessions.record_lifecycle_owner_receipt(
                 request_id,
                 owner="delegation",
@@ -2117,8 +1448,6 @@ class AgentService:
             "workflow_changed",
             {"reason": reason, **state},
         )
-        for room_id in self.rooms.room_ids_for_session(session_id):
-            self.room_kernel_projection.sync_room(room_id)
         return state
 
     def create_session(self, payload: Mapping[str, object]) -> dict[str, object]:
@@ -2303,7 +1632,7 @@ class AgentService:
             participant,
         )
 
-    def _restore_legacy_room_participant_sessions(
+    def _restore_room_participant_sessions(
         self,
         room: Mapping[str, object],
     ) -> None:
@@ -2322,8 +1651,6 @@ class AgentService:
     ) -> dict[str, object]:
         return self.room_management.history(room_id, payload)
 
-    def room_kernel_snapshot(self, room_id: str) -> dict[str, object]:
-        return self.room_kernel_application.snapshot(room_id)
 
     def collaboration_profile_projection(self, profile_id: str) -> dict[str, object]:
         with sqlite_connection(self.db_path) as conn:
@@ -2339,66 +1666,9 @@ class AgentService:
             raise PermissionError("CollaborationProfile control requires an authorized control caller")
         with sqlite_connection(self.db_path) as conn:
             result = self._collaboration_profile_control(conn).execute(payload)
-        self._run_room_learning_maintenance()
         return result
 
-    def observe_room_user_correction(
-        self,
-        *,
-        room_id: str,
-        root_id: str,
-        dispatch_id: str,
-        correction_ref: str,
-        caller_authorized: bool = False,
-        now_ms: int | None = None,
-    ) -> dict[str, object] | None:
-        if not caller_authorized:
-            raise PermissionError("Room correction observation requires an authorized caller")
-        if self.room_kernel.root(root_id).get("roomId") != room_id:
-            raise RoomKernelFenceError("correction Root belongs to another Room")
-        return self._persist_room_learning_event(
-            root_id=root_id,
-            dispatch_id=dispatch_id,
-            taxonomy="user_correction",
-            failure_signature=f"user_correction:{correction_ref}",
-            reason="user_correction",
-            now_ms=int(now_ms if now_ms is not None else time.time() * 1000),
-        )
 
-    def rollback_room_guard(
-        self,
-        *,
-        scope_key: str,
-        rollback_receipt_id: str,
-        authority_ref: str,
-        authority_secret: bytes | str,
-        reason: str,
-        caller_authorized: bool = False,
-        now_ms: int | None = None,
-    ) -> dict[str, object]:
-        if not caller_authorized:
-            raise PermissionError("Room Guard rollback requires an authorized caller")
-        timestamp = int(now_ms if now_ms is not None else time.time() * 1000)
-        result = self.room_learning.rollback(
-            rollback_receipt_id=rollback_receipt_id,
-            scope_key=scope_key,
-            authority_ref=authority_ref,
-            authority_secret=authority_secret,
-            reason=reason,
-            now_ms=timestamp,
-        )
-        for dispatch_id in result["cancelledDispatchIds"]:
-            dispatch = self.room_kernel.dispatch(str(dispatch_id))
-            self._persist_room_learning_event(
-                root_id=str(dispatch["rootId"]),
-                dispatch_id=str(dispatch_id),
-                taxonomy="rollback",
-                failure_signature=f"rollback:{reason}",
-                reason="rollback",
-                now_ms=timestamp,
-            )
-        self._run_room_learning_maintenance()
-        return result
 
     def room_knowledge_search(
         self,
@@ -2468,272 +1738,23 @@ class AgentService:
                 "rag", "memory", "planning", "review", "control", "delegation"
             ),
             binding_revision="room-v2-agent-definition-compiler-v1",
-            cancel_root=lambda root_id, _now_ms: self.room_kernel_commands.cancel_root(root_id),
         )
 
-    def bind_room_capability_runtime(
-        self,
-        *,
-        room_binding: Mapping[str, object],
-        participant_binding: Mapping[str, object],
-        prompt_compile_receipt: Mapping[str, object],
-        manifest_id: str,
-        dispatch_id: str,
-        user_authorized: Sequence[str],
-        template_allowed: Sequence[str],
-        role_allowed: Sequence[str],
-        profile_allowed: Sequence[str],
-        state_allowed: Sequence[str],
-        runtime_registry: Mapping[str, Mapping[str, object]] | None = None,
-        created_at_ms: int,
-        runtime_state: str = "active",
-    ) -> dict[str, object]:
-        return self.room_kernel_runtime.bind_capability_runtime(
-            manifest_id=manifest_id,
-            room_binding=room_binding,
-            participant_binding=participant_binding,
-            prompt_compile_receipt=prompt_compile_receipt,
-            dispatch_id=dispatch_id,
-            user_authorized=user_authorized,
-            template_allowed=template_allowed,
-            role_allowed=role_allowed,
-            profile_allowed=profile_allowed,
-            state_allowed=state_allowed,
-            runtime_registry=runtime_registry or room_runtime_registry(),
-            created_at_ms=created_at_ms,
-            runtime_state=runtime_state,
-        )
 
-    def _prepare_managed_room_dispatch(
-        self,
-        dispatch: Mapping[str, object],
-        now_ms: int,
-    ) -> dict[str, object]:
-        return self.room_kernel_runtime.prepare_dispatch(dispatch, now_ms)
 
-    def _accept_managed_room_runtime_context(
-        self,
-        runtime_receipt: Mapping[str, object],
-    ) -> None:
-        self.room_kernel_runtime.accept_runtime_context(runtime_receipt)
 
-    def _resolve_room_collaboration_profile(
-        self,
-        root: Mapping[str, object],
-        *,
-        pinned_at_ms: int,
-    ) -> tuple[CollaborationProfileManifest, dict[str, object]]:
-        return self.room_kernel_runtime.resolve_collaboration_profile(
-            root,
-            pinned_at_ms=pinned_at_ms,
-        )
 
-    def room_capability_tool_search(self, payload: Mapping[str, object]) -> dict[str, object]:
-        receipt, _ = self.room_capabilities.runtime_tool_search(
-            session_id=_required_text(payload, "sessionId"),
-            receipt_id=_required_text(payload, "receiptId"),
-            query=str(payload.get("query") or ""),
-            created_at_ms=int(payload.get("createdAtMs") or int(time.time() * 1000)),
-        )
-        return {"ok": True, "result": receipt}
 
-    def room_capability_tool_load(self, payload: Mapping[str, object]) -> dict[str, object]:
-        raw_loads = payload.get("loads")
-        if raw_loads is not None:
-            if (
-                not isinstance(raw_loads, Sequence)
-                or isinstance(raw_loads, (str, bytes))
-                or not 1 <= len(raw_loads) <= 4
-                or not all(isinstance(item, Mapping) for item in raw_loads)
-            ):
-                raise ValueError(
-                    "tool load batch must contain one to four load objects"
-                )
-            receipts, created = self.room_capabilities.runtime_tool_load_batch(
-                session_id=_required_text(payload, "sessionId"),
-                loads=[
-                    {
-                        "receiptId": _required_text(item, "receiptId"),
-                        "toolName": _required_text(item, "toolName"),
-                    }
-                    for item in raw_loads
-                    if isinstance(item, Mapping)
-                ],
-                created_at_ms=int(
-                    payload.get("createdAtMs") or int(time.time() * 1000)
-                ),
-            )
-            return {
-                "ok": True,
-                "result": {
-                    "schemaVersion": (
-                        "wisdom-weasel.room-tool-load-batch-receipt.v1"
-                    ),
-                    "items": receipts,
-                    "created": created,
-                },
-            }
-        receipt, _ = self.room_capabilities.runtime_tool_load(
-            session_id=_required_text(payload, "sessionId"),
-            receipt_id=_required_text(payload, "receiptId"),
-            tool_name=_required_text(payload, "toolName"),
-            created_at_ms=int(payload.get("createdAtMs") or int(time.time() * 1000)),
-        )
-        return {"ok": True, "result": receipt}
 
-    def execute_room_capability_tool(
-        self,
-        session_id: str,
-        tool_name: str,
-        args: Mapping[str, object],
-        *,
-        tool_call_id: str,
-        load_receipt_id: str,
-    ) -> dict[str, object] | None:
-        return self.room_kernel_application.execute_capability_tool(
-            session_id,
-            tool_name,
-            args,
-            tool_call_id=tool_call_id,
-            load_receipt_id=load_receipt_id,
-        )
 
-    def authorize_room_product_tool(
-        self,
-        session_id: str,
-        tool_name: str,
-        args: Mapping[str, object],
-        *,
-        tool_call_id: str,
-        load_receipt_id: str,
-    ) -> dict[str, object] | None:
-        return self.room_kernel_application.authorize_product_tool(
-            session_id,
-            tool_name,
-            args,
-            tool_call_id=tool_call_id,
-            load_receipt_id=load_receipt_id,
-        )
 
-    def record_room_product_tool_execution(
-        self,
-        session_id: str,
-        invocation_receipt_id: str,
-        *,
-        status: str,
-        result_hash: str,
-    ) -> dict[str, object]:
-        return self.room_kernel_application.record_product_tool_execution(
-            session_id,
-            invocation_receipt_id,
-            status=status,
-            result_hash=result_hash,
-        )
 
-    def validate_room_product_tool_approval(
-        self,
-        session_id: str,
-        invocation_receipt_id: str,
-        *,
-        tool_name: str,
-    ) -> dict[str, object]:
-        return self.room_kernel_application.validate_product_tool_approval(
-            session_id,
-            invocation_receipt_id,
-            tool_name=tool_name,
-        )
 
-    def apply_room_kernel_command(
-        self,
-        room_id: str,
-        payload: Mapping[str, object],
-        *,
-        caller_authorized: bool = False,
-    ) -> dict[str, object]:
-        if not caller_authorized:
-            raise PermissionError("Room Kernel control requires an authorized control caller")
-        self.rooms.get(room_id)
-        if str(payload.get("roomId") or "") != room_id:
-            raise RoomKernelFenceError("control command path Room does not match payload")
-        result = self.room_kernel_commands.control(payload)
-        if str(payload.get("commandKind") or "") in {
-            "cancel_root",
-            "cancel_target",
-            "panic",
-        }:
-            self.room_kernel_application.reconcile_workspace_retention(
-                room_id=room_id,
-                root_id=str(payload.get("rootId") or ""),
-                reason=(
-                    "Room control cancellation retained isolated workspace evidence"
-                ),
-            )
-        self.room_kernel_projection.sync_room(room_id)
-        root_id = str(payload.get("rootId") or "")
-        if root_id:
-            root = self.room_kernel.root(root_id)
-            self.room_public_timeline.sync_terminal_root(root)
-            self._project_room_work_from_kernel_root(root)
-        self.room_kernel_worker_loop.wake()
-        return dict(result["kernelReceipt"])
 
-    def create_room_kernel_root(
-        self,
-        room_id: str,
-        payload: Mapping[str, object],
-        *,
-        caller_authorized: bool = False,
-    ) -> dict[str, object]:
-        if not caller_authorized:
-            raise PermissionError(
-                "Room Kernel create requires an authorized caller"
-            )
-        return self.room_kernel_application.create_root(room_id, payload)
 
-    def dispatch_room_kernel(
-        self,
-        room_id: str,
-        payload: Mapping[str, object],
-        *,
-        caller_authorized: bool = False,
-    ) -> dict[str, object]:
-        if not caller_authorized:
-            raise PermissionError(
-                "Room Kernel dispatch requires an authorized caller"
-            )
-        return self.room_kernel_application.dispatch(room_id, payload)
 
-    def finalize_room_kernel_route(self, room_id: str, payload: Mapping[str, object], *, caller_authorized: bool = False) -> dict[str, object]:
-        if not caller_authorized:
-            raise PermissionError("Room Kernel finalize requires an authorized caller")
-        root_id = str(payload.get("rootId") or "")
-        if self.room_kernel.root(root_id).get("roomId") != room_id:
-            raise RoomKernelFenceError("Finalize Root belongs to another Room")
-        return self.finalize_room_kernel_root(root_id, catalog_revision_id=str(payload.get("catalogRevisionId") or ""), target_commit=str(payload.get("targetCommit") or ""), blind_review_status=str(payload.get("blindReviewStatus") or "unavailable"), delivery_gate_preview_receipt_id=str(payload.get("deliveryGatePreviewReceiptId") or ""))
 
-    def settle_room_kernel_dispatch(
-        self,
-        room_id: str,
-        payload: Mapping[str, object],
-        *,
-        caller_authorized: bool = False,
-    ) -> dict[str, object]:
-        if not caller_authorized:
-            raise PermissionError(
-                "Room Kernel settle requires an authorized runtime caller"
-            )
-        return self.room_kernel_application.settle(room_id, payload)
 
-    def settle_room_runtime(
-        self,
-        payload: Mapping[str, object],
-    ) -> dict[str, object]:
-        """Bridge Pi's pre-settle lifecycle gate into the canonical Kernel."""
-
-        return {
-            "ok": True,
-            "result": self.room_settle_lifecycle.settle(payload),
-        }
 
     def governance_read_model(self, *, scope_key: str | None = None) -> dict[str, object]:
         return {
@@ -2747,26 +1768,6 @@ class AgentService:
             "knowledge": self.knowledge_promotion.governance_snapshot(),
         }
 
-    def finalize_room_kernel_root(
-        self,
-        root_id: str,
-        *,
-        catalog_revision_id: str = "",
-        target_commit: str = "",
-        blind_review_status: str = "unavailable",
-        delivery_gate_preview_receipt_id: str = "",
-        now_ms: int | None = None,
-    ) -> dict[str, object]:
-        return self.room_kernel_application.finalize(
-            root_id,
-            catalog_revision_id=catalog_revision_id,
-            target_commit=target_commit,
-            blind_review_status=blind_review_status,
-            delivery_gate_preview_receipt_id=(
-                delivery_gate_preview_receipt_id
-            ),
-            now_ms=now_ms,
-        )
 
     def room_work_items(
         self,
@@ -2957,14 +1958,18 @@ class AgentService:
             response=response,
         )
 
-    def start_room_execution(
+    def execute_room_partner_tool(
         self,
-        room_id: str,
-        payload: Mapping[str, object],
+        session_id: str,
+        args: Mapping[str, object],
+        *,
+        tool_call_id: str,
     ) -> dict[str, object]:
-        """Typed start command for the post-clarification Room intake branch."""
-
-        return self.room_application.start_execution(room_id, payload)
+        return self.room_partner_application.execute(
+            session_id,
+            args,
+            tool_call_id=tool_call_id,
+        )
 
     def steer_room_participant(
         self,
@@ -2996,7 +2001,7 @@ class AgentService:
         if claim.replay_response is not None:
             return {**claim.replay_response, "idempotentReplay": True}
         try:
-            response = self.room_application.steer_participant(room_id, payload)
+            response = self._steer_room_participant_once(room_id, payload)
         except Exception as exc:
             self.command_receipts.fail(
                 claim,
@@ -3018,6 +2023,96 @@ class AgentService:
             client_message_id=client_action_id,
             response=response,
         )
+
+    def _steer_room_participant_once(
+        self,
+        room_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        if str(payload.get("action") or "steer").strip() != "steer":
+            raise ValueError("Room participant control action must be steer")
+        root_id = str(payload.get("rootId") or "").strip()
+        message = str(payload.get("message") or "").strip()
+        client_action_id = str(payload.get("clientActionId") or "").strip()
+        if not message:
+            raise ValueError("participant steer message must not be empty")
+        if len(message) > ROOM_MESSAGE_CHAR_LIMIT:
+            raise ValueError(
+                f"Room message must not exceed {ROOM_MESSAGE_CHAR_LIMIT} characters"
+            )
+        room = self.rooms.get(room_id)
+        events = [
+            event
+            for event in self.rooms.list_events(room_id, after_sequence=0, limit=2000)
+            if str(event.get("turnId") or "") == root_id
+        ]
+        if not any(str(event.get("eventType") or "") == "user_message" for event in events):
+            raise ValueError("Room turn does not belong to this Room")
+        routed_participant_ids = {
+            str(
+                event.get("participantId")
+                or (
+                    event.get("payload", {}).get("targetParticipantId")
+                    if isinstance(event.get("payload"), Mapping)
+                    else ""
+                )
+                or ""
+            )
+            for event in events
+            if str(event.get("eventType") or "") == "route_decision"
+        }
+        routed_participant_ids.discard("")
+        requested_participant_id = str(payload.get("participantId") or "").strip()
+        participant_id = requested_participant_id or next(iter(routed_participant_ids), "")
+        if not participant_id or participant_id not in routed_participant_ids:
+            raise ValueError("participant steer target is not part of this Room turn")
+        participant = self.rooms.participant(participant_id)
+        if (
+            str(participant.get("roomId") or "") != room_id
+            or str(participant.get("status") or "") != "active"
+        ):
+            raise ValueError("participant steer target is no longer active")
+        session_id = str(participant.get("sessionId") or "")
+        topic_id = str(room.get("activeTopicId") or "")
+        room_event = self.room_events.publish(
+            room_id=room_id,
+            event_type="user_message",
+            payload={
+                "text": message,
+                "delivery": "steer",
+                "rootId": root_id,
+                "targetParticipantIds": [participant_id],
+                "clientActionId": client_action_id,
+            },
+            turn_id=root_id,
+            participant_id=participant_id,
+            source_session_id=session_id,
+            topic_id=topic_id,
+        )
+        accepted = self.prompt(
+            session_id,
+            {
+                "message": message,
+                "clientMessageId": client_action_id,
+                "delivery": "steer",
+                "_contextSourceToken": self._context_source_token,
+                "_contextSource": "room",
+                "_checkpointText": message,
+            },
+        )
+        return {
+            "schemaVersion": "rag-ime.agent-room-steer.v1",
+            "ok": True,
+            "accepted": True,
+            "roomId": room_id,
+            "rootId": root_id,
+            "participantId": participant_id,
+            "sessionId": session_id,
+            "delivery": "steer",
+            "turnId": str(accepted.get("turnId") or ""),
+            "event": room_event,
+            "sessionReceipt": accepted,
+        }
 
     def _resolve_room_attachments(
         self,
@@ -3060,18 +2155,6 @@ class AgentService:
                 raise ValueError("Room attachments currently support PNG, JPEG, GIF, and WebP only")
         return receipts
 
-    def _room_dispatch_images(
-        self,
-        dispatch: Mapping[str, object],
-    ) -> list[dict[str, str]]:
-        attachment_ids = _room_attachment_ids(dispatch.get("attachmentIds"))
-        if not attachment_ids:
-            return []
-        root = self.room_kernel.root(str(dispatch.get("rootId") or ""))
-        room_id = str(root["roomId"])
-        session_id = str(dispatch.get("targetSessionId") or "")
-        self._resolve_room_attachments(room_id, [session_id], attachment_ids)
-        return self.media.pi_images("", attachment_ids, room_id=room_id)
 
     def abort_room_turn(
         self,
@@ -3120,25 +2203,7 @@ class AgentService:
         *,
         room_turn_id: str,
     ) -> dict[str, object]:
-        if (
-            kernel_owns_room_execution(self.room_kernel.mode)
-            and room_turn_id in self.room_kernel.root_ids(room_id)
-        ):
-            background_job_receipts = (
-                self.background_jobs.cancel_room_root_all_sessions(
-                    room_turn_id=room_turn_id,
-                    reason=f"Cancelled with Room root {room_turn_id}",
-                )
-            )
-            response = dict(
-                self.room_kernel_application.cancel_root(
-                    room_id,
-                    room_turn_id,
-                )
-            )
-            response["backgroundJobReceipts"] = background_job_receipts
-            return response
-        return self.room_legacy_cancellation.abort_turn(
+        return self.room_cancellation.abort_turn(
             room_id,
             room_turn_id=room_turn_id,
         )
@@ -3155,45 +2220,9 @@ class AgentService:
         answer_to_post_id: str,
         answer_to_root_id: str,
     ) -> dict[str, object]:
-        if kernel_owns_room_execution(self.room_kernel.mode):
-            room = self.rooms.get(room_id)
-            owner = (
-                "kernel"
-                if answer_to_post_id and answer_to_root_id
-                else room_message_owner(
-                    work_item_id=work_item_id,
-                    room_kind=str(
-                        room.get("roomKind") or "collaboration"
-                    ),
-                )
-            )
-            if owner == "session":
-                return self.room_legacy_dispatch.post_conversation(
-                    room_id,
-                    message=message,
-                    client_message_id=client_message_id,
-                    requested_participant_ids=requested_participant_ids,
-                    attachment_ids=attachment_ids,
-                )
-            if owner != "kernel":
-                raise RoomKernelFenceError(
-                    f"unsupported Room message owner: {owner}"
-                )
-            return self.room_application.post_message(
-                room_id,
-                message=message,
-                client_message_id=client_message_id,
-                requested_participant_ids=requested_participant_ids,
-                work_item_id=work_item_id,
-                attachment_ids=attachment_ids,
-                answer_to_post_id=answer_to_post_id,
-                answer_to_root_id=answer_to_root_id,
-            )
         if answer_to_post_id or answer_to_root_id:
-            raise ValueError(
-                "clarification answer identity requires managed Room execution"
-            )
-        return self.room_legacy_dispatch.post_message(
+            raise ValueError("Room messages no longer accept clarification reply ids")
+        return self.room_dispatch.post_message(
             room_id,
             message=message,
             client_message_id=client_message_id,
@@ -3215,7 +2244,7 @@ class AgentService:
         work_item: Mapping[str, object] | None,
         attachment_ids: Sequence[str],
     ) -> dict[str, object]:
-        return self.room_legacy_dispatch.dispatch_target(
+        return self.room_dispatch.dispatch_target(
             room=room,
             target=target,
             decision=decision,
@@ -3331,20 +2360,6 @@ class AgentService:
             heartbeat_seconds=heartbeat_seconds,
         )
 
-    def subscribe_room_kernel_events(
-        self,
-        room_id: str,
-        *,
-        after_event_id: str = "",
-        heartbeat_seconds: float = 10.0,
-    ) -> Iterator[bytes]:
-        self.rooms.get(room_id)
-        self.room_kernel_projection.sync_room(room_id)
-        return self.room_kernel_projection.subscribe(
-            room_id,
-            after_event_id=after_event_id,
-            heartbeat_seconds=heartbeat_seconds,
-        )
 
     def model_catalog(self, session_id: str) -> dict[str, object]:
         return self.session_policy.model_catalog(session_id)
@@ -3689,18 +2704,10 @@ class AgentService:
         self,
         session_id: str,
     ) -> None:
-        kernel_binding = self.room_kernel.session_binding(session_id)
-        capability_binding = self.room_capabilities.runtime_binding(
+        room_busy = self.room_turns.session_turn_active(
             session_id
         )
-        legacy_busy = self.room_turns.session_turn_active(
-            session_id
-        )
-        if (
-            kernel_binding is None
-            and capability_binding is None
-            and not legacy_busy
-        ):
+        if not room_busy:
             return
         raise AgentTurnConflictError(
             "Session 正在执行 Room 任务，不能同时从 Agent 发送；"
@@ -4155,782 +3162,14 @@ class AgentService:
             heartbeat_seconds=heartbeat_seconds,
         )
 
-    def _room_root_child_quiescence(
-        self,
-        root_id: str,
-        generation: int,
-        dispatch_id: str = "",
-    ) -> dict[str, object]:
-        owners = [
-            self.delegation.root_child_quiescence(
-                root_id=root_id,
-                generation=int(generation),
-                dispatch_id=dispatch_id,
-            ),
-            self.background_jobs.root_child_quiescence(
-                root_id=root_id,
-                generation=int(generation),
-                dispatch_id=dispatch_id,
-            ),
-        ]
-        pending_targets: list[dict[str, object]] = []
-        errors: list[str] = []
-        counts = {"queued": 0, "running": 0, "cancelling": 0}
-        unknown_count = 0
-        for owner in owners:
-            if not isinstance(owner, Mapping):
-                errors.append("child owner returned an invalid receipt")
-                unknown_count += 1
-                continue
-            for key in counts:
-                counts[key] += int(
-                    (owner.get("counts") or {}).get(key, 0)
-                    if isinstance(owner.get("counts"), Mapping)
-                    else 0
-                )
-            targets = owner.get("pendingTargets")
-            if isinstance(targets, list):
-                pending_targets.extend(
-                    item for item in targets if isinstance(item, Mapping)
-                )
-            if owner.get("quiescent") is not True and not targets:
-                errors.append("child owner did not prove quiescence")
-                unknown_count += 1
-            owner_errors = owner.get("errors")
-            if isinstance(owner_errors, list):
-                errors.extend(str(item)[:240] for item in owner_errors[:8])
-            unknown_count += int(owner.get("unknownCount") or 0)
-        if unknown_count or errors:
-            state = "unknown"
-        elif pending_targets:
-            state = "pending"
-        else:
-            state = "quiescent"
-        return {
-            "schemaVersion": "rag-ime.root-child-quiescence.v1",
-            "owner": "roomRoot",
-            "rootId": str(root_id),
-            "generation": int(generation),
-            "dispatchId": str(dispatch_id or ""),
-            "state": state,
-            "quiescent": state == "quiescent",
-            "pendingCount": len(pending_targets) + len(errors),
-            "unknownCount": unknown_count,
-            "counts": {**counts, "total": sum(counts.values())},
-            "pendingTargets": pending_targets,
-            "errors": errors[:8],
-        }
 
-    def _room_workspace_writer_quiescence(
-        self,
-        request: Mapping[str, object],
-    ) -> Mapping[str, object]:
-        """Build one exact-lineage cleanup fence from existing runtime owners."""
 
-        root_id = str(request.get("rootId") or "")
-        task_id = str(request.get("taskId") or "")
-        dispatch_id = str(request.get("dispatchId") or "")
-        session_id = str(request.get("ownerSessionId") or "")
-        if not all((root_id, task_id, dispatch_id, session_id)):
-            raise RuntimeError(
-                "workspace writer quiescence requires root/task/dispatch/session lineage"
-            )
-        dispatch = self.room_kernel.dispatch(dispatch_id)
-        if any(
-            str(dispatch.get(key) or "") != expected
-            for key, expected in {
-                "rootId": root_id,
-                "taskId": task_id,
-                "targetSessionId": session_id,
-            }.items()
-        ):
-            raise RuntimeError(
-                "workspace writer quiescence does not match the canonical Dispatch"
-            )
-        generation = int(dispatch.get("generation", -1))
-        # Capability revocation is the admission fence. Any invocation without
-        # an execution receipt remains pending unless the exact Dispatch has a
-        # durable Host-restart termination outcome; that outcome is checked
-        # together with the revoked binding and child-owner fences below.
-        self.room_kernel_runtime.revoke_session(
-            session_id,
-            int(time.time() * 1000),
-        )
-        children = self._room_root_child_quiescence(
-            root_id,
-            generation,
-            dispatch_id,
-        )
-        with sqlite_connection(self.db_path, row_factory=sqlite3.Row) as conn:
-            rows = conn.execute(
-                """
-                SELECT manifest.manifest_id, manifest.manifest_hash,
-                       manifest.generation, binding.session_id,
-                       binding.state AS binding_state,
-                       invocation.receipt_id AS invocation_receipt_id,
-                       invocation.canonical_tool_name,
-                       invocation.command_hash,
-                       invocation.created_at_ms AS invocation_created_at_ms,
-                       execution.execution_receipt_id,
-                       execution.session_id AS execution_session_id,
-                       execution.status, execution.result_hash
-                FROM room_v2_capability_manifests AS manifest
-                JOIN room_v2_capability_runtime_bindings AS binding
-                  ON binding.manifest_id = manifest.manifest_id
-                 AND binding.manifest_hash = manifest.manifest_hash
-                LEFT JOIN room_v2_tool_invocation_receipts AS invocation
-                  ON invocation.manifest_id = manifest.manifest_id
-                 AND invocation.manifest_hash = manifest.manifest_hash
-                LEFT JOIN room_v2_tool_execution_receipts AS execution
-                  ON execution.invocation_receipt_id = invocation.receipt_id
-                WHERE manifest.root_id=? AND manifest.task_id=?
-                  AND manifest.dispatch_id=? AND manifest.generation=?
-                  AND binding.session_id=?
-                ORDER BY manifest.manifest_id, invocation.receipt_id
-                """,
-                (root_id, task_id, dispatch_id, generation, session_id),
-            ).fetchall()
-            settle_rows = conn.execute(
-                """
-                SELECT settle_receipt_id, kernel_receipt_json, created_at_ms
-                FROM room_kernel_settle_attempt_receipts
-                WHERE dispatch_id=?
-                ORDER BY created_at_ms, settle_receipt_id
-                """,
-                (dispatch_id,),
-            ).fetchall()
-            restart_rows = conn.execute(
-                """
-                SELECT receipt_id, payload_json
-                FROM room_kernel_receipts
-                WHERE root_id=? AND receipt_kind='runtime_failed'
-                  AND status='applied'
-                ORDER BY created_at_ms, receipt_id
-                """,
-                (root_id,),
-            ).fetchall()
-            dead_letter = conn.execute(
-                """
-                SELECT reason_code, payload_json
-                FROM room_kernel_dead_letters
-                WHERE dispatch_id=?
-                """,
-                (dispatch_id,),
-            ).fetchone()
-            runtime_effect = conn.execute(
-                """
-                SELECT state, runtime_receipt_json
-                FROM room_kernel_runtime_effects
-                WHERE dispatch_id=? AND root_id=? AND session_id=?
-                  AND dispatch_generation=?
-                """,
-                (dispatch_id, root_id, session_id, generation),
-            ).fetchone()
-        invalid_execution_sessions = [
-            str(row["execution_receipt_id"])
-            for row in rows
-            if row["execution_receipt_id"] is not None
-            and str(row["execution_session_id"] or "") != session_id
-        ]
-        registry_known = bool(rows) and not invalid_execution_sessions
-        pending = [
-            str(row["invocation_receipt_id"])
-            for row in rows
-            if row["invocation_receipt_id"] is not None
-            and row["execution_receipt_id"] is None
-        ]
-        settle_rejected_pending: list[str] = []
-        settle_rejection_proofs: list[dict[str, object]] = []
-        if (
-            pending
-            and str(dispatch.get("state") or "")
-            in {"committed", "failed", "cancelled", "dead_letter"}
-            and rows
-            and all(str(row["binding_state"]) == "revoked" for row in rows)
-        ):
-            room_commit_rows = [
-                row
-                for row in rows
-                if row["invocation_receipt_id"] is not None
-                and str(row["canonical_tool_name"] or "") == "room_commit"
-            ]
-            for settle_row in settle_rows:
-                try:
-                    settle_receipt = json.loads(
-                        str(settle_row["kernel_receipt_json"])
-                    )
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    continue
-                details = (
-                    settle_receipt.get("details")
-                    if isinstance(settle_receipt, Mapping)
-                    else None
-                )
-                settle_at_ms = int(settle_row["created_at_ms"])
-                if not (
-                    isinstance(settle_receipt, Mapping)
-                    and isinstance(details, Mapping)
-                    and settle_receipt.get("rootId") == root_id
-                    and settle_receipt.get("generation") == generation
-                    and settle_receipt.get("status") == "rejected"
-                    and settle_receipt.get("receiptKind")
-                    in {"settle_retry_required", "settle_blocked"}
-                    and settle_receipt.get("createdAtMs") == settle_at_ms
-                    and details.get("dispatchId") == dispatch_id
-                ):
-                    continue
-                eligible = [
-                    row
-                    for row in room_commit_rows
-                    if int(row["invocation_created_at_ms"] or 0)
-                    <= settle_at_ms
-                ]
-                if not eligible:
-                    continue
-                candidate = max(
-                    eligible,
-                    key=lambda row: (
-                        int(row["invocation_created_at_ms"] or 0),
-                        str(row["invocation_receipt_id"] or ""),
-                    ),
-                )
-                candidate_id = str(candidate["invocation_receipt_id"] or "")
-                if (
-                    candidate_id in pending
-                    and candidate["execution_receipt_id"] is None
-                    and candidate_id not in settle_rejected_pending
-                ):
-                    settle_rejected_pending.append(candidate_id)
-                    settle_rejection_proofs.append(
-                        {
-                            "invocationReceiptId": candidate_id,
-                            "settleReceiptId": str(
-                                settle_row["settle_receipt_id"]
-                            ),
-                            "kernelReceiptId": str(
-                                settle_receipt.get("receiptId") or ""
-                            ),
-                            "kernelReceiptSha256": hashlib.sha256(
-                                str(settle_row["kernel_receipt_json"]).encode(
-                                    "utf-8"
-                                )
-                            ).hexdigest(),
-                        }
-                    )
-        restart_matches: list[dict[str, object]] = []
-        restart_source_prefix = (
-            f"runtime-lifecycle-recovery:{dispatch_id}:{generation}:"
-        )
-        for row in restart_rows:
-            try:
-                candidate = json.loads(str(row["payload_json"]))
-            except (TypeError, ValueError, json.JSONDecodeError):
-                continue
-            details = (
-                candidate.get("details")
-                if isinstance(candidate, Mapping)
-                else None
-            )
-            if (
-                isinstance(candidate, dict)
-                and isinstance(details, Mapping)
-                and candidate.get("receiptId") == row["receipt_id"]
-                and candidate.get("rootId") == root_id
-                and candidate.get("receiptKind") == "runtime_failed"
-                and candidate.get("status") == "applied"
-                and candidate.get("generation") == generation
-                and details.get("dispatchId") == dispatch_id
-                and details.get("reasonCode") == "runtime_host_restarted"
-                and str(details.get("sourceEventId") or "").startswith(
-                    restart_source_prefix
-                )
-            ):
-                restart_matches.append(candidate)
-        dead_letter_payload: Mapping[str, object] | None = None
-        if dead_letter is not None:
-            try:
-                decoded_dead_letter = json.loads(
-                    str(dead_letter["payload_json"])
-                )
-            except (TypeError, ValueError, json.JSONDecodeError):
-                decoded_dead_letter = None
-            if isinstance(decoded_dead_letter, Mapping):
-                dead_letter_payload = decoded_dead_letter
-        runtime_effect_payload: Mapping[str, object] | None = None
-        if runtime_effect is not None:
-            try:
-                decoded_runtime_effect = json.loads(
-                    str(runtime_effect["runtime_receipt_json"])
-                )
-            except (TypeError, ValueError, json.JSONDecodeError):
-                decoded_runtime_effect = None
-            if isinstance(decoded_runtime_effect, Mapping):
-                runtime_effect_payload = decoded_runtime_effect
-        restart_receipt = (
-            restart_matches[0]
-            if len(restart_matches) == 1
-            else None
-        )
-        restart_details = (
-            restart_receipt.get("details")
-            if isinstance(restart_receipt, Mapping)
-            else None
-        )
-        restart_termination_proven = bool(
-            pending
-            and restart_receipt is not None
-            and isinstance(restart_details, Mapping)
-            and str(dispatch.get("state") or "") == "failed"
-            and rows
-            and all(str(row["binding_state"]) == "revoked" for row in rows)
-            and dead_letter is not None
-            and str(dead_letter["reason_code"] or "")
-            == "runtime_host_restarted"
-            and isinstance(dead_letter_payload, Mapping)
-            and dead_letter_payload.get("sourceEventId")
-            == restart_details.get("sourceEventId")
-            and dead_letter_payload.get("kernelReceipt")
-            == restart_receipt
-            and runtime_effect is not None
-            and str(runtime_effect["state"] or "") == "failed"
-            and isinstance(runtime_effect_payload, Mapping)
-            and runtime_effect_payload.get("schemaVersion")
-            == "wisdom-weasel.room-runtime-failure.v1"
-            and runtime_effect_payload.get("status") == "failed"
-            and runtime_effect_payload.get("reasonCode")
-            == "runtime_host_restarted"
-            and runtime_effect_payload.get("sourceEventId")
-            == restart_details.get("sourceEventId")
-        )
-        unresolved_pending = [
-            receipt_id
-            for receipt_id in pending
-            if receipt_id not in settle_rejected_pending
-        ]
-        host_terminated_pending = (
-            unresolved_pending if restart_termination_proven else []
-        )
-        active_pending = [] if restart_termination_proven else unresolved_pending
-        registry_material = [
-            {
-                "manifestId": str(row["manifest_id"]),
-                "manifestHash": str(row["manifest_hash"]),
-                "generation": int(row["generation"]),
-                "bindingState": str(row["binding_state"]),
-                "invocationReceiptId": str(row["invocation_receipt_id"] or ""),
-                "toolName": str(row["canonical_tool_name"] or ""),
-                "commandHash": str(row["command_hash"] or ""),
-                "executionReceiptId": str(row["execution_receipt_id"] or ""),
-                "executionSessionId": str(row["execution_session_id"] or ""),
-                "status": str(row["status"] or ""),
-                "resultHash": str(row["result_hash"] or ""),
-            }
-            for row in rows
-        ]
-        if restart_receipt is not None:
-            registry_material.append(
-                {
-                    "runtimeHostTerminationReceiptId": str(
-                        restart_receipt.get("receiptId") or ""
-                    ),
-                    "runtimeHostTerminationSourceEventId": str(
-                        restart_details.get("sourceEventId") or ""
-                        if isinstance(restart_details, Mapping)
-                        else ""
-                    ),
-                    "hostTerminatedInvocationReceiptIds": (
-                        host_terminated_pending
-                    ),
-                }
-            )
-        if settle_rejection_proofs:
-            registry_material.append(
-                {"settleRejectionProofs": settle_rejection_proofs}
-            )
-        registry_revision = hashlib.sha256(
-            json.dumps(
-                registry_material,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
-        background_known = (
-            children.get("quiescent") is True
-            and int(children.get("unknownCount") or 0) == 0
-        )
-        dispatch_settled = str(dispatch.get("state") or "") in {
-            "committed",
-            "failed",
-            "cancelled",
-            "dead_letter",
-        }
-        dispatch_revision = hashlib.sha256(
-            json.dumps(
-                dispatch,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
-        receipt = {
-            "schemaVersion": "wisdom-weasel.room-workspace-writer-quiescence.v1",
-            **dict(request),
-            "foregroundMutatingInvocations": {
-                "known": registry_known,
-                "activeCount": len(active_pending)
-                + len(invalid_execution_sessions),
-                "registryRevision": registry_revision,
-                "pendingInvocationReceiptIds": active_pending[:32],
-                "settleRejectedInvocationReceiptIds": (
-                    settle_rejected_pending[:32]
-                ),
-                "settleRejectionProofs": settle_rejection_proofs[:32],
-                "hostTerminatedInvocationReceiptIds": (
-                    host_terminated_pending[:32]
-                ),
-                "runtimeHostTerminationReceiptId": (
-                    str(restart_receipt.get("receiptId") or "")
-                    if restart_termination_proven
-                    and isinstance(restart_receipt, Mapping)
-                    else ""
-                ),
-                "invalidExecutionReceiptIds": invalid_execution_sessions[:32],
-            },
-            "backgroundWork": {
-                "known": background_known,
-                "activeCount": int(children.get("pendingCount") or 0),
-                "receiptRef": hashlib.sha256(
-                    json.dumps(
-                        children,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                ).hexdigest(),
-            },
-            "managedPiTurn": {
-                "known": True,
-                "settled": dispatch_settled,
-                "sessionId": session_id,
-                "dispatchId": dispatch_id,
-                "receiptRef": dispatch_revision,
-            },
-        }
-        receipt["receiptRevision"] = hashlib.sha256(
-            json.dumps(
-                receipt,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
-        return receipt
 
-    def _cancel_room_root_children(
-        self,
-        root_id: str,
-        generation: int,
-        reason: str,
-        request_id: str,
-    ) -> dict[str, object]:
-        delegation = self.delegation.cancel_root_children(
-            request_id=request_id,
-            root_id=root_id,
-            generation=int(generation),
-            reason=reason,
-        )
-        background = self.background_jobs.cancel_root_children(
-            request_id=request_id,
-            root_id=root_id,
-            generation=int(generation),
-            reason=reason,
-        )
-        quiescence = self._room_root_child_quiescence(
-            root_id,
-            int(generation),
-        )
-        return {
-            "schemaVersion": "rag-ime.root-child-cancellation.v1",
-            "owner": "roomRoot",
-            "requestId": str(request_id),
-            "rootId": str(root_id),
-            "generation": int(generation),
-            "state": (
-                "terminated"
-                if quiescence["quiescent"]
-                else "requested"
-            ),
-            "targetIds": [
-                *[
-                    str(item)
-                    for item in delegation.get("targetIds", [])
-                ],
-                *[
-                    str(item)
-                    for item in background.get("targetIds", [])
-                ],
-            ],
-            "pendingTargets": list(quiescence["pendingTargets"]),
-            "receipts": [delegation, background],
-            "delegation": delegation,
-            "backgroundJob": background,
-            "quiescence": quiescence,
-        }
 
-    def _capture_startup_room_runtime_targets(
-        self,
-    ) -> list[dict[str, object]]:
-        if (
-            not self._room_kernel_worker_enabled
-            or not kernel_owns_room_execution(self.room_kernel.mode)
-        ):
-            return []
-        return self.room_kernel.startup_accepted_runtime_targets(
-            captured_at_ms=int(time.time() * 1000)
-        )
 
-    def _recover_startup_room_runtime_targets(
-        self,
-        startup_targets: list[Mapping[str, object]],
-    ) -> dict[str, object]:
-        status = self.runtime.runtime_status()
-        kill_gate = (
-            status.get("runtimeHostKillGate")
-            if isinstance(status.get("runtimeHostKillGate"), Mapping)
-            else {}
-        )
-        raw_receipts = kill_gate.get("orphanReconcileReceipts")
-        receipts = (
-            [dict(item) for item in raw_receipts if isinstance(item, Mapping)]
-            if isinstance(raw_receipts, list)
-            else []
-        )
-        result = self.room_kernel_worker.recover_terminated_runtime_host(
-            [dict(item) for item in startup_targets],
-            receipts,
-        )
-        self._room_runtime_startup_recovery = dict(result)
-        return result
 
-    def _bind_room_kernel_runtime(self, *, start_worker: bool = True) -> None:
-        prior = getattr(self, "room_kernel_worker_loop", None)
-        if prior is not None:
-            prior.close()
-        if kernel_owns_room_execution(self.room_kernel.mode) and (
-            not callable(getattr(self.runtime, "dispatch_room", None))
-            or not callable(getattr(self.runtime, "cancel_room", None))
-        ):
-            raise RuntimeError("managed Room Kernel requires typed Pi Room RPC")
-        self.room_kernel_runtime = RoomKernelRuntimeCoordinator(
-            db_path=self.db_path,
-            rooms=self.rooms,
-            personas=self.personas,
-            kernel=self.room_kernel,
-            capabilities=self.room_capabilities,
-            prompt_plans=self.room_prompt_plans,
-            projection_journals=self.room_projection_journals,
-            context_ledger=self.room_context_ledger,
-            context_epochs=self.room_context_epochs,
-            skill_policy=self.room_skill_policy,
-            skill_receipts=self.room_skill_receipts,
-            requirements=self.room_requirements,
-            learning=self.room_learning,
-            learning_runtime=self.room_learning_runtime,
-            definition_compiler=self.agent_definition_compiler,
-            role_book_prompt_resolver=lambda session_id: (
-                self.role_books.prompt_block(
-                    self.sessions.get(session_id)
-                )
-            ),
-            session_resolver=self.sessions.get,
-            product_tool_manifest_provider=self._room_product_tool_manifests,
-        )
-        self.room_kernel_worker = RoomKernelWorker(
-            self.room_kernel,
-            self.runtime,  # type: ignore[arg-type]
-            prepare_dispatch=self.room_kernel_runtime.prepare_dispatch,
-            prepare_memory_context=self._prepare_room_memory_context,
-            accept_runtime_context=self.room_kernel_runtime.accept_runtime_context,
-            revoke_session=self.room_kernel_runtime.revoke_session,
-            invalidate_room_approvals=self.sessions.invalidate_room_approvals,
-            foreground_invocation_quiescence=(
-                self._room_workspace_writer_quiescence
-            ),
-            image_provider=self._room_dispatch_images,
-            learning_observer=self.room_kernel_runtime.record_learning_signal,
-        )
-        self.room_kernel_commands = KernelCommandBus(
-            self.room_kernel,
-            self.room_kernel_worker,
-            runtime_effects_enabled=self._room_kernel_worker_enabled,
-        )
-        self.room_kernel_worker_loop = RoomKernelWorkerLoop(
-            self.room_kernel_worker,
-            on_change=self._sync_all_room_kernel_projections,
-            poll_seconds=self._room_kernel_poll_seconds,
-        )
-        self.room_application = RoomApplicationService(
-            rooms=self.rooms,
-            sessions=self.sessions,
-            personas=self.personas,
-            role_books=self.role_books,
-            work_items=self.room_work,
-            kernel=self.room_kernel,
-            commands=self.room_kernel_commands,
-            projection=self.room_kernel_projection,
-            context=self.room_context_ledger,
-            requirements=self.room_requirements,
-            capabilities=self.room_capabilities,
-            public_timeline=self.room_public_timeline,
-            session_mode_gate=self.session_mode_gate,
-            wake_worker=self.room_kernel_worker_loop.wake,
-            restore_participant_sessions=self._restore_legacy_room_participant_sessions,
-            resolve_attachments=self._resolve_room_attachments,
-            deliver_steer=lambda session_id, message, client_action_id: (
-                self.runtime.prompt(
-                    session_id,
-                    message,
-                    client_message_id=client_action_id,
-                    delivery="steer",
-                )
-            ),
-        )
-        self.room_kernel_application = RoomKernelApplicationService(
-            rooms=self.rooms,
-            kernel=self.room_kernel,
-            commands=self.room_kernel_commands,
-            projection=self.room_kernel_projection,
-            capabilities=self.room_capabilities,
-            context=self.room_context_ledger,
-            requirements=self.room_requirements,
-            peer_review=self.room_peer_review,
-            learning=self.room_learning,
-            public_timeline=self.room_public_timeline,
-            wake_worker=self.room_kernel_worker_loop.wake,
-            revoke_session=self.room_kernel_runtime.revoke_session,
-            define_room=self.room_application.define_room,
-            artifact_hash_provider=self._room_artifact_hash_provider,
-            workspaces=self.room_workspaces,
-            media_receipt_provider=lambda media_id, session_id: self.media.receipt(
-                media_id,
-                session_id=session_id,
-            ),
-            root_child_quiescence=self._room_root_child_quiescence,
-            cancel_root_children=self._cancel_room_root_children,
-            root_state_observer=(
-                self._project_room_work_from_kernel_root
-            ),
-        )
-        self.room_settle_lifecycle = RoomSettleLifecycleService(
-            rooms=self.rooms,
-            kernel=self.room_kernel,
-            capabilities=self.room_capabilities,
-            application=self.room_kernel_application,
-            wake_worker=self.room_kernel_worker_loop.wake,
-            record_runtime_turn_completed=(
-                self._record_room_runtime_turn_completed
-            ),
-        )
-        stranded_cleanups = (
-            self.room_workspaces.cleaned_integration_projection_candidates()
-        )
-        recovered_cleanups = self.room_workspaces.recover_integrated_cleanups()
-        for cleanup in [*stranded_cleanups, *recovered_cleanups]:
-            if str(cleanup.get("cleanupState") or "") not in {
-                "cleaned",
-                "missing",
-            }:
-                continue
-            self.room_kernel.record_workspace_integration(
-                str(cleanup.get("taskId") or ""),
-                integration_ref=str(cleanup.get("integrationRef") or ""),
-                workspace_result=cleanup,
-                now_ms=int(cleanup.get("updatedAtMs") or time.time() * 1000),
-            )
-        if start_worker:
-            self.room_kernel_worker_loop.start()
 
-    def _sync_all_room_kernel_projections(self) -> None:
-        for room_id in self.room_kernel.room_ids():
-            try:
-                self.rooms.get(room_id)
-            except AgentRoomNotFound:
-                continue
-            self.room_kernel_application.reconcile_workspace_retention(
-                room_id=room_id,
-                reason=(
-                    "Room runtime terminal state retained isolated workspace evidence"
-                ),
-            )
-            self.room_kernel_projection.sync_room(room_id)
-            for root_id in self.room_kernel.root_ids(room_id):
-                root = self.room_kernel.root(root_id)
-                self.room_public_timeline.sync_terminal_root(root)
-                self._project_room_work_from_kernel_root(root)
-        self._run_room_learning_maintenance()
-        self._consume_room_knowledge_cache_tombstones()
 
-    def _reconcile_room_work_from_kernel(self) -> int:
-        projected = 0
-        for room_id in self.room_kernel.room_ids():
-            try:
-                self.rooms.get(room_id)
-            except AgentRoomNotFound:
-                continue
-            for root_id in self.room_kernel.root_ids(room_id):
-                projected += self._project_room_work_from_kernel_root(
-                    self.room_kernel.root(root_id)
-                )
-        return projected
-
-    def _project_room_work_from_kernel_root(
-        self,
-        root: Mapping[str, object],
-    ) -> int:
-        room_id = str(root.get("roomId") or "")
-        root_id = str(root.get("rootId") or "")
-        snapshot = self.room_kernel_projection.snapshot(room_id)
-        final_posts = [
-            item
-            for item in snapshot.get("posts") or []
-            if isinstance(item, Mapping)
-            and item.get("rootId") == root_id
-            and item.get("kind") == "result"
-            and str(item.get("content") or "").strip()
-        ]
-        task_results = [
-            item
-            for item in snapshot.get("tasks") or []
-            if isinstance(item, Mapping)
-            and item.get("rootId") == root_id
-            and str(item.get("resultSummary") or "").strip()
-        ]
-        result_summary = (
-            str(final_posts[-1].get("content") or "")
-            if final_posts
-            else (
-                str(
-                    max(
-                        task_results,
-                        key=lambda item: int(item.get("resultAtMs") or 0),
-                    ).get("resultSummary")
-                    or ""
-                )
-                if task_results
-                else ""
-            )
-        )
-        projected = self.room_work.project_kernel_root(
-            root,
-            result_summary=result_summary,
-        )
-        for work in projected:
-            state = str(work.get("state") or "")
-            self._publish_room_work_activity(
-                work,
-                phase="completed" if state == "done" else state,
-                actor=self.rooms.participant(
-                    str(work["currentOwnerParticipantId"])
-                ),
-            )
-        return len(projected)
 
     def _consume_room_knowledge_cache_tombstones(self) -> int:
         """Clear process-local recall state after durable knowledge invalidation.
@@ -4944,83 +3183,12 @@ class AgentService:
         self.memory_context_application.clear_recall_state(retired.session_ids)
         return retired.consumed
 
-    def _record_room_learning_signal(
-        self,
-        signal: Mapping[str, object],
-    ) -> None:
-        self.room_kernel_runtime.record_learning_signal(signal)
 
-    def _persist_room_learning_event(
-        self,
-        *,
-        root_id: str,
-        dispatch_id: str,
-        taxonomy: str,
-        failure_signature: str,
-        reason: str,
-        now_ms: int,
-    ) -> dict[str, object] | None:
-        return self.room_kernel_runtime.persist_learning_event(
-            root_id=root_id,
-            dispatch_id=dispatch_id,
-            taxonomy=taxonomy,
-            failure_signature=failure_signature,
-            reason=reason,
-            now_ms=now_ms,
-        )
 
-    def _apply_managed_cancel(self, item: Mapping[str, object]) -> Mapping[str, object]:
-        root = self.room_kernel.root(str(item["root_id"]))
-        command = {
-            "schemaVersion": "wisdom-weasel.room-kernel-command.v1",
-            "commandId": f"managed-cancel:{item['cancel_id']}",
-            "rootId": root["rootId"],
-            "roomId": root["roomId"],
-            "commandKind": "cancel_root",
-            "targetKind": "root",
-            "targetId": root["rootId"],
-            "sourceKind": str(item["source_kind"]),
-            "sourceId": str(item["source_receipt_id"]),
-            "idempotencyKey": str(item["cancel_id"]),
-            "generation": int(root["generation"]),
-            "payload": {"dispatchId": item.get("dispatch_id")},
-            "createdAtMs": int(item["created_at_ms"]),
-        }
-        return self.room_kernel_commands.control(command)
 
-    def _run_room_learning_maintenance(self) -> None:
-        now_ms = int(time.time() * 1000)
-        try:
-            self.room_learning_runtime.ingest_kernel_receipts(now_ms=now_ms)
-        except Exception:
-            pass
-        for _ in range(8):
-            try:
-                if self.room_learning_runtime.materialize_once(now_ms=now_ms) is None:
-                    break
-            except Exception:
-                break
-        for _ in range(8):
-            result = self.room_learning_runtime.drain_cancel_once(
-                self._apply_managed_cancel,
-                now_ms=now_ms,
-            )
-            if result is None or result.get("state") != "applied":
-                break
-        try:
-            self.room_learning_runtime.run_reflection_once(now_ms=now_ms)
-        except Exception:
-            pass
 
-    def _revoke_room_runtime_capability(
-        self,
-        session_id: str,
-        now_ms: int,
-    ) -> None:
-        self.room_kernel_runtime.revoke_session(session_id, now_ms)
 
     def close(self) -> None:
-        self.room_kernel_worker_loop.close()
         self.delegation.close()
         self.runtime.stop()
         self.background_jobs.close()
@@ -5032,10 +3200,6 @@ class AgentService:
         self.room_intercom.close()
 
     def reconfigure_runtime(self, config: PiRuntimeConfig) -> dict[str, object]:
-        startup_room_runtime_targets = (
-            self._capture_startup_room_runtime_targets()
-        )
-        self.room_kernel_worker_loop.close()
         self.runtime.stop()
         config = replace(
             config,
@@ -5059,20 +3223,10 @@ class AgentService:
             session_context_provider=self._runtime_session_context,
         )
         self.delegation.reconfigure(config)
-        self._bind_room_kernel_runtime(start_worker=False)
-        self._recover_startup_room_runtime_targets(
-            startup_room_runtime_targets
-        )
-        if self._room_kernel_worker_enabled:
-            self.room_kernel_worker_loop.start()
         self.room_intercom.notify()
         return self.runtime_status()
 
     def _apply_runtime_policy(self, policy: AgentRuntimePolicy) -> dict[str, object]:
-        startup_room_runtime_targets = (
-            self._capture_startup_room_runtime_targets()
-        )
-        self.room_kernel_worker_loop.close()
         self.runtime.stop()
         self.runtime_factory.apply_policy(policy)
         self.runtime = self.runtime_factory.create(
@@ -5089,77 +3243,12 @@ class AgentService:
             session_context_provider=self._runtime_session_context,
         )
         self.delegation.refresh_runtime_factory()
-        self._bind_room_kernel_runtime(start_worker=False)
-        self._recover_startup_room_runtime_targets(
-            startup_room_runtime_targets
-        )
-        if self._room_kernel_worker_enabled:
-            self.room_kernel_worker_loop.start()
         self.room_intercom.notify()
         return self.runtime.runtime_status()
 
     def _record_event(self, event: AgentEventEnvelope) -> None:
         self.event_projection_application.record(event)
 
-    def _record_room_runtime_turn_completed(
-        self,
-        session_id: str,
-        runtime_turn_id: str,
-        dispatch_id: str,
-        created_at_ms: int,
-    ) -> object:
-        recorder = getattr(
-            self.runtime,
-            "record_room_turn_settled",
-            None,
-        )
-        if callable(recorder):
-            return recorder(
-                session_id,
-                runtime_turn_id,
-                dispatch_id,
-                created_at_ms,
-            )
-        existing = self.sessions.runtime_turn_terminal_event(
-            session_id,
-            runtime_turn_id,
-        )
-        if (
-            existing is not None
-            and existing.get("eventType") == "turn_completed"
-        ):
-            return {"replayed": True, "event": existing}
-        corrected_failure_event_id = (
-            str(existing.get("eventId") or "")
-            if existing is not None
-            and existing.get("eventType") == "turn_failed"
-            else ""
-        )
-        self.sessions.set_status(
-            session_id,
-            "idle",
-            updated_at_ms=created_at_ms,
-        )
-        payload: dict[str, object] = {
-            "status": "completed",
-            "dispatchId": dispatch_id,
-            "terminalEvent": "room_commit_settlement",
-        }
-        if corrected_failure_event_id:
-            payload.update(
-                {
-                    "terminalCorrection": True,
-                    "correctsTerminalEventId": corrected_failure_event_id,
-                }
-            )
-        terminal = self.events.publish(
-            session_id,
-            "turn_completed",
-            payload,
-            turn_id=runtime_turn_id,
-            created_at_ms=created_at_ms,
-        )
-        return {"replayed": False, "event": terminal.to_payload()}
 
     def _mirror_event_to_room(self, event: AgentEventEnvelope) -> None:
         if not self.room_turns.allows_room_event(event):
@@ -5175,12 +3264,14 @@ class AgentService:
         topic_id: str = "",
         *,
         dispatch_id: str = "",
+        child: bool = False,
     ) -> None:
         self.room_turns.begin(
             session_id,
             room_turn_id,
             topic_id,
             dispatch_id=dispatch_id,
+            child=child,
         )
 
     def _accept_room_turn(
@@ -5300,13 +3391,9 @@ class AgentService:
             payload,
         )
 
-    def _guard_legacy_room_route(self, route_id: str, session_id: str) -> None:
-        binding = self.room_kernel.session_binding(str(session_id or ""))
-        owner = room_route_owner(route_id, has_room_binding=binding is not None)
-        if binding is not None and owner == "kernel":
-            raise RoomKernelFenceError(
-                f"RoomBinding route {route_id} is owned by Kernel, not the legacy executor"
-            )
+    def _guard_room_session_route(self, route_id: str, session_id: str) -> None:
+        # Pi Session is the sole execution owner for direct and Room prompts.
+        self.sessions.get(str(session_id or ""))
 
     @staticmethod
     def _room_work_operation(
@@ -5343,9 +3430,7 @@ def agent_service_from_environment(
     project: str = "",
     memory_embedding_provider: EmbeddingProvider | None = None,
     wake_scheduler_enabled: bool = True,
-    room_kernel_worker_enabled: bool = True,
 ) -> AgentService:
-    room_kernel_mode = _room_kernel_mode_from_environment()
     return AgentService(
         db_path=db_path,
         runtime_config=PiRuntimeConfig.from_environment(),
@@ -5356,11 +3441,6 @@ def agent_service_from_environment(
         ),
         memory_embedding_provider=memory_embedding_provider,
         wake_scheduler_enabled=wake_scheduler_enabled,
-        room_kernel_mode=room_kernel_mode,
-        room_kernel_worker_enabled=room_kernel_worker_enabled,
-        room_runner_secrets=_room_runner_secrets_from_provider(),
-        room_delivery_gate_enforcement=_room_delivery_gate_enforcement(room_kernel_mode),
-        room_artifact_hash_provider=_room_artifact_hash_provider_from_environment(),
     )
 
 
@@ -5421,7 +3501,6 @@ def agent_service_from_settings(
     project: str = "",
     memory_embedding_provider: EmbeddingProvider | None = None,
     wake_scheduler_enabled: bool = True,
-    room_kernel_worker_enabled: bool = True,
     runtime_execution_owner: bool = True,
 ) -> AgentService:
     runtime_config = pi_runtime_config_from_settings(settings)
@@ -5432,7 +3511,6 @@ def agent_service_from_settings(
         if runtime_config.provider and runtime_config.model
         else "pi/default"
     )
-    room_kernel_mode = _room_kernel_mode_from_environment()
     return AgentService(
         db_path=db_path,
         runtime_config=runtime_config,
@@ -5457,123 +3535,20 @@ def agent_service_from_settings(
         ),
         memory_embedding_provider=memory_embedding_provider,
         wake_scheduler_enabled=wake_scheduler_enabled,
-        room_kernel_mode=room_kernel_mode,
-        room_kernel_worker_enabled=room_kernel_worker_enabled,
         background_job_execution_owner=runtime_execution_owner,
-        room_runner_secrets=_room_runner_secrets_from_provider(),
-        room_delivery_gate_enforcement=_room_delivery_gate_enforcement(room_kernel_mode),
-        room_artifact_hash_provider=_room_artifact_hash_provider_from_environment(),
     )
 
 
-def _room_kernel_mode_from_environment() -> KernelMode:
-    value = os.environ.get("RAG_IME_ROOM_KERNEL_MODE", "off").strip().lower()
-    if value not in {"off", "shadow", "cohort", "test", "kernel_only"}:
-        return "off"
-    if value == "cohort" and os.environ.get("RAG_IME_ROOM_KERNEL_COHORT_ID", "").strip() != "room-v2-test":
-        return "shadow"
-    return value  # type: ignore[return-value]
 
 
-def _room_delivery_gate_enforcement(mode: KernelMode) -> bool:
-    return (
-        mode == "cohort"
-        and os.environ.get("RAG_IME_ROOM_KERNEL_COHORT_ID", "").strip() == "room-v2-test"
-    )
 
 
-def _room_runner_secrets_from_provider() -> dict[str, str]:
-    """Load runner trust only from the service's file-based secret provider."""
-    provider_path = os.environ.get("RAG_IME_ROOM_RUNNER_SECRET_PROVIDER_FILE", "").strip()
-    if not provider_path:
-        return {}
-    value = json.loads(Path(provider_path).expanduser().read_text(encoding="utf-8"))
-    if not isinstance(value, Mapping) or not all(
-        isinstance(key, str) and isinstance(secret, str) and key and secret
-        for key, secret in value.items()
-    ):
-        raise ValueError("Room runner secret provider must contain a non-empty string map")
-    return dict(value)
 
 
-def _room_artifact_hash_provider_from_environment() -> Callable[[str], str] | None:
-    provider_path = os.environ.get("RAG_IME_ROOM_ARTIFACT_HASH_PROVIDER_FILE", "").strip()
-    if not provider_path:
-        return None
-    path = Path(provider_path).expanduser()
-
-    def current_hash(root_id: str) -> str:
-        value = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(value, Mapping):
-            return ""
-        result = value.get(root_id)
-        return str(result) if isinstance(result, str) else ""
-
-    return current_hash
 
 
-def _room_skill_stage(dispatch: Mapping[str, object]) -> str:
-    """Map a Kernel-owned intent to policy selection without letting Skills route."""
-
-    return {
-        "align": "requirements",
-        "execute": "implementation",
-        "review": "vision-review",
-        "revise": "feedback",
-        "retry": "debugging",
-        "resume": "implementation",
-        "wake": "implementation",
-        "callback": "handoff",
-        "close": "closure",
-    }.get(str(dispatch.get("intentKind") or ""), "implementation")
 
 
-def _room_runtime_binding_hash(
-    *,
-    root_id: str,
-    generation: int,
-    capability_epoch: int,
-    static_system_prompt_hash: str,
-    compiled_runtime_profile_ref: object,
-    tool_manifest: Sequence[Mapping[str, object]],
-    room_skill_policy: Mapping[str, object],
-) -> str:
-    """Hash only surfaces that require a new Pi provider-context epoch."""
-
-    tools = [
-        {
-            key: tool.get(key)
-            for key in (
-                "name",
-                "description",
-                "parameters",
-                "when",
-                "notFor",
-                "input",
-                "output",
-                "does",
-                "profile",
-                "risk",
-            )
-        }
-        for tool in sorted(tool_manifest, key=lambda item: str(item.get("name") or ""))
-    ]
-    skill = {
-        key: room_skill_policy.get(key)
-        for key in ("selection", "skillId", "skillHash")
-        if room_skill_policy.get(key) is not None
-    }
-    return _sha256_json(
-        {
-            "rootId": root_id,
-            "generation": generation,
-            "capabilityEpoch": capability_epoch,
-            "staticSystemPromptHash": static_system_prompt_hash,
-            "compiledRuntimeProfileRef": compiled_runtime_profile_ref,
-            "toolSurface": tools,
-            "requiredSkill": skill,
-        }
-    )
 
 
 def _approval_user_request_text(
@@ -5604,55 +3579,8 @@ def _approval_user_request_text(
     return "\n".join(parts)
 
 
-def _room_effective_tool_profile(
-    session_profile: str,
-) -> str:
-    """Tool visibility is independent from the unified execution mode."""
-
-    return str(session_profile or CONTROL_CENTER_TOOL_PROFILE).strip()
 
 
-def _project_read_only_room_tool(
-    tool: Mapping[str, object],
-) -> dict[str, object] | None:
-    """Project a persisted Room tool without workspace mutation operations."""
-
-    name = str(tool.get("name") or "")
-    if not name.startswith("workspace_"):
-        return dict(tool)
-    raw_schema = tool.get("inputSchema")
-    if not isinstance(raw_schema, Mapping):
-        return dict(tool)
-    raw_properties = raw_schema.get("properties")
-    if not isinstance(raw_properties, Mapping):
-        return dict(tool)
-    raw_operation = raw_properties.get("op")
-    if not isinstance(raw_operation, Mapping):
-        return dict(tool)
-    raw_operations = raw_operation.get("enum")
-    if not isinstance(raw_operations, Sequence) or isinstance(
-        raw_operations,
-        (str, bytes),
-    ):
-        return dict(tool)
-    operations = [
-        str(operation)
-        for operation in raw_operations
-        if not read_only_blocks_effect(name, operation)
-    ]
-    if not operations:
-        return None
-    if len(operations) == len(raw_operations):
-        return dict(tool)
-    schema = dict(raw_schema)
-    properties = dict(raw_properties)
-    operation_schema = dict(raw_operation)
-    operation_schema["enum"] = operations
-    properties["op"] = operation_schema
-    schema["properties"] = properties
-    projected = dict(tool)
-    projected["inputSchema"] = schema
-    return projected
 
 
 def _lifecycle_cancellation_request_id(

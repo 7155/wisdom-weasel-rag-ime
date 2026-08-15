@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping
 from typing import Any, Protocol
 
@@ -36,16 +34,6 @@ class ApprovalHost(Protocol):
         self,
         approval: Mapping[str, object],
     ) -> dict[str, object]: ...
-
-    def record_room_product_tool_execution(
-        self,
-        session_id: str,
-        invocation_receipt_id: str,
-        *,
-        status: str,
-        result_hash: str,
-    ) -> dict[str, object]: ...
-
 
 class AgentApprovalApplicationService:
     """Own approval decisions, execution receipts, and external finalization."""
@@ -251,7 +239,7 @@ class AgentApprovalApplicationService:
         approval_id = str(final.get("approvalId") or "")
         session_id = str(final.get("sessionId") or "")
         runtime_notified = False
-        runtime_warning = self._seal_room_terminal_approval(final)
+        runtime_warning = ""
         memory_checkpoint = self.checkpoint_applied(final)
         memory_evidence: dict[str, object] = {}
         if final.get("state") == "applied":
@@ -563,11 +551,6 @@ class AgentApprovalApplicationService:
                     )
                     receipt["externalActionPending"] = False
                     external_action_pending = False
-        if not external_action_pending:
-            receipt = self._seal_missing_room_execution_receipt(
-                decided,
-                receipt,
-            )
         return self.host.sessions.complete_approval(
             approval_id,
             state=(
@@ -579,55 +562,6 @@ class AgentApprovalApplicationService:
             ),
             receipt=receipt,
         )
-
-    def _seal_missing_room_execution_receipt(
-        self,
-        approval: Mapping[str, object],
-        receipt: Mapping[str, object],
-    ) -> dict[str, object]:
-        """Give failed approval execution the same single terminal owner as success."""
-
-        sealed = dict(receipt)
-        invocation_receipt_id = _room_invocation_receipt_id(approval)
-        if (
-            not invocation_receipt_id
-            or isinstance(sealed.get("roomExecutionReceipt"), Mapping)
-        ):
-            return sealed
-        status = (
-            "applied"
-            if sealed.get("mutationApplied") is True
-            else "failed"
-        )
-        result_hash = hashlib.sha256(
-            json.dumps(
-                sealed,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
-        try:
-            execution = self.host.record_room_product_tool_execution(
-                str(approval.get("sessionId") or ""),
-                invocation_receipt_id,
-                status=status,
-                result_hash=result_hash,
-            )
-        except Exception as exc:
-            sealed["roomExecutionWarning"] = (
-                "Room 工具执行终态未写入："
-                + _public_error(exc)
-            )
-            return sealed
-        room_receipt = execution.get("executionReceipt")
-        if isinstance(room_receipt, Mapping):
-            sealed["roomExecutionReceipt"] = dict(room_receipt)
-        else:
-            sealed["roomExecutionWarning"] = (
-                "Room 工具执行终态没有返回执行回执"
-            )
-        return sealed
 
     def checkpoint_applied(
         self,
@@ -672,7 +606,7 @@ class AgentApprovalApplicationService:
         session_id = str(approval.get("sessionId") or "")
         state = str(approval.get("state") or "stale")
         runtime_notified = False
-        runtime_warning = self._seal_room_terminal_approval(approval)
+        runtime_warning = ""
         if pending_in_pi:
             try:
                 self.host.runtime.resolve_approval(
@@ -741,46 +675,6 @@ class AgentApprovalApplicationService:
         ):
             raise ValueError("approval payload is stale")
 
-    def _seal_room_terminal_approval(
-        self,
-        approval: Mapping[str, object],
-    ) -> str:
-        invocation_receipt_id = _room_invocation_receipt_id(approval)
-        state = str(approval.get("state") or "")
-        if not invocation_receipt_id or state not in {
-            "rejected",
-            "expired",
-            "stale",
-        }:
-            return ""
-        status = "rejected" if state == "rejected" else "cancelled"
-        identity = {
-            "approvalId": str(approval.get("approvalId") or ""),
-            "invocationReceiptId": invocation_receipt_id,
-            "state": state,
-        }
-        result_hash = hashlib.sha256(
-            json.dumps(
-                identity,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
-        try:
-            self.host.record_room_product_tool_execution(
-                str(approval.get("sessionId") or ""),
-                invocation_receipt_id,
-                status=status,
-                result_hash=result_hash,
-            )
-        except Exception as exc:
-            return (
-                "Room 工具审批终态未写入，请停止或刷新 Room："
-                + _public_error(exc)
-            )
-        return ""
-
 def _approval_event_identity(
     approval: Mapping[str, object],
 ) -> dict[str, object]:
@@ -812,20 +706,6 @@ def _failed_receipt(
         "reason": reason,
         "error": _public_error(error),
     }
-
-
-def _room_invocation_receipt_id(
-    approval: Mapping[str, object],
-) -> str:
-    preview = approval.get("preview")
-    if not isinstance(preview, Mapping):
-        return ""
-    base_state = preview.get("baseState")
-    if not isinstance(base_state, Mapping):
-        return ""
-    return " ".join(
-        str(base_state.get("roomInvocationReceiptId") or "").split()
-    )[:240]
 
 
 def _append_warning(current: str, addition: str) -> str:

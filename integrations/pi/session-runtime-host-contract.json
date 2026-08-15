@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "rag-ime.pi-session-runtime-host-contract.v1",
+  "sourceRepository": "https://github.com/7155/pi.git",
+  "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
+  "protocolVersion": "2",
+  "minimumHandlersCommit": "0fd0564af34cb40bbcd6b8903c01b36191c4f90d",
+  "requiredMethods": [
+    "session.open",
+    "session.prompt",
+    "session.steer",
+    "session.debug.context",
+    "session.abort",
+    "session.snapshot"
+  ],
+  "handlerSources": {
+    "protocol": "packages/rag-ime-runtime-host/src/protocol.ts",
+    "runtimeHost": "packages/rag-ime-runtime-host/src/runtime-host.ts",
+    "contextInspection": "packages/rag-ime-runtime-host/src/debug-context.ts",
+    "toolBridge": "packages/rag-ime-runtime-host/src/tool-bridge.ts",
+    "session": "packages/rag-ime-runtime-host/src/pi-session.ts"
+  },
+  "requiredSourceMarkers": {
+    "protocol": [
+      "export const PROTOCOL_VERSION = \"2\" as const;",
+      "| \"session.open\"",
+      "| \"session.prompt\"",
+      "| \"session.steer\"",
+      "| \"session.abort\""
+    ],
+    "runtimeHost": [
+      "case \"session.open\"",
+      "case \"session.snapshot\"",
+      "case \"session.debug.context\"",
+      "case \"session.prompt\"",
+      "case \"session.steer\"",
+      "case \"session.abort\"",
+      "sessionCancelOperationRegistry: true"
+    ],
+    "contextInspection": [
+      "const MAX_TOOLS_PER_TURN = 96;",
+      "const MAX_TOOL_UPDATES = 12;",
+      "pi.on(\"tool_execution_start\"",
+      "pi.on(\"tool_execution_end\""
+    ],
+    "toolBridge": [
+      "const MAX_MODEL_RESULT_BYTES = 24 * 1024;",
+      "function boundedModelResult(",
+      "duplicate_${cachedFailure.code}"
+    ],
+    "session": [
+      "async prompt(options:",
+      "async queueMessage(options:",
+      "async abort(): Promise<PiProductSessionAbortReceipt>",
+      "async compact(customInstructions?: string)"
+    ]
+  }
+}

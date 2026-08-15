@@ -67,26 +67,20 @@ notFor:
 
 ## Managed Room Boundary
 
-`room_define` is the alignment commit, not a planning Tool. Consume the
-existing Root/Task, WorkItem, aliases, participant binding, and receipts after
-Kernel handoff. Do not create another Root, Task, Dispatch, WorkItem, or task
-store. The Facilitator owns decomposition, assignment, reassignment,
-dependency handling, and integration; this Skill may describe candidate
-capabilities and owners, but must not silently recruit or create Dispatches.
-The pre-start plan preview is an accepted user-facing constraint, not evidence
-that its work has started.
-Candidate WorkItems remain non-overlapping and review is an optional,
-post-integration Kernel handoff to a distinct participant, never a planning
-child. Stale, foreign, or missing authority returns a governed wait or
-blocker, never replacement state.
-- Consume `room_state` for the current aliases, then use
-  `room_commit(handoff)` only after the active alignment Dispatch has fenced
-  the next target. `room_collaborate` remains only a bounded implementation
-  child; review is an optional post-integration handoff to a distinct
-  participant.
-- Participant Session/Dispatch identity is distinct from filesystem roots.
-  Act only through the bound workspace harness and accepted evidence receipts;
-  a path does not establish isolation.
+- The Facilitator owns decomposition, partner selection, dependency handling,
+  integration, and the single final answer. Planning does not create a second
+  task graph or Kernel state machine.
+- If one Session can finish coherently, keep the work in that Session. Otherwise
+  inspect the roster with `room_partner(operation="list")` and delegate only
+  bounded, non-overlapping work through `room_partner(operation="delegate")`.
+- Each delegation carries the task, expected output, and acceptance criteria in
+  its prompt. Partners read only the directly relevant project documents and
+  return a bounded result event to the Facilitator.
+- Review is optional and risk-driven. When chosen, delegate a fixed review scope
+  to a distinct partner after integration; do not manufacture review for every
+  task.
+- Participant Session identity is distinct from a filesystem root. Record the
+  actual shared or isolated workspace mode; a path alone proves neither.
 
 ## Durable State Gate
 
@@ -121,7 +115,7 @@ Start with `User Source`, then AI interpretation. Return source hash/ref,
 ordered candidates, capability-compatible owner recommendations for the
 Facilitator, blockers, frontier, explicit parallel/serial choice, one
 integration owner/workspace, review-warrant decision, evidence gates,
-non-goals, rollback, and `ready_for_kernel_start`,
+non-goals, rollback, and `ready_for_execution`,
 `needs_alignment_decision`, or `blocked_by_external_fact`. Once the Runtime
 accepts the plan, route the accepted plan reference and exact acceptance
 aliases to `implementation-execution`.
@@ -135,11 +129,11 @@ confirmed requirements or dump every field unless requested.
 - Is each candidate a complete vertical result for one fresh Session?
 - Are blocking edges, frontier, shared owners, order, and rollback explicit?
 - Could one coherent Session do this more simply?
-- Did I leave assignment and roster changes to the Facilitator/Kernel rather
+- Did I leave assignment and roster changes to the Facilitator rather
   than use round-robin or free-text mentions?
 
 ## Boundaries
 
 Do not allocate Agents, create managed work, publish tracker tickets, write
 implementation code, reopen confirmed choices, or invent a hierarchy. A plan
-is not Runtime work until accepted by the Kernel.
+is not Runtime work until the Facilitator starts or delegates it.

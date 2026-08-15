@@ -34,6 +34,7 @@ class RoomTurnRegistry:
         self.lock = RLock()
         self.pending_turn_by_session: dict[str, str] = {}
         self.pending_dispatch_by_session: dict[str, str] = {}
+        self.pending_child_dispatch_by_session: set[str] = set()
         self.turn_by_session_turn: dict[
             tuple[str, str],
             str,
@@ -42,6 +43,7 @@ class RoomTurnRegistry:
             tuple[str, str],
             str,
         ] = {}
+        self.child_dispatch_ids: set[str] = set()
         self.topic_by_room_turn: dict[str, str] = {}
         self.user_priority_sessions: set[str] = set()
         self.cancelled_turns: dict[str, str] = {}
@@ -71,6 +73,7 @@ class RoomTurnRegistry:
         topic_id: str = "",
         *,
         dispatch_id: str = "",
+        child: bool = False,
     ) -> None:
         with self.lock:
             self._discard_pending_events_locked(session_id)
@@ -93,6 +96,10 @@ class RoomTurnRegistry:
                 self.pending_dispatch_by_session[
                     session_id
                 ] = dispatch_id
+            if child:
+                self.pending_child_dispatch_by_session.add(session_id)
+            else:
+                self.pending_child_dispatch_by_session.discard(session_id)
             self.topic_by_room_turn[room_turn_id] = topic_id
 
     def accept(
@@ -122,6 +129,9 @@ class RoomTurnRegistry:
                 self.dispatch_by_session_turn[
                     key
                 ] = dispatch_id
+                if session_id in self.pending_child_dispatch_by_session:
+                    self.child_dispatch_ids.add(dispatch_id)
+            self.pending_child_dispatch_by_session.discard(session_id)
             return self._discard_pending_events_locked(
                 session_id,
                 accepted_turn_id=session_turn_id,
@@ -149,6 +159,7 @@ class RoomTurnRegistry:
                     session_id,
                     None,
                 )
+                self.pending_child_dispatch_by_session.discard(session_id)
                 self._discard_pending_events_locked(session_id)
             for key, value in tuple(
                 self.turn_by_session_turn.items()
@@ -162,10 +173,12 @@ class RoomTurnRegistry:
                             key
                         ] = room_turn_id
                     self.turn_by_session_turn.pop(key, None)
-                    self.dispatch_by_session_turn.pop(
+                    removed_dispatch = self.dispatch_by_session_turn.pop(
                         key,
                         None,
                     )
+                    if removed_dispatch:
+                        self.child_dispatch_ids.discard(removed_dispatch)
             while (
                 len(self.cancelled_turn_by_session_turn)
                 > 4_096
@@ -263,6 +276,28 @@ class RoomTurnRegistry:
                     for key in self.private_intercom_by_session_turn
                 )
             )
+
+    def active_turn(self, session_id: str) -> tuple[str, str]:
+        """Return the public Room root and optional dispatch for one Session.
+
+        Pi owns the private turn.  This registry only keeps the small causal
+        link needed by Room projection, cancellation and nested Tool Agents.
+        """
+
+        with self.lock:
+            pending = self.pending_turn_by_session.get(session_id, "")
+            if pending:
+                return (
+                    pending,
+                    self.pending_dispatch_by_session.get(session_id, ""),
+                )
+            for key, room_turn_id in self.turn_by_session_turn.items():
+                if key[0] == session_id:
+                    return (
+                        room_turn_id,
+                        self.dispatch_by_session_turn.get(key, ""),
+                    )
+        return "", ""
 
     def begin_private_intercom(
         self,
@@ -534,6 +569,14 @@ class RoomTurnRegistry:
                 return dispatch_id
             return ""
 
+    def child_for_event(self, event: AgentEventEnvelope) -> bool:
+        dispatch_id = self.dispatch_for_event(event)
+        with self.lock:
+            return bool(
+                dispatch_id
+                and dispatch_id in self.child_dispatch_ids
+            )
+
     def finish(
         self,
         session_id: str,
@@ -543,7 +586,9 @@ class RoomTurnRegistry:
         with self.lock:
             key = (session_id, session_turn_id)
             self.turn_by_session_turn.pop(key, None)
-            self.dispatch_by_session_turn.pop(key, None)
+            removed_dispatch = self.dispatch_by_session_turn.pop(key, None)
+            if removed_dispatch:
+                self.child_dispatch_ids.discard(removed_dispatch)
             if (
                 self.pending_turn_by_session.get(session_id)
                 == room_turn_id
@@ -556,6 +601,7 @@ class RoomTurnRegistry:
                     session_id,
                     None,
                 )
+                self.pending_child_dispatch_by_session.discard(session_id)
             self._discard_pending_events_locked(session_id)
             self._drop_topic_if_idle(room_turn_id)
 

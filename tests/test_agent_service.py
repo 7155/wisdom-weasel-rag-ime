@@ -19,7 +19,6 @@ from rag_ime.agent_command_receipts import (
 from rag_ime.agent_context_runtime import RUNTIME_PROMPT_ENVELOPE_PREFIX
 from rag_ime.agent_prompt_delivery import AgentPromptAcceptanceUnknown
 from rag_ime.agent_service import AgentService, pi_runtime_config_from_settings
-from rag_ime.agent_room_kernel import RoomKernelFenceError
 from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.agent_workspace import WorkspaceHarness
 from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
@@ -149,200 +148,9 @@ class AgentServiceTests(unittest.TestCase):
         self.service.close()
         self.tmp.cleanup()
 
-    def test_startup_cleanup_recovery_binds_delegation_owner_first(self) -> None:
-        observed: list[dict[str, object]] = []
 
-        def recover_after_owner_bind(coordinator: object) -> list[dict[str, object]]:
-            writer_quiescence = coordinator._writer_quiescence_provider  # type: ignore[attr-defined]
-            owner = writer_quiescence.__self__
-            observed.append(
-                owner._room_root_child_quiescence(
-                    "root:startup-cleanup-order",
-                    0,
-                    "dispatch:startup-cleanup-order",
-                )
-            )
-            return []
 
-        restarted: AgentService | None = None
-        with patch(
-            "rag_ime.agent_service.RoomWorkspaceCoordinator.recover_integrated_cleanups",
-            autospec=True,
-            side_effect=recover_after_owner_bind,
-        ):
-            restarted = AgentService(
-                db_path=self.root / "startup-cleanup-order.sqlite",
-                runtime_config=PiRuntimeConfig(
-                    enabled=False,
-                    executable=None,
-                    agent_dir=self.root / "startup-cleanup-order-agent",
-                    session_dir=self.root / "startup-cleanup-order-sessions",
-                    logs_dir=self.root / "startup-cleanup-order-logs",
-                ),
-                room_kernel_worker_enabled=False,
-                background_job_execution_owner=False,
-            )
-        try:
-            self.assertEqual(len(observed), 1)
-            self.assertFalse(observed[0]["quiescent"], observed[0])
-            self.assertEqual(observed[0]["state"], "unknown")
-            self.assertGreater(int(observed[0]["unknownCount"]), 0)
-        finally:
-            if restarted is not None:
-                restarted.close()
 
-    def test_startup_cleanup_recovery_projects_cleaned_binding_into_kernel(
-        self,
-    ) -> None:
-        cleaned = {
-            "integrated": True,
-            "taskId": "task:startup-cleanup-projection",
-            "workspaceBindingId": "binding:startup-cleanup-projection",
-            "integrationRef": "integration:startup-cleanup-projection",
-            "integrationPatchSha256": "a" * 64,
-            "integratedRevision": "git:startup-cleanup-projection",
-            "integratedSnapshotSha256": "b" * 64,
-            "workspaceLifecycleState": "cleaned",
-            "cleanupState": "cleaned",
-            "attentionRequired": False,
-            "updatedAtMs": 12,
-        }
-        restarted: AgentService | None = None
-        with (
-            patch(
-                "rag_ime.agent_service.RoomWorkspaceCoordinator.recover_integrated_cleanups",
-                autospec=True,
-                return_value=[cleaned],
-            ),
-            patch(
-                "rag_ime.agent_service.RoomKernelStore.record_workspace_integration",
-                autospec=True,
-            ) as project_cleanup,
-        ):
-            restarted = AgentService(
-                db_path=self.root / "startup-cleanup-projection.sqlite",
-                runtime_config=PiRuntimeConfig(
-                    enabled=False,
-                    executable=None,
-                    agent_dir=self.root / "startup-cleanup-projection-agent",
-                    session_dir=self.root / "startup-cleanup-projection-sessions",
-                    logs_dir=self.root / "startup-cleanup-projection-logs",
-                ),
-                room_kernel_worker_enabled=False,
-                background_job_execution_owner=False,
-            )
-        try:
-            project_cleanup.assert_called_once_with(
-                restarted.room_kernel,
-                "task:startup-cleanup-projection",
-                integration_ref="integration:startup-cleanup-projection",
-                workspace_result=cleaned,
-                now_ms=12,
-            )
-        finally:
-            if restarted is not None:
-                restarted.close()
-
-    def test_startup_cleanup_recovery_does_not_project_failed_binding(
-        self,
-    ) -> None:
-        failed = {
-            "taskId": "task:startup-cleanup-failed",
-            "workspaceBindingId": "binding:startup-cleanup-failed",
-            "workspaceLifecycleState": "cleanup_failed",
-            "cleanupState": "failed",
-            "attentionRequired": True,
-            "updatedAtMs": 13,
-        }
-        restarted: AgentService | None = None
-        with (
-            patch(
-                "rag_ime.agent_service.RoomWorkspaceCoordinator.recover_integrated_cleanups",
-                autospec=True,
-                return_value=[failed],
-            ),
-            patch(
-                "rag_ime.agent_service.RoomKernelStore.record_workspace_integration",
-                autospec=True,
-            ) as project_cleanup,
-        ):
-            restarted = AgentService(
-                db_path=self.root / "startup-cleanup-failed.sqlite",
-                runtime_config=PiRuntimeConfig(
-                    enabled=False,
-                    executable=None,
-                    agent_dir=self.root / "startup-cleanup-failed-agent",
-                    session_dir=self.root / "startup-cleanup-failed-sessions",
-                    logs_dir=self.root / "startup-cleanup-failed-logs",
-                ),
-                room_kernel_worker_enabled=False,
-                background_job_execution_owner=False,
-            )
-        try:
-            project_cleanup.assert_not_called()
-        finally:
-            if restarted is not None:
-                restarted.close()
-
-    def test_repeated_runtime_bind_replays_cleanup_through_canonical_projection(
-        self,
-    ) -> None:
-        cleaned = {
-            "integrated": True,
-            "taskId": "task:startup-cleanup-replay",
-            "workspaceBindingId": "binding:startup-cleanup-replay",
-            "integrationRef": "integration:startup-cleanup-replay",
-            "integrationPatchSha256": "c" * 64,
-            "integratedRevision": "git:startup-cleanup-replay",
-            "integratedSnapshotSha256": "d" * 64,
-            "workspaceLifecycleState": "cleaned",
-            "cleanupState": "cleaned",
-            "attentionRequired": False,
-            "updatedAtMs": 14,
-        }
-        restarted: AgentService | None = None
-        with (
-            patch(
-                "rag_ime.agent_service.RoomWorkspaceCoordinator.recover_integrated_cleanups",
-                autospec=True,
-                return_value=[cleaned],
-            ),
-            patch(
-                "rag_ime.agent_service.RoomKernelStore.record_workspace_integration",
-                autospec=True,
-            ) as project_cleanup,
-        ):
-            restarted = AgentService(
-                db_path=self.root / "startup-cleanup-replay.sqlite",
-                runtime_config=PiRuntimeConfig(
-                    enabled=False,
-                    executable=None,
-                    agent_dir=self.root / "startup-cleanup-replay-agent",
-                    session_dir=self.root / "startup-cleanup-replay-sessions",
-                    logs_dir=self.root / "startup-cleanup-replay-logs",
-                ),
-                room_kernel_worker_enabled=False,
-                background_job_execution_owner=False,
-            )
-            restarted._bind_room_kernel_runtime(start_worker=False)
-        try:
-            self.assertEqual(project_cleanup.call_count, 2)
-            for observed in project_cleanup.call_args_list:
-                self.assertEqual(
-                    observed.args,
-                    (restarted.room_kernel, "task:startup-cleanup-replay"),
-                )
-                self.assertEqual(
-                    observed.kwargs,
-                    {
-                        "integration_ref": "integration:startup-cleanup-replay",
-                        "workspace_result": cleaned,
-                        "now_ms": 14,
-                    },
-                )
-        finally:
-            if restarted is not None:
-                restarted.close()
 
     def test_debug_context_forwards_the_runtime_payload(self) -> None:
         session = self.service.create_session({"title": "debug context"})[
@@ -502,103 +310,8 @@ class AgentServiceTests(unittest.TestCase):
         self.assertTrue(deleted["ok"])
         self.assertEqual(self.service.list_sessions()["items"], [])
 
-    def test_direct_agent_prompt_rejects_an_active_room_session_before_runtime(self) -> None:
-        session = self.service.create_session(
-            {"title": "Agent 与 Room 共用"}
-        )["session"]
-        session_id = str(session["id"])
 
-        with (
-            patch.object(
-                self.service.room_kernel,
-                "session_binding",
-                return_value={
-                    "roomId": "room:shared",
-                    "rootId": "root:active",
-                    "dispatchId": "dispatch:active",
-                    "generation": 0,
-                    "state": "running",
-                },
-            ),
-            patch.object(self.service.runtime, "prompt") as runtime_prompt,
-        ):
-            with self.assertRaisesRegex(
-                ValueError,
-                "正在执行 Room 任务",
-            ) as conflict:
-                self.service.prompt(
-                    session_id,
-                    {"message": "从 Agent 页面继续"},
-                )
-            self.assertEqual(
-                conflict.exception.error_code,
-                "AGENT_TURN_CONFLICT",
-            )
 
-        runtime_prompt.assert_not_called()
-
-    def test_agent_runtime_open_rejects_an_active_room_session_before_rebind(self) -> None:
-        session = self.service.create_session(
-            {"title": "Agent 打开 Room Session"}
-        )["session"]
-        session_id = str(session["id"])
-
-        with (
-            patch.object(
-                self.service.room_kernel,
-                "session_binding",
-                return_value={
-                    "roomId": "room:shared",
-                    "rootId": "root:active",
-                    "dispatchId": "dispatch:active",
-                    "generation": 0,
-                    "state": "running",
-                },
-            ),
-            patch.object(self.service.runtime, "ensure") as runtime_ensure,
-        ):
-            with self.assertRaisesRegex(
-                ValueError,
-                "正在执行 Room 任务",
-            ):
-                self.service.ensure_runtime(
-                    {"sessionId": session_id}
-                )
-
-        runtime_ensure.assert_not_called()
-
-    def test_revoked_room_binding_restores_the_ordinary_agent_tool_catalog(self) -> None:
-        session = self.service.create_session(
-            {"title": "Room 收工后继续聊"}
-        )["session"]
-        self.service.bind_tool_manifest_provider(
-            lambda _session: [
-                {
-                    "name": "workspace_read",
-                    "description": "读取工作区文件",
-                    "parameters": {"type": "object"},
-                }
-            ]
-        )
-
-        with (
-            patch.object(
-                self.service.room_capabilities,
-                "manifest_for_runtime",
-                return_value=None,
-            ),
-            patch.object(
-                self.service.room_capabilities,
-                "runtime_binding",
-                return_value={"state": "revoked"},
-            ),
-        ):
-            tools = self.service._runtime_tool_manifest(session)
-
-        self.assertEqual(
-            [str(tool["name"]) for tool in tools],
-            ["workspace_read"],
-        )
 
     def test_room_member_conversation_sessions_remain_visible_in_agent_list(self) -> None:
         room = self.service.create_room(
@@ -868,175 +581,7 @@ class AgentServiceTests(unittest.TestCase):
             json.dumps(context, ensure_ascii=False),
         )
 
-    def test_room_approval_context_is_room_global_and_task_bound(self) -> None:
-        session = self.service.create_session(
-            {"title": "Room 审批上下文"}
-        )["session"]
-        session_id = str(session["id"])
-        with (
-            patch.object(
-                self.service.rooms,
-                "participant_for_session",
-                return_value={
-                    "id": "participant:reviewer",
-                    "roomId": "room:shared",
-                },
-            ),
-            patch.object(
-                self.service.rooms,
-                "list_events",
-                return_value=[
-                    {
-                        "eventType": "user_message",
-                        "payload": {"text": "先检查实现边界。"},
-                        "turnId": "root:1",
-                        "createdAtMs": 10,
-                    },
-                    {
-                        "eventType": "participant_message",
-                        "payload": {
-                            "message": "PRIMARY_ROOM_AGENT_OUTPUT_MUST_BE_EXCLUDED"
-                        },
-                        "turnId": "root:1",
-                        "createdAtMs": 11,
-                    },
-                    {
-                        "eventType": "user_message",
-                        "payload": {"text": "然后完成受限修改。"},
-                        "turnId": "root:2",
-                        "createdAtMs": 12,
-                    },
-                ],
-            ),
-            patch.object(
-                self.service.room_capabilities,
-                "runtime_identity",
-                return_value={"dispatchId": "dispatch:1"},
-            ),
-            patch.object(
-                self.service.room_kernel,
-                "dispatch",
-                return_value={
-                    "dispatchId": "dispatch:1",
-                    "taskId": "task:1",
-                },
-            ),
-            patch.object(
-                self.service.room_kernel,
-                "task",
-                return_value={
-                    "rootId": "root:2",
-                    "taskId": "task:1",
-                    "state": "active",
-                    "objective": "完成受限修改",
-                    "expectedOutput": "验证回执",
-                    "acceptanceCriterionIds": ["criterion:1"],
-                },
-            ),
-        ):
-            context = self.service._approval_model_context(
-                {"sessionId": session_id},
-                session,
-            )
 
-        self.assertTrue(context["contextAvailable"])
-        self.assertEqual(context["contextKind"], "room")
-        self.assertEqual(context["contextId"], "room:shared")
-        self.assertEqual(
-            [request["text"] for request in context["userRequests"]],
-            ["先检查实现边界。", "然后完成受限修改。"],
-        )
-        self.assertEqual(context["currentTask"]["taskId"], "task:1")
-        self.assertEqual(
-            context["currentTask"]["acceptanceCriterionIds"],
-            ["criterion:1"],
-        )
-        self.assertNotIn(
-            "PRIMARY_ROOM_AGENT_OUTPUT_MUST_BE_EXCLUDED",
-            json.dumps(context, ensure_ascii=False),
-        )
-
-    def test_room_approval_context_uses_durable_root_request_after_timeline_churn(self) -> None:
-        session = self.service.create_session(
-            {"title": "Room 审批上下文保留"}
-        )["session"]
-        session_id = str(session["id"])
-        with (
-            patch.object(
-                self.service.rooms,
-                "participant_for_session",
-                return_value={
-                    "id": "participant:worker",
-                    "roomId": "room:shared",
-                },
-            ),
-            patch.object(
-                self.service.rooms,
-                "list_events",
-                return_value=[
-                    {
-                        "eventType": "participant_activity",
-                        "payload": {"summary": "高频工具进展"},
-                        "turnId": "root:current",
-                        "createdAtMs": 30,
-                    }
-                ],
-            ),
-            patch.object(
-                self.service.room_capabilities,
-                "runtime_identity",
-                return_value={"dispatchId": "dispatch:current"},
-            ),
-            patch.object(
-                self.service.room_kernel,
-                "dispatch",
-                return_value={
-                    "dispatchId": "dispatch:current",
-                    "taskId": "task:current",
-                },
-            ),
-            patch.object(
-                self.service.room_kernel,
-                "task",
-                return_value={
-                    "rootId": "root:current",
-                    "taskId": "task:current",
-                    "state": "active",
-                    "objective": "完成用户确认的实现",
-                    "expectedOutput": "测试回执",
-                    "acceptanceCriterionIds": ["criterion:1"],
-                },
-            ),
-            patch.object(
-                self.service.room_kernel,
-                "user_request_posts",
-                return_value=[
-                    {
-                        "role": "user",
-                        "text": "开始行动并运行测试。",
-                        "turnId": "root:current",
-                        "createdAtMs": 20,
-                    }
-                ],
-            ),
-        ):
-            context = self.service._approval_model_context(
-                {"sessionId": session_id},
-                session,
-            )
-
-        self.assertTrue(context["contextAvailable"])
-        self.assertEqual(
-            context["userRequests"],
-            [
-                {
-                    "role": "user",
-                    "text": "开始行动并运行测试。",
-                    "turnId": "root:current",
-                    "createdAtMs": 20,
-                }
-            ],
-        )
 
     def test_full_automation_model_approval_applies_and_audits_a_hash_bound_preview(self) -> None:
         session = self.service.create_session({"title": "完全信任测试"})["session"]
@@ -2104,116 +1649,6 @@ class AgentServiceTests(unittest.TestCase):
                 0,
             )
 
-    def test_room_work_item_drives_start_and_compaction_context(self) -> None:
-        room = self.service.create_room(
-            {
-                "title": "记忆联调",
-                "workspaceRoots": [str(self.root)],
-                "participants": [
-                    {"roleId": "companion-present-v1", "roleVersion": "1"},
-                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
-                ],
-            }
-        )["room"]
-        owner = room["participants"][1]
-        work = self.service.create_room_work_item(
-            str(room["id"]),
-            {
-                "currentOwnerParticipantId": owner["id"],
-                "createdByParticipantId": room["participants"][0]["id"],
-                "clientMessageId": "room-memory-work-1",
-                "objective": "验证 Room Agent 压缩后仍按自己的检索任务召回记忆",
-                "expectedOutput": "一份可复核的 Provider 上下文",
-                "acceptanceCriteria": [
-                    "包含当前任务",
-                    "包含压缩摘要参与的召回结果",
-                ],
-                "state": "active",
-            },
-        )["workItem"]
-        session_id = str(owner["sessionId"])
-
-        with patch.object(
-            self.service.memory_bootstrap,
-            "build",
-            wraps=self.service.memory_bootstrap.build,
-        ) as start_build:
-            started = self.service.refresh_session_context(
-                {
-                    "sessionId": session_id,
-                    "trigger": "session_start",
-                    "queryText": "@Hermes 继续处理",
-                    "recentMessages": [
-                        {"role": "user", "text": "@Hermes 继续处理"},
-                    ],
-                }
-            )
-        start_query = start_build.call_args.kwargs["query_text"]
-        self.assertNotIn("@Hermes", start_query)
-        self.assertIn("继续处理", start_query)
-        self.assertIn(str(work["objective"]), start_query)
-        self.assertEqual(start_build.call_args.kwargs["vector_context_weight"], 0.0)
-        start_context = started["result"]["sessionContext"]
-        self.assertEqual(started["result"]["trigger"], "room_task")
-        self.assertIn(str(work["objective"]), start_context)
-        self.assertIn(str(work["expectedOutput"]), start_context)
-        self.assertIn("包含当前任务", start_context)
-
-        self.service.sessions.mutate_agent_todo(
-            session_id,
-            {
-                "op": "init",
-                "phase": "Room 验收",
-                "items": ["核验 Room Provider Payload"],
-            },
-        )
-        self.service.sessions.mutate_agent_todo(
-            session_id,
-            {"op": "start", "task": "核验 Room Provider Payload"},
-        )
-        with patch.object(
-            self.service.memory_bootstrap,
-            "build",
-            wraps=self.service.memory_bootstrap.build,
-        ) as compact_build:
-            compacted = self.service.refresh_session_context(
-                {
-                    "sessionId": session_id,
-                    "trigger": "compaction",
-                    "summary": "已完成 Room 任务检索设计，正在核验真实载荷。",
-                    "recentMessages": [
-                        {"role": "user", "text": "按 WorkItem 继续"},
-                        {"role": "assistant", "text": "已经完成第一阶段"},
-                    ],
-                }
-            )
-        self.assertEqual(compact_build.call_args.kwargs["vector_context_weight"], 0.0)
-        self.assertEqual(compact_build.call_args.kwargs["vector_context_text"], "")
-        self.assertEqual(compact_build.call_args.kwargs["recent_messages"], [])
-        self.assertNotIn(
-            "已经完成第一阶段",
-            compact_build.call_args.kwargs["retrieval_context_text"],
-        )
-        self.assertIn(
-            "按 WorkItem 继续",
-            compact_build.call_args.kwargs["retrieval_context_text"],
-        )
-        self.assertIn("按 WorkItem 继续", compact_build.call_args.kwargs["query_text"])
-        self.assertIn(str(work["objective"]), compact_build.call_args.kwargs["query_text"])
-        compacted_context = compacted["result"]["sessionContext"]
-        self.assertEqual(compacted["result"]["trigger"], "compaction")
-        self.assertIn(str(work["objective"]), compacted_context)
-        self.assertIn("核验 Room Provider Payload", compacted_context)
-        self.assertNotIn("## 最近对话", compacted_context)
-        self.assertNotIn("已经完成第一阶段", compacted_context)
-        self.assertEqual(
-            compacted["result"]["recentConversationCount"],
-            0,
-        )
-        self.assertNotEqual(
-            started["result"]["itemId"],
-            compacted["result"]["itemId"],
-        )
 
     def test_subagent_task_is_combined_with_live_user_query(self) -> None:
         session = self.service.create_session({"title": "受管子任务"})["session"]
@@ -2256,85 +1691,7 @@ class AgentServiceTests(unittest.TestCase):
             refreshed["result"]["sessionContext"],
         )
 
-    def test_session_context_refresh_fails_closed_on_room_generation_change(self) -> None:
-        session = self.service.create_session({"title": "召回代际栅栏"})["session"]
-        session_id = str(session["id"])
-        before = {
-            "manifestId": "manifest:1",
-            "manifestHash": "a" * 64,
-            "capabilityEpoch": 3,
-            "state": "active",
-        }
-        after = {**before, "capabilityEpoch": 4, "state": "revoked"}
 
-        with patch.object(
-            self.service.room_capabilities,
-            "runtime_binding",
-            side_effect=[before, after],
-        ):
-            with self.assertRaisesRegex(RoomKernelFenceError, "changed"):
-                self.service.refresh_session_context(
-                    {
-                        "sessionId": session_id,
-                        "trigger": "compaction",
-                        "queryText": "继续当前任务",
-                        "summary": "旧代际压缩摘要",
-                    }
-                )
-
-        self.assertIsNone(
-            self.service.context_runtime.active_item(
-                session_id, source_kind="memory_bootstrap"
-            )
-        )
-
-    def test_next_agent_turn_accepts_stably_revoked_room_binding(self) -> None:
-        session = self.service.create_session({"title": "Room 收工后继续对话"})[
-            "session"
-        ]
-        session_id = str(session["id"])
-        revoked = {
-            "manifestId": "manifest:settled",
-            "manifestHash": "b" * 64,
-            "capabilityEpoch": 8,
-            "state": "revoked",
-        }
-
-        with (
-            patch.object(
-                self.service.room_capabilities,
-                "runtime_binding",
-                side_effect=lambda _session_id, *, active_only=True: (
-                    None if active_only else revoked
-                ),
-            ),
-            patch.object(
-                self.service.memory_context_application,
-                "room_recovery_context_provider",
-                return_value="",
-            ),
-        ):
-            refreshed = self.service.refresh_session_context(
-                {
-                    "sessionId": session_id,
-                    "trigger": "turn_start",
-                    "queryText": "Room 已经收工，我们继续普通聊天",
-                    "recentMessages": [
-                        {
-                            "role": "user",
-                            "text": "Room 已经收工，我们继续普通聊天",
-                        }
-                    ],
-                }
-            )
-
-        self.assertTrue(refreshed["ok"])
-        self.assertEqual(
-            refreshed["result"]["trigger"],
-            "first_user_prompt",
-        )
-        self.assertTrue(refreshed["result"]["itemId"])
-        self.assertIsNone(refreshed["result"]["roomContextRecovery"])
 
     def test_next_prompt_repairs_first_query_bootstrap_failure(self) -> None:
         created = self.service.create_session({"title": "可恢复启动上下文"})
@@ -3016,7 +2373,8 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertEqual(accepted["turnId"], "turn:intercom")
         self.assertIn("房间协作消息", prompt.call_args.args[1])
-        self.assertIn("room_post", prompt.call_args.args[1])
+        self.assertIn("在 Room 中直接回复结论", prompt.call_args.args[1])
+        self.assertNotIn("room_post", prompt.call_args.args[1])
         self.assertNotIn("agents.room_reply", prompt.call_args.args[1])
         checkpoint.assert_not_called()
 
@@ -3164,87 +2522,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(response["todo"]["phases"][0]["tasks"][0]["content"], "恢复可见 Todo")
         self.assertEqual(response["todo"]["phases"][0]["tasks"][0]["status"], "in_progress")
 
-    def test_message_snapshot_uses_active_room_workflow_authorization(self) -> None:
-        session = self.service.create_session({"title": "Room 快照授权"})["session"]
-        session_id = str(session["id"])
-        live = {
-            "rootId": "root:active",
-            "dispatchId": "dispatch:active",
-            "generation": 7,
-        }
-        manifest = {
-            "rootId": "root:active",
-            "dispatchId": "dispatch:active",
-            "generation": 7,
-        }
-        binding = {"state": "active"}
 
-        with (
-            patch.object(
-                self.service.room_kernel,
-                "session_binding",
-                return_value=live,
-            ),
-            patch.object(
-                self.service.room_capabilities,
-                "manifest_for_runtime",
-                return_value=(manifest, binding),
-            ),
-            patch.object(self.service.runtime, "messages", return_value=[]),
-        ):
-            workflow = self.service.workflow_state(session_id)
-            response = self.service.messages(session_id)
-
-        self.assertEqual(response["todo"], workflow["todo"])
-        self.assertEqual(response["goal"], workflow["goal"])
-        self.assertEqual(response["actGate"], workflow["actGate"])
-        self.assertTrue(response["actGate"]["allowed"])
-        self.assertEqual(response["actGate"]["reason"], "approved")
-
-    def test_message_snapshot_falls_back_to_user_request_when_room_authority_is_fenced(self) -> None:
-        session = self.service.create_session({"title": "Room 快照撤权"})["session"]
-        session_id = str(session["id"])
-        live = {
-            "rootId": "root:current",
-            "dispatchId": "dispatch:current",
-            "generation": 8,
-        }
-        stale_manifest = {
-            "rootId": "root:current",
-            "dispatchId": "dispatch:current",
-            "generation": 7,
-        }
-        cases = {
-            "revoked": None,
-            "generation_fenced": (stale_manifest, {"state": "active"}),
-        }
-
-        for name, bound in cases.items():
-            with self.subTest(name=name):
-                with (
-                    patch.object(
-                        self.service.room_kernel,
-                        "session_binding",
-                        return_value=live,
-                    ),
-                    patch.object(
-                        self.service.room_capabilities,
-                        "manifest_for_runtime",
-                        return_value=bound,
-                    ),
-                    patch.object(self.service.runtime, "messages", return_value=[]),
-                ):
-                    workflow = self.service.workflow_state(session_id)
-                    response = self.service.messages(session_id)
-
-                self.assertEqual(response["todo"], workflow["todo"])
-                self.assertEqual(response["goal"], workflow["goal"])
-                self.assertEqual(response["actGate"], workflow["actGate"])
-                self.assertTrue(response["actGate"]["allowed"])
-                self.assertEqual(
-                    response["actGate"]["reason"],
-                    "user_execution_request",
-                )
 
     def test_message_snapshot_reconciles_provider_loop_count_to_visible_messages(self) -> None:
         session = self.service.create_session({"title": "可见消息计数"})["session"]
@@ -3457,17 +2735,18 @@ class AgentServiceTests(unittest.TestCase):
             {"title": "Room 完整快照兼容"}
         )["session"]
         session_id = str(session["id"])
+        durable_history = []
         for index in range(60):
-            self.service.events.publish(
+            durable_history.append(self.service.events.publish(
                 session_id,
                 "reasoning_summary",
                 {"summary": f"完整进展 {index + 1}"},
                 turn_id="turn:full",
                 created_at_ms=100 + index,
-            )
+            ).to_payload())
         runtime_snapshot = {
             "messages": [],
-            "toolHistoryEvents": [],
+            "toolHistoryEvents": durable_history,
             "telemetry": None,
             "messageQueue": None,
         }
@@ -3493,6 +2772,147 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(len(response["liveEvents"]), 60)
         self.assertNotIn("snapshotScope", response)
         self.assertNotIn("partial", response)
+
+    def test_idle_snapshot_drops_settled_stream_journal_and_uses_durable_activity(
+        self,
+    ) -> None:
+        session = self.service.create_session(
+            {"title": "已完成流不重放"}
+        )["session"]
+        session_id = str(session["id"])
+        turn_id = "turn:settled-stream"
+        for index in range(500):
+            self.service.events.publish(
+                session_id,
+                "text_delta",
+                {
+                    "messageId": f"{turn_id}:assistant",
+                    "blockId": f"{turn_id}:assistant:text",
+                    "contentIndex": 0,
+                    "delta": f"LINE-{index + 1}\n",
+                    "replaceBlock": index == 0,
+                },
+                turn_id=turn_id,
+            )
+        self.service.events.publish(
+            session_id,
+            "message_completed",
+            {"message": {"id": f"{turn_id}:assistant"}},
+            turn_id=turn_id,
+        )
+        self.service.events.publish(
+            session_id,
+            "turn_completed",
+            {"status": "completed"},
+            turn_id=turn_id,
+        )
+        self.service.events.publish(
+            session_id,
+            "status_changed",
+            {"status": "aborting", "pendingAdmission": True},
+        )
+        self.assertTrue(self.service.events.flush())
+        durable_reasoning = AgentEventEnvelope(
+            event_id=f"{session_id}:history:reasoning",
+            session_id=session_id,
+            turn_id="history:user-1",
+            sequence=1,
+            created_at_ms=100,
+            event_type="reasoning_summary",
+            payload={"summary": "已完成的公开思考摘要"},
+            resume_token=f"{session_id}:history:reasoning",
+        ).to_payload()
+        with patch.object(
+            self.service.runtime,
+            "session_snapshot",
+            create=True,
+            return_value={
+                "messages": [],
+                "toolHistoryEvents": [durable_reasoning],
+                "telemetry": None,
+                "messageQueue": None,
+            },
+        ):
+            response = self.service.messages(session_id)
+
+        self.assertEqual(
+            [event["eventType"] for event in response["liveEvents"]],
+            ["reasoning_summary"],
+        )
+        self.assertLess(
+            len(json.dumps(response["liveEvents"], ensure_ascii=False)),
+            2_000,
+        )
+
+    def test_active_snapshot_coalesces_stream_deltas(self) -> None:
+        session = self.service.create_session(
+            {"title": "活动流压缩"}
+        )["session"]
+        session_id = str(session["id"])
+        turn_id = "turn:active-stream"
+        self.service.sessions.set_status(session_id, "busy")
+        for index in range(100):
+            self.service.events.publish(
+                session_id,
+                "text_delta",
+                {
+                    "messageId": f"{turn_id}:assistant",
+                    "blockId": f"{turn_id}:assistant:text",
+                    "contentIndex": 0,
+                    "delta": str(index),
+                    "replaceBlock": index == 0,
+                },
+                turn_id=turn_id,
+            )
+        self.service.events.publish(
+            session_id,
+            "status_changed",
+            {"status": "busy"},
+        )
+        self.assertTrue(self.service.events.flush())
+        with (
+            patch.object(
+                self.service.runtime,
+                "session_snapshot",
+                create=True,
+                return_value={
+                    "messages": [],
+                    "toolHistoryEvents": [],
+                    "telemetry": None,
+                    "messageQueue": None,
+                },
+            ),
+            patch.object(
+                self.service.runtime,
+                "runtime_status",
+                return_value={
+                    "status": "busy",
+                    "activeSessionIds": [session_id],
+                    "activeSessionId": session_id,
+                },
+            ),
+        ):
+            response = self.service.messages(session_id)
+
+        deltas = [
+            event
+            for event in response["liveEvents"]
+            if event["eventType"] == "text_delta"
+        ]
+        self.assertEqual(len(deltas), 1)
+        self.assertEqual(
+            deltas[0]["payload"]["delta"],
+            "".join(str(index) for index in range(100)),
+        )
+        self.assertTrue(deltas[0]["payload"]["replaceBlock"])
+        self.assertEqual(
+            [
+                event["payload"]["status"]
+                for event in response["liveEvents"]
+                if event["eventType"] == "status_changed"
+            ],
+            ["busy"],
+        )
 
     def test_recent_view_keeps_ordinary_session_on_full_snapshot_contract(
         self,
@@ -3736,253 +3156,6 @@ class AgentServiceTests(unittest.TestCase):
             len(expected_ids),
         )
 
-    def test_revoked_room_session_context_recovers_only_own_public_turn(
-        self,
-    ) -> None:
-        room = self.service.create_room(
-            {
-                "title": "结算后 Session 连续性",
-                "workspaceRoots": [str(self.root)],
-                "participants": [
-                    {
-                        "roleId": "companion-present-v1",
-                        "roleVersion": "1",
-                    },
-                    {
-                        "roleId": "companion-firstlight-v1",
-                        "roleVersion": "1",
-                    },
-                ],
-            }
-        )["room"]
-        target = room["participants"][0]
-        other = room["participants"][1]
-        room_id = str(room["id"])
-        session_id = str(target["sessionId"])
-        root_id = "room-root:continuity"
-        self.service.rooms.append_event(
-            room_id=room_id,
-            event_type="user_message",
-            payload={
-                "text": "完成三成员协作任务并核对测试结果",
-            },
-            turn_id=root_id,
-            created_at_ms=10,
-        )
-        self.service.rooms.append_event(
-            room_id=room_id,
-            event_type="participant_message",
-            payload={
-                "resultPublic": False,
-                "data": {
-                    "message": {
-                        "text": "PRIVATE-LATE-RESULT-MUST-NOT-LEAK",
-                    }
-                },
-            },
-            turn_id=root_id,
-            participant_id=str(target["id"]),
-            source_session_id=session_id,
-            created_at_ms=20,
-        )
-        own_post = {
-            "postId": "post:continuity:delivery",
-            "rootId": root_id,
-            "dispatchId": "dispatch:continuity",
-            "generation": 3,
-            "content": "三成员任务已完成，聚焦测试全部通过。",
-        }
-        self.service.rooms.append_event(
-            room_id=room_id,
-            event_type="room_post",
-            payload={"post": own_post},
-            turn_id=root_id,
-            participant_id=str(target["id"]),
-            source_session_id=session_id,
-            created_at_ms=30,
-        )
-        self.service.rooms.append_event(
-            room_id=room_id,
-            event_type="room_post",
-            payload={"post": own_post},
-            turn_id=root_id,
-            participant_id=str(target["id"]),
-            source_session_id=session_id,
-            created_at_ms=31,
-        )
-        self.service.rooms.append_event(
-            room_id=room_id,
-            event_type="room_post",
-            payload={
-                "post": {
-                    "postId": "post:wrong-dispatch",
-                    "rootId": root_id,
-                    "dispatchId": "dispatch:other-attempt",
-                    "generation": 3,
-                    "content": (
-                        "WRONG-DISPATCH-POST-MUST-NOT-LEAK"
-                    ),
-                }
-            },
-            turn_id=root_id,
-            participant_id=str(target["id"]),
-            source_session_id=session_id,
-            created_at_ms=31,
-        )
-        self.service.rooms.append_event(
-            room_id=room_id,
-            event_type="room_post",
-            payload={
-                "post": {
-                    "postId": "post:other",
-                    "rootId": root_id,
-                    "content": "OTHER-PARTICIPANT-MUST-NOT-LEAK",
-                }
-            },
-            turn_id=root_id,
-            participant_id=str(other["id"]),
-            source_session_id=str(other["sessionId"]),
-            created_at_ms=32,
-        )
-        self.service.rooms.append_event(
-            room_id=room_id,
-            event_type="room_post",
-            payload={
-                "post": {
-                    "postId": "post:wrong-root",
-                    "rootId": "room-root:later",
-                    "content": "WRONG-ROOT-LATE-POST-MUST-NOT-LEAK",
-                }
-            },
-            turn_id="room-root:later",
-            participant_id=str(target["id"]),
-            source_session_id=session_id,
-            created_at_ms=33,
-        )
-        tombstone = {
-            "manifestId": "manifest:continuity",
-            "manifestHash": "a" * 64,
-            "capabilityEpoch": 8,
-            "state": "revoked",
-        }
-        identity = {
-            "roomId": room_id,
-            "rootId": root_id,
-            "dispatchId": "dispatch:continuity",
-            "generation": 3,
-        }
-
-        with (
-            patch.object(
-                self.service.room_capabilities,
-                "manifest_for_runtime",
-                return_value=None,
-            ),
-            patch.object(
-                self.service.room_capabilities,
-                "runtime_binding",
-                return_value=tombstone,
-            ),
-            patch.object(
-                self.service.room_capabilities,
-                "runtime_identity",
-                return_value=identity,
-            ),
-            patch.object(
-                self.service.context_runtime,
-                "materialize",
-                return_value={
-                    "itemIds": [],
-                    "items": [],
-                    "prompt": "",
-                    "charCount": 0,
-                },
-            ),
-            patch.object(
-                self.service.runtime,
-                "prompt",
-                return_value={
-                    "accepted": True,
-                    "turnId": "turn:continuity",
-                    "piEntryId": "entry:continuity",
-                    "response": {"success": True},
-                },
-            ) as runtime_prompt,
-        ):
-            accepted, _trace_id, _context_count = (
-                self.service.prompt_delivery_application.deliver(
-                    session_id,
-                    (
-                        "SESSION-CONTINUITY-AFTER-ROOM："
-                        "确认刚才的三成员任务和测试结果"
-                    ),
-                    client_message_id="continuity:1",
-                    source_kind="user",
-                )
-            )
-
-        self.assertTrue(accepted["accepted"])
-        runtime_message = str(runtime_prompt.call_args.args[1])
-        self.assertTrue(
-            runtime_message.startswith(RUNTIME_PROMPT_ENVELOPE_PREFIX)
-        )
-        envelope = json.loads(
-            runtime_message[len(RUNTIME_PROMPT_ENVELOPE_PREFIX):]
-        )
-        self.assertEqual(
-            envelope["message"],
-            (
-                "SESSION-CONTINUITY-AFTER-ROOM："
-                "确认刚才的三成员任务和测试结果"
-            ),
-        )
-        self.assertEqual(
-            runtime_message.count("SESSION-CONTINUITY-AFTER-ROOM"),
-            1,
-        )
-        session_context = str(envelope["sessionContext"])
-        self.assertEqual(
-            session_context.count("完成三成员协作任务并核对测试结果"),
-            1,
-        )
-        self.assertEqual(
-            session_context.count("三成员任务已完成，聚焦测试全部通过。"),
-            1,
-        )
-        for private_text in (
-            "PRIVATE-LATE-RESULT-MUST-NOT-LEAK",
-            "OTHER-PARTICIPANT-MUST-NOT-LEAK",
-            "WRONG-DISPATCH-POST-MUST-NOT-LEAK",
-            "WRONG-ROOT-LATE-POST-MUST-NOT-LEAK",
-        ):
-            self.assertNotIn(private_text, session_context)
-        encoded_packet = session_context.split(
-            "<room-public-recovery>\n",
-            1,
-        )[1].split("\n</room-public-recovery>", 1)[0]
-        packet = json.loads(encoded_packet)
-        self.assertLessEqual(
-            len(encoded_packet.encode("utf-8")),
-            3_600,
-        )
-        self.assertFalse(packet["activeRoomDispatch"])
-        self.assertEqual(packet["rootId"], root_id)
-        self.assertEqual(
-            packet["dispatchId"],
-            "dispatch:continuity",
-        )
-        self.assertEqual(packet["generation"], 3)
-        self.assertEqual(packet["capabilityEpoch"], 8)
-        self.assertEqual(
-            [
-                (message["role"], message.get("postId"))
-                for message in packet["messages"]
-            ],
-            [
-                ("user", None),
-                ("assistant", "post:continuity:delivery"),
-            ],
-        )
 
     def test_message_snapshot_keeps_completed_tools_after_replay_eviction(self) -> None:
         session = self.service.create_session({"title": "工具历史恢复"})["session"]
@@ -4526,6 +3699,62 @@ class AgentServiceTests(unittest.TestCase):
         deleted = self.service.delete_session(session_id)
         self.assertEqual(deleted["mediaFilesDeleted"], 1)
         self.assertEqual(list(self.service.media.root.glob("*.blob")), [])
+
+    def test_prompt_reserves_runtime_admission_before_context_dispatch(
+        self,
+    ) -> None:
+        session = self.service.create_session({"title": "early stop fence"})[
+            "session"
+        ]
+        session_id = str(session["id"])
+        timeline: list[str] = []
+
+        def reserve(*_args, **_kwargs):
+            timeline.append("reserve")
+            return {"reserved": True}
+
+        def prompt(*_args, **_kwargs):
+            timeline.append("prompt")
+            return {
+                "accepted": True,
+                "turnId": "turn:early-stop-fence",
+                "piEntryId": "pi-entry:early-stop-fence",
+                "response": {"success": True},
+            }
+
+        def release(*_args, **_kwargs):
+            timeline.append("release")
+            return False
+
+        with (
+            patch.object(
+                self.service.runtime,
+                "reserve_prompt_admission",
+                create=True,
+                side_effect=reserve,
+            ),
+            patch.object(
+                self.service.runtime,
+                "prompt",
+                side_effect=prompt,
+            ),
+            patch.object(
+                self.service.runtime,
+                "release_prompt_admission",
+                create=True,
+                side_effect=release,
+            ),
+        ):
+            response = self.service.prompt(
+                session_id,
+                {
+                    "message": "立即发送后停止",
+                    "clientMessageId": "web-early-stop-fence",
+                },
+            )
+
+        self.assertTrue(response["accepted"])
+        self.assertEqual(timeline, ["reserve", "prompt", "release"])
 
     def test_room_prompt_checkpoint_preserves_room_media_ownership(
         self,
@@ -5607,94 +4836,6 @@ class AgentServiceTests(unittest.TestCase):
                 {"runId": "memory-run-1", "decision": "approve"},
             )
 
-    def test_sidecar_restart_is_released_to_pi_then_finalized_by_new_process(self) -> None:
-        session = self.service.create_session({"title": "Sidecar 两阶段重启"})["session"]
-        approval = self.service.sessions.create_approval(
-            session_id=str(session["id"]),
-            tool_name="runtime",
-            operation="restart_sidecar",
-            payload_sha256="d" * 64,
-            preview={
-                "summary": "重启 Sidecar",
-                "baseState": {
-                    "roomInvocationReceiptId": "invoke:external:test"
-                },
-            },
-            risk_level="R2",
-        )
-        command = ["launchctl", "kickstart", "-k", "gui/501/com.rag-ime.sidecar"]
-        command_sha256 = hashlib.sha256(
-            json.dumps(command, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
-                "utf-8"
-            )
-        ).hexdigest()
-
-        self.service.bind_approval_executor(
-            lambda value: {
-                "schemaVersion": "rag-ime.agent-operation-receipt.v1",
-                "mutationApplied": False,
-                "externalActionPending": True,
-                "approvalId": value["approvalId"],
-                "toolId": "runtime",
-                "operation": "restart_sidecar",
-                "summary": "等待 Pi 回合结束",
-                "externalAction": "restart_sidecar",
-                "externalCommand": command,
-                "externalCommandSha256": command_sha256,
-            }
-        )
-        with (
-            patch.object(self.service.runtime, "has_pending_approval", return_value=True),
-            patch.object(self.service.runtime, "resolve_approval") as resolve,
-        ):
-            pending = self.service.decide_approval(
-                str(approval["approvalId"]),
-                {"decision": "approve", "payloadSha256": "d" * 64},
-            )
-
-        self.assertEqual(pending["approval"]["state"], "external_pending")
-        self.assertEqual(pending["approval"]["receipt"]["originProcessId"], 100)
-        self.assertFalse(pending["approval"]["receipt"]["mutationApplied"])
-        resolve.assert_called_once_with(
-            str(session["id"]),
-            str(approval["approvalId"]),
-            approved=True,
-            resolution_state="external_pending",
-        )
-        finalize_payload = {
-            "payloadSha256": "d" * 64,
-            "externalAction": "restart_sidecar",
-            "externalCommandSha256": command_sha256,
-            "succeeded": True,
-            "exitCode": 0,
-            "timedOut": False,
-        }
-        with self.assertRaisesRegex(ValueError, "new Sidecar process"):
-            self.service.finalize_external_approval(str(approval["approvalId"]), finalize_payload)
-
-        self.process_id = 101
-        with patch.object(
-            self.service,
-            "record_room_product_tool_execution",
-            return_value={"ok": True},
-        ) as room_record:
-            finalized = self.service.finalize_external_approval(
-                str(approval["approvalId"]),
-                finalize_payload,
-            )
-        self.assertEqual(finalized["approval"]["state"], "applied")
-        self.assertTrue(finalized["approval"]["receipt"]["mutationApplied"])
-        self.assertFalse(finalized["approval"]["receipt"]["externalActionPending"])
-        self.assertEqual(finalized["approval"]["receipt"]["finalProcessId"], 101)
-        room_record.assert_called_once()
-        self.assertEqual(room_record.call_args.kwargs["status"], "applied")
-        self.assertEqual(
-            room_record.call_args.args,
-            (str(session["id"]), "invoke:external:test"),
-        )
-        events, _ = self.service.events.replay(str(session["id"]))
-        self.assertEqual(events[-1].event_type, "approval_resolved")
-        self.assertTrue(events[-1].payload["externalFinalized"])
 
     def test_final_user_prompt_creates_private_source_checkpoint_without_activity(self) -> None:
         session = self.service.create_session({"title": "连续记忆"})["session"]

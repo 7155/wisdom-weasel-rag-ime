@@ -63,63 +63,31 @@ weakens the requirements.
 
 ## Managed Room Intake
 
-- The facilitator/reporter owns one alignment Root/Task/Dispatch. Inspect
-  `room_state`; never fan out work before requirements are settled.
-- For a bounded choice, use `room_commit` with `decision="wait"`,
-  `waitingFor="user"`, `questionKind="bounded"`,
-  `question="<one prompt>"`, and `questionOptions=[...]` containing 2-5
-  unique options with at most one `recommended`. If no honest bounded set
-  exists, explicitly use `questionKind="unbounded"` and omit
-  `questionOptions` rather than inventing choices. This is not a second
-  question Tool.
-- The next ordinary Room message answers the wait: append its source span to the
-  RequirementAnchor and make one new resume Dispatch under the same Root; never
-  reuse the alignment Dispatch.
-- Once settled, re-read `room_state`, use `tool_search`, then one `tool_load` for
-  `room_define`. It binds one RequirementCatalog and is terminal for that model
-  turn. When no material clarification was needed, call it directly without a
-  confirmation message; never substitute `room_commit deliver` for definition.
-- If the user requires a pre-start plan, first use `room_state` to resolve the
-  active participant names. Put a concise user-facing preview in
-  `room_define.expectedOutput`: participant names, one complete vertical user
-  outcome per participant, blocking dependencies and waves, integration, and
-  cross-review boundaries. This pre-start plan is disclosure only: do not
-  recruit, dispatch, inspect files, run commands, or claim work has begun.
-- The Facilitator owns decomposition. `room_collaborate` creates only bounded,
-  non-overlapping implementation work, never intake or review.
-- `room_post` is not a second clarification channel; it carries material progress.
-  Only the facilitator/reporter emits the final public summary.
-- Filesystem roots are not participant identity. Require receipts; do not claim
-  automatic Git worktree cloning or isolation without proof.
+- A Room is a small composition of ordinary Pi Sessions. The Facilitator keeps
+  the user-facing turn and final answer; it does not create a second workflow or
+  wait for a Kernel definition step.
+- Use `room_partner(operation="list")` only when the current roster matters.
+  Use `room_partner(operation="delegate")` after alignment for bounded work
+  whose task, expected output, and acceptance are explicit. Use
+  `room_partner(operation="post")` only for material public progress.
+- A partner result is evidence for the Facilitator, not an automatic decision or
+  final answer. The Facilitator integrates it, asks any remaining material user
+  question normally, and emits the Room's single final response.
+- Temporary micro-agents created through Session tools remain private to their
+  Session tree, but may discover live peers with `agents(op="status")` and call
+  one another directly with `agents(op="call", targetRunId=..., message=...)`.
+  Promote work to a formal Room partner only when it should be visible in the
+  Room timeline or independently attributable.
+- A shared filesystem path is not proof of isolation, ownership, or completion.
+  State the actual workspace mode and verification boundary instead of claiming
+  automatic Worktree creation.
 
 ## Explicit Grill Mode
 
-In explicit Grill Mode, map the material decisions as a dependency tree,
-including nonblocking tradeoffs. Work it in rounds. Each round asks the current
-frontier: at most four independent questions whose prerequisites are already
-settled. Recommend an answer for each, then wait. A dependent question belongs
-to a later round. Recompute the frontier after every answer, investigate facts
-yourself, and stop only after the user confirms shared understanding.
-
-### Comprehension Repair
-
-If the user says they do not understand, asks “wait, what?”, or their answer
-shows that the question depends on a missing concept, pause the decision tree.
-Do not repeat the same question, add pressure, or treat confusion as a wrong
-answer.
-
-1. Give the smallest context needed for the current decision in short, plain
-   sentences. Use the user's confirmed vocabulary; define at most one new term.
-2. State the recommended answer directly and show one tiny concrete example.
-3. Replace the unlanded question with one smaller bounded question. Ask only
-   whether the user accepts the recommendation or which observable outcome they
-   prefer.
-4. Resume the decision tree only after that smaller choice lands. If the choice
-   is reversible and within authority, take the recommended default instead of
-   turning missing technical knowledge into work for the user.
-
-Comprehension repair teaches enough to decide; it does not start a second Grill
-session, weaken acceptance, or silently record an answer the user did not give.
+In explicit Grill Mode, explore every material decision-tree branch in
+dependency order, including nonblocking tradeoffs. Ask one question at a time,
+recommend an answer, and wait. Investigate facts yourself. Do not stop merely
+because planning could begin; stop only after the user confirms shared understanding.
 
 ## Output Contract
 

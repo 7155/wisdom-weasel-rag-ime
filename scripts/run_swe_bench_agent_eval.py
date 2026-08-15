@@ -329,7 +329,6 @@ def _run_case(
                 tool_gateway_url=spool.tool_gateway_url,
                 tool_gateway_token=spool.token,
                 wake_scheduler_enabled=False,
-                room_kernel_worker_enabled=False,
                 background_job_execution_owner=False,
             )
             gateway = ControlToolGateway(

@@ -92,12 +92,12 @@ class AgentPromptAuditTests(unittest.TestCase):
             prompt = collaboration_role(item["roleId"], item["version"]).system_prompt
             self.assertIn("<work-lens", prompt)
             self.assertIn("<room-work>", prompt)
-            self.assertIn("room_commit", prompt)
-            self.assertEqual(prompt.count("## 让用户看得懂"), 1)
-            self.assertIn("方法、可观察结果、风险", prompt)
-            self.assertIn("不得包含隐藏逐 token 推理", prompt)
-            self.assertIn("当前工作卡片的全部剩余责任", prompt)
-            self.assertIn("room_commit.evidence", prompt)
+            self.assertIn("room_partner", prompt)
+            self.assertIn("普通 Pi Session", prompt)
+            self.assertIn("唯一最终回复", prompt)
+            self.assertNotIn("room_commit", prompt)
+            self.assertNotIn("room_define", prompt)
+            self.assertNotIn("room_collaborate", prompt)
             self.assertNotIn("收工前", prompt)
 
         for item in collaboration_profile_catalog():
@@ -177,16 +177,14 @@ class AgentPromptAuditTests(unittest.TestCase):
     ) -> None:
         prompt = collaboration_role("implementer", "1").system_prompt
 
-        self.assertIn("用户最初的目标和已经确认的要求是共同边界", prompt)
-        self.assertIn("开始、交接、复核和最终回复前都要重新", prompt)
-        self.assertIn("当前工作卡片是你这一轮唯一负责的部分", prompt)
-        self.assertIn("其他伙伴只负责被邀请的明确子任务", prompt)
-        self.assertIn("用 room_state", prompt)
+        self.assertIn("普通 Pi Session 的轻量组合", prompt)
+        self.assertIn("使用 room_partner 查看伙伴并委派有界任务", prompt)
+        self.assertIn("使用 agents\n创建微型子 Agent", prompt)
+        self.assertIn("共享工作区允许普通写入", prompt)
         self.assertIn("不要代替独立审查", prompt)
-        self.assertIn("不要在\n公开内容里出现 Kernel、Root、Dispatch", prompt)
-        self.assertIn("room_commit.evidence", prompt)
-        self.assertIn("不得改写、拼接、猜测", prompt)
-        self.assertIn("room_commit 暂存\n成功后立即结束本轮", prompt)
+        self.assertIn("伙伴结果不是整个 Room 的最终回复", prompt)
+        self.assertNotIn("room_state", prompt)
+        self.assertNotIn("room_commit", prompt)
 
     def test_facilitator_owns_integration_review_routing_and_final_reply(
         self,
@@ -195,28 +193,23 @@ class AgentPromptAuditTests(unittest.TestCase):
         prompt = role.system_prompt
 
         self.assertEqual(role.display_name, "主持整合者")
-        self.assertIn("Root 首位接收者是临时 Facilitator", prompt)
+        self.assertIn("当前协作的临时 Facilitator", prompt)
         self.assertIn("集成、端到端验证", prompt)
-        self.assertIn("普通分工使用\nroom_collaborate", prompt)
-        self.assertIn("parallel Room 必须在集成验证后交给独立", prompt)
-        self.assertIn(
-            "room_commit(decision=handoff, intent=review)",
-            prompt,
-        )
+        self.assertIn("正式 Room 伙伴时使用 room_partner 委派", prompt)
+        self.assertIn("私有微型助手时使用 agents", prompt)
+        self.assertIn("是否需要独立 Reviewer 由风险决定", prompt)
         self.assertIn("唯一最终回复", prompt)
 
-    def test_facilitator_fans_out_ready_peer_slices_before_local_implementation(
+    def test_facilitator_avoids_forced_fanout_and_fake_workspace_isolation(
         self,
     ) -> None:
         prompt = collaboration_role("coordinator", "1").system_prompt
 
-        self.assertIn("四位伙伴都可以承担功能切片", prompt)
-        self.assertIn("先完成所有当前可并行的 room_collaborate", prompt)
-        self.assertIn("再读取实现文件或运行实现命令", prompt)
-        self.assertIn("复核是集成后的临时任务职责", prompt)
-        self.assertIn("有修改可能的功能切片一开始就用 isolated_writable", prompt)
-        self.assertIn("只读任务不能靠改目标、handoff 或换负责人变成可写", prompt)
-        self.assertIn("新建可写实现切片", prompt)
+        self.assertIn("只有工作确实独立时并行", prompt)
+        self.assertIn("共享工作区允许普通写入", prompt)
+        self.assertIn("有冲突风险时改为顺序执行", prompt)
+        self.assertNotIn("isolated_writable", prompt)
+        self.assertNotIn("Kernel", prompt)
 
     def test_unpinned_role_book_is_zero_bytes_not_a_status_message(self) -> None:
         persona = agent_role("companion-present-v1", "1").persona_prompt

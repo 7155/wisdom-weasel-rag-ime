@@ -95,5 +95,5 @@ or `blocked_by_missing_evidence`.
 
 Do not refactor to satisfy a line-count target, invent a second runtime path,
 silently change public contracts, open managed execution, or claim architectural
-improvement without a focused diff and fresh verification. Kernel lifecycle and
+improvement without a focused diff and fresh verification. Runtime lifecycle and
 native permission rules remain authoritative.

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import uuid
-
-from .agent_room_kernel import kernel_owns_room_execution
 from .agent_room_turn_registry import (
     RoomSessionBusyError,
     RoomTurnRegistry,
@@ -15,18 +13,16 @@ from typing import Any, Protocol
 ROOM_CONTEXT_UNREAD_MESSAGE_LIMIT = 12
 
 
-class LegacyRoomHost(Protocol):
+class RoomSessionHost(Protocol):
     rooms: Any
     personas: Any
     role_books: Any
     room_work: Any
     room_events: Any
-    room_kernel: Any
-    room_application: Any
     room_turns: RoomTurnRegistry
     _context_source_token: object
 
-    def _restore_legacy_room_participant_sessions(
+    def _restore_room_participant_sessions(
         self,
         room: Mapping[str, object],
     ) -> None: ...
@@ -36,7 +32,7 @@ class LegacyRoomHost(Protocol):
         session_id: str,
     ) -> Mapping[str, object]: ...
 
-    def _guard_legacy_room_route(
+    def _guard_room_session_route(
         self,
         route: str,
         session_id: str,
@@ -60,16 +56,16 @@ class LegacyRoomHost(Protocol):
     ) -> dict[str, object]: ...
 
 
-class RoomLegacyDispatchService:
-    """Dispatch ordinary Room conversation through participant Sessions.
+class RoomSessionDispatchService:
+    """Dispatch every Room request through ordinary participant Pi Sessions.
 
-    Managed work remains Kernel-only. The same Session-backed path is retained
-    for pre-Kernel installations so conversation mirroring has one owner.
+    Room contributes routing and bounded context. Pi remains the sole owner of
+    turns, tools, Steer, Stop and compaction.
     """
 
     def __init__(
         self,
-        host: LegacyRoomHost,
+        host: RoomSessionHost,
         *,
         build_participant_prompt: Callable[..., str],
         resolve_attachments: Callable[
@@ -95,15 +91,6 @@ class RoomLegacyDispatchService:
             if str(work_item_id or "").strip()
             else "room.message.conversation"
         )
-        if kernel_owns_room_execution(self.host.room_kernel.mode):
-            return self.host.room_application.post_message(
-                room_id,
-                message=message,
-                client_message_id=client_message_id,
-                requested_participant_ids=requested_participant_ids,
-                work_item_id=work_item_id,
-                attachment_ids=attachment_ids,
-            )
         return self._post_session_messages(
             room_id,
             message=message,
@@ -111,49 +98,7 @@ class RoomLegacyDispatchService:
             requested_participant_ids=requested_participant_ids,
             work_item_id=work_item_id,
             attachment_ids=attachment_ids,
-            guard_legacy_route=True,
             route_id=route_id,
-        )
-
-    def post_conversation(
-        self,
-        room_id: str,
-        *,
-        message: str,
-        client_message_id: str,
-        requested_participant_ids: Sequence[str],
-        attachment_ids: Sequence[str],
-    ) -> dict[str, object]:
-        """Route ordinary chat to one responder; WorkItems use Kernel."""
-
-        room = self.host.rooms.get(room_id)
-        if (
-            kernel_owns_room_execution(self.host.room_kernel.mode)
-            and str(room.get("roomKind") or "collaboration")
-            == "collaboration"
-        ):
-            # An unaddressed message is ordinary conversation, not an implicit
-            # WorkItem. The Kernel still owns its single selected Dispatch;
-            # only a caller supplying a confirmed WorkItem may open managed
-            # alignment or parallel work lanes.
-            return self.host.room_application.post_message(
-                room_id,
-                message=message,
-                client_message_id=client_message_id,
-                requested_participant_ids=requested_participant_ids,
-                work_item_id="",
-                attachment_ids=attachment_ids,
-            )
-
-        return self._post_session_messages(
-            room_id,
-            message=message,
-            client_message_id=client_message_id,
-            requested_participant_ids=requested_participant_ids,
-            work_item_id="",
-            attachment_ids=attachment_ids,
-            guard_legacy_route=False,
-            route_id="room.message.conversation",
         )
 
     def _post_session_messages(
@@ -165,11 +110,10 @@ class RoomLegacyDispatchService:
         requested_participant_ids: Sequence[str],
         work_item_id: str,
         attachment_ids: Sequence[str],
-        guard_legacy_route: bool,
         route_id: str,
     ) -> dict[str, object]:
         room = self.host.rooms.get(room_id)
-        self.host._restore_legacy_room_participant_sessions(room)
+        self.host._restore_room_participant_sessions(room)
         work_item: dict[str, object] | None = None
         authoritative_participant_id = ""
         if work_item_id:
@@ -222,6 +166,10 @@ class RoomLegacyDispatchService:
             requested_participant_ids=requested_participant_ids,
             profiles=profiles,
             authoritative_participant_id=authoritative_participant_id,
+            # A Room is one lead Session with optional child/partner Sessions,
+            # not an automatic broadcast.  Explicit @mentions can still fan
+            # out; an unaddressed request always starts one lead turn.
+            conversation_only=work_item is None,
         )
         if work_item is not None:
             for decision in decisions:
@@ -240,12 +188,11 @@ class RoomLegacyDispatchService:
         )
         if len(set(target_session_ids)) != len(target_session_ids):
             raise RuntimeError("Room routing produced duplicate participant Sessions")
-        if guard_legacy_route:
-            for session_id in target_session_ids:
-                self.host._guard_legacy_room_route(
-                    route_id,
-                    session_id,
-                )
+        for session_id in target_session_ids:
+            self.host._guard_room_session_route(
+                route_id,
+                session_id,
+            )
 
         target_by_session_id = {
             session_id: target
@@ -460,9 +407,7 @@ class RoomLegacyDispatchService:
             "ok": True,
             "accepted": bool(successful),
             "status": "accepted" if successful else "rejected",
-            "executionOwner": (
-                "session" if work_item is None else "legacy_work_item"
-            ),
+            "executionOwner": "session",
             "phase": (
                 "alignment"
                 if work_item is None
@@ -554,14 +499,32 @@ class RoomLegacyDispatchService:
             }
         except Exception as exc:
             self.host._cancel_room_turn(session_id, room_turn_id)
+            child = decision.get("child") is True
             self.host.room_events.publish(
                 room_id=str(room["id"]),
-                event_type="turn_failed",
-                payload={
-                    "rootId": room_turn_id,
-                    "dispatchId": dispatch_id,
-                    "error": _public_error(exc),
-                },
+                event_type=(
+                    "participant_activity" if child else "turn_failed"
+                ),
+                payload=(
+                    {
+                        "activityKind": "child",
+                        "phase": "failed",
+                        "status": "dispatch_failed",
+                        "rootId": room_turn_id,
+                        "childDispatchId": dispatch_id,
+                        "dispatchId": dispatch_id,
+                        "parentDispatchId": str(
+                            decision.get("parentDispatchId") or ""
+                        ),
+                        "error": _public_error(exc),
+                    }
+                    if child
+                    else {
+                        "rootId": room_turn_id,
+                        "dispatchId": dispatch_id,
+                        "error": _public_error(exc),
+                    }
+                ),
                 turn_id=room_turn_id,
                 participant_id=participant_id,
                 source_session_id=session_id,

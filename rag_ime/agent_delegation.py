@@ -26,7 +26,6 @@ from .agent_runtime_driver import (
 )
 from .agent_sessions import AgentSessionStore
 from .agent_templates import AgentTemplate, agent_template, agent_template_catalog
-from .agent_tool_ids import ASSISTANT_CONTROL_TOOL_IDS
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 from .pi_runtime import PiRuntimeConfig, PiRuntimeDriverFactory, PiRuntimeManager
@@ -67,6 +66,36 @@ _DELEGATION_TASK_CONTRACT: dict[str, object] = {
             "items": {"type": "string", "minLength": 1, "maxLength": 1_000},
         },
         "outputSchema": {"type": "object"},
+        "modelProfile": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 240,
+            "pattern": r"^[^/\s]+/[^/\s]+$",
+        },
+        "thinkingLevel": {
+            "type": "string",
+            "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+        },
+        "access": {
+            "type": "string",
+            "enum": ["inherit", "read_only", "write"],
+        },
+        "allowedTools": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "uniqueItems": True,
+            "items": {"type": "string", "minLength": 1, "maxLength": 120},
+        },
+        "piSkillsEnabled": {"type": "boolean"},
+        "codexSkillsEnabled": {"type": "boolean"},
+        "workspaceRoots": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "uniqueItems": True,
+            "items": {"type": "string", "minLength": 1, "maxLength": 1024},
+        },
     },
 }
 
@@ -316,264 +345,14 @@ class AgentDelegationStore:
                 "SELECT COUNT(*) FROM agent_subagent_runs WHERE state IN ('queued', 'running')"
             ).fetchone()
         return int(row[0] if row else 0)
-    def root_child_quiescence(
-        self,
-        *,
-        root_id: str,
-        generation: int,
-        dispatch_id: str = "",
-    ) -> dict[str, object]:
-        normalized_root = _bounded_text(root_id, maximum=240, required=True)
-        normalized_generation = max(0, int(generation))
-        normalized_dispatch = _bounded_text(dispatch_id, maximum=240)
-        dispatch_clause = " AND b.causal_dispatch_id = ?" if normalized_dispatch else ""
-        values: tuple[object, ...] = (
-            normalized_root,
-            normalized_dispatch,
-        ) if normalized_dispatch else (
-            normalized_root,
-        )
-        try:
-            with self._connect() as conn:
-                root = conn.execute(
-                    "SELECT generation, state FROM room_kernel_roots WHERE root_id = ?",
-                    (normalized_root,),
-                ).fetchone()
-                rows = conn.execute(
-                    f"""
-                    SELECT r.id, r.batch_id, r.state, b.abort_requested,
-                           b.causal_room_id, b.causal_root_id,
-                           b.causal_task_id, b.causal_dispatch_id,
-                           b.causal_generation
-                    FROM agent_subagent_runs AS r
-                    JOIN agent_subagent_batches AS b ON b.id = r.batch_id
-                    WHERE b.room_bound = 1
-                      AND b.causal_root_id = ?
-                      {dispatch_clause}
-                      AND r.state IN ('queued', 'running')
-                    ORDER BY r.created_at_ms, r.id
-                    """,
-                    values,
-                ).fetchall()
-        except Exception as exc:
-            return _root_child_quiescence_unknown(
-                root_id=normalized_root,
-                generation=normalized_generation,
-                dispatch_id=normalized_dispatch,
-                error=exc,
-                target_kind="delegationRun",
-            )
-        errors: list[str] = []
-        if root is None:
-            errors.append("room root lineage is unavailable")
-        elif int(root["generation"]) != normalized_generation:
-            errors.append("room root generation is stale")
-        targets: list[dict[str, object]] = []
-        counts = {"queued": 0, "running": 0, "cancelling": 0}
-        for row in rows:
-            row_generation = int(row["causal_generation"] or 0)
-            row_dispatch = str(row["causal_dispatch_id"] or "")
-            exact = (
-                row_generation == normalized_generation
-                and (not normalized_dispatch or row_dispatch == normalized_dispatch)
-            )
-            persisted_state = str(row["state"])
-            effective_state = (
-                "queued"
-                if persisted_state == "queued"
-                else "cancelling"
-                if bool(row["abort_requested"])
-                else "running"
-            )
-            if not exact:
-                targets.append(
-                    {
-                        "targetKind": "delegationRun",
-                        "targetId": str(row["id"]),
-                        "batchId": str(row["batch_id"]),
-                        "state": "unknown",
-                        "roomId": str(row["causal_room_id"] or ""),
-                        "rootId": str(row["causal_root_id"] or ""),
-                        "generation": row_generation,
-                        "taskId": str(row["causal_task_id"] or ""),
-                        "dispatchId": row_dispatch,
-                    }
-                )
-                continue
-            counts[effective_state] += 1
-            targets.append(
-                {
-                    "targetKind": "delegationRun",
-                    "targetId": str(row["id"]),
-                    "batchId": str(row["batch_id"]),
-                    "state": effective_state,
-                    "roomId": str(row["causal_room_id"] or ""),
-                    "rootId": str(row["causal_root_id"] or ""),
-                    "generation": row_generation,
-                    "taskId": str(row["causal_task_id"] or ""),
-                    "dispatchId": row_dispatch,
-                }
-            )
-        unknown_count = len(errors) + sum(
-            1 for target in targets if target["state"] == "unknown"
-        )
-        return {
-            "schemaVersion": "rag-ime.root-child-quiescence.v1",
-            "owner": "delegation",
-            "rootId": normalized_root,
-            "generation": normalized_generation,
-            "dispatchId": normalized_dispatch,
-            "state": (
-                "unknown"
-                if unknown_count
-                else "pending"
-                if targets
-                else "quiescent"
-            ),
-            "quiescent": not targets and not errors,
-            "pendingCount": len(targets) + len(errors),
-            "unknownCount": unknown_count,
-            "counts": {**counts, "total": sum(counts.values())},
-            "pendingTargets": targets,
-            "errors": errors[:8],
-        }
-
-    def request_root_abort(
-        self,
-        *,
-        request_id: str,
-        root_id: str,
-        generation: int,
-        dispatch_id: str = "",
-        reason: str = "Room Root cancelled",
-        requested_at_ms: int | None = None,
-    ) -> dict[str, object]:
-        normalized_request_id = _bounded_text(request_id, maximum=240, required=True)
-        normalized_root = _bounded_text(root_id, maximum=240, required=True)
-        normalized_generation = max(0, int(generation))
-        normalized_dispatch = _bounded_text(dispatch_id, maximum=240)
-        normalized_reason = _bounded_text(reason, maximum=240) or "Room Root cancelled"
-        dispatch_clause = " AND b.causal_dispatch_id = ?" if normalized_dispatch else ""
-        values: tuple[object, ...] = (
-            normalized_root,
-            normalized_generation,
-            normalized_dispatch,
-        ) if normalized_dispatch else (
-            normalized_root,
-            normalized_generation,
-        )
-        now = _timestamp(requested_at_ms)
-        affected_run_ids: list[str] = []
-        active_run_ids: list[str] = []
-        blocked_run_ids: list[str] = []
-        batch_ids: list[str] = []
-        with self._connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            batches = conn.execute(
-                f"""
-                SELECT b.id, b.lifecycle_cancel_request_id
-                FROM agent_subagent_batches AS b
-                WHERE b.room_bound = 1
-                  AND b.causal_root_id = ?
-                  AND b.causal_generation = ?
-                  {dispatch_clause}
-                  AND b.state IN ('queued', 'running')
-                ORDER BY b.created_at_ms, b.id
-                """,
-                values,
-            ).fetchall()
-            for batch in batches:
-                batch_id = str(batch["id"])
-                owner = str(batch["lifecycle_cancel_request_id"] or "")
-                if owner not in {"", normalized_request_id}:
-                    blocked = conn.execute(
-                        """
-                        SELECT id FROM agent_subagent_runs
-                        WHERE batch_id = ? AND state IN ('queued', 'running')
-                        ORDER BY ordinal, id
-                        """,
-                        (batch_id,),
-                    ).fetchall()
-                    blocked_run_ids.extend(str(run["id"]) for run in blocked)
-                    continue
-                batch_ids.append(batch_id)
-                conn.execute(
-                    """
-                    UPDATE agent_subagent_batches
-                    SET abort_requested = 1,
-                        lifecycle_cancel_request_id = ?,
-                        updated_at_ms = ?
-                    WHERE id = ? AND lifecycle_cancel_request_id IN ('', ?)
-                    """,
-                    (normalized_request_id, now, batch_id, normalized_request_id),
-                )
-                runs = conn.execute(
-                    """
-                    SELECT id, state FROM agent_subagent_runs
-                    WHERE batch_id = ? ORDER BY ordinal, id
-                    """,
-                    (batch_id,),
-                ).fetchall()
-                for run in runs:
-                    run_id = str(run["id"])
-                    state = str(run["state"])
-                    if state not in {"queued", "running"}:
-                        continue
-                    affected_run_ids.append(run_id)
-                    if state == "queued":
-                        conn.execute(
-                            """
-                            UPDATE agent_subagent_runs
-                            SET state = 'aborted', error = ?,
-                                updated_at_ms = ?, completed_at_ms = ?
-                            WHERE id = ? AND state = 'queued'
-                            """,
-                            (normalized_reason, now, now, run_id),
-                        )
-                        self._append_event_conn(
-                            conn,
-                            run_id=run_id,
-                            event_type="aborted",
-                            payload={
-                                "reason": "room_root_cancelled",
-                                "requestId": normalized_request_id,
-                                "rootId": normalized_root,
-                                "generation": normalized_generation,
-                                "dispatchId": normalized_dispatch,
-                            },
-                            created_at_ms=now,
-                        )
-                    else:
-                        active_run_ids.append(run_id)
-                self._refresh_batch_conn(conn, batch_id, updated_at_ms=now)
-        return {
-            "schemaVersion": "rag-ime.root-child-cancellation.v1",
-            "owner": "delegation",
-            "requestId": normalized_request_id,
-            "rootId": normalized_root,
-            "generation": normalized_generation,
-            "dispatchId": normalized_dispatch,
-            "batchIds": batch_ids,
-            "affectedRunIds": affected_run_ids,
-            "activeRunIds": active_run_ids,
-            "pendingRunIds": [*active_run_ids, *blocked_run_ids],
-        }
-
     def room_delivery_allowed(self, run_id: str) -> bool:
         try:
             with self._connect() as conn:
                 row = conn.execute(
                     """
-                    SELECT b.room_bound, b.causal_root_id, b.causal_dispatch_id,
-                           b.causal_generation, root.generation AS root_generation,
-                           root.state AS root_state, dispatch.state AS dispatch_state,
-                           dispatch.generation AS dispatch_generation
+                    SELECT b.abort_requested
                     FROM agent_subagent_runs AS r
                     JOIN agent_subagent_batches AS b ON b.id = r.batch_id
-                    LEFT JOIN room_kernel_roots AS root
-                      ON root.root_id = b.causal_root_id
-                    LEFT JOIN room_kernel_dispatches AS dispatch
-                      ON dispatch.dispatch_id = b.causal_dispatch_id
                     WHERE r.id = ?
                     """,
                     (run_id,),
@@ -582,19 +361,9 @@ class AgentDelegationStore:
             return False
         if row is None:
             return False
-        if not bool(row["room_bound"]):
-            return True
-        return bool(
-            row["causal_root_id"]
-            and row["causal_dispatch_id"]
-            and row["root_generation"] is not None
-            and int(row["root_generation"]) == int(row["causal_generation"])
-            and str(row["root_state"]) in {"running", "waiting"}
-            and row["dispatch_generation"] is not None
-            and int(row["dispatch_generation"]) == int(row["causal_generation"])
-            and str(row["dispatch_state"])
-            in {"pending", "leased", "running", "retry_wait", "timer_wait"}
-        )
+        # The parent Session owns child delivery. Abort is the only durable
+        # fence; there is no parallel Room Kernel generation to consult.
+        return not bool(row["abort_requested"])
 
     def terminal_child_sessions(
         self,
@@ -1890,33 +1659,108 @@ class AgentDelegationCoordinator:
                 for ordinal, (task, template) in enumerate(zip(tasks, templates, strict=True)):
                     parent_profile = str(parent.get("toolProfileVersion") or "control-center-v1")
                     parent_execution_mode = str(parent.get("executionMode") or "").strip()
+                    access = str(task.get("access") or "inherit")
+                    writable = access == "write"
+                    if writable and str(parent.get("mode") or "") != "coordinator":
+                        raise ValueError("writable delegated tasks require a coordinator parent")
+                    parent_roots = [str(value) for value in parent.get("workspaceRoots") or []]
+                    requested_roots = [str(value) for value in task.get("workspaceRoots") or []]
+                    child_roots = (requested_roots or parent_roots) if writable else []
+                    if writable and not child_roots:
+                        raise ValueError("writable delegated tasks require an authorized workspace")
+                    if requested_roots:
+                        authorized_roots = {
+                            str(Path(value).expanduser().resolve(strict=False))
+                            for value in parent_roots
+                        }
+                        if any(
+                            str(Path(value).expanduser().resolve(strict=False))
+                            not in authorized_roots
+                            for value in requested_roots
+                        ):
+                            raise ValueError(
+                                "delegated workspaceRoots must be inherited from the parent Session"
+                            )
                     child_profile = (
                         "subagent-readonly-v1"
-                        if parent_profile == "subagent-readonly-v1"
+                        if access == "read_only"
+                        or parent_profile == "subagent-readonly-v1"
                         or parent_execution_mode == "read_only"
+                        else "subagent-worker-v1"
+                        if writable
                         else template.tool_profile_version
                     )
+                    child_mode = "coordinator" if writable else "assistant"
+                    child_execution_mode = parent_execution_mode if writable else None
                     child = self.sessions.create(
                         title=f"{template.display_name} · {_bounded_text(task['task'], maximum=72)}",
-                        mode="assistant",
+                        mode=child_mode,
                         role_id=str(parent.get("roleId") or "companion-present-v1"),
                         role_version=str(parent.get("roleVersion") or "1"),
                         role_book_revision_id=str(
                             parent.get("roleBookRevisionId") or ""
                         ),
-                        model_profile=str(parent.get("modelProfile") or "pi/default"),
+                        model_profile=str(
+                            task.get("modelProfile")
+                            or parent.get("modelProfile")
+                            or "pi/default"
+                        ),
+                        thinking_level=str(
+                            task.get("thinkingLevel")
+                            if task.get("thinkingLevel") is not None
+                            else parent.get("thinkingLevel") or ""
+                        ),
                         tool_profile_version=child_profile,
+                        execution_mode=child_execution_mode,
+                        pi_skills_enabled=bool(
+                            task.get("piSkillsEnabled")
+                            if task.get("piSkillsEnabled") is not None
+                            else parent.get("piSkillsEnabled", False)
+                        ),
+                        codex_skills_enabled=bool(
+                            task.get("codexSkillsEnabled")
+                            if task.get("codexSkillsEnabled") is not None
+                            else parent.get("codexSkillsEnabled", False)
+                        ),
+                        workspace_roots=child_roots,
                         session_kind="subagent_runtime",
                     )
+                    requested_tools = (
+                        list(
+                            dict.fromkeys(
+                                str(value)
+                                for value in task.get("allowedTools") or []
+                            )
+                        )
+                        if "allowedTools" in task
+                        else None
+                    )
                     if str(parent.get("toolAllowlistMode") or "profile") == "explicit":
-                        parent_tools = {str(value) for value in parent.get("allowedTools") or []}
+                        parent_tool_order = [
+                            str(value) for value in parent.get("allowedTools") or []
+                        ]
+                        parent_tools = set(parent_tool_order)
+                        requested_tools = (
+                            parent_tool_order
+                            if requested_tools is None
+                            else [
+                                tool for tool in requested_tools if tool in parent_tools
+                            ]
+                        )
+                    if requested_tools is not None:
                         child = self.sessions.set_runtime_policy(
                             str(child["id"]),
-                            mode="assistant",
+                            mode=child_mode,
                             tool_profile_version=child_profile,
-                            allowed_tools=[
-                                tool for tool in ASSISTANT_CONTROL_TOOL_IDS if tool in parent_tools
-                            ],
+                            execution_mode=child_execution_mode,
+                            grant_workspace_scope=(
+                                writable
+                                and bool(parent.get("workspaceScopeGranted"))
+                            ),
+                            allowed_tools=requested_tools,
+                            pi_skills_enabled=bool(child.get("piSkillsEnabled")),
+                            codex_skills_enabled=bool(child.get("codexSkillsEnabled")),
+                            workspace_roots=child_roots,
                         )
                     if context_mode == "fork":
                         branch = native_forks[ordinal]
@@ -2002,18 +1846,124 @@ class AgentDelegationCoordinator:
                     parent_session_id=parent_session_id,
                     limit=_bounded_int(payload.get("limit") or 20, minimum=1, maximum=100),
                 ),
+                "peers": self._peer_runs(parent_session_id),
             }
         try:
             batch = self.store.get_batch(identifier)
         except KeyError:
             run = self.store.get_run(identifier)
             batch = self.store.get_batch(str(run["batchId"]))
-        _assert_batch_owner(batch, parent_session_id)
+        self._assert_delegation_tree_access(parent_session_id, batch)
         return {
             "schemaVersion": "rag-ime.agent-delegation-status.v1",
             "ok": True,
             "batch": batch,
+            "peers": self._peer_runs(parent_session_id),
         }
+
+    def call(self, caller_session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        """Deliver one direct message to another live subagent Session.
+
+        Pi remains the only message runtime: this adapter only proves that the
+        caller and target belong to the same bounded delegation tree, then
+        injects an ordinary steer into the target Session. The target may call
+        the sender back through the same operation.
+        """
+
+        self.sessions.require_goal_execution(caller_session_id)
+        target_run_id = _bounded_text(
+            payload.get("targetRunId"), maximum=240, required=True
+        )
+        message = _bounded_text(payload.get("message"), maximum=4_000, required=True)
+        target_run = self.store.get_run(target_run_id)
+        target_batch = self.store.get_batch(str(target_run["batchId"]))
+        self._assert_delegation_tree_access(caller_session_id, target_batch)
+        caller_run = self.store.run_for_child_session(caller_session_id)
+        if caller_run is not None and str(caller_run.get("id") or "") == target_run_id:
+            raise ValueError("a subagent cannot call itself")
+        if str(target_run.get("state") or "") != "running":
+            raise ValueError("target subagent is not running")
+
+        active = self._active_run(target_run_id)
+        caller_run_id = str(caller_run.get("id") or "") if caller_run else ""
+        sender = (
+            f"子 Agent {caller_run_id}"
+            if caller_run_id
+            else f"主持 Session {caller_session_id}"
+        )
+        delivery = dict(
+            active.runtime.prompt(
+                active.child_session_id,
+                f"[{sender} 直接调用]\n{message}",
+                client_message_id=_bounded_text(
+                    payload.get("_toolCallId") or f"peer-call:{uuid.uuid4()}",
+                    maximum=240,
+                ),
+                delivery="steer",
+            )
+        )
+        return {
+            "schemaVersion": "rag-ime.agent-peer-call.v1",
+            "ok": True,
+            "accepted": True,
+            "callerSessionId": caller_session_id,
+            "callerRunId": caller_run_id,
+            "targetRunId": target_run_id,
+            "targetSessionId": str(target_run["childSessionId"]),
+            "delivery": str(delivery.get("delivery") or "steer"),
+            "turnId": str(delivery.get("turnId") or ""),
+        }
+
+    def _peer_runs(self, session_id: str) -> list[dict[str, object]]:
+        root_session_id = self._delegation_root_session_id(session_id)
+        caller_run = self.store.run_for_child_session(session_id)
+        caller_run_id = str(caller_run.get("id") or "") if caller_run else ""
+        peers: list[dict[str, object]] = []
+        for batch in self.store.list_batches(limit=200):
+            if (
+                self._delegation_root_session_id(str(batch["parentSessionId"]))
+                != root_session_id
+            ):
+                continue
+            for run in batch["runs"]:
+                run_id = str(run["id"])
+                if run_id == caller_run_id:
+                    continue
+                peers.append(
+                    {
+                        "runId": run_id,
+                        "childSessionId": str(run["childSessionId"]),
+                        "templateId": str(run["templateId"]),
+                        "state": str(run["state"]),
+                        "task": _bounded_text(run.get("task"), maximum=240),
+                        "callable": str(run["state"]) == "running",
+                    }
+                )
+        return peers
+
+    def _assert_delegation_tree_access(
+        self,
+        session_id: str,
+        batch: Mapping[str, object],
+    ) -> None:
+        caller_root = self._delegation_root_session_id(session_id)
+        target_root = self._delegation_root_session_id(
+            str(batch.get("parentSessionId") or "")
+        )
+        if not caller_root or caller_root != target_root:
+            raise ValueError("delegated run does not belong to this Session tree")
+
+    def _delegation_root_session_id(self, session_id: str) -> str:
+        current = str(session_id or "").strip()
+        seen: set[str] = set()
+        while current and current not in seen:
+            seen.add(current)
+            run = self.store.run_for_child_session(current)
+            if run is None:
+                return current
+            batch = self.store.get_batch(str(run["batchId"]))
+            current = str(batch.get("parentSessionId") or "")
+        return current
 
     def console(self, parent_session_id: str, run_id: str) -> dict[str, object]:
         run = self.store.get_run(run_id)
@@ -2327,100 +2277,6 @@ class AgentDelegationCoordinator:
                 "pendingRunIds": pending_run_ids,
                 "graceMs": self._cancellation_grace_ms,
             },
-        }
-
-    def root_child_quiescence(
-        self,
-        *,
-        root_id: str,
-        generation: int,
-        dispatch_id: str = "",
-    ) -> dict[str, object]:
-        return self.store.root_child_quiescence(
-            root_id=root_id,
-            generation=generation,
-            dispatch_id=dispatch_id,
-        )
-
-    def cancel_root_children(
-        self,
-        *,
-        request_id: str,
-        root_id: str,
-        generation: int,
-        dispatch_id: str = "",
-        reason: str = "Room Root cancelled",
-    ) -> dict[str, object]:
-        selection = self.store.request_root_abort(
-            request_id=request_id,
-            root_id=root_id,
-            generation=generation,
-            dispatch_id=dispatch_id,
-            reason=reason,
-        )
-        for run_id in selection["activeRunIds"]:
-            self._request_cancel(
-                str(run_id),
-                state="aborted",
-                reason=reason,
-            )
-        deadline = (
-            time.monotonic()
-            + self._cancellation_grace_ms / 1000.0
-            + 1.0
-        )
-        pending_targets: list[dict[str, object]] = []
-        while True:
-            pending_targets = []
-            for run_id in selection["affectedRunIds"]:
-                try:
-                    run = self.store.get_run(str(run_id))
-                except Exception as exc:
-                    pending_targets.append(
-                        {
-                            "targetKind": "delegationRun",
-                            "targetId": str(run_id),
-                            "state": "unknown",
-                            "errorType": type(exc).__name__,
-                        }
-                    )
-                    continue
-                if str(run.get("state") or "") in _ACTIVE_STATES:
-                    batch = self.store.get_batch(str(run["batchId"]))
-                    causal = batch.get("causalMetadata")
-                    causal = causal if isinstance(causal, Mapping) else {}
-                    pending_targets.append(
-                        {
-                            "targetKind": "delegationRun",
-                            "targetId": str(run_id),
-                            "state": (
-                                "cancelling"
-                                if bool(batch.get("abortRequested"))
-                                else str(run.get("state") or "unknown")
-                            ),
-                            "rootId": str(causal.get("rootId") or root_id),
-                            "generation": int(generation),
-                            "dispatchId": str(causal.get("dispatchId") or dispatch_id),
-                        }
-                    )
-            if not pending_targets or time.monotonic() >= deadline:
-                break
-            time.sleep(0.01)
-        self._schedule_pending_result_contexts()
-        return {
-            "schemaVersion": "rag-ime.root-child-cancellation.v1",
-            "owner": "delegation",
-            "requestId": str(request_id),
-            "rootId": str(root_id),
-            "generation": int(generation),
-            "dispatchId": str(dispatch_id),
-            "state": "requested" if pending_targets else "terminated",
-            "batchIds": list(selection["batchIds"]),
-            "targetIds": [
-                str(run_id) for run_id in selection["affectedRunIds"]
-            ],
-            "pendingTargets": pending_targets,
-            "terminatedCount": len(selection["affectedRunIds"]) - len(pending_targets),
         }
 
     def cancel_causal(
@@ -3337,6 +3193,13 @@ def _delegation_tasks(payload: Mapping[str, object]) -> list[dict[str, object]]:
                 "expectedOutput",
                 "acceptanceCriteria",
                 "outputSchema",
+                "modelProfile",
+                "thinkingLevel",
+                "access",
+                "allowedTools",
+                "piSkillsEnabled",
+                "codexSkillsEnabled",
+                "workspaceRoots",
             )
             if field in payload
         ]
@@ -3355,6 +3218,19 @@ def _delegation_tasks(payload: Mapping[str, object]) -> list[dict[str, object]]:
                     if "outputSchema" in payload
                     else {}
                 ),
+                **{
+                    field: payload.get(field)
+                    for field in (
+                        "modelProfile",
+                        "thinkingLevel",
+                        "access",
+                        "allowedTools",
+                        "piSkillsEnabled",
+                        "codexSkillsEnabled",
+                        "workspaceRoots",
+                    )
+                    if field in payload
+                },
             }
         ]
     if not isinstance(raw_tasks, list) or not 1 <= len(raw_tasks) <= _MAX_PARALLEL_RUNS:
@@ -3367,6 +3243,13 @@ def _delegation_tasks(payload: Mapping[str, object]) -> list[dict[str, object]]:
         "expectedOutput",
         "acceptanceCriteria",
         "outputSchema",
+        "modelProfile",
+        "thinkingLevel",
+        "access",
+        "allowedTools",
+        "piSkillsEnabled",
+        "codexSkillsEnabled",
+        "workspaceRoots",
     }
     for value in raw_tasks:
         if not isinstance(value, Mapping):
@@ -3394,6 +3277,25 @@ def _delegation_tasks(payload: Mapping[str, object]) -> list[dict[str, object]]:
         output_schema = _delegation_output_schema(value.get("outputSchema"))
         if output_schema:
             task["outputSchema"] = output_schema
+        for field in (
+            "modelProfile",
+            "thinkingLevel",
+            "access",
+            "piSkillsEnabled",
+            "codexSkillsEnabled",
+        ):
+            if field in value:
+                task[field] = value.get(field)
+        if "allowedTools" in value:
+            raw_tools = value.get("allowedTools")
+            if not isinstance(raw_tools, list):
+                raise ValueError("allowedTools must be an array")
+            task["allowedTools"] = [str(tool).strip() for tool in raw_tools]
+        if "workspaceRoots" in value:
+            raw_roots = value.get("workspaceRoots")
+            if not isinstance(raw_roots, list):
+                raise ValueError("workspaceRoots must be an array")
+            task["workspaceRoots"] = [str(root).strip() for root in raw_roots]
         validate_contract(task, _DELEGATION_TASK_CONTRACT)
         tasks.append(task)
     return tasks
@@ -3599,9 +3501,10 @@ def _subagent_prompt(run: Mapping[str, object], batch: Mapping[str, object]) -> 
             )
         )
         room_handoff = (
-            "\n\nRoom nested handoff：你是 parent 的私有、有界助手，不得 settle Room、"
-            "room_post 或直接打开原生 Ask。缺少用户决定时把结构化 blocker 交回 parent；"
-            "Room participant 使用 room_commit(wait)，且只带一个最小问题和恢复条件。\n"
+            "\n\nRoom nested handoff：你是 parent Session 的私有、有界助手，"
+            "不得发布 Room 进展、委派正式 Room Partner、直接打开原生 Ask，"
+            "也不得代替 parent 给用户最终答复。缺少用户决定时把一个最小结构化 blocker "
+            "和恢复条件交回 parent。\n"
             f"{context_guidance}\n"
             "workspace_lsp 仅按当前 tool profile：readonly 只用 status/symbols/hover/definition/"
             "references/diagnostics；worker 的 rename/code_action_apply 仍需现有 hash-bound "
@@ -3856,36 +3759,6 @@ def _bounded_text(value: object, *, maximum: int, required: bool = False) -> str
     if required and not text:
         raise ValueError("required delegation text is missing")
     return text[:maximum]
-
-def _root_child_quiescence_unknown(
-    *,
-    root_id: str,
-    generation: int,
-    dispatch_id: str,
-    error: BaseException,
-    target_kind: str,
-) -> dict[str, object]:
-    return {
-        "schemaVersion": "rag-ime.root-child-quiescence.v1",
-        "owner": "delegation",
-        "rootId": root_id,
-        "generation": int(generation),
-        "dispatchId": dispatch_id,
-        "state": "unknown",
-        "quiescent": False,
-        "pendingCount": 1,
-        "unknownCount": 1,
-        "counts": {"queued": 0, "running": 0, "cancelling": 0, "total": 0},
-        "pendingTargets": [
-            {
-                "targetKind": target_kind,
-                "targetId": f"{target_kind}:{root_id}:{generation}",
-                "state": "unknown",
-            }
-        ],
-        "errors": [type(error).__name__],
-    }
-
 
 def _bounded_task(value: object) -> str:
     text = str(value or "").strip()

@@ -16,7 +16,7 @@ notFor:
 
 This is one code stage in one continuous suite:
 `alignment-and-decision -> implementation-planning -> implementation-execution
--> quality-gate -> independent-review`.
+-> quality-gate`, with `independent-review` added only when risk warrants it.
 
 - Project scope selects the shared recovery note automatically. Do not create a
   workflow or work ID; Runtime refs only separate concurrent responsibility.
@@ -68,35 +68,18 @@ no automatic deletion timer.
 
 ## Managed Room Boundary
 
-- Start only after Kernel alignment/definition/handoff. Continue the existing
-  Root/Task/WorkItem, aliases, and participant binding; never create parallel
-  state.
-- A Worker executes only its directed responsibility. The Facilitator owns
-  decomposition, reassignment, dependencies, and authoritative integration.
-  A Worker may reject with a structured reason but never widen scope silently.
-- Room companions are peers, not permanently reserved workers or reviewers. If
-  several accepted slices are ready, the Facilitator dispatches every ready
-  peer slice before using implementation files or commands, and may keep one
-  explicit slice. Review is a later scoped duty for a peer independent of that
-  authored or integrated scope.
-- Participant identity is not a filesystem root. Use only the bound workspace
-  harness and accepted evidence receipts. Read-only work may share a baseline;
-  concurrent writable Workers need separate receipted workspaces from the same
-  Root baseline. Never claim automatic worktree cloning.
-- When implementation is authorized and a feature slice may require changes,
-  start it as `isolated_writable`. A read-only task never becomes writable
-  through handoff, a renamed objective, or a different owner. If read-only work
-  finds a defect, return the evidence to the Facilitator; create a new
-  `isolated_writable` implementation slice, integrate it, and assign a fresh
-  post-integration review. Never loop a fix among read-only participants.
-- `room_collaborate` is a bounded non-overlapping implementation child only
-  after definition; never use it for intake, mention-based assignment, or review.
-- Submit artifacts/evidence/handoff via `room_commit`; reserve `room_post` for
-  progress. The Facilitator integrates results, then decides if risk warrants
-  review; when chosen, the Kernel hands the WorkItem to a distinct participant.
-- Re-read `room_state` after rejection or handoff. Stale or foreign authority
-  blocks work and leaves ownership with the Facilitator; never replace state.
-- Only the Facilitator/reporter emits the final public summary.
+- A formal partner is an ordinary Pi Session delegated by the Facilitator with
+  one bounded task, expected output, and acceptance criteria. It may use its own
+  Session micro-agents and tools under the permissions chosen at creation time.
+- Shared writable workspaces are allowed when the Facilitator judges concurrent
+  writes safe. Use isolated writable Worktrees only when real parallel-edit or
+  rollback risk justifies their cost; never claim isolation that was not created.
+- A partner executes only its delegated scope and returns discoveries, changes,
+  evidence, blockers, and residual risk as its result event. It does not emit the
+  Room final or silently widen the task.
+- Use `room_partner(operation="post")` for material public progress, not every
+  tool call. The Facilitator integrates partner results and remains responsible
+  for conflicts, verification, optional review, and the single final answer.
 
 ## No-Progress And Cancellation
 

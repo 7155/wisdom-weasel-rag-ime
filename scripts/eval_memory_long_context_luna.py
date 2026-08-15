@@ -43,12 +43,12 @@ from rag_ime.memory_long_context_evaluation import (
 from rag_ime.memory_model_executor import build_governed_memory_model_executor
 from rag_ime.pi_runtime import PiRuntimeConfig
 
-from run_room_context_epoch_in_process import (
-    _OPENAI_CODEX_PROXY_ENV,
-    _installed_agent_config_dir,
-    _launch_environment,
-    _stage_openai_codex_oauth,
-    _temporary_environment,
+from pi_canary_support import (
+    OPENAI_CODEX_PROXY_ENV,
+    installed_agent_config_dir,
+    launch_environment as load_launch_environment,
+    stage_openai_codex_oauth,
+    temporary_environment,
 )
 
 
@@ -140,10 +140,10 @@ def main(argv: list[str] | None = None) -> int:
     run_id = f"memory-long-context:{started_at_ms}:{secrets.token_hex(6)}"
     error: BaseException | None = None
     try:
-        installed_auth = _installed_agent_config_dir(launch_agent) / "auth.json"
+        installed_auth = installed_agent_config_dir(launch_agent) / "auth.json"
         installed_auth_sha256 = _file_sha256(installed_auth)
-        _stage_openai_codex_oauth(installed_auth.parent, agent_dir)
-        launch_environment = _launch_environment(launch_agent)
+        stage_openai_codex_oauth(installed_auth.parent, agent_dir)
+        launch_environment = load_launch_environment(launch_agent)
         environment = {
             **launch_environment,
             "RAG_IME_APP_SUPPORT_DIR": str(app_support),
@@ -152,9 +152,8 @@ def main(argv: list[str] | None = None) -> int:
             "RAG_IME_PI_EXECUTABLE": str(entrypoint),
             "RAG_IME_PI_NODE": str(node),
             "RAG_IME_PI_PROTOCOL_VERSION": "2",
-            "RAG_IME_ROOM_KERNEL_MODE": "off",
         }
-        with _temporary_environment(environment):
+        with temporary_environment(environment):
             base_runtime = PiRuntimeConfig.from_environment(enabled_default=True)
             runtime = replace(
                 base_runtime,
@@ -172,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
                 provider_environment={
                     key: value
                     for key, value in base_runtime.provider_environment.items()
-                    if key in _OPENAI_CODEX_PROXY_ENV
+                    if key in OPENAI_CODEX_PROXY_ENV
                 },
                 provider="openai-codex",
                 model="gpt-5.6-luna",
@@ -201,8 +200,6 @@ def main(argv: list[str] | None = None) -> int:
                 memory_embedding_provider=embedding,
                 wake_scheduler_enabled=False,
                 background_job_execution_owner=False,
-                room_kernel_mode="off",
-                room_kernel_worker_enabled=False,
             )
             executor = build_governed_memory_model_executor(
                 agent.runtime,

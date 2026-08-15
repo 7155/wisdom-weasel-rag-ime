@@ -12,7 +12,6 @@ from rag_ime.agent_routes import (
     agent_context_trace_route,
     agent_media_route,
     agent_room_route,
-    agent_room_kernel_route,
     agent_room_work_route,
     agent_session_route,
     agent_wake_schedule_route,
@@ -62,6 +61,14 @@ class AgentRouteTests(unittest.TestCase):
             agent_session_route("/api/agent/sessions/agent:123/review"),
             ("agent:123", "review"),
         )
+        self.assertEqual(
+            agent_session_route("/api/agent/sessions/agent:123/workspace"),
+            ("agent:123", "workspace"),
+        )
+        self.assertEqual(
+            agent_session_route("/api/agent/sessions/agent:123/workspace-file"),
+            ("agent:123", "workspace-file"),
+        )
 
     def test_ui_response_session_route_is_strict_and_url_decoded(self) -> None:
         self.assertEqual(
@@ -85,6 +92,53 @@ class AgentRouteTests(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertEqual(agent_session_route(path), ("", ""))
+
+    def test_workspace_get_handlers_forward_decoded_session_and_query(self) -> None:
+        calls: list[tuple[str, str, dict[str, object]]] = []
+
+        class WorkspaceRecorder:
+            def workspace_list(
+                self,
+                session_id: str,
+                request: dict[str, object],
+            ) -> dict[str, object]:
+                calls.append(("list", session_id, request))
+                return {"ok": True, "items": []}
+
+            def workspace_read(
+                self,
+                session_id: str,
+                request: dict[str, object],
+            ) -> dict[str, object]:
+                calls.append(("read", session_id, request))
+                return {"ok": True, "content": "hello"}
+
+        written: list[tuple[HTTPStatus, dict[str, object]]] = []
+        handler = DebugRequestHandler.__new__(DebugRequestHandler)
+        handler.service = SimpleNamespace(agent_tools=WorkspaceRecorder())
+        handler._authorize_gateway_request = lambda _method, _parsed: True
+        handler._serve_gateway_static = lambda _path: False
+        handler._write_json = lambda status, body: written.append((status, body))
+
+        handler.path = "/api/agent/sessions/agent%3A123/workspace?path=%2Fwork&depth=1&limit=40"
+        handler.do_GET()
+        handler.path = "/api/agent/sessions/agent%3A123/workspace-file?path=%2Fwork%2FREADME.md&offset=0&limit=65536"
+        handler.do_GET()
+
+        self.assertEqual(
+            calls,
+            [
+                ("list", "agent:123", {"path": "/work", "depth": "1", "limit": "40"}),
+                ("read", "agent:123", {"path": "/work/README.md", "offset": "0", "limit": "65536"}),
+            ],
+        )
+        self.assertEqual(
+            written,
+            [
+                (HTTPStatus.OK, {"ok": True, "items": []}),
+                (HTTPStatus.OK, {"ok": True, "content": "hello"}),
+            ],
+        )
 
     def test_ui_response_handler_receives_decoded_session_id_and_payload(self) -> None:
         calls: list[tuple[str, dict[str, object]]] = []
@@ -241,7 +295,7 @@ class AgentRouteTests(unittest.TestCase):
         )
         self.assertEqual(
             agent_room_route("/api/agent/rooms/room%3A123/start-execution"),
-            ("room:123", "start-execution"),
+            ("", ""),
         )
         self.assertEqual(
             agent_room_route("/api/agent/rooms/room%3A123/steer"),
@@ -272,17 +326,9 @@ class AgentRouteTests(unittest.TestCase):
             ("room:123", "", "collection"),
         )
 
-    def test_room_kernel_routes_are_strict(self) -> None:
+    def test_room_kernel_routes_are_not_part_of_the_public_api(self) -> None:
         self.assertEqual(
-            agent_room_kernel_route("/api/agent/rooms/room%3A123/kernel/snapshot"),
-            ("room:123", "snapshot"),
-        )
-        self.assertEqual(
-            agent_room_kernel_route("/api/agent/rooms/room:123/kernel/commands"),
-            ("room:123", "commands"),
-        )
-        self.assertEqual(
-            agent_room_kernel_route("/api/agent/rooms/room:123/kernel/unknown"),
+            agent_room_route("/api/agent/rooms/room:123/kernel/snapshot"),
             ("", ""),
         )
         self.assertEqual(

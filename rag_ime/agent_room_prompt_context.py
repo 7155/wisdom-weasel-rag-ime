@@ -150,8 +150,8 @@ def room_participant_prompt(
                 "不要让用户先填写额外表格或回复固定开工口令。只有 Facilitator/Reporter "
                 "在缺少且会改变结果的用户选择时，才加载 alignment-and-decision，再用原生 ask "
                 "一次提出一到四个必要问题并给出二到五个唯一选项；前置依赖改变后续问题时"
-                "才分开问。Room partner 把缺口用 room_commit(wait) 交给 Facilitator；"
-                "nested child 不调用 Room Tool，只返回 structured blocker。能从源码、配置或"
+                "才分开问。Room partner 把缺口和恢复条件在公开回复中交给 Facilitator；"
+                "nested child 通过子 Agent 结果事件返回 blocker。能从源码、配置或"
                 "运行状态查明的事实自行核对。不要另起一套重复的目标、计划或伙伴任务流程。",
             ]
         )
@@ -192,7 +192,7 @@ def room_intercom_prompt(
             "如果不需要采取行动，直接结束这一轮。"
             if private_notice
             else (
-                "对方需要你的答复。判断后用 room_post 把结论发到 Room，"
+            "对方需要你的答复。判断后在 Room 中直接回复结论，"
                 "不要只在私下说已经回复。"
                 if kind == "ask"
                 else (

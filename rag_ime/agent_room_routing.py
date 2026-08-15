@@ -243,6 +243,27 @@ def plan_room_route(
             (),
         )
 
+    if conversation_only and normalize_room_kind(room.get("roomKind")) == "collaboration":
+        facilitator = next(
+            (
+                participant
+                for participant in participants
+                if canonical_collaboration_role_id(
+                    participant.get("collaborationRole")
+                )
+                == "coordinator"
+            ),
+            participants[0],
+        )
+        return _decision(
+            room,
+            policy,
+            facilitator,
+            "facilitator",
+            participants,
+            (),
+        )
+
     if policy == "parallel":
         if conversation_only:
             return _natural_route_decision(

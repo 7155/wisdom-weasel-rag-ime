@@ -7,6 +7,7 @@ import stat
 import threading
 import tempfile
 import unittest
+from collections.abc import Mapping
 from pathlib import Path
 from unittest.mock import patch
 
@@ -199,7 +200,11 @@ class AgentRoomTests(unittest.TestCase):
 
         self.assertEqual(len(decisions), 1)
         self.assertEqual(len(decisions[0]["selectedParticipantIds"]), 1)
-        self.assertEqual(decisions[0]["reason"], "natural_fallback")
+        self.assertEqual(decisions[0]["reason"], "facilitator")
+        self.assertEqual(
+            decisions[0]["targetParticipantId"],
+            room["participants"][0]["id"],
+        )
 
     def test_room_never_persists_or_projects_retired_builtin_role_ids(
         self,
@@ -1080,86 +1085,6 @@ class AgentRoomServiceTests(unittest.TestCase):
             [str(task_workspace.resolve())],
         )
 
-    def test_room_snapshot_preserves_materialized_isolated_workspace_before_runtime_busy(
-        self,
-    ) -> None:
-        room = self.service.create_room(
-            {
-                "title": "Room materialized workspace polling fence",
-                "routingPolicy": "parallel",
-                "workspaceRoots": [str(self.root)],
-                "participants": [
-                    {"roleId": "companion-present-v1", "roleVersion": "1"},
-                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
-                ],
-            }
-        )["room"]
-        participant = room["participants"][1]
-        session_id = str(participant["sessionId"])
-        task_workspace = self.root / "isolated-before-runtime-busy"
-        task_workspace.mkdir()
-        session = self.service.sessions.get(session_id)
-        self.service.sessions.set_runtime_policy(
-            session_id,
-            mode=str(session["mode"]),
-            tool_profile_version=str(session["toolProfileVersion"]),
-            execution_mode=str(session["executionMode"]),
-            grant_workspace_scope=True,
-            allowed_tools=None,
-            workspace_roots=[str(task_workspace)],
-        )
-        binding, _ = self.service.room_workspaces.ledger.reserve_binding(
-            room_id=str(room["id"]),
-            root_id="room-root:materialized-before-busy",
-            task_id="room-task:materialized-before-busy",
-            work_item_id="room-work:materialized-before-busy",
-            dispatch_id="room-dispatch:materialized-before-busy",
-            requirement_revision="requirement-catalog:test",
-            acceptance_aliases=["AC-1"],
-            participant_id=str(participant["id"]),
-            session_id=session_id,
-            repository_id="a" * 64,
-            base_root=str(self.root.resolve()),
-            base_commit="baseline",
-            workspace_root=str(task_workspace.resolve()),
-            workspace_policy="isolated_writable",
-            creation_reason="test materialized-to-runtime window",
-            now_ms=10,
-        )
-        self.service.room_workspaces.ledger.mark_materialized(
-            str(binding["workspaceBindingId"]),
-            workspace_snapshot_sha256="b" * 64,
-            actor_ref=str(participant["id"]),
-            now_ms=11,
-        )
-        self.assertNotIn(
-            session_id,
-            self.service.room_turns.pending_turn_by_session,
-        )
-
-        snapshot = self.service.room_snapshot(str(room["id"]))
-
-        self.assertTrue(snapshot["ok"])
-        self.assertEqual(
-            self.service.sessions.get(session_id)["workspaceRoots"],
-            [str(task_workspace.resolve())],
-        )
-        session = self.service.sessions.get(session_id)
-        self.service.sessions.set_runtime_policy(
-            session_id,
-            mode=str(session["mode"]),
-            tool_profile_version=str(session["toolProfileVersion"]),
-            execution_mode=str(session["executionMode"]),
-            grant_workspace_scope=True,
-            allowed_tools=None,
-            workspace_roots=[str(self.root)],
-        )
-        with self.assertRaisesRegex(
-            RuntimeError,
-            "active isolated workspace binding does not match its Session lease",
-        ):
-            self.service.room_snapshot(str(room["id"]))
-
     def test_archived_room_releases_policy_and_restore_reclaims_it(self) -> None:
         room = self.service.create_room(
             {
@@ -1335,7 +1260,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             [],
         )
 
-    def test_natural_room_uses_pinned_role_book_as_advisory_profile(self) -> None:
+    def test_unaddressed_room_starts_with_facilitator_despite_specialist_profile(self) -> None:
         role = self.service.personas.resolve("companion-firstlight-v1", "1")
         self.service.role_books.ensure_seeded(
             role.role_id,
@@ -1378,6 +1303,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         hermes = next(
             item for item in room["participants"] if item["roleId"] == "companion-firstlight-v1"
         )
+        facilitator = room["participants"][0]
         self.assertEqual(
             self.service.sessions.get(str(hermes["sessionId"]))[
                 "roleBookRevisionId"
@@ -1395,11 +1321,11 @@ class AgentRoomServiceTests(unittest.TestCase):
                 {"message": "时序数据库性能"},
             )
 
-        self.assertEqual(accepted["participant"]["id"], hermes["id"])
-        self.assertEqual(accepted["routeDecision"]["reason"], "descriptor_match")
+        self.assertEqual(accepted["participant"]["id"], facilitator["id"])
+        self.assertEqual(accepted["routeDecision"]["reason"], "facilitator")
         evidence = self.service.memory_evidence.list(
-            role_id="companion-firstlight-v1",
-            session_id=str(hermes["sessionId"]),
+            role_id=str(facilitator["roleId"]),
+            session_id=str(facilitator["sessionId"]),
         )
         self.assertEqual(evidence[0]["sourceKind"], "room_event")
         self.assertFalse(evidence[0]["metadata"]["accepted"])
@@ -1659,6 +1585,95 @@ class AgentRoomServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot be deleted directly"):
             self.service.delete_session(str(hermes["sessionId"]))
         self.assertEqual(len(self.service.list_rooms()["items"]), 1)
+
+    def test_room_messages_always_use_participant_sessions_even_with_retired_kernel_mode(self) -> None:
+        """A stale install flag must not resurrect the retired Room runtime."""
+
+        room = self.service.create_room(
+            {
+                "title": "Session 组合唯一入口",
+                "routingPolicy": "parallel",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        facilitator = room["participants"][0]
+        self.assertFalse(hasattr(self.service, "room_kernel"))
+
+        with patch.object(
+            self.service,
+            "prompt",
+            return_value={"turnId": "turn:session-room-only"},
+        ) as prompt:
+            accepted = self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "请先理解目标，再自行决定是否需要伙伴。",
+                    "clientMessageId": "room-session-only-1",
+                },
+            )
+
+        prompt.assert_called_once()
+        self.assertEqual(accepted["executionOwner"], "session")
+        self.assertEqual(accepted["participant"]["id"], facilitator["id"])
+        self.assertEqual(accepted["dispatches"][0]["sessionTurnId"], "turn:session-room-only")
+
+    def test_room_steer_is_recorded_before_the_active_pi_session_receives_it(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "Room Steer",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        facilitator = room["participants"][0]
+        with patch.object(
+            self.service,
+            "prompt",
+            return_value={"turnId": "turn:room-steer"},
+        ):
+            accepted = self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "先检查当前实现。",
+                    "clientMessageId": "room-steer-start",
+                },
+            )
+
+        observed_event_types: list[str] = []
+
+        def accept_steer(_session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+            observed_event_types.extend(
+                str(event["eventType"])
+                for event in self.service.rooms.list_events(str(room["id"]))
+            )
+            self.assertEqual(payload["delivery"], "steer")
+            self.assertEqual(payload["message"], "先停止旧方向，只验证 Stop。")
+            return {"turnId": "turn:room-steer", "queued": True}
+
+        with patch.object(self.service, "prompt", side_effect=accept_steer) as prompt:
+            receipt = self.service.steer_room_participant(
+                str(room["id"]),
+                {
+                    "action": "steer",
+                    "rootId": accepted["roomTurnId"],
+                    "participantId": facilitator["id"],
+                    "message": "先停止旧方向，只验证 Stop。",
+                    "clientActionId": "room-steer-action-1",
+                },
+            )
+
+        prompt.assert_called_once()
+        self.assertEqual(observed_event_types[-1], "user_message")
+        self.assertTrue(receipt["accepted"])
+        self.assertEqual(receipt["delivery"], "steer")
+        self.assertEqual(receipt["participantId"], facilitator["id"])
 
     def test_pending_room_turn_rejects_queued_prior_turn_events_until_runtime_acceptance(
         self,

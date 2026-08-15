@@ -49,7 +49,14 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             core=object(),
             project="contract-test",
         )
-        catalog = gateway.manifests(session_id=str(session["id"]))["items"]
+        public_catalog = gateway.manifests(session_id=str(session["id"]))["items"]
+        # Runtime manifests intentionally include modelVisible=false execution
+        # targets. Compare them against the internal projection, while keeping
+        # Pi-host-native entries such as `ask` from the public handshake.
+        catalog = gateway._manifest_items(session)
+        catalog.extend(
+            item for item in public_catalog if item.get("runtimeOwner") == "pi_host"
+        )
         return catalog, gateway.runtime_manifests(session)
 
     def test_runtime_schema_projection_does_not_share_mutable_global_branches(self) -> None:
@@ -260,7 +267,11 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         )
         self.assertEqual(
             self._branch(tools["desktop_semantic"], "act")["required"],
-            ["op", "snapshotId", "revision", "nodeRef", "action"],
+            ["op", "action"],
+        )
+        self.assertEqual(
+            self._branch(tools["desktop_semantic"], "find")["required"],
+            ["op", "match"],
         )
         self.assertEqual(
             self._branch(tools["desktop_semantic"], "inspect")["properties"]["maxNodes"]["maximum"],

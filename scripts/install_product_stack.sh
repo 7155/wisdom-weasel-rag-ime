@@ -167,7 +167,7 @@ rm -rf "$EXTENSION_DEST"
 ditto "$EXTENSION_SOURCE" "$EXTENSION_DEST"
 echo "Browser Co-pilot extension installed at $EXTENSION_DEST"
 
-required=(--require control --require sidecar --require roomKernelMode --require squirrel)
+required=(--require control --require sidecar --require squirrel)
 
 if [[ "$INCLUDE_PI" == "auto" ]]; then
   if [[ -n "$PI_WORKTREE" ]] \
@@ -214,7 +214,7 @@ PY
   PI_INSTALLED_PAYLOAD="$APP_SUPPORT_DIR/PiRuntime/$PI_RUNTIME_VERSION"
   : > "$PI_ACCEPTANCE_REPORT"
   chmod 600 "$PI_ACCEPTANCE_REPORT"
-  "$PI_PYTHON" "$ROOT/scripts/smoke_room_v2_staged_runtime.py" \
+  "$PI_PYTHON" "$ROOT/scripts/smoke_pi_session_staged_runtime.py" \
     --payload "$PI_INSTALLED_PAYLOAD" \
     --workspace-root "$ROOT" \
     --deterministic-test-gate > "$PI_ACCEPTANCE_REPORT"
@@ -249,7 +249,6 @@ fi
 # also refreshing the gateway, otherwise launchd sees two back-to-back
 # bootout/bootstrap cycles for the same label and can reject the second one.
 RAG_IME_INSTALL_AGENT_GATEWAY=0 \
-RAG_IME_ROOM_KERNEL_MODE=kernel_only \
   "$ROOT/scripts/install_sidecar_launch_agent.sh"
 
 if [[ -f "$APP_SUPPORT_DIR/PiRuntime/current.json" ]]; then

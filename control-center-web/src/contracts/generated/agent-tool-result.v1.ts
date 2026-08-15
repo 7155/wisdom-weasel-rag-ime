@@ -136,6 +136,7 @@ export interface AgentToolResultV1 {
     | 'restore_preview'
     | 'restore_apply'
     | 'delegate'
+    | 'call'
     | 'artifact'
     | 'abort'
     | 'tabs'

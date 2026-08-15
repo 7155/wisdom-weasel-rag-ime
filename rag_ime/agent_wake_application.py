@@ -20,7 +20,7 @@ class AgentWakeApplicationService:
         events: Any,
         create_session: Callable[[Mapping[str, object]], Mapping[str, object]],
         prompt: Callable[[str, Mapping[str, object]], Mapping[str, object]],
-        guard_legacy_room_route: Callable[[str, str], None],
+        guard_room_session_route: Callable[[str, str], None],
         context_source_token: object,
     ) -> None:
         self.schedules = schedules
@@ -31,7 +31,7 @@ class AgentWakeApplicationService:
         self.events = events
         self.create_session = create_session
         self.prompt = prompt
-        self.guard_legacy_room_route = guard_legacy_room_route
+        self.guard_room_session_route = guard_room_session_route
         self.context_source_token = context_source_token
         self.scheduler: Any = None
 
@@ -237,7 +237,7 @@ class AgentWakeApplicationService:
         if session is None:
             return
         session_id = str(session["id"])
-        self.guard_legacy_room_route(
+        self.guard_room_session_route(
             "wake.dispatch",
             session_id,
         )

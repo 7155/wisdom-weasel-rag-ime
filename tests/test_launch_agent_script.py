@@ -10,29 +10,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rag_ime.agent_room_skills import RoomSkillPolicy
 
 
 class LaunchAgentScriptTests(unittest.TestCase):
-    def test_agent_gateway_installer_allows_room_recovery_to_finish_before_health_timeout(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        script_source = (
-            root / "scripts" / "install_agent_gateway_launch_agent.sh"
-        ).read_text(encoding="utf-8")
-
-        self.assertIn(
-            'RAG_IME_AGENT_GATEWAY_HEALTH_TIMEOUT_SECONDS:-120',
-            script_source,
-        )
-        self.assertIn(
-            'deadline=$((SECONDS + HEALTH_TIMEOUT_SECONDS))',
-            script_source,
-        )
-        self.assertIn(
-            'RAG_IME_AGENT_GATEWAY_HEALTH_TIMEOUT_SECONDS must be a positive integer',
-            script_source,
-        )
-
     def test_stop_runtime_proves_all_launch_agents_ports_and_processes_absent(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-stop-proof-") as tmp:
@@ -294,7 +274,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PI_ENABLED"], "0")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AGENT_GATEWAY_ENABLED"], "1")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_KNOWLEDGE_SHARED_WORKER"], "1")
-        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ROOM_KERNEL_MODE"], "kernel_only")
+        self.assertNotIn("RAG_IME_ROOM_KERNEL_MODE", payload["EnvironmentVariables"])
 
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_IDLE_MS"], "180")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_MIN_DELTA_CHARS"], "3")
@@ -1000,15 +980,6 @@ class LaunchAgentScriptTests(unittest.TestCase):
             managed_native_session = managed_extension.with_name("pi-native-session.ts")
             managed_extension_text = managed_extension.read_text(encoding="utf-8")
             managed_native_session_text = managed_native_session.read_text(encoding="utf-8")
-            portable_pi_root = managed_extension.parent
-            portable_room_policy = portable_pi_root / "room-skill-policy.json"
-            portable_room_skills = portable_pi_root / "skills"
-            portable_room_skill = (
-                portable_room_skills / "quality-gate" / "SKILL.md"
-            )
-            RoomSkillPolicy(portable_room_policy, portable_room_skills)
-            portable_room_policy_text = portable_room_policy.read_text(encoding="utf-8")
-            portable_room_skill_text = portable_room_skill.read_text(encoding="utf-8")
             managed_memory_skill = (
                 home
                 / "Library"
@@ -1031,7 +1002,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_PROFILE"], "qwen3_06b_ime_hot")
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_STREAM_FIRST"], "0")
         self.assertEqual(env_vars["RAG_IME_POST_COMMIT_PRESENTATION_STREAM"], "0")
-        self.assertEqual(env_vars["RAG_IME_ROOM_KERNEL_MODE"], "kernel_only")
+        self.assertNotIn("RAG_IME_ROOM_KERNEL_MODE", env_vars)
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_ENV"], "/tmp/predictor.env")
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_API_KEY"], "preserved-local-secret")
         self.assertNotIn("preserved-local-secret", result.stdout + result.stderr)
@@ -1054,23 +1025,6 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(
             managed_native_session_text,
             (root / "integrations" / "pi" / "pi-native-session.ts").read_text(encoding="utf-8"),
-        )
-        self.assertEqual(
-            portable_room_policy_text,
-            (root / "integrations" / "pi" / "room-skill-policy.json").read_text(
-                encoding="utf-8"
-            ),
-        )
-        self.assertEqual(
-            portable_room_skill_text,
-            (
-                root
-                / "integrations"
-                / "pi"
-                / "skills"
-                / "quality-gate"
-                / "SKILL.md"
-            ).read_text(encoding="utf-8"),
         )
         self.assertNotIn("must-not-be-installed", managed_extension_text)
         self.assertIn("authorized Evidence -> one Current Atom", managed_memory_skill_text)

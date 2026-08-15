@@ -1,4 +1,4 @@
 interface:
   display_name: "Align and Decide"
-  short_description: "Preserve intent, clarify choices, and teach when Grill questions do not land"
-  default_prompt: "Use $alignment-and-decision to preserve the original request and vision, investigate uncertainty, work Grill Mode in bounded decision-frontier rounds, and pause to teach then ask a smaller question whenever one does not land."
+  short_description: "Preserve intent, clarify the work, and grill decisions when requested"
+  default_prompt: "Use $alignment-and-decision to preserve the original request and vision, investigate uncertainty, settle one smallest question group at a time, and use one-at-a-time full Grill Mode when requested."
