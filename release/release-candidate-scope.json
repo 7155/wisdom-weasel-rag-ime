@@ -43,13 +43,13 @@
     },
     "installation_reliability": {
       "description": "Clean installation compatibility for full Xcode paths and immutable installed database history.",
-      "pathCount": 2
+      "pathCount": 4
     }
   },
   "summary": {
-    "pathCount": 215,
+    "pathCount": 217,
     "dispositionCounts": {
-      "keep_release": 206,
+      "keep_release": 208,
       "delete_old_implementation": 9
     },
     "groupCounts": {
@@ -60,7 +60,7 @@
       "memory_curation": 3,
       "release_scope": 1,
       "room_kernel_cleanup": 2,
-      "installation_reliability": 2
+      "installation_reliability": 4
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -1248,6 +1248,13 @@
       "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
+      "path": "scripts/install_product_stack.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "installation_reliability",
+      "reason": "Preserve the default cross-worktree Squirrel ownership guard while forwarding an explicit release-owner handoff through the stack installer."
+    },
+    {
       "path": "scripts/verify_desktop_semantic_foreground.py",
       "status": "added",
       "disposition": "keep_release",
@@ -1281,6 +1288,13 @@
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "tests/test_control_center_cutover.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "installation_reliability",
+      "reason": "Prevent the stack installer from silently forcing an explicit Squirrel source-owner handoff back to the default refusal mode."
     },
     {
       "path": "tests/test_database_migrations.py",

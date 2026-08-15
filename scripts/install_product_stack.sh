@@ -14,6 +14,7 @@ SQUIRREL_WORKDIR_OVERRIDE_SET=0
 SQUIRREL_WORKDIR_OVERRIDE=""
 SQUIRREL_DERIVED_DATA_OVERRIDE_SET=0
 SQUIRREL_DERIVED_DATA_OVERRIDE=""
+SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE="${RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE:-0}"
 SQUIRREL_STACK_TEMP_ROOT=""
 SQUIRREL_STACK_WORKDIR=""
 SQUIRREL_STACK_DERIVED_DATA=""
@@ -48,6 +49,9 @@ RAG_IME_ALLOW_DIRTY_INSTALL=1 only for an explicitly marked development build.
 With --include-squirrel, an explicit RAG_IME_SQUIRREL_WORKDIR or
 RAG_IME_SQUIRREL_DERIVED_DATA must be an absolute path that does not exist yet.
 The release installer never resets or silently reuses an existing checkout.
+
+Set RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE=1 only for an intentional
+handoff from a Squirrel app installed by another PAW checkout.
 EOF
 }
 
@@ -84,7 +88,7 @@ run_with_stack_squirrel_workspace() {
     RAG_IME_SQUIRREL_DRY_RUN=0 \
     RAG_IME_SQUIRREL_BUILD_DRY_RUN=0 \
     RAG_IME_SQUIRREL_SKIP_POSTINSTALL=0 \
-    RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE=0 \
+    RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE="$SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE" \
     "$@"
 }
 
