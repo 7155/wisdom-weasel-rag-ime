@@ -1899,22 +1899,34 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("-scheme Squirrel", xcodebuild_log)
         self.assertIn("CODE_SIGNING_ALLOWED=NO", xcodebuild_log)
         self.assertIn("INFOPLIST_KEY_LSRegisterProhibited=YES", xcodebuild_log)
+        self.assertIn("SYSTEM_HEADER_SEARCH_PATHS=", xcodebuild_log)
+        self.assertIn("Tk.framework/Headers", xcodebuild_log)
 
-    def test_dependency_preinstall_aliases_spaceful_developer_dir(self) -> None:
+    def test_dependency_preinstall_overrides_install_name_tool_for_spaceful_developer_dir(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-squirrel-xcode-space-") as tmp:
             tmp_path = Path(tmp)
             workdir = _fake_patched_squirrel_workdir(tmp_path)
             developer_dir = tmp_path / "Xcode Beta" / "Contents" / "Developer"
-            developer_dir.mkdir(parents=True)
-            effective_developer_dir = tmp_path / "effective-developer-dir.txt"
+            (developer_dir / "usr" / "bin").mkdir(parents=True)
+            (developer_dir / "usr" / "bin" / "make").symlink_to(
+                "/Library/Developer/CommandLineTools/usr/bin/make"
+            )
+            (developer_dir / "usr" / "bin" / "gnumake").symlink_to(
+                "/Library/Developer/CommandLineTools/usr/bin/gnumake"
+            )
+            effective_install_name_tool = tmp_path / "effective-install-name-tool.txt"
+            (workdir / "action-install-test.mk").write_text(
+                "INSTALL_NAME_TOOL = /tmp/Xcode Beta/Contents/Developer/usr/bin/install_name_tool\n"
+                "verify:\n"
+                f"\t@printf '%s' \"$(INSTALL_NAME_TOOL)\" > \"{effective_install_name_tool}\"\n",
+                encoding="utf-8",
+            )
             action_install = workdir / "action-install.sh"
             action_install.write_text(
                 "#!/usr/bin/env bash\n"
                 "set -euo pipefail\n"
-                "[[ \"$DEVELOPER_DIR\" != *' '* ]]\n"
-                "[[ -d \"$DEVELOPER_DIR\" ]]\n"
-                "printf '%s' \"$DEVELOPER_DIR\" > \"$EFFECTIVE_DEVELOPER_DIR_LOG\"\n"
+                "make -s -f action-install-test.mk verify\n"
                 "mkdir -p lib Frameworks/Sparkle.framework bin\n"
                 "touch lib/librime.1.dylib bin/rime-install\n",
                 encoding="utf-8",
@@ -1935,7 +1947,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
                 env={
                     **os.environ,
                     "DEVELOPER_DIR": str(developer_dir),
-                    "EFFECTIVE_DEVELOPER_DIR_LOG": str(effective_developer_dir),
+                    "PATH": f"{developer_dir / 'usr' / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}",
                     "RAG_IME_XCODEBUILD": str(fake_xcodebuild),
                     "RAG_IME_SQUIRREL_PREINSTALL": "1",
                     "RAG_IME_SQUIRREL_WORKDIR": str(workdir),
@@ -1946,8 +1958,36 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            observed = effective_developer_dir.read_text(encoding="utf-8")
-            self.assertNotIn(" ", observed)
+            self.assertTrue(
+                effective_install_name_tool.exists(),
+                f"action-install verification log missing\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+            )
+            observed = effective_install_name_tool.read_text(encoding="utf-8")
+            self.assertEqual(observed, "/usr/bin/install_name_tool")
+
+    def test_spaceful_developer_dir_prefers_no_space_x11_header_root(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            ["bash", str(root / "scripts" / "build_patched_squirrel.sh"), "build"],
+            cwd=root,
+            env={
+                **os.environ,
+                "DEVELOPER_DIR": "/tmp/Xcode Beta/Contents/Developer",
+                "RAG_IME_SQUIRREL_BUILD_DRY_RUN": "1",
+            },
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertIn(
+            "SYSTEM_HEADER_SEARCH_PATHS=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/",
+            result.stdout,
+        )
+        self.assertNotIn(
+            "SYSTEM_HEADER_SEARCH_PATHS=/tmp/Xcode Beta/Contents/Developer",
+            result.stdout,
+        )
 
     def test_install_action_copies_app_and_installs_rag_config(self) -> None:
         root = Path(__file__).resolve().parents[1]

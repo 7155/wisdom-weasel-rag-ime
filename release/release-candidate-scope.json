@@ -1,11 +1,11 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-08-15T17:44:40Z",
+  "generatedAt": "2026-08-15T18:25:05Z",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
     "baseCommit": "69ccce70a000414dea752e4f68e2a6a5c931d1c1",
-    "candidateCommitPolicy": "Commit this exact inventory as one clean source candidate; the candidate commit is the commit containing this manifest."
+    "candidateCommitPolicy": "This inventory covers the exact base-to-head source candidate; follow-up reliability fixes remain within listed paths."
   },
   "dispositions": {
     "keep_release": "Retain this path change in the source release candidate.",
@@ -81,14 +81,14 @@
     "projectHarness": "passed",
     "focusedSkillAndPromptTests": "38 passed",
     "pythonFullSuiteShards": "3245 tests across four shards; one shard exposed only 3 stale voice UI copy assertions, and its corrected voice module reran 8/8 passed",
-    "databaseMigrationsAfterChecksumRestore": "17 passed",
+    "databaseMigrationsAfterChecksumRestore": "18 passed",
     "frontendTypecheck": "passed with pnpm 11.9.0",
     "frontendUnitTests": "929 passed",
     "frontendBuild": "passed",
     "frontendBrowserAcceptance": "166 passed, 49 conditional skips, 0 failed",
     "agentToolMatrix": "29/29 Pi runtime Tools invoked successfully in a real Room Session",
-    "repositoryPublicAudit": "pending clean candidate commit",
-    "localInstall": "Sidecar checksum repair is verified; clean Squirrel retry is pending after adding a space-safe full-Xcode dependency path",
+    "repositoryPublicAudit": "run against the clean candidate head after committing this inventory",
+    "localInstall": "Installation acceptance is external runtime evidence; source fixes cover installed migration checksum compatibility plus spaceful-Xcode Squirrel preinstall and SDK header resolution",
     "foregroundAcceptance": "not claimed by this source scope"
   },
   "items": [
@@ -1273,7 +1273,7 @@
       "status": "modified",
       "disposition": "keep_release",
       "group": "installation_reliability",
-      "reason": "Lock down the space-safe Xcode alias at the real Squirrel dependency-preinstall seam."
+      "reason": "Lock down the install_name_tool Make override and no-space X11 header resolution for a spaceful selected Xcode at their real Squirrel build seams."
     },
     {
       "path": "tests/test_build_managed_pi_runtime_v2.py",

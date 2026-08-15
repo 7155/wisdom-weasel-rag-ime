@@ -58,6 +58,39 @@ if [[ -n "$BUILD_SETTINGS_EXTRA" ]]; then
   read -r -a extra_build_settings <<< "$BUILD_SETTINGS_EXTRA"
 fi
 
+# Upstream Squirrel hard-codes /Applications/Xcode.app for Tk's X11 headers.
+# Resolve the header root from the selected Developer directory so a full Xcode
+# installed elsewhere can still compile librime's key_table.h.
+x11_header_root=""
+x11_header_candidates=()
+if [[ -n "${DEVELOPER_DIR:-}" && "${DEVELOPER_DIR}" != *" "* ]]; then
+  x11_header_candidates+=(
+    "$DEVELOPER_DIR/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks/Tk.framework/Headers"
+  )
+fi
+x11_header_candidates+=(
+  "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Tk.framework/Headers"
+  "/opt/homebrew/include"
+  "/usr/local/include"
+)
+if [[ -n "${DEVELOPER_DIR:-}" && "${DEVELOPER_DIR}" == *" "* ]]; then
+  # Xcode splits whitespace-delimited build-setting values even when the
+  # xcodebuild argv item itself is quoted. Prefer an equivalent no-space SDK
+  # header root before falling back to the selected Developer directory.
+  x11_header_candidates+=(
+    "$DEVELOPER_DIR/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks/Tk.framework/Headers"
+  )
+fi
+for candidate in "${x11_header_candidates[@]}"; do
+  if [[ -f "$candidate/X11/keysym.h" ]]; then
+    x11_header_root="$candidate"
+    break
+  fi
+done
+if [[ -n "$x11_header_root" && " $BUILD_SETTINGS_EXTRA " != *" SYSTEM_HEADER_SEARCH_PATHS="* ]]; then
+  extra_build_settings+=("SYSTEM_HEADER_SEARCH_PATHS=$x11_header_root")
+fi
+
 bool_true() {
   [[ "$1" == "1" || "$1" == "true" || "$1" == "TRUE" || "$1" == "yes" || "$1" == "YES" ]]
 }
@@ -138,6 +171,7 @@ xcodebuild=${XCODEBUILD:-<not-found>}
 preinstall=$PREINSTALL
 no_download=$NO_DOWNLOAD
 build_settings=$BUILD_SETTINGS_EXTRA
+x11_header_root=${x11_header_root:-<not-found>}
 codesign_identity=$CODESIGN_IDENTITY
 skip_codesign=$SKIP_CODESIGN
 enable_pref_repair=$ENABLE_PREF_REPAIR
@@ -517,32 +551,29 @@ ensure_librime_source_headers() {
 }
 
 run_squirrel_action_install() {
-  local original_developer_dir="${DEVELOPER_DIR:-}"
-  local effective_developer_dir="$original_developer_dir"
-  local alias_root=""
+  local action_makeflags="${MAKEFLAGS:-}"
   local action_status=0
 
-  if [[ "$original_developer_dir" == *" "* ]]; then
-    alias_root="$(mktemp -d "${TMPDIR:-/tmp}/rag-ime-xcode-developer.XXXXXX")"
-    effective_developer_dir="$alias_root/Developer"
-    ln -s "$original_developer_dir" "$effective_developer_dir"
-    printf '[INFO] using a space-safe Xcode developer alias for Squirrel dependencies\n'
-  fi
-
-  if [[ -n "$effective_developer_dir" ]]; then
-    if bool_true "$NO_DOWNLOAD"; then
-      (cd "$SQUIRREL_WORKDIR" && DEVELOPER_DIR="$effective_developer_dir" no_download=1 ./action-install.sh) || action_status=$?
-    else
-      (cd "$SQUIRREL_WORKDIR" && DEVELOPER_DIR="$effective_developer_dir" ./action-install.sh) || action_status=$?
+  if [[ "${DEVELOPER_DIR:-}" == *" "* ]]; then
+    if [[ ! -x /usr/bin/install_name_tool ]]; then
+      echo "spaceful DEVELOPER_DIR requires /usr/bin/install_name_tool" >&2
+      return 1
     fi
-  elif bool_true "$NO_DOWNLOAD"; then
-    (cd "$SQUIRREL_WORKDIR" && no_download=1 ./action-install.sh) || action_status=$?
-  else
-    (cd "$SQUIRREL_WORKDIR" && ./action-install.sh) || action_status=$?
+    # GNU make 3.81 treats a bare MAKEFLAGS value as single-letter flags. Keep
+    # command-line variable overrides after the standalone `--` separator so
+    # INSTALL_NAME_TOOL does not accidentally enable `-n` (dry-run).
+    if [[ " $action_makeflags " == *" -- "* ]]; then
+      action_makeflags="${action_makeflags} INSTALL_NAME_TOOL=/usr/bin/install_name_tool"
+    else
+      action_makeflags="${action_makeflags:+$action_makeflags }-- INSTALL_NAME_TOOL=/usr/bin/install_name_tool"
+    fi
+    printf '[INFO] overriding Squirrel dependency install_name_tool for a spaceful Xcode path\n'
   fi
 
-  if [[ -n "$alias_root" ]]; then
-    rm -rf -- "$alias_root"
+  if bool_true "$NO_DOWNLOAD"; then
+    (cd "$SQUIRREL_WORKDIR" && MAKEFLAGS="$action_makeflags" no_download=1 ./action-install.sh) || action_status=$?
+  else
+    (cd "$SQUIRREL_WORKDIR" && MAKEFLAGS="$action_makeflags" ./action-install.sh) || action_status=$?
   fi
   return "$action_status"
 }
