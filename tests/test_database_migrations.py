@@ -1043,6 +1043,13 @@ class DatabaseMigrationTests(unittest.TestCase):
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM agent_media").fetchone()[0], 0)
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM agent_message_media").fetchone()[0], 0)
 
+    def test_installed_0152_room_participant_steer_migration_stays_immutable(self) -> None:
+        source = DEFAULT_MIGRATIONS_DIR / "0152_room_participant_steer_receipts.sql"
+        self.assertEqual(
+            hashlib.sha256(source.read_bytes()).hexdigest(),
+            "17769f20b27d770388a59f2978c6e5e8ebc54cb9ada801db7b9141ccc0a3f8a0",
+        )
+
     def test_production_0062_history_stays_immutable_and_workflow_migrations_append(self) -> None:
         expected_history = {
             61: (

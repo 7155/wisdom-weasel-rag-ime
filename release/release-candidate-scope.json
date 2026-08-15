@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-08-15T17:19:01Z",
+  "generatedAt": "2026-08-15T17:26:02Z",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -23,7 +23,7 @@
     },
     "session_room_skill_flow": {
       "description": "Pi-native Session/Room composition, compact Skills, routing cards, and installed-runtime synchronization.",
-      "pathCount": 38
+      "pathCount": 39
     },
     "desktop_semantic_accessibility": {
       "description": "Accessibility-only semantic desktop bridge, bounded find, metrics, smoke target, and foreground verifier.",
@@ -43,15 +43,15 @@
     }
   },
   "summary": {
-    "pathCount": 212,
+    "pathCount": 213,
     "dispositionCounts": {
-      "keep_release": 203,
+      "keep_release": 204,
       "delete_old_implementation": 9
     },
     "groupCounts": {
       "project_harness": 11,
       "control_center_release_ui": 149,
-      "session_room_skill_flow": 38,
+      "session_room_skill_flow": 39,
       "desktop_semantic_accessibility": 8,
       "memory_curation": 3,
       "release_scope": 1,
@@ -68,8 +68,8 @@
     },
     {
       "path": "rag_ime/db/migrations/0152_room_participant_steer_receipts.sql",
-      "action": "restored_immutable_migration",
-      "reason": "Formatting-only edits would have changed the migration checksum for installed databases."
+      "action": "restored_installed_immutable_migration",
+      "reason": "Restored the byte-exact installed checksum 17769f20...; formatting-only edits had changed it and prevented the installed Sidecar from starting."
     }
   ],
   "verification": {
@@ -83,7 +83,7 @@
     "frontendBrowserAcceptance": "166 passed, 49 conditional skips, 0 failed",
     "agentToolMatrix": "29/29 Pi runtime Tools invoked successfully in a real Room Session",
     "repositoryPublicAudit": "pending clean candidate commit",
-    "localInstall": "pending clean candidate commit and build gates",
+    "localInstall": "first attempt found the 0152 installed-checksum regression; byte-exact repair and regression test passed, clean retry pending",
     "foregroundAcceptance": "not claimed by this source scope"
   },
   "items": [
@@ -1178,6 +1178,13 @@
       "disposition": "keep_release",
       "group": "desktop_semantic_accessibility",
       "reason": "Keep bounded semantic desktop find, bridge metrics, smoke target, and verification."
+    },
+    {
+      "path": "rag_ime/db/migrations/0152_room_participant_steer_receipts.sql",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Restore the byte-exact immutable migration already recorded by installed databases so Sidecar startup remains compatible."
     },
     {
       "path": "rag_ime/owner_memory_curation.py",
