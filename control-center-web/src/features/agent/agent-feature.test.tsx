@@ -626,6 +626,39 @@ describe('Agent experience', () => {
     expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('读取输入法工具书，并把结果作为可展开卡片保留。');
   });
 
+  it('does not warm the fork catalog while the selected Session is busy', async () => {
+    const forkListRoute = vi.fn(() => forkListFixture());
+    const transport = productionTransport({
+      'agent.session.snapshot': {
+        ...previewAgentSnapshot('session-preview'),
+        status: 'busy',
+        messages: [],
+        liveEvents: [],
+      },
+      'agent.session.forks.list': forkListRoute,
+      'agent.runtime.get': {
+        schemaVersion: 'rag-ime.agent-runtime.v1',
+        enabled: true,
+        managed: true,
+        status: 'ready',
+        capabilities: { conversationFork: true, conversationRewrite: true },
+      },
+    });
+
+    renderAgent(transport);
+
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      pathId: 'agent.session.snapshot',
+    })));
+    await waitFor(() => expect(
+      useAgentLiveStore.getState().projections['session-preview']?.status,
+    ).toBe('busy'));
+    expect(forkListRoute).not.toHaveBeenCalled();
+    expect(transport.requests).not.toContainEqual(expect.objectContaining({
+      pathId: 'agent.session.forks.list',
+    }));
+  });
+
   it('opens historical editing immediately while Pi resolves the branch anchor in the background', async () => {
     const pendingForkCatalog = deferred<ReturnType<typeof forkListFixture>>();
     const transport = featureTransport(

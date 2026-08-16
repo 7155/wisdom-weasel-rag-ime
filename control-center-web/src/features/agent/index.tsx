@@ -568,6 +568,8 @@ function AgentWorkspace() {
     }
     async function warmForkCatalog(): Promise<void> {
       if (isRoomParticipant) return;
+      const sessionStatus = agentProjection(selectedId).status;
+      if (sessionStatus !== 'idle' && sessionStatus !== 'active') return;
       try {
         const response = await transport.request<Record<string, unknown>>({
           pathId: 'agent.session.forks.list',
