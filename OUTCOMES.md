@@ -9,11 +9,11 @@ their authoritative projections.
 
 ## Evidence Boundary
 
-The working tree contains substantial uncommitted work from several scopes.
-The latest machine release snapshot in `release/product-status.json` covers a
-clean commit only through 2026-07-27 and explicitly excludes current uncommitted
-changes. The entries below therefore distinguish source/test progress from
-installed foreground or distribution acceptance.
+These entries distinguish source/test progress, installed development evidence,
+foreground acceptance, and distribution acceptance. Git cleanliness, installed
+commit identity, Runtime state, and release gates must always be checked live;
+this document does not make those mechanical facts true. Machine-readable
+release evidence remains in `release/product-status.json` and the release audit.
 
 ## Current Focus
 
@@ -22,8 +22,8 @@ installed foreground or distribution acceptance.
 | O1 | Session can work reliably for a long time | active | The installed Luna canary passed public activity, native Steer order, Stop, Tool failure closure, refresh, and an 8/8 bounded Tool-result round; the real browser projected `stopping` in 35 ms | Long-duration soak and repeated compaction/recovery on real development work |
 | O2 | Room completes a real collaboration by composing Pi Sessions | active | The installed Luna Room canary used two ordinary Pi Sessions, completed one `room_partner` child, returned its event/result, emitted exactly one Root final, stopped a second live Tool turn, and refreshed without active ghosts | A useful self-hosted project change with organically chosen Partner/Tool Agent work and retained evidence |
 | O3 | A parent Session can use configurable private Tool Agents | active | Current source supports bounded child events/results, read/write choice, model/thinking override, and same-tree peer calls | Prove a useful live parent/child run, then raise capacity through bounded event/UI/resource budgets rather than more Kernel state |
-| O4 | PAW can develop itself through a bounded context and Skill harness | active | Eight conditional core Skills and the Pi-native `plugin-creator` are installed in the current development build; npm/Git/local Package prepare, product confirmation, version history, rollback, resource loading, and an installed-Runtime Package canary pass | Complete one fresh self-hosted change through market discovery or on-demand Skill creation and inspect its bounded context/receipts |
-| O5 | Control Center truthfully renders Session and Room state | active | Shared reducers now cover pseudo-empty Room tasks, task details/progress, terminal Tool cards, compact Tool/thinking UI, Stop/Steer order, rich HTML output, refresh recovery, and package-market previews; 466 focused frontend tests and the production build passed across the latest suites | Native installed checks on the current build; no empty task view for active Roots, white HTML preview, or ghost running turn after refresh |
+| O4 | PAW can develop itself through a bounded context and Skill harness | active | Eight conditional core Skills and the Pi-native `plugin-creator` are installed in the current development build; the source and installer tests now also provide an explicit Pi `/init` template for creating or narrowly supplementing a new project's root `AGENTS.md` | Verify `/init` from a newly opened installed Session, then complete one fresh self-hosted change through market discovery or on-demand Skill creation |
+| O5 | Control Center truthfully renders Session and Room state | active | Shared reducers now cover pseudo-empty Room tasks, task details/progress, terminal Tool cards, compact Tool/thinking UI, Stop/Steer order, rich HTML output, refresh recovery, and package-market previews; the current source also deduplicates Room/Pi user mirrors and labels partial context restoration instead of showing a false completed round | Installed browser check for Room/Pi history deduplication and recent/full restoration, then no empty active Root, white HTML preview, or ghost running turn after refresh |
 | O6 | Memory and Knowledge provide governed, explainable context | active | Local stores, curation, retrieval, evaluation, and management surfaces exist; recent commits refined daily activity and Project Field evidence | Keep Memory/Knowledge authority separate, verify retrieval quality on frozen evaluations, and finish product-facing acceptance without widening Session bootstrap |
 | O7 | The macOS input experience is correct in real foreground apps | active | Source, sidecar, patched Squirrel, and automated checks exist; the older status snapshot records partial foreground evidence | Fresh foreground matrix for composition, deletion, app switch, follow-up, RAG/memory selection, Accessibility, and voice |
 | O8 | A public macOS release is reproducible and distributable | blocked | Public source and engineering build paths exist | Clean scoped source, current release manifest, candidate-quality sign-off, Developer ID signing, notarization, stapling, clean-machine installation, and accepted foreground evidence |
@@ -94,6 +94,10 @@ minimal Package only when the capability is absent, and stops at the same
 product confirmation boundary. The 2026-08-16 development installation exposed
 `piPackages: true`; its active Runtime created and prepared an isolated local
 Package with one Skill without mutating the real installed-package state.
+
+New projects are initialized only when the user invokes Pi's `/init` prompt
+template. It inspects the bound workspace and creates or narrowly supplements
+the root `AGENTS.md`; Session creation itself never writes project files.
 
 ## O5–O8 — Product Surfaces And Release
 

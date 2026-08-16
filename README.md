@@ -733,6 +733,11 @@ and a hash-bound `rag-ime.release-manifest.v2` that verifies the project
 `LICENSE`, third-party notices, and exact patched Squirrel corresponding source.
 See the [release-manifest template](release/release-manifest.example.json).
 
+For a newly bound project that does not yet have repository instructions, run
+Pi's explicit `/init` prompt template. It inspects the actual workspace and
+creates or narrowly supplements the root `AGENTS.md`; creating a Session never
+writes project files implicitly.
+
 ## Repository Map
 
 | Path | Purpose |

@@ -3199,6 +3199,112 @@ class AgentServiceTests(unittest.TestCase):
             len(expected_ids),
         )
 
+    def test_room_message_snapshot_uses_pi_user_copy_for_the_completed_turn(
+        self,
+    ) -> None:
+        room = self.service.create_room(
+            {
+                "title": "Room 与 Pi 用户消息去重",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {
+                        "roleId": "companion-present-v1",
+                        "roleVersion": "1",
+                    },
+                    {
+                        "roleId": "companion-firstlight-v1",
+                        "roleVersion": "1",
+                    }
+                ],
+            }
+        )["room"]
+        target = room["participants"][0]
+        room_id = str(room["id"])
+        session_id = str(target["sessionId"])
+        self.service.rooms.append_event(
+            room_id=room_id,
+            event_type="user_message",
+            payload={"text": "我想给 Agent 对话加 TUI 模式"},
+            turn_id="room-turn:tui",
+            created_at_ms=10_000,
+        )
+        repeated_event = self.service.rooms.append_event(
+            room_id=room_id,
+            event_type="user_message",
+            payload={"text": "我想给 Agent 对话加 TUI 模式"},
+            turn_id="room-turn:tui-repeat",
+            created_at_ms=100_000,
+        )
+        pi_user = {
+            "schemaVersion": "rag-ime.agent-message.v1",
+            "id": "message:pi-user",
+            "sessionId": session_id,
+            "turnId": "history:pi-user",
+            "role": "user",
+            "status": "completed",
+            "blocks": [
+                {
+                    "id": "message:pi-user:text",
+                    "type": "text",
+                    "status": "completed",
+                    "presentationKind": "markdown",
+                    "data": {"text": "我想给 Agent 对话加 TUI 模式"},
+                }
+            ],
+            "attachments": [],
+            "citations": [],
+            "createdAtMs": 17_000,
+            "completedAtMs": 17_000,
+        }
+        pi_assistant = {
+            "schemaVersion": "rag-ime.agent-message.v1",
+            "id": "message:pi-assistant",
+            "sessionId": session_id,
+            "turnId": "history:pi-user",
+            "role": "assistant",
+            "status": "completed",
+            "blocks": [
+                {
+                    "id": "message:pi-assistant:text",
+                    "type": "text",
+                    "status": "completed",
+                    "presentationKind": "markdown",
+                    "data": {"text": "已完成 TUI 方案调查。"},
+                }
+            ],
+            "attachments": [],
+            "citations": [],
+            "createdAtMs": 18_000,
+            "completedAtMs": 18_000,
+        }
+        runtime_snapshot = {
+            "messages": [pi_user, pi_assistant],
+            "toolHistoryEvents": [],
+            "telemetry": None,
+            "messageQueue": None,
+        }
+
+        with patch.object(
+            self.service.runtime,
+            "session_snapshot",
+            create=True,
+            return_value=runtime_snapshot,
+        ):
+            response = self.service.messages(session_id)
+
+        self.assertEqual(
+            [message["id"] for message in response["items"]],
+            [
+                "message:pi-user",
+                "message:pi-assistant",
+                f"room-event:{repeated_event['eventId']}",
+            ],
+        )
+        self.assertEqual(
+            {message["turnId"] for message in response["items"]},
+            {"history:pi-user", "room-turn:tui-repeat"},
+        )
+
 
     def test_message_snapshot_keeps_completed_tools_after_replay_eviction(self) -> None:
         session = self.service.create_session({"title": "工具历史恢复"})["session"]

@@ -164,6 +164,11 @@
 .agent-composer-dock > * { pointer-events: auto; }
 .agent-conversation-state { display: grid; min-height: 0; grid-row: 1; place-items: center; padding: var(--space-6); overflow: auto; }
 .agent-conversation__header > span { display: grid; min-width: 0; gap: 1px; }
+.agent-conversation__header > span > small { display: flex; min-width: 0; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; }
+.agent-context-snapshot-state { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; color: var(--color-info); }
+.agent-context-snapshot-state::before { width: 5px; height: 5px; border-radius: 50%; background: currentColor; content: ''; }
+.agent-context-snapshot-state[data-state='restoring']::before { animation: agent-status-breathe 1.4s ease-in-out infinite; }
+.agent-context-snapshot-state[data-state='partial'] { color: var(--color-warning); }
 .agent-conversation__header p { display: flex; min-width: 0; max-width: 50%; align-items: center; gap: 6px; margin: 0 0 0 auto; color: var(--color-danger); font-size: 13px; }
 .agent-conversation__header p > svg { flex: 0 0 auto; }
 .agent-conversation__header p > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2424,6 +2429,7 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
   }
 
   .agent-streaming-cursor,
+  .agent-context-snapshot-state[data-state='restoring']::before,
   .agent-assistant-pending > svg,
   .agent-timeline-loading > svg,
   .agent-working-dots b,
@@ -2464,6 +2470,7 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 }
 
 :root[data-reduce-motion='true'] .agent-streaming-cursor,
+:root[data-reduce-motion='true'] .agent-context-snapshot-state[data-state='restoring']::before,
 :root[data-reduce-motion='true'] .agent-assistant-pending > svg,
 :root[data-reduce-motion='true'] .agent-timeline-loading > svg,
 :root[data-reduce-motion='true'] .agent-working-dots b,

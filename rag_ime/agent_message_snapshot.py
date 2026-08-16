@@ -17,6 +17,7 @@ _ROOM_CONTEXT_CLOSE = "</room-context>"
 _TRANSIENT_CONTEXT_PREFIX = "RAG_IME_TRANSIENT_CONTEXT_V1\n"
 _RECENT_LIVE_EVENT_LIMIT = 48
 _RECENT_ROOM_MESSAGE_LIMIT = 12
+_ROOM_USER_TRANSCRIPT_MATCH_WINDOW_MS = 30_000
 
 
 class AgentMessageSnapshotService:
@@ -418,10 +419,18 @@ def _project_room_public_messages(
     projected: list[
         tuple[int, int, int, str, dict[str, object]]
     ] = []
+    private_user_copies: list[tuple[int, str, int]] = []
     for index, message in enumerate(private_messages):
         if _is_managed_room_bootstrap(message):
             continue
         value = dict(message)
+        if str(value.get("role") or "") == "user":
+            text = _message_text(value)
+            created_at_ms = _message_created_at_ms(value)
+            if text and created_at_ms > 0:
+                private_user_copies.append(
+                    (index, text, created_at_ms)
+                )
         projected.append(
             (
                 _message_created_at_ms(value),
@@ -441,6 +450,7 @@ def _project_room_public_messages(
     )
     seen_event_ids: set[str] = set()
     seen_post_ids: set[str] = set()
+    matched_private_user_indexes: set[int] = set()
     ordered_events = sorted(
         (
             event
@@ -470,6 +480,29 @@ def _project_room_public_messages(
             if not text:
                 continue
             seen_event_ids.add(event_id)
+            matching_private_index = next(
+                (
+                    private_index
+                    for private_index, private_text, private_created_at_ms
+                    in private_user_copies
+                    if private_index not in matched_private_user_indexes
+                    and private_text == text
+                    and 0
+                    <= private_created_at_ms - created_at_ms
+                    <= _ROOM_USER_TRANSCRIPT_MATCH_WINDOW_MS
+                ),
+                None,
+            )
+            if matching_private_index is not None:
+                # The Room event is the fast public mirror of the same input
+                # that Pi persists in its transcript a few milliseconds later.
+                # Keep Pi's copy in a full snapshot because it owns the
+                # history turn shared by the assistant response. Recent Room
+                # snapshots still use the event while Pi is being loaded.
+                matched_private_user_indexes.add(
+                    matching_private_index
+                )
+                continue
             message = _room_text_message(
                 session_id=session_id,
                 message_id=f"room-event:{event_id}",
@@ -572,18 +605,14 @@ def _message_created_at_ms(value: Mapping[str, object]) -> int:
     )
 
 
-def _is_managed_room_bootstrap(
-    message: Mapping[str, object],
-) -> bool:
-    if str(message.get("role") or "") != "user":
-        return False
-    blocks = message.get("blocks")
+def _message_text(value: Mapping[str, object]) -> str:
+    blocks = value.get("blocks")
     if not isinstance(blocks, Sequence) or isinstance(
         blocks,
         (str, bytes),
     ):
-        return False
-    text_parts: list[str] = []
+        return ""
+    parts: list[str] = []
     for block in blocks:
         if (
             not isinstance(block, Mapping)
@@ -593,8 +622,18 @@ def _is_managed_room_bootstrap(
         data = block.get("data")
         if not isinstance(data, Mapping):
             continue
-        text_parts.append(str(data.get("text") or ""))
-    text = "\n".join(text_parts).strip()
+        text = str(data.get("text") or "").strip()
+        if text:
+            parts.append(text)
+    return "\n".join(parts).strip()
+
+
+def _is_managed_room_bootstrap(
+    message: Mapping[str, object],
+) -> bool:
+    if str(message.get("role") or "") != "user":
+        return False
+    text = _message_text(message)
     return (
         text.startswith(_ROOM_CONTEXT_OPEN)
         and text.endswith(_ROOM_CONTEXT_CLOSE)

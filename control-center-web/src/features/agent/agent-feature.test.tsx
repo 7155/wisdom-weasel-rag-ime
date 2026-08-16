@@ -148,6 +148,7 @@ describe('Agent experience', () => {
     expect(await screen.findByText(
       '读取输入法工具书，并把结果作为可展开卡片保留。',
     )).toBeInTheDocument();
+    expect(screen.getByText('正在恢复完整上下文')).toBeInTheDocument();
     expect(transport.requests.filter((request) => (
       request.pathId === 'agent.session.snapshot'
       && request.query?.view === 'recent'
@@ -166,6 +167,7 @@ describe('Agent experience', () => {
     ).size).toBe(4);
     expect(useAgentLiveStore.getState().projections['session-preview']?.turnOrder).toHaveLength(2);
     expect(container.querySelectorAll('.agent-turn')).toHaveLength(2);
+    expect(screen.queryByText('正在恢复完整上下文')).not.toBeInTheDocument();
   });
 
   it('falls back to the compatible full snapshot when the recent window fails', async () => {

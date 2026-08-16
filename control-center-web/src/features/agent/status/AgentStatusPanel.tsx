@@ -76,6 +76,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
   capabilityCatalogError?: string;
   capabilityPolicyMutation?: CapabilityMutationOutcome;
   busy: boolean;
+  contextSnapshotState?: 'restoring' | 'partial';
   onCapabilityPreferenceChange: (canonicalId: string, preference: CapabilityPreference) => void;
   onCapabilityPolicyRetry: () => void;
   onCapabilityCatalogRetry: () => void;
@@ -90,6 +91,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
   capabilityCatalogError,
   capabilityPolicyMutation,
   busy,
+  contextSnapshotState,
   onCapabilityPreferenceChange,
   onCapabilityPolicyRetry,
   onCapabilityCatalogRetry,
@@ -103,7 +105,11 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
   const resolvedTodo = resolvedWorkflow?.sessionId === sessionId
     ? resolvedWorkflow.todo
     : undefined;
-  const panelStatus = statusPanelLabel(projection, view, resolvedTodo);
+  const panelStatus = contextSnapshotState === 'restoring'
+    ? '正在恢复上下文'
+    : contextSnapshotState === 'partial'
+      ? '仅显示最近上下文'
+      : statusPanelLabel(projection, view, resolvedTodo);
   const backgroundJobs = useMemo(
     () => (projection?.backgroundJobOrder ?? [])
       .map((jobId) => projection?.backgroundJobsById[jobId])

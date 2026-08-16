@@ -20,7 +20,9 @@ PI_EXTENSION_SOURCE="$PI_INTEGRATION_SOURCE_DIR/rag-ime-control.ts"
 PI_NATIVE_SESSION_SOURCE="$PI_INTEGRATION_SOURCE_DIR/pi-native-session.ts"
 PI_EXTENSION_TARGET="$PI_INTEGRATION_DIR/rag-ime-control.ts"
 PI_SKILLS_SOURCE_DIR="$PI_INTEGRATION_SOURCE_DIR/skills"
+PI_INIT_PROMPT_SOURCE="$PI_INTEGRATION_SOURCE_DIR/prompts/init.md"
 MANAGED_PI_SKILLS_DIR="$APP_SUPPORT_DIR/Agent/config/skills"
+MANAGED_PI_PROMPTS_DIR="$APP_SUPPORT_DIR/Agent/config/prompts"
 DB_PATH="${RAG_IME_DB_PATH:-$APP_SUPPORT_DIR/rag-ime.sqlite}"
 PROJECT="${RAG_IME_PROJECT:-wisdom-weasel-rag-ime}"
 HOST="${RAG_IME_SIDECAR_HOST:-127.0.0.1}"
@@ -272,6 +274,10 @@ if [[ ! -d "$PI_SKILLS_SOURCE_DIR" || -L "$PI_SKILLS_SOURCE_DIR" ]]; then
   echo "controlled Pi skills source not found or is a symlink: $PI_SKILLS_SOURCE_DIR" >&2
   exit 1
 fi
+if [[ ! -f "$PI_INIT_PROMPT_SOURCE" || -L "$PI_INIT_PROMPT_SOURCE" ]]; then
+  echo "controlled Pi init prompt not found or is a symlink: $PI_INIT_PROMPT_SOURCE" >&2
+  exit 1
+fi
 if [[ -n "$(find "$PI_INTEGRATION_SOURCE_DIR" -type l -print -quit)" ]]; then
   echo "controlled Pi integration source must not contain symlinks: $PI_INTEGRATION_SOURCE_DIR" >&2
   exit 1
@@ -337,6 +343,14 @@ for skill_source in "$PI_SKILLS_SOURCE_DIR"/*; do
   rm -rf "$skill_target"
   cp -R "$skill_source" "$skill_target"
 done
+
+# `/init` is a Pi-native prompt template, not a PAW command reimplementation.
+# Replace only the product-owned filename and preserve every unrelated user
+# prompt already installed in the Agent directory.
+mkdir -p "$MANAGED_PI_PROMPTS_DIR"
+rm -f "$MANAGED_PI_PROMPTS_DIR/init.md"
+cp "$PI_INIT_PROMPT_SOURCE" "$MANAGED_PI_PROMPTS_DIR/init.md"
+chmod 644 "$MANAGED_PI_PROMPTS_DIR/init.md"
 
 write_install_marker() {
   "$PYTHON_EXECUTABLE" - "$INSTALL_MARKER" "$ROOT" "$SOURCE_COMMIT" "$SOURCE_DIRTY" "$PYTHON_EXECUTABLE" <<'PY'

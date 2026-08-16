@@ -94,6 +94,10 @@ function AgentWorkspace() {
   const [showArchived, setShowArchived] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sessionLoadError, setSessionLoadError] = useState('');
+  const [contextSnapshot, setContextSnapshot] = useState<{
+    sessionId: string;
+    state: 'restoring' | 'partial';
+  }>();
   const [sendingSessionIds, setSendingSessionIds] = useState<Set<string>>(() => new Set());
   const [stoppingSessionIds, setStoppingSessionIds] = useState<Set<string>>(() => new Set());
   const [modelPickerRequest, setModelPickerRequest] = useState(0);
@@ -149,6 +153,9 @@ function AgentWorkspace() {
     getSelectedSessionId: () => selectedIdRef.current,
   });
   const sending = sendingSessionIds.has(selectedId);
+  const contextSnapshotState = contextSnapshot?.sessionId === selectedId
+    ? contextSnapshot.state
+    : undefined;
   const modelSelection = useModelSelectionController({
     transport,
     selectedSessionId: selectedId,
@@ -403,6 +410,7 @@ function AgentWorkspace() {
   }, [loadSessions, requestedSessionId]);
   useEffect(() => {
     setVisibleError(visibleSessionError(selectedId));
+    setContextSnapshot(undefined);
     // A Session's last Pi-confirmed catalog is safe to render while the
     // background refresh runs. Clearing it here caused a visible dead window
     // every time the user returned to a conversation.
@@ -479,6 +487,10 @@ function AgentWorkspace() {
         };
         hydrateSnapshotResponse(snapshotResponse);
         if (isRecentAgentSnapshot(snapshotResponse)) {
+          setContextSnapshot({
+            sessionId: selectedId,
+            state: 'restoring',
+          });
           try {
             const fullSnapshot = await transport.request({
               pathId: 'agent.session.snapshot',
@@ -487,12 +499,29 @@ function AgentWorkspace() {
             });
             if (!active || requestId !== snapshotRequestId) return false;
             hydrateSnapshotResponse(fullSnapshot);
+            setContextSnapshot((current) => (
+              current?.sessionId === selectedId
+                ? undefined
+                : current
+            ));
           } catch (fullError) {
             if (abort.signal.aborted) throw fullError;
             // The recent window is already authoritative and usable. Keep it
             // visible and continue from its cursor; a later recovery snapshot
             // can restore older transcript entries without duplicating turns.
+            if (active && requestId === snapshotRequestId) {
+              setContextSnapshot({
+                sessionId: selectedId,
+                state: 'partial',
+              });
+            }
           }
+        } else {
+          setContextSnapshot((current) => (
+            current?.sessionId === selectedId
+              ? undefined
+              : current
+          ));
         }
         const cursor = agentProjection(selectedId).resumeToken;
         unsubscribe();
@@ -1764,7 +1793,19 @@ function AgentWorkspace() {
       >
         <header className="agent-conversation__header">
           <IconButton ref={railToggleRef} className="agent-rail-toggle" label={railOpen ? '收起对话列表' : '展开对话列表'} icon={railOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} onClick={toggleRail} tooltip />
-          <span><strong>{session?.title ?? identity.assistantName}</strong><small>{session ? `${sessionProjectName(session)} · 本地 · ${sessionPermissionLabel(session)}` : '选择一段对话'}</small></span>
+          <span>
+            <strong>{session?.title ?? identity.assistantName}</strong>
+            <small>
+              {session ? `${sessionProjectName(session)} · 本地 · ${sessionPermissionLabel(session)}` : '选择一段对话'}
+              {contextSnapshotState ? (
+                <span className="agent-context-snapshot-state" data-state={contextSnapshotState}>
+                  {contextSnapshotState === 'restoring'
+                    ? '正在恢复完整上下文'
+                    : '当前仅显示最近上下文'}
+                </span>
+              ) : null}
+            </small>
+          </span>
           {error ? <p role="alert" title={error}><AlertCircle size={14} /><span>{error}</span></p> : null}
           <div className="agent-conversation__actions">
             <IconButton label="查看对话路径与分支" icon={<GitBranch size={17} />} onClick={() => openForkDialog()} disabled={!session} tooltip />
@@ -1856,6 +1897,7 @@ function AgentWorkspace() {
         capabilityCatalog={capabilityCatalog}
         capabilityPolicyMutation={capabilityPolicyMutation}
         busy={busy}
+        contextSnapshotState={contextSnapshotState}
         onCapabilityCatalogRetry={() => void retryCapabilityCatalog()}
         onCapabilityPolicyRetry={retryCapabilityPreference}
         onCapabilityPreferenceChange={(canonicalId, preference) => void changeCapabilityPreference(canonicalId, preference)}
