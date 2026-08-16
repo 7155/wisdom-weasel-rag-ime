@@ -2458,28 +2458,12 @@ class ControlToolGateway:
                 )
                 if projection["operation"] in operations
             ]
-            # Protocol v2 disables Pi's built-in filesystem tools so every file
-            # operation still passes through the product workspace boundary.
-            # Register the provider-facing names here and normalize them back to
-            # their workspace_* Gateway targets at execution time. The internal
-            # route names must never become a second model-facing Tool family.
-            if spec.get("modelVisible") is False and projections:
-                for projection in projections:
-                    manifests.append(
-                        {
-                            "name": projection["name"],
-                            "description": projection["description"],
-                            "parameters": projection["parameters"],
-                            "when": list(spec["when"]),
-                            "notFor": list(spec["notFor"]),
-                            "input": spec["input"],
-                            "output": spec["output"],
-                            "does": spec["does"],
-                            "risk": manifest.get("riskLevel") or "R0",
-                            "alwaysAvailable": True,
-                        }
-                    )
-                continue
+            # Pi owns the resident model-facing workspace names (ls/read/grep/
+            # find/edit/write/bash). PAW registers only its hidden governed
+            # workspace_* execution targets and declares which native name each
+            # target projects. Passing a native name as a backend manifest would
+            # collide with Pi's reserved tool namespace and prevent the Session
+            # from opening before the first model request.
             parameter_schema = _runtime_tool_parameter_schema(
                 str(manifest["id"]),
                 operations,
@@ -2506,7 +2490,13 @@ class ControlToolGateway:
             if spec.get("modelVisible") is False:
                 item["modelVisible"] = False
             if projections:
-                item["runtimeProjections"] = projections
+                item["runtimeProjections"] = [
+                    {
+                        "name": projection["name"],
+                        "operation": projection["operation"],
+                    }
+                    for projection in projections
+                ]
             manifests.append(item)
         return manifests
 

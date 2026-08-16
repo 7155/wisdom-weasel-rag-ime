@@ -1025,6 +1025,36 @@ class ControlToolGatewayTests(unittest.TestCase):
             for item in self.gateway.runtime_manifests(coordinator)
         }
 
+        projections = {
+            "workspace_list": [{"name": "ls", "operation": "list"}],
+            "workspace_read": [{"name": "read", "operation": "read"}],
+            "workspace_search": [
+                {"name": "grep", "operation": "search"},
+                {"name": "find", "operation": "search"},
+            ],
+            "workspace_edit": [{"name": "edit", "operation": "apply"}],
+            "workspace_write": [{"name": "write", "operation": "apply"}],
+            "workspace_shell": [{"name": "bash", "operation": "run"}],
+        }
+        for target, expected_projections in projections.items():
+            with self.subTest(target=target):
+                self.assertIn(target, manifests)
+                self.assertIs(manifests[target]["modelVisible"], False)
+                self.assertEqual(
+                    manifests[target]["runtimeProjections"],
+                    expected_projections,
+                )
+        for reserved_name in (
+            "ls",
+            "read",
+            "grep",
+            "find",
+            "edit",
+            "write",
+            "bash",
+        ):
+            with self.subTest(reserved_name=reserved_name):
+                self.assertNotIn(reserved_name, manifests)
         for target in (
             "workspace_list",
             "workspace_read",
@@ -1034,7 +1064,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             "workspace_shell",
         ):
             with self.subTest(target=target):
-                self.assertNotIn(target, manifests)
+                self.assertIn(target, manifests)
         # These have no differently named always-on native alias. They remain
         # progressive Tools and are disclosed only when selected.
         self.assertIn("workspace_patch", manifests)
@@ -1579,7 +1609,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 operations,
                 {"start", "list", "status", "logs", "cancel"},
             )
-            self.assertNotIn("workspace_read", manifests)
+            self.assertIs(manifests["workspace_read"]["modelVisible"], False)
         finally:
             background_jobs.close()
 

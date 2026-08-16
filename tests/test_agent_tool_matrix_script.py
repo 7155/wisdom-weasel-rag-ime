@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.check_agent_tool_matrix import EXPECTED_TOOL_IDS, TOOL_CALLS
+from scripts.check_agent_tool_matrix import (
+    EXPECTED_TOOL_IDS,
+    EXPECTED_PROVIDER_TOOL_IDS,
+    HIDDEN_BACKEND_ONLY_TOOL_IDS,
+    TOOL_CALLS,
+    provider_tool_names,
+)
 
 
 class AgentToolMatrixScriptTests(unittest.TestCase):
@@ -34,6 +40,29 @@ class AgentToolMatrixScriptTests(unittest.TestCase):
         )
         self.assertEqual(TOOL_CALLS["write"]["path"], "created.txt")
         self.assertIn("agent-tool-matrix-shell-ok", TOOL_CALLS["bash"]["command"])
+
+    def test_provider_surface_projects_hidden_workspace_targets_to_pi_names(self) -> None:
+        self.assertEqual(
+            HIDDEN_BACKEND_ONLY_TOOL_IDS,
+            {"work_documents", "workspace_patch"},
+        )
+        self.assertTrue(HIDDEN_BACKEND_ONLY_TOOL_IDS.isdisjoint(EXPECTED_PROVIDER_TOOL_IDS))
+        self.assertEqual(
+            provider_tool_names(
+                [
+                    {"name": "overview"},
+                    {
+                        "name": "workspace_search",
+                        "modelVisible": False,
+                        "runtimeProjections": [
+                            {"name": "grep", "operation": "search"},
+                            {"name": "find", "operation": "search"},
+                        ],
+                    },
+                ]
+            ),
+            ("overview", "grep", "find"),
+        )
 
 
 if __name__ == "__main__":

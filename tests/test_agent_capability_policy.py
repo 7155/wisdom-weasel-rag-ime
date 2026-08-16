@@ -484,27 +484,34 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
             "references",
             "diagnostics",
         }
-        forbidden_tools = {"edit", "write"}
-        retired_provider_aliases = {
-            "workspace_list",
-            "workspace_read",
-            "workspace_search",
-            "workspace_shell",
-            "workspace_edit",
-            "workspace_write",
-        }
+        forbidden_tools = {"edit", "write", "workspace_edit", "workspace_write"}
+        reserved_provider_names = {"ls", "read", "grep", "find", "bash"}
         gateway = self._gateway()
         for session in sessions:
             manifests = gateway.runtime_manifests(dict(session))
             by_name = {str(item["name"]): item for item in manifests}
             self.assertTrue(
-                {"ls", "read", "grep", "find", "workspace_lsp"}
+                {
+                    "workspace_list",
+                    "workspace_read",
+                    "workspace_search",
+                    "workspace_shell",
+                    "workspace_lsp",
+                }
                 <= set(by_name)
             )
-            self.assertIn("bash", by_name)
-            self.assertEqual(by_name["bash"]["parameters"]["required"], ["command"])
             self.assertTrue(forbidden_tools.isdisjoint(by_name))
-            self.assertTrue(retired_provider_aliases.isdisjoint(by_name))
+            self.assertTrue(reserved_provider_names.isdisjoint(by_name))
+            self.assertEqual(
+                by_name["workspace_shell"]["runtimeProjections"],
+                [{"name": "bash", "operation": "run"}],
+            )
+            shell_run = next(
+                branch
+                for branch in by_name["workspace_shell"]["parameters"]["oneOf"]
+                if branch["properties"]["op"]["const"] == "run"
+            )
+            self.assertEqual(shell_run["required"], ["op", "command"])
             self.assertNotIn("workspace_job", by_name)
             lsp = by_name["workspace_lsp"]
             branches = lsp["parameters"].get("oneOf", [])

@@ -198,24 +198,11 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
     def test_every_enabled_runtime_tool_exposes_exact_operation_branches(self) -> None:
         catalog, manifests = self._runtime_contracts(mode="coordinator")
         effective: dict[str, set[str]] = {}
-        native_operations: dict[str, str] = {}
         for item in catalog:
             if item["enabled"] is not True or item.get("runtimeOwner") == "pi_host":
                 continue
             tool_id = str(item["id"])
             operations = {str(value) for value in item["effectiveOperations"]}
-            if (
-                _TOOL_SPEC_BY_ID[tool_id].get("modelVisible") is False
-                and tool_id in _RUNTIME_TOOL_PROJECTIONS
-            ):
-                native_operations.update(
-                    {
-                        str(projection["name"]): str(projection["operation"])
-                        for projection in _RUNTIME_TOOL_PROJECTIONS[tool_id]
-                        if str(projection["operation"]) in operations
-                    }
-                )
-                continue
             effective[tool_id] = operations
         native_ask = next(item for item in catalog if item["id"] == "ask")
         self.assertEqual(native_ask["runtimeOwner"], "pi_host")
@@ -223,7 +210,7 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
 
         self.assertEqual(
             {str(manifest["name"]) for manifest in manifests},
-            set(effective) | set(native_operations),
+            set(effective),
         )
         for manifest in manifests:
             with self.subTest(tool=manifest["name"]):
@@ -245,10 +232,6 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
                     if isinstance(branch.get("properties", {}).get("op"), dict)
                     and "const" in branch["properties"]["op"]
                 ]
-                if manifest["name"] in native_operations:
-                    self.assertTrue(manifest["alwaysAvailable"])
-                    self.assertEqual(operation_branches, [])
-                    continue
                 self.assertEqual(
                     {
                         branch["properties"]["op"]["const"]
@@ -309,18 +292,11 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         self.assertLess(len(encoded), 52_000)
         self.assertLess(len(public_encoded), 12_000)
         self.assertTrue(all("profile" not in manifest for manifest in manifests))
-        native_names = {
-            str(projection["name"])
-            for projections in _RUNTIME_TOOL_PROJECTIONS.values()
-            for projection in projections
-            if str(projection["name"]) in {"ls", "read", "grep", "find", "edit", "write", "bash"}
-        }
         self.assertTrue(
             all(
                 manifest["description"]
                 == _TOOL_SPEC_BY_ID[str(manifest["name"])]["displayName"]
                 for manifest in manifests
-                if str(manifest["name"]) not in native_names
             )
         )
         self.assertIn("work_documents", {manifest["name"] for manifest in manifests})
@@ -491,9 +467,37 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         _catalog, manifests = self._runtime_contracts(mode="coordinator")
         tools = {manifest["name"]: manifest for manifest in manifests}
 
-        # Native Pi tools own the model-facing ls/read/grep/find/edit/write/bash
-        # names. Their workspace_* Gateway route IDs must never appear as a
-        # second progressive Tool family.
+        # Pi owns the model-facing ls/read/grep/find/edit/write/bash names. PAW
+        # sends hidden workspace_* execution targets plus explicit native
+        # projections, never a second backend registration of Pi's names.
+        projections = {
+            "workspace_list": [{"name": "ls", "operation": "list"}],
+            "workspace_read": [{"name": "read", "operation": "read"}],
+            "workspace_search": [
+                {"name": "grep", "operation": "search"},
+                {"name": "find", "operation": "search"},
+            ],
+            "workspace_edit": [{"name": "edit", "operation": "apply"}],
+            "workspace_write": [{"name": "write", "operation": "apply"}],
+            "workspace_shell": [{"name": "bash", "operation": "run"}],
+        }
+        for internal_name, expected_projections in projections.items():
+            self.assertIn(internal_name, tools)
+            self.assertIs(tools[internal_name]["modelVisible"], False)
+            self.assertEqual(
+                tools[internal_name]["runtimeProjections"],
+                expected_projections,
+            )
+        for reserved_name in (
+            "ls",
+            "read",
+            "grep",
+            "find",
+            "edit",
+            "write",
+            "bash",
+        ):
+            self.assertNotIn(reserved_name, tools)
         for internal_name in (
             "workspace_list",
             "workspace_read",
@@ -502,7 +506,7 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             "workspace_write",
             "workspace_shell",
         ):
-            self.assertNotIn(internal_name, tools)
+            self.assertIn("op", self._branch(tools[internal_name], tools[internal_name]["runtimeProjections"][0]["operation"])["required"])
         lsp_properties = self._branch(tools["workspace_lsp"], "references")["properties"]
         self.assertIn("includeDeclaration", lsp_properties)
         self.assertEqual(lsp_properties["timeoutMs"]["maximum"], 20_000)
@@ -548,9 +552,6 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
 
         for manifest in manifests:
             with self.subTest(tool=manifest["name"]):
-                if manifest["name"] in {"ls", "read", "grep", "find", "bash"}:
-                    self.assertTrue(manifest["alwaysAvailable"])
-                    continue
                 operations = {
                     branch["properties"]["op"]["const"]
                     for branch in manifest["parameters"]["oneOf"]
@@ -568,9 +569,14 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
 
         self.assertTrue(shell["enabled"])
         self.assertEqual(shell["effectiveOperations"], ["run"])
-        names = {item["name"] for item in manifests}
-        self.assertNotIn("workspace_shell", names)
-        self.assertIn("bash", names)
+        by_name = {item["name"]: item for item in manifests}
+        self.assertIn("workspace_shell", by_name)
+        self.assertIs(by_name["workspace_shell"]["modelVisible"], False)
+        self.assertEqual(
+            by_name["workspace_shell"]["runtimeProjections"],
+            [{"name": "bash", "operation": "run"}],
+        )
+        self.assertNotIn("bash", by_name)
 
 
 if __name__ == "__main__":

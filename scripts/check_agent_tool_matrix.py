@@ -67,6 +67,32 @@ TOOL_CALLS: dict[str, dict[str, object]] = {
 }
 
 EXPECTED_TOOL_IDS = frozenset(TOOL_CALLS)
+HIDDEN_BACKEND_ONLY_TOOL_IDS = frozenset({"work_documents", "workspace_patch"})
+EXPECTED_PROVIDER_TOOL_IDS = EXPECTED_TOOL_IDS - HIDDEN_BACKEND_ONLY_TOOL_IDS
+
+
+def provider_tool_names(manifests: list[object]) -> tuple[str, ...]:
+    """Project the hidden PAW targets into the names actually owned by Pi."""
+
+    names: list[str] = []
+    for value in manifests:
+        if not isinstance(value, dict):
+            continue
+        if value.get("modelVisible") is False:
+            projections = value.get("runtimeProjections")
+            if not isinstance(projections, list):
+                continue
+            names.extend(
+                str(projection.get("name") or "")
+                for projection in projections
+                if isinstance(projection, dict)
+                and str(projection.get("name") or "").strip()
+            )
+            continue
+        name = str(value.get("name") or "").strip()
+        if name:
+            names.append(name)
+    return tuple(names)
 
 
 def run_matrix(*, keep_workspace: bool = False) -> dict[str, object]:
@@ -141,15 +167,17 @@ def run_matrix(*, keep_workspace: bool = False) -> dict[str, object]:
             actor="agent-tool-matrix",
         )
 
-        runtime_tools = tuple(
-            str(item["name"])
-            for item in service.agent_tools.runtime_manifests(session)
+        runtime_tools = provider_tool_names(
+            list(service.agent_tools.runtime_manifests(session))
         )
-        if runtime_tools != tuple(TOOL_CALLS):
+        expected_provider_order = tuple(
+            name for name in TOOL_CALLS if name in EXPECTED_PROVIDER_TOOL_IDS
+        )
+        if runtime_tools != expected_provider_order:
             raise RuntimeError(
                 "Pi runtime Tool matrix differs from the reviewed Provider surface: "
-                f"missing={sorted(EXPECTED_TOOL_IDS - set(runtime_tools))}, "
-                f"unexpected={sorted(set(runtime_tools) - EXPECTED_TOOL_IDS)}, "
+                f"missing={sorted(EXPECTED_PROVIDER_TOOL_IDS - set(runtime_tools))}, "
+                f"unexpected={sorted(set(runtime_tools) - EXPECTED_PROVIDER_TOOL_IDS)}, "
                 f"actualOrder={list(runtime_tools)}"
             )
 
