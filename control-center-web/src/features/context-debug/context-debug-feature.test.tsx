@@ -162,6 +162,52 @@ describe('ContextDebugFeature', () => {
     expect(screen.getByRole('link', { name: '打开设置' })).toHaveAttribute('href', '#/configuration');
   });
 
+  it.each([
+    {
+      code: 'session_not_resident',
+      expected: '这段对话已经结束或当前未驻留',
+    },
+    {
+      code: 'runtime_unresponsive',
+      expected: '运行时没有在诊断等待时间内返回快照',
+    },
+    {
+      code: 'internal_snapshot_lookup_failed',
+      expected: '当前回合没有可用的上下文快照',
+    },
+  ])('explains unavailable historical context without exposing $code', async ({ code, expected }) => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          sessions: [{
+            id: 'session-old',
+            title: '已结束的对话',
+            mode: 'assistant',
+            status: 'idle',
+            roleId: 'companion-present-v1',
+            roleVersion: '1',
+            updatedAtMs: 100,
+            workspaceRoots: [],
+          }],
+        },
+        'agent.session.debugContext.get': {
+          available: false,
+          transient: true,
+          sessionId: 'session-old',
+          turnId: '',
+          error: code,
+          availableTurns: [],
+        },
+      },
+    });
+    renderFeature(transport, '/context-debug?sessionId=session-old');
+
+    expect(await screen.findByText(expected, { exact: false })).toBeInTheDocument();
+    expect(screen.queryByText(code)).not.toBeInTheDocument();
+    expect(screen.queryByText('发送一条消息后', { exact: false })).not.toBeInTheDocument();
+  });
+
   it('keeps long prompt bodies hidden until the user opens the audit payload', async () => {
     const user = userEvent.setup();
     const payload = debugContextResponse();

@@ -467,12 +467,19 @@ export function RoomTurn({
               activities={lane.activities}
             />
           </span>
-          <RoomLaneTiming
-            freshness={laneFreshness}
-            nowMs={nowMs}
-            startedAtMs={turn.createdAtMs}
-            endedAtMs={laneStillActive && !laneAction ? undefined : turn.updatedAtMs}
-          />
+          <span className="room-agent-lane__summary-meta">
+            <RoomLaneTiming
+              freshness={laneFreshness}
+              nowMs={nowMs}
+              startedAtMs={turn.createdAtMs}
+              endedAtMs={laneStillActive && !laneAction ? undefined : turn.updatedAtMs}
+            />
+            <ChevronRight
+              aria-hidden="true"
+              className="room-agent-lane__disclosure"
+              size={15}
+            />
+          </span>
         </summary>
         {visibleMessages.length ? <div className="room-agent-lane__posts">
           {visibleMessages.map((message) => <Fragment key={message.id}>
@@ -1736,10 +1743,11 @@ function RoomLaneTiming({
   );
   return <span className="room-agent-lane__timing">
     <span className="room-agent-lane__updated-at">
-      最近更新 <time dateTime={updatedAt.toISOString()}>
-        {roomActivityTimeFormatter.format(updatedAt)}
-      </time>
-      <span aria-hidden="true"> · {elapsedSeconds} 秒前</span>
+      <time
+        aria-label={`最近更新 ${roomActivityTimeFormatter.format(updatedAt)}`}
+        dateTime={updatedAt.toISOString()}
+        title={`最近更新 ${roomActivityTimeFormatter.format(updatedAt)}`}
+      >{formatRelativeUpdateAge(elapsedSeconds)}</time>
     </span>
     {freshness.state === 'fresh' || endedAtMs !== undefined ? null : <small data-state={freshness.state}>
       {freshness.detail}
@@ -1750,6 +1758,16 @@ function RoomLaneTiming({
       startedAtMs={startedAtMs}
     />
   </span>;
+}
+
+function formatRelativeUpdateAge(elapsedSeconds: number): string {
+  if (elapsedSeconds < 1) return '刚刚更新';
+  if (elapsedSeconds < 60) return `${elapsedSeconds} 秒前更新`;
+  const minutes = Math.floor(elapsedSeconds / 60);
+  if (minutes < 60) return `${minutes} 分钟前更新`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时前更新`;
+  return `${Math.floor(hours / 24)} 天前更新`;
 }
 
 function RoomElapsed({

@@ -2672,6 +2672,154 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertEqual(response["items"], history)
 
+    def test_message_snapshot_recovers_managed_html_link_for_historical_reply(
+        self,
+    ) -> None:
+        session = self.service.create_session(
+            {"title": "历史 HTML 产物"}
+        )["session"]
+        session_id = str(session["id"])
+        receipt = self.service.media.import_bytes(
+            session_id=session_id,
+            data=b"<!doctype html><html><body>managed report</body></html>",
+            mime_type="text/html",
+            file_name="project-intro.html",
+            origin="tool_result",
+            origin_tool="workspace_write",
+        )
+        history = [
+            {
+                "schemaVersion": "rag-ime.agent-message.v1",
+                "id": "message:historical-html",
+                "sessionId": session_id,
+                "turnId": "turn:historical-html",
+                "role": "assistant",
+                "status": "completed",
+                "blocks": [
+                    {
+                        "id": "message:historical-html:text",
+                        "type": "text",
+                        "status": "completed",
+                        "presentationKind": "markdown",
+                        "data": {
+                            "text": (
+                                "已完成独立网页介绍："
+                                "[打开 project-intro.html](./project-intro.html)"
+                            )
+                        },
+                    }
+                ],
+                "attachments": [],
+                "citations": [],
+                "createdAtMs": 10,
+                "completedAtMs": 11,
+            }
+        ]
+        with patch.object(
+            self.service.runtime,
+            "session_snapshot",
+            create=True,
+            return_value={
+                "messages": history,
+                "toolHistoryEvents": [],
+                "telemetry": None,
+                "messageQueue": None,
+            },
+        ):
+            response = self.service.messages(session_id)
+
+        recovered = response["items"][0]
+        file_blocks = [
+            block
+            for block in recovered["blocks"]
+            if block.get("type") == "file"
+        ]
+        self.assertEqual(len(file_blocks), 1)
+        self.assertEqual(
+            file_blocks[0]["data"]["mediaId"],
+            receipt["mediaId"],
+        )
+        self.assertEqual(
+            file_blocks[0]["data"]["fileName"],
+            "project-intro.html",
+        )
+
+    def test_message_snapshot_rejects_unowned_or_nested_historical_html_links(
+        self,
+    ) -> None:
+        session = self.service.create_session(
+            {"title": "受限历史 HTML"}
+        )["session"]
+        session_id = str(session["id"])
+        other = self.service.create_session(
+            {"title": "其他 Session"}
+        )["session"]
+        self.service.media.import_bytes(
+            session_id=session_id,
+            data=b"<!doctype html><p>nested</p>",
+            mime_type="text/html",
+            file_name="nested.html",
+            origin="tool_result",
+            origin_tool="workspace_write",
+        )
+        self.service.media.import_bytes(
+            session_id=str(other["id"]),
+            data=b"<!doctype html><p>other</p>",
+            mime_type="text/html",
+            file_name="other.html",
+            origin="tool_result",
+            origin_tool="workspace_write",
+        )
+        self.service.media.import_bytes(
+            session_id=session_id,
+            data=b"<!doctype html><p>attachment</p>",
+            mime_type="text/html",
+            file_name="attachment.html",
+            origin="user_attachment",
+        )
+        history = [{
+            "schemaVersion": "rag-ime.agent-message.v1",
+            "id": "message:untrusted-html",
+            "sessionId": session_id,
+            "turnId": "turn:untrusted-html",
+            "role": "assistant",
+            "status": "completed",
+            "blocks": [{
+                "id": "message:untrusted-html:text",
+                "type": "text",
+                "status": "completed",
+                "presentationKind": "markdown",
+                "data": {
+                    "text": (
+                        "[嵌套路径](../nested.html) "
+                        "[其他会话](other.html) "
+                        "[用户附件](attachment.html)"
+                    )
+                },
+            }],
+            "attachments": [],
+            "citations": [],
+            "createdAtMs": 10,
+            "completedAtMs": 11,
+        }]
+        with patch.object(
+            self.service.runtime,
+            "session_snapshot",
+            create=True,
+            return_value={
+                "messages": history,
+                "toolHistoryEvents": [],
+                "telemetry": None,
+                "messageQueue": None,
+            },
+        ):
+            response = self.service.messages(session_id)
+
+        self.assertFalse(any(
+            block.get("type") == "file"
+            for block in response["items"][0]["blocks"]
+        ))
+
     def test_recent_room_message_snapshot_skips_runtime_and_bounds_events(
         self,
     ) -> None:

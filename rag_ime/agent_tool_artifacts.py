@@ -103,7 +103,7 @@ class AgentToolArtifactProjector:
                 origin_receipt_id=revision,
             )
             return ToolArtifactProjection(
-                blocks=(_file_block(media_receipt, kind="file"),),
+                blocks=(managed_file_block(media_receipt, kind="file"),),
                 status="available",
             )
         except (OSError, TypeError, ValueError):
@@ -174,7 +174,7 @@ class AgentToolArtifactProjector:
                 )
             except (OSError, TypeError, ValueError):
                 continue
-            blocks.append(_file_block(media_receipt, kind=kind))
+            blocks.append(managed_file_block(media_receipt, kind=kind))
 
         if not blocks:
             return ToolArtifactProjection(status="unavailable", reason="no_previewable_artifact")
@@ -243,7 +243,13 @@ def _text_mime_for(file_name: str) -> str:
     return _TEXT_MIME_BY_SUFFIX.get(Path(file_name).suffix.lower(), "text/plain")
 
 
-def _file_block(receipt: Mapping[str, object], *, kind: str) -> dict[str, object]:
+def managed_file_block(
+    receipt: Mapping[str, object],
+    *,
+    kind: str = "file",
+) -> dict[str, object]:
+    """Build the trusted raw file block shared by live and recovery paths."""
+
     media_id = str(receipt["mediaId"])
     session_id = str(receipt["sessionId"])
     sha256 = str(receipt["sha256"])

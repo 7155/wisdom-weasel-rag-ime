@@ -99,6 +99,9 @@ export function ContextDebugFeature() {
     [contextQuery.data],
   );
   const context = response.context;
+  const unavailableContext = !contextQuery.isPending && sessionId && !response.available
+    ? unavailableContextCopy(response.error)
+    : null;
 
   useEffect(() => () => {
     if (!htmlPreviewUrls) return;
@@ -219,7 +222,7 @@ export function ContextDebugFeature() {
       {!contextQuery.isPending && !contextQuery.error && sessionId && !response.available ? (
         <div className="context-debug-notice-bar">
           <DebugNotice tone="warning">
-            {response.error || '当前回合没有上下文快照。请在“设置 → 隐私与安全”开启本机上下文快照并选择保存目录；未开启时，应用重启后无法恢复旧的系统指令。'}
+            {unavailableContext?.notice || ''}
           </DebugNotice>
           <a className="context-debug-notice-bar__link" href="#/configuration">打开设置</a>
         </div>
@@ -233,6 +236,7 @@ export function ContextDebugFeature() {
         returnToConversationHref={sessionId ? `#/agent?sessionId=${encodeURIComponent(sessionId)}` : '#/agent'}
         selectedTurnId={requestedTurnId || response.turnId || context?.turnId || ''}
         telemetry={response.telemetry}
+        unavailable={unavailableContext}
       />
     </main>
     <Dialog
@@ -283,6 +287,36 @@ export function ContextDebugFeature() {
 
 type ContextTreeFilter = 'all' | 'default' | 'no-tools' | 'user-only';
 
+interface UnavailableContextCopy {
+  title: string;
+  notice: string;
+  description: string;
+}
+
+function unavailableContextCopy(error: string): UnavailableContextCopy {
+  if (error === 'session_not_resident') {
+    return {
+      title: '旧上下文未保留',
+      notice: '这段对话已经结束或当前未驻留。',
+      description: '原始上下文不会为查看而重新启动；若当时未开启本机快照，旧请求无法事后还原。',
+    };
+  }
+  if (error === 'runtime_unresponsive') {
+    return {
+      title: '暂时无法读取快照',
+      notice: '运行时没有在诊断等待时间内返回快照。',
+      description: '对话本身不受影响；可以稍后刷新，或开启本机快照保留后续调用。',
+    };
+  }
+  return {
+    title: '当前快照不可用',
+    notice: /[\u3400-\u9fff]/u.test(error)
+      ? error
+      : '当前回合没有可用的上下文快照。',
+    description: '这里不会把未保留的旧请求误显示成一段空白对话。',
+  };
+}
+
 interface ContextTreeEntry {
   depth: 0 | 1;
   id: string;
@@ -299,6 +333,7 @@ function ContextDebugDocument({
   returnToConversationHref,
   selectedTurnId,
   telemetry,
+  unavailable,
 }: {
   availableTurns: DebugTurnSummary[];
   context?: DebugContextRecord;
@@ -307,6 +342,7 @@ function ContextDebugDocument({
   returnToConversationHref: string;
   selectedTurnId: string;
   telemetry: Record<string, unknown>;
+  unavailable: UnavailableContextCopy | null;
 }) {
   const [activeEntryId, setActiveEntryId] = useState('');
   const [treeFilter, setTreeFilter] = useState<ContextTreeFilter>('default');
@@ -331,9 +367,11 @@ function ContextDebugDocument({
       <div className="context-debug-reader__empty">
         <EmptyState
           action={!loading ? <a className="context-debug-empty-action" href={returnToConversationHref}>前往对话</a> : undefined}
-          description={loading ? '正在读取运行上下文。' : '发送一条消息后，这里会按模型调用恢复实际上下文。'}
+          description={loading
+            ? '正在读取运行上下文。'
+            : unavailable?.description || '发送一条消息后，这里会按模型调用恢复实际上下文。'}
           icon={Database}
-          title={loading ? '正在读取' : '暂无模型调用'}
+          title={loading ? '正在读取' : unavailable?.title || '暂无模型调用'}
         />
       </div>
     );

@@ -285,11 +285,11 @@ describe('RoomTurn public activity detail', () => {
     const lane = view.container.querySelector<HTMLElement>('.room-agent-lane')!;
 
     expect(lane).toHaveAttribute('data-motion', 'fresh');
-    expect(lane).toHaveTextContent(/最近更新 .* · 1 秒前/);
+    expect(lane).toHaveTextContent('1 秒前更新');
     expect(lane.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'thinking');
 
     act(() => vi.advanceTimersByTime(2_000));
-    expect(lane).toHaveTextContent(/最近更新 .* · 3 秒前/);
+    expect(lane).toHaveTextContent('3 秒前更新');
 
     act(() => vi.advanceTimersByTime(14_000));
     expect(lane).toHaveAttribute('data-motion', 'stale');
@@ -306,7 +306,7 @@ describe('RoomTurn public activity detail', () => {
     };
     view.rerender(roomTurn(projection));
     expect(lane).toHaveAttribute('data-motion', 'fresh');
-    expect(lane).toHaveTextContent(/最近更新 .* · 0 秒前/);
+    expect(lane).toHaveTextContent('刚刚更新');
     expect(lane.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'thinking');
   });
 

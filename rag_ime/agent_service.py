@@ -550,6 +550,7 @@ class AgentService:
             runtime_provider=lambda: self.runtime,
             workflow_projector=self.workflow_state,
             agent_blocks=self.agent_blocks,
+            media=self.media,
             observations=self.observations,
             events=self.events,
             background_jobs=self.background_jobs,

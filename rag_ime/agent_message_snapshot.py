@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import re
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, TypeAlias
 
+from .agent_blocks import MAX_BLOCKS_PER_TURN, normalize_trusted_agent_blocks
 from .agent_protocol import AgentEventEnvelope
+from .agent_tool_artifacts import managed_file_block
 from .contracts.json_schema import validate_contract
 
 RoomPublicMessageProvider: TypeAlias = Callable[
@@ -18,6 +21,111 @@ _TRANSIENT_CONTEXT_PREFIX = "RAG_IME_TRANSIENT_CONTEXT_V1\n"
 _RECENT_LIVE_EVENT_LIMIT = 48
 _RECENT_ROOM_MESSAGE_LIMIT = 12
 _ROOM_USER_TRANSCRIPT_MATCH_WINDOW_MS = 30_000
+_HISTORICAL_HTML_LINK = re.compile(
+    r"\[[^\]\n]{0,240}\]\((?:\./)?(?P<name>[^/\\?#)\s]{1,240}\.html?)(?:#[^)\s]*)?\)",
+    re.IGNORECASE,
+)
+
+
+def _recover_managed_html_links(
+    session_id: str,
+    messages: Sequence[Mapping[str, object]],
+    *,
+    media: Any,
+) -> list[dict[str, object]]:
+    """Restore old relative HTML links from Session-owned managed receipts.
+
+    Older Pi replies sometimes named a generated HTML file using a relative
+    Markdown link but predated the managed-file block projection. Recovery is
+    deliberately narrow: assistant Markdown, a basename-only `.htm[l]` target,
+    and an exact same-Session `tool_result` receipt must all agree.
+    """
+
+    copied = [dict(message) for message in messages]
+    requested_names: set[str] = set()
+    names_by_message: dict[str, list[str]] = {}
+    for message in copied:
+        if str(message.get("role") or "") != "assistant":
+            continue
+        message_id = str(message.get("id") or "").strip()
+        if not message_id:
+            continue
+        names: list[str] = []
+        for block in message.get("blocks", []):
+            if not isinstance(block, Mapping) or block.get("type") != "text":
+                continue
+            data = block.get("data")
+            if not isinstance(data, Mapping):
+                continue
+            value = str(data.get("text") or data.get("markdown") or "")
+            for match in _HISTORICAL_HTML_LINK.finditer(value):
+                name = match.group("name")
+                if name not in names:
+                    names.append(name)
+        if names:
+            names_by_message[message_id] = names
+            requested_names.update(names)
+    if not requested_names:
+        return copied
+
+    try:
+        receipts = media.list_for_session(session_id, limit=500)
+    except Exception:
+        return copied
+    receipts_by_name: dict[str, Mapping[str, object]] = {}
+    for receipt in receipts:
+        if not isinstance(receipt, Mapping):
+            continue
+        file_name = str(receipt.get("fileName") or "")
+        if (
+            file_name in requested_names
+            and receipt.get("mimeType") == "text/html"
+            and receipt.get("origin") == "tool_result"
+        ):
+            receipts_by_name.setdefault(file_name, receipt)
+
+    for index, message in enumerate(copied):
+        message_id = str(message.get("id") or "").strip()
+        names = names_by_message.get(message_id, [])
+        if not names:
+            continue
+        blocks = [
+            dict(block)
+            for block in message.get("blocks", [])
+            if isinstance(block, Mapping)
+        ]
+        existing_media_ids = {
+            str(data.get("mediaId") or "")
+            for block in blocks
+            for data in [block.get("data")]
+            if isinstance(data, Mapping)
+        }
+        remaining = max(0, MAX_BLOCKS_PER_TURN - len(blocks))
+        if remaining == 0:
+            continue
+        raw_blocks: list[dict[str, object]] = []
+        for name in names:
+            receipt = receipts_by_name.get(name)
+            if receipt is None:
+                continue
+            media_id = str(receipt.get("mediaId") or "")
+            if not media_id or media_id in existing_media_ids:
+                continue
+            raw_blocks.append(managed_file_block(receipt))
+            existing_media_ids.add(media_id)
+            if len(raw_blocks) >= remaining:
+                break
+        if not raw_blocks:
+            continue
+        recovered = normalize_trusted_agent_blocks(
+            raw_blocks,
+            source_kind="managed_media_recovery",
+            source_ref=message_id,
+        )
+        updated = dict(message)
+        updated["blocks"] = [*blocks, *recovered]
+        copied[index] = updated
+    return copied
 
 
 class AgentMessageSnapshotService:
@@ -30,6 +138,7 @@ class AgentMessageSnapshotService:
         runtime_provider: Callable[[], Any],
         workflow_projector: Callable[[str], Mapping[str, object]],
         agent_blocks: Any,
+        media: Any,
         observations: Any,
         events: Any,
         background_jobs: Any,
@@ -40,6 +149,7 @@ class AgentMessageSnapshotService:
         self._runtime_provider = runtime_provider
         self._workflow_projector = workflow_projector
         self.agent_blocks = agent_blocks
+        self.media = media
         self.observations = observations
         self.events = events
         self.background_jobs = background_jobs
@@ -96,6 +206,11 @@ class AgentMessageSnapshotService:
                 for message in messages
                 if isinstance(message, Mapping)
             ],
+        )
+        messages = _recover_managed_html_links(
+            session_id,
+            messages,
+            media=self.media,
         )
         room_projection = self._room_public_messages(session_id)
         if room_projection is not None:
