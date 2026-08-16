@@ -104,15 +104,80 @@ describe('PluginsFeature', () => {
     await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'agent.tools.list')).toHaveLength(before + 1));
   });
 
-  it('opens Agent with a review-only plugin-authoring skill request', async () => {
+  it('opens the project Pi skill with a search-first create-if-missing request', async () => {
     const user = userEvent.setup();
     renderPlugins();
     await user.click(await screen.findByRole('button', { name: '管理扩展与自动整理' }));
-    await user.click(await screen.findByRole('button', { name: '准备扩展草稿' }));
+    await user.click(await screen.findByRole('button', { name: '获取或制作能力' }));
 
     expect(screen.getByTestId('test-location')).toHaveTextContent('/agent?draft=');
     expect(screen.getByTestId('test-location')).toHaveTextContent('%2Fskill%3Aplugin-creator');
-    expect(screen.getByTestId('test-location')).toHaveTextContent('%E4%B8%8D%E8%A6%81%E5%A3%B0%E7%A7%B0%E5%AE%83%E5%B7%B2%E8%8E%B7%E5%87%86%E6%89%A7%E8%A1%8C');
+    expect(screen.getByTestId('test-location')).toHaveTextContent('%E5%85%88%E6%90%9C%E7%B4%A2%E5%B8%82%E5%9C%BA');
+    expect(screen.getByTestId('test-location')).toHaveTextContent('%E4%B8%8D%E8%A6%81%E5%A3%B0%E7%A7%B0%E5%B7%B2%E7%BB%8F%E5%AE%89%E8%A3%85');
+  });
+
+  it('resolves an npm Pi Package and stops at the product confirmation card', async () => {
+    const user = userEvent.setup();
+    const transport = renderPlugins({
+      'agent.extensions.validate': {
+        ok: true,
+        validationToken: 'package-validation-token',
+        distribution: 'pi_package',
+        extension: {
+          id: 'example.context-helper',
+          displayName: 'Context Helper',
+          version: '1.2.3',
+          resources: {
+            extensions: [],
+            skills: ['skills/context-helper/SKILL.md'],
+            prompts: ['prompts/context.md'],
+            themes: [],
+          },
+          source: { kind: 'npm', requested: 'npm:@example/context-helper@1.2.3' },
+        },
+      },
+      'agent.extensions.preview': {
+        ok: true,
+        previewToken: 'package-preview-token',
+        payloadSha256: 'c'.repeat(64),
+        summary: {
+          action: 'install',
+          pluginId: 'example.context-helper',
+          displayName: 'Context Helper',
+          version: '1.2.3',
+          resources: {
+            extensions: [],
+            skills: ['skills/context-helper/SKILL.md'],
+            prompts: ['prompts/context.md'],
+            themes: [],
+          },
+        },
+      },
+    });
+
+    await user.click(await screen.findByRole('button', { name: '管理扩展与自动整理' }));
+    await user.type(
+      screen.getByRole('textbox', { name: 'Pi Package 来源' }),
+      'npm:@example/context-helper@1.2.3',
+    );
+    const inspectPackage = screen.getByRole('button', { name: '检查并预览' });
+    expect(inspectPackage).toBeEnabled();
+    await user.click(inspectPackage);
+
+    await waitFor(() => expect(transport.requests.some((call) => (
+      call.request.pathId === 'agent.extensions.validate'
+    ))).toBe(true));
+    expect(transport.requests.find((call) => (
+      call.request.pathId === 'agent.extensions.validate'
+    ))?.request.body).toEqual({ packageSource: 'npm:@example/context-helper@1.2.3' });
+    expect(await screen.findByText('Pi 已解析')).toBeVisible();
+    expect(screen.getByText(/2 项资源/)).toBeVisible();
+    expect(screen.getByText('等待你的批准')).toBeVisible();
+    expect(transport.requests.some((call) => (
+      call.request.pathId === 'agent.extensions.preview'
+      && JSON.stringify(call.request.body).includes('package-validation-token')
+    ))).toBe(true);
+    expect(transport.requests.some((call) => call.request.pathId === 'agent.extensions.apply')).toBe(false);
   });
 
   it('filters capabilities by readable purpose, availability and kind', async () => {

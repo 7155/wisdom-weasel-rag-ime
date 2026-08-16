@@ -99,7 +99,7 @@ export interface AgentToolResultV1 {
     | 'submit_review'
     | 'confirm_setup'
     | 'complete'
-    | 'create_draft'
+    | 'create_package'
     | 'validate'
     | 'propose_install'
     | 'list_bases'

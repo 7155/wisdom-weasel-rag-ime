@@ -62,7 +62,7 @@ export function usePluginCatalog(sessionId = '') {
   });
   const queryClient = useQueryClient();
   const validate = useMutation({
-    mutationFn: (body: { sourcePath?: string; catalogId?: string; catalogVersion?: string }) => transport.request({ pathId: 'agent.extensions.validate', body }),
+    mutationFn: (body: { sourcePath?: string; packageSource?: string; catalogId?: string; catalogVersion?: string }) => transport.request({ pathId: 'agent.extensions.validate', body }),
   });
   const preview = useMutation({
     mutationFn: (body: { action: string; validationToken?: string; pluginId?: string; enable?: boolean }) => (

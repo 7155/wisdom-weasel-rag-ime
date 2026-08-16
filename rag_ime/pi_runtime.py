@@ -59,6 +59,7 @@ from .pi_runtime_public import (
     visible_message_text,
 )
 from .pi_runtime_values import (
+    PiRuntimeCommandRejected,
     PiRuntimeError,
     PiRuntimeTurnConflict,
     effective_thinking_level,
@@ -1160,7 +1161,10 @@ class PiRuntimeManager:
         if normalized_delivery != "prompt":
             with self._lock:
                 if not self._active_turn_id:
-                    raise PiRuntimeError("Pi 当前没有可接收排队消息的活动回合")
+                    raise PiRuntimeCommandRejected(
+                        "Pi 当前没有可接收排队消息的活动回合",
+                        host_error_code="SESSION_IDLE",
+                    )
                 client = self._require_client_locked(session_id)
                 turn_id = self._active_turn_id
                 self._cancel_idle_locked()

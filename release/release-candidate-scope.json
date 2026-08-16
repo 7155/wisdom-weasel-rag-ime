@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-08-15T18:25:05Z",
+  "generatedAt": "2026-08-16T04:44:53Z",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -19,11 +19,11 @@
     },
     "control_center_release_ui": {
       "description": "User-visible Control Center release redesign, recovery paths, accessibility, and regression coverage.",
-      "pathCount": 149
+      "pathCount": 154
     },
     "session_room_skill_flow": {
       "description": "Pi-native Session/Room composition, compact Skills, routing cards, and installed-runtime synchronization.",
-      "pathCount": 39
+      "pathCount": 54
     },
     "desktop_semantic_accessibility": {
       "description": "Accessibility-only semantic desktop bridge, bounded find, metrics, smoke target, and foreground verifier.",
@@ -47,15 +47,15 @@
     }
   },
   "summary": {
-    "pathCount": 217,
+    "pathCount": 237,
     "dispositionCounts": {
-      "keep_release": 208,
+      "keep_release": 228,
       "delete_old_implementation": 9
     },
     "groupCounts": {
       "project_harness": 11,
-      "control_center_release_ui": 149,
-      "session_room_skill_flow": 39,
+      "control_center_release_ui": 154,
+      "session_room_skill_flow": 54,
       "desktop_semantic_accessibility": 8,
       "memory_curation": 3,
       "release_scope": 1,
@@ -87,6 +87,9 @@
     "frontendBuild": "passed",
     "frontendBrowserAcceptance": "166 passed, 49 conditional skips, 0 failed",
     "agentToolMatrix": "29/29 Pi runtime Tools invoked successfully in a real Room Session",
+    "installedPiPackageCanary": "active managed Pi Runtime created and prepared one isolated local Package with one Skill; no real package state was mutated",
+    "installedLunaSessionCanary": "passed: first public activity 6.4 s, native Steer ordered, browser stopping projection 35 ms, Runtime Stop terminal 384 ms, Tool failure closed, refresh stable, 8/8 bounded Tool terminals with 660-byte maximum public event payload",
+    "installedLunaRoomCanary": "passed: two ordinary Luna Pi Sessions, one successful room_partner child start/completion and result, exactly one Root final, live Room Tool turn aborted with one terminal, refresh stable",
     "repositoryPublicAudit": "run against the clean candidate head after committing this inventory",
     "localInstall": "Installation acceptance is external runtime evidence; source fixes cover installed migration checksum compatibility plus spaceful-Xcode Squirrel preinstall and SDK header resolution",
     "foregroundAcceptance": "not claimed by this source scope"
@@ -1610,6 +1613,146 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep voice feature contract tests aligned with the release UI's plain-language provider, credential, and hotword boundaries."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated-validators.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the generated native Pi Package contracts used by the ability market."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/agent-tool-result.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the generated native Pi Package contracts used by the ability market."
+    },
+    {
+      "path": "control-center-web/src/contracts/schema-index.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the generated native Pi Package contracts used by the ability market."
+    },
+    {
+      "path": "control-center-web/src/features/plugins/api.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep npm, Git, local, and catalog Package discovery and preview in the ability market."
+    },
+    {
+      "path": "control-center-web/src/platform/routes.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the Package draft and source-validation route contracts used by the ability market."
+    },
+    {
+      "path": "integrations/pi/skills/plugin-creator/SKILL.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep project Pi Package discovery and on-demand Skill creation inside the native Pi Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/plugin-creator/agents/openai.yaml",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep project Pi Package discovery and on-demand Skill creation inside the native Pi Skill flow."
+    },
+    {
+      "path": "rag_ime/agent_extensions.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep PAW Package discovery, immutable drafts, product confirmation, version history, and rollback over Pi's loader."
+    },
+    {
+      "path": "rag_ime/agent_tools.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the unified Package market Tool operations exposed to Pi Sessions."
+    },
+    {
+      "path": "rag_ime/contracts/json/agent-tool-result.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the authoritative Package creation Tool-result contract."
+    },
+    {
+      "path": "rag_ime/control_api/route_policy.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Package draft and validation inputs aligned at the HTTP boundary."
+    },
+    {
+      "path": "rag_ime/debug_server.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Package draft endpoint on the same application owner as the ability market."
+    },
+    {
+      "path": "rag_ime/pi_runtime_v2.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the narrow PAW adapter for Pi-native Package create and prepare methods."
+    },
+    {
+      "path": "tests/test_agent_extensions.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep focused Package lifecycle and product-confirmation regression coverage."
+    },
+    {
+      "path": "tests/test_agent_tool_runtime_contracts.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Package Tool-result compatibility coverage at the Runtime boundary."
+    },
+    {
+      "path": "tests/test_pi_runtime_v2.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi Package create and prepare adapter regression coverage."
+    },
+    {
+      "path": "rag_ime/agent_prompt_application.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep typed Pi Host rejection codes in durable Session command receipts."
+    },
+    {
+      "path": "rag_ime/agent_prompt_delivery.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Close source-proven rejected Steer commands instead of leaving unknown pending receipts."
+    },
+    {
+      "path": "rag_ime/pi_runtime.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep legacy local Session idle rejection semantics aligned with the managed Pi Host."
+    },
+    {
+      "path": "rag_ime/pi_runtime_values.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve bounded Pi Host error codes in a typed Runtime command rejection."
     }
   ]
 }

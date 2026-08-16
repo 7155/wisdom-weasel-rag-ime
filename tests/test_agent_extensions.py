@@ -29,6 +29,50 @@ class _FakePluginRuntime:
             "installPreview": {"operation": "install", "enabledAfterInstall": False},
         }
 
+    def plugin_prepare_package(self, source: str):
+        self.calls.append(("prepare_package", source))
+        return {
+            "preparedPackageId": "prepared-pi-package",
+            "manifest": {
+                "schemaVersion": 1,
+                "id": "context-helper",
+                "name": "Context Helper",
+                "version": "2.1.0",
+                "description": "Adds a bounded context Skill",
+                "entry": "generated-entry.ts",
+                "permissions": [],
+            },
+            "digest": "a" * 64,
+            "files": ["skills/context-helper/SKILL.md"],
+            "totalBytes": 96,
+            "resources": {
+                "extensions": [],
+                "skills": ["skills/context-helper/SKILL.md"],
+                "prompts": [],
+                "themes": [],
+            },
+            "source": {
+                "kind": "npm",
+                "requested": source,
+                "resolved": "npm:@example/context-helper@2.1.0",
+            },
+            "installPreview": {
+                "operation": "install",
+                "enabledAfterInstall": False,
+            },
+        }
+
+    def plugin_create_package(self, payload):
+        self.calls.append(("create_package", dict(payload)))
+        return {
+            "draftId": str(payload["draftId"]),
+            "sourcePath": str(self.calls and Path("/managed/pi-package-draft")),
+            "package": {
+                "name": str(payload["packageJson"]["name"]),
+                "version": str(payload["packageJson"]["version"]),
+            },
+        }
+
     def plugin_install(self, payload):
         self.calls.append(("install", dict(payload)))
         plugin = {
@@ -298,6 +342,83 @@ class AgentExtensionServiceTests(unittest.TestCase):
                     "enable": True,
                 }
             )
+
+    def test_pi_package_source_uses_pi_resolver_and_the_same_explicit_apply_gate(self) -> None:
+        validation = self.service.validate(
+            {"packageSource": "npm:@example/context-helper@2.1.0"}
+        )
+
+        self.assertEqual(validation["distribution"], "pi_package")
+        self.assertEqual(validation["extension"]["version"], "2.1.0")
+        self.assertEqual(
+            validation["extension"]["resources"]["skills"],
+            ["skills/context-helper/SKILL.md"],
+        )
+        self.assertEqual(
+            self.runtime.calls[-1],
+            ("prepare_package", "npm:@example/context-helper@2.1.0"),
+        )
+
+        preview = self.service.preview(
+            {
+                "action": "install",
+                "validationToken": validation["validationToken"],
+                "enable": True,
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "confirmText=apply"):
+            self.service.apply(
+                {
+                    "previewToken": preview["previewToken"],
+                    "payloadSha256": preview["payloadSha256"],
+                    "confirmText": "yes",
+                }
+            )
+
+        self.service.apply(
+            {
+                "previewToken": preview["previewToken"],
+                "payloadSha256": preview["payloadSha256"],
+                "confirmText": "apply",
+            }
+        )
+        self.assertEqual(
+            self.runtime.calls[-1],
+            (
+                "install",
+                {
+                    "preparedPackageId": "prepared-pi-package",
+                    "expectedDigest": "a" * 64,
+                    "enable": True,
+                },
+            ),
+        )
+
+    def test_agent_can_create_an_immutable_pi_package_draft_before_validation(self) -> None:
+        result = self.service.create_package_draft(
+            {
+                "draftId": "context-helper-v1",
+                "packageJson": {
+                    "name": "@example/context-helper",
+                    "version": "1.0.0",
+                    "description": "Adds a bounded context Skill",
+                    "pi": {"skills": ["skills/context-helper"]},
+                },
+                "files": {
+                    "skills/context-helper/SKILL.md": (
+                        "---\nname: context-helper\n"
+                        "description: Load bounded context.\n---\n"
+                    )
+                },
+            }
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["draft"]["draftId"], "context-helper-v1")
+        self.assertEqual(
+            self.runtime.calls[-1][0],
+            "create_package",
+        )
 
     def test_rejects_symlinks_and_unsupported_files_before_runtime_validation(self) -> None:
         (self.source / "payload.bin").write_bytes(b"unsafe")

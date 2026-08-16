@@ -3926,7 +3926,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                     )
         self.assertEqual(calls, [])
 
-    def test_agent_can_create_validate_and_propose_but_cannot_apply_a_plugin(self) -> None:
+    def test_agent_can_search_create_validate_and_propose_but_cannot_apply_a_package(self) -> None:
         calls: list[tuple[str, object]] = []
 
         class _Extensions:
@@ -3934,11 +3934,12 @@ class ControlToolGatewayTests(unittest.TestCase):
                 return {"ok": True, "items": []}
 
             def catalog(self):
-                return {"ok": True, "items": []}
+                calls.append(("catalog", {}))
+                return {"ok": True, "items": [{"id": "bundled.example"}]}
 
-            def create_draft(self, payload):
-                calls.append(("create", dict(payload)))
-                return {"ok": True, "draft": {"sourcePath": "/managed/inbox/draft-1"}}
+            def create_package_draft(self, payload):
+                calls.append(("create_package", dict(payload)))
+                return {"ok": True, "draft": {"sourcePath": "/managed/inbox/package-1"}}
 
             def validate(self, payload):
                 calls.append(("validate", dict(payload)))
@@ -3949,20 +3950,25 @@ class ControlToolGatewayTests(unittest.TestCase):
                 return {"ok": True, "proposalId": "proposal-1", "requiredConfirm": "apply"}
 
         self.gateway.extensions = _Extensions()
+        catalog = self.gateway.execute(self._tool_call("plugins", "catalog"))
         draft = self.gateway.execute(
             self._tool_call(
                 "plugins",
-                "create_draft",
-                draftId="draft-1",
-                manifest={"id": "log-helper"},
-                files={"index.ts": "export default function () {}"},
+                "create_package",
+                draftId="package-1",
+                packageJson={
+                    "name": "@paw/log-helper",
+                    "version": "1.0.0",
+                    "pi": {"skills": ["skills/log-helper/SKILL.md"]},
+                },
+                files={"skills/log-helper/SKILL.md": "---\nname: log-helper\ndescription: Help inspect logs.\n---\n"},
             )
         )
         validation = self.gateway.execute(
             self._tool_call(
                 "plugins",
                 "validate",
-                sourcePath=draft["result"]["draft"]["sourcePath"],
+                packageSource=draft["result"]["draft"]["sourcePath"],
             )
         )
         proposal = self.gateway.execute(
@@ -3974,7 +3980,14 @@ class ControlToolGatewayTests(unittest.TestCase):
             )
         )
 
+        self.assertEqual(catalog["result"]["items"][0]["id"], "bundled.example")
         self.assertEqual(proposal["result"]["proposalId"], "proposal-1")
+        self.assertEqual(calls[0], ("catalog", {}))
+        self.assertEqual(calls[1][0], "create_package")
+        self.assertEqual(
+            calls[2][1]["packageSource"],
+            "/managed/inbox/package-1",
+        )
         self.assertEqual(
             calls[-1][1],
             {"action": "install", "validationToken": "validation-1", "enable": True},

@@ -10,7 +10,10 @@ from .agent_context_runtime import (
     render_provider_context_items,
 )
 from .agent_execution_policy import execution_policy_prompt
-from .pi_runtime_values import PiRuntimeTurnConflict
+from .pi_runtime_values import (
+    PiRuntimeCommandRejected,
+    PiRuntimeTurnConflict,
+)
 from .text_utils import compact_whitespace
 
 
@@ -363,7 +366,10 @@ class AgentPromptDeliveryService:
             duration_ms = _duration_ms(started)
             known_rejection = isinstance(
                 exc,
-                PiRuntimeTurnConflict,
+                (
+                    PiRuntimeCommandRejected,
+                    PiRuntimeTurnConflict,
+                ),
             )
             try:
                 self.context_runtime.add_trace_node(

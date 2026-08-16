@@ -99,6 +99,37 @@ describe('preview control transport', () => {
     expect(sessions.find((session) => session.id === 'session-preview')).not.toHaveProperty('roomParticipant');
   });
 
+  it('keeps native Pi Package inspection representative in preview mode', async () => {
+    const transport = createPreviewTransport();
+    const validation = record(await transport.request({
+      pathId: 'agent.extensions.validate',
+      body: { packageSource: 'npm:@example/context-helper@2.1.0' },
+    }));
+    const extension = record(validation.extension);
+    expect(validation).toMatchObject({ distribution: 'pi_package' });
+    expect(extension).toMatchObject({
+      id: 'example.context-helper',
+      displayName: '@example/context-helper',
+      version: '2.1.0',
+      resources: { skills: ['skills/example.context-helper/SKILL.md'] },
+      source: { kind: 'npm', requested: 'npm:@example/context-helper@2.1.0' },
+    });
+
+    const preview = record(await transport.request({
+      pathId: 'agent.extensions.preview',
+      body: {
+        action: 'install',
+        validationToken: String(validation.validationToken),
+        enable: true,
+      },
+    }));
+    expect(record(preview.summary)).toMatchObject({
+      pluginId: 'example.context-helper',
+      resources: { skills: ['skills/example.context-helper/SKILL.md'] },
+      source: { kind: 'npm' },
+    });
+  });
+
 
   it('returns verifiable Room projections for preview creation and topic mutations', async () => {
     const transport = createPreviewTransport();

@@ -457,6 +457,9 @@ main[data-route-id='plugins'] .plugins-count {
   grid-template-columns: minmax(220px, 1fr) auto auto;
 }
 
+.plugin-lifecycle__install .ui-field { min-width: 0; }
+.plugin-lifecycle__install .ui-input { width: 100%; }
+
 .plugin-lifecycle__source {
   display: flex;
   min-width: 0;

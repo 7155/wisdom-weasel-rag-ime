@@ -156,6 +156,7 @@ current Room runtime or UI owner.
 | Pi Session runtime | `rag_ime/agent_service.py`, `rag_ime/agent_sessions.py`, `rag_ime/pi_runtime*.py` | transcript, Agent/Tool loop, compaction, Steer, Stop, recovery | Room or Project semantics |
 | Delegation | `rag_ime/agent_delegation.py` | child Sessions, bounded context, A2A calls, child cancellation and results | Room membership or Root final |
 | Tool execution | `rag_ime/agent_tools.py` | tool schemas, policy, approval, execution, terminal receipts | model-authored authority |
+| Ability market | `rag_ime/agent_extensions.py`, `integrations/pi/skills/plugin-creator/`, Pi `rag-ime-runtime-host` package manager | discovery, Package preparation, product confirmation, version receipts, update/rollback, active resource paths | a second extension/Skill loader or Session bootstrap |
 | Light Room | `rag_ime/agent_rooms.py`, `rag_ime/agent_room_turn_registry.py`, Room methods in `agent_service.py` | Room identity, participants, topics, explicit dispatch mapping, public event order, cancellation fan-out, one Root terminal | Pi loop, document quality gates, mandatory review |
 | Persistence | `rag_ime/local_sqlite_core.py` and focused stores | schema, transactions, authoritative local state | Provider or presentation policy |
 | UI projection | `control-center-web/src/contracts/room-reducer.ts`, `control-center-web/src/features/rooms/` | deterministic read model, rendering, user intent | runtime ownership or inferred completion |
@@ -219,6 +220,28 @@ Simple route families use descriptors. Streaming, path-parameter, binary, and
 special-authorization routes keep dedicated adapters when a generic descriptor
 would hide behavior.
 
+### Pi Package Market And Skill Creation
+
+```text
+npm / Git / local / catalog source
+  -> Control Center ability market
+  -> PAW draft + validation + proposal receipt
+  -> managed Pi plugins.package.prepare
+  -> Pi DefaultPackageManager resolution in a temporary inbox
+  -> resource inventory: extensions / Skills / prompts / themes
+  -> explicit product confirmation
+  -> versioned managed install + active pointer
+  -> new Pi Session DefaultResourceLoader
+```
+
+Preparation, validation, and resource inspection are deterministic package
+operations and do not use an approval model. Installation, update, and rollback
+are product state changes and therefore require the normal product confirmation
+receipt. The project `plugin-creator` is itself a Pi Skill: it searches first,
+creates only a missing reusable capability, validates the resulting Package,
+and stops before confirmation. Pi remains the sole resource loader, and an
+already-running Session never has its prompt prefix silently rewritten.
+
 ### Rime Suggestion
 
 ```text
@@ -265,6 +288,9 @@ not become durable personal memory merely because they appeared in a Session.
   focused receipt tests. Approval semantics remain explicit.
 - **New Session projection:** event/read-model adapter; authoritative history
   and Provider payload construction remain unchanged.
+- **New installable Agent capability:** a Pi Package declaring extensions,
+  Skills, prompts, or themes; discovery and receipts live in PAW, while source
+  resolution and Session resource loading remain in Pi.
 
 The project intentionally avoids a service locator, universal base service,
 second event bus, and generic dependency-injection framework.
@@ -287,7 +313,9 @@ See [SECURITY.md](SECURITY.md) for reporting and the supported threat model.
 
 1. static contracts, import boundaries, route ownership, lint, and typing;
 2. deterministic Python, TypeScript, and native tests;
-3. real Provider Room canaries with Tool and receipt evidence;
+3. real Provider Session/Room canaries with Tool and receipt evidence (the
+   installed Luna development Runtime passed the bounded Session and two-Partner
+   Room canaries on 2026-08-16);
 4. installed macOS foreground acceptance;
 5. signed, notarized, stapled distribution with a hash-bound release manifest.
 

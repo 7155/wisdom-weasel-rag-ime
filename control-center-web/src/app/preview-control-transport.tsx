@@ -50,6 +50,7 @@ export function createPreviewTransport(): MockControlTransport {
   let previewMemoryJob: Record<string, unknown> = {};
   let previewWorkflow = previewWorkflowState('session-preview');
   let previewInstalledExtensions = previewInstalledExtensionItems();
+  let previewValidatedExtension: Record<string, unknown> = {};
   let previewExtensionChange: Record<string, unknown> = {};
   let previewLifecyclePolicies = previewLifecyclePolicyItems();
   const previewTimelineStatuses = new Map<string, string>([
@@ -195,16 +196,28 @@ export function createPreviewTransport(): MockControlTransport {
   });
   routes['agent.extensions.validate'] = (request: ControlRequest) => {
     const body = record(request.body);
-    const pluginId = stringValue(body.catalogId) || 'session-review';
+    const packageSource = stringValue(body.packageSource);
+    const packageIdentity = previewPiPackageIdentity(packageSource);
+    const pluginId = stringValue(body.catalogId) || packageIdentity.id || 'session-review';
+    previewValidatedExtension = {
+      id: pluginId,
+      displayName: packageIdentity.displayName
+        || (pluginId === 'session-review' ? 'Session Review' : pluginId),
+      version: stringValue(body.catalogVersion) || packageIdentity.version || '1.1.0',
+      totalBytes: 18_432,
+      permissions: [],
+      resources: packageSource
+        ? { extensions: [], skills: [`skills/${pluginId}/SKILL.md`], prompts: [], themes: [] }
+        : { extensions: [], skills: ['skills/session-review/SKILL.md'], prompts: [], themes: [] },
+      source: packageSource
+        ? { kind: packageIdentity.kind, requested: packageSource, resolved: packageSource }
+        : { kind: 'bundled', requested: pluginId, resolved: pluginId },
+    };
     return {
       ok: true,
       validationToken: `validation:${pluginId}:preview`,
-      extension: {
-        id: pluginId,
-        displayName: pluginId === 'session-review' ? 'Session Review' : pluginId,
-        version: stringValue(body.catalogVersion) || '1.1.0',
-        totalBytes: 18_432,
-      },
+      distribution: packageSource ? 'pi_package' : 'bundled',
+      extension: previewValidatedExtension,
     };
   };
   routes['agent.extensions.preview'] = (request: ControlRequest) => {
@@ -229,8 +242,13 @@ export function createPreviewTransport(): MockControlTransport {
       action,
       pluginId,
       displayName: stringValue(installedExtension?.displayName)
+        || stringValue(previewValidatedExtension.displayName)
         || (pluginId === 'session-review' ? 'Session Review' : pluginId),
       enable: body.enable !== false,
+      version: stringValue(previewValidatedExtension.version) || stringValue(installedExtension?.version),
+      permissions: previewValidatedExtension.permissions ?? installedExtension?.permissions ?? [],
+      resources: previewValidatedExtension.resources ?? installedExtension?.resources ?? {},
+      source: previewValidatedExtension.source ?? installedExtension?.source ?? {},
       ...(rollbackVersion ? { version: rollbackVersion } : {}),
     };
     return {
@@ -1945,7 +1963,44 @@ function previewInstalledExtensionItems(): Record<string, unknown>[] {
     previousVersion: '0.9.0',
     enabled: true,
     rollbackAvailable: true,
+    resources: { extensions: ['extensions/timeline-inspector.ts'], skills: [], prompts: [], themes: [] },
+    source: { kind: 'bundled', requested: 'timeline-inspector', resolved: 'timeline-inspector@1.0.0' },
   }];
+}
+
+function previewPiPackageIdentity(source: string): {
+  id: string;
+  displayName: string;
+  version: string;
+  kind: 'npm' | 'git' | 'local';
+} {
+  if (!source) return { id: '', displayName: '', version: '', kind: 'local' };
+  const kind = source.startsWith('/') || source.startsWith('./') || source.startsWith('../') || source.startsWith('~/')
+    ? 'local'
+    : source.startsWith('git:') || source.startsWith('git+') || source.startsWith('github:') || source.includes('github.com/')
+      ? 'git'
+      : 'npm';
+  let name = source.replace(/^npm:/u, '').replace(/\/$/u, '');
+  let version = '';
+  if (kind === 'npm') {
+    const versionSeparator = name.startsWith('@')
+      ? name.indexOf('@', name.indexOf('/') + 1)
+      : name.lastIndexOf('@');
+    if (versionSeparator > 0) {
+      version = name.slice(versionSeparator + 1);
+      name = name.slice(0, versionSeparator);
+    }
+  } else {
+    name = name.split('/').filter(Boolean).at(-1)?.replace(/\.git$/u, '') || 'pi-package-preview';
+  }
+  const id = name
+    .toLocaleLowerCase('en-US')
+    .replace(/^@/u, '')
+    .replaceAll('/', '.')
+    .replace(/[^a-z0-9._-]+/gu, '-')
+    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/gu, '')
+    .slice(0, 64) || 'pi-package-preview';
+  return { id, displayName: name, version, kind };
 }
 
 function previewExtensionCatalogItems(

@@ -7911,7 +7911,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             elif path == "/api/agent/extensions/drafts":
                 self._write_json(
                     HTTPStatus.CREATED,
-                    self.service.agent_extensions.create_draft(payload),
+                    self.service.agent_extensions.create_package_draft(payload),
                 )
             elif path == "/api/agent/extensions/validate":
                 self._write_json(HTTPStatus.OK, self.service.agent_extensions.validate(payload))

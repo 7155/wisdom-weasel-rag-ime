@@ -7764,7 +7764,7 @@ export const contractSchemas = {
           "submit_review",
           "confirm_setup",
           "complete",
-          "create_draft",
+          "create_package",
           "validate",
           "propose_install",
           "list_bases",

@@ -1,6 +1,6 @@
 # Project Decisions
 
-Updated: 2026-08-15
+Updated: 2026-08-16
 
 This file records decisions that remain relevant across Outcomes. It does not
 record ordinary implementation choices or live status.
@@ -126,3 +126,18 @@ record ordinary implementation choices or live status.
   project's entire architecture.
 - **Consequence:** every borrowed mechanism must replace a concrete PAW failure
   and fit the existing Pi Session boundary.
+
+## D-011 — Pi Packages Own Installable Agent Capabilities
+
+- **Status:** accepted
+- **Decision:** installable extensions, Skills, prompts, and themes use Pi's
+  Package resolver and resource loader. PAW provides a product market for npm,
+  Git, local, and catalog sources, staged confirmation, installed-version
+  receipts, update, and rollback. The project `plugin-creator` Skill searches
+  and reuses before creating a minimal missing Package.
+- **Why:** self-hosting needs discoverable and creatable capabilities, but a
+  PAW-specific loader would fork Pi's Session bootstrap and resource semantics.
+- **Consequence:** source preparation and inspection do not invoke Luna. The
+  product asks for confirmation only before installation-state mutation. New
+  Sessions receive the active Package resources; already-running Sessions keep
+  their stable resource snapshot.

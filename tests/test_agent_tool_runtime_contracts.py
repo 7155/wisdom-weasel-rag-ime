@@ -364,8 +364,12 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             ["op", "command"],
         )
         self.assertEqual(
-            self._branch(tools["plugins"], "create_draft")["required"],
-            ["op", "draftId", "manifest", "files"],
+            self._branch(tools["plugins"], "create_package")["required"],
+            ["op", "draftId", "packageJson", "files"],
+        )
+        self.assertEqual(
+            self._branch(tools["plugins"], "validate")["required"],
+            ["op"],
         )
         self.assertEqual(
             self._branch(tools["memory"], "read")["required"],

@@ -68,6 +68,21 @@ class AgentExtensionService:
                         for item in value.get("permissions") or []
                         if isinstance(item, str)
                     ],
+                    "resources": {
+                        kind: [
+                            str(item)
+                            for item in value.get("resources", {}).get(kind, [])
+                            if isinstance(item, str)
+                        ]
+                        for kind in ("extensions", "skills", "prompts", "themes")
+                    }
+                    if isinstance(value.get("resources"), Mapping)
+                    else {},
+                    "source": (
+                        dict(value["source"])
+                        if isinstance(value.get("source"), Mapping)
+                        else {}
+                    ),
                     "installedVersions": versions,
                     "rollbackTarget": (
                         dict(value["rollbackTarget"])
@@ -189,26 +204,30 @@ class AgentExtensionService:
             "schemaVersion": "rag-ime.plugin-catalog.v1",
             "ok": True,
             "catalogVersion": str(document.get("catalogVersion") or ""),
-            "distribution": "bundled_only",
+            "distribution": "bundled_and_pi_packages",
             "runtimeAvailable": runtime_available,
             "items": entries,
         }
 
-    def create_draft(self, payload: Mapping[str, object]) -> dict[str, object]:
-        manifest = payload.get("manifest")
+    def create_package_draft(self, payload: Mapping[str, object]) -> dict[str, object]:
+        package_json = payload.get("packageJson")
         files = payload.get("files")
-        if not isinstance(manifest, Mapping) or not isinstance(files, Mapping):
-            raise ValueError("plugin draft requires manifest and files objects")
+        if not isinstance(package_json, Mapping) or not isinstance(files, Mapping):
+            raise ValueError("Pi Package draft requires packageJson and files objects")
         draft_id = str(payload.get("draftId") or "").strip()
         if not draft_id:
-            raise ValueError("plugin draft requires draftId")
+            raise ValueError("Pi Package draft requires draftId")
         result = self._call(
-            "plugin_create",
-            {"draftId": draft_id, "manifest": dict(manifest), "files": dict(files)},
+            "plugin_create_package",
+            {
+                "draftId": draft_id,
+                "packageJson": dict(package_json),
+                "files": dict(files),
+            },
         )
         if not isinstance(result, Mapping):
-            raise AgentRuntimeError("Pi Runtime Host returned an invalid plugin draft")
-        return {"ok": True, "draft": self._public_validation(result, include_source=True)}
+            raise AgentRuntimeError("Pi Runtime Host returned an invalid Pi Package draft")
+        return {"ok": True, "draft": dict(result)}
 
     def proposals(self) -> dict[str, object]:
         with self._lock:
@@ -219,18 +238,34 @@ class AgentExtensionService:
 
     def validate(self, payload: Mapping[str, object]) -> dict[str, object]:
         source_path = str(payload.get("sourcePath") or "").strip()
+        package_source = str(payload.get("packageSource") or "").strip()
         catalog_id = str(payload.get("catalogId") or "").strip()
         catalog_version = str(payload.get("catalogVersion") or "").strip()
+        if sum(bool(value) for value in (source_path, package_source, catalog_id)) != 1:
+            raise ValueError(
+                "plugin validation requires exactly one sourcePath, packageSource, or catalogId"
+            )
         catalog_selection: dict[str, str] = {}
+        staged: Path | None = None
+        prepared_package_id = ""
+        distribution = "review_only"
         if catalog_id:
             source, resolved_version = self._catalog_source(catalog_id, catalog_version)
             staged = self._stage_source(source)
             catalog_selection = {"catalogId": catalog_id, "catalogVersion": resolved_version}
+            validation = self._call("plugin_validate", str(staged))
+            distribution = "bundled"
+        elif package_source:
+            validation = self._call("plugin_prepare_package", package_source)
+            if not isinstance(validation, Mapping):
+                raise AgentRuntimeError("Pi Runtime Host returned an invalid Pi Package validation")
+            prepared_package_id = str(validation.get("preparedPackageId") or "")
+            if not prepared_package_id:
+                raise AgentRuntimeError("Pi Runtime Host did not retain the prepared Pi Package")
+            distribution = "pi_package"
         elif source_path:
             staged = self._stage_source(Path(source_path))
-        else:
-            raise ValueError("plugin validation requires sourcePath or catalogId")
-        validation = self._call("plugin_validate", str(staged))
+            validation = self._call("plugin_validate", str(staged))
         if not isinstance(validation, Mapping):
             raise AgentRuntimeError("Pi Runtime Host returned an invalid plugin validation")
         token = secrets.token_urlsafe(32)
@@ -238,14 +273,15 @@ class AgentExtensionService:
         with self._lock:
             self._tokens[token] = {
                 "kind": "validation",
-                "sourcePath": str(staged),
+                "sourcePath": str(staged) if staged is not None else "",
+                "preparedPackageId": prepared_package_id,
                 "digest": str(validation.get("digest") or ""),
                 "validation": dict(validation),
                 "catalog": catalog_selection,
-                # Local/Agent-authored source can be inspected and retained as a
-                # draft, but it must not execute in the in-process Pi Runtime.
-                # Only digest-pinned first-party bundle entries may reach apply.
-                "distribution": "bundled" if catalog_selection else "review_only",
+                # Legacy local extension drafts remain review-only. Native Pi
+                # Packages are resolved and retained by Pi, then may reach the
+                # same product-owned explicit confirmation gate as bundled items.
+                "distribution": distribution,
                 "expiresAtMs": expires_at_ms,
             }
             self._prune_locked()
@@ -253,11 +289,16 @@ class AgentExtensionService:
             "ok": True,
             "validationToken": token,
             "expiresAtMs": expires_at_ms,
-            "checks": ["manifest", "entry", "path-boundary", "size-limit", "content-digest"],
-            "distribution": "bundled" if catalog_selection else "review_only",
+            "checks": [
+                "manifest",
+                "pi-resources" if distribution == "pi_package" else "entry",
+                "path-boundary",
+                "content-digest",
+            ],
+            "distribution": distribution,
             "warnings": (
                 []
-                if catalog_selection
+                if distribution in {"bundled", "pi_package"}
                 else [
                     "自定义插件只完成源码草稿校验，不会被加载执行；"
                     "需先进入第一方产品目录。"
@@ -275,7 +316,7 @@ class AgentExtensionService:
         if action in {"install", "update"}:
             validation_token = str(payload.get("validationToken") or "").strip()
             validation = self._token(validation_token, kind="validation", consume=False)
-            if validation.get("distribution") != "bundled":
+            if validation.get("distribution") not in {"bundled", "pi_package"}:
                 raise ValueError(
                     "local and Agent-authored plugins are review-only until they "
                     "are added to the signed first-party catalog"
@@ -283,6 +324,7 @@ class AgentExtensionService:
             operation.update(
                 {
                     "sourcePath": str(validation["sourcePath"]),
+                    "preparedPackageId": str(validation.get("preparedPackageId") or ""),
                     "expectedDigest": str(validation["digest"]),
                     "enable": payload.get("enable") is True,
                     "manifest": dict(validation["validation"]),
@@ -370,13 +412,18 @@ class AgentExtensionService:
             raise AgentRuntimeError("plugin preview is invalid")
         action = str(operation.get("action") or "")
         if action in {"install", "update"}:
+            install_payload: dict[str, object] = {
+                "expectedDigest": str(operation.get("expectedDigest") or ""),
+                "enable": operation.get("enable") is True,
+            }
+            prepared_package_id = str(operation.get("preparedPackageId") or "")
+            if prepared_package_id:
+                install_payload["preparedPackageId"] = prepared_package_id
+            else:
+                install_payload["sourcePath"] = str(operation.get("sourcePath") or "")
             plugin = self._call(
                 "plugin_install",
-                {
-                    "sourcePath": str(operation.get("sourcePath") or ""),
-                    "expectedDigest": str(operation.get("expectedDigest") or ""),
-                    "enable": operation.get("enable") is True,
-                },
+                install_payload,
             )
         elif action in {"enable", "disable"}:
             plugin = self._call(
@@ -571,6 +618,19 @@ class AgentExtensionService:
             "files": [str(item) for item in validation.get("files") or [] if isinstance(item, str)],
             "totalBytes": int(validation.get("totalBytes") or 0),
             "installPreview": dict(validation.get("installPreview") or {}),
+            "resources": {
+                kind: [
+                    str(item)
+                    for item in (validation.get("resources") or {}).get(kind, [])
+                    if isinstance(item, str)
+                ]
+                for kind in ("extensions", "skills", "prompts", "themes")
+            }
+            if isinstance(validation.get("resources"), Mapping)
+            else {},
+            "source": dict(validation.get("source") or {})
+            if isinstance(validation.get("source"), Mapping)
+            else {},
         }
         if include_source:
             result["sourcePath"] = str(validation.get("sourcePath") or "")
@@ -582,6 +642,8 @@ class AgentExtensionService:
         raw_validation = operation.get("manifest")
         raw_manifest = raw_validation.get("manifest") if isinstance(raw_validation, Mapping) else None
         manifest = dict(raw_manifest) if isinstance(raw_manifest, Mapping) else {}
+        resources = raw_validation.get("resources") if isinstance(raw_validation, Mapping) else None
+        source = raw_validation.get("source") if isinstance(raw_validation, Mapping) else None
         return {
             "action": action,
             "pluginId": str(operation.get("pluginId") or manifest.get("id") or ""),
@@ -596,6 +658,8 @@ class AgentExtensionService:
             "permissions": list(
                 manifest.get("permissions") or operation.get("permissions") or []
             ),
+            "resources": dict(resources) if isinstance(resources, Mapping) else {},
+            "source": dict(source) if isinstance(source, Mapping) else {},
             "enableAfterInstall": operation.get("enable") is True,
             "expectedEnabled": operation.get("expectedEnabled"),
             "expectedActiveDigest": str(

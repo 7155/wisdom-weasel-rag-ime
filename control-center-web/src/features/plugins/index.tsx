@@ -76,6 +76,7 @@ const kindFilters: readonly { label: string; value: KindFilter }[] = [
 const operationLabels: Record<string, string> = {
   abort: '停止任务', apply_settings: '应用输入设置', artifact: '查看任务产物', audit: '查看审计记录',
   cache_stats: '查看缓存状态', candidate_explain: '解释候选词', capabilities: '查看可用能力', catalog: '浏览目录',
+  create_package: '创建 Pi Package', validate: '检查安装来源', propose_install: '提交安装提议',
   components: '检查运行组件', dashboard: '查看规划面板', deep_recall: '深度检索', delegate: '委派任务',
   diagnose: '运行诊断', export: '导出备份', export_preview: '预览备份', get_settings: '查看输入设置',
   health: '检查服务状态', history: '查看输入记录', lexicon_apply: '应用词库更新', lexicon_review: '审阅词库建议',
@@ -119,6 +120,7 @@ export function PluginsFeature() {
   const [selectedId, setSelectedId] = useState('');
   const selectedTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [enableAfterInstall, setEnableAfterInstall] = useState(true);
+  const [packageSource, setPackageSource] = useState('');
   const [validation, setValidation] = useState<Record<string, unknown>>({});
   const [pendingChange, setPendingChange] = useState<Record<string, unknown>>({});
   const [lifecycleError, setLifecycleError] = useState('');
@@ -164,6 +166,14 @@ export function PluginsFeature() {
   const disclosedCount = items.filter((item) => item.disclosure.state === 'disclosed').length;
   const hiddenCount = items.filter((item) => item.disclosure.state === 'hidden').length;
   const pendingSummary = asRecord(pendingChange.summary);
+  const pendingResources = asRecord(pendingSummary.resources);
+  const pendingResourceCount = ['extensions', 'skills', 'prompts', 'themes']
+    .reduce((total, resourceKind) => total + stringArray(pendingResources[resourceKind]).length, 0);
+  const pendingSource = asRecord(pendingSummary.source);
+  const validatedExtension = asRecord(validation.extension);
+  const validatedResources = asRecord(validatedExtension.resources);
+  const validatedResourceCount = ['extensions', 'skills', 'prompts', 'themes']
+    .reduce((total, resourceKind) => total + stringArray(validatedResources[resourceKind]).length, 0);
   const pendingPluginId = stringValue(pendingSummary.pluginId);
   const pendingSummaryDisplayName = stringValue(pendingSummary.displayName);
   const pendingInstalledPlugin = installedItems.find(
@@ -324,6 +334,31 @@ export function PluginsFeature() {
         action: item.updateAvailable === true ? 'update' : 'install',
         validationToken: stringValue(validationResult.validationToken),
         enable: item.installed === true ? item.enabled === true : enableAfterInstall,
+      })));
+    } catch (error) {
+      setLifecycleError(errorMessage(error));
+    }
+  };
+
+  const previewPackageSource = async () => {
+    const source = packageSource.trim();
+    setLifecycleError('');
+    setValidation({});
+    setPendingChange({});
+    if (!source) {
+      setLifecycleError('请输入 npm 包、Git 地址或本地 Pi Package 目录。');
+      return;
+    }
+    try {
+      const validationResult = asRecord(await validate.mutateAsync({ packageSource: source }));
+      const extension = asRecord(validationResult.extension);
+      const pluginId = stringValue(extension.id);
+      const installedPackage = installedItems.find((item) => stringValue(item.id) === pluginId);
+      setValidation(validationResult);
+      setPendingChange(asRecord(await preview.mutateAsync({
+        action: installedPackage ? 'update' : 'install',
+        validationToken: stringValue(validationResult.validationToken),
+        enable: installedPackage ? installedPackage.enabled === true : enableAfterInstall,
       })));
     } catch (error) {
       setLifecycleError(errorMessage(error));
@@ -519,6 +554,31 @@ export function PluginsFeature() {
           onRetry={() => void Promise.all([installed.refetch(), versions.refetch(), proposals.refetch()])}
         >
           <div className="plugin-lifecycle">
+            <div className="plugin-lifecycle__install">
+              <Field htmlFor="pi-package-source" label="Pi Package 来源">
+                <Input
+                  id="pi-package-source"
+                  onChange={(event) => setPackageSource(event.target.value)}
+                  placeholder="npm:@scope/package@1.2.3、Git URL 或本地目录"
+                  value={packageSource}
+                />
+              </Field>
+              <Switch checked={enableAfterInstall} label="安装后立即启用" onCheckedChange={setEnableAfterInstall} />
+              <Button
+                disabled={!packageSource.trim() || lifecyclePending}
+                leadingIcon={<PackageCheck size={15} />}
+                loading={validate.isPending || preview.isPending}
+                onClick={() => void previewPackageSource()}
+                size="small"
+              >检查并预览</Button>
+              {validatedExtension.id ? (
+                <div className="plugin-lifecycle__validation">
+                  <StatusBadge label="Pi 已解析" tone="success" />
+                  <strong>{publicPluginDisplayName(stringValue(validatedExtension.displayName, stringValue(validatedExtension.id)))}</strong>
+                  <span>v{stringValue(validatedExtension.version)} · {validatedResourceCount} 项资源 · 新对话加载 Skill、Prompt 与主题</span>
+                </div>
+              ) : null}
+            </div>
             <div className="plugin-catalog" aria-label="受管插件目录">
               {versionItems.map((item) => {
                 const security = asRecord(item.security);
@@ -551,18 +611,17 @@ export function PluginsFeature() {
             </div>
             <div className="plugin-authoring-callout">
               <span className="plugin-authoring-callout__icon"><Sparkles aria-hidden="true" size={18} /></span>
-              <span><strong>让{identity.assistantName}准备扩展草稿</strong><small>自定义代码不会直接启用；完成检查并加入可信目录后，才可以安装。</small></span>
+              <span><strong>让{identity.assistantName}查找或创造新能力</strong><small>先搜索现有 Pi Package；没有合适能力时，再制作最小 Package。安装仍会停在上面的确认卡。</small></span>
               <Button
                 leadingIcon={<MessageCircle size={16} />}
                 onClick={() => navigate({
                   pathname: '/agent',
                   search: new URLSearchParams({
-                    draft: '/skill:plugin-creator 帮我创建一个插件审阅草稿。先询问用途和权限边界，再生成并校验草稿；不要声称它已获准执行，也不要绕过第一方目录审查。',
+                    draft: '/skill:plugin-creator 我需要一个新能力。先搜索市场和已安装 Pi Package；只有没有合适能力且值得复用时才创建最小 Package。完成来源检查并提交安装预览后停下，等待我的产品内确认；不要声称已经安装。',
                   }).toString(),
                 })}
-              >准备扩展草稿</Button>
+              >获取或制作能力</Button>
             </div>
-            <Switch checked={enableAfterInstall} label="安装后立即启用" onCheckedChange={setEnableAfterInstall} />
 
             {proposalItems.length ? (
               <div className="plugin-lifecycle__proposals">
@@ -590,6 +649,8 @@ export function PluginsFeature() {
                       {stringArray(pendingSummary.permissions).length
                         ? `需要的权限：${stringArray(pendingSummary.permissions).map(publicPluginPermissionLabel).join('、')}`
                         : '无额外权限'}
+                      {pendingResourceCount ? ` · ${pendingResourceCount} 项 Pi 资源` : ''}
+                      {stringValue(pendingSource.kind) ? ` · 来源：${publicPluginSourceLabel(stringValue(pendingSource.kind))}` : ''}
                       {typeof pendingSummary.expectedEnabled === 'boolean'
                         ? ` · 当前${pendingSummary.expectedEnabled ? '已启用' : '已停用'}`
                         : ''}
@@ -926,6 +987,9 @@ function publicPluginSourceLabel(label: string): string {
   return ({
     'Personal Agent Workbench': '系统内置',
     'Product bundle': '随产品提供',
+    npm: 'npm 包',
+    git: 'Git 仓库',
+    local: '本地目录',
   } as Record<string, string>)[label] ?? label;
 }
 function publicPluginPermissionLabel(permission: string): string {

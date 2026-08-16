@@ -22,7 +22,10 @@ from rag_ime.agent_service import AgentService, pi_runtime_config_from_settings
 from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.agent_workspace import WorkspaceHarness
 from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
-from rag_ime.pi_runtime_values import PiRuntimeTurnConflict
+from rag_ime.pi_runtime_values import (
+    PiRuntimeCommandRejected,
+    PiRuntimeTurnConflict,
+)
 
 
 PNG_1X1 = base64.b64decode(
@@ -4404,6 +4407,41 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(
             replay_failed.exception.response_payload(),
             failed.exception.response_payload(),
+        )
+
+    def test_host_rejected_steer_closes_receipt_instead_of_pending(self) -> None:
+        session = self.service.create_session(
+            {"title": "宿主明确拒绝 Steer"}
+        )["session"]
+        session_id = str(session["id"])
+        payload = {
+            "message": "停止原计划，只回复新结论",
+            "delivery": "steer",
+            "clientMessageId": "rejected-steer-1",
+        }
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+            side_effect=PiRuntimeCommandRejected(
+                "Session has no active turn to receive a queued message",
+                host_error_code="SESSION_IDLE",
+            ),
+        ):
+            with self.assertRaises(
+                AgentCommandReceiptFailed
+            ) as failed:
+                self.service.prompt(session_id, payload)
+
+        self.assertEqual(
+            failed.exception.response_payload(),
+            {
+                "code": "AGENT_COMMAND_FAILED",
+                "commandReceipt": {
+                    "state": "failed",
+                    "clientMessageId": "rejected-steer-1",
+                    "causeCode": "SESSION_IDLE",
+                },
+            },
         )
 
     def test_text_only_pi_model_rejects_managed_image_before_prompt(self) -> None:

@@ -1,6 +1,6 @@
 # Project Context
 
-Updated: 2026-08-15
+Updated: 2026-08-16
 
 This is the durable Project Context Pack for Personal Agent Workbench. It is
 small on purpose. It preserves direction and boundaries; it does not mirror
@@ -32,9 +32,12 @@ PAW should support long-running self-hosted development with:
    integrates their evidence, optionally requests review, and emits one final;
 4. progressively disclosed context and task Skills that help Agents work
    without duplicating Pi or turning checklists into lifecycle gates;
-5. a Control Center that projects the same authoritative Runtime facts instead
+5. a Pi Package market that can discover, inspect, install, update, roll back,
+   or create a missing reusable Skill without turning PAW into a second package
+   loader;
+6. a Control Center that projects the same authoritative Runtime facts instead
    of maintaining a parallel frontend state machine; and
-6. governed local memory, knowledge, input, voice, and browser adapters that
+7. governed local memory, knowledge, input, voice, and browser adapters that
    remain separate from Session/Room ownership.
 
 ## Users And Core Jobs
@@ -59,6 +62,9 @@ PAW should support long-running self-hosted development with:
   quality gate, mandatory reviewer, or natural-language Kernel validator.
 - Skills describe conditional methods. They do not grant authority, prove
   completion, or own Runtime state.
+- Pi owns Package resolution and the resource loader for extensions, Skills,
+  prompts, and themes. PAW owns discovery UX, staged product confirmation,
+  installed-version receipts, update, and rollback.
 - Documents store accepted semantic meaning. Runtime and workspace services
   store mechanical facts.
 - Model cards describe model-specific operating guidance; personas describe

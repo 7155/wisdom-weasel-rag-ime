@@ -1,6 +1,6 @@
 # Project Outcomes
 
-Updated: 2026-08-15
+Updated: 2026-08-16
 
 This file is the bounded project focus set, not a task database. Domain status
 is one of `proposed`, `active`, `blocked`, `completed`, or `cancelled`.
@@ -19,11 +19,11 @@ installed foreground or distribution acceptance.
 
 | ID | User result | Status | Current evidence boundary | Next acceptance frontier |
 | --- | --- | --- | --- | --- |
-| O1 | Session can work reliably for a long time | active | Stop admission, durable/live-tail reconstruction, Tool terminal projection, and aggregate Tool-result budgeting exist in the current working tree with focused/staged tests | Fresh Luna live canary for first visible output, Steer order, Stop latency/termination, Tool failure, refresh, and bounded results |
-| O2 | Room completes a real collaboration by composing Pi Sessions | active | Main contains the light Session-composition and ghost-Root fixes; staged Room smoke reported ordered Steer, termination, and one final | Real Facilitator + Partner + optional Tool Agent Room run with cancellation/recovery and one visible final |
+| O1 | Session can work reliably for a long time | active | The installed Luna canary passed public activity, native Steer order, Stop, Tool failure closure, refresh, and an 8/8 bounded Tool-result round; the real browser projected `stopping` in 35 ms | Long-duration soak and repeated compaction/recovery on real development work |
+| O2 | Room completes a real collaboration by composing Pi Sessions | active | The installed Luna Room canary used two ordinary Pi Sessions, completed one `room_partner` child, returned its event/result, emitted exactly one Root final, stopped a second live Tool turn, and refreshed without active ghosts | A useful self-hosted project change with organically chosen Partner/Tool Agent work and retained evidence |
 | O3 | A parent Session can use configurable private Tool Agents | active | Current source supports bounded child events/results, read/write choice, model/thinking override, and same-tree peer calls | Prove a useful live parent/child run, then raise capacity through bounded event/UI/resource budgets rather than more Kernel state |
-| O4 | PAW can develop itself through a bounded context and Skill harness | active | Eight conditional core Skills replace the retired fixed pipeline; the bounded bootstrap/context documents now exist at the Git root but are not yet committed | Start a fresh Session from this repository, complete one real change using progressive disclosure, and inspect the resulting context/receipts |
-| O5 | Control Center truthfully renders Session and Room state | active | Shared reducers and current frontend work address pseudo-empty Room tasks, terminal Tool cards, Stop/Steer ordering, rich output, and refresh recovery | Browser and native live checks on the current build; no empty task view for active Roots and no ghost running turn after refresh |
+| O4 | PAW can develop itself through a bounded context and Skill harness | active | Eight conditional core Skills and the Pi-native `plugin-creator` are installed in the current development build; npm/Git/local Package prepare, product confirmation, version history, rollback, resource loading, and an installed-Runtime Package canary pass | Complete one fresh self-hosted change through market discovery or on-demand Skill creation and inspect its bounded context/receipts |
+| O5 | Control Center truthfully renders Session and Room state | active | Shared reducers now cover pseudo-empty Room tasks, task details/progress, terminal Tool cards, compact Tool/thinking UI, Stop/Steer order, rich HTML output, refresh recovery, and package-market previews; 466 focused frontend tests and the production build passed across the latest suites | Native installed checks on the current build; no empty task view for active Roots, white HTML preview, or ghost running turn after refresh |
 | O6 | Memory and Knowledge provide governed, explainable context | active | Local stores, curation, retrieval, evaluation, and management surfaces exist; recent commits refined daily activity and Project Field evidence | Keep Memory/Knowledge authority separate, verify retrieval quality on frozen evaluations, and finish product-facing acceptance without widening Session bootstrap |
 | O7 | The macOS input experience is correct in real foreground apps | active | Source, sidecar, patched Squirrel, and automated checks exist; the older status snapshot records partial foreground evidence | Fresh foreground matrix for composition, deletion, app switch, follow-up, RAG/memory selection, Accessibility, and voice |
 | O8 | A public macOS release is reproducible and distributable | blocked | Public source and engineering build paths exist | Clean scoped source, current release manifest, candidate-quality sign-off, Developer ID signing, notarization, stapling, clean-machine installation, and accepted foreground evidence |
@@ -45,8 +45,12 @@ Acceptance requires all of the following on one current Runtime/build:
 - Public Tool results stay within one round-level budget rather than multiplying
   a per-Tool limit.
 
-Focused and staged evidence is encouraging, but the latest admission change is
-not accepted until the fresh Luna live sequence passes.
+The 2026-08-16 installed development Runtime passed this sequence. First public
+activity appeared in 6.4 seconds; Steer ordering was correct; the browser
+projected `stopping` in 35 ms; Runtime Stop terminated in 384 ms; the failed
+Tool closed; refresh had no active ghost; and eight bounded Tool calls produced
+eight terminal events with a maximum public event payload of 660 bytes. This is
+current-build acceptance, not yet a multi-day soak or public-release claim.
 
 ## O2 — Lightweight Room
 
@@ -55,10 +59,11 @@ Sessions. Partners may use private Tool Agents. Pi owns each Session; Room owns
 collaboration identity, explicit dispatch, ordered public events, cancellation
 fan-out, and one terminal Root.
 
-The next demo must prove useful work, not only a scripted lifecycle. It should
-show a bounded Partner brief, event/result return, Facilitator integration,
-optional review only when justified, Stop/recovery behavior, and exactly one
-user-facing final.
+The installed Luna canary now proves the lifecycle on the current development
+Runtime: two ordinary Luna Sessions, Facilitator-owned dispatch, one Partner
+child start/completion, Partner result return, one Root final, a second live
+Tool turn stopped with one `aborted` terminal, and a stable refresh. The next
+frontier is useful self-hosted work rather than another scripted lifecycle.
 
 ## O3 — Tool Agent Capacity
 
@@ -79,6 +84,16 @@ background organizer keeps accepted documents linked and compact, while active
 Agents own the meaning they produce. A live self-hosting canary should verify
 that a new Session reads only the current Outcome and selected refs, chooses no
 unnecessary Skill, performs a real change, and returns a bounded `AgentResult`.
+
+The ability market is a Pi Package surface. It accepts npm, Git, local, and
+catalog sources; prepares and inspects them without model approval; asks for
+product confirmation only before state mutation; and records installed
+versions for update and rollback. Package resources are loaded by Pi into new
+Sessions. The `plugin-creator` Skill searches and reuses first, creates a
+minimal Package only when the capability is absent, and stops at the same
+product confirmation boundary. The 2026-08-16 development installation exposed
+`piPackages: true`; its active Runtime created and prepared an isolated local
+Package with one Skill without mutating the real installed-package state.
 
 ## O5–O8 — Product Surfaces And Release
 

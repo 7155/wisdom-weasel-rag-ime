@@ -23,6 +23,7 @@ from typing import Any, cast
 from .agent_runtime_driver import AgentRuntimeError
 
 __all__ = [
+    "PiRuntimeCommandRejected",
     "PiRuntimeError",
     "PiRuntimeTurnConflict",
     "as_integer",
@@ -50,6 +51,31 @@ class PiRuntimeTurnConflict(PiRuntimeError):
     """A new prompt cannot start while this runtime owns an active turn."""
 
     error_code = "AGENT_TURN_CONFLICT"
+
+
+class PiRuntimeCommandRejected(PiRuntimeError):
+    """The Pi Host returned a terminal error response for one command.
+
+    This is different from a transport timeout or a broken Host connection:
+    the response proves that Pi rejected the command, so callers may close the
+    durable receipt instead of leaving it permanently pending.
+    """
+
+    error_code = "PI_RUNTIME_COMMAND_REJECTED"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        host_error_code: str = "RUNTIME_REJECTED",
+    ) -> None:
+        super().__init__(message)
+        normalized = re.sub(
+            r"[^A-Z0-9_]",
+            "_",
+            str(host_error_code).strip().upper(),
+        ).strip("_")
+        self.host_error_code = normalized[:80] or "RUNTIME_REJECTED"
 
 
 def as_mapping(value: object) -> Mapping[str, object]:

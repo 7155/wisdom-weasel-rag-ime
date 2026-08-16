@@ -687,14 +687,14 @@ export const CONTROL_ROUTES = {
   'agent.extensions.create': {
     method: 'POST',
     path: '/api/agent/extensions/drafts',
-    body: ['draftId', 'manifest', 'files'],
-    requiredBody: ['draftId', 'manifest', 'files'],
+    body: ['draftId', 'packageJson', 'files'],
+    requiredBody: ['draftId', 'packageJson', 'files'],
   },
   'agent.extensions.proposals': { method: 'GET', path: '/api/agent/extensions/proposals' },
   'agent.extensions.validate': {
     method: 'POST',
     path: '/api/agent/extensions/validate',
-    body: ['sourcePath', 'catalogId', 'catalogVersion'],
+    body: ['sourcePath', 'packageSource', 'catalogId', 'catalogVersion'],
   },
   'agent.extensions.preview': {
     method: 'POST',

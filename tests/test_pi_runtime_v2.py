@@ -27,6 +27,7 @@ from rag_ime.pi_runtime_v2 import (
     _pi_tool_history_events,
     _runtime_primitive_capabilities,
 )
+from rag_ime.pi_runtime_values import PiRuntimeCommandRejected
 
 
 FAKE_HOST = r'''#!/usr/bin/env python3
@@ -267,6 +268,11 @@ for line in sys.stdin:
             time.sleep(0.15)
             event(session_id, turn_id, client_message_id, {"type": "agent_settled"})
     elif method in {"session.steer", "session.follow_up"}:
+        if params.get("message") == "host-reject-session-idle":
+            write({"protocolVersion": "2", "id": request["id"], "ok": False,
+                   "error": {"code": "SESSION_IDLE",
+                             "message": "Session has no active turn to receive a queued message"}})
+            continue
         turn_id = "turn-" + session_id
         queue = sessions[session_id]["messageQueue"]
         key = "steering" if method == "session.steer" else "followUp"
@@ -763,6 +769,43 @@ class PiRuntimeV2Tests(unittest.TestCase):
             )
         )
         self.assertNotIn("tool-gateway-only", json.dumps(mutations))
+
+    def test_pi_package_draft_and_prepare_use_native_host_methods_without_approval(self) -> None:
+        self.runtime.plugin_create_package(
+            {
+                "draftId": "context-helper",
+                "packageJson": {
+                    "name": "@paw/context-helper",
+                    "version": "1.0.0",
+                    "pi": {"skills": ["skills/context-helper/SKILL.md"]},
+                },
+                "files": {"skills/context-helper/SKILL.md": "skill body"},
+            }
+        )
+        self.runtime.plugin_prepare_package("npm:@paw/context-helper@1.0.0")
+
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        package_requests = [
+            request
+            for request in requests
+            if request["method"] in {"plugins.package.create", "plugins.package.prepare"}
+        ]
+        self.assertEqual(
+            [request["method"] for request in package_requests],
+            ["plugins.package.create", "plugins.package.prepare"],
+        )
+        self.assertEqual(
+            package_requests[1]["params"],
+            {"source": "npm:@paw/context-helper@1.0.0"},
+        )
+        self.assertTrue(
+            all("approvalToken" not in request["params"] for request in package_requests)
+        )
 
     def test_session_context_resource_settings_reach_pi_session_open(self) -> None:
         session_id = str(self.first["id"])
@@ -2535,6 +2578,31 @@ class PiRuntimeV2Tests(unittest.TestCase):
         requests = [json.loads(line) for line in (self.root / "agent" / "host-requests.jsonl").read_text().splitlines()]
         self.assertIn("session.steer", [row["method"] for row in requests])
         self.assertIn("session.follow_up", [row["method"] for row in requests])
+
+    def test_host_rejection_preserves_code_and_ends_as_known_failure(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.prompt(
+            session_id,
+            "hang-without-settled",
+            client_message_id="initial-for-rejection",
+        )
+
+        with self.assertRaises(PiRuntimeCommandRejected) as rejected:
+            self.runtime.prompt(
+                session_id,
+                "host-reject-session-idle",
+                client_message_id="stale-steer",
+                delivery="steer",
+            )
+
+        self.assertEqual(
+            rejected.exception.error_code,
+            "PI_RUNTIME_COMMAND_REJECTED",
+        )
+        self.assertEqual(
+            rejected.exception.host_error_code,
+            "SESSION_IDLE",
+        )
 
     def test_debug_context_reads_a_resident_busy_session_without_snapshot(
         self,

@@ -52,6 +52,7 @@ from .pi_runtime_public import (
     visible_message_text,
 )
 from .pi_runtime_values import (
+    PiRuntimeCommandRejected,
     PiRuntimeTurnConflict,
     effective_thinking_level,
     as_integer,
@@ -307,7 +308,15 @@ class PiRuntimeHostClient:
         assert isinstance(response, dict)
         if response.get("ok") is not True:
             error = as_mapping(response.get("error"))
-            raise PiRuntimeError(str(error.get("message") or f"Pi Runtime Host command failed: {method}"))
+            raise PiRuntimeCommandRejected(
+                str(
+                    error.get("message")
+                    or f"Pi Runtime Host command failed: {method}"
+                ),
+                host_error_code=str(
+                    error.get("code") or "RUNTIME_REJECTED"
+                ),
+            )
         return dict(as_mapping(response.get("result")))
 
     def _write_record(
@@ -1012,7 +1021,10 @@ class PiRuntimeHostManager:
                 state = self._states.setdefault(session_id, _HostedSessionState())
                 turn_id = state.turn_id
                 if not turn_id or state.abort_requested_turn_id:
-                    raise PiRuntimeError("Pi 当前没有可接收排队消息的活动回合")
+                    raise PiRuntimeCommandRejected(
+                        "Pi 当前没有可接收排队消息的活动回合",
+                        host_error_code="SESSION_IDLE",
+                    )
                 self._cancel_idle_locked()
             client = self._require_client()
             method = "session.steer" if normalized_delivery == "steer" else "session.follow_up"
@@ -2431,11 +2443,16 @@ class PiRuntimeHostManager:
     def plugin_list(self) -> list[dict[str, object]]:
         return [dict(value) for value in self._require_host_result("plugins.list").get("plugins") or [] if isinstance(value, Mapping)]
 
-    def plugin_create(self, payload: Mapping[str, object]) -> dict[str, object]:
-        return self._require_host_result("plugins.create", payload)
+    def plugin_create_package(self, payload: Mapping[str, object]) -> dict[str, object]:
+        return self._require_host_result("plugins.package.create", payload)
 
     def plugin_validate(self, source_path: str) -> dict[str, object]:
         return self._require_host_result("plugins.validate", {"sourcePath": source_path})
+
+    def plugin_prepare_package(self, source: str) -> dict[str, object]:
+        return self._require_host_result(
+            "plugins.package.prepare", {"source": source}
+        )
 
     def plugin_install(self, payload: Mapping[str, object]) -> dict[str, object]:
         return self._require_host_result(

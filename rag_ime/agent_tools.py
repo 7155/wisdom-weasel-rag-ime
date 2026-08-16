@@ -444,14 +444,20 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
     {
         "id": "plugins",
         "domain": "agents",
-        "displayName": "插件制作与安装",
-        "description": "制作、校验并提交插件安装提议；最终应用必须由用户在控制中心批准",
-        "when": ("用户要求制作、校验或提议安装当前 Agent 插件",),
-        "notFor": ("直接安装、启停、回滚或写入密钥",),
-        "input": "插件 manifest、文件、来源路径或验证 token",
-        "output": "插件草案、校验结果或待审安装提议",
-        "does": "制作并受控提交当前 Agent 插件。",
-        "operations": ("list", "create_draft", "validate", "propose_install"),
+        "displayName": "能力市场与制作",
+        "description": "查找、检查或制作原生 Pi Package，并提交受控安装提议；最终应用只需用户在控制中心明确确认",
+        "when": ("当前任务缺少可复用的 Skill、扩展、提示词或主题，需要先查找再获取或制作",),
+        "notFor": ("已有工具或 Skill 可以完成的普通任务、直接应用安装状态、写入密钥或绕过产品确认",),
+        "input": "市场查询、Pi Package 来源或不可变 Package 草稿",
+        "output": "市场结果、Package 草稿、校验结果或待确认安装提议",
+        "does": "复用 Pi 的 Package 解析和加载能力；PAW 只负责发现、草稿、回执、版本和产品确认。",
+        "operations": (
+            "catalog",
+            "list",
+            "create_package",
+            "validate",
+            "propose_install",
+        ),
         "resultPresentation": "tool_result",
     },
     {
@@ -1895,8 +1901,7 @@ _RUNTIME_TOOL_REQUIRED_ARGUMENTS: dict[tuple[str, str], tuple[str, ...]] = {
     ("configuration", "restore_apply"): ("sourceApprovalId",),
     ("agents", "artifact"): ("artifactId",),
     ("agents", "call"): ("targetRunId", "message"),
-    ("plugins", "create_draft"): ("draftId", "manifest", "files"),
-    ("plugins", "validate"): ("sourcePath",),
+    ("plugins", "create_package"): ("draftId", "packageJson", "files"),
     ("plugins", "propose_install"): ("validationToken",),
     ("browser", "navigate"): ("url",),
     ("browser", "click"): ("refId",),
@@ -3000,10 +3005,12 @@ class ControlToolGateway:
     def _plugins(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         if self.extensions is None:
             raise ValueError("managed plugin lifecycle is unavailable")
+        if operation == "catalog":
+            return dict(self.extensions.catalog())  # type: ignore[attr-defined]
         if operation == "list":
             return dict(self.extensions.list())  # type: ignore[attr-defined]
-        if operation == "create_draft":
-            return dict(self.extensions.create_draft(args))  # type: ignore[attr-defined]
+        if operation == "create_package":
+            return dict(self.extensions.create_package_draft(args))  # type: ignore[attr-defined]
         if operation == "validate":
             return dict(self.extensions.validate(args))  # type: ignore[attr-defined]
         if operation == "propose_install":

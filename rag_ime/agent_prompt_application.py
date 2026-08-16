@@ -776,7 +776,11 @@ def _checkpoint_arguments(
 
 
 def _delivery_failure_code(error: BaseException) -> str:
-    return str(getattr(error, "error_code", "") or "")
+    return str(
+        getattr(error, "host_error_code", "")
+        or getattr(error, "error_code", "")
+        or ""
+    )
 
 
 def _room_evidence_placeholder() -> dict[str, object]:
