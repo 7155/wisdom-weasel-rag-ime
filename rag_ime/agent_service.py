@@ -2679,7 +2679,10 @@ class AgentService:
                 media_owner_room_id=media_owner_room_id,
                 on_accepted=on_accepted,
             )
-        with self._direct_agent_entry(session_id):
+        with self._direct_agent_entry(
+            session_id,
+            continuation=delivery != "prompt",
+        ):
             return self.prompt_application.prompt_with_checkpoint(
                 session_id=session_id,
                 message=message,
@@ -2700,16 +2703,27 @@ class AgentService:
     def _direct_agent_entry(
         self,
         session_id: str,
+        *,
+        continuation: bool = False,
     ) -> Iterator[None]:
-        with self.session_mode_gate.claim_agent(session_id):
+        claim = (
+            self.session_mode_gate.claim_agent_continuation(
+                session_id
+            )
+            if continuation
+            else self.session_mode_gate.claim_agent(session_id)
+        )
+        with claim:
             self._assert_direct_agent_prompt_available(session_id)
-            self.room_turns.hold_priority((session_id,))
+            if not continuation:
+                self.room_turns.hold_priority((session_id,))
             try:
                 yield
             finally:
-                self.room_turns.release_priority_session(
-                    session_id
-                )
+                if not continuation:
+                    self.room_turns.release_priority_session(
+                        session_id
+                    )
 
     def _assert_direct_agent_prompt_available(
         self,

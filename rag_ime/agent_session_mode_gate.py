@@ -14,11 +14,25 @@ class AgentSessionModeGate:
 
     def __init__(self) -> None:
         self._lock = RLock()
-        self._claims: dict[str, tuple[str, object]] = {}
+        self._claims: dict[str, tuple[str, set[object]]] = {}
 
     @contextmanager
     def claim_agent(self, session_id: str) -> Iterator[None]:
         with self._claim((session_id,), mode="agent"):
+            yield
+
+    @contextmanager
+    def claim_agent_continuation(
+        self,
+        session_id: str,
+    ) -> Iterator[None]:
+        """Join one Agent turn without admitting a second initial prompt."""
+
+        with self._claim(
+            (session_id,),
+            mode="agent",
+            join_same_mode=True,
+        ):
             yield
 
     @contextmanager
@@ -32,6 +46,7 @@ class AgentSessionModeGate:
         session_ids: Sequence[str],
         *,
         mode: str,
+        join_same_mode: bool = False,
     ) -> Iterator[None]:
         normalized = tuple(
             dict.fromkeys(
@@ -49,7 +64,13 @@ class AgentSessionModeGate:
                 (
                     (session_id, self._claims[session_id][0])
                     for session_id in normalized
-                    if session_id in self._claims
+                    if (
+                        session_id in self._claims
+                        and not (
+                            join_same_mode
+                            and self._claims[session_id][0] == mode
+                        )
+                    )
                 ),
                 None,
             )
@@ -61,14 +82,21 @@ class AgentSessionModeGate:
                     )
                 )
             for session_id in normalized:
-                self._claims[session_id] = (mode, token)
+                claim = self._claims.get(session_id)
+                if claim is None:
+                    self._claims[session_id] = (mode, {token})
+                else:
+                    claim[1].add(token)
         try:
             yield
         finally:
             with self._lock:
                 for session_id in normalized:
                     claim = self._claims.get(session_id)
-                    if claim is not None and claim[1] is token:
+                    if claim is None or token not in claim[1]:
+                        continue
+                    claim[1].discard(token)
+                    if not claim[1]:
                         self._claims.pop(session_id, None)
 
 

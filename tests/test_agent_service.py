@@ -8,6 +8,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from threading import Event, Thread
 from unittest.mock import patch
 
 from rag_ime.agent_protocol import AgentEventEnvelope
@@ -4785,6 +4786,83 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual({message["turnId"] for message in user_messages}, {"turn:active:1"})
         with self.assertRaisesRegex(ValueError, "delivery"):
             self.service.prompt(session_id, {"message": "bad", "delivery": "later"})
+
+    def test_steer_can_join_while_initial_prompt_is_still_being_admitted(self) -> None:
+        session = self.service.create_session(
+            {"title": "首轮接纳期间立即 Steer"}
+        )["session"]
+        session_id = str(session["id"])
+        initial_entered = Event()
+        release_initial = Event()
+        initial_result: dict[str, object] = {}
+        initial_error: list[BaseException] = []
+
+        def runtime_prompt(
+            _session_id: str,
+            _message: str,
+            **kwargs: object,
+        ) -> dict[str, object]:
+            delivery = str(kwargs.get("delivery") or "prompt")
+            if delivery == "prompt":
+                initial_entered.set()
+                if not release_initial.wait(timeout=3):
+                    raise TimeoutError("test did not release initial prompt")
+                return {
+                    "accepted": True,
+                    "turnId": "turn:admission:1",
+                    "piEntryId": "pi-entry:initial",
+                    "response": {"success": True},
+                }
+            return {
+                "accepted": True,
+                "queued": True,
+                "delivery": delivery,
+                "turnId": "turn:admission:1",
+                "piEntryId": "pi-entry:steer",
+                "response": {"success": True},
+            }
+
+        def send_initial() -> None:
+            try:
+                initial_result.update(
+                    self.service.prompt(
+                        session_id,
+                        {
+                            "message": "先执行原计划",
+                            "clientMessageId": "admission-initial",
+                        },
+                    )
+                )
+            except BaseException as exc:  # pragma: no cover - assertion path
+                initial_error.append(exc)
+
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+            side_effect=runtime_prompt,
+        ):
+            initial_thread = Thread(target=send_initial)
+            initial_thread.start()
+            self.assertTrue(initial_entered.wait(timeout=3))
+            steer = self.service.prompt(
+                session_id,
+                {
+                    "message": "立即改为新计划",
+                    "delivery": "steer",
+                    "clientMessageId": "admission-steer",
+                },
+            )
+            release_initial.set()
+            initial_thread.join(timeout=3)
+
+        self.assertFalse(initial_thread.is_alive())
+        self.assertEqual(initial_error, [])
+        self.assertEqual(
+            initial_result.get("turnId"),
+            "turn:admission:1",
+        )
+        self.assertEqual(steer["turnId"], "turn:admission:1")
+        self.assertEqual(steer["delivery"], "steer")
 
     def test_persisted_runtime_toggle_is_used_unless_development_env_overrides_it(self) -> None:
         settings = {
