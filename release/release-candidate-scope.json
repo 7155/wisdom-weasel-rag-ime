@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-08-16T14:11:33Z",
+  "generatedAt": "2026-08-16T17:57:46Z",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -19,11 +19,11 @@
     },
     "control_center_release_ui": {
       "description": "User-visible Control Center release redesign, recovery paths, accessibility, and regression coverage.",
-      "pathCount": 154
+      "pathCount": 199
     },
     "session_room_skill_flow": {
       "description": "Pi-native Session/Room composition, compact Skills, routing cards, and installed-runtime synchronization.",
-      "pathCount": 54
+      "pathCount": 71
     },
     "desktop_semantic_accessibility": {
       "description": "Accessibility-only semantic desktop bridge, bounded find, metrics, smoke target, and foreground verifier.",
@@ -31,7 +31,7 @@
     },
     "memory_curation": {
       "description": "Owner-scoped memory curation and source/pagination correctness.",
-      "pathCount": 3
+      "pathCount": 5
     },
     "room_kernel_cleanup": {
       "description": "Removal of obsolete heavy-Kernel-specific test obligations without rewriting immutable migrations.",
@@ -39,23 +39,23 @@
     },
     "release_scope": {
       "description": "One-time, source-candidate inventory.",
-      "pathCount": 1
+      "pathCount": 3
     },
     "installation_reliability": {
       "description": "Clean installation compatibility for full Xcode paths and immutable installed database history.",
-      "pathCount": 4
+      "pathCount": 7
     }
   },
   "summary": {
-    "pathCount": 304,
+    "pathCount": 306,
     "dispositionCounts": {
-      "keep_release": 284,
+      "keep_release": 286,
       "delete_old_implementation": 20
     },
     "groupCounts": {
       "project_harness": 11,
       "control_center_release_ui": 199,
-      "session_room_skill_flow": 69,
+      "session_room_skill_flow": 71,
       "desktop_semantic_accessibility": 8,
       "memory_curation": 5,
       "release_scope": 3,
@@ -91,7 +91,7 @@
     "installedLunaSessionCanary": "passed: first public activity 6.4 s, native Steer ordered, browser stopping projection 35 ms, Runtime Stop terminal 384 ms, Tool failure closed, refresh stable, 8/8 bounded Tool terminals with 660-byte maximum public event payload",
     "installedLunaRoomCanary": "passed: two ordinary Luna Pi Sessions, one successful room_partner child start/completion and result, exactly one Root final, live Room Tool turn aborted with one terminal, refresh stable",
     "focusedSessionRoomBackendTests": "298 passed across Session/context/approval/cancel, delegation/Room work, and Room/service/event shards",
-    "releaseScopeCoverage": "304/304 base-to-HEAD paths classified; 284 retained and 20 old implementations deleted",
+    "releaseScopeCoverage": "306/306 base-to-HEAD paths classified; 286 retained and 20 old implementations deleted",
     "repositoryPublicAudit": "run against the clean candidate head after committing this inventory",
     "localInstall": "Installation acceptance is external runtime evidence; source fixes cover installed migration checksum compatibility plus spaceful-Xcode Squirrel preinstall and SDK header resolution",
     "foregroundAcceptance": "not claimed by this source scope"
@@ -2156,6 +2156,13 @@
       "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
     },
     {
+      "path": "rag_ime/agent_session_mode_gate.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Steer and FollowUp on the active Pi turn while new initial prompts remain exclusive."
+    },
+    {
       "path": "rag_ime/agent_tool_artifacts.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2210,6 +2217,13 @@
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
+    },
+    {
+      "path": "tests/test_agent_session_mode_gate.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep regression coverage for exact prompt ownership and in-turn continuation admission."
     },
     {
       "path": "tests/test_launch_agent_script.py",

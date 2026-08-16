@@ -3303,7 +3303,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         with patch.object(client, "send", side_effect=observe_send):
             self.runtime.abort(session_id)
 
-    def test_abort_during_prompt_admission_is_delivered_after_turn_id_arrives(
+    def test_abort_during_prompt_admission_reaches_host_before_prompt_ack(
         self,
     ) -> None:
         session_id = str(self.first["id"])
@@ -3313,6 +3313,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         prompt_entered = threading.Event()
         release_prompt = threading.Event()
         abort_delivered = threading.Event()
+        abort_settled = threading.Event()
         turn_id = f"turn-admission-{session_id}"
 
         def delayed_send(
@@ -3337,6 +3338,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
                     "turnId": turn_id,
                     "payload": {"type": "agent_settled"},
                 })
+                abort_settled.set()
                 return {
                     "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
                     "sessionId": session_id,
@@ -3385,7 +3387,9 @@ class PiRuntimeV2Tests(unittest.TestCase):
 
             self.assertLess(elapsed, 0.2)
             self.assertTrue(early_receipt["pendingAdmission"])
-            self.assertEqual(self.store.get(session_id)["status"], "busy")
+            self.assertTrue(abort_delivered.wait(1.0))
+            self.assertTrue(abort_settled.wait(1.0))
+            self.assertEqual(self.store.get(session_id)["status"], "idle")
             release_prompt.set()
             prompt_thread.join(timeout=2.0)
 
@@ -3427,6 +3431,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         client = self.runtime._require_client()
         original_send = client.send
         abort_delivered = threading.Event()
+        abort_settled = threading.Event()
         turn_id = f"turn-reserved-{session_id}"
 
         def reserved_send(
@@ -3449,6 +3454,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
                     "turnId": turn_id,
                     "payload": {"type": "agent_settled"},
                 })
+                abort_settled.set()
                 return {
                     "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
                     "sessionId": session_id,
@@ -3479,7 +3485,8 @@ class PiRuntimeV2Tests(unittest.TestCase):
             )
 
         self.assertTrue(result["abortRequested"])
-        self.assertTrue(abort_delivered.is_set())
+        self.assertTrue(abort_delivered.wait(1.0))
+        self.assertTrue(abort_settled.wait(1.0))
         self.assertEqual(self.store.get(session_id)["status"], "idle")
         completed = [
             event
