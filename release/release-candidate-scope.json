@@ -47,9 +47,9 @@
     }
   },
   "summary": {
-    "pathCount": 302,
+    "pathCount": 303,
     "dispositionCounts": {
-      "keep_release": 282,
+      "keep_release": 283,
       "delete_old_implementation": 20
     },
     "groupCounts": {
@@ -58,7 +58,7 @@
       "session_room_skill_flow": 68,
       "desktop_semantic_accessibility": 8,
       "memory_curation": 5,
-      "release_scope": 2,
+      "release_scope": 3,
       "room_kernel_cleanup": 2,
       "installation_reliability": 7
     },
@@ -91,7 +91,7 @@
     "installedLunaSessionCanary": "passed: first public activity 6.4 s, native Steer ordered, browser stopping projection 35 ms, Runtime Stop terminal 384 ms, Tool failure closed, refresh stable, 8/8 bounded Tool terminals with 660-byte maximum public event payload",
     "installedLunaRoomCanary": "passed: two ordinary Luna Pi Sessions, one successful room_partner child start/completion and result, exactly one Root final, live Room Tool turn aborted with one terminal, refresh stable",
     "focusedSessionRoomBackendTests": "298 passed across Session/context/approval/cancel, delegation/Room work, and Room/service/event shards",
-    "releaseScopeCoverage": "302/302 base-to-HEAD paths classified; 282 retained and 20 old implementations deleted",
+    "releaseScopeCoverage": "303/303 base-to-HEAD paths classified; 283 retained and 20 old implementations deleted",
     "repositoryPublicAudit": "run against the clean candidate head after committing this inventory",
     "localInstall": "Installation acceptance is external runtime evidence; source fixes cover installed migration checksum compatibility plus spaceful-Xcode Squirrel preinstall and SDK header resolution",
     "foregroundAcceptance": "not claimed by this source scope"
@@ -2210,6 +2210,13 @@
       "disposition": "keep_release",
       "group": "installation_reliability",
       "reason": "Keep build and install verification aligned with the current product generation."
+    },
+    {
+      "path": "release/product-status.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "release_scope",
+      "reason": "Keep Session/Room installed evidence current without weakening whole-product distribution blockers."
     }
   ]
 }
