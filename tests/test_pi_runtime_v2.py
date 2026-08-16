@@ -2606,6 +2606,90 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertIn("session.steer", [row["method"] for row in requests])
         self.assertIn("session.follow_up", [row["method"] for row in requests])
 
+    def test_steer_waits_for_reserved_prompt_to_reach_host(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        client = self.runtime._require_client()
+        self.runtime.reserve_prompt_admission(
+            session_id,
+            client_message_id="initial-race",
+        )
+        original_write = client._write_record
+        prompt_write_entered = threading.Event()
+        release_prompt_write = threading.Event()
+        results: dict[str, object] = {}
+        failures: list[BaseException] = []
+
+        def delayed_write(process, request, *, before_write=None) -> None:
+            if request.get("method") == "session.prompt":
+                prompt_write_entered.set()
+                if not release_prompt_write.wait(timeout=2):
+                    raise TimeoutError("test did not release prompt write")
+            original_write(
+                process,
+                request,
+                before_write=before_write,
+            )
+
+        def run_prompt() -> None:
+            try:
+                results["prompt"] = self.runtime.prompt(
+                    session_id,
+                    "hang-without-settled",
+                    client_message_id="initial-race",
+                )
+            except BaseException as exc:
+                failures.append(exc)
+
+        def run_steer() -> None:
+            try:
+                results["steer"] = self.runtime.prompt(
+                    session_id,
+                    "立即改变当前执行",
+                    client_message_id="steer-during-admission",
+                    delivery="steer",
+                )
+            except BaseException as exc:
+                failures.append(exc)
+
+        with patch.object(
+            client,
+            "_write_record",
+            side_effect=delayed_write,
+        ):
+            prompt_thread = threading.Thread(target=run_prompt)
+            steer_thread = threading.Thread(target=run_steer)
+            prompt_thread.start()
+            self.assertTrue(prompt_write_entered.wait(timeout=1))
+            steer_thread.start()
+            self.assertFalse(
+                self.runtime._states[
+                    session_id
+                ].prompt_dispatch_signal.is_set()
+            )
+            release_prompt_write.set()
+            prompt_thread.join(timeout=2)
+            steer_thread.join(timeout=2)
+
+        self.assertFalse(prompt_thread.is_alive())
+        self.assertFalse(steer_thread.is_alive())
+        self.assertEqual(failures, [])
+        prompt = results["prompt"]
+        steer = results["steer"]
+        self.assertEqual(steer["turnId"], prompt["turnId"])
+        self.assertTrue(steer["queued"])
+        requests = [
+            json.loads(line)
+            for line in (
+                self.root / "agent" / "host-requests.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+        ]
+        methods = [row["method"] for row in requests]
+        self.assertLess(
+            methods.index("session.prompt"),
+            methods.index("session.steer"),
+        )
+
     def test_host_rejection_preserves_code_and_ends_as_known_failure(self) -> None:
         session_id = str(self.first["id"])
         self.runtime.prompt(
@@ -3236,8 +3320,11 @@ class PiRuntimeV2Tests(unittest.TestCase):
             params: dict[str, object] | None = None,
             *,
             timeout: float | None = None,
+            before_write=None,
         ) -> dict[str, object]:
             if method == "session.prompt":
+                if before_write is not None:
+                    before_write()
                 prompt_entered.set()
                 self.assertTrue(release_prompt.wait(2.0))
                 return {"accepted": True, "turnId": turn_id}
@@ -3347,8 +3434,11 @@ class PiRuntimeV2Tests(unittest.TestCase):
             params: dict[str, object] | None = None,
             *,
             timeout: float | None = None,
+            before_write=None,
         ) -> dict[str, object]:
             if method == "session.prompt":
+                if before_write is not None:
+                    before_write()
                 return {"accepted": True, "turnId": turn_id}
             if method == "session.abort":
                 abort_delivered.set()

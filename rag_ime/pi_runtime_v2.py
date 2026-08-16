@@ -467,6 +467,10 @@ class _HostedSessionState:
     prompt_admission_in_flight: bool = False
     admission_client_message_id: str = ""
     abort_pending_admission: bool = False
+    prompt_dispatch_signal: threading.Event = field(
+        default_factory=threading.Event,
+        repr=False,
+    )
     stream_pi_message_id: str = ""
     tool_blocks: AgentToolBlockBuffer = field(default_factory=AgentToolBlockBuffer)
     last_agent_messages: list[object] = field(default_factory=list)
@@ -959,6 +963,7 @@ class PiRuntimeHostManager:
                     normalized_client_message_id
                 )
                 state.abort_pending_admission = False
+                state.prompt_dispatch_signal.clear()
             self._cancel_idle_locked()
         self.sessions.set_status(session_id, "busy")
         return {
@@ -990,6 +995,7 @@ class PiRuntimeHostManager:
             state.prompt_admission_in_flight = False
             state.admission_client_message_id = ""
             state.abort_pending_admission = False
+            state.prompt_dispatch_signal.set()
             self._schedule_idle_locked()
         self.sessions.set_status(session_id, "idle")
         return True
@@ -1019,18 +1025,72 @@ class PiRuntimeHostManager:
             with self._lock:
                 state = self._states.setdefault(session_id, _HostedSessionState())
                 turn_id = state.turn_id
-                if not turn_id or state.abort_requested_turn_id:
+                pending_admission = state.prompt_admission_in_flight
+                dispatch_signal = state.prompt_dispatch_signal
+                if (
+                    state.abort_requested_turn_id
+                    or state.abort_pending_admission
+                    or (not turn_id and not pending_admission)
+                ):
                     raise PiRuntimeCommandRejected(
                         "Pi 当前没有可接收排队消息的活动回合",
                         host_error_code="SESSION_IDLE",
                     )
                 self._cancel_idle_locked()
+            if not turn_id:
+                # The application reserves a prompt before it assembles
+                # context. A Steer can therefore arrive while the product is
+                # already busy but before the prompt JSONL reaches Pi. Wait for
+                # that single ownership hand-off; the Host remains the source
+                # of truth for whether the turn can accept the message.
+                if not dispatch_signal.wait(
+                    timeout=max(1.0, self.config.command_timeout_seconds)
+                ):
+                    raise PiRuntimeCommandRejected(
+                        "Pi 仍在准备当前回合，尚不能接收排队消息",
+                        host_error_code="PROMPT_ADMISSION_PENDING",
+                    )
+                with self._lock:
+                    state = self._states.setdefault(
+                        session_id,
+                        _HostedSessionState(),
+                    )
+                    turn_id = state.turn_id
+                    if (
+                        state.abort_requested_turn_id
+                        or state.abort_pending_admission
+                        or (
+                            not turn_id
+                            and not state.prompt_admission_in_flight
+                        )
+                    ):
+                        raise PiRuntimeCommandRejected(
+                            "Pi 当前没有可接收排队消息的活动回合",
+                            host_error_code="SESSION_IDLE",
+                        )
             client = self._require_client()
             method = "session.steer" if normalized_delivery == "steer" else "session.follow_up"
             response = client.send(method, params)
             response_turn_id = str(response.get("turnId") or turn_id)
-            if response_turn_id != turn_id:
-                raise PiRuntimeError("Pi 返回了不匹配的排队消息回合")
+            with self._lock:
+                state = self._states.setdefault(
+                    session_id,
+                    _HostedSessionState(),
+                )
+                active_turn_id = state.turn_id
+                if (
+                    active_turn_id
+                    and response_turn_id != active_turn_id
+                ):
+                    raise PiRuntimeError(
+                        "Pi 返回了不匹配的排队消息回合"
+                    )
+                if not active_turn_id and response_turn_id:
+                    state.turn_id = response_turn_id
+                    active_turn_id = response_turn_id
+                turn_id = active_turn_id or response_turn_id
+            if not turn_id:
+                raise PiRuntimeError("Pi 未返回排队消息所属的活动回合")
             result: dict[str, object] = {
                 "accepted": True,
                 "queued": True,
@@ -1065,6 +1125,7 @@ class PiRuntimeHostManager:
                     normalized_client_message_id
                 )
                 state.abort_pending_admission = False
+                state.prompt_dispatch_signal.clear()
             state.stream_pi_message_id = ""
             state.tool_blocks.clear()
             state.last_agent_messages = []
@@ -1081,10 +1142,9 @@ class PiRuntimeHostManager:
             last_message_preview=public_prompt_preview,
         )
         try:
-            # The Runtime Host resolves `session.prompt` after the complete Pi
-            # agent/tool loop.  It is intentionally not a short control ACK;
-            # Stop and Steer remain responsive through the Host's concurrent
-            # request dispatcher while this call is pending.
+            # The Runtime Host resolves `session.prompt` after Pi accepts the
+            # turn preflight. Stop and Steer remain responsive through the
+            # Host's concurrent request dispatcher while that ACK is pending.
             accepted = client.send(
                 "session.prompt",
                 params,
@@ -1092,6 +1152,7 @@ class PiRuntimeHostManager:
                     _PROMPT_TIMEOUT_SECONDS,
                     self.config.command_timeout_seconds,
                 ),
+                before_write=state.prompt_dispatch_signal.set,
             )
         except Exception as exc:
             with self._lock:
@@ -1102,6 +1163,7 @@ class PiRuntimeHostManager:
                 state.prompt_admission_in_flight = False
                 state.admission_client_message_id = ""
                 state.abort_pending_admission = False
+                state.prompt_dispatch_signal.set()
             self._turn_failed(session_id, "", exc)
             raise
         turn_id = str(accepted.get("turnId") or "")
@@ -2062,6 +2124,7 @@ class PiRuntimeHostManager:
             if not turn_id:
                 if state.prompt_admission_in_flight:
                     state.abort_pending_admission = True
+                    state.prompt_dispatch_signal.set()
                     self.events.publish(
                         session_id,
                         "status_changed",
