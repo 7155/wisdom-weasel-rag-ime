@@ -7,7 +7,7 @@
     "includesUncommittedChanges": false,
     "automatedEvidenceThrough": "2026-08-16",
     "foregroundPermissionActionsRun": false,
-    "note": "The clean 4f95c405 Session/Room checkpoint passed 931 frontend unit tests, TypeScript, the production Web build, 298 focused backend Session/Room tests, project/import/route/public-source gates, deterministic staged Session and Room canaries, and a current installed core-component audit. Earlier native Control/Voice/Desktop source-build evidence remains recorded, but optional installed Desktop/Voice/MLX components were not refreshed for this Session/Room checkpoint. Automated evidence does not replace user-authorized foreground IME, Accessibility, microphone, signing, notarization, or clean-machine installation acceptance."
+    "note": "The clean 4f95c405 Session/Room checkpoint passed 931 frontend unit tests, TypeScript, the production Web build, 298 focused backend Session/Room tests, project/import/route/public-source gates, deterministic staged Session and Room canaries, and a current installed core-component audit. A live three-participant Luna Room then self-hosted the b846d617 release audit, waited for two delegated partner results, emitted one final, and recovered the complete timeline and task projection after a browser reload. Earlier native Control/Voice/Desktop source-build evidence remains recorded, but optional installed Desktop/Voice/MLX components were not refreshed for this Session/Room checkpoint. Automated evidence does not replace user-authorized foreground IME, Accessibility, microphone, signing, notarization, or clean-machine installation acceptance."
   },
   "productStatus": "backend_only",
   "releaseStatus": "blocked",
@@ -144,6 +144,17 @@
     "deterministicRoomAcceptance": "passed",
     "liveLunaSessionAcceptance": "passed",
     "liveLunaRoomAcceptance": "passed",
+    "liveLunaRoomSelfHost": {
+      "releaseScopeCommit": "b846d6175413b69c5d60730e7f24cb40d10c8334",
+      "marker": "ROOM-RELEASE-AUDIT-B846D617-OK",
+      "participants": 3,
+      "delegatedPartners": 2,
+      "executionLines": 3,
+      "toolSteps": 19,
+      "taskProjection": "1/1_completed",
+      "uniqueFinal": true,
+      "browserReloadRecovery": true
+    },
     "focusedBackendTests": 298,
     "frontendUnitTests": 931,
     "note": "This proves the current installed development Session/Room slice. It is not whole-product foreground or signed-distribution acceptance."
