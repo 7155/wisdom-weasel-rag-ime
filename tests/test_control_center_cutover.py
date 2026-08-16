@@ -103,6 +103,7 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("install_managed_pi_runtime.py", installer)
         self.assertIn("--no-activate", installer)
         self.assertIn("smoke_pi_session_staged_runtime.py", installer)
+        self.assertIn("smoke_pi_room_composition.py", installer)
         self.assertIn("--deterministic-test-gate", installer)
         self.assertIn("--acceptance-report", installer)
         self.assertLess(
@@ -111,6 +112,10 @@ class ControlCenterCutoverTests(unittest.TestCase):
         )
         self.assertLess(
             installer.index("smoke_pi_session_staged_runtime.py"),
+            installer.index("smoke_pi_room_composition.py"),
+        )
+        self.assertLess(
+            installer.index("smoke_pi_room_composition.py"),
             installer.index("--acceptance-report"),
         )
         self.assertIn("--require piSkills", installer)

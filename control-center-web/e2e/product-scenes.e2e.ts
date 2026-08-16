@@ -112,7 +112,7 @@ test('production Room and Role scenes retain group and persona boundaries', asyn
     await expect(page.getByRole('radio', { name: '对话' })).toBeChecked();
     await page.getByRole('radio', { name: '任务' }).click();
     await expect(roomsScene.locator('.room-execution-workspace')).toBeVisible();
-    const taskGraph = roomsScene.getByRole('region', { name: '任务图' });
+    const taskGraph = roomsScene.getByRole('region', { name: '任务图', exact: true });
     await expect(taskGraph).toBeVisible();
     await expect(taskGraph).toContainText('共同目标');
     await expect(taskGraph).toContainText('结果');

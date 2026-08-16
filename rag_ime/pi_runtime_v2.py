@@ -844,13 +844,12 @@ class PiRuntimeHostManager:
                 branch_anchor=str(snapshot.get("leafId") or ""),
                 binding_state="active",
                 metadata={"protocolVersion": _PROTOCOL_VERSION},
-                message_count=max(
-                    0,
-                    int(
-                        snapshot.get("messageCount")
-                        or len(snapshot.get("messages") or [])
-                    ),
-                ),
+                # The Host count describes Pi's Provider transcript and can
+                # include Tool/protocol entries.  AgentMessageSnapshot owns
+                # the public conversation count, so opening a resident Pi
+                # Session must preserve that product projection instead of
+                # overwriting it with a different unit.
+                message_count=max(0, int(session.get("messageCount") or 0)),
             )
             idle_session = self._sync_idle_snapshot(
                 session_id,

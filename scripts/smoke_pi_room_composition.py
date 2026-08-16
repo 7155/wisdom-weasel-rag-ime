@@ -180,7 +180,7 @@ def main() -> int:
                 steered = service.steer_room_participant(
                     room_id,
                     {
-                        "action": "steer",
+                        "action": "steer_participant",
                         "rootId": root_id,
                         "participantId": str(facilitator["id"]),
                         "message": "Stop the original direction and acknowledge this steer.",

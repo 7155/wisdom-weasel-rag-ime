@@ -22,6 +22,28 @@ import type { AgentBackgroundJobV1 } from './generated/agent-background-job.v1';
 import type { AgentLifecycleCancellationAuditV1 } from './generated/agent-lifecycle-cancellation-audit.v1';
 
 describe('AgentEventReducer', () => {
+  it('does not mark a settled user-only snapshot as a completed turn', () => {
+    const state = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [
+        serverMessage(
+          'user-without-answer',
+          'user',
+          'turn-without-answer',
+          '我想给 Agent 对话加 TUI 模式',
+        ),
+      ],
+      liveEvents: [],
+      lastSequence: 1,
+      resumeToken: 'session-1:1',
+      status: 'idle',
+    });
+
+    expect(state.turnsById['turn-without-answer']).toMatchObject({
+      status: 'failed',
+      failure: '未收到助手回复。',
+    });
+  });
+
   it('does not treat a partial recent snapshot as terminal history', () => {
     const sessionId = 'session-recent-partial';
     const turnId = 'turn:recent-running';

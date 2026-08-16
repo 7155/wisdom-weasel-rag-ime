@@ -193,7 +193,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
 
         <StatusSection
           icon={Sparkles}
-          title="当前对话工具与技能（可用能力，不计入上下文 Token）"
+          title="可用能力目录 · 当前对话工具与技能（未注入上下文）"
           count={capabilityCatalog?.items.length ?? 0}
           defaultOpen={false}
         >
@@ -324,7 +324,31 @@ function useDeferredStatusContent(open: boolean): boolean {
 
 function SessionTelemetryView({ projection }: { projection?: AgentProjectionState }) {
   const telemetry = projection?.telemetry;
-  if (!telemetry) return <EmptyLine>发送一轮消息后显示上下文与缓存数据</EmptyLine>;
+  if (!telemetry) {
+    const recovered = persistedMessageUsage(projection);
+    if (!recovered) return <EmptyLine>发送一轮消息后显示上下文与缓存数据</EmptyLine>;
+    const promptTokens = recovered.input + recovered.cacheRead + recovered.cacheWrite;
+    const cachePercent = promptTokens > 0
+      ? Math.round((recovered.cacheRead / promptTokens) * 100)
+      : 0;
+    return (
+      <div className="agent-session-telemetry" data-source="persisted-messages">
+        <div className="agent-session-telemetry__model">
+          <span><strong>可见回合用量</strong><small>{[recovered.model, recovered.provider].filter(Boolean).join(' · ')}</small></span>
+        </div>
+        <div className="agent-session-telemetry__usage" aria-label="已持久化回合 Token 用量">
+          <span><small>输入</small><strong>{formatTokenCount(promptTokens)}</strong></span>
+          <span><small>输出</small><strong>{formatTokenCount(recovered.output)}</strong></span>
+          <span><small>缓存</small><strong data-cache={cachePercent > 0 || undefined}>{cachePercent}%</strong></span>
+        </div>
+        <div className="agent-session-telemetry__context">
+          <div><span><strong>上下文</strong><small>精确占用不可用</small></span><b>—</b></div>
+          <p>当前 Provider 上下文精确占用未保存</p>
+          <p>这里只合计已持久化助手消息的 Token 用量；下一轮响应会恢复 Runtime 精确计量。</p>
+        </div>
+      </div>
+    );
+  }
   const context = telemetry.context;
   const cumulative = telemetry.cumulativeUsage;
   const promptTokens = cumulative.input + cumulative.cacheRead + cumulative.cacheWrite;
@@ -366,6 +390,39 @@ function SessionTelemetryView({ projection }: { projection?: AgentProjectionStat
       ) : null}
     </div>
   );
+}
+
+function persistedMessageUsage(projection?: AgentProjectionState): {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  model: string;
+  provider: string;
+} | undefined {
+  const messages = (projection?.messageOrder ?? [])
+    .map((messageId) => projection?.messagesById[messageId])
+    .filter((message) => (
+      message?.role === 'assistant'
+      && message.usage !== undefined
+      && message.usage.totalTokens > 0
+    ));
+  if (!messages.length) return undefined;
+  const usage = messages.reduce(
+    (total, message) => ({
+      input: total.input + (message?.usage?.input ?? 0),
+      output: total.output + (message?.usage?.output ?? 0),
+      cacheRead: total.cacheRead + (message?.usage?.cacheRead ?? 0),
+      cacheWrite: total.cacheWrite + (message?.usage?.cacheWrite ?? 0),
+    }),
+    { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  );
+  const latest = messages.at(-1);
+  return {
+    ...usage,
+    model: latest?.model ?? '',
+    provider: latest?.provider ?? '',
+  };
 }
 
 function MessageQueueView({ projection }: { projection?: AgentProjectionState }) {

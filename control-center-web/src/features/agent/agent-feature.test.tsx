@@ -1042,6 +1042,46 @@ describe('Agent experience', () => {
     await waitFor(() => expect(attempts).toBe(1));
   });
 
+  it('shows persisted message usage when an idle snapshot has no live context telemetry', async () => {
+    const base = previewAgentSnapshot('session-preview');
+    let assistantIndex = 0;
+    const usages = [
+      { input: 1_501, output: 208, cacheRead: 8_704, cacheWrite: 0, totalTokens: 10_413 },
+      { input: 563, output: 219, cacheRead: 61_952, cacheWrite: 0, totalTokens: 62_734 },
+    ];
+    const snapshot = {
+      ...base,
+      telemetry: undefined,
+      messages: (base.messages as UiAgentMessage[]).map((message) => {
+        if (message.role !== 'assistant') return message;
+        const usage = usages[assistantIndex] ?? usages.at(-1)!;
+        assistantIndex += 1;
+        return {
+          ...message,
+          provider: 'openai-codex',
+          model: 'gpt-5.6-luna',
+          usage,
+        };
+      }),
+    };
+    const transport = productionTransport({
+      'agent.session.snapshot': snapshot,
+    });
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '展开任务中心' }));
+    const statusPanel = await screen.findByLabelText('当前对话任务中心');
+    const telemetryToggle = await within(statusPanel).findByRole('button', { name: /上下文与用量/ });
+    await user.click(telemetryToggle);
+
+    const section = telemetryToggle.closest('section')!;
+    expect(within(section).getByText('可见回合用量')).toBeInTheDocument();
+    expect(within(section).getByLabelText('已持久化回合 Token 用量')).toHaveTextContent('输入72.7K');
+    expect(within(section).getByText('当前 Provider 上下文精确占用未保存')).toBeInTheDocument();
+    expect(within(section).queryByText('发送一轮消息后显示上下文与缓存数据')).not.toBeInTheDocument();
+  });
+
   it('shows the full capability catalog while keeping Runtime authorization and native Skills distinct', async () => {
     const enabled = { ...toolCatalog().find((tool) => tool.id === 'input')!, enabled: true };
     const disabled = { ...toolCatalog().find((tool) => tool.id === 'knowledge')!, enabled: false };
@@ -1058,7 +1098,8 @@ describe('Agent experience', () => {
     await user.click(await screen.findByRole('button', { name: '展开任务中心' }));
     const statusPanel = await screen.findByLabelText('当前对话任务中心');
     const capabilityToggle = await within(statusPanel).findByRole('button', { name: /当前对话工具与技能/ });
-    expect(capabilityToggle).toHaveTextContent('可用能力，不计入上下文 Token');
+    expect(capabilityToggle).toHaveTextContent('可用能力目录');
+    expect(capabilityToggle).toHaveTextContent('未注入上下文');
     const capabilitySection = capabilityToggle.closest('section')!;
     await user.click(capabilityToggle);
     await user.click(within(capabilitySection).getByRole('button', { name: '管理当前对话的工具与技能' }));

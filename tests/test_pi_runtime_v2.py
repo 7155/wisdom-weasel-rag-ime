@@ -113,6 +113,8 @@ for line in sys.stdin:
             "messageQueue": {"steering": [], "followUp": [], "steeringMode": "one-at-a-time",
                              "followUpMode": "one-at-a-time"},
         })
+        if os.environ.get("TEST_SESSION_OPEN_MESSAGE_COUNT"):
+            session["messageCount"] = int(os.environ["TEST_SESSION_OPEN_MESSAGE_COUNT"])
         result(request, {"snapshot": session, "evictedSessionId": None})
     elif method == "session.control_state":
         session = sessions[session_id]
@@ -411,6 +413,27 @@ class PiRuntimeV2Tests(unittest.TestCase):
             "stored": True,
             "status": "checkpointed",
         }
+
+    def test_opening_runtime_does_not_replace_public_message_count_with_provider_entries(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        self.store.set_status(
+            session_id,
+            "idle",
+            message_count=3,
+            last_message_preview="公开助手回复",
+        )
+
+        self.runtime.config = replace(
+            self.runtime.config,
+            provider_environment={"TEST_SESSION_OPEN_MESSAGE_COUNT": "61"},
+        )
+        self.runtime.ensure(session_id)
+
+        session = self.store.get(session_id)
+        self.assertEqual(session["messageCount"], 3)
+        self.assertEqual(session["lastMessagePreview"], "公开助手回复")
 
     def test_usage_evidence_distinguishes_cache_report_from_missing_fields(
         self,

@@ -1736,6 +1736,8 @@ function attachMessageToTurn(state: AgentProjectionState, message: UiAgentMessag
 }
 
 function reconcileSnapshotTurnStatuses(state: AgentProjectionState): void {
+  const lastTurnId = state.turnOrder[state.turnOrder.length - 1] ?? '';
+  const runtimeStatus = turnStatusFromRuntime(state.status);
   for (const turnId of state.turnOrder) {
     const turn = writableTurn(state, turnId);
     if (!turn) continue;
@@ -1748,13 +1750,22 @@ function reconcileSnapshotTurnStatuses(state: AgentProjectionState): void {
     else if (statuses.has('queued')) turn.status = 'queued';
     else if (statuses.has('aborted')) turn.status = 'aborted';
     else turn.status = 'completed';
+
+    const hasUserMessage = messages.some((message) => message.role === 'user');
+    const hasAssistantMessage = messages.some((message) => message.role === 'assistant');
+    const activeTail = turnId === lastTurnId && runtimeStatus !== 'completed';
+    if (
+      turn.status === 'completed'
+      && hasUserMessage
+      && !hasAssistantMessage
+      && !activeTail
+    ) {
+      turn.status = 'failed';
+      turn.failure = turn.failure || '未收到助手回复。';
+    }
   }
 
-  const lastTurn = writableTurn(
-    state,
-    state.turnOrder[state.turnOrder.length - 1] ?? '',
-  );
-  const runtimeStatus = turnStatusFromRuntime(state.status);
+  const lastTurn = writableTurn(state, lastTurnId);
   if (lastTurn && runtimeStatus !== 'completed' && lastTurn.status === 'completed') {
     lastTurn.status = runtimeStatus;
   }

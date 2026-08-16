@@ -292,6 +292,14 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertNotIn('"room.dispatch"', script)
         self.assertNotIn('"room.cancel"', script)
 
+    def test_staged_room_smoke_uses_the_typed_participant_steer_contract(self) -> None:
+        script = (ROOT / "scripts" / "smoke_pi_room_composition.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('"action": "steer_participant"', script)
+        self.assertNotIn('"action": "steer",', script)
+
     def test_product_owns_all_managed_skills(self) -> None:
         skills_root = ROOT / "integrations" / "pi" / "skills"
         skill_dirs = _product_skill_dirs(skills_root)

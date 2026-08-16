@@ -198,6 +198,7 @@ if [[ "$INCLUDE_PI" == "1" ]]; then
   "$PI_PYTHON" "$ROOT/scripts/build_managed_pi_runtime_v2.py" "${pi_build_args[@]}"
   PI_STAGE_REPORT="$PI_BUILD_DIR.install-stage.json"
   PI_ACCEPTANCE_REPORT="$PI_BUILD_DIR.acceptance.json"
+  PI_ROOM_ACCEPTANCE_REPORT="$PI_BUILD_DIR.room-acceptance.json"
   : > "$PI_STAGE_REPORT"
   chmod 600 "$PI_STAGE_REPORT"
   "$PI_PYTHON" "$ROOT/scripts/install_managed_pi_runtime.py" \
@@ -223,6 +224,12 @@ PY
     --payload "$PI_INSTALLED_PAYLOAD" \
     --workspace-root "$ROOT" \
     --deterministic-test-gate > "$PI_ACCEPTANCE_REPORT"
+  : > "$PI_ROOM_ACCEPTANCE_REPORT"
+  chmod 600 "$PI_ROOM_ACCEPTANCE_REPORT"
+  "$PI_PYTHON" "$ROOT/scripts/smoke_pi_room_composition.py" \
+    --payload "$PI_INSTALLED_PAYLOAD" \
+    --workspace-root "$ROOT" \
+    --deterministic-test-gate > "$PI_ROOM_ACCEPTANCE_REPORT"
   "$PI_PYTHON" "$ROOT/scripts/install_managed_pi_runtime.py" \
     --payload "$PI_BUILD_DIR" \
     --app-support "$APP_SUPPORT_DIR" \

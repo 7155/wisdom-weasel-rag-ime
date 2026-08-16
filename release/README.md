@@ -130,8 +130,10 @@ scripts/install_product_stack.sh \
 ```
 
 The installer refuses dirty tracked source, writes source-generation markers,
-installs the visible Control Center last, and checks that the installed
-components agree on the expected commit before returning success.
+runs deterministic staged Session and Room lifecycle canaries before activating
+the managed Pi generation, installs the visible Control Center last, and checks
+that the installed components agree on the expected commit before returning
+success.
 
 Inspect the removal plan without changing the machine:
 
