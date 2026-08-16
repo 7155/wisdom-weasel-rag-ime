@@ -313,6 +313,27 @@ class AgentServiceTests(unittest.TestCase):
         self.assertTrue(deleted["ok"])
         self.assertEqual(self.service.list_sessions()["items"], [])
 
+    def test_project_session_enables_pi_project_context_by_default(self) -> None:
+        project_session = self.service.create_session(
+            {
+                "title": "项目对话",
+                "mode": "coordinator",
+                "workspaceRoots": [self.root.as_posix()],
+            }
+        )["session"]
+        self.assertTrue(project_session["projectContextEnabled"])
+
+        project_context_disabled = self.service.create_session(
+            {
+                "title": "显式关闭项目上下文",
+                "mode": "coordinator",
+                "workspaceRoots": [self.root.as_posix()],
+                "projectContextEnabled": False,
+            }
+        )["session"]
+        self.assertFalse(
+            project_context_disabled["projectContextEnabled"]
+        )
 
 
 

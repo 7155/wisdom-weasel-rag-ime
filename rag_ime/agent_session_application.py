@@ -218,8 +218,10 @@ class AgentSessionApplicationService:
             thinking_level=thinking_level,
             tool_profile_version=requested_tool_profile,
             execution_mode=requested_execution_mode,
-            project_context_enabled=bool(
-                payload.get("projectContextEnabled", False)
+            project_context_enabled=(
+                bool(payload["projectContextEnabled"])
+                if "projectContextEnabled" in payload
+                else bool(workspace_roots)
             ),
             pi_skills_enabled=bool(payload.get("piSkillsEnabled", False)),
             codex_skills_enabled=bool(
