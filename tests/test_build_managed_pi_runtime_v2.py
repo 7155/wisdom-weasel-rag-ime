@@ -21,6 +21,7 @@ from scripts.build_managed_pi_runtime_v2 import (
     SESSION_RUNTIME_CONTRACT,
     _SESSION_RUNTIME_SOURCE_KEYS,
     _copy_product_skills,
+    _compact_card_length,
     _default_pi_worktree,
     _default_node,
     _product_skill_dirs,
@@ -73,6 +74,9 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 ),
                 "toolBridge": Path(
                     "packages/rag-ime-runtime-host/src/tool-bridge.ts"
+                ),
+                "toolResults": Path(
+                    "packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts"
                 ),
                 "session": Path(
                     "packages/rag-ime-runtime-host/src/pi-session.ts"
@@ -368,7 +372,11 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             self.assertTrue(card["when"])
             self.assertTrue(card["does"])
             compact = json.dumps(card, ensure_ascii=False, separators=(",", ":"))
-            self.assertLessEqual(len(compact), MAX_ROUTING_CARD_CHARS, card["name"])
+            self.assertLessEqual(
+                _compact_card_length(card),
+                MAX_ROUTING_CARD_CHARS,
+                card["name"],
+            )
             self.assertNotIn("file://", compact)
             self.assertNotIn(str(ROOT), compact)
 

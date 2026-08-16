@@ -3,7 +3,7 @@
   "sourceRepository": "https://github.com/7155/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "0fd0564af34cb40bbcd6b8903c01b36191c4f90d",
+  "minimumHandlersCommit": "a4d15d3a3cc99000f3a2e5e98d19c5dfb3c291d5",
   "requiredMethods": [
     "session.open",
     "session.prompt",
@@ -17,6 +17,7 @@
     "runtimeHost": "packages/rag-ime-runtime-host/src/runtime-host.ts",
     "contextInspection": "packages/rag-ime-runtime-host/src/debug-context.ts",
     "toolBridge": "packages/rag-ime-runtime-host/src/tool-bridge.ts",
+    "toolResults": "packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts",
     "session": "packages/rag-ime-runtime-host/src/pi-session.ts"
   },
   "requiredSourceMarkers": {
@@ -43,14 +44,19 @@
       "pi.on(\"tool_execution_end\""
     ],
     "toolBridge": [
-      "const MAX_MODEL_RESULT_BYTES = 24 * 1024;",
-      "function boundedModelResult(",
-      "duplicate_${cachedFailure.code}"
+      "const MAX_CONCURRENT_GATEWAY_REQUESTS = 8;",
+      "modelVisibleToolGatewayResult(",
+      "modelVisibleResult("
+    ],
+    "toolResults": [
+      "export const MAX_MODEL_VISIBLE_TOOL_RESULT_BYTES = 50 * 1024;",
+      "export function modelVisibleResult(",
+      "truncatedBy: \"model_result_bytes\""
     ],
     "session": [
       "async prompt(options:",
       "async queueMessage(options:",
-      "async abort(): Promise<PiProductSessionAbortReceipt>",
+      "abort(): Promise<PiSessionAbortReceipt>",
       "async compact(customInstructions?: string)"
     ]
   }

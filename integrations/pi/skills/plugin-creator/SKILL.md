@@ -2,14 +2,14 @@
 name: plugin-creator
 description: Search for, inspect, acquire, update, roll back, or create a native Pi Package for Personal Agent Workbench. Use when a task needs a reusable extension, Skill, prompt, or theme that is not already available, or when the user asks to install a package from npm, Git, or a local directory. Do not use for ordinary task logic already covered by an existing Tool, Skill, hook, or package; for one-off file edits that do not justify a reusable capability; for secrets; or to bypass the product confirmation that applies a package change.
 when:
-  - 用户要求从 npm、Git、本地目录或能力市场安装、更新、回滚或检查 Pi Package
-  - 当前缺少值得复用的 extension、Skill、prompt 或 theme，需要先搜索再创建
-does: 先搜索和复用已有 Pi Package；缺失时创建最小 Package，校验资源并提交产品内安装预览。
-input: 缺失能力、正面触发、Not for、输入输出、来源或最小文件、启用请求和验证方式。
-output: 已有包匹配或 Package 草案、资源清单、校验回执、待确认安装提议及剩余限制。
+  - 用户要求安装、更新、回滚或创建可复用 Pi Package
+  - 现有 Tool 或 Skill 无法满足且能力值得复用
+does: 先搜索已有包；没有合适项时创建、校验并提交安装预览。
+input: 缺失能力、来源、触发边界和验收。
+output: 匹配包或草案、校验回执、安装提议和限制。
 notFor:
-  - 已有 Tool、Skill、hook 或 Package 能完成的普通任务，或不值得复用的一次性文件修改
-  - 写入密钥、复制不明代码、创建第二套加载器，或绕过产品确认直接改变安装状态
+  - 已有能力可完成的普通任务或一次性修改
+  - 密钥、不明代码、绕过确认或第二套加载器
 ---
 
 # Pi Package Creator

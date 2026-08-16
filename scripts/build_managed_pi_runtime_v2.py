@@ -38,14 +38,15 @@ PROJECT_ROUTING_SKILLS = frozenset(
     {"memory-curation", "plugin-creator"}
 )
 ROUTING_CARD_FIELDS = ("name", "when", "notFor", "does", "input", "output")
-MAX_ROUTING_CARD_CHARS = 420
+MAX_ROUTING_CARD_CHARS = 200
 SKILL_SOURCE_KINDS = ("bundled", "configured", "pi-installed")
-REQUIRED_PI_RUNTIME_BASE_COMMIT = "0fd0564af34cb40bbcd6b8903c01b36191c4f90d"
+REQUIRED_PI_RUNTIME_BASE_COMMIT = "a4d15d3a3cc99000f3a2e5e98d19c5dfb3c291d5"
 _SESSION_RUNTIME_SOURCE_KEYS = (
     "protocol",
     "runtimeHost",
     "contextInspection",
     "toolBridge",
+    "toolResults",
     "session",
 )
 _OAUTH_RUNTIME_MODULES = {
@@ -456,7 +457,12 @@ def _resolve_skill_source_collisions(
 
 
 def _compact_card_length(card: dict[str, object]) -> int:
-    return len(json.dumps(card, ensure_ascii=False, separators=(",", ":")))
+    runtime_card = {
+        field: card[field]
+        for field in ("name", "when", "does", "notFor")
+        if field in card
+    }
+    return len(json.dumps(runtime_card, ensure_ascii=False, separators=(",", ":")))
 
 
 def _validated_skill_routing_catalog(
