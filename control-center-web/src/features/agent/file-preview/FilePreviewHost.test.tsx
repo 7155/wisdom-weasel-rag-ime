@@ -43,10 +43,11 @@ describe('file preview interaction', () => {
 
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('project-intro.html')).toBeInTheDocument();
-    const frame = within(dialog).getByTitle('project-intro.html 静态预览');
-    expect(frame).toHaveAttribute('sandbox', '');
-    expect(frame.getAttribute('srcdoc')).toContain('项目介绍');
-    expect(frame.getAttribute('srcdoc')).not.toContain('<script');
+    const frame = within(dialog).getByTitle('project-intro.html 交互预览');
+    expect(frame.getAttribute('sandbox')).toContain('allow-scripts');
+    expect(frame.getAttribute('sandbox')).toContain('allow-forms');
+    expect(frame.getAttribute('src')).toMatch(/^blob:/u);
+    expect(frame).not.toHaveAttribute('srcdoc');
   });
 
   it('expands a managed Markdown file in its message instead of opening a dialog', async () => {

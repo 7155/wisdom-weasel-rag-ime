@@ -2228,6 +2228,8 @@ describe('Agent experience', () => {
     const activity = [...view.container.querySelectorAll<HTMLElement>('.agent-activity--inline')]
       .find((item) => item.textContent?.includes('该操作需要本机审批后继续'));
     expect(activity).toBeDefined();
+    expect(activity).not.toHaveAttribute('open');
+    await user.click(activity!.querySelector('summary')!);
     expect(activity).toHaveAttribute('open');
     expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
     const failedRow = [...activity!.querySelectorAll<HTMLDetailsElement>('.agent-activity-row')]
@@ -2279,6 +2281,8 @@ describe('Agent experience', () => {
     const activity = [...view.container.querySelectorAll<HTMLElement>('.agent-activity--inline')]
       .find((item) => item.textContent?.includes('工作区不在授权目录内'));
     expect(activity).toBeDefined();
+    expect(activity).not.toHaveAttribute('open');
+    await user.click(activity!.querySelector('summary')!);
     expect(activity).toHaveAttribute('open');
     expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
     const failedRow = [...activity!.querySelectorAll<HTMLDetailsElement>('.agent-activity-row')]

@@ -304,7 +304,7 @@
    recolouring it would misrepresent what they wrote. In dark mode that white
    page needs a matte so it reads as a sheet resting on the surface instead of a
    lit rectangle butted against the dialog edge. */
-.agent-static-html-preview { display: block; width: 100%; height: 100%; min-height: 520px; border: 0; background: #fff; }
+.agent-rich-html-preview { display: block; width: 100%; height: 100%; min-height: 520px; border: 0; background: #fff; }
 .agent-file-preview-dialog__body[data-preview-kind='html'] { padding: 10px; background: var(--color-canvas, var(--color-surface-subtle)); }
 @media (max-width: 720px) { .agent-file-preview-dialog__body[data-preview-kind='html'] { padding: 0; } }
 .agent-file-image-preview { display: grid; min-height: 100%; place-items: center; padding: 20px; background: var(--color-surface-subtle); }

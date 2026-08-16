@@ -6,7 +6,7 @@ import { managedAgentMediaContentPath } from '@/platform/transport';
 import { CodePreview } from './CodePreview';
 import { DiffPreview } from './DiffPreview';
 import { MarkdownPreview } from './MarkdownPreview';
-import { StaticHtmlPreview } from './StaticHtmlPreview';
+import { RichHtmlPreview } from './RichHtmlPreview';
 
 export type FilePreviewKind = AgentFilePreviewV1['descriptor']['previewKind'];
 export type FilePreviewRenderer = ComponentType<{ preview: AgentFilePreviewV1 }>;
@@ -25,7 +25,7 @@ export function FilePreviewRenderer({ preview }: { preview: AgentFilePreviewV1 }
 registerFilePreviewRenderer('markdown', ({ preview }) => <MarkdownPreview content={preview.content ?? ''} />);
 registerFilePreviewRenderer('code', ({ preview }) => <CodePreview content={preview.content ?? ''} fileName={preview.descriptor.fileName} language={preview.descriptor.language || 'text'} />);
 registerFilePreviewRenderer('diff', ({ preview }) => <DiffPreview content={preview.content ?? ''} />);
-registerFilePreviewRenderer('html', ({ preview }) => <StaticHtmlPreview content={preview.content ?? ''} title={preview.descriptor.fileName} />);
+registerFilePreviewRenderer('html', ({ preview }) => <RichHtmlPreview content={preview.content ?? ''} title={preview.descriptor.fileName} />);
 registerFilePreviewRenderer('image', ManagedImagePreview);
 registerFilePreviewRenderer('unsupported', UnsupportedPreview);
 

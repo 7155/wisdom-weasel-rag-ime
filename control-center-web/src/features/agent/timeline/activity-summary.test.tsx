@@ -116,7 +116,7 @@ describe('Agent tool activity details', () => {
     expect(document.activeElement).toBe(summary);
   });
 
-  it('expands a large tool group downward below its summary without a screen dialog', () => {
+  it('keeps a large tool group compact until its summary is opened', () => {
     const activities = Array.from({ length: 34 }, (_, index) => toolActivity(
       'tool_finished',
       index === 17 ? 'failed' : 'completed',
@@ -131,16 +131,17 @@ describe('Agent tool activity details', () => {
     const { container } = render(<ActivitySummary activities={activities} inline />);
     const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
 
-    expect(group).toHaveAttribute('open');
+    expect(group).not.toHaveAttribute('open');
     expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
     expect(group).toHaveAttribute('data-state', 'mixed');
     expect(group).toHaveTextContent('33 已完成 · 1 未完成');
+    fireEvent.click(group.querySelector('summary')!);
     const scrollRegion = within(group).getByRole('region', { name: '操作与思考过程' });
     expect(scrollRegion).toHaveAttribute('data-bounded-scroll', 'true');
     expect(scrollRegion.querySelectorAll('.agent-activity-row')).toHaveLength(34);
   });
 
-  it('keeps a live inline group open in its bounded scroll region while status updates', () => {
+  it('keeps a manually opened live group stable while status updates', () => {
     const activity = toolActivity('tool_progress', 'running', {
       toolCallId: 'call-running-disclosure',
       toolName: 'workspace_search',
@@ -149,8 +150,9 @@ describe('Agent tool activity details', () => {
     const { container, rerender } = render(<ActivitySummary activities={[activity]} inline />);
     const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
 
+    expect(group).not.toHaveAttribute('open');
+    fireEvent.click(group.querySelector('summary')!);
     expect(group).toHaveAttribute('open');
-    expect(group.querySelector('.agent-activity-row')).toBeInTheDocument();
 
     rerender(
       <ActivitySummary
@@ -172,7 +174,7 @@ describe('Agent tool activity details', () => {
     expect(within(group).getByRole('region', { name: '操作与思考过程' })).toBeInTheDocument();
   });
 
-  it('opens a failed inline group so its public error is immediately viewable', () => {
+  it('summarizes a failed group while keeping its detailed receipt on demand', () => {
     const activity = toolActivity('tool_finished', 'failed', {
       toolCallId: 'call-failed-disclosure',
       toolName: 'workspace_search',
@@ -183,10 +185,11 @@ describe('Agent tool activity details', () => {
     const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
     const summary = group.querySelector('summary')!;
 
-    expect(group).toHaveAttribute('open');
-    expect(group.querySelector('.agent-activity-row')).toBeInTheDocument();
+    expect(group).not.toHaveAttribute('open');
     expect(summary).toHaveTextContent('搜索参数超出允许范围');
     expect(group).toHaveAttribute('data-state', 'mixed');
+    fireEvent.click(summary);
+    expect(group).toHaveAttribute('open');
     expect(screen.getByLabelText('工具未完成')).toHaveTextContent('搜索参数超出允许范围');
     expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
 

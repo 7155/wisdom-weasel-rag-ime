@@ -1,19 +1,15 @@
-import { ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
-import { memo, useId, useMemo, useState, type ReactNode } from 'react';
+import { ExternalLink } from 'lucide-react';
+import { memo, useMemo, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { AgentBlockRenderProps } from './renderer-contract';
 import { CodeContentBlock, StreamingCursor } from './CodeDiffRenderers';
 import { text } from './renderer-values';
-import { toggleDisclosurePreservingAnchor } from './disclosure-anchor';
 import {
   HtmlOutputPlaceholder,
   InlineHtmlOutput,
   standaloneHtmlSource,
 } from './InlineHtmlOutput';
-
-const MARKDOWN_FOLD_LINES = 48;
-const MARKDOWN_FOLD_CHARACTERS = 7_000;
 
 export function TextBlockRenderer({
   block,
@@ -34,8 +30,6 @@ export function MarkdownBody({
   streamingTail?: boolean;
   text: string;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const disclosureId = useId();
   const partition = useMemo(
     () => streamingTail
       ? partitionStreamingMarkdownFragments(source)
@@ -49,34 +43,14 @@ export function MarkdownBody({
       ? <HtmlOutputPlaceholder />
       : <InlineHtmlOutput content={standaloneHtml} />;
   }
-  const lineCount = source.split('\n').length;
-  const foldable = !streamingTail
-    && (lineCount > MARKDOWN_FOLD_LINES || source.length > MARKDOWN_FOLD_CHARACTERS);
-  const collapsed = foldable && !expanded;
-  const body = (
-    <div className="agent-markdown" data-collapsed={collapsed || undefined}>
+  return (
+    <div className="agent-markdown">
       {partition.stableFragments.map((fragment, index) => (
         <StableMarkdownFragment key={`stable:${index}`} source={fragment} />
       ))}
       {partition.active ? (
         <MarkdownFragment source={partition.active} streamingTail />
       ) : null}
-    </div>
-  );
-  if (!foldable) return body;
-  return (
-    <div className="agent-markdown-fold">
-      <div className="agent-markdown-fold__content" id={disclosureId}>{body}</div>
-      <button
-        aria-controls={disclosureId}
-        aria-expanded={expanded}
-        className="agent-markdown-fold__toggle"
-        onClick={(event) => toggleDisclosurePreservingAnchor(event, setExpanded)}
-        type="button"
-      >
-        {collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-        {collapsed ? `展开全文（${lineCount} 行）` : '收起长回复'}
-      </button>
     </div>
   );
 }
@@ -353,11 +327,4 @@ function safeLink(value: string | undefined): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-export function markdownFoldThresholds() {
-  return {
-    characters: MARKDOWN_FOLD_CHARACTERS,
-    lines: MARKDOWN_FOLD_LINES,
-  } as const;
 }

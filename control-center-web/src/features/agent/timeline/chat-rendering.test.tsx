@@ -11,6 +11,7 @@ import {
   agentDeliveryFeedback,
   agentScrollSeekConfiguration,
   agentTurnMarkerKind,
+  estimatedStreamingTokens,
   interleavedTurnEntries,
   visibleAgentTurnIds,
 } from './AgentTimeline';
@@ -25,11 +26,42 @@ import { agentRendererPolicy, TRUSTED_AGENT_RENDERERS } from './renderer-registr
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   useAgentLiveStore.getState().clear('session-failed-snapshot');
   useAgentLiveStore.getState().clear('session-1');
 });
 
 describe('Agent chat rendering', () => {
+
+  it('estimates streamed CJK and Latin text for the visible token-rate indicator', () => {
+    expect(estimatedStreamingTokens([{ id: 'empty', type: 'text', status: 'running', presentationKind: 'markdown', data: {} }])).toBe(0);
+    expect(estimatedStreamingTokens([{ id: 'mixed', type: 'text', status: 'running', presentationKind: 'markdown', data: { text: '你好abcdefgh' } }])).toBe(4);
+  });
+
+  it('shows the live token-rate indicator on an actually streaming assistant message', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId)],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'idle',
+    });
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(1, 'text_delta', { delta: '正在生成可观察的流式回答。', replaceBlock: true }),
+    ]);
+
+    render(<AgentTurn sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />);
+    expect(screen.queryByLabelText(/tokens 每秒/)).not.toBeInTheDocument();
+    act(() => {
+      vi.advanceTimersByTime(900);
+    });
+
+    expect(screen.getByLabelText(/前端估算生成速度 .* tokens 每秒/)).toHaveTextContent(/t\/s/);
+  });
 
   it('shows the observable Steer delivery lifecycle instead of a static badge', () => {
     expect(agentDeliveryFeedback('steer', 'sending', 'queued')).toBe('正在发送干预');
@@ -421,18 +453,22 @@ describe('Agent chat rendering', () => {
     expect(container.querySelector('tr[data-kind="add"]')).toHaveTextContent('reduceBatch');
   });
 
-  it('folds a completed long Markdown reply without hiding its readable prefix', () => {
+  it('keeps long Markdown structurally stable when streaming becomes completed', () => {
     const markdown = Array.from(
       { length: 52 },
       (_, index) => `第 ${index + 1} 段仍可按需查看。`,
     ).join('\n\n');
-    const { container } = render(<MarkdownBody text={markdown} />);
+    const { container, rerender } = render(<MarkdownBody streamingTail text={markdown} />);
 
-    expect(container.querySelector('.agent-markdown')).toHaveAttribute('data-collapsed', 'true');
-    expect(screen.getByText('第 1 段仍可按需查看。')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /展开全文/ }));
     expect(container.querySelector('.agent-markdown')).not.toHaveAttribute('data-collapsed');
-    expect(screen.getByRole('button', { name: '收起长回复' })).toBeInTheDocument();
+    expect(screen.getByText('第 1 段仍可按需查看。')).toBeInTheDocument();
+    expect(screen.getByText('第 52 段仍可按需查看。')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /展开全文|收起长回复/ })).not.toBeInTheDocument();
+
+    rerender(<MarkdownBody text={markdown} />);
+    expect(container.querySelector('.agent-markdown')).not.toHaveAttribute('data-collapsed');
+    expect(screen.getByText('第 52 段仍可按需查看。')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /展开全文|收起长回复/ })).not.toBeInTheDocument();
   });
 
   it('renders the typed rich block allowlist without executing untrusted markup or links', () => {

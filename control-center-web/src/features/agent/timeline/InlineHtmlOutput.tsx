@@ -1,5 +1,7 @@
 import { Code2, Globe2, Maximize2, Minimize2, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { RICH_HTML_SANDBOX, richHtmlDocument } from '../file-preview/rich-html';
+import { useRichHtmlUrl } from '../file-preview/use-rich-html-url';
 
 const INLINE_MIN_HEIGHT = 180;
 const INLINE_MAX_HEIGHT = 720;
@@ -22,7 +24,8 @@ export const InlineHtmlOutput = memo(function InlineHtmlOutput({
   const [contentHeight, setContentHeight] = useState(320);
   const [expanded, setExpanded] = useState(false);
   const [showSource, setShowSource] = useState(false);
-  const document = useMemo(() => modelHtmlDocument(content), [content]);
+  const document = useMemo(() => richHtmlDocument(content), [content]);
+  const url = useRichHtmlUrl(document);
 
   const measure = useCallback(() => {
     const frame = frameRef.current;
@@ -98,8 +101,8 @@ export const InlineHtmlOutput = memo(function InlineHtmlOutput({
         onLoad={bindMeasurement}
         ref={frameRef}
         referrerPolicy="no-referrer"
-        sandbox="allow-downloads allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
-        srcDoc={document}
+        sandbox={RICH_HTML_SANDBOX}
+        src={url || undefined}
         style={{ height: `${frameHeight}px` }}
         title="HTML 输出预览"
       />
@@ -127,32 +130,6 @@ export function standaloneHtmlSource(source: string): string | undefined {
     return trimmed;
   }
   return undefined;
-}
-
-export function modelHtmlDocument(source: string): string {
-  const completeDocument = /(?:<!doctype\s+html\b|<html\b|<head\b|<body\b)/iu.test(source);
-  const document = new DOMParser().parseFromString(
-    completeDocument ? source : `<main class="paw-html-fragment">${source}</main>`,
-    'text/html',
-  );
-
-  const viewport = document.createElement('meta');
-  viewport.name = 'viewport';
-  viewport.content = 'width=device-width, initial-scale=1';
-  document.head.prepend(viewport);
-
-  const guardrails = document.createElement('style');
-  guardrails.dataset.pawHtmlHost = 'true';
-  guardrails.textContent = [
-    'html{box-sizing:border-box;min-width:0;background:transparent}',
-    '*,*::before,*::after{box-sizing:inherit}',
-    'body{min-width:0;margin:0;overflow-wrap:anywhere}',
-    '.paw-html-fragment{padding:18px;font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#17231d;background:#fff}',
-    'img,video,svg,canvas{max-width:100%}',
-    'pre,table{max-width:100%;overflow:auto}',
-  ].join('');
-  document.head.append(guardrails);
-  return `<!doctype html>${document.documentElement.outerHTML}`;
 }
 
 function measureDocumentHeight(document: Document): number {

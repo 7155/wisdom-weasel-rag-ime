@@ -11,8 +11,8 @@ describe('model-authored HTML inside assistant replies', () => {
 
     const frame = screen.getByTitle('HTML 输出预览');
     expect(frame.getAttribute('sandbox')).toContain('allow-scripts');
-    expect(frame.getAttribute('srcdoc')).toContain('<h1>项目报告</h1>');
-    expect(frame.getAttribute('srcdoc')).toContain('document.body.dataset.ready');
+    expect(frame.getAttribute('src')).toMatch(/^blob:/u);
+    expect(frame).not.toHaveAttribute('srcdoc');
 
     fireEvent.click(screen.getByRole('button', { name: '查看 HTML 源码' }));
     expect(screen.getByText(source)).toBeInTheDocument();
@@ -26,7 +26,7 @@ describe('model-authored HTML inside assistant replies', () => {
     expect(screen.getByText('上方说明。')).toBeInTheDocument();
     expect(screen.getByText('下方说明。')).toBeInTheDocument();
     const frame = screen.getByTitle('HTML 输出预览');
-    expect(frame.getAttribute('srcdoc')).toContain('<strong>富文本卡片</strong>');
+    expect(frame.getAttribute('src')).toMatch(/^blob:/u);
     expect(screen.queryByText(/<section>/u)).not.toBeInTheDocument();
   });
 
@@ -37,8 +37,9 @@ describe('model-authored HTML inside assistant replies', () => {
 
     const frames = screen.getAllByTitle('HTML 输出预览');
     expect(frames).toHaveLength(2);
-    expect(frames[0]?.getAttribute('srcdoc')).toContain('第一块');
-    expect(frames[1]?.getAttribute('srcdoc')).toContain('第二块');
+    expect(frames[0]?.getAttribute('src')).toMatch(/^blob:/u);
+    expect(frames[1]?.getAttribute('src')).toMatch(/^blob:/u);
+    expect(frames[0]?.getAttribute('src')).not.toBe(frames[1]?.getAttribute('src'));
   });
 
   it('shows a stable placeholder instead of rebuilding an incomplete streaming document', () => {
@@ -56,7 +57,7 @@ describe('model-authored HTML inside assistant replies', () => {
     );
 
     const frame = screen.getByTitle('HTML 输出预览');
-    expect(frame.getAttribute('srcdoc')).toContain('流式富文本已就绪');
+    expect(frame.getAttribute('src')).toMatch(/^blob:/u);
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 

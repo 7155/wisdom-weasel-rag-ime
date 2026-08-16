@@ -13,7 +13,7 @@ import {
 import { CodePreview } from '../file-preview/CodePreview';
 import { DiffPreview } from '../file-preview/DiffPreview';
 import { MarkdownPreview } from '../file-preview/MarkdownPreview';
-import { StaticHtmlPreview } from '../file-preview/StaticHtmlPreview';
+import { RichHtmlPreview } from '../file-preview/RichHtmlPreview';
 import '../file-preview/file-preview.css';
 
 interface WorkspaceFilePreviewDialogProps {
@@ -111,7 +111,7 @@ export function WorkspaceFilePreviewDialog({
 
 function renderPreview(kind: 'markdown' | 'html' | 'diff' | 'code', content: string, fileName: string, language: string) {
   if (kind === 'markdown') return <MarkdownPreview content={content} />;
-  if (kind === 'html') return <StaticHtmlPreview content={content} title={fileName} />;
+  if (kind === 'html') return <RichHtmlPreview content={content} title={fileName} />;
   if (kind === 'diff') return <DiffPreview content={content} fileName={fileName} />;
   return <CodePreview content={content} fileName={fileName} language={language} />;
 }
@@ -149,7 +149,7 @@ function fileLanguage(fileName: string): string {
 
 function languageLabel(kind: string, language: string): string {
   if (kind === 'markdown') return 'Markdown';
-  if (kind === 'html') return 'HTML 静态预览';
+  if (kind === 'html') return 'HTML 交互预览';
   if (kind === 'diff') return 'Diff';
   return language === 'text' ? '文本' : language;
 }

@@ -783,6 +783,14 @@ class AgentService:
                     "createdAtMs": int(message.get("createdAtMs") or 0),
                 }
             )
+        if not requests:
+            # Pi compaction owns the Provider history and may leave the current
+            # UI snapshot without an original user message. Do not ask Luna to
+            # judge from an assistant-authored summary; recover only bounded,
+            # immutable ``user_final`` checkpoints from this same Session.
+            requests.extend(
+                self.memory_sources.recent_user_requests(session_id, limit=8)
+            )
         workflow = self.sessions.workflow_state(session_id)
         goal = (
             workflow.get("goal")

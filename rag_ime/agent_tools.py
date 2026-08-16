@@ -340,15 +340,15 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "id": "room_partner",
         "domain": "agents",
         "displayName": "Room 伙伴协作",
-        "description": "查看当前 Room 伙伴、委派一个有界子任务并接收其 Session 结果，或发布公开进展",
+        "description": "查看当前 Room 伙伴、委派一个有界子任务并接收其 Session 结果，或发布公开进展与最终结果",
         "when": (
             "当前 Session 正在 Room 中主持任务，且需要另一位正式伙伴独立处理有界子任务",
         ),
         "notFor": (
             "普通 Session 的临时微型子 Agent，或主伙伴自己即可完成的单步工作",
         ),
-        "input": "list；或目标伙伴、任务、预期输出与验收条件；或公开进展",
-        "output": "伙伴模型/状态、子 Session 终态结果或公开进展回执",
+        "input": "list；或目标伙伴、任务、预期输出与验收条件；或带 kind 的公开进展/最终结果",
+        "output": "伙伴模型/状态、子 Session 终态结果或类型明确的公开回执",
         "does": "把正式 Room Partner 作为普通 Pi Session 调用，并将子事件归入当前 Room turn。",
         "operations": ("list", "delegate", "post"),
         # Availability is still Room-bound below. Once available, this is the
@@ -765,6 +765,19 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 8_000,
+            },
+            "kind": {
+                "type": "string",
+                "enum": [
+                    "progress",
+                    "result",
+                    "work_result",
+                    "review_result",
+                    "handoff",
+                    "wait",
+                    "blocked",
+                ],
+                "description": "公开内容类型；省略时为 progress，最终答复使用 result。",
             },
         },
         "oneOf": [

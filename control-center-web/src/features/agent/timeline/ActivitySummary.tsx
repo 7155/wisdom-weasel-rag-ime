@@ -90,11 +90,13 @@ export function ActivitySummary({
     activity.status === 'waiting'
     && Boolean(text(activity.payload.approvalId))
     && Boolean(text(activity.payload.toolCallId))
+    && approvalNeedsHumanDecision(activity.payload)
   ));
   const pendingApprovalId = text(pendingApproval?.payload.approvalId);
-  const [inlineOpen, setInlineOpen] = useState(
-    running || waiting || failed || Boolean(pendingApprovalId),
-  );
+  // Tool histories are supporting detail, not the conversation itself. Keep
+  // live, completed, and failed groups compact by default; only a real human
+  // decision opens automatically so the required controls cannot be missed.
+  const [inlineOpen, setInlineOpen] = useState(Boolean(pendingApprovalId));
   const presentedApprovalRef = useRef(pendingApprovalId);
   const inlineContentKey = activities
     .map((activity) => `${activity.id}:${activity.status}:${activity.updatedAtMs}`)

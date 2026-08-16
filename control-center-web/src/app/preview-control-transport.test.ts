@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { parseRoomRequirementsReadProjection } from '@/features/rooms/requirements/room-requirements-read-model';
 import { createPreviewTransport } from './preview-control-transport';
 
 describe('preview control transport', () => {

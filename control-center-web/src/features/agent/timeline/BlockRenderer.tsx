@@ -5,7 +5,6 @@ import { agentRendererPolicy } from './renderer-registry';
 
 export {
   MarkdownBody,
-  markdownFoldThresholds,
   partitionStreamingMarkdown,
   partitionStreamingMarkdownFragments,
 } from './MarkdownRenderer';

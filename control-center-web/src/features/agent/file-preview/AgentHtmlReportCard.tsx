@@ -1,4 +1,4 @@
-import { ExternalLink, Eye, ShieldCheck } from 'lucide-react';
+import { ExternalLink, Eye, Sparkles } from 'lucide-react';
 import { Button } from '@/components/primitives';
 import type { ControlTransport } from '@/platform/transport';
 import { fileSizeLabel, managedContentUrl, type FilePreviewRequest } from './file-descriptor';
@@ -38,8 +38,8 @@ export function AgentHtmlReportCard({
       {/* Size and the safety statement share one line: split across two rows
           the size orphaned itself under the file name for no benefit. */}
       <p className="agent-report-card__assurance">
-        <ShieldCheck aria-hidden="true" size={14} />
-        <span>{size ? `${size} · ` : ''}静态预览：不执行脚本、表单与外部请求</span>
+        <Sparkles aria-hidden="true" size={14} />
+        <span>{size ? `${size} · ` : ''}交互预览：保留页面样式、脚本、图表与表单</span>
       </p>
       <div className="agent-report-card__actions">
         <Button

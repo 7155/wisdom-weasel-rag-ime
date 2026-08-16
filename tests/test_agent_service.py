@@ -581,6 +581,44 @@ class AgentServiceTests(unittest.TestCase):
             json.dumps(context, ensure_ascii=False),
         )
 
+    def test_approval_context_recovers_persisted_user_request_after_compaction(self) -> None:
+        session = self.service.create_session(
+            {"title": "压缩后的审批上下文"}
+        )["session"]
+        session_id = str(session["id"])
+        self.service.memory_sources.checkpoint_user_message(
+            session_id=session_id,
+            pi_entry_id="pi-entry:before-compaction",
+            turn_id="turn:before-compaction",
+            text="请在授权工作区完成实现，并按当前目标继续。",
+            created_at_ms=20,
+        )
+
+        with patch.object(
+            self.service.message_snapshot,
+            "messages",
+            return_value={"items": []},
+        ):
+            context = self.service._approval_model_context(
+                {"sessionId": session_id},
+                session,
+            )
+
+        self.assertTrue(context["contextAvailable"])
+        self.assertEqual(
+            context["userRequests"],
+            [{
+                "role": "user",
+                "text": "请在授权工作区完成实现，并按当前目标继续。",
+                "turnId": "turn:before-compaction",
+                "createdAtMs": 20,
+            }],
+        )
+        self.assertEqual(
+            context["currentTask"]["activeUserRequest"],
+            "请在授权工作区完成实现，并按当前目标继续。",
+        )
+
 
 
     def test_full_automation_model_approval_applies_and_audits_a_hash_bound_preview(self) -> None:

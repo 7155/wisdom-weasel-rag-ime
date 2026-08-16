@@ -49,6 +49,10 @@ import { CapabilitySessionView } from './CapabilitySessionView';
 import { WorkspaceLspStatusView } from './WorkspaceLspStatusView';
 import { SubagentConsoleDialog } from './SubagentConsole';
 import {
+  hasActiveSubagentRuns,
+  subagentRuns,
+} from './subagent-data';
+import {
   isUnverifiedReturn,
   subagentPresentationState,
   subagentStateLabel,
@@ -680,34 +684,6 @@ export function projectStatusPanel(projection?: AgentProjectionState): StatusPan
     artifacts: uniqueBy(artifacts, (item) => item.name),
     attachmentCount: attachmentIds.size,
   };
-}
-
-function subagentRuns(value: unknown): AgentSubagentRunV1[] {
-  const source = Array.isArray(record(value).items) ? record(value).items as unknown[] : [];
-  const runs = source.flatMap((batch) => Array.isArray(record(batch).runs) ? record(batch).runs as unknown[] : []);
-  return runs.filter(isSubagentRun);
-}
-
-function isActiveSubagentRun(run: AgentSubagentRunV1): boolean {
-  return run.state === 'queued' || run.state === 'running';
-}
-
-function hasActiveSubagentRuns(runs: AgentSubagentRunV1[]): boolean {
-  return runs.some(isActiveSubagentRun);
-}
-
-function isSubagentRun(value: unknown): value is AgentSubagentRunV1 {
-  const item = record(value);
-  const usage = record(item.usage);
-  const templates: AgentSubagentRunV1['templateId'][] = ['researcher', 'planner', 'worker', 'reviewer', 'delegate'];
-  return item.schemaVersion === 'rag-ime.agent-subagent-run.v1'
-    && typeof item.id === 'string'
-    && typeof item.task === 'string'
-    && templates.includes(item.templateId as AgentSubagentRunV1['templateId'])
-    && ['queued', 'running', 'completed', 'failed', 'aborted', 'timed_out'].includes(text(item.state))
-    && Number.isFinite(usage.turnCount)
-    && Number.isFinite(usage.toolCount)
-    && Number.isFinite(usage.totalTokens);
 }
 
 function statusPanelLabel(

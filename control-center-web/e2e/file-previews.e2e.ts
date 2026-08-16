@@ -6,7 +6,7 @@ const PNG_1X1 = Buffer.from(
   'base64',
 );
 
-test('managed Markdown, code, Diff, image, and static HTML previews stay usable and isolated', async ({ page }, testInfo) => {
+test('managed Markdown, code, Diff, image, and interactive HTML previews stay usable', async ({ page }, testInfo) => {
   test.skip(
     !['desktop-1440x900', 'mobile-390x844'].includes(testInfo.project.name),
     'one desktop and one narrow viewport cover the preview shell',
@@ -14,6 +14,22 @@ test('managed Markdown, code, Diff, image, and static HTML previews stay usable 
   const externalRequests: string[] = [];
   page.on('request', (request) => {
     if (request.url().includes('evil.example')) externalRequests.push(request.url());
+  });
+  await page.route('https://evil.example/**', async (route) => {
+    const url = route.request().url();
+    if (url.endsWith('.png')) {
+      await route.fulfill({ body: PNG_1X1, contentType: 'image/png' });
+      return;
+    }
+    if (url.endsWith('.css')) {
+      await route.fulfill({ body: 'body{color:#173c32} form{margin-top:12px}', contentType: 'text/css' });
+      return;
+    }
+    await route.fulfill({
+      body: '脚本与远程资源已运行。',
+      contentType: 'text/plain',
+      headers: { 'Access-Control-Allow-Origin': '*' },
+    });
   });
   await page.route('**/api/agent/media/*/content?*', async (route) => {
     await route.fulfill({
@@ -48,16 +64,29 @@ test('managed Markdown, code, Diff, image, and static HTML previews stay usable 
   await close(page, 'room-proof.png');
 
   await open(page, 'acceptance-report.html');
-  const iframe = page.locator('iframe[title="acceptance-report.html 静态预览"]');
-  await expect(iframe).toHaveAttribute('sandbox', '');
-  await expect(iframe.contentFrame().getByRole('heading', { name: '静态验收报告' })).toBeVisible();
-  await expect(iframe.contentFrame().getByText('脚本与网络已隔离。')).toBeVisible();
-  await expect(iframe.contentFrame().locator('script, form, iframe')).toHaveCount(0);
-  // Nothing may survive that could still reach the network, and nothing may be
-  // left as a broken-image husk where a remote asset was removed.
-  await expect(iframe.contentFrame().locator('img[src^="http"], link, [onerror], [onload]')).toHaveCount(0);
+  const iframe = page.locator('iframe[title="acceptance-report.html 交互预览"]');
+  await expect(iframe).toHaveAttribute('sandbox', /allow-scripts/);
+  await expect(iframe).toHaveAttribute('sandbox', /allow-forms/);
+  await expect(iframe.contentFrame().getByRole('heading', { name: '交互验收报告' })).toBeVisible();
+  await expect(iframe.contentFrame().getByText('脚本与远程资源已运行。')).toBeVisible();
+  await expect(iframe.contentFrame().locator('script')).toHaveCount(1);
+  await expect(iframe.contentFrame().locator('form')).toHaveCount(1);
+  await expect(iframe.contentFrame().locator('link[rel="stylesheet"]')).toHaveCount(1);
+  await iframe.contentFrame().getByRole('textbox', { name: '报告备注' }).fill('表单交互正常');
+  await iframe.contentFrame().getByRole('button', { name: '更新报告' }).click();
+  await expect(iframe.contentFrame().getByText('表单交互正常')).toBeVisible();
+  await page.getByRole('dialog').getByRole('button', { name: '关闭' }).click();
+  await expect(page.getByRole('dialog')).toBeHidden();
+
+  const inlineFrame = page.locator('iframe[title="HTML 输出预览"]');
+  await expect(inlineFrame.contentFrame().getByRole('heading', { name: '页内 HTML 已渲染' })).toBeVisible();
+  await inlineFrame.contentFrame().getByRole('textbox', { name: '页内报告备注' }).fill('页内交互正常');
+  await inlineFrame.contentFrame().getByRole('button', { name: '更新页内报告' }).click();
+  await expect(inlineFrame.contentFrame().getByRole('heading', { name: '页内交互正常' })).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
-  expect(externalRequests).toEqual([]);
+  expect(externalRequests.some((url) => url.endsWith('/run'))).toBe(true);
+  expect(externalRequests.some((url) => url.endsWith('/theme.css'))).toBe(true);
+  expect(externalRequests.some((url) => url.endsWith('/image.png'))).toBe(true);
 
   await testInfo.attach(`file-preview-${testInfo.project.name}.png`, {
     body: await page.screenshot({ animations: 'disabled', fullPage: false }),

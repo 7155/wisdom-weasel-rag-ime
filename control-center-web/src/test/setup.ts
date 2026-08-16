@@ -1,6 +1,22 @@
 import '@testing-library/jest-dom/vitest';
 import { afterEach } from 'vitest';
 
+let objectUrlSequence = 0;
+if (typeof URL.createObjectURL !== 'function') {
+  Object.defineProperty(URL, 'createObjectURL', {
+    configurable: true,
+    value: () => `blob:vitest-rich-html-${objectUrlSequence += 1}`,
+    writable: true,
+  });
+}
+if (typeof URL.revokeObjectURL !== 'function') {
+  Object.defineProperty(URL, 'revokeObjectURL', {
+    configurable: true,
+    value: () => undefined,
+    writable: true,
+  });
+}
+
 Object.defineProperty(window, 'scrollTo', {
   configurable: true,
   value: () => undefined,

@@ -657,6 +657,48 @@ class AgentMemorySourceStore:
             ).fetchall()
         return [_source_payload(row) for row in rows]
 
+    def recent_user_requests(
+        self,
+        session_id: str,
+        *,
+        limit: int = 8,
+    ) -> list[dict[str, object]]:
+        """Return bounded primary-user evidence for post-compaction recovery.
+
+        The active Pi snapshot may intentionally contain only the compacted
+        window. Approval still needs the user's actual request, but must never
+        substitute an assistant summary for it. ``user_final`` checkpoints are
+        immutable, user-authored evidence and therefore the narrow fallback.
+        """
+
+        bounded_limit = max(1, min(int(limit), 8))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT source.turn_id, source.pi_entry_id,
+                       source.created_at_ms, event.committed_text
+                FROM agent_memory_sources AS source
+                JOIN input_events AS event ON event.id = source.input_event_id
+                WHERE source.session_id = ?
+                  AND source.status = 'active'
+                  AND source.source_kind = 'user_final'
+                  AND source.source_role = 'user'
+                ORDER BY source.created_at_ms DESC, source.source_id DESC
+                LIMIT ?
+                """,
+                (compact_whitespace(session_id), bounded_limit),
+            ).fetchall()
+        return [
+            {
+                "role": "user",
+                "text": compact_whitespace(str(row["committed_text"] or "")),
+                "turnId": str(row["turn_id"] or row["pi_entry_id"] or ""),
+                "createdAtMs": int(row["created_at_ms"] or 0),
+            }
+            for row in reversed(rows)
+            if compact_whitespace(str(row["committed_text"] or ""))
+        ]
+
     def get(self, source_id: str) -> dict[str, object]:
         with self._connect() as conn:
             row = conn.execute(

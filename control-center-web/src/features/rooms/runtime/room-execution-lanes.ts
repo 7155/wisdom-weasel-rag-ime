@@ -28,6 +28,7 @@ export interface RoomExecutionOverviewItem {
   objective: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'aborted';
   participantIds: string[];
+  sessionIds: string[];
   laneCount: number;
   toolCount: number;
   lastSummary: string;
@@ -69,6 +70,9 @@ export function selectRoomExecutionOverview(
       const participantIds = [...new Set(execution.lanes
         .map((lane) => lane.participantId)
         .filter((participantId): participantId is string => Boolean(participantId)))];
+      const sessionIds = [...new Set(execution.lanes
+        .map((lane) => lane.sourceSessionId.trim())
+        .filter(Boolean))];
       const toolActivities = execution.activities.filter((activity) => {
         const sourceEventType = textValue(activity.payload.sourceEventType);
         return activity.kind === 'tool' || sourceEventType.startsWith('tool_');
@@ -82,6 +86,7 @@ export function selectRoomExecutionOverview(
         objective,
         status: turn.status,
         participantIds,
+        sessionIds,
         laneCount: execution.lanes.length,
         toolCount: toolActivities.length,
         lastSummary,

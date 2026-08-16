@@ -460,19 +460,38 @@ class RoomPartnerApplicationService:
         tool_call_id: str,
     ) -> dict[str, object]:
         content = _required_text(args, "content", maximum=8_000)
+        kind = _text(args.get("kind"), maximum=40) or "progress"
+        if kind not in {
+            "progress",
+            "result",
+            "work_result",
+            "review_result",
+            "handoff",
+            "wait",
+            "blocked",
+        }:
+            raise ValueError("room_partner post kind is invalid")
         root_id, dispatch_id = self._active_root(source)
         room = self.rooms.get(str(source["roomId"]))
         post_id = f"room-post:{tool_call_id}"
+        created_at_ms = int(time.time() * 1_000)
         post = {
+            "schemaVersion": "wisdom-weasel.room-post.v2",
             "postId": post_id,
             "roomId": str(room["id"]),
             "rootId": root_id,
+            "generation": 0,
             "dispatchId": dispatch_id,
             "authorActorRef": str(source["id"]),
-            "kind": "room_post",
+            "kind": kind,
             "visibility": "room",
             "content": content,
-            "createdAtMs": int(time.time() * 1_000),
+            "idempotencyKey": tool_call_id,
+            "publicationSource": {
+                "kind": "room_post",
+                "ref": tool_call_id,
+            },
+            "createdAtMs": created_at_ms,
         }
         self.room_events.publish(
             room_id=str(room["id"]),
@@ -489,6 +508,7 @@ class RoomPartnerApplicationService:
             "roomId": str(room["id"]),
             "rootId": root_id,
             "postId": post_id,
+            "kind": kind,
             "published": True,
         }
 

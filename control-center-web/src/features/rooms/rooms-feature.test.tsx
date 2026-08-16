@@ -9,6 +9,7 @@ import { MockControlTransport } from '@/test/mock-transport';
 import { createRoomProjection, reduceRoomEvent } from '@/contracts/room-reducer';
 import { parseRoomEvent } from '@/contracts/validators';
 import { previewPersonas } from '@/features/agent/preview-data';
+import { FilePreviewHost } from '@/features/agent/file-preview/FilePreviewHost';
 import type { ControlRequest, PickedFile } from '@/platform/transport';
 import { RoomTurn, RoomsFeature, type RoomSummary } from './index';
 import { RoomStatusPanel } from './RoomStatusPanel';
@@ -358,7 +359,7 @@ describe('Rooms experience', () => {
     expect(screen.queryByText(/还没有单独登记的工作项/)).not.toBeInTheDocument();
   });
 
-  it('keeps the task graph structure visible before the first WorkItem exists', async () => {
+  it('does not fabricate a task graph before real work exists', async () => {
     const transport = new MockControlTransport({ routes: {
       'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '空任务 Room')] },
       'agent.roles.list': { ok: true, items: previewPersonas },
@@ -370,13 +371,84 @@ describe('Rooms experience', () => {
     expect(await screen.findByRole('button', { name: '打开协作空间：空任务 Room' })).toBeInTheDocument();
     await user.click(screen.getByRole('radio', { name: '任务' }));
 
+    expect(screen.queryByRole('region', { name: '任务图' })).not.toBeInTheDocument();
+    expect(screen.getByText('还没有实际分工')).toBeInTheDocument();
+    expect(screen.getByText('在“对话”里发送目标后，这里才会显示真实的分工和进度。')).toBeInTheDocument();
+    expect(screen.queryByText('共同目标')).not.toBeInTheDocument();
+    expect(screen.queryByText('等待任务拆分')).not.toBeInTheDocument();
+  });
+
+  it('shows real assignment, progress, delivery, and acceptance details for registered work', async () => {
+    const room = roomSummary('room-a', '真实分工 Room');
+    const work: NonNullable<RoomSummary['workItems']>[number] = {
+      id: 'room-work:implementation',
+      roomId: room.id,
+      topicId: '',
+      rootTurnId: 'room-a:turn-1',
+      rootWorkId: 'room-work:implementation',
+      parentWorkId: '',
+      objective: '恢复任务图的真实详情',
+      expectedOutput: '可展开核对的任务详情',
+      acceptanceCriteria: ['空 Room 不画伪任务图', '显示负责人和当前进度'],
+      accountableParticipantId: 'room-a:p1',
+      currentOwnerParticipantId: 'room-a:p2',
+      offeredToParticipantId: '',
+      createdByParticipantId: 'room-a:p1',
+      clientMessageId: 'test-work-detail',
+      state: 'active',
+      depth: 1,
+      revision: 2,
+      resultSummary: '已接入真实 WorkItem',
+      artifactRefs: ['artifact:task-view'],
+      evidenceRefs: ['evidence:task-view'],
+      blocker: {},
+      acceptedTurnId: 'room-a:turn-1',
+      createdAtMs: 1,
+      updatedAtMs: 2,
+      completedAtMs: null,
+    };
+    room.workItems = [work];
+    const snapshot = roomSnapshot(room.id, []);
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [room] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.session.workflow.get': roomWorkflowFixture('room-a:s2'),
+      'agent.subagents.list': roomSubagentListFixture('room-a:s2'),
+      'agent.room.snapshot': {
+        ...snapshot,
+        room: { ...snapshot.room, workItems: [work] },
+      },
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('radio', { name: '任务' }));
+
     const graph = screen.getByRole('region', { name: '任务图' });
-    expect(graph.parentElement).toHaveClass('room-execution-workspace');
-    expect(graph).toHaveTextContent('共同目标');
-    expect(graph).toHaveTextContent('等待拆分任务');
-    expect(graph).toHaveTextContent('等待任务拆分');
-    expect(graph.querySelectorAll('.room-task-flow__node')).toHaveLength(2);
-    expect(graph.querySelector('.room-task-flow__edges path')).toBeInTheDocument();
+    expect(graph).toHaveTextContent('0 / 1');
+    const details = screen.getByRole('region', { name: '分工与进度' });
+    expect(details).toHaveTextContent('恢复任务图的真实详情');
+    expect(details).toHaveTextContent('正在执行');
+    expect(details).toHaveTextContent('负责');
+    expect(details).toHaveTextContent('澄·初');
+    expect(details).toHaveTextContent('复核');
+    expect(details).toHaveTextContent('澄');
+    expect(details).toHaveTextContent('可展开核对的任务详情');
+    expect(details).toHaveTextContent('空 Room 不画伪任务图');
+    expect(details).toHaveTextContent('显示负责人和当前进度');
+    expect(details).toHaveTextContent('第 2 次修订');
+    expect(details).toHaveTextContent('已接入真实 WorkItem');
+    expect(details).toHaveTextContent('/Volumes/work/learnA');
+    expect(details).toHaveTextContent('Todo 1 / 3');
+    expect(details).toHaveTextContent('实现交互结果视图');
+    expect(details).toHaveTextContent('验证 HTML 报告');
+    expect(details).toHaveTextContent('Tool Agent · 进行中');
+    expect(details).toHaveTextContent('evidence:task-view');
+    expect(details).toHaveTextContent('artifact:task-view');
+    expect(within(details).getByRole('link', { name: '打开澄·初的对话' })).toHaveAttribute(
+      'href',
+      '#/agent?session=room-a%3As2',
+    );
   });
 
   it('shows the canonical blocked WorkItem state instead of claiming work is executing', async () => {
@@ -822,6 +894,99 @@ describe('Rooms experience', () => {
     expect(Array.from(container.querySelectorAll('.room-agent-lane__post-kind')).map(
       (element) => element.textContent,
     )).toEqual(['最终答复', '交接说明', '等待说明', '遇到的问题']);
+  });
+
+  it('keeps a managed interactive HTML result attached to the Room final', async () => {
+    const room = roomSummary('room-html-final', 'HTML 结果 Room');
+    const sessionId = 'room-html-final:s1';
+    const mediaId = 'media_room_html_final_01';
+    const post = {
+      schemaVersion: 'wisdom-weasel.room-post.v2',
+      postId: 'room-post:html-final',
+      roomId: room.id,
+      rootId: 'room-html-final:turn-1',
+      generation: 0,
+      dispatchId: 'room-html-final:dispatch-1',
+      authorActorRef: 'room-html-final:p1',
+      kind: 'result',
+      visibility: 'room',
+      content: '最终结果已生成。',
+      blocks: [{
+        schemaVersion: 'rag-ime.agent-block.v1',
+        id: 'block:html-final',
+        type: 'file',
+        status: 'completed',
+        presentationKind: 'file',
+        data: {
+          mediaId,
+          sessionId,
+          fileName: 'room-final.html',
+          mimeType: 'text/html',
+          byteSize: 240,
+          sha256: 'f'.repeat(64),
+        },
+        summary: '交互式 Room Final',
+        source: { kind: 'tool', ref: 'tool:write-html' },
+        visibility: 'room_post',
+        digest: 'e'.repeat(64),
+        ref: 'artifact:room-final-html',
+        generation: 0,
+      }],
+      idempotencyKey: 'room-final-html',
+      publicationSource: { kind: 'room_post', ref: 'tool:room-final' },
+      createdAtMs: 1,
+    };
+    const projection = [
+      parseRoomEvent(roomEvent(room.id, 1, 'room_post', { post }, {
+        turnId: post.rootId,
+        participantId: 'room-html-final:p1',
+        sourceSessionId: sessionId,
+      })),
+      parseRoomEvent(roomEvent(room.id, 2, 'turn_completed', {
+        dispatchId: post.dispatchId,
+        status: 'completed',
+      }, {
+        turnId: post.rootId,
+        participantId: 'room-html-final:p1',
+        sourceSessionId: sessionId,
+      })),
+    ].reduce((state, event) => reduceRoomEvent(state, event).state, createRoomProjection(room.id));
+    const finalHtml = '<!doctype html><h1>Room Final 已渲染</h1><button onclick="this.textContent=\'已交互\'">验证交互</button>';
+    const transport = new MockControlTransport({ routes: {
+      'agent.media.preview': {
+        schemaVersion: 'rag-ime.agent-file-preview.v1',
+        descriptor: {
+          schemaVersion: 'rag-ime.agent-file-descriptor.v1',
+          mediaId,
+          sessionId,
+          fileName: 'room-final.html',
+          mimeType: 'text/html',
+          byteSize: 240,
+          sha256: 'f'.repeat(64),
+          previewKind: 'html',
+          language: 'html',
+          contentUrl: `/api/agent/media/${mediaId}/content?sessionId=${encodeURIComponent(sessionId)}`,
+        },
+        content: finalHtml,
+        previewByteSize: new TextEncoder().encode(finalHtml).byteLength,
+        truncated: false,
+      },
+    } });
+    const user = userEvent.setup();
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <RoomTurn turnId={post.rootId} room={room} projection={projection} personas={previewPersonas} />
+          <FilePreviewHost />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    expect(screen.getByText('最终答复')).toBeInTheDocument();
+    expect(screen.getByText('room-final.html')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '预览报告' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByTitle('room-final.html 交互预览')).toHaveAttribute('sandbox', expect.stringContaining('allow-scripts'));
   });
 
   it('keeps lifecycle transitions and preserves each chronological public post', () => {
@@ -3903,6 +4068,114 @@ function roomSummary(roomId: string, title: string): RoomSummary {
       { id: `${roomId}:p1`, sessionId: `${roomId}:s1`, roleId: 'companion-present-v1', roleVersion: '1', displayName: '澄', collaborationRole: 'coordinator', status: 'active', ordinal: 0 },
       { id: `${roomId}:p2`, sessionId: `${roomId}:s2`, roleId: 'companion-firstlight-v1', roleVersion: '1', displayName: '澄·初', collaborationRole: 'researcher', status: 'active', ordinal: 1 },
     ],
+  };
+}
+
+function roomWorkflowFixture(sessionId: string) {
+  return {
+    schemaVersion: 'rag-ime.agent-workflow-state.v1',
+    ok: true,
+    sessionId,
+    todo: {
+      schemaVersion: 'rag-ime.agent-todo.v1',
+      id: `todo:${sessionId}`,
+      sessionId,
+      revision: 3,
+      actor: 'agent',
+      updatedAtMs: 3,
+      roomLineage: null,
+      phases: [{
+        name: '实现',
+        tasks: [
+          { content: '读取真实 Room 事件', status: 'completed' },
+          { content: '实现交互结果视图', status: 'in_progress' },
+          { content: '完成网页验收', status: 'pending' },
+        ],
+      }],
+      counts: { total: 3, pending: 1, inProgress: 1, completed: 1, abandoned: 0 },
+    },
+    goal: {
+      schemaVersion: 'rag-ime.agent-goal.v1',
+      sessionId,
+      configured: false,
+      goalId: '',
+      revision: 0,
+      objective: '',
+      successCriteria: '',
+      evidenceExpectations: [],
+      status: 'cleared',
+      budget: { tokenLimit: null, timeLimitMs: null },
+      usage: { tokens: 0, elapsedMs: 0 },
+      remaining: { tokens: null, timeMs: null },
+      budgetExceeded: false,
+      completionAudit: null,
+      cancellationAudit: null,
+      updatedAtMs: 0,
+    },
+    actGate: {
+      allowed: true,
+      reason: 'user_execution_request',
+      message: '用户已请求执行。',
+      todoRevision: 3,
+      goalRevision: 0,
+    },
+  };
+}
+
+function roomSubagentListFixture(sessionId: string) {
+  return {
+    ok: true,
+    items: [{
+      schemaVersion: 'rag-ime.agent-subagent-batch.v1',
+      id: `batch:${sessionId}`,
+      parentSessionId: sessionId,
+      parentRunId: 'run:parent',
+      contextMode: 'fresh',
+      resultDeliveryMode: 'inline',
+      state: 'running',
+      depth: 0,
+      maxDepth: 2,
+      abortRequested: false,
+      causalMetadata: {
+        todoId: `todo:${sessionId}`,
+        todoRevision: 3,
+        goalId: '',
+        goalRevision: 0,
+        roomBound: true,
+        roomId: 'room-a',
+        rootId: 'room-a:turn-1',
+        taskId: 'task:html',
+        dispatchId: 'dispatch:html',
+        generation: 1,
+      },
+      createdAtMs: 1,
+      updatedAtMs: 2,
+      completedAtMs: null,
+      runs: [{
+        schemaVersion: 'rag-ime.agent-subagent-run.v1',
+        id: 'run:html-review',
+        batchId: `batch:${sessionId}`,
+        childSessionId: 'room-a:s2:child-1',
+        todoTask: '实现交互结果视图',
+        todoPhase: '实现',
+        templateId: 'reviewer',
+        templateVersion: '1',
+        ordinal: 0,
+        task: '验证 HTML 报告',
+        expectedOutput: '浏览器验收结果',
+        acceptanceCriteria: ['脚本和表单可以运行'],
+        state: 'running',
+        budget: { maxTurns: 8, maxToolCalls: 12, maxTotalTokens: 20_000, maxDurationMs: 300_000, maxOutputChars: 16_000 },
+        usage: { turnCount: 1, toolCount: 1, totalTokens: 800 },
+        result: {},
+        error: '',
+        resultContextScheduledAtMs: null,
+        createdAtMs: 1,
+        startedAtMs: 1,
+        updatedAtMs: 2,
+        completedAtMs: null,
+      }],
+    }],
   };
 }
 

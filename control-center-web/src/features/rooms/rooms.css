@@ -150,6 +150,11 @@
 }
 .room-empty { display: grid; height: 100%; place-items: center; margin: 0; padding: 24px; color: var(--color-text-tertiary); font-size: 13px; text-align: center; }
 
+.room-task-flow__empty { display: grid; width: min(100%, 680px); min-width: 0; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; margin: 28px auto 0; border: 1px solid var(--color-border); border-radius: var(--radius-2); padding: 14px; background: var(--color-surface-subtle); color: var(--color-text-tertiary); }
+.room-task-flow__empty > svg { margin-top: 1px; color: var(--color-text-secondary); }
+.room-task-flow__empty > span { display: grid; min-width: 0; gap: 4px; }
+.room-task-flow__empty strong { color: var(--color-text-primary); font-size: var(--text-ui); }
+.room-task-flow__empty small { line-height: 1.5; }
 .room-task-flow { display: grid; container-name: room-task-flow; container-type: inline-size; min-width: 0; align-content: start; gap: 12px; }
 .room-task-flow__header { display: flex; min-width: 0; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--color-border); padding-bottom: 11px; }
 .room-task-flow__header > span { display: grid; min-width: 0; gap: 3px; }
@@ -202,6 +207,49 @@
 .room-task-flow__node[data-state='active'] > i, .room-task-flow__task-node[data-state='active'] > i { background: var(--color-accent-soft); color: var(--color-accent); }
 .room-task-flow__node[data-state='complete'] > i, .room-task-flow__task-node[data-state='complete'] > i { background: var(--color-success-soft); color: var(--color-success); }
 .room-task-flow__node[data-state='attention'] > i, .room-task-flow__task-node[data-state='attention'] > i { background: var(--color-danger-soft); color: var(--color-danger); }
+.room-task-flow__work-details { display: grid; min-width: 0; gap: 10px; border-top: 1px solid var(--color-border); padding-top: 14px; }
+.room-task-flow__work-details > header { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 5px 12px; }
+.room-task-flow__work-details > header strong { font-size: var(--text-ui); }
+.room-task-flow__work-details > header small { color: var(--color-text-tertiary); line-height: 1.45; }
+.room-task-flow__work-details > div { display: grid; min-width: 0; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 10px; }
+.room-task-flow__work-card { display: grid; min-width: 0; align-content: start; gap: 10px; border: 1px solid var(--color-border); border-left-width: 3px; border-radius: var(--radius-2); padding: 12px; background: var(--color-surface); }
+.room-task-flow__work-card[data-state='active'] { border-left-color: var(--color-accent); }
+.room-task-flow__work-card[data-state='review'] { border-left-color: var(--color-info, var(--color-accent)); }
+.room-task-flow__work-card[data-state='complete'] { border-left-color: var(--color-success); }
+.room-task-flow__work-card[data-state='attention'] { border-left-color: var(--color-danger); }
+.room-task-flow__work-card > header { display: flex; min-width: 0; align-items: start; justify-content: space-between; gap: 10px; }
+.room-task-flow__work-card > header > span { display: grid; min-width: 0; gap: 2px; }
+.room-task-flow__work-card > header small { color: var(--color-text-tertiary); font-size: var(--text-label); font-weight: 600; }
+.room-task-flow__work-card > header strong { overflow-wrap: anywhere; line-height: 1.4; }
+.room-task-flow__work-card > header > i { flex: 0 0 auto; border-radius: 999px; padding: 2px 8px; background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: var(--text-label); font-style: normal; white-space: nowrap; }
+.room-task-flow__work-card[data-state='active'] > header > i { background: var(--color-accent-soft); color: var(--color-accent); }
+.room-task-flow__work-card[data-state='complete'] > header > i { background: var(--color-success-soft); color: var(--color-success); }
+.room-task-flow__work-card[data-state='attention'] > header > i { background: var(--color-danger-soft); color: var(--color-danger); }
+.room-task-flow__work-card dl { display: grid; min-width: 0; gap: 6px; margin: 0; }
+.room-task-flow__work-card dl > div { display: grid; min-width: 0; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; }
+.room-task-flow__work-card dt { color: var(--color-text-tertiary); font-size: var(--text-label); }
+.room-task-flow__work-card dd { min-width: 0; margin: 0; color: var(--color-text-secondary); font-size: var(--text-label); line-height: 1.45; overflow-wrap: anywhere; }
+.room-task-flow__work-card > section { display: grid; min-width: 0; gap: 5px; border-top: 1px solid var(--color-border); padding-top: 8px; }
+.room-task-flow__work-card > section > strong { color: var(--color-text-tertiary); font-size: var(--text-label); }
+.room-task-flow__work-card ul { display: grid; gap: 3px; margin: 0; padding-left: 18px; color: var(--color-text-secondary); font-size: var(--text-label); line-height: 1.45; }
+.room-task-flow__workspaces > strong { display: inline-flex; align-items: center; gap: 5px; }
+.room-task-flow__workspaces code, .room-task-flow__references code { font-family: var(--font-mono); font-size: .92em; overflow-wrap: anywhere; }
+.room-task-flow__session-facts > header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
+.room-task-flow__session-facts > header > strong { color: var(--color-text-tertiary); font-size: var(--text-label); }
+.room-task-flow__session-facts > header > a { display: inline-flex; align-items: center; gap: 4px; color: var(--color-accent); font-size: var(--text-label); font-weight: 600; text-decoration: none; }
+.room-task-flow__session-facts > small { color: var(--color-text-tertiary); font-size: var(--text-label); line-height: 1.45; }
+.room-task-flow__todo-facts { display: grid; gap: 5px; border-radius: var(--radius-1); padding: 8px; background: var(--color-surface-subtle); }
+.room-task-flow__todo-facts > strong { font-size: var(--text-label); }
+.room-task-flow__todo-facts > ul { padding-left: 0; list-style: none; }
+.room-task-flow__todo-facts li { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 8px; }
+.room-task-flow__todo-facts li > span { min-width: 0; overflow-wrap: anywhere; }
+.room-task-flow__todo-facts li > i { flex: 0 0 auto; color: var(--color-text-tertiary); font-size: .92em; font-style: normal; }
+.room-task-flow__subagent-facts { display: grid; gap: 5px; }
+.room-task-flow__subagent-facts > article { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; border-radius: var(--radius-1); padding: 7px 8px; background: var(--color-surface-subtle); color: var(--color-text-secondary); }
+.room-task-flow__subagent-facts > article > span { display: grid; min-width: 0; gap: 1px; }
+.room-task-flow__subagent-facts > article strong { color: var(--color-text-primary); font-size: var(--text-label); line-height: 1.35; overflow-wrap: anywhere; }
+.room-task-flow__subagent-facts > article small { color: var(--color-text-tertiary); font-size: var(--text-label); }
+.room-task-flow__subagent-facts > article > a { display: inline-flex; color: var(--color-accent); }
 
 @container room-task-flow (max-width: 700px) {
   .room-task-flow__stage-labels, .room-task-flow__edges { display: none; }

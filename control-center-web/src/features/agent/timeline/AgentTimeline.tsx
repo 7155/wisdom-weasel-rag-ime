@@ -822,7 +822,10 @@ function MessageView({
     <div className="agent-assistant-message-shell" data-actions={canFork || undefined}>
       <div className="agent-assistant-message" data-status={visibleStatus} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
         <AgentBlocks blocks={visibleBlocks} sessionId={sessionId} streaming={showStreaming} onApprovalDecision={onApprovalDecision} />
-        {showStreaming ? <span className="agent-streaming-cursor" aria-label="正在生成" /> : null}
+        {showStreaming ? <>
+          <span className="agent-streaming-cursor" aria-label="正在生成" />
+          <EstimatedStreamingRate blocks={visibleBlocks} />
+        </> : null}
       </div>
       {canFork ? (
         <div className="agent-message-actions">
@@ -838,6 +841,51 @@ function MessageView({
       ) : null}
     </div>
   );
+}
+
+function EstimatedStreamingRate({ blocks }: { blocks: AgentMessageProjection['blocks'] }) {
+  const tokens = estimatedStreamingTokens(blocks);
+  const latestTokens = useRef(tokens);
+  const startedAtMs = useRef(0);
+  const [rate, setRate] = useState<number | null>(null);
+  useEffect(() => {
+    latestTokens.current = tokens;
+    if (tokens > 0 && startedAtMs.current === 0) startedAtMs.current = Date.now();
+  }, [tokens]);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!startedAtMs.current || latestTokens.current <= 0) return;
+      const elapsedSeconds = (Date.now() - startedAtMs.current) / 1_000;
+      if (elapsedSeconds < 0.6) return;
+      setRate(latestTokens.current / elapsedSeconds);
+    }, 300);
+    return () => window.clearInterval(timer);
+  }, []);
+  if (rate === null || !Number.isFinite(rate)) return null;
+  const bounded = Math.min(999, Math.max(0, rate));
+  return <small
+    aria-label={`前端估算生成速度 ${bounded.toFixed(1)} tokens 每秒`}
+    className="agent-stream-rate"
+    data-band={bounded >= 30 ? 'fast' : bounded >= 15 ? 'medium' : 'steady'}
+    title="基于当前已显示内容的前端估算，不是 Provider 上报"
+  >
+    <i aria-hidden="true" />约 {bounded.toFixed(1)} t/s
+  </small>;
+}
+
+export function estimatedStreamingTokens(blocks: AgentMessageProjection['blocks']): number {
+  const content = blocks.map((block) => text(
+    block.data.text
+    ?? block.data.markdown
+    ?? block.data.code
+    ?? block.data.content
+    ?? block.data.message
+    ?? block.data.summary,
+  )).filter(Boolean).join('\n');
+  if (!content) return 0;
+  const cjk = content.match(/[\u3400-\u9fff\uf900-\ufaff]/gu)?.length ?? 0;
+  const remaining = Math.max(0, content.length - cjk);
+  return Math.max(1, Math.round(cjk + remaining / 4));
 }
 
 function AgentTurnUsage({ messages }: { messages: AgentMessageProjection[] }) {
