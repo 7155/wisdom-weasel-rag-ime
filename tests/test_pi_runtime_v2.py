@@ -3406,7 +3406,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         ]
         self.assertEqual(completed[-1].payload["status"], "aborted")
 
-    def test_reserved_prompt_admission_carries_early_stop_into_pi_turn(
+    def test_reserved_prompt_admission_stops_before_host_dispatch(
         self,
     ) -> None:
         session_id = str(self.first["id"])
@@ -3419,82 +3419,32 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertTrue(reserved["reserved"])
         early_receipt = self.runtime.abort(session_id)
         self.assertTrue(early_receipt["pendingAdmission"])
-
-        self.runtime.ensure(session_id)
+        self.assertTrue(early_receipt["admissionCancelled"])
+        self.assertTrue(early_receipt["lifecycle"]["drained"])
+        self.assertTrue(early_receipt["lifecycle"]["idle"])
+        self.assertEqual(
+            early_receipt["lifecycle"]["pendingOperations"],
+            [],
+        )
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
         admission_statuses = [
             event.payload.get("status")
             for event in self.events.replay(session_id)[0]
             if event.event_type == "status_changed"
         ]
         self.assertEqual(admission_statuses[-1], "aborting")
-        self.assertNotEqual(admission_statuses[-1], "ready")
-        client = self.runtime._require_client()
-        original_send = client.send
-        abort_delivered = threading.Event()
-        abort_settled = threading.Event()
-        turn_id = f"turn-reserved-{session_id}"
-
-        def reserved_send(
-            method: str,
-            params: dict[str, object] | None = None,
-            *,
-            timeout: float | None = None,
-            before_write=None,
-        ) -> dict[str, object]:
-            if method == "session.prompt":
-                if before_write is not None:
-                    before_write()
-                return {"accepted": True, "turnId": turn_id}
-            if method == "session.abort":
-                abort_delivered.set()
-                self.runtime._handle_host_event({
-                    "protocolVersion": "2",
-                    "event": "agent.event",
-                    "sessionId": session_id,
-                    "turnId": turn_id,
-                    "payload": {"type": "agent_settled"},
-                })
-                abort_settled.set()
-                return {
-                    "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
-                    "sessionId": session_id,
-                    "turnId": turn_id,
-                    "cancelledDecisionIds": [],
-                    "cancelledUIRequestIds": [],
-                    "lifecycle": {
-                        "schemaVersion": "pi.agent-abort-receipt.v1",
-                        "scopeId": session_id,
-                        "generation": 1,
-                        "reason": "user_abort",
-                        "cancelledContinuationIds": [],
-                        "cancelledOperationIds": ["provider"],
-                        "failedOperationIds": [],
-                        "operations": [],
-                        "pendingOperations": [],
-                        "drained": True,
-                        "idle": True,
-                    },
-                }
-            return original_send(method, params, timeout=timeout)
-
-        with patch.object(client, "send", side_effect=reserved_send):
-            result = self.runtime.prompt(
+        with self.assertRaises(PiRuntimeCommandRejected) as cancelled:
+            self.runtime.prompt(
                 session_id,
                 "stop before context preparation finishes",
                 client_message_id=client_message_id,
             )
-
-        self.assertTrue(result["abortRequested"])
-        self.assertTrue(abort_delivered.wait(1.0))
-        self.assertTrue(abort_settled.wait(1.0))
+        self.assertEqual(
+            cancelled.exception.host_error_code,
+            "PROMPT_ADMISSION_CANCELLED",
+        )
         self.assertEqual(self.store.get(session_id)["status"], "idle")
-        completed = [
-            event
-            for event in self.events.replay(session_id)[0]
-            if event.event_type == "turn_completed"
-            and event.turn_id == turn_id
-        ]
-        self.assertEqual(completed[-1].payload["status"], "aborted")
+        self.assertEqual(self.runtime.runtime_status()["activeSessionIds"], [])
 
     def test_open_idle_session_can_list_fork_candidates(self) -> None:
         session_id = str(self.first["id"])

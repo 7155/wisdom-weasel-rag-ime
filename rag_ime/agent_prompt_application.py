@@ -103,6 +103,26 @@ class AgentPromptApplicationService:
                 ),
             )
 
+    def _require_prompt_admission_active(
+        self,
+        session_id: str,
+        *,
+        client_message_id: str,
+        delivery: str,
+    ) -> None:
+        if delivery != "prompt":
+            return
+        require_active = getattr(
+            self.runtime,
+            "require_prompt_admission_active",
+            None,
+        )
+        if callable(require_active):
+            require_active(
+                session_id,
+                client_message_id=client_message_id,
+            )
+
     def prompt(
         self,
         session_id: str,
@@ -221,6 +241,22 @@ class AgentPromptApplicationService:
                     recovery_state="in_flight",
                 ) from exc
             cause_code = _delivery_failure_code(exc)
+            if cause_code == "PROMPT_ADMISSION_CANCELLED":
+                return self.command_receipts.complete(
+                    claim,
+                    command_scope="session_prompt",
+                    scope_id=session_id,
+                    client_message_id=client_message_id,
+                    response={
+                        "accepted": False,
+                        "cancelled": True,
+                        "abortRequested": True,
+                        "admissionCancelled": True,
+                        "clientMessageId": client_message_id,
+                        "turnId": "",
+                        "piEntryId": "",
+                    },
+                )
             replay = self.command_receipts.fail(
                 claim,
                 command_scope="session_prompt",
@@ -466,9 +502,19 @@ class AgentPromptApplicationService:
         session = self.memory_context.ensure_role_book(
             session_id
         )
+        self._require_prompt_admission_active(
+            session_id,
+            client_message_id=client_message_id,
+            delivery=delivery,
+        )
         bootstrap = self.memory_context.ensure_bootstrap(
             session,
             query_text=checkpoint_text,
+        )
+        self._require_prompt_admission_active(
+            session_id,
+            client_message_id=client_message_id,
+            delivery=delivery,
         )
         self._validate_images(session_id, attachment_ids)
         images = self.media.pi_images(
@@ -494,6 +540,13 @@ class AgentPromptApplicationService:
                 delivery=delivery,
                 transient_context=transient_context,
                 on_accepted=on_accepted,
+                before_runtime=lambda: (
+                    self._require_prompt_admission_active(
+                        session_id,
+                        client_message_id=client_message_id,
+                        delivery=delivery,
+                    )
+                ),
             )
         )
         if not media_owner_room_id:

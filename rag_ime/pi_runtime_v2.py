@@ -468,6 +468,7 @@ class _HostedSessionState:
     admission_client_message_id: str = ""
     abort_pending_admission: bool = False
     admission_abort_dispatched: bool = False
+    prompt_dispatched: bool = False
     prompt_dispatch_signal: threading.Event = field(
         default_factory=threading.Event,
         repr=False,
@@ -563,7 +564,11 @@ class PiRuntimeHostManager:
             busy = sorted(
                 session_id
                 for session_id, state in self._states.items()
-                if state.turn_id or state.prompt_admission_in_flight
+                if state.turn_id
+                or (
+                    state.prompt_admission_in_flight
+                    and not state.abort_pending_admission
+                )
             )
             open_sessions = sorted(self._open_sessions)
             active_completions = sorted(self._active_completion_ids)
@@ -879,6 +884,7 @@ class PiRuntimeHostManager:
                             evicted_state.settle_timer.cancel()
                 admission_in_flight = (
                     hosted_state.prompt_admission_in_flight
+                    and not hosted_state.abort_pending_admission
                 )
                 self._status = (
                     "busy" if admission_in_flight else "ready"
@@ -914,7 +920,11 @@ class PiRuntimeHostManager:
         with self._lock:
             state = self._states.get(session_id)
             if state is not None and (
-                state.turn_id or state.prompt_admission_in_flight
+                state.turn_id
+                or (
+                    state.prompt_admission_in_flight
+                    and not state.abort_pending_admission
+                )
             ):
                 return None
         session = self.sessions.get(session_id)
@@ -965,6 +975,7 @@ class PiRuntimeHostManager:
                 )
                 state.abort_pending_admission = False
                 state.admission_abort_dispatched = False
+                state.prompt_dispatched = False
                 state.prompt_dispatch_signal.clear()
             self._cancel_idle_locked()
         self.sessions.set_status(session_id, "busy")
@@ -974,6 +985,31 @@ class PiRuntimeHostManager:
             "sessionId": session_id,
             "clientMessageId": normalized_client_message_id,
         }
+
+    def require_prompt_admission_active(
+        self,
+        session_id: str,
+        *,
+        client_message_id: str = "",
+    ) -> None:
+        """Reject product preflight after Stop fenced this exact admission."""
+
+        normalized_client_message_id = str(client_message_id).strip()
+        with self._lock:
+            state = self._states.get(session_id)
+            active = (
+                state is not None
+                and state.prompt_admission_in_flight
+                and state.admission_client_message_id
+                == normalized_client_message_id
+                and not state.abort_pending_admission
+            )
+        if active:
+            return
+        raise PiRuntimeCommandRejected(
+            "当前消息已停止，未发送给 Pi",
+            host_error_code="PROMPT_ADMISSION_CANCELLED",
+        )
 
     def release_prompt_admission(
         self,
@@ -998,6 +1034,7 @@ class PiRuntimeHostManager:
             state.admission_client_message_id = ""
             state.abort_pending_admission = False
             state.admission_abort_dispatched = False
+            state.prompt_dispatched = False
             state.prompt_dispatch_signal.set()
             self._schedule_idle_locked()
         self.sessions.set_status(session_id, "idle")
@@ -1108,6 +1145,7 @@ class PiRuntimeHostManager:
         self.ensure(session_id)
         client = self._require_client()
         normalized_client_message_id = str(client_message_id).strip()
+        cancelled_before_dispatch = False
         with self._lock:
             state = self._states.setdefault(session_id, _HostedSessionState())
             pre_reserved = (
@@ -1129,7 +1167,16 @@ class PiRuntimeHostManager:
                 )
                 state.abort_pending_admission = False
                 state.admission_abort_dispatched = False
+                state.prompt_dispatched = False
                 state.prompt_dispatch_signal.clear()
+            elif state.abort_pending_admission:
+                state.prompt_admission_in_flight = False
+                state.admission_client_message_id = ""
+                state.abort_pending_admission = False
+                state.admission_abort_dispatched = False
+                state.prompt_dispatched = False
+                state.prompt_dispatch_signal.set()
+                cancelled_before_dispatch = True
             state.stream_pi_message_id = ""
             state.tool_blocks.clear()
             state.last_agent_messages = []
@@ -1137,6 +1184,16 @@ class PiRuntimeHostManager:
             state.had_tool_activity = False
             state.settle_extension_failed = False
             state.abort_requested_turn_id = ""
+        if cancelled_before_dispatch:
+            self.sessions.set_status(
+                session_id,
+                "idle",
+                last_message_preview="已停止。",
+            )
+            raise PiRuntimeCommandRejected(
+                "当前消息已停止，未发送给 Pi",
+                host_error_code="PROMPT_ADMISSION_CANCELLED",
+            )
         # The browser renders Stop from its optimistic turn before the Host
         # returns a turnId. Persist the admission as busy so a concurrent Stop
         # and snapshot cannot mistake that short window for an idle Session.
@@ -1171,8 +1228,20 @@ class PiRuntimeHostManager:
                 state.admission_client_message_id = ""
                 state.abort_pending_admission = False
                 state.admission_abort_dispatched = False
+                state.prompt_dispatched = False
                 state.prompt_dispatch_signal.set()
-            self._turn_failed(session_id, "", exc)
+            if (
+                isinstance(exc, PiRuntimeCommandRejected)
+                and exc.host_error_code
+                == "PROMPT_ADMISSION_CANCELLED"
+            ):
+                self.sessions.set_status(
+                    session_id,
+                    "idle",
+                    last_message_preview="已停止。",
+                )
+            else:
+                self._turn_failed(session_id, "", exc)
             raise
         turn_id = str(accepted.get("turnId") or "")
         with self._lock:
@@ -1182,6 +1251,7 @@ class PiRuntimeHostManager:
             state.admission_client_message_id = ""
             state.abort_pending_admission = False
             state.admission_abort_dispatched = False
+            state.prompt_dispatched = False
             already_retired = (
                 turn_id in state.retired_turn_ids
                 or (session_id, turn_id) in self._retired_host_turns
@@ -2131,35 +2201,28 @@ class PiRuntimeHostManager:
         session_id: str,
         admission_client_message_id: str,
     ) -> None:
-        """Expose the Host hand-off and deliver an already requested Stop.
+        """Atomically fence Stop against the Host JSONL hand-off.
 
         ``PiRuntimeHostClient`` invokes this callback while its JSONL write
         lock is held. A background abort therefore cannot overtake the prompt
-        record, but it can reach Pi immediately after that record is flushed.
+        record. If Stop won the state lock, raising here prevents the prompt
+        record from being written. If this callback wins, a later Stop sees
+        ``prompt_dispatched`` and follows Pi's native abort path.
         """
-
-        launch_abort = False
         with self._lock:
             state = self._states.setdefault(session_id, _HostedSessionState())
-            state.prompt_dispatch_signal.set()
             if (
                 state.prompt_admission_in_flight
                 and state.admission_client_message_id
                 == admission_client_message_id
                 and state.abort_pending_admission
-                and not state.admission_abort_dispatched
             ):
-                state.admission_abort_dispatched = True
-                launch_abort = True
-        if not launch_abort:
-            return
-        worker = threading.Thread(
-            target=self._deliver_pending_admission_abort,
-            args=(session_id, admission_client_message_id),
-            name=f"rag-ime-pi-admission-abort-{session_id[-8:]}",
-            daemon=True,
-        )
-        worker.start()
+                raise PiRuntimeCommandRejected(
+                    "当前消息已停止，未发送给 Pi",
+                    host_error_code="PROMPT_ADMISSION_CANCELLED",
+                )
+            state.prompt_dispatched = True
+            state.prompt_dispatch_signal.set()
 
     def _deliver_pending_admission_abort(
         self,
@@ -2201,8 +2264,9 @@ class PiRuntimeHostManager:
                 if state.prompt_admission_in_flight:
                     state.abort_pending_admission = True
                     admission_client_message_id = state.admission_client_message_id
+                    dispatched = state.prompt_dispatched
                     if (
-                        state.prompt_dispatch_signal.is_set()
+                        dispatched
                         and not state.admission_abort_dispatched
                     ):
                         state.admission_abort_dispatched = True
@@ -2222,11 +2286,23 @@ class PiRuntimeHostManager:
                             "pendingAdmission": True,
                         },
                     )
+                    if not dispatched:
+                        self.sessions.set_status(
+                            session_id,
+                            "idle",
+                            last_message_preview="已停止。",
+                        )
+                        if (
+                            self._client is not None
+                            and self._client.running
+                        ):
+                            self._status = "ready"
                     return {
                         "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
                         "sessionId": session_id,
                         "turnId": "",
                         "pendingAdmission": True,
+                        "admissionCancelled": not dispatched,
                         "cancelledDecisionIds": [],
                         "cancelledUIRequestIds": [],
                         "lifecycle": {
@@ -2238,9 +2314,11 @@ class PiRuntimeHostManager:
                             "cancelledOperationIds": [],
                             "failedOperationIds": [],
                             "operations": [],
-                            "pendingOperations": ["prompt_admission"],
-                            "drained": False,
-                            "idle": False,
+                            "pendingOperations": (
+                                ["prompt_admission"] if dispatched else []
+                            ),
+                            "drained": not dispatched,
+                            "idle": not dispatched,
                         },
                     }
                 self.sessions.set_status(session_id, "idle")

@@ -4075,6 +4075,142 @@ class AgentServiceTests(unittest.TestCase):
         self.assertTrue(response["accepted"])
         self.assertEqual(timeline, ["reserve", "prompt", "release"])
 
+    def test_stop_during_memory_bootstrap_fences_prompt_before_runtime(
+        self,
+    ) -> None:
+        session = self.service.create_session(
+            {"title": "stop during memory bootstrap"}
+        )["session"]
+        session_id = str(session["id"])
+        client_message_id = "web-stop-memory-bootstrap"
+        bootstrap_entered = Event()
+        release_bootstrap = Event()
+        cancelled = Event()
+        prompt_result: dict[str, object] = {}
+        prompt_errors: list[BaseException] = []
+
+        def reserve(*_args, **_kwargs):
+            return {"reserved": True}
+
+        def require_active(*_args, **_kwargs):
+            if cancelled.is_set():
+                raise PiRuntimeCommandRejected(
+                    "当前消息已停止，未发送给 Pi",
+                    host_error_code="PROMPT_ADMISSION_CANCELLED",
+                )
+
+        def bootstrap(*_args, **_kwargs):
+            bootstrap_entered.set()
+            self.assertTrue(release_bootstrap.wait(2.0))
+            return {}
+
+        def abort(*_args, **_kwargs):
+            cancelled.set()
+            self.service.sessions.set_status(
+                session_id,
+                "idle",
+                last_message_preview="已停止。",
+            )
+            return {
+                "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
+                "sessionId": session_id,
+                "turnId": "",
+                "pendingAdmission": True,
+                "admissionCancelled": True,
+                "cancelledDecisionIds": [],
+                "cancelledUIRequestIds": [],
+                "lifecycle": {
+                    "schemaVersion": "pi.agent-abort-receipt.v1",
+                    "scopeId": session_id,
+                    "generation": 0,
+                    "reason": "user_abort",
+                    "cancelledContinuationIds": [],
+                    "cancelledOperationIds": [],
+                    "failedOperationIds": [],
+                    "operations": [],
+                    "pendingOperations": [],
+                    "drained": True,
+                    "idle": True,
+                },
+            }
+
+        def run_prompt() -> None:
+            try:
+                prompt_result.update(
+                    self.service.prompt(
+                        session_id,
+                        {
+                            "message": "停止时不能迟到发送",
+                            "clientMessageId": client_message_id,
+                        },
+                    )
+                )
+            except BaseException as exc:  # pragma: no cover - assertion below
+                prompt_errors.append(exc)
+
+        with (
+            patch.object(
+                self.service.runtime,
+                "reserve_prompt_admission",
+                create=True,
+                side_effect=reserve,
+            ),
+            patch.object(
+                self.service.runtime,
+                "require_prompt_admission_active",
+                create=True,
+                side_effect=require_active,
+            ),
+            patch.object(
+                self.service.runtime,
+                "release_prompt_admission",
+                create=True,
+                return_value=True,
+            ),
+            patch.object(
+                self.service.runtime,
+                "abort",
+                side_effect=abort,
+            ),
+            patch.object(
+                self.service.memory_context_application,
+                "ensure_bootstrap",
+                side_effect=bootstrap,
+            ),
+            patch.object(self.service.runtime, "prompt") as runtime_prompt,
+        ):
+            prompt_thread = Thread(target=run_prompt)
+            prompt_thread.start()
+            self.assertTrue(bootstrap_entered.wait(1.0))
+            started = time.monotonic()
+            abort_receipt = self.service.abort(session_id)
+            self.assertLess(time.monotonic() - started, 0.2)
+            self.assertTrue(
+                abort_receipt["runtimeReceipt"]["admissionCancelled"]
+            )
+            self.assertEqual(
+                self.service.sessions.get(session_id)["status"],
+                "idle",
+            )
+            release_bootstrap.set()
+            prompt_thread.join(timeout=2.0)
+
+        self.assertFalse(prompt_thread.is_alive())
+        self.assertEqual(prompt_errors, [])
+        runtime_prompt.assert_not_called()
+        self.assertFalse(prompt_result["accepted"])
+        self.assertTrue(prompt_result["cancelled"])
+        self.assertTrue(prompt_result["admissionCancelled"])
+        replay = self.service.prompt(
+            session_id,
+            {
+                "message": "停止时不能迟到发送",
+                "clientMessageId": client_message_id,
+            },
+        )
+        self.assertTrue(replay["idempotentReplay"])
+        self.assertTrue(replay["cancelled"])
+
     def test_room_prompt_checkpoint_preserves_room_media_ownership(
         self,
     ) -> None:

@@ -65,6 +65,7 @@ class AgentPromptDeliveryService:
         on_accepted: (
             Callable[[Mapping[str, object]], None] | None
         ) = None,
+        before_runtime: Callable[[], None] | None = None,
     ) -> tuple[dict[str, object], str, int]:
         trace_id = self.context_runtime.begin_trace(
             session_id,
@@ -185,6 +186,8 @@ class AgentPromptDeliveryService:
                 "toolCount": tool_count,
             },
         )
+        if before_runtime is not None:
+            before_runtime()
         accepted, duration_ms = self._runtime_prompt(
             trace_id,
             request_node=request_node,
