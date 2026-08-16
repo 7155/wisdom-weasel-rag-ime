@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-08-16T04:44:53Z",
+  "generatedAt": "2026-08-16T14:11:33Z",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -47,20 +47,20 @@
     }
   },
   "summary": {
-    "pathCount": 237,
+    "pathCount": 302,
     "dispositionCounts": {
-      "keep_release": 228,
-      "delete_old_implementation": 9
+      "keep_release": 282,
+      "delete_old_implementation": 20
     },
     "groupCounts": {
       "project_harness": 11,
-      "control_center_release_ui": 154,
-      "session_room_skill_flow": 54,
+      "control_center_release_ui": 199,
+      "session_room_skill_flow": 68,
       "desktop_semantic_accessibility": 8,
-      "memory_curation": 3,
-      "release_scope": 1,
+      "memory_curation": 5,
+      "release_scope": 2,
       "room_kernel_cleanup": 2,
-      "installation_reliability": 4
+      "installation_reliability": 7
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -83,13 +83,15 @@
     "pythonFullSuiteShards": "3245 tests across four shards; one shard exposed only 3 stale voice UI copy assertions, and its corrected voice module reran 8/8 passed",
     "databaseMigrationsAfterChecksumRestore": "18 passed",
     "frontendTypecheck": "passed with pnpm 11.9.0",
-    "frontendUnitTests": "929 passed",
+    "frontendUnitTests": "931 passed",
     "frontendBuild": "passed",
     "frontendBrowserAcceptance": "166 passed, 49 conditional skips, 0 failed",
     "agentToolMatrix": "29/29 Pi runtime Tools invoked successfully in a real Room Session",
     "installedPiPackageCanary": "active managed Pi Runtime created and prepared one isolated local Package with one Skill; no real package state was mutated",
     "installedLunaSessionCanary": "passed: first public activity 6.4 s, native Steer ordered, browser stopping projection 35 ms, Runtime Stop terminal 384 ms, Tool failure closed, refresh stable, 8/8 bounded Tool terminals with 660-byte maximum public event payload",
     "installedLunaRoomCanary": "passed: two ordinary Luna Pi Sessions, one successful room_partner child start/completion and result, exactly one Root final, live Room Tool turn aborted with one terminal, refresh stable",
+    "focusedSessionRoomBackendTests": "298 passed across Session/context/approval/cancel, delegation/Room work, and Room/service/event shards",
+    "releaseScopeCoverage": "302/302 base-to-HEAD paths classified; 282 retained and 20 old implementations deleted",
     "repositoryPublicAudit": "run against the clean candidate head after committing this inventory",
     "localInstall": "Installation acceptance is external runtime evidence; source fixes cover installed migration checksum compatibility plus spaceful-Xcode Squirrel preinstall and SDK header resolution",
     "foregroundAcceptance": "not claimed by this source scope"
@@ -1753,6 +1755,461 @@
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Preserve bounded Pi Host error codes in a typed Runtime command rejection."
+    },
+    {
+      "path": "control-center-web/e2e/__screenshots__/product-scenes.e2e.ts/agent-preview-mobile-390x844.png",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/e2e/file-previews.e2e.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/e2e/fixtures/file-previews.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/contracts/agent-reducer.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/contracts/agent-reducer.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/agent-room-snapshot.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/design/workspace.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/agent-feature.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/AgentComposer.project-context.test.tsx",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "control_center_release_ui",
+      "reason": "Remove the redundant frontend project-context selector; Pi Session options now own project context."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/AgentComposer.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/ContextResourcesPicker.tsx",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "control_center_release_ui",
+      "reason": "Remove the redundant frontend project-context selector; Pi Session options now own project context."
+    },
+    {
+      "path": "control-center-web/src/features/agent/context-resource-profile.ts",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "control_center_release_ui",
+      "reason": "Remove the redundant frontend project-context selector; Pi Session options now own project context."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/AgentHtmlReportCard.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/FilePreviewHost.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/RichHtmlPreview.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/StaticHtmlPreview.tsx",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "control_center_release_ui",
+      "reason": "Remove the replaced static HTML renderer; the managed rich preview is authoritative."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/file-preview.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/renderer-registry.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/rich-html.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/rich-html.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/static-html.test.ts",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "control_center_release_ui",
+      "reason": "Remove the replaced static HTML renderer; the managed rich preview is authoritative."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/static-html.ts",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "control_center_release_ui",
+      "reason": "Remove the replaced static HTML renderer; the managed rich preview is authoritative."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/use-rich-html-url.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/state/use-context-resource-controller.ts",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "control_center_release_ui",
+      "reason": "Remove the redundant frontend project-context selector; Pi Session options now own project context."
+    },
+    {
+      "path": "control-center-web/src/features/agent/status/AgentStatusPanel.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/status/ContextXrayPanel.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/status/ContextXrayPanel.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/status/subagent-data.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/ActivitySummary.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/BlockRenderer.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/InlineHtmlOutput.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/MarkdownRenderer.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/activity-summary.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/literal-html.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/workspace/WorkspaceFilePreviewDialog.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/requirements/RoomRequirementsControlPlane.test.tsx",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "control_center_release_ui",
+      "reason": "Remove the retired heavy Room requirements control plane; Pi Sessions and lightweight Room facts are authoritative."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/requirements/RoomRequirementsControlPlane.tsx",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "control_center_release_ui",
+      "reason": "Remove the retired heavy Room requirements control plane; Pi Sessions and lightweight Room facts are authoritative."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/requirements/room-requirements-control-plane.css",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "control_center_release_ui",
+      "reason": "Remove the retired heavy Room requirements control plane; Pi Sessions and lightweight Room facts are authoritative."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/requirements/room-requirements-read-model.ts",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "control_center_release_ui",
+      "reason": "Remove the retired heavy Room requirements control plane; Pi Sessions and lightweight Room facts are authoritative."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/runtime/room-execution-lanes.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/timeline/RoomTurn.activity.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/timeline/RoomTurn.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/use-room-task-session-facts.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/test/setup.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "integrations/pi/prompts/init.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
+    },
+    {
+      "path": "integrations/pi/session-runtime-host-contract.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
+    },
+    {
+      "path": "integrations/pi/skills/memory-curation/SKILL.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep governed memory context routing and its current Skill contract."
+    },
+    {
+      "path": "rag_ime/agent_memory_sources.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep governed memory context routing and its current Skill contract."
+    },
+    {
+      "path": "rag_ime/agent_message_snapshot.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
+    },
+    {
+      "path": "rag_ime/agent_room_lifecycle.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
+    },
+    {
+      "path": "rag_ime/agent_room_participants.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
+    },
+    {
+      "path": "rag_ime/agent_room_partner_application.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
+    },
+    {
+      "path": "rag_ime/agent_room_prompt_context.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
+    },
+    {
+      "path": "rag_ime/agent_rooms.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
+    },
+    {
+      "path": "rag_ime/agent_service.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
+    },
+    {
+      "path": "rag_ime/agent_session_application.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
+    },
+    {
+      "path": "rag_ime/contracts/json/agent-room-snapshot.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
+    },
+    {
+      "path": "release/README.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "release_scope",
+      "reason": "Keep release instructions aligned with the current scoped candidate."
+    },
+    {
+      "path": "scripts/build_control_center_web_host.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "installation_reliability",
+      "reason": "Keep build and install verification aligned with the current product generation."
+    },
+    {
+      "path": "scripts/build_voice_input.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "installation_reliability",
+      "reason": "Keep build and install verification aligned with the current product generation."
+    },
+    {
+      "path": "scripts/smoke_pi_room_composition.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
+    },
+    {
+      "path": "tests/test_agent_room_partner_application.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
+    },
+    {
+      "path": "tests/test_agent_rooms.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
+    },
+    {
+      "path": "tests/test_launch_agent_script.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "installation_reliability",
+      "reason": "Keep build and install verification aligned with the current product generation."
     }
   ]
 }

@@ -42,7 +42,7 @@ git clone https://github.com/7155/personal-agent-workbench.git
 git clone https://github.com/7155/pi.git
 
 cd pi
-git checkout 0fd0564af34cb40bbcd6b8903c01b36191c4f90d
+git checkout 4ddb155fefc7b262c0cc1aec5c6931b2a9a5fa5e
 npm ci
 
 cd ../personal-agent-workbench
@@ -50,11 +50,12 @@ uv sync --frozen
 pnpm --dir control-center-web install --frozen-lockfile
 ```
 
-The product contract rejects a Pi source tree that does not contain the pinned
-runtime-host implementation. This checkpoint includes the deterministic
-Goal/Room lifecycle, native coding-tool evidence, long-result handles, and the
-pre-dispatch model-context fence. Do not substitute an arbitrary Pi release
-just because its CLI starts.
+The product contract rejects a Pi source tree that predates its minimum handler
+commit or does not contain the required Runtime-host methods and source markers.
+The checkout above is the currently installed and accepted reference. It
+includes the deterministic Goal/Room lifecycle, native coding-tool evidence,
+long-result handles, and the pre-dispatch model-context fence. Do not substitute
+an arbitrary Pi release just because its CLI starts.
 
 ## Non-Destructive Build Walkthrough
 
@@ -83,6 +84,7 @@ Run the source and architecture gates from a clean checkout:
 
 ```bash
 python3 -m compileall -q rag_ime scripts tests
+python3 scripts/check_project_harness.py
 python3 scripts/check_import_boundaries.py
 python3 scripts/check_route_ownership.py
 python3 scripts/check_product_status.py --json

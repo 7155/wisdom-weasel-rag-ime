@@ -1,13 +1,13 @@
 {
   "schemaVersion": "rag-ime.product-status.v1",
-  "sourceCommit": "bd405fd8649dd5921eeb0dc662ed38cfeaf788ce",
+  "sourceCommit": "4f95c405b3c56cb3847d6a7d727ca8da41b72d55",
   "verificationScope": {
     "kind": "clean_commit",
-    "baseCommit": "bd405fd8649dd5921eeb0dc662ed38cfeaf788ce",
+    "baseCommit": "4f95c405b3c56cb3847d6a7d727ca8da41b72d55",
     "includesUncommittedChanges": false,
-    "automatedEvidenceThrough": "2026-07-27",
+    "automatedEvidenceThrough": "2026-08-16",
     "foregroundPermissionActionsRun": false,
-    "note": "The clean checkpoint passed 560 frontend unit tests, TypeScript, the production Web build, 158 full-run Playwright cases plus 2 focused cases after repairing one stale privacy-copy contract, native Control/Voice/Desktop builds with codesign verification, managed Pi v2 packaging and smoke, import/route/Ruff/mypy gates, and focused backend verification. The latest 2,952-test backend run had one SQLite test-literal error that was repaired and rechecked narrowly rather than hiding the nonzero full-run exit. Automated evidence does not replace user-authorized foreground IME, Accessibility, microphone, signing, notarization, or clean-machine installation acceptance."
+    "note": "The clean 4f95c405 Session/Room checkpoint passed 931 frontend unit tests, TypeScript, the production Web build, 298 focused backend Session/Room tests, project/import/route/public-source gates, deterministic staged Session and Room canaries, and a current installed core-component audit. Earlier native Control/Voice/Desktop source-build evidence remains recorded, but optional installed Desktop/Voice/MLX components were not refreshed for this Session/Room checkpoint. Automated evidence does not replace user-authorized foreground IME, Accessibility, microphone, signing, notarization, or clean-machine installation acceptance."
   },
   "productStatus": "backend_only",
   "releaseStatus": "blocked",
@@ -31,7 +31,7 @@
     "note": "Release flags are declarations only. scripts/check_public_release.py recalculates artifact/evidence hashes and blocks while the real manifest or any listed file is absent or mismatched."
   },
   "runtimeProfile": "managed-pi-v2",
-  "lastVerifiedDate": "2026-07-27",
+  "lastVerifiedDate": "2026-08-16",
   "resolvedBlockers": [
     {
       "id": "duplicate_system_squirrel_bundle",
@@ -63,18 +63,14 @@
     },
     {
       "id": "clean_source_build_checkpoint",
-      "evidence": "Checkpoint bd405fd builds the production Web Control Center, all three native helper apps, and the pinned managed Pi v2 payload from clean source; the native app markers record gitDirty=false."
+      "evidence": "Checkpoint 4f95c405 builds the production Web Control Center and managed Pi v2 payload from clean source; the earlier bd405fd checkpoint remains the latest recorded all-native-helper source build."
     },
     {
       "id": "managed_pi_v2_source_contract",
-      "evidence": "The public build contract now requires Pi commit 0fd0564af34cb40bbcd6b8903c01b36191c4f90d and source-contract sha256 84fcc9f28401aa6685e91de8081f08af114b804cd456c02e82e3acb1973bfe28, including deterministic Goal continuation, Session memory-refresh epochs, native read/grep/find/ls/edit/write/bash projections, governed Room target binding, bounded semantic tool-result evidence, a pre-dispatch model-context fence, and a line-based native read canary that consumes the same structured receipt as production. Earlier runtime smoke against an older pin is not runtime acceptance evidence for this checkpoint."
+      "evidence": "The installed managed Runtime is Pi 4ddb155fefc7b262c0cc1aec5c6931b2a9a5fa5e with source-contract sha256 1dc76eb359e97a8079f956230f8f9898eead1ee6d0bb38cc9787da1e88cb6141. Its deterministic staged Session and Room canaries passed before activation, and the installed Runtime pointer and payload hashes were revalidated against product checkpoint 4f95c405."
     }
   ],
   "blockers": [
-    {
-      "id": "managed_pi_0fd0564_runtime_acceptance_pending",
-      "detail": "The source and packager contract now require Pi 0fd0564af34cb40bbcd6b8903c01b36191c4f90d, but a clean managed payload build and deterministic installed Agent Session canary for that exact commit have not yet been recorded."
-    },
     {
       "id": "strict_foreground_soak_not_green",
       "detail": "Current trace does not prove the full Rime composition, delete resync, app-switch invalidation, and follow-up-after-selection matrix."
@@ -137,6 +133,20 @@
     "inputSourcePreferencesComplete": true,
     "postCommitModel": "local-runtime-registry (active deployment: mlx)",
     "remoteModelInPassivePath": false
+  },
+  "sessionRoomEvidence": {
+    "status": "installed_development_accepted",
+    "productCommit": "4f95c405b3c56cb3847d6a7d727ca8da41b72d55",
+    "piSourceCommit": "4ddb155fefc7b262c0cc1aec5c6931b2a9a5fa5e",
+    "piSourceContractSha256": "1dc76eb359e97a8079f956230f8f9898eead1ee6d0bb38cc9787da1e88cb6141",
+    "runtimeVersion": "pi-0.80.7-4ddb155fefc7-raghost-4b57839a56",
+    "deterministicSessionAcceptance": "passed",
+    "deterministicRoomAcceptance": "passed",
+    "liveLunaSessionAcceptance": "passed",
+    "liveLunaRoomAcceptance": "passed",
+    "focusedBackendTests": 298,
+    "frontendUnitTests": 931,
+    "note": "This proves the current installed development Session/Room slice. It is not whole-product foreground or signed-distribution acceptance."
   },
   "features": {
     "rime-core-stability": "backend_only",
