@@ -2585,8 +2585,8 @@ describe('Agent experience', () => {
           items: [],
           liveEvents: [],
           status: 'idle',
-          lastSequence: 99,
-          resumeToken: 'session-preview:99',
+          lastSequence: 100,
+          resumeToken: 'session-preview:100',
         };
       },
     );
@@ -2603,7 +2603,9 @@ describe('Agent experience', () => {
 
     await waitFor(() => expect(snapshotCalls).toBe(2));
     expect(screen.queryByRole('button', { name: '正在停止本轮' })).not.toBeInTheDocument();
-    expect(useAgentLiveStore.getState().projections['session-preview']?.status).toBe('idle');
+    await waitFor(() => expect(
+      useAgentLiveStore.getState().projections['session-preview']?.status,
+    ).toBe('idle'));
     expect(useAgentLiveStore.getState().projections['session-preview']?.optimisticByClientMessageId).toEqual({});
     expect(Object.values(
       useAgentLiveStore.getState().projections['session-preview']?.messagesById ?? {},
@@ -2656,18 +2658,13 @@ describe('Agent experience', () => {
 
   it('recovers a stale client-side busy turn from the idle snapshot returned after abort ACK', async () => {
     let snapshotCalls = 0;
-    const transport = featureTransport(
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      () => {
+    const transport = productionTransport({
+      'agent.session.abort': { ok: true },
+      'agent.session.snapshot': () => {
         snapshotCalls += 1;
-        if (snapshotCalls === 1) return previewAgentSnapshot('session-preview');
+        if (snapshotCalls <= 2) {
+          return busyStopSnapshot('session-preview', 98 + snapshotCalls);
+        }
         return {
           schemaVersion: 'rag-ime.agent-message-list.v1',
           ok: true,
@@ -2675,50 +2672,50 @@ describe('Agent experience', () => {
           items: [],
           liveEvents: [],
           status: 'idle',
-          lastSequence: 99,
-          resumeToken: 'session-preview:99',
+          lastSequence: 101,
+          resumeToken: 'session-preview:101',
         };
       },
-    );
+    });
     const user = userEvent.setup();
     renderAgent(transport);
     await screen.findByRole('textbox', { name: '消息' });
     await waitFor(() => expect(snapshotCalls).toBe(1));
-    const projection = useAgentLiveStore.getState().projections['session-preview'];
-    act(() => {
-      useAgentLiveStore.getState().applyEvents('session-preview', [
-        {
-          schemaVersion: 'rag-ime.agent-event.v1',
-          eventId: 'stale-busy-before-stop',
-          sessionId: 'session-preview',
-          turnId: 'turn-stale-stop',
-          sequence: projection.lastSequence + 1,
-          createdAtMs: Date.now(),
-          streamKind: 'agent',
-          eventType: 'status_changed',
-          payload: { status: 'busy' },
-          resumeToken: `session-preview:${projection.lastSequence + 1}`,
-        },
-        {
-          schemaVersion: 'rag-ime.agent-event.v1',
-          eventId: 'stale-delta-before-stop',
-          sessionId: 'session-preview',
-          turnId: 'turn-stale-stop',
-          sequence: projection.lastSequence + 2,
-          createdAtMs: Date.now(),
-          streamKind: 'agent',
-          eventType: 'text_delta',
-          payload: { delta: 'partial' },
-          resumeToken: `session-preview:${projection.lastSequence + 2}`,
-        },
-      ]);
-    });
-
+    await waitFor(() => expect(
+      useAgentLiveStore.getState().projections['session-preview']?.status,
+    ).toBe('busy'));
+    expect(useAgentLiveStore.getState().projections['session-preview']?.turnsById['session-preview:turn-stop-reconcile']?.status).toBe('running');
     await user.click(await screen.findByRole('button', { name: '停止本轮' }));
 
-    await waitFor(() => expect(snapshotCalls).toBe(2));
+    await waitFor(() => expect(snapshotCalls).toBe(3));
     await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.status).toBe('idle'));
     expect(screen.queryByRole('button', { name: '正在停止本轮' })).not.toBeInTheDocument();
+  });
+
+  it('leaves a bounded Pi fallback notice instead of a permanent stopping control', async () => {
+    let snapshotCalls = 0;
+    const transport = productionTransport({
+      'agent.session.abort': { ok: true },
+      'agent.session.snapshot': () => {
+        snapshotCalls += 1;
+        return busyStopSnapshot('session-preview', 100 + snapshotCalls);
+      },
+    });
+    const user = userEvent.setup();
+    renderAgent(transport);
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(snapshotCalls).toBe(1));
+    await waitFor(() => expect(
+      useAgentLiveStore.getState().projections['session-preview']?.status,
+    ).toBe('busy'));
+    await user.click(await screen.findByRole('button', { name: '停止本轮' }));
+
+    expect(await screen.findByRole('button', { name: '正在停止本轮' })).toBeDisabled();
+    expect(await screen.findByRole('alert', {}, { timeout: 2_000 })).toHaveTextContent(
+      '1.5 秒内未收到终态，已进入 Pi 终止兜底；状态会继续同步。',
+    );
+    expect(screen.queryByRole('button', { name: '正在停止本轮' })).not.toBeInTheDocument();
+    expect(snapshotCalls).toBeGreaterThan(2);
   });
 
   it('treats an open Pi transcript as quiescent instead of showing a permanent stop action', async () => {
@@ -4450,6 +4447,57 @@ function deferred<T>() {
     reject = rejectPromise;
   });
   return { promise, resolve, reject };
+}
+
+function busyStopSnapshot(sessionId: string, sequence: number) {
+  const turnId = `${sessionId}:turn-stop-reconcile`;
+  const createdAtMs = Date.now() - 1_000;
+  return {
+    schemaVersion: 'rag-ime.agent-message-list.v1',
+    ok: true,
+    sessionId,
+    status: 'busy',
+    lastSequence: sequence,
+    resumeToken: `${sessionId}:${sequence}`,
+    liveEvents: [],
+    items: [{
+      schemaVersion: 'rag-ime.agent-message.v1',
+      id: `${sessionId}:stop-user`,
+      sessionId,
+      turnId,
+      role: 'user',
+      status: 'completed',
+      blocks: [{
+        id: 'stop-user-text',
+        type: 'text',
+        status: 'completed',
+        presentationKind: 'markdown',
+        data: { text: '停止当前回合' },
+      }],
+      attachments: [],
+      citations: [],
+      createdAtMs,
+      completedAtMs: createdAtMs,
+    }, {
+      schemaVersion: 'rag-ime.agent-message.v1',
+      id: `${sessionId}:stop-assistant`,
+      sessionId,
+      turnId,
+      role: 'assistant',
+      status: 'streaming',
+      blocks: [{
+        id: 'stop-assistant-text',
+        type: 'text',
+        status: 'running',
+        presentationKind: 'markdown',
+        data: { text: 'partial' },
+      }],
+      attachments: [],
+      citations: [],
+      createdAtMs: createdAtMs + 100,
+      completedAtMs: null,
+    }],
+  };
 }
 
 function featureTransport(

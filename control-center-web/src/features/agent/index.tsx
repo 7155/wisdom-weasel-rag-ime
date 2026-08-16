@@ -1371,31 +1371,65 @@ function AgentWorkspace() {
   async function stop(): Promise<void> {
     if (!session || stopping) return;
     const sessionId = session.id;
+    const stopStartedAt = monotonicNow();
+    const stopDeadlineAt = stopStartedAt + STOP_RECONCILE_BUDGET_MS;
     setSessionStopping(sessionId, true);
     try {
-      const abortReceipt = await transport.request<Record<string, unknown>>({
-        pathId: 'agent.session.abort',
-        params: { sessionId },
-        body: {},
-      });
+      const abortResult = await settleBeforeDeadline(
+        transport.request<Record<string, unknown>>({
+          pathId: 'agent.session.abort',
+          params: { sessionId },
+          body: {},
+        }),
+        stopDeadlineAt,
+      );
+      if (abortResult.kind === 'timeout') {
+        setSessionStopping(sessionId, false);
+        setSessionError(sessionId, STOP_RECONCILE_ESCALATED_MESSAGE);
+        return;
+      }
+      if (abortResult.kind === 'rejected') throw abortResult.error;
+      const abortReceipt = abortResult.value;
       if (abortCancelledPendingAdmission(abortReceipt)) {
         discardSessionOptimisticMessages(sessionId);
         sendTimings.clearSession(sessionId);
         setSessionStopping(sessionId, false);
+        setSessionError(sessionId, '');
+        const snapshotResult = await settleBeforeDeadline(
+          transport.request({
+            pathId: 'agent.session.snapshot',
+            params: { sessionId },
+          }),
+          stopDeadlineAt,
+        );
+        if (snapshotResult.kind === 'resolved') {
+          useAgentLiveStore.getState().hydrate(sessionId, snapshotResult.value);
+        }
+        return;
       }
-      // Abort acknowledgement only means Pi accepted the request. Reconcile
-      // once with the authoritative Session row so a stale client-side busy
-      // marker can recover; a genuinely active turn remains locked until its
-      // terminal SSE event arrives.
-      const snapshot = await transport.request({
-        pathId: 'agent.session.snapshot',
-        params: { sessionId },
+      // Abort acknowledgement only means Pi accepted the request. The first
+      // snapshot can race with terminal persistence, so reconcile a few
+      // authoritative snapshots inside the product's 1.5 second Stop budget.
+      // Pi remains the sole owner of cancellation and escalation.
+      const settled = await reconcileStoppedSession({
+        deadlineAt: stopDeadlineAt,
+        requestSnapshot: () => transport.request({
+          pathId: 'agent.session.snapshot',
+          params: { sessionId },
+        }),
+        onSnapshot: (snapshot) => {
+          useAgentLiveStore.getState().hydrate(sessionId, snapshot);
+        },
+        isActive: () => Boolean(latestActiveTurnId(agentProjection(sessionId))),
+        startedAt: stopStartedAt,
       });
-      useAgentLiveStore.getState().hydrate(sessionId, snapshot);
-      if (!latestActiveTurnId(agentProjection(sessionId))) {
+      if (settled) {
         setSessionStopping(sessionId, false);
+        setSessionError(sessionId, '');
+      } else {
+        setSessionStopping(sessionId, false);
+        setSessionError(sessionId, STOP_RECONCILE_ESCALATED_MESSAGE);
       }
-      setSessionError(sessionId, '');
     } catch (requestError) {
       setSessionStopping(sessionId, false);
       setSessionError(sessionId, errorText(requestError));
@@ -2079,6 +2113,74 @@ function shouldOpenTaskCenterByDefault(): boolean {
 
 const PASTED_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const MAX_AGENT_IMAGE_BYTES = 20 * 1024 * 1024;
+const STOP_RECONCILE_BUDGET_MS = 1_450;
+const STOP_RECONCILE_CHECKPOINTS_MS = [0, 180, 420, 760, 1_100, 1_320] as const;
+const STOP_RECONCILE_ESCALATED_MESSAGE = '1.5 秒内未收到终态，已进入 Pi 终止兜底；状态会继续同步。';
+
+type DeadlineSettlement<T> =
+  | { kind: 'resolved'; value: T }
+  | { kind: 'rejected'; error: unknown }
+  | { kind: 'timeout' };
+
+async function settleBeforeDeadline<T>(
+  request: Promise<T>,
+  deadlineAt: number,
+): Promise<DeadlineSettlement<T>> {
+  const remainingMs = Math.max(0, deadlineAt - monotonicNow());
+  if (remainingMs === 0) return { kind: 'timeout' };
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = 0;
+    const finish = (result: DeadlineSettlement<T>) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      resolve(result);
+    };
+    timer = window.setTimeout(() => finish({ kind: 'timeout' }), remainingMs);
+    request.then(
+      (value) => finish({ kind: 'resolved', value }),
+      (error: unknown) => finish({ kind: 'rejected', error }),
+    );
+  });
+}
+
+async function waitUntil(deadlineAt: number): Promise<void> {
+  const remainingMs = deadlineAt - monotonicNow();
+  if (remainingMs <= 0) return;
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, remainingMs);
+  });
+}
+
+async function reconcileStoppedSession({
+  deadlineAt,
+  requestSnapshot,
+  onSnapshot,
+  isActive,
+  startedAt,
+}: {
+  deadlineAt: number;
+  requestSnapshot: () => Promise<unknown>;
+  onSnapshot: (snapshot: unknown) => void;
+  isActive: () => boolean;
+  startedAt: number;
+}): Promise<boolean> {
+  for (const checkpointMs of STOP_RECONCILE_CHECKPOINTS_MS) {
+    if (checkpointMs > 0) {
+      const checkpointAt = startedAt + checkpointMs;
+      if (monotonicNow() >= checkpointAt) continue;
+      await waitUntil(Math.min(checkpointAt, deadlineAt));
+    }
+    if (monotonicNow() >= deadlineAt) break;
+    const result = await settleBeforeDeadline(requestSnapshot(), deadlineAt);
+    if (result.kind === 'timeout') break;
+    if (result.kind === 'rejected') continue;
+    onSnapshot(result.value);
+    if (!isActive()) return true;
+  }
+  return !isActive();
+}
 
 function latestActiveTurnId(projection?: AgentProjectionState): string {
   if (!projection) return '';
