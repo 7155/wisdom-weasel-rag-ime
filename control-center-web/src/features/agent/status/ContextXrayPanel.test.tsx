@@ -31,6 +31,7 @@ describe('ContextXraySections', () => {
     const layers = await screen.findByRole('list', { name: '上下文分层指标' });
     for (const label of [
       'System',
+      '项目规则',
       '伙伴画像',
       '工作状态',
       'Goal',
@@ -44,10 +45,11 @@ describe('ContextXraySections', () => {
     ]) {
       expect(within(layers).getByText(label)).toBeVisible();
     }
-    expect(within(layers).getAllByText('已接收')).toHaveLength(11);
+    expect(within(layers).getAllByText('已接收')).toHaveLength(12);
     expect(screen.getByText('68%')).toBeVisible();
     expect(screen.getByText('12.0K → 4.2K')).toBeVisible();
     expect(screen.queryByText('ROLE_BOOK_PRIVATE_TEXT')).not.toBeInTheDocument();
+    expect(screen.queryByText('PROJECT_RULES_PRIVATE_TEXT')).not.toBeInTheDocument();
     expect(screen.queryByText('WORKFLOW_CONTROL_PRIVATE_TEXT')).not.toBeInTheDocument();
     expect(screen.queryByText('GOAL_PRIVATE_TEXT')).not.toBeInTheDocument();
     expect(screen.queryByText('LIFECYCLE_HOOK_PRIVATE_TEXT')).not.toBeInTheDocument();
@@ -123,6 +125,22 @@ describe('buildContextXraySnapshot', () => {
     expect(snapshot.providerStatus).toBeNull();
     expect(snapshot.layers.every((layer) => layer.providerDelivery === 'pending')).toBe(true);
   });
+
+  it('reports Pi-loaded project rules as their own layer instead of hiding them in System', () => {
+    const snapshot = buildContextXraySnapshot(normalizeDebugContextResponse(debugResponse()));
+    const system = snapshot.layers.find((layer) => layer.id === 'system');
+    const projectContext = snapshot.layers.find((layer) => layer.id === 'project-context');
+
+    expect(projectContext).toEqual(
+      expect.objectContaining({
+        label: '项目规则',
+        state: 'present',
+        characters: 'PROJECT_RULES_PRIVATE_TEXT'.length,
+        providerDelivery: 'delivered',
+      }),
+    );
+    expect(system?.characters).toBe('BASE_SYSTEM_PROMPT'.length);
+  });
 });
 
 function debugResponse(): Record<string, unknown> {
@@ -137,6 +155,7 @@ function debugResponse(): Record<string, unknown> {
   ].join('\n');
   const systemPrompt = [
     'BASE_SYSTEM_PROMPT',
+    'PROJECT_RULES_PRIVATE_TEXT',
     '<agent-profile>',
     'ROLE_BOOK_PRIVATE_TEXT',
     '</agent-profile>',
@@ -182,7 +201,13 @@ function debugResponse(): Record<string, unknown> {
       updatedAtMs: 200,
       prompt: 'CURRENT_USER_TEXT',
       systemPrompt,
-      systemPromptOptions: { skills },
+      systemPromptOptions: {
+        contextFiles: [{
+          path: '/tmp/project/AGENTS.md',
+          content: 'PROJECT_RULES_PRIVATE_TEXT',
+        }],
+        skills,
+      },
       activeTools: ['memory'],
       toolSchemas: tools,
       modelCalls: [{

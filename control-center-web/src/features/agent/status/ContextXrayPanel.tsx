@@ -7,6 +7,7 @@ import {
   CircleHelp,
   Clock3,
   Database,
+  FileText,
   Flag,
   History,
   Layers3,
@@ -29,6 +30,7 @@ import './ContextXrayPanel.css';
 
 type ContextLayerId =
   | 'system'
+  | 'project-context'
   | 'role-book'
   | 'workflow-control'
   | 'goal'
@@ -81,6 +83,7 @@ interface LayerSource {
 
 const layerIcons: Record<ContextLayerId, LucideIcon> = {
   system: Layers3,
+  'project-context': FileText,
   'role-book': BookUser,
   'workflow-control': ListChecks,
   goal: Flag,
@@ -347,6 +350,18 @@ function contextLayerSources(
     .replace(/\n{3,}/gu, '\n\n')
     .trim();
   const options = record(systemPromptOptions);
+  const contextFiles = array(options.contextFiles).map(record);
+  const projectContextContent = contextFiles
+    .map((item) => text(item.content).trim())
+    .filter(Boolean)
+    .join('\n');
+  const projectContextNames = contextFiles
+    .map((item) => contextFileName(text(item.path)))
+    .filter(Boolean);
+  const systemWithoutProjectContext = contextFiles.reduce(
+    (value, item) => removeLiteral(value, text(item.content)),
+    systemWithoutManagedLayers,
+  ).replace(/\n{3,}/gu, '\n\n').trim();
   const skills = array(options.skills);
   const skillsContent = stableJson(skills);
   const skillIdentifiers = skills.flatMap((item) => {
@@ -371,10 +386,20 @@ function contextLayerSources(
     layer(
       'system',
       'System',
-      '最终 systemPrompt（已剔除独立记忆块）',
-      systemWithoutManagedLayers,
+      '最终 systemPrompt（已剔除独立上下文层）',
+      systemWithoutProjectContext,
       Boolean(systemPrompt),
-      contentIdentifiers(systemWithoutManagedLayers),
+      contentIdentifiers(systemWithoutProjectContext),
+    ),
+    layer(
+      'project-context',
+      '项目规则',
+      projectContextNames.length
+        ? `systemPromptOptions.contextFiles · ${projectContextNames.join('、')}`
+        : 'systemPromptOptions.contextFiles',
+      projectContextContent,
+      Boolean(Object.keys(options).length),
+      contentIdentifiers(projectContextContent),
     ),
     layer('role-book', '伙伴画像', '<agent-profile>', roleBooks.join('\n'), Boolean(systemPrompt)),
     layer(
@@ -482,6 +507,15 @@ function contentIdentifiers(value: string): string[] {
     .split('\n')
     .map(compact)
     .filter((line) => line.length >= 3);
+}
+
+function contextFileName(path: string): string {
+  return path.split(/[\\/]/u).filter(Boolean).at(-1) ?? '';
+}
+
+function removeLiteral(value: string, literal: string): string {
+  const trimmed = literal.trim();
+  return trimmed ? value.split(trimmed).join('\n') : value;
 }
 
 function captures(value: string, pattern: RegExp): string[] {
@@ -608,7 +642,11 @@ function emptySnapshot(): ContextXraySnapshot {
     available: false,
     layers: [
       unavailable('system', 'System', '最终 systemPrompt'),
+      unavailable('project-context', '项目规则', 'systemPromptOptions.contextFiles'),
       unavailable('role-book', '伙伴画像', '<agent-profile>'),
+      unavailable('workflow-control', '工作状态', '<workflow-state>'),
+      unavailable('goal', 'Goal', 'type="goal"'),
+      unavailable('lifecycle-hook', 'Lifecycle Hook', 'type="lifecycle_hook"'),
       unavailable('session-memory', 'Session Memory', 'type="session_memory"'),
       unavailable('timeline', 'Timeline', 'Session Memory · 近期时间线'),
       unavailable('skills', 'Skills', 'systemPromptOptions.skills'),
