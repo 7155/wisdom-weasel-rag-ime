@@ -126,6 +126,24 @@ describe('buildContextXraySnapshot', () => {
     expect(snapshot.layers.every((layer) => layer.providerDelivery === 'pending')).toBe(true);
   });
 
+  it('accepts Pi message-end usage as a completed provider receipt', () => {
+    const response = debugResponse();
+    const context = response.context as Record<string, unknown>;
+    const modelCalls = context.modelCalls as Array<Record<string, unknown>>;
+    const exchanges = modelCalls[0]?.providerExchanges as Array<Record<string, unknown>>;
+    delete exchanges[0]?.status;
+    context.providerRequestReceipts = [{
+      schemaVersion: 'rag-ime.provider-request-receipt.v1',
+      index: 1,
+      usage: { input: 100, output: 10, totalTokens: 110 },
+    }];
+
+    const snapshot = buildContextXraySnapshot(normalizeDebugContextResponse(response));
+
+    expect(snapshot.providerStatus).toBeNull();
+    expect(snapshot.layers.every((layer) => layer.providerDelivery === 'delivered')).toBe(true);
+  });
+
   it('reports Pi-loaded project rules as their own layer instead of hiding them in System', () => {
     const snapshot = buildContextXraySnapshot(normalizeDebugContextResponse(debugResponse()));
     const system = snapshot.layers.find((layer) => layer.id === 'system');

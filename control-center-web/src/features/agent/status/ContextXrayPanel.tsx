@@ -260,7 +260,16 @@ export function buildContextXraySnapshot(response: DebugContextResponse): Contex
   const latestExchange = latestCall?.providerExchanges.at(-1);
   const providerCaptured = latestExchange?.payload !== undefined;
   const providerStatus = finiteNumber(latestExchange?.status);
-  const providerAcknowledged = providerStatus !== null;
+  const providerReceipt = [...array(context.raw.providerRequestReceipts)]
+    .map(record)
+    .reverse()
+    .find((receipt) => (
+      finiteNumber(receipt.index) === finiteNumber(latestExchange?.index)
+    ));
+  const providerAcknowledged = providerStatus !== null || (
+    providerReceipt !== undefined
+    && Object.prototype.hasOwnProperty.call(providerReceipt, 'usage')
+  );
   const providerText = providerCaptured ? collectProviderText(latestExchange?.payload) : '';
   const sources = contextLayerSources(context.systemPrompt, context.systemPromptOptions, context.activeTools, context.toolSchemas, latestCall);
   const telemetry = response.telemetry;
