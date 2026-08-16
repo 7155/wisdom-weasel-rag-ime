@@ -1753,11 +1753,16 @@ function reconcileSnapshotTurnStatuses(state: AgentProjectionState): void {
 
     const hasUserMessage = messages.some((message) => message.role === 'user');
     const hasAssistantMessage = messages.some((message) => message.role === 'assistant');
+    const hasTerminalActivity = turn.activityIds.some((activityId) => {
+      const activity = state.activitiesById[activityId];
+      return activity?.status === 'completed' || activity?.status === 'failed';
+    });
     const activeTail = turnId === lastTurnId && runtimeStatus !== 'completed';
     if (
       turn.status === 'completed'
       && hasUserMessage
       && !hasAssistantMessage
+      && !hasTerminalActivity
       && !activeTail
     ) {
       turn.status = 'failed';
