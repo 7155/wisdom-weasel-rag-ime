@@ -16,6 +16,56 @@ if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]]; then
   SOURCE_DIRTY="true"
 fi
 
+has_swift_macro_host() {
+  local developer_dir="$1"
+  [[ -f "$developer_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/libSwiftMacros.dylib" ]]
+}
+
+resolve_voice_developer_dir() {
+  local developer_dir="${DEVELOPER_DIR:-}"
+  if [[ -n "$developer_dir" ]]; then
+    if has_swift_macro_host "$developer_dir"; then
+      printf '%s\n' "$developer_dir"
+      return 0
+    fi
+    echo "DEVELOPER_DIR does not provide SwiftUIMacros: $developer_dir" >&2
+    return 1
+  fi
+
+  developer_dir="$(xcode-select -p 2>/dev/null || true)"
+  if [[ -n "$developer_dir" ]] && has_swift_macro_host "$developer_dir"; then
+    printf '%s\n' "$developer_dir"
+    return 0
+  fi
+
+  local xcode_app
+  for xcode_app in /Applications/Xcode*.app "$HOME"/Applications/Xcode*.app; do
+    [[ -d "$xcode_app" ]] || continue
+    developer_dir="$xcode_app/Contents/Developer"
+    if has_swift_macro_host "$developer_dir"; then
+      printf '%s\n' "$developer_dir"
+      return 0
+    fi
+  done
+
+  if command -v mdfind >/dev/null 2>&1; then
+    while IFS= read -r xcode_app; do
+      [[ -d "$xcode_app" ]] || continue
+      developer_dir="$xcode_app/Contents/Developer"
+      if has_swift_macro_host "$developer_dir"; then
+        printf '%s\n' "$developer_dir"
+        return 0
+      fi
+    done < <(mdfind 'kMDItemCFBundleIdentifier == "com.apple.dt.Xcode"')
+  fi
+
+  echo "Voice build requires a full Xcode with SwiftUIMacros; CommandLineTools alone is insufficient." >&2
+  echo "Install Xcode or set DEVELOPER_DIR to its Contents/Developer directory." >&2
+  return 1
+}
+
+VOICE_DEVELOPER_DIR="$(resolve_voice_developer_dir)"
+
 rm -rf "$APP"
 mkdir -p "$MACOS" "$RESOURCES"
 cp "$SRC/Info.plist" "$CONTENTS/Info.plist"
@@ -24,7 +74,7 @@ cp "$SHARED/Assets/CompanionStates/"*.png "$RESOURCES/"
 sources=()
 while IFS= read -r file; do sources+=("$file"); done < <(find "$SHARED" "$SRC" -type f -name '*.swift' | sort)
 
-xcrun swiftc \
+DEVELOPER_DIR="$VOICE_DEVELOPER_DIR" xcrun swiftc \
   -O \
   -target arm64-apple-macosx13.0 \
   -framework AppKit \
