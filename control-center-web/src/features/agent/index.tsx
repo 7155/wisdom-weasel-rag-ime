@@ -1080,6 +1080,17 @@ function AgentWorkspace() {
     void (async () => {
       try {
         const response = await requestAdmission();
+        if (isCancelledPromptAdmission(response)) {
+          sendTimings.failed(clientMessageId);
+          useAgentLiveStore.getState().discardOptimistic(
+            sessionId,
+            clientMessageId,
+          );
+          setSessionStopping(sessionId, false);
+          setSessionError(sessionId, '');
+          void refreshSessionRail();
+          return;
+        }
         useAgentLiveStore.getState().acknowledgeOptimistic(
           sessionId,
           clientMessageId,
@@ -1359,26 +1370,35 @@ function AgentWorkspace() {
 
   async function stop(): Promise<void> {
     if (!session || stopping) return;
-    setSessionStopping(session.id, true);
+    const sessionId = session.id;
+    setSessionStopping(sessionId, true);
     try {
-      await transport.request({
+      const abortReceipt = await transport.request<Record<string, unknown>>({
         pathId: 'agent.session.abort',
-        params: { sessionId: session.id },
+        params: { sessionId },
         body: {},
       });
+      if (abortCancelledPendingAdmission(abortReceipt)) {
+        discardSessionOptimisticMessages(sessionId);
+        sendTimings.clearSession(sessionId);
+        setSessionStopping(sessionId, false);
+      }
       // Abort acknowledgement only means Pi accepted the request. Reconcile
       // once with the authoritative Session row so a stale client-side busy
       // marker can recover; a genuinely active turn remains locked until its
       // terminal SSE event arrives.
       const snapshot = await transport.request({
         pathId: 'agent.session.snapshot',
-        params: { sessionId: session.id },
+        params: { sessionId },
       });
-      useAgentLiveStore.getState().hydrate(session.id, snapshot);
-      setSessionError(session.id, '');
+      useAgentLiveStore.getState().hydrate(sessionId, snapshot);
+      if (!latestActiveTurnId(agentProjection(sessionId))) {
+        setSessionStopping(sessionId, false);
+      }
+      setSessionError(sessionId, '');
     } catch (requestError) {
-      setSessionStopping(session.id, false);
-      setSessionError(session.id, errorText(requestError));
+      setSessionStopping(sessionId, false);
+      setSessionError(sessionId, errorText(requestError));
     }
   }
 
@@ -1941,6 +1961,41 @@ function AgentWorkspace() {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
+
+function isCancelledPromptAdmission(value: unknown): boolean {
+  return isRecord(value)
+    && value.accepted === false
+    && value.cancelled === true
+    && value.admissionCancelled === true;
+}
+
+function abortCancelledPendingAdmission(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const runtimeReceipt = isRecord(value.runtimeReceipt)
+    ? value.runtimeReceipt
+    : {};
+  const lifecycle = isRecord(runtimeReceipt.lifecycle)
+    ? runtimeReceipt.lifecycle
+    : {};
+  return value.schemaVersion === 'rag-ime.agent-abort.v1'
+    && runtimeReceipt.schemaVersion
+      === 'rag-ime.pi-session-abort-receipt.v1'
+    && runtimeReceipt.pendingAdmission === true
+    && runtimeReceipt.admissionCancelled === true
+    && lifecycle.schemaVersion === 'pi.agent-abort-receipt.v1'
+    && lifecycle.drained === true
+    && lifecycle.idle === true;
+}
+
+function discardSessionOptimisticMessages(sessionId: string): void {
+  const liveStore = useAgentLiveStore.getState();
+  const projection = liveStore.projections[sessionId];
+  for (const clientMessageId of Object.keys(
+    projection?.optimisticByClientMessageId ?? {},
+  )) {
+    liveStore.discardOptimistic(sessionId, clientMessageId);
+  }
+}
 
 function isRecentAgentSnapshot(value: unknown): boolean {
   return isRecord(value)

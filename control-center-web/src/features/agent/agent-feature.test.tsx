@@ -2542,6 +2542,118 @@ describe('Agent experience', () => {
     resolveAbort({ ok: true });
   });
 
+  it('settles a pre-dispatch stop from the explicit cancellation receipt without leaving a ghost turn', async () => {
+    const pendingPrompt = deferred<unknown>();
+    let snapshotCalls = 0;
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      undefined,
+      () => pendingPrompt.promise,
+      undefined,
+      undefined,
+      {
+        schemaVersion: 'rag-ime.agent-abort.v1',
+        ok: true,
+        sessionId: 'session-preview',
+        runtimeReceipt: {
+          schemaVersion: 'rag-ime.pi-session-abort-receipt.v1',
+          sessionId: 'session-preview',
+          turnId: '',
+          pendingAdmission: true,
+          admissionCancelled: true,
+          lifecycle: {
+            schemaVersion: 'pi.agent-abort-receipt.v1',
+            scopeId: 'session-preview',
+            generation: 0,
+            reason: 'user_abort',
+            pendingOperations: [],
+            drained: true,
+            idle: true,
+          },
+        },
+        approvalCancellation: {},
+      },
+      undefined,
+      () => {
+        snapshotCalls += 1;
+        if (snapshotCalls === 1) return previewAgentSnapshot('session-preview');
+        return {
+          schemaVersion: 'rag-ime.agent-message-list.v1',
+          ok: true,
+          sessionId: 'session-preview',
+          items: [],
+          liveEvents: [],
+          status: 'idle',
+          lastSequence: 99,
+          resumeToken: 'session-preview:99',
+        };
+      },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composer, '发送前就停止这一轮');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(
+      transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt'),
+    ).toHaveLength(1));
+    await user.click(await screen.findByRole('button', { name: '停止本轮' }));
+
+    await waitFor(() => expect(snapshotCalls).toBe(2));
+    expect(screen.queryByRole('button', { name: '正在停止本轮' })).not.toBeInTheDocument();
+    expect(useAgentLiveStore.getState().projections['session-preview']?.status).toBe('idle');
+    expect(useAgentLiveStore.getState().projections['session-preview']?.optimisticByClientMessageId).toEqual({});
+    expect(Object.values(
+      useAgentLiveStore.getState().projections['session-preview']?.messagesById ?? {},
+    ).some((message) => message.blocks.some(
+      (block) => block.data.text === '发送前就停止这一轮',
+    ))).toBe(false);
+
+    pendingPrompt.resolve({
+      accepted: false,
+      cancelled: true,
+      abortRequested: true,
+      admissionCancelled: true,
+    });
+    await user.type(composer, '下一轮仍可发送');
+    await waitFor(() => expect(screen.getByRole('button', { name: '发送' })).toBeEnabled());
+    expect(useAgentLiveStore.getState().projections['session-preview']?.optimisticByClientMessageId).toEqual({});
+  });
+
+  it('removes an optimistic prompt when Pi reports that admission was cancelled', async () => {
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      undefined,
+      {
+        accepted: false,
+        cancelled: true,
+        abortRequested: true,
+        admissionCancelled: true,
+      },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composer, '这条消息不应成为幽灵回合');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(
+      transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt'),
+    ).toHaveLength(1));
+    await waitFor(() => expect(
+      useAgentLiveStore.getState().projections['session-preview']?.optimisticByClientMessageId,
+    ).toEqual({}));
+    expect(Object.values(
+      useAgentLiveStore.getState().projections['session-preview']?.messagesById ?? {},
+    ).some((message) => message.blocks.some(
+      (block) => block.data.text === '这条消息不应成为幽灵回合',
+    ))).toBe(false);
+    expect(screen.queryByText('思考中')).not.toBeInTheDocument();
+  });
+
   it('recovers a stale client-side busy turn from the idle snapshot returned after abort ACK', async () => {
     let snapshotCalls = 0;
     const transport = featureTransport(
