@@ -170,6 +170,40 @@ describe('Agent experience', () => {
     expect(screen.queryByText('正在恢复完整上下文')).not.toBeInTheDocument();
   });
 
+  it('does not present a settled recent user-only window as the completed conversation', async () => {
+    const pendingFull = deferred<unknown>();
+    const complete = previewAgentSnapshot('session-preview');
+    const danglingUser = complete.messages.slice(2, 3);
+    const transport = productionTransport({
+      'agent.session.snapshot': (request: ControlRequest) => (
+        request.query?.view === 'recent'
+          ? {
+              ...complete,
+              items: danglingUser,
+              messages: undefined,
+              liveEvents: [],
+              snapshotScope: 'recent',
+              partial: true,
+              recentFromSequence: 12,
+            }
+          : pendingFull.promise
+      ),
+    });
+
+    renderAgent(transport, '/agent?session=session-preview');
+
+    expect(await screen.findByText('正在恢复完整上下文')).toBeInTheDocument();
+    expect(screen.queryByText(
+      '读取输入法工具书，并把结果作为可展开卡片保留。',
+    )).not.toBeInTheDocument();
+
+    await act(async () => pendingFull.resolve(complete));
+    expect((await screen.findAllByText(
+      '读取输入法工具书，并把结果作为可展开卡片保留。',
+    )).length).toBeGreaterThan(0);
+    expect(screen.queryByText('正在恢复完整上下文')).not.toBeInTheDocument();
+  });
+
   it('falls back to the compatible full snapshot when the recent window fails', async () => {
     const complete = previewAgentSnapshot('session-preview');
     const transport = productionTransport({
@@ -1024,6 +1058,7 @@ describe('Agent experience', () => {
     await user.click(await screen.findByRole('button', { name: '展开任务中心' }));
     const statusPanel = await screen.findByLabelText('当前对话任务中心');
     const capabilityToggle = await within(statusPanel).findByRole('button', { name: /当前对话工具与技能/ });
+    expect(capabilityToggle).toHaveTextContent('可用能力，不计入上下文 Token');
     const capabilitySection = capabilityToggle.closest('section')!;
     await user.click(capabilityToggle);
     await user.click(within(capabilitySection).getByRole('button', { name: '管理当前对话的工具与技能' }));
@@ -1332,7 +1367,8 @@ describe('Agent experience', () => {
     const todoPanel = await within(statusPanel).findByRole('region', { name: 'Todo' });
     expect(todoPanel).toHaveTextContent('1/3 已收束');
     expect(todoPanel).toHaveTextContent('实现会话内可见的 Todo');
-    expect(within(statusPanel).getByText('执行中 · 1/3')).toBeInTheDocument();
+    expect(within(statusPanel).getAllByText('当前回合 · 已完成')).toHaveLength(2);
+    expect(within(statusPanel).queryByText('执行中 · 1/3')).not.toBeInTheDocument();
     expect(within(statusPanel).getByText('规划员')).toBeInTheDocument();
     expect(within(statusPanel).getByText('审阅者')).toBeInTheDocument();
     expect(within(statusPanel).getByText('执行者')).toBeInTheDocument();

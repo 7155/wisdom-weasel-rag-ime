@@ -2626,6 +2626,26 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(methods[-1], "session.debug.context")
         self.assertNotIn("session.snapshot", methods)
 
+    def test_debug_context_does_not_restore_a_nonresident_session(self) -> None:
+        session_id = str(self.first["id"])
+
+        response = self.runtime.debug_context(session_id)
+
+        self.assertEqual(
+            response,
+            {
+                "schemaVersion": "rag-ime.pi-debug-context-response.v1",
+                "sessionId": session_id,
+                "turnId": "",
+                "available": False,
+                "transient": True,
+                "context": None,
+                "telemetry": None,
+                "reason": "session_not_resident",
+            },
+        )
+        self.assertFalse((self.root / "agent" / "host-requests.jsonl").exists())
+
     def test_idle_control_probe_closes_tool_loop_when_agent_settled_is_lost(self) -> None:
         session_id = str(self.first["id"])
         accepted = self.runtime.prompt(

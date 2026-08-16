@@ -193,7 +193,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
 
         <StatusSection
           icon={Sparkles}
-          title="当前对话工具与技能"
+          title="当前对话工具与技能（可用能力，不计入上下文 Token）"
           count={capabilityCatalog?.items.length ?? 0}
           defaultOpen={false}
         >
@@ -697,10 +697,11 @@ function statusPanelLabel(
   view: StatusPanelProjection,
   resolvedTodo?: AgentTodoProjection,
 ): string {
-  if (
-    view.turn
-    && ['queued', 'running', 'waiting', 'failed', 'aborted'].includes(view.turn.status)
-  ) {
+  // The header describes the current Pi turn. A durable Session Todo is a
+  // separate work record and may intentionally outlive a completed turn; do
+  // not let an unfinished historical Todo relabel that completed turn as
+  // currently executing.
+  if (view.turn) {
     return `当前回合 · ${turnStatusLabel(view.turn.status)}`;
   }
   const todo = resolvedTodo ?? projection?.todo;
@@ -713,7 +714,7 @@ function statusPanelLabel(
     }
     return `待执行 · ${todo.counts.completed}/${todo.counts.total}`;
   }
-  return view.turn ? turnStatusLabel(view.turn.status) : '等待新回合';
+  return '等待新回合';
 }
 
 function turnProgressLabel(view: StatusPanelProjection): string {

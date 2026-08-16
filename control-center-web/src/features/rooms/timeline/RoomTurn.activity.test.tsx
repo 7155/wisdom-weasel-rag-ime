@@ -310,6 +310,27 @@ describe('RoomTurn public activity detail', () => {
     expect(lane.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'thinking');
   });
 
+  it('does not label a terminal lane as waiting for more progress', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(20_000);
+    const projection = roomProjection();
+    projection.turnsById['turn-a'] = {
+      ...projection.turnsById['turn-a']!,
+      status: 'completed',
+      terminalDispatchIds: ['dispatch-a'],
+      terminalParticipantIds: ['participant-a'],
+      updatedAtMs: 3_100,
+    };
+
+    const view = render(roomTurn(projection));
+    const lane = view.container.querySelector<HTMLElement>('.room-agent-lane')!;
+
+    expect(lane).toHaveAttribute('data-state', 'completed');
+    expect(lane).toHaveTextContent('已完成');
+    expect(lane).not.toHaveTextContent('正在等待下一条进展');
+    expect(lane).not.toHaveTextContent('状态可能过期');
+  });
+
   it('stops motion immediately when only the Room timeline stream disconnects', () => {
     vi.useFakeTimers();
     vi.setSystemTime(10_000);

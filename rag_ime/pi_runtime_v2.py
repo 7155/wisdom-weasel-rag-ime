@@ -1414,7 +1414,21 @@ class PiRuntimeHostManager:
         with self._lock:
             already_open = session_id in self._open_sessions
         if not already_open:
-            self.ensure(session_id)
+            # Context inspection is observational. Reopening an idle historical
+            # Session here can restore a large Pi transcript, block the local
+            # control server, and evict an actively used Session. The UI can
+            # truthfully report that raw Provider context is unavailable until
+            # the Session is resident again.
+            return {
+                "schemaVersion": "rag-ime.pi-debug-context-response.v1",
+                "sessionId": session_id,
+                "turnId": str(turn_id or "").strip(),
+                "available": False,
+                "transient": True,
+                "context": None,
+                "telemetry": None,
+                "reason": "session_not_resident",
+            }
         params: dict[str, object] = {"sessionId": session_id}
         if str(turn_id).strip():
             params["turnId"] = str(turn_id).strip()

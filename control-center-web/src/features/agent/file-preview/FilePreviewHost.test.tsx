@@ -1,41 +1,48 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { StrictMode } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { StubControlTransport } from '@/test/stub-control-transport';
 import { AgentFileBlock } from './AgentFileBlock';
 import { FilePreviewHost } from './FilePreviewHost';
+import { RichHtmlPreview } from './RichHtmlPreview';
 import { useFilePreviewStore } from './file-preview-store';
 
 afterEach(() => {
   cleanup();
   useFilePreviewStore.getState().reset();
+  delete window.webkit;
+  vi.restoreAllMocks();
 });
 
 describe('file preview interaction', () => {
   it('renders an explicit HTML artifact as a sandboxed managed report preview', async () => {
     const content = '<!doctype html><h1>项目介绍</h1><script>window.pwned = true</script>';
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL');
     const transport = new StubControlTransport('mock', {
       'agent.media.preview': htmlPreview(content),
     });
     const user = userEvent.setup();
     render(
-      <TooltipProvider>
-        <ControlTransportProvider transport={transport}>
-          <AgentFileBlock
-            data={{
-              mediaId: MEDIA_ID,
-              fileName: 'project-intro.html',
-              mimeType: 'text/html',
-              byteSize: new TextEncoder().encode(content).byteLength,
-              sha256: SHA256,
-            }}
-            sessionId={SESSION_ID}
-          />
-          <FilePreviewHost />
-        </ControlTransportProvider>
-      </TooltipProvider>,
+      <StrictMode>
+        <TooltipProvider>
+          <ControlTransportProvider transport={transport}>
+            <AgentFileBlock
+              data={{
+                mediaId: MEDIA_ID,
+                fileName: 'project-intro.html',
+                mimeType: 'text/html',
+                byteSize: new TextEncoder().encode(content).byteLength,
+                sha256: SHA256,
+              }}
+              sessionId={SESSION_ID}
+            />
+            <FilePreviewHost />
+          </ControlTransportProvider>
+        </TooltipProvider>
+      </StrictMode>,
     );
 
     expect(screen.getByText('HTML 报告')).toBeInTheDocument();
@@ -46,8 +53,9 @@ describe('file preview interaction', () => {
     const frame = within(dialog).getByTitle('project-intro.html 交互预览');
     expect(frame.getAttribute('sandbox')).toContain('allow-scripts');
     expect(frame.getAttribute('sandbox')).toContain('allow-forms');
-    expect(frame.getAttribute('src')).toMatch(/^blob:/u);
-    expect(frame).not.toHaveAttribute('srcdoc');
+    expect(frame.getAttribute('srcdoc')).toContain('<h1>项目介绍</h1>');
+    expect(frame).not.toHaveAttribute('src');
+    expect(createObjectUrl).not.toHaveBeenCalled();
   });
 
   it('expands a managed Markdown file in its message instead of opening a dialog', async () => {
@@ -86,6 +94,29 @@ describe('file preview interaction', () => {
 
     await user.click(screen.getByRole('button', { name: '收起 acceptance.md' }));
     expect(screen.queryByRole('region', { name: 'acceptance.md 内联预览' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the Blob transport for the native WebKit host', () => {
+    window.webkit = {
+      messageHandlers: {
+        ragImeNativeBridge: { postMessage: () => undefined },
+      },
+    };
+    const revoked: string[] = [];
+    let sequence = 0;
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:native-report-${sequence += 1}`);
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation((url) => { revoked.push(url); });
+
+    render(
+      <StrictMode>
+        <RichHtmlPreview content="<h1>原生报告</h1>" title="native-report.html" />
+      </StrictMode>,
+    );
+
+    const frame = screen.getByTitle('native-report.html 交互预览');
+    expect(frame.getAttribute('src')).toMatch(/^blob:native-report-/u);
+    expect(frame).not.toHaveAttribute('srcdoc');
+    expect(revoked).not.toContain(frame.getAttribute('src'));
   });
 
   it('keeps a file disabled when no authoritative parent session is available', () => {

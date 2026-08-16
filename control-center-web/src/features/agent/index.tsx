@@ -485,8 +485,11 @@ function AgentWorkspace() {
             useAgentLiveStore.getState().hydrate(selectedId, value);
           }
         };
-        hydrateSnapshotResponse(snapshotResponse);
-        if (isRecentAgentSnapshot(snapshotResponse)) {
+        const recentSnapshot = isRecentAgentSnapshot(snapshotResponse);
+        if (!recentSnapshot || recentAgentSnapshotIsPresentable(snapshotResponse)) {
+          hydrateSnapshotResponse(snapshotResponse);
+        }
+        if (recentSnapshot) {
           setContextSnapshot({
             sessionId: selectedId,
             state: 'restoring',
@@ -1943,6 +1946,19 @@ function isRecentAgentSnapshot(value: unknown): boolean {
   return isRecord(value)
     && value.snapshotScope === 'recent'
     && value.partial === true;
+}
+
+function recentAgentSnapshotIsPresentable(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const status = typeof value.status === 'string' ? value.status : '';
+  if (status === 'active' || status === 'busy') return true;
+  const items = Array.isArray(value.items)
+    ? value.items
+    : Array.isArray(value.messages)
+      ? value.messages
+      : [];
+  const last = items.at(-1);
+  return !(isRecord(last) && last.role === 'user');
 }
 function conversationNodeText(blocks: Array<{ type: string; data: Record<string, unknown> }>): string {
   const value = blocks.map((block) => {

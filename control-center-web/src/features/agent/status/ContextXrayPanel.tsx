@@ -121,10 +121,11 @@ export function ContextXraySections({
     refetchInterval: open && expanded ? 3_000 : false,
     retry: false,
   });
-  const snapshot = useMemo(
-    () => buildContextXraySnapshot(normalizeDebugContextResponse(query.data)),
+  const response = useMemo(
+    () => normalizeDebugContextResponse(query.data),
     [query.data],
   );
+  const snapshot = useMemo(() => buildContextXraySnapshot(response), [response]);
   const presentCount = snapshot.layers.filter((layer) => layer.state === 'present').length;
   const deliveredCount = snapshot.layers.filter((layer) => layer.providerDelivery === 'delivered').length;
 
@@ -132,7 +133,7 @@ export function ContextXraySections({
     <section className="agent-status-section agent-context-xray">
       <header>
         <ScanSearch size={15} />
-        <strong>Context X-ray</strong>
+        <strong>上下文检查</strong>
         {snapshot.available ? <span>{presentCount}</span> : null}
       </header>
       <button
@@ -160,7 +161,11 @@ export function ContextXraySections({
             </XrayNotice>
           ) : null}
           {!query.isPending && !query.error && !snapshot.available ? (
-            <XrayNotice>这轮尚未形成可核对的上下文快照</XrayNotice>
+            <XrayNotice>
+              {response.error === 'session_not_resident'
+                ? '该 Session 当前未驻留；上下文检查不会为诊断强制唤醒它'
+                : '这轮尚未形成可核对的上下文快照'}
+            </XrayNotice>
           ) : null}
           {snapshot.available ? (
             <>

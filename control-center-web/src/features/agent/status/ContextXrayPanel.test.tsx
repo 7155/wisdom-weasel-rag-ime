@@ -25,6 +25,7 @@ describe('ContextXraySections', () => {
       </ControlTransportProvider>,
     );
 
+    expect(screen.getByText('上下文检查')).toBeVisible();
     await user.click(screen.getByRole('button', { name: /查看上下文检查/ }));
 
     const layers = await screen.findByRole('list', { name: '上下文分层指标' });
@@ -64,6 +65,7 @@ describe('ContextXraySections', () => {
         transient: true,
         context: null,
         telemetry: null,
+        reason: 'session_not_resident',
       },
     });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -77,7 +79,7 @@ describe('ContextXraySections', () => {
     );
 
     await user.click(screen.getByRole('button', { name: /查看上下文检查/ }));
-    expect(await screen.findByText('这轮尚未形成可核对的上下文快照')).toBeVisible();
+    expect(await screen.findByText('该 Session 当前未驻留；上下文检查不会为诊断强制唤醒它')).toBeVisible();
     expect(screen.queryByRole('list', { name: '上下文分层指标' })).not.toBeInTheDocument();
   });
 });

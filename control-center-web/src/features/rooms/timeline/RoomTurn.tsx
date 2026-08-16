@@ -1741,7 +1741,7 @@ function RoomLaneTiming({
       </time>
       <span aria-hidden="true"> · {elapsedSeconds} 秒前</span>
     </span>
-    {freshness.state === 'fresh' ? null : <small data-state={freshness.state}>
+    {freshness.state === 'fresh' || endedAtMs !== undefined ? null : <small data-state={freshness.state}>
       {freshness.detail}
     </small>}
     <RoomElapsed

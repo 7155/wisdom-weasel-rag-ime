@@ -7,15 +7,18 @@ import { useLayoutEffect, useState } from 'react';
  * the native host. Keep the authored document intact and move only its
  * transport to the CSP-owned blob channel.
  */
-export function useRichHtmlUrl(document: string): string {
+export function useRichHtmlUrl(document: string, enabled = true): string {
   const [url, setUrl] = useState('');
   useLayoutEffect(() => {
-    if (typeof URL.createObjectURL !== 'function') return undefined;
+    if (!enabled || typeof URL.createObjectURL !== 'function') {
+      setUrl('');
+      return undefined;
+    }
     const next = URL.createObjectURL(new Blob([document], { type: 'text/html;charset=utf-8' }));
     setUrl(next);
     return () => {
       URL.revokeObjectURL(next);
     };
-  }, [document]);
+  }, [document, enabled]);
   return url;
 }
