@@ -444,6 +444,7 @@ class RoomParticipantLifecycleService:
             if mode == "coordinator"
             else []
         )
+        project_context_enabled = bool(workspace_roots)
         execution_mode = normalize_execution_mode(
             room.get("executionMode"),
             default=(
@@ -464,6 +465,8 @@ class RoomParticipantLifecycleService:
             and session.get("toolAllowlistMode") == "profile"
             and list(session.get("workspaceRoots") or [])
             == workspace_roots
+            and bool(session.get("projectContextEnabled"))
+            == project_context_enabled
             and (
                 execution_mode
                 not in {
@@ -485,6 +488,7 @@ class RoomParticipantLifecycleService:
                 FULL_TRUST_EXECUTION_MODE,
             },
             allowed_tools=None,
+            project_context_enabled=project_context_enabled,
             workspace_roots=workspace_roots,
         )
 
@@ -527,6 +531,11 @@ def _session_payload(
             else PER_ACTION_EXECUTION_MODE
         ),
     )
+    workspace_roots = (
+        list(room.get("workspaceRoots") or [])
+        if mode == "coordinator"
+        else []
+    )
     return {
         "title": (
             f"{room['title']} · "
@@ -545,9 +554,8 @@ def _session_payload(
             WORKSPACE_MANAGED_EXECUTION_MODE,
             FULL_TRUST_EXECUTION_MODE,
         },
-        "workspaceRoots": list(
-            room.get("workspaceRoots") or []
-        ),
+        "projectContextEnabled": bool(workspace_roots),
+        "workspaceRoots": workspace_roots,
     }
 
 

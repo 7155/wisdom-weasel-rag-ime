@@ -195,12 +195,13 @@
 .agent-user-message,
 .room-user-message {
   width: fit-content;
-  max-width: min(76%, 690px);
-  padding: 10px 14px;
-  border: 0;
-  border-radius: 12px 12px 4px 12px;
-  background: color-mix(in srgb, var(--color-info-soft) 62%, var(--color-paper));
+  max-width: min(76%, 680px);
+  padding: 10px 15px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 14px 14px 4px 14px;
+  background: var(--color-surface-hover);
   color: var(--color-text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
   overflow-wrap: anywhere;
 }
 
@@ -364,7 +365,7 @@
   gap: 3px;
 }
 
-\.agent-composer__send,
+.agent-composer__send,
 .room-composer__send {
   display: grid;
   width: 34px;
@@ -464,27 +465,29 @@
   background: var(--color-paper-subtle);
 }
 
-/* Composer: part of the sheet, not a glass pill floating over it. Soft edge,
-   faint lift, just enough translucency to admit the scrolled page beneath. */
+/* Composer: refined floating island dock with glassmorphic backdrop filter and subtle border */
 .agent-composer,
 .room-composer {
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-soft);
   border-radius: var(--radius-3);
-  background: var(--color-paper);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%), var(--shadow-1);
+  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard);
 }
 
 .agent-composer:focus-within,
 .room-composer:focus-within {
-  border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 9%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+  box-shadow: 0 6px 28px -4px rgba(0, 0, 0, 0.12), 0 0 0 2px color-mix(in srgb, var(--color-accent) 20%, transparent);
 }
 
 .agent-composer-wrap,
 .room-composer-cluster {
   width: min(100%, var(--workspace-measure));
   margin-inline: auto;
-  padding: 6px var(--workspace-gutter) 10px;
+  padding: 8px var(--workspace-gutter) 16px;
 }
 
 .room-context-bar {

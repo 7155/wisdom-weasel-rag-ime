@@ -18,6 +18,7 @@ SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE="${RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE:-
 SQUIRREL_STACK_TEMP_ROOT=""
 SQUIRREL_STACK_WORKDIR=""
 SQUIRREL_STACK_DERIVED_DATA=""
+WEB_SUITE_VERIFIED=0
 if [[ "${RAG_IME_SQUIRREL_WORKDIR+x}" == "x" ]]; then
   SQUIRREL_WORKDIR_OVERRIDE_SET=1
   SQUIRREL_WORKDIR_OVERRIDE="$RAG_IME_SQUIRREL_WORKDIR"
@@ -257,6 +258,7 @@ RAG_IME_INSTALL_AGENT_GATEWAY=0 \
 
 if [[ -f "$APP_SUPPORT_DIR/PiRuntime/current.json" ]]; then
   "$ROOT/scripts/install_agent_gateway_launch_agent.sh"
+  WEB_SUITE_VERIFIED=1
   required+=(--require piRuntime)
 else
   if [[ "$INCLUDE_PI" == "1" ]]; then
@@ -282,7 +284,16 @@ fi
 
 # Install the user-visible app last so its marker becomes the canonical product
 # generation only after the supporting runtimes have been refreshed.
-"$ROOT/scripts/build_control_center_web_host.sh" install-release
+if [[ "$WEB_SUITE_VERIFIED" == "1" ]]; then
+  # Gateway just ran the full frontend suite for this installer invocation.
+  # The native transport still gets its own Vite build and dist validation,
+  # but does not reinstall dependencies or rerun the same long test suite.
+  RAG_IME_SKIP_WEB_INSTALL=1 \
+  RAG_IME_SKIP_WEB_TESTS=1 \
+    "$ROOT/scripts/build_control_center_web_host.sh" install-release
+else
+  "$ROOT/scripts/build_control_center_web_host.sh" install-release
+fi
 
 "$ROOT/scripts/check_installed_product_components.py" \
   --repo-root "$ROOT" \

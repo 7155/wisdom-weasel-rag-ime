@@ -35,12 +35,42 @@ esac
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
+
+source_signature() {
+  {
+    git -C "$ROOT" rev-parse HEAD
+    git -C "$ROOT" diff --binary --no-ext-diff HEAD --
+    while IFS= read -r -d '' file; do
+      printf 'untracked:%s\n' "$file"
+      if [[ -L "$ROOT/$file" ]]; then
+        printf 'symlink:%s\n' "$(readlink "$ROOT/$file")"
+      elif [[ -f "$ROOT/$file" ]]; then
+        shasum -a 256 < "$ROOT/$file"
+      else
+        printf 'missing\n'
+      fi
+    done < <(git -C "$ROOT" ls-files --others --exclude-standard -z)
+  } | shasum -a 256 | awk '{print $1}'
+}
+
 SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+SOURCE_SIGNATURE="$(source_signature)"
 SOURCE_DIRTY="false"
-if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]]; then
+if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]]; then
   SOURCE_DIRTY="true"
 fi
 USE_VERIFIED_WEB_DIST="${RAG_IME_USE_VERIFIED_WEB_DIST:-0}"
+
+require_source_stable() {
+  local current_signature
+  current_signature="$(source_signature)"
+  if [[ "$current_signature" == "$SOURCE_SIGNATURE" ]]; then
+    return 0
+  fi
+  rm -rf "$APP"
+  echo "source changed during Control Center build; refusing to install a mixed app" >&2
+  exit 75
+}
 
 if [[ "$FRONTEND_CHANNEL" == "production" && "${RAG_IME_SKIP_WEB_BUILD:-0}" == "1" ]]; then
   echo "release builds cannot reuse a pre-existing control-center dist" >&2
@@ -57,6 +87,8 @@ if [[ "$USE_VERIFIED_WEB_DIST" == "0" && "${RAG_IME_SKIP_WEB_BUILD:-0}" != "1" ]
   RAG_IME_CONTROL_BUILD_CHANNEL="$FRONTEND_CHANNEL" \
     "$ROOT/scripts/build_control_center_web.sh" >/dev/null
 fi
+
+require_source_stable
 
 [[ -f "$WEB/dist/index.html" ]] || {
   echo "missing control-center-web/dist/index.html" >&2
@@ -94,6 +126,8 @@ xcrun swiftc \
   -framework WebKit \
   "${swift_files[@]}" \
   -o "$MACOS/$EXECUTABLE"
+
+require_source_stable
 
 python3 - "$RESOURCES/rag-ime-control-web-build-marker.json" "$ROOT" "$BUNDLE_ID" "$CHANNEL" "$FRONTEND_CHANNEL" "$SOURCE_DIRTY" <<'PY'
 import json

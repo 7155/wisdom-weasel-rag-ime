@@ -560,7 +560,7 @@ export function AgentTurn({
       {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user forkAvailable={forkAvailable} rewriteAvailable={rewriteAvailable} historyTarget={activeTargetId === messageId} onForkFromMessage={onForkFromMessage} onEditMessage={onEditMessage} />)}
       {assistantMessages.length > 0 || activities.length > 0 || failure || showWorking ? (
         <div className="agent-assistant-turn">
-          <PersonaAvatar fallbackName={assistantName} persona={persona} presence={showWorking ? 'thinking' : presence} />
+          <PersonaAvatar fallbackName={assistantName} persona={persona} presence={showWorking ? 'thinking' : presence} size="small" />
           <div className="agent-assistant-turn__body">
             <header><strong>{persona?.displayName ?? assistantName}</strong><span>{showWorking ? (stopping ? '正在停止' : '正在处理') : turnStatusLabel(turn.status)}</span></header>
             {showWorking ? <AssistantWorkingState activities={activities} startedAtMs={turn.createdAtMs} stopping={stopping} /> : null}
@@ -925,41 +925,39 @@ function ActivityGroupView({
   onOpenApproval?: (activity: AgentActivityProjection) => void;
   onRequestPermission?: () => void;
 }) {
-  type ActivitySegment =
-    | { kind: 'compaction'; activity: AgentActivityProjection }
-    | { kind: 'reasoning' | 'ordinary'; activities: AgentActivityProjection[] };
-  const segments: ActivitySegment[] = [];
+  const compactions: AgentActivityProjection[] = [];
+  const reasonings: AgentActivityProjection[] = [];
+  const ordinaries: AgentActivityProjection[] = [];
+
   for (const activity of activities) {
     if (activity.kind === 'context_compaction') {
-      segments.push({ kind: 'compaction', activity });
-      continue;
+      compactions.push(activity);
+    } else if (activity.kind === 'reasoning_summary') {
+      reasonings.push(activity);
+    } else {
+      if (isAgentTodoActivity(activity) && activity.status !== 'failed') continue;
+      ordinaries.push(activity);
     }
-    if (isAgentTodoActivity(activity) && activity.status !== 'failed') continue;
-    const kind = activity.kind === 'reasoning_summary' ? 'reasoning' : 'ordinary';
-    const previous = segments.at(-1);
-    if (previous && previous.kind === kind) previous.activities.push(activity);
-    else segments.push({ kind, activities: [activity] });
   }
+
   return (
     <>
-      {segments.map((segment) => {
-        if (segment.kind === 'compaction') {
-          return <ContextCompactionNotice key={segment.activity.id} activity={segment.activity} />;
-        }
-        if (segment.kind === 'reasoning') {
-          return <ReasoningActivitySummary key={`reasoning:${segment.activities[0]?.id}`} activities={segment.activities} />;
-        }
-        return (
-          <ActivitySummary
-            key={`ordinary:${segment.activities[0]?.id}`}
-            activities={segment.activities}
-            inline
-            onApprovalDecision={onApprovalDecision}
-            onOpenApproval={onOpenApproval}
-            onRequestPermission={onRequestPermission}
-          />
-        );
-      })}
+      {compactions.map((activity) => (
+        <ContextCompactionNotice key={activity.id} activity={activity} />
+      ))}
+      {reasonings.length > 0 ? (
+        <ReasoningActivitySummary key={`reasoning:${reasonings[0]?.id}`} activities={reasonings} />
+      ) : null}
+      {ordinaries.length > 0 ? (
+        <ActivitySummary
+          key={`ordinary:${ordinaries[0]?.id}`}
+          activities={ordinaries}
+          inline
+          onApprovalDecision={onApprovalDecision}
+          onOpenApproval={onOpenApproval}
+          onRequestPermission={onRequestPermission}
+        />
+      ) : null}
     </>
   );
 }

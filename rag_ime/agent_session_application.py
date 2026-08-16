@@ -167,6 +167,16 @@ class AgentSessionApplicationService:
             workspace_roots = [str(item) for item in roots_value]
         else:
             raise ValueError("workspaceRoots must be an array")
+        for boolean_key in (
+            "projectContextEnabled",
+            "piSkillsEnabled",
+            "codexSkillsEnabled",
+        ):
+            if (
+                boolean_key in payload
+                and not isinstance(payload.get(boolean_key), bool)
+            ):
+                raise ValueError(f"{boolean_key} must be a boolean")
         internal_scope_grant = payload.get("_internalWorkspaceScopeGrant") is True
         if requested_execution_mode == WORKSPACE_MANAGED_EXECUTION_MODE and not (
             internal_scope_grant
@@ -208,6 +218,13 @@ class AgentSessionApplicationService:
             thinking_level=thinking_level,
             tool_profile_version=requested_tool_profile,
             execution_mode=requested_execution_mode,
+            project_context_enabled=bool(
+                payload.get("projectContextEnabled", False)
+            ),
+            pi_skills_enabled=bool(payload.get("piSkillsEnabled", False)),
+            codex_skills_enabled=bool(
+                payload.get("codexSkillsEnabled", False)
+            ),
             workspace_roots=workspace_roots,
         )
         return {

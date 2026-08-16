@@ -33,8 +33,6 @@ import {
   nextEnabledCommandIndex,
   type ComposerCommand,
 } from './command-catalog';
-import type { ContextResourceSelection } from '../context-resource-profile';
-import { ContextResourcesPicker } from './ContextResourcesPicker';
 import { ModelPicker } from './ModelPicker';
 import { PermissionPicker } from './PermissionPicker';
 import { ToolPicker } from './ToolPicker';
@@ -89,14 +87,12 @@ export function AgentComposer({
   onCancelEdit,
   onPermissionChange,
   onWorkspaceRootsChange,
-  onContextResourcesChange = () => {},
   onModelChange,
   modelPickerRequest = 0,
   permissionPickerRequest = 0,
   toolPickerRequest = 0,
   helpRequest = 0,
   imageSupport = 'unknown',
-  contextResourcesChanging = false,
   showJumpLatest = false,
   onJumpLatest,
 }: {
@@ -130,14 +126,12 @@ export function AgentComposer({
   onCancelEdit?: () => void;
   onPermissionChange: (selection: AgentPermissionSelection) => void;
   onWorkspaceRootsChange: () => void;
-  onContextResourcesChange?: (selection: ContextResourceSelection) => void;
   onModelChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
   modelPickerRequest?: number;
   permissionPickerRequest?: number;
   toolPickerRequest?: number;
   helpRequest?: number;
   imageSupport?: 'supported' | 'unsupported' | 'unknown';
-  contextResourcesChanging?: boolean;
   showJumpLatest?: boolean;
   onJumpLatest?: () => void;
 }) {
@@ -193,8 +187,7 @@ export function AgentComposer({
     session
     && (composerDraft.trim() || attachments.length)
     && !sending
-    && !modelChanging
-    && !contextResourcesChanging,
+    && !modelChanging,
   );
   function publishDraft(value: string): void {
     // The textarea owns keystroke latency; the parent only needs a deferred
@@ -430,12 +423,6 @@ export function AgentComposer({
               tooltip
             />
             <PermissionPicker session={session} persona={persona} tools={tools} disabled={busy || sending} requestOpen={permissionPickerRequest} onChange={onPermissionChange} onWorkspaceRootsChange={onWorkspaceRootsChange} />
-            <ContextResourcesPicker
-              session={session}
-              disabled={busy || sending}
-              pending={contextResourcesChanging}
-              onChange={onContextResourcesChange}
-            />
             <ToolPicker
               adjustmentDisabled={busy || sending}
               capabilityCatalog={capabilityCatalog}

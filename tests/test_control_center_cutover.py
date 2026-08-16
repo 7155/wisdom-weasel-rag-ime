@@ -87,6 +87,15 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("install_desktop_bridge_launch_agent.sh", installer)
         self.assertIn("--require desktopBridge", installer)
         self.assertIn("install_agent_gateway_launch_agent.sh", installer)
+        self.assertIn("WEB_SUITE_VERIFIED=0", installer)
+        self.assertIn("WEB_SUITE_VERIFIED=1", installer)
+        self.assertIn('if [[ "$WEB_SUITE_VERIFIED" == "1" ]]', installer)
+        self.assertIn("RAG_IME_SKIP_WEB_INSTALL=1", installer)
+        self.assertIn("RAG_IME_SKIP_WEB_TESTS=1", installer)
+        self.assertLess(
+            installer.index("WEB_SUITE_VERIFIED=1"),
+            installer.index("RAG_IME_SKIP_WEB_TESTS=1"),
+        )
         self.assertIn("build_managed_pi_runtime_v2.py", installer)
         self.assertIn("--pi-worktree", installer)
         self.assertIn("RAG_IME_PI_WORKTREE", installer)
@@ -220,6 +229,19 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("#/agent", view)
         self.assertIn('INSTALL_DEST="$HOME/Applications/RagImeControl.app"', build)
         self.assertIn("rag-ime-control-web-build-marker.json", build)
+        self.assertIn("source_signature()", build)
+        self.assertIn('SOURCE_SIGNATURE="$(source_signature)"', build)
+        self.assertEqual(build.count("require_source_stable"), 3)
+        self.assertIn(
+            "source changed during Control Center build; refusing to install a mixed app",
+            build,
+        )
+        self.assertLess(
+            build.rindex("require_source_stable"),
+            build.index(
+                'python3 - "$RESOURCES/rag-ime-control-web-build-marker.json"'
+            ),
+        )
         self.assertIn("lsregister", build)
         self.assertIn('PROCESS_PATTERN="/Contents/MacOS/$EXECUTABLE([[:space:]]|$)"', build)
         self.assertIn('pkill -TERM -f "$PROCESS_PATTERN"', build)

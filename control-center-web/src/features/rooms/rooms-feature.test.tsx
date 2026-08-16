@@ -3030,7 +3030,7 @@ describe('Rooms experience', () => {
 
     expect(lane).not.toHaveAttribute('open');
     expect(work).toHaveTextContent('入口已修改，正在核对调用方');
-    expect(work).toHaveTextContent('3 个步骤');
+    expect(work).toHaveTextContent('3 条运行记录');
     expect(work).toHaveTextContent('澄');
     await user.click(lane.querySelector('summary')!);
     expect(lane).toHaveAttribute('open');
@@ -3291,7 +3291,8 @@ describe('Rooms experience', () => {
     expect(lane).toHaveAttribute('data-state', 'completed');
     expect(lane.querySelector('.room-agent-lane__identity')).toHaveTextContent('已完成');
     expect(lane.querySelector('.room-agent-lane__identity')).not.toHaveTextContent('执行中');
-    expect(screen.getByText('这轮协作已完成')).toBeInTheDocument();
+    expect(screen.getByText('这轮回复已结束')).toBeInTheDocument();
+    expect(screen.queryByText('这轮协作已完成')).not.toBeInTheDocument();
   });
 
   it('marks only a live Root terminal transition as an arriving collaboration result', () => {
@@ -3575,7 +3576,8 @@ describe('Rooms experience', () => {
       terminalParticipantIds: ['room-a:p1'],
       failedParticipantIds: [],
     });
-    expect(screen.getByText('这轮协作已完成')).toBeInTheDocument();
+    expect(screen.getByText('这轮回复已结束')).toBeInTheDocument();
+    expect(screen.queryByText('这轮协作已完成')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '停止本轮任务' })).not.toBeInTheDocument();
   });
 

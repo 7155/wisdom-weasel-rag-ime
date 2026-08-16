@@ -1298,6 +1298,15 @@ function roomTurnOutcome(
       ? '本轮没有产生伙伴公开汇报。'
       : '';
   if (state === 'completed') {
+    if (publicReportCount === 0) {
+      return {
+        state,
+        title: '这轮回复已结束',
+        detail: lanes.length > 1
+          ? `${lanes.length} 位伙伴的运行回合已结束，但没有提交结构化交付回执。`
+          : '本轮只结束了伙伴的 Pi 回合，没有提交结构化交付回执；若这是执行任务，不能视为已经完成。',
+      };
+    }
     const workDetail = lanes.length > 0 ? `${lanes.length} 项分工已经收束。` : '';
     return {
       state,
@@ -1371,19 +1380,19 @@ function roomActivityDigest(
     return result;
   }, { running: 0, waiting: 0, failed: 0, aborted: 0, completed: 0 });
   const states = [
-    counts.running ? `${counts.running} 个进行中` : '',
-    counts.waiting ? `${counts.waiting} 个等待处理` : '',
-    counts.failed ? `${counts.failed} 个未完成` : '',
-    counts.aborted ? `${counts.aborted} 个已停止` : '',
+    counts.running ? `${counts.running} 条进行中` : '',
+    counts.waiting ? `${counts.waiting} 条等待处理` : '',
+    counts.failed ? `${counts.failed} 条未完成` : '',
+    counts.aborted ? `${counts.aborted} 条已停止` : '',
     !counts.running && !counts.waiting && !counts.failed && !counts.aborted
-      ? '所有步骤已返回'
+      ? '所有运行记录已返回'
       : counts.completed
-        ? `${counts.completed} 个步骤已返回`
+        ? `${counts.completed} 条已返回`
         : '',
   ].filter(Boolean);
   return {
     title,
-    detail: `${activities.length} 个步骤 · ${states.join(' · ')}`,
+    detail: `${activities.length} 条运行记录 · ${states.join(' · ')}`,
   };
 }
 

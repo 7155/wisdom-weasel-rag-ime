@@ -1031,10 +1031,14 @@ class AgentRoomServiceTests(unittest.TestCase):
             }
         )["room"]
         session_id = str(room["participants"][0]["sessionId"])
+        self.assertTrue(
+            self.service.sessions.get(session_id)["projectContextEnabled"]
+        )
         self.service.sessions.set_runtime_policy(
             session_id,
             mode="assistant",
             tool_profile_version="subagent-readonly-v1",
+            project_context_enabled=False,
             allowed_tools=["overview"],
             workspace_roots=[],
         )
@@ -1047,6 +1051,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(session["toolAllowlistMode"], "profile")
         self.assertEqual(session["allowedTools"], [])
         self.assertEqual(session["workspaceRoots"], [str(self.root.resolve())])
+        self.assertTrue(session["projectContextEnabled"])
 
     def test_room_snapshot_does_not_revoke_an_active_task_workspace(self) -> None:
         room = self.service.create_room(
@@ -1315,7 +1320,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             self.service,
             "prompt",
             return_value={"turnId": "turn:role-book"},
-        ):
+        ) as prompt:
             accepted = self.service.post_room_message(
                 str(room["id"]),
                 {"message": "时序数据库性能"},
@@ -1323,6 +1328,11 @@ class AgentRoomServiceTests(unittest.TestCase):
 
         self.assertEqual(accepted["participant"]["id"], facilitator["id"])
         self.assertEqual(accepted["routeDecision"]["reason"], "facilitator")
+        facilitator_context = str(
+            prompt.call_args.args[1].get("_transientContext") or ""
+        )
+        self.assertIn("skill_load 加载 facilitate-room", facilitator_context)
+        self.assertIn("room_partner", facilitator_context)
         evidence = self.service.memory_evidence.list(
             role_id=str(facilitator["roleId"]),
             session_id=str(facilitator["sessionId"]),

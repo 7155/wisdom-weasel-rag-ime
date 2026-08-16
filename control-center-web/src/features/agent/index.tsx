@@ -23,7 +23,6 @@ import { AgentStatusPanel } from './status/AgentStatusPanel';
 import { AgentFilesPanel } from './workspace/AgentFilesPanel';
 import { useMediaQuery, useModalPanel } from './overlay-dialog';
 import { agentProjection, useAgentLiveStore } from './state/live-store';
-import { useContextResourceController } from './state/use-context-resource-controller';
 import { useModelSelectionController } from './state/use-model-selection-controller';
 import { useSessionComposerInputs } from './state/use-session-composer-inputs';
 import { AgentTimeline } from './timeline/AgentTimeline';
@@ -165,21 +164,8 @@ function AgentWorkspace() {
     errorText,
   });
   const modelChanging = modelSelection.changingSessionIds.has(selectedId);
-  const contextResources = useContextResourceController({
-    transport,
-    updateSession: (updated) => {
-      setSessions((current) => current.map((item) => (
-        item.id === updated.id
-          ? { ...item, ...updated, roomParticipant: updated.roomParticipant ?? item.roomParticipant }
-          : item
-      )));
-    },
-    setSessionError,
-    errorText,
-  });
   const stopping = stoppingSessionIds.has(selectedId);
   const rewriteResolving = rewriteResolvingSessionIds.has(selectedId);
-  const contextResourcesChanging = contextResources.changingSessionIds.has(selectedId);
   const capabilityPolicyMutation = capabilityPolicyMutations.get(selectedId);
   const capabilityPolicyPending = capabilityPolicyMutation?.status === 'pending';
 
@@ -812,7 +798,7 @@ function AgentWorkspace() {
     requestedDelivery: AgentMessageDelivery = busy ? 'steer' : 'prompt',
     composerDraft = draft,
   ): Promise<void> {
-    if (!session || sending || modelChanging || contextResourcesChanging) return;
+    if (!session || sending || modelChanging) return;
     const sendStartedAt = monotonicNow();
     const delivery: AgentMessageDelivery = busy
       ? (requestedDelivery === 'followUp' ? 'followUp' : 'steer')
@@ -1804,7 +1790,6 @@ function AgentWorkspace() {
             capabilityPolicyPending={capabilityPolicyPending}
             catalog={catalog}
             commands={commands}
-            contextResourcesChanging={contextResourcesChanging}
             draft={draft}
             editState={editTarget}
             helpRequest={helpRequest}
@@ -1823,7 +1808,6 @@ function AgentWorkspace() {
             onAttachmentsChange={setSelectedAttachments}
             onCancelEdit={cancelEdit}
             onCapabilityPreferenceChange={(canonicalId, preference) => void changeCapabilityPreference(canonicalId, preference)}
-            onContextResourcesChange={(selection) => contextResources.select(session, selection)}
             onDraftChange={persistSelectedDraft}
             onEditPrevious={() => void beginEditMessage()}
             onJumpLatest={() => setScrollToLatestRequest((current) => current + 1)}

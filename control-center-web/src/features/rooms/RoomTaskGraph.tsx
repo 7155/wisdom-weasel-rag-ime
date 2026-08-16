@@ -98,7 +98,7 @@ export function RoomTaskGraph({
     <header className="room-task-flow__header">
       <span>
         <strong>任务图</strong>
-        <small>显示共同目标、实际分工、接续关系和结果状态；没有关系数据时不会猜测依赖。</small>
+        <small>展示共同目标、分工执行与当前交付进展。</small>
       </span>
       <div
         aria-label={`${nodes.length} 项工作，${completeCount} 项已完成`}

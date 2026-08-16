@@ -716,6 +716,7 @@ def _participant_session_payload(
             WORKSPACE_MANAGED_EXECUTION_MODE,
             FULL_TRUST_EXECUTION_MODE,
         },
+        "projectContextEnabled": bool(plan.workspace_roots),
         "workspaceRoots": list(plan.workspace_roots),
     }
 

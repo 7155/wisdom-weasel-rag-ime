@@ -142,6 +142,16 @@ def room_participant_prompt(
     if work_item_lines:
         sections.extend(["", "当前工作卡片：", *work_item_lines])
     elif room_kind == "collaboration":
+        if role == "coordinator":
+            sections.extend(
+                [
+                    "",
+                    "当前职责：Room Facilitator。普通闲聊或一个连贯动作直接处理。"
+                    "当请求包含多个可独立验收步骤、需要不同专长，或并行处理能明显推进时，"
+                    "先用 skill_load 加载 facilitate-room，再按该 Skill 判断是否调用 "
+                    "room_partner list/delegate；不要为了凑伙伴数量机械委派。",
+                ]
+            )
         sections.extend(
             [
                 "",

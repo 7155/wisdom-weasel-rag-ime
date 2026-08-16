@@ -551,7 +551,7 @@ function ReasoningSummaryStrip({
       <DialogContent className="agent-activity-dialog agent-reasoning-dialog">
         <DialogHeader>
           <DialogTitle>{running ? '正在思考' : '思考摘要'}</DialogTitle>
-          <DialogDescription>仅显示 Provider 允许公开的限长摘要；时间线保持单行，避免流式更新引起跳动。</DialogDescription>
+          <DialogDescription>本轮思考过程与规划摘要。</DialogDescription>
         </DialogHeader>
         <ReasoningSummaryDetails items={items} />
       </DialogContent>
