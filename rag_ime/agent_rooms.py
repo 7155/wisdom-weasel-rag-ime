@@ -1772,6 +1772,38 @@ class AgentRoomStore:
                 """,
                 (room_id, ROOM_SNAPSHOT_EVENT_LIMIT),
             ).fetchall()
+            # The live snapshot is a projection input, not an arbitrary tail
+            # of the audit log.  Cutting through the middle of a Room turn can
+            # drop its user message and route decision while retaining later
+            # Partner messages.  A fresh UI would then misclassify those
+            # messages as unrouted and lose a final result that was visible
+            # before refresh.  Keep the normal bounded tail, but expand it to
+            # the start of the earliest turn already represented by that tail.
+            if event_rows:
+                leading_turn_id = str(event_rows[0]["turn_id"] or "")
+                if leading_turn_id:
+                    boundary_row = conn.execute(
+                        """
+                        SELECT COALESCE(MIN(sequence), 0) AS first_sequence
+                        FROM agent_room_events
+                        WHERE room_id = ? AND turn_id = ?
+                        """,
+                        (room_id, leading_turn_id),
+                    ).fetchone()
+                    turn_first_sequence = (
+                        int(boundary_row["first_sequence"])
+                        if boundary_row is not None
+                        else 0
+                    )
+                    if turn_first_sequence < int(event_rows[0]["sequence"]):
+                        event_rows = conn.execute(
+                            """
+                            SELECT * FROM agent_room_events
+                            WHERE room_id = ? AND sequence >= ?
+                            ORDER BY sequence ASC
+                            """,
+                            (room_id, turn_first_sequence),
+                        ).fetchall()
 
         room = _room_payload(
             room_row,

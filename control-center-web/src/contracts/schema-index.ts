@@ -5409,7 +5409,7 @@ export const contractSchemas = {
       },
       "events": {
         "type": "array",
-        "maxItems": 200,
+        "maxItems": 2000,
         "items": {
           "$ref": "#/$defs/event"
         }

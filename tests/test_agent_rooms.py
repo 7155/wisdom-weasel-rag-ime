@@ -438,6 +438,56 @@ class AgentRoomTests(unittest.TestCase):
         self.assertEqual(second_page["retainedFirstSequence"], 11)
         self.assertTrue(second_page["retainedPrefixTruncated"])
 
+    def test_snapshot_expands_a_tail_that_starts_inside_one_room_turn(self) -> None:
+        room = self.store.create(
+            title="完整回合快照",
+            routing_policy="moderator",
+            participants=[
+                self._participant("companion-present-v1", "澄"),
+                self._participant("companion-firstlight-v1", "Hermes"),
+            ],
+        )
+        room_id = str(room["id"])
+        turn_id = "room-turn:long"
+        self.store.append_event(
+            room_id=room_id,
+            event_type="user_message",
+            payload={"text": "请完成一次长回合"},
+            turn_id=turn_id,
+            created_at_ms=1,
+        )
+        for sequence in range(2, 252):
+            self.store.append_event(
+                room_id=room_id,
+                event_type="participant_delta",
+                payload={"data": {"delta": f"chunk-{sequence}"}},
+                turn_id=turn_id,
+                created_at_ms=sequence,
+            )
+        self.store.append_event(
+            room_id=room_id,
+            event_type="participant_message",
+            payload={"data": {"message": {"id": "message:final"}}},
+            turn_id=turn_id,
+            created_at_ms=252,
+        )
+        self.store.append_event(
+            room_id=room_id,
+            event_type="turn_completed",
+            payload={"status": "completed"},
+            turn_id=turn_id,
+            created_at_ms=253,
+        )
+
+        snapshot = self.store.snapshot(room_id)
+
+        self.assertEqual(snapshot["firstSequence"], 1)
+        self.assertEqual(snapshot["lastSequence"], 253)
+        self.assertEqual(len(snapshot["events"]), 253)
+        self.assertEqual(snapshot["events"][0]["eventType"], "user_message")
+        self.assertEqual(snapshot["events"][-1]["eventType"], "turn_completed")
+        self.assertFalse(snapshot["truncated"])
+
     def test_participant_public_cursor_prevents_reinjecting_old_room_messages(self) -> None:
         room = self.store.create(
             title="游标房间",
