@@ -82,6 +82,31 @@ describe('ContextXraySections', () => {
     expect(await screen.findByText('该 Session 当前未驻留；上下文检查不会为诊断强制唤醒它')).toBeVisible();
     expect(screen.queryByRole('list', { name: '上下文分层指标' })).not.toBeInTheDocument();
   });
+
+  it('ends a slow Runtime diagnostic as unavailable instead of implying the Session is blocked', async () => {
+    const transport = new StubControlTransport('mock', {
+      'agent.session.debugContext.get': {
+        available: false,
+        transient: true,
+        context: null,
+        telemetry: null,
+        reason: 'runtime_unresponsive',
+      },
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    render(
+      <ControlTransportProvider transport={transport}>
+        <QueryClientProvider client={client}>
+          <ContextXraySections sessionId="session-slow-xray" open />
+        </QueryClientProvider>
+      </ControlTransportProvider>,
+    );
+
+    await user.click(screen.getByRole('button', { name: /查看上下文检查/ }));
+    expect(await screen.findByText('Runtime 未及时返回上下文快照；正常对话不会被诊断请求阻塞')).toBeVisible();
+    expect(transport.requests).toHaveLength(1);
+  });
 });
 
 describe('buildContextXraySnapshot', () => {

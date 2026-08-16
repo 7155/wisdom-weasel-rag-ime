@@ -307,6 +307,10 @@ for line in sys.stdin:
             "selectedText": selected["text"] if selected["role"] == "user" else "",
             "branchAnchor": params["entryId"], "snapshot": target, "evictedSessionId": None,
         })
+    elif method == "session.debug.context":
+        if os.environ.get("TEST_DEBUG_CONTEXT_HANG") == "1":
+            time.sleep(2)
+        result(request, {})
     elif method == "session.compact":
         result(request, {
             "summary": "用户要求角色每天整理主题书。",
@@ -2645,6 +2649,31 @@ class PiRuntimeV2Tests(unittest.TestCase):
             },
         )
         self.assertFalse((self.root / "agent" / "host-requests.jsonl").exists())
+
+    def test_debug_context_timeout_is_bounded_and_does_not_fail_the_session(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.config = replace(
+            self.runtime.config,
+            provider_environment={"TEST_DEBUG_CONTEXT_HANG": "1"},
+        )
+        self.runtime.ensure(session_id)
+        started = time.monotonic()
+        response = self.runtime.debug_context(session_id)
+
+        self.assertLess(time.monotonic() - started, 1.5)
+        self.assertEqual(
+            response,
+            {
+                "schemaVersion": "rag-ime.pi-debug-context-response.v1",
+                "sessionId": session_id,
+                "turnId": "",
+                "available": False,
+                "transient": True,
+                "context": None,
+                "telemetry": None,
+                "reason": "runtime_unresponsive",
+            },
+        )
 
     def test_idle_control_probe_closes_tool_loop_when_agent_settled_is_lost(self) -> None:
         session_id = str(self.first["id"])

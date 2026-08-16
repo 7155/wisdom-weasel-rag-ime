@@ -118,7 +118,10 @@ export function ContextXraySections({
       signal,
     }),
     enabled: open && expanded && Boolean(sessionId),
-    refetchInterval: open && expanded ? 3_000 : false,
+    // This panel is explicit diagnostics, not runtime state. Repeating a raw
+    // context request can compete with the active Session and turn an optional
+    // inspector into background load. Collapse/reopen to request a fresh view.
+    refetchInterval: false,
     retry: false,
   });
   const response = useMemo(
@@ -164,6 +167,8 @@ export function ContextXraySections({
             <XrayNotice>
               {response.error === 'session_not_resident'
                 ? '该 Session 当前未驻留；上下文检查不会为诊断强制唤醒它'
+                : response.error === 'runtime_unresponsive'
+                  ? 'Runtime 未及时返回上下文快照；正常对话不会被诊断请求阻塞'
                 : '这轮尚未形成可核对的上下文快照'}
             </XrayNotice>
           ) : null}

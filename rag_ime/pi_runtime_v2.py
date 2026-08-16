@@ -1432,7 +1432,28 @@ class PiRuntimeHostManager:
         params: dict[str, object] = {"sessionId": session_id}
         if str(turn_id).strip():
             params["turnId"] = str(turn_id).strip()
-        result = self._require_client().send("session.debug.context", params)
+        try:
+            result = self._require_client().send(
+                "session.debug.context",
+                params,
+                # Context inspection is optional observability. It must never
+                # inherit the ordinary command timeout and hold a control
+                # request open while a large or unhealthy Session is resident.
+                timeout=min(1.0, max(0.1, self.config.command_timeout_seconds)),
+            )
+        except PiRuntimeError as exc:
+            if "timed out: session.debug.context" not in str(exc):
+                raise
+            return {
+                "schemaVersion": "rag-ime.pi-debug-context-response.v1",
+                "sessionId": session_id,
+                "turnId": str(turn_id or "").strip(),
+                "available": False,
+                "transient": True,
+                "context": None,
+                "telemetry": None,
+                "reason": "runtime_unresponsive",
+            }
         return dict(result)
 
     def rewind_session(self, session_id: str, *, entry_id: str) -> dict[str, object]:
