@@ -9311,6 +9311,11 @@ def _tool_profile_allows(
                 "abort",
             }
         ),
+        # Formal Room delegation does not widen the workspace policy: the
+        # target remains an ordinary participant Session carrying the same
+        # read-only execution mode. Public progress/result posts are Room
+        # projection receipts, not source mutations.
+        "room_partner": frozenset({"list", "delegate", "post"}),
         "agent_schedule": frozenset({"list", "runs"}),
         "todo": frozenset(
             {"init", "start", "done", "drop", "append", "view", "rm"}

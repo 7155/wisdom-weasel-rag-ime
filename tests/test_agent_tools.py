@@ -1179,6 +1179,23 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
         self.assertTrue(room_partner["alwaysAvailable"])
 
+        read_only_session = self.store.create(
+            title="read-only Room coordinator",
+            mode="coordinator",
+            execution_mode="read_only",
+            workspace_roots=[self.tmp.name],
+            created_at_ms=2,
+        )
+        read_only_room_partner = next(
+            item
+            for item in gateway.runtime_manifests(read_only_session)
+            if item["name"] == "room_partner"
+        )
+        self.assertEqual(
+            read_only_room_partner["parameters"]["properties"]["op"]["enum"],
+            ["list", "delegate", "post"],
+        )
+
     def test_memory_capture_is_r0_and_does_not_create_an_approval(self) -> None:
         AgentMemorySourceStore(
             self.store.db_path,
