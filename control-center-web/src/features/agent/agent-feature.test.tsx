@@ -1825,7 +1825,11 @@ describe('Agent experience', () => {
 
     await user.click(screen.getByRole('button', { name: '记忆整理' }));
     const composerB = await screen.findByRole('textbox', { name: '消息' });
-    await user.type(composerB, 'B 不应被 A 的停止请求锁住');
+    // Keep the rejection deliberately inside the product's 1.45s Stop
+    // reconciliation budget. Per-character userEvent typing becomes slower
+    // under the full parallel suite and can accidentally exercise the timeout
+    // branch instead of the late-rejection ownership branch named by this test.
+    fireEvent.change(composerB, { target: { value: 'B 不应被 A 的停止请求锁住' } });
     expect(screen.getByRole('button', { name: '发送' })).toBeEnabled();
 
     await act(async () => pendingAbort.reject(new Error('A 的停止请求失败')));
