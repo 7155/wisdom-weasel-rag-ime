@@ -329,6 +329,8 @@ describe('Rooms experience', () => {
     const transport = new MockControlTransport({ routes: {
       'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '轻量 Room')] },
       'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.session.workflow.get': roomWorkflowFixture('room-a:s1'),
+      'agent.subagents.list': roomSubagentListFixture('room-a:s1'),
       'agent.room.snapshot': roomSnapshot('room-a', [
         roomEvent('room-a', 1, 'user_message', { text: '修好伪空的任务界面' }, {
           turnId: 'room-a:turn-1',
@@ -356,6 +358,10 @@ describe('Rooms experience', () => {
     expect(screen.getByRole('region', { name: '任务图' })).toHaveTextContent('正在执行');
     expect(screen.getByRole('region', { name: '任务图' })).toHaveTextContent('1 位伙伴');
     expect(screen.getByRole('region', { name: '任务图' })).toHaveTextContent('1 个工具步骤');
+    const details = screen.getByRole('region', { name: '分工与进度' });
+    expect(await within(details).findByText('Todo 1 / 3')).toBeInTheDocument();
+    expect(details).toHaveTextContent('实现交互结果视图');
+    expect(details).toHaveTextContent('Tool Agent · 进行中');
     expect(screen.queryByText(/还没有单独登记的工作项/)).not.toBeInTheDocument();
   });
 

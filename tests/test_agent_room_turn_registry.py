@@ -279,6 +279,57 @@ class RuntimeTurnBindingTests(unittest.TestCase):
         self.assertFalse(registry.allows_room_event(old))
         self.assertTrue(registry.session_turn_active("session:target"))
 
+    def test_cancelled_abort_terminal_can_be_claimed_exactly_once(
+        self,
+    ) -> None:
+        registry = RoomTurnRegistry()
+        registry.begin(
+            "session:target",
+            "room-root:cancelled",
+            dispatch_id="dispatch:cancelled",
+        )
+        registry.accept(
+            "session:target",
+            "runtime-turn:cancelled",
+            "room-root:cancelled",
+        )
+        registry.record_cancellation(
+            "room-root:cancelled",
+            "cancel:cancelled",
+        )
+        aborted = AgentEventEnvelope(
+            event_id="event:cancelled:aborted",
+            session_id="session:target",
+            turn_id="runtime-turn:cancelled",
+            sequence=2,
+            created_at_ms=2,
+            event_type="turn_completed",
+            payload={"status": "aborted", "aborted": True},
+            resume_token="event:cancelled:aborted",
+        )
+
+        self.assertEqual(
+            registry.claim_cancelled_terminal(aborted),
+            ("room-root:cancelled", "cancel:cancelled"),
+        )
+        self.assertIsNone(
+            registry.claim_cancelled_terminal(aborted)
+        )
+
+        late_completed = AgentEventEnvelope(
+            event_id="event:cancelled:completed",
+            session_id="session:target",
+            turn_id="runtime-turn:cancelled",
+            sequence=3,
+            created_at_ms=3,
+            event_type="turn_completed",
+            payload={"status": "completed"},
+            resume_token="event:cancelled:completed",
+        )
+        self.assertIsNone(
+            registry.claim_cancelled_terminal(late_completed)
+        )
+
 
 class TurnTargetSnapshotTests(unittest.TestCase):
     def setUp(self) -> None:

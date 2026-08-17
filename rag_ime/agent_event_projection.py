@@ -85,6 +85,8 @@ class AgentEventProjectionService:
     def mirror_to_room(
         self,
         event: AgentEventEnvelope,
+        *,
+        cancelled_terminal: tuple[str, str] | None = None,
     ) -> None:
         private_intercom_id = (
             self.room_turns.private_intercom_for_event(event)
@@ -126,7 +128,9 @@ class AgentEventProjectionService:
             None,
         )
         conversation_turn_id = (
-            registered_turn_for_event(event)
+            cancelled_terminal[0]
+            if cancelled_terminal is not None
+            else registered_turn_for_event(event)
             if callable(registered_turn_for_event)
             else ""
         )
@@ -134,9 +138,12 @@ class AgentEventProjectionService:
             conversation_turn_id
             or self.room_turns.turn_for_event(event)
         )
-        if self.room_turns.is_cancelled(
-            event.session_id,
-            room_turn_id,
+        if (
+            cancelled_terminal is None
+            and self.room_turns.is_cancelled(
+                event.session_id,
+                room_turn_id,
+            )
         ):
             return
         mapped_type, public_data = room_event_projection(
@@ -145,6 +152,13 @@ class AgentEventProjectionService:
         dispatch_id = self.room_turns.dispatch_for_event(
             event
         )
+        if cancelled_terminal is not None:
+            public_data = {
+                **public_data,
+                "status": "aborted",
+                "aborted": True,
+                "cancellationReceiptId": cancelled_terminal[1],
+            }
         child_event = self.room_turns.child_for_event(event)
         if child_event and event.event_type in {
             "turn_completed",

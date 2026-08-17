@@ -642,12 +642,33 @@ export function interleavedTurnEntries(
   messages: AgentMessageProjection[],
   activities: AgentActivityProjection[],
 ): InterleavedTurnEntry[] {
+  const historicalReasoningSequenceByMessage = new Map<string, number>();
+  for (const activity of activities) {
+    if (activity.kind !== 'reasoning_summary' || activity.timelineSequence === undefined) continue;
+    const sourceMessageId = text(activity.payload.sourceMessageId);
+    if (!sourceMessageId) continue;
+    historicalReasoningSequenceByMessage.set(
+      sourceMessageId,
+      Math.max(
+        historicalReasoningSequenceByMessage.get(sourceMessageId) ?? Number.NEGATIVE_INFINITY,
+        activity.timelineSequence,
+      ),
+    );
+  }
   const items: TurnTimelineItem[] = [
     ...messages.map((message, index): TurnTimelineItem => ({
       kind: 'message',
       message,
       createdAtMs: message.createdAtMs,
-      sequence: message.timelineSequence,
+      // Completed Pi history does not retain the transient
+      // `message_completed` sequence. Its Provider reasoning receipt does
+      // retain `sourceMessageId`, so anchor that durable body immediately
+      // after the last matching reasoning event instead of falling back to
+      // the message-first array order when both share one timestamp.
+      sequence: message.timelineSequence
+        ?? derivedHistoricalMessageSequence(
+          historicalReasoningSequenceByMessage.get(message.id),
+        ),
       fallbackOrder: index,
     })),
     ...activities.map((activity, index): TurnTimelineItem => ({
@@ -677,6 +698,10 @@ export function interleavedTurnEntries(
     });
     return entries;
   }, []);
+}
+
+function derivedHistoricalMessageSequence(reasoningSequence: number | undefined): number | undefined {
+  return reasoningSequence === undefined ? undefined : reasoningSequence + 0.5;
 }
 
 function activeStreamingMessageId(

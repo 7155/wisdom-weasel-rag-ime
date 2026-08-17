@@ -3276,6 +3276,15 @@ class AgentService:
 
 
     def _mirror_event_to_room(self, event: AgentEventEnvelope) -> None:
+        cancelled_terminal = (
+            self.room_turns.claim_cancelled_terminal(event)
+        )
+        if cancelled_terminal is not None:
+            self.event_projection_application.mirror_to_room(
+                event,
+                cancelled_terminal=cancelled_terminal,
+            )
+            return
         if not self.room_turns.allows_room_event(event):
             return
         self.event_projection_application.mirror_to_room(

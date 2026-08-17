@@ -2348,6 +2348,47 @@ class AgentRoomServiceTests(unittest.TestCase):
             "cancellation_pending",
         )
 
+        self.service.events.publish(
+            str(participant["sessionId"]),
+            "turn_completed",
+            {"status": "aborted", "aborted": True},
+            turn_id="turn:abort:pending",
+            created_at_ms=1_000,
+        )
+        self.assertTrue(self.service.events.flush())
+        terminal_events = [
+            event
+            for event in self.service.rooms.list_events(str(room["id"]))
+            if event["turnId"] == accepted["roomTurnId"]
+            and event["eventType"] == "turn_completed"
+        ]
+        self.assertEqual(len(terminal_events), 1)
+        terminal_payload = terminal_events[0]["payload"]
+        self.assertEqual(
+            terminal_payload["data"]["status"],
+            "aborted",
+        )
+        self.assertEqual(
+            terminal_payload["data"]["cancellationReceiptId"],
+            receipt["cancellationReceiptId"],
+        )
+
+        self.service.events.publish(
+            str(participant["sessionId"]),
+            "turn_completed",
+            {"status": "aborted", "aborted": True},
+            turn_id="turn:abort:pending",
+            created_at_ms=1_001,
+        )
+        self.assertTrue(self.service.events.flush())
+        terminal_events = [
+            event
+            for event in self.service.rooms.list_events(str(room["id"]))
+            if event["turnId"] == accepted["roomTurnId"]
+            and event["eventType"] == "turn_completed"
+        ]
+        self.assertEqual(len(terminal_events), 1)
+
     def test_room_input_stays_a_user_message_and_room_delta_is_provider_only(self) -> None:
         created = self.service.create_room(
             {

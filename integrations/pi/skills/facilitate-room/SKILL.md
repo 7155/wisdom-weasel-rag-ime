@@ -11,13 +11,20 @@ Keep the Room lightweight. Partners remain ordinary Sessions and use the same ta
 
 1. Read the project, outcome, Room brief, current workboard, and Runtime participant projection.
 2. Clarify material user choices only when necessary. Use planning only when the work truly needs multiple items or owners.
-3. Keep one coherent responsibility in the Facilitator when delegation would not help.
-4. Delegate bounded Partner tasks with objective, scope, acceptance, exact ContextRefs, exact SkillRefs, workspace binding, capabilities, and expected output.
+3. Before editing, identify independently verifiable tracks such as protocol/runtime, implementation, UI, and acceptance. If two or more can progress independently and an eligible Partner is available, delegate at least one bounded track. Otherwise publish one short single-lane reason and keep the coherent responsibility in the Facilitator.
+4. Delegate bounded Partner tasks with objective, scope, acceptance, exact ContextRefs, exact SkillRefs, workspace binding, capabilities, and expected output. A Partner is assigned only after `room_partner delegate` returns an accepted dispatch; a Todo label alone is not a delegation.
 5. Let each Partner choose private Session subagents within its granted capabilities.
 6. Consume Partner progress and result events. Publish only material shared progress and resolve dependencies or conflicts from evidence.
 7. Integrate Partner results into the authoritative workspace and shared workboard.
 8. Request an independent fixed-scope review only when the user asks or risk warrants it.
 9. Update the Room final document and emit one integrated final result. Runtime remains responsible for enforcing the unique terminal event.
+
+## Failure Recovery and Terminal Rule
+
+- Treat Session Todo as a working plan, not Room authority. Partner assignment exists only after a real delegated dispatch.
+- After the same operation family fails twice, change to one smaller supported operation or declare that item blocked; do not create dummy reads or partial writes merely to keep the loop moving.
+- A blocked or optional item must not leave the root running forever. Reconcile remaining Todo items into completed, blocked, abandoned, or unresolved-result entries, then emit the best evidence-backed partial or blocked final.
+- Before finalizing, consume the latest Partner events once. Do not poll an idle inbox or repeat discovery after the evidence needed for the result is already available.
 
 ## Document Responsibility
 

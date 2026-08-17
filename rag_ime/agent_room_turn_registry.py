@@ -10,6 +10,7 @@ from .agent_protocol import AgentEventEnvelope
 # Cancelled-turn receipts kept for late event stamping. The bound lives next to
 # the dict it bounds; it is a memory cap, not a cancellation policy.
 _CANCELLED_TURN_RECEIPT_LIMIT = 2048
+_CANCELLED_TERMINAL_LIMIT = 4096
 _PRIVATE_INTERCOM_TURN_LIMIT = 2048
 _PENDING_ROOM_EVENT_LIMIT = 2048
 
@@ -49,6 +50,10 @@ class RoomTurnRegistry:
         self.cancelled_turns: dict[str, str] = {}
         self.cancelled_root_by_session: dict[str, str] = {}
         self.cancelled_turn_by_session_turn: dict[
+            tuple[str, str],
+            str,
+        ] = {}
+        self.cancelled_terminal_by_session_root: dict[
             tuple[str, str],
             str,
         ] = {}
@@ -481,6 +486,106 @@ class RoomTurnRegistry:
                 self.cancelled_turns.pop(
                     next(iter(self.cancelled_turns))
                 )
+
+    def mark_cancelled_terminal(
+        self,
+        session_id: str,
+        room_turn_id: str,
+    ) -> None:
+        """Fence duplicate runtime terminals after Room emitted an abort.
+
+        A synchronous Room abort writes its own public terminal before Pi's
+        private Session necessarily settles. Remember that fact so the later
+        runtime `turn_completed(status=aborted)` remains a private receipt
+        instead of producing a second Room terminal.
+        """
+
+        with self.lock:
+            receipt_id = self.cancelled_turns.get(
+                room_turn_id,
+                "",
+            )
+            if not receipt_id:
+                return
+            self._remember_cancelled_terminal_locked(
+                session_id,
+                room_turn_id,
+                receipt_id,
+            )
+
+    def claim_cancelled_terminal(
+        self,
+        event: AgentEventEnvelope,
+    ) -> tuple[str, str] | None:
+        """Claim the one late abort proof allowed through cancellation.
+
+        Cancellation still fences every delta, Tool event, failure and late
+        successful completion. The sole exception is Pi's authoritative
+        aborted terminal after an earlier Room abort returned pending. That
+        event closes the public Room exactly once.
+        """
+
+        if (
+            event.event_type != "turn_completed"
+            or str(event.payload.get("status") or "")
+            != "aborted"
+            or not event.turn_id
+        ):
+            return None
+        key = (event.session_id, event.turn_id)
+        with self.lock:
+            room_turn_id = (
+                self.turn_by_session_turn.get(key)
+                or self.cancelled_turn_by_session_turn.get(key)
+                or self.cancelled_root_by_session.get(
+                    event.session_id,
+                    "",
+                )
+            )
+            if not room_turn_id:
+                return None
+            receipt_id = self.cancelled_turns.get(
+                room_turn_id,
+                "",
+            )
+            if not receipt_id:
+                return None
+            terminal_key = (
+                event.session_id,
+                room_turn_id,
+            )
+            if (
+                terminal_key
+                in self.cancelled_terminal_by_session_root
+            ):
+                return None
+            self._remember_cancelled_terminal_locked(
+                event.session_id,
+                room_turn_id,
+                receipt_id,
+            )
+            return room_turn_id, receipt_id
+
+    def _remember_cancelled_terminal_locked(
+        self,
+        session_id: str,
+        room_turn_id: str,
+        receipt_id: str,
+    ) -> None:
+        self.cancelled_terminal_by_session_root[
+            (session_id, room_turn_id)
+        ] = receipt_id
+        while (
+            len(self.cancelled_terminal_by_session_root)
+            > _CANCELLED_TERMINAL_LIMIT
+        ):
+            self.cancelled_terminal_by_session_root.pop(
+                next(
+                    iter(
+                        self.cancelled_terminal_by_session_root
+                    )
+                )
+            )
 
     def allows_room_event(
         self,

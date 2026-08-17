@@ -381,6 +381,10 @@ class RoomSessionCancellationService:
 
         if not pending_targets:
             for target in active_targets:
+                self.host.room_turns.mark_cancelled_terminal(
+                    target["sessionId"],
+                    room_turn_id,
+                )
                 self.host.room_events.publish(
                     room_id=room_id,
                     event_type="turn_completed",

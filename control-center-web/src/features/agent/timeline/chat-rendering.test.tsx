@@ -143,6 +143,39 @@ describe('Agent chat rendering', () => {
     ]);
   });
 
+  it('restores Provider reasoning before the matching durable assistant body', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
+    const assistant = assistantMessage(sessionId, turnId, '最终正文', 100);
+    const reasoning = {
+      ...agentEventFixture(1, 'reasoning_summary', {
+        requestId: `reasoning:${assistant.id}:0`,
+        sourceMessageId: assistant.id,
+        summary: '先整理回答结构',
+        items: ['先整理回答结构'],
+        source: 'provider_reasoning_summary',
+        state: 'completed',
+      }),
+      createdAtMs: assistant.createdAtMs,
+    };
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId), assistant],
+      liveEvents: [reasoning],
+      lastSequence: 1,
+      resumeToken: `${sessionId}:1`,
+      status: 'idle',
+    });
+
+    const { container } = render(
+      <AgentTurn sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
+    );
+
+    const entries = [...container.querySelectorAll<HTMLElement>('[data-timeline-kind]')];
+    expect(entries.map((entry) => entry.dataset.timelineKind)).toEqual(['activity', 'message']);
+    expect(entries[0]).toHaveTextContent('先整理回答结构');
+    expect(entries[1]).toHaveTextContent('最终正文');
+  });
+
   it('renders assistant text and tool results in their real event order', () => {
     const sessionId = 'session-1';
     const turnId = 'turn-1';

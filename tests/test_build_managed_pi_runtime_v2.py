@@ -599,6 +599,11 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn("Session's native subagent capability", orchestration)
         self.assertIn("does not define another event bus", orchestration)
         self.assertIn("Partners remain ordinary Sessions", facilitation)
+        self.assertIn(
+            "A Partner is assigned only after `room_partner delegate`",
+            facilitation,
+        )
+        self.assertIn("emit the best evidence-backed partial or blocked final", facilitation)
         self.assertIn("document gardener", organization)
         self.assertIn("$orchestrate-session", orchestration_prompt)
         for required in (
