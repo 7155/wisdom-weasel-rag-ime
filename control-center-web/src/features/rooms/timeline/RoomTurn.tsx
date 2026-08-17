@@ -1927,9 +1927,13 @@ function describeRoomActivity(
   }
   if (activity.kind === 'route_decision') {
     const target = textValue(payload.targetDisplayName) || participantName;
-    const reason = textValue(payload.reason);
+    // Older Room events used explicit_invite for Tool-delegated children.
+    // Prefer the authoritative child marker so retained timelines also render
+    // the real owner of the dispatch after this projection fix ships.
+    const reason = payload.child === true ? 'partner_delegate' : textValue(payload.reason);
     const detailByReason: Record<string, string> = {
       explicit_invite: '由用户直接邀请发言',
+      partner_delegate: '由主持伙伴委派本次任务',
       mention: '根据明确提及开始处理',
       moderator: '协作调度已确定本轮负责角色',
       sequential: '该角色已接续上一步工作',

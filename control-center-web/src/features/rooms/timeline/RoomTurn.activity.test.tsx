@@ -98,6 +98,25 @@ describe('RoomTurn public activity detail', () => {
     expect(progress).toHaveTextContent('2 / 3');
   });
 
+  it('projects a Partner Tool child route as a host delegation', () => {
+    const projection = roomProjection();
+    projection.activitiesById['route-a'] = {
+      ...projection.activitiesById['route-a']!,
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'room-child:a',
+        targetDisplayName: '澄·今',
+        reason: 'explicit_invite',
+        child: true,
+      },
+    };
+
+    const view = render(roomTurn(projection));
+
+    expect(view.container).toHaveTextContent('由主持伙伴委派本次任务');
+    expect(view.container).not.toHaveTextContent('由用户直接邀请发言');
+  });
+
   it('keeps a recovered tool miss in the feed without promoting it to the whole task headline', () => {
     const projection = roomProjection();
     projection.activitiesById['read-failed'] = {

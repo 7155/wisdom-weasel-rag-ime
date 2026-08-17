@@ -230,6 +230,11 @@ class RoomPartnerApplicationService:
         child_dispatch_id = f"room-child:{uuid.uuid4()}"
         decision.update(
             {
+                # A Partner Tool dispatch is an explicit coordinator
+                # delegation, not a fresh invitation from the user.  Keep the
+                # distinction in the public route event so Room projections do
+                # not attribute this child Session to the user.
+                "reason": "partner_delegate",
                 "rootId": root_id,
                 "dispatchId": child_dispatch_id,
                 "targetSessionId": target_session_id,
