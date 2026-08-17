@@ -1312,7 +1312,8 @@ describe('RoomEventReducer', () => {
     const secondFailed = roomEvent(4, 'turn_failed', {
       rootId: 'room-turn-1',
       dispatchId: 'dispatch-2',
-      error: '证据源暂时不可用',
+      summary: '证据源暂时不可用',
+      nextStep: '修正读取范围后在当前任务上重试',
     });
     secondFailed.participantId = 'participant-2';
     secondFailed.sourceSessionId = 'session-room-2';
@@ -1336,6 +1337,7 @@ describe('RoomEventReducer', () => {
     });
     expect(allTerminal.turnsById['room-turn-1']).toMatchObject({
       status: 'failed',
+      failure: '证据源暂时不可用；修正读取范围后在当前任务上重试',
       terminalParticipantIds: ['participant-1', 'participant-2'],
       failedParticipantIds: ['participant-2'],
     });

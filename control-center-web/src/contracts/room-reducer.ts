@@ -285,16 +285,21 @@ export function reduceRoomEvent(
       );
       break;
     case 'turn_failed':
-      completeParticipantTurn(
-        next,
-        event,
-        text(payload.dispatchId),
-        'failed',
-        event.createdAtMs,
-        text(payload.error),
-      );
-      upsertActivity(next, event, payload, 'failed');
-      break;
+      {
+        const failure = [text(payload.error) || text(payload.summary), text(payload.nextStep)]
+          .filter(Boolean)
+          .join('；');
+        completeParticipantTurn(
+          next,
+          event,
+          text(payload.dispatchId),
+          'failed',
+          event.createdAtMs,
+          failure,
+        );
+        upsertActivity(next, event, payload, 'failed');
+        break;
+      }
     case 'room_config_changed':
     case 'topic_changed':
     case 'artifact_changed':

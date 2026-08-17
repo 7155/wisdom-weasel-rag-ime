@@ -1899,7 +1899,6 @@ describe('Agent experience', () => {
     const retry = await screen.findByRole('button', { name: '重试本轮' });
     await user.click(retry);
 
-    expect(retry).toHaveTextContent('已提交重试');
     const retryProjection = useAgentLiveStore.getState().projections['session-preview'];
     const queuedRetry = Object.values(retryProjection.turnsById)
       .find((turn) => turn.id.startsWith('local-turn:') && turn.status === 'queued');
@@ -1912,9 +1911,16 @@ describe('Agent experience', () => {
         )),
     ).toBe(true);
     await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt')).toHaveLength(2));
-    await waitFor(() => expect(retry).toBeDisabled());
-    await user.click(retry);
-    expect(transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt')).toHaveLength(2);
+    const timeline = screen.getByRole('log', { name: '对话时间线' });
+    await waitFor(() => expect(
+      [...timeline.querySelectorAll<HTMLElement>('.agent-user-message')]
+        .filter((message) => message.textContent?.includes('重试时保留这句话')),
+    ).toHaveLength(1));
+    expect(
+      [...timeline.querySelectorAll<HTMLElement>('.agent-turn')]
+        .filter((turn) => turn.textContent?.includes('重试时保留这句话')),
+    ).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: '重试本轮' })).not.toBeInTheDocument();
     const prompts = transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt');
     expect(prompts[1]?.request.params).toEqual({ sessionId: 'session-preview' });
     expect(prompts[1]?.request.body).toMatchObject({ message: '重试时保留这句话', attachments: [] });

@@ -2357,6 +2357,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         ]
         self.assertEqual(guarded[-1].payload["reason"], "repeated_failure_signature")
         self.assertEqual(guarded[-1].payload["toolNames"], ["read"])
+        self.assertIn("工具 read", guarded[-1].payload["nextStep"])
         failed = [
             event for event in events
             if event.event_type == "turn_failed"
@@ -2364,6 +2365,9 @@ class PiRuntimeV2Tests(unittest.TestCase):
         ]
         self.assertEqual(len(failed), 1)
         self.assertIn("受管无进展策略停止", failed[0].payload["error"])
+        self.assertEqual(failed[0].payload["reason"], "repeated_failure_signature")
+        self.assertEqual(failed[0].payload["toolNames"], ["read"])
+        self.assertIn("当前任务上重试", failed[0].payload["nextStep"])
         self.assertFalse(failed[0].payload["retryable"])
         self.assertEqual(self.store.get(session_id)["status"], "faulted")
 

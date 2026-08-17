@@ -67,15 +67,94 @@ export function agentTurnMarkerKind(
  * public rendering belongs to the Room task card. A Session timeline only
  * owns direct user/assistant turns and their Runtime activities. */
 export function visibleAgentTurnIds(projection: AgentProjectionState): string[] {
-  return projection.turnOrder.filter((turnId) => {
-    const turn = projection.turnsById[turnId];
-    if (!turn) return false;
+  const retrySuccessors = retrySuccessorTurnIds(projection);
+  const retryChildren = new Set(retrySuccessors.values());
+  return projection.turnOrder.flatMap((turnId) => {
+    // A retry is a new idempotent Runtime attempt, but it remains the same
+    // logical conversation turn. Keep the durable attempts for audit, replace
+    // the root with its latest attempt, and preserve the root's visual slot.
+    if (retryChildren.has(turnId)) return [];
+    const visibleTurnId = logicalRetryLeafTurnId(projection, turnId, retrySuccessors);
+    const turn = projection.turnsById[visibleTurnId];
+    if (!turn) return [];
     const hasVisibleMessage = turn.messageIds.some((messageId) => {
       const message = projection.messagesById[messageId];
       return Boolean(message && !isRoomPublicPostMessage(message));
     });
-    return hasVisibleMessage || turn.activityIds.length > 0;
+    return hasVisibleMessage || turn.activityIds.length > 0 ? [visibleTurnId] : [];
   });
+}
+
+function retrySuccessorTurnIds(projection: AgentProjectionState): Map<string, string> {
+  const turnByClientMessageId = new Map<string, string>();
+  for (const turnId of projection.turnOrder) {
+    const turn = projection.turnsById[turnId];
+    for (const messageId of turn?.messageIds ?? []) {
+      const message = projection.messagesById[messageId];
+      if (message?.role === 'user' && message.clientMessageId) {
+        turnByClientMessageId.set(message.clientMessageId, turnId);
+      }
+    }
+  }
+  const successors = new Map<string, string>();
+  for (const turnId of projection.turnOrder) {
+    const turn = projection.turnsById[turnId];
+    for (const messageId of turn?.messageIds ?? []) {
+      const predecessorClientMessageId = projection.messagesById[messageId]?.retryOfClientMessageId;
+      const predecessorTurnId = predecessorClientMessageId
+        ? turnByClientMessageId.get(predecessorClientMessageId)
+        : undefined;
+      if (predecessorTurnId && predecessorTurnId !== turnId) {
+        successors.set(predecessorTurnId, turnId);
+      }
+    }
+  }
+  return successors;
+}
+
+function logicalRetryLeafTurnId(
+  projection: AgentProjectionState,
+  turnId: string,
+  knownSuccessors?: Map<string, string>,
+): string {
+  const successors = knownSuccessors ?? retrySuccessorTurnIds(projection);
+  const visited = new Set<string>();
+  let current = turnId;
+  while (!visited.has(current)) {
+    visited.add(current);
+    const successor = successors.get(current);
+    if (!successor) break;
+    current = successor;
+  }
+  return current;
+}
+
+function logicalRetryRootUserIds(
+  projection: AgentProjectionState | undefined,
+  turnId: string,
+): string[] {
+  if (!projection) return [];
+  const messageByClientMessageId = new Map<string, AgentMessageProjection>();
+  for (const messageId of projection.messageOrder) {
+    const message = projection.messagesById[messageId];
+    if (message?.role === 'user' && message.clientMessageId) {
+      messageByClientMessageId.set(message.clientMessageId, message);
+    }
+  }
+  const currentUser = (projection.turnsById[turnId]?.messageIds ?? [])
+    .map((messageId) => projection.messagesById[messageId])
+    .find((message) => message?.role === 'user');
+  if (!currentUser) return [];
+  const visited = new Set<string>();
+  let root = currentUser;
+  while (root.retryOfClientMessageId && !visited.has(root.retryOfClientMessageId)) {
+    visited.add(root.retryOfClientMessageId);
+    const predecessor = messageByClientMessageId.get(root.retryOfClientMessageId);
+    if (!predecessor) break;
+    root = predecessor;
+  }
+  return (projection.turnsById[root.turnId]?.messageIds ?? [])
+    .filter((messageId) => projection.messagesById[messageId]?.role === 'user');
 }
 
 export function AgentTimeline({
@@ -150,10 +229,9 @@ export function AgentTimeline({
   const markerUserPreviews = useAgentLiveStore(useShallow((state) => markerIndexes.map((index) => {
     const projection = state.projections[sessionId];
     const turnId = turnOrder[index];
-    const turn = projection?.turnsById[turnId];
-    const message = turn?.messageIds
+    const message = logicalRetryRootUserIds(projection, turnId ?? '')
       .map((messageId) => projection?.messagesById[messageId])
-      .find((item) => item?.role === 'user');
+      .find(Boolean);
     return messagePreview(message);
   })));
   const markerAssistantPreviews = useAgentLiveStore(useShallow((state) => markerIndexes.map((index) => {
@@ -272,9 +350,13 @@ export function AgentTimeline({
   useEffect(() => {
     if (!jumpRequest?.messageId) return;
     const projection = useAgentLiveStore.getState().projections[sessionId];
-    const index = projection?.turnOrder.findIndex(
+    const sourceTurnId = projection?.turnOrder.find(
       (turnId) => projection.turnsById[turnId]?.messageIds.includes(jumpRequest.messageId),
-    ) ?? -1;
+    );
+    const visibleTurnId = projection && sourceTurnId
+      ? logicalRetryLeafTurnId(projection, sourceTurnId)
+      : '';
+    const index = visibleTurnId ? turnOrder.indexOf(visibleTurnId) : -1;
     if (index < 0) return;
     liveFollowIntentRef.current = false;
     setActiveTargetId(jumpRequest.messageId);
@@ -500,7 +582,7 @@ export function AgentTurn({
   });
   const userIds = useAgentLiveStore(useShallow((state) => {
     const projection = state.projections[sessionId];
-    return (projection?.turnsById[turnId]?.messageIds ?? []).filter((id) => projection?.messagesById[id]?.role === 'user');
+    return logicalRetryRootUserIds(projection, turnId);
   }));
   const assistantMessages = useAgentLiveStore(useShallow((state) => {
     const projection = state.projections[sessionId];

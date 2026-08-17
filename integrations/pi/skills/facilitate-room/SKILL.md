@@ -19,6 +19,8 @@ Keep the Room lightweight. Partners remain ordinary Sessions and use the same ta
 8. Request an independent fixed-scope review only when the user asks or risk warrants it.
 9. Update the Room final document and emit one integrated final result. Runtime remains responsible for enforcing the unique terminal event.
 
+For a normal completion, call `room_partner post` exactly once with `kind=result` before the final assistant response. For a partial or blocked completion, call it once with `kind=blocked`; the content must state what is already established, the blocker, and one executable next step. This post is the Room's public result receipt, not a mechanical settle hook or a Kernel gate. Pi's ordinary `agent_settled` event remains the terminal owner.
+
 ## Failure Recovery and Terminal Rule
 
 - Treat Session Todo as a working plan, not Room authority. Partner assignment exists only after a real delegated dispatch.

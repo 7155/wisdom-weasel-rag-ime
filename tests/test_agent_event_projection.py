@@ -133,6 +133,47 @@ class AgentEventProjectionTests(unittest.TestCase):
         self.assertTrue(payload["isError"])
         self.assertEqual(payload["status"], "failed")
 
+    def test_no_progress_failure_keeps_bounded_recovery_step(self) -> None:
+        event_type, payload = room_event_projection(AgentEventEnvelope(
+            event_id="event:no-progress",
+            session_id="session:1",
+            turn_id="turn:1",
+            sequence=2,
+            created_at_ms=2,
+            event_type="turn_failed",
+            payload={
+                "failureKind": "tool_loop",
+                "reason": "repeated_failure_signature",
+                "toolNames": ["read"],
+                "nextStep": "检查工具 read 的调用参数或权限，修正后在当前任务上重试。",
+            },
+            resume_token="event:no-progress",
+        ))
+        self.assertEqual(event_type, "turn_failed")
+        self.assertEqual(payload["summary"], "工具连续失败，已停止本轮以避免继续空转")
+        self.assertEqual(payload["error"], payload["summary"])
+        self.assertEqual(payload["reason"], "repeated_failure_signature")
+        self.assertEqual(payload["toolNames"], ["read"])
+        self.assertIn("当前任务上重试", payload["nextStep"])
+
+    def test_recovery_step_does_not_reclassify_other_failures_as_no_progress(self) -> None:
+        _event_type, payload = room_event_projection(AgentEventEnvelope(
+            event_id="event:provider-failure",
+            session_id="session:1",
+            turn_id="turn:1",
+            sequence=3,
+            created_at_ms=3,
+            event_type="turn_failed",
+            payload={
+                "failureKind": "provider",
+                "reason": "provider_unavailable",
+                "nextStep": "检查 Provider 配置后重试。",
+            },
+            resume_token="event:provider-failure",
+        ))
+        self.assertEqual(payload["summary"], "模型响应失败，任务已暂停等待恢复")
+        self.assertEqual(payload["nextStep"], "检查 Provider 配置后重试。")
+
     def test_child_session_terminal_is_activity_not_second_room_final(self) -> None:
         service, _sessions, room_events = self._service(child=True)
         service.mirror_to_room(AgentEventEnvelope(

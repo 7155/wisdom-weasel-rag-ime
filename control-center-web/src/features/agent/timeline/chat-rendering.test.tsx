@@ -973,6 +973,52 @@ describe('Agent chat rendering', () => {
     expect(container.querySelector('.agent-assistant-turn')).not.toBeInTheDocument();
     expect(screen.queryByText('Room 公共交付不应复制到 Session。')).not.toBeInTheDocument();
   });
+
+  it('replaces a failed turn in place while keeping retry attempts auditable', () => {
+    const sessionId = 'session-1';
+    const rootTurnId = 'turn-root';
+    const rootMessage: UiAgentMessage = {
+      ...userMessage(sessionId, rootTurnId),
+      id: 'root-user-message',
+      clientMessageId: 'client-root',
+      blocks: [{
+        id: 'root-user-text',
+        type: 'text',
+        status: 'completed',
+        presentationKind: 'markdown',
+        data: { text: '只显示一次的原始要求' },
+      }],
+    };
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [rootMessage, failedAssistantMessage(sessionId, rootTurnId)],
+      liveEvents: [],
+      lastSequence: 1,
+      resumeToken: `${sessionId}:1`,
+      status: 'faulted',
+    });
+    useAgentLiveStore.getState().appendOptimistic(sessionId, {
+      clientMessageId: 'client-retry',
+      retryOfClientMessageId: 'client-root',
+      text: '只显示一次的原始要求',
+      attachments: [],
+      nowMs: 2,
+    });
+
+    const projection = useAgentLiveStore.getState().projections[sessionId];
+    expect(projection.turnOrder).toEqual([rootTurnId, 'local-turn:client-retry']);
+    expect(visibleAgentTurnIds(projection)).toEqual(['local-turn:client-retry']);
+
+    render(
+      <AgentTurn
+        sessionId={sessionId}
+        turnId="local-turn:client-retry"
+        onApprovalDecision={() => {}}
+      />,
+    );
+    expect(screen.getAllByText('只显示一次的原始要求')).toHaveLength(1);
+    expect(screen.queryByText('本轮未完成')).not.toBeInTheDocument();
+    expect(screen.getByText('正在处理')).toBeInTheDocument();
+  });
 });
 
 function imageBlock(data: Record<string, unknown>): UiAgentBlock {

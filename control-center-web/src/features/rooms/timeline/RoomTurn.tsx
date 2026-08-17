@@ -1952,7 +1952,12 @@ function describeRoomActivity(
     };
   }
   if (activity.kind === 'turn_failed') {
-    return { title: '这轮协作未完成', detail: '可以调整消息后重新发送' };
+    return {
+      title: '这轮协作未完成',
+      detail: textValue(payload.nextStep)
+        || textValue(payload.summary)
+        || '修正失败原因后在当前任务上重试',
+    };
   }
   if (textValue(payload.activityKind) === 'intercom') {
     const phaseCopy: Record<string, string> = {

@@ -477,6 +477,7 @@ class _HostedSessionState:
     tool_blocks: AgentToolBlockBuffer = field(default_factory=AgentToolBlockBuffer)
     last_agent_messages: list[object] = field(default_factory=list)
     final_error: str = ""
+    final_failure_context: dict[str, object] = field(default_factory=dict)
     had_tool_activity: bool = False
     pending_approvals: dict[str, str] = field(default_factory=dict)
     pending_reviews: dict[str, str] = field(default_factory=dict)
@@ -1181,6 +1182,7 @@ class PiRuntimeHostManager:
             state.tool_blocks.clear()
             state.last_agent_messages = []
             state.final_error = ""
+            state.final_failure_context.clear()
             state.had_tool_activity = False
             state.settle_extension_failed = False
             state.abort_requested_turn_id = ""
@@ -2435,6 +2437,7 @@ class PiRuntimeHostManager:
                     state.tool_blocks.clear()
                     state.last_agent_messages = []
                     state.final_error = ""
+                    state.final_failure_context.clear()
                     state.had_tool_activity = False
                     state.settle_extension_failed = False
                     state.abort_requested_turn_id = ""
@@ -3107,8 +3110,30 @@ class PiRuntimeHostManager:
             message = redact_runtime_text(
                 str(raw.get("message") or "Tool Loop 未产生新进展，已停止。")
             )
+            reason = redact_runtime_text(
+                str(raw.get("reason") or "no_progress")
+            )
+            tool_names = [
+                redact_runtime_text(str(name))
+                for name in (
+                    raw.get("toolNames")
+                    if isinstance(raw.get("toolNames"), list)
+                    else []
+                )
+                if isinstance(name, str)
+            ][:16]
+            next_step = (
+                f"检查工具 {tool_names[-1]} 的调用参数或权限，修正后在当前任务上重试。"
+                if tool_names
+                else "检查最后一次失败操作的输入或权限，修正后在当前任务上重试。"
+            )
             with self._lock:
                 state.final_error = message
+                state.final_failure_context = {
+                    "reason": reason,
+                    "toolNames": tool_names,
+                    "nextStep": next_step,
+                }
             self.events.publish(
                 session_id,
                 "status_changed",
@@ -3117,22 +3142,15 @@ class PiRuntimeHostManager:
                     "phase": "tool_loop_no_progress",
                     "activityState": "failed",
                     "message": message,
-                    "reason": str(raw.get("reason") or "no_progress"),
+                    "reason": reason,
                     "consecutiveAllErrorTurns": as_integer(
                         raw.get("consecutiveAllErrorTurns")
                     ),
                     "repeatedFailureSignature": as_integer(
                         raw.get("repeatedFailureSignature")
                     ),
-                    "toolNames": [
-                        redact_runtime_text(str(name))
-                        for name in (
-                            raw.get("toolNames")
-                            if isinstance(raw.get("toolNames"), list)
-                            else []
-                        )
-                        if isinstance(name, str)
-                    ][:16],
+                    "toolNames": tool_names,
+                    "nextStep": next_step,
                 },
                 turn_id=turn_id,
             )
@@ -3141,11 +3159,13 @@ class PiRuntimeHostManager:
             messages = raw.get("messages") if isinstance(raw.get("messages"), list) else []
             with self._lock:
                 state.last_agent_messages = list(messages)
-                state.final_error = (
-                    ""
-                    if raw.get("willRetry") is True
-                    else last_assistant_error(messages) or state.final_error
-                )
+                assistant_error = last_assistant_error(messages)
+                if raw.get("willRetry") is True:
+                    state.final_error = ""
+                    state.final_failure_context.clear()
+                elif assistant_error:
+                    state.final_error = assistant_error
+                    state.final_failure_context.clear()
                 # agent_end is normally followed by agent_settled. Probe the
                 # lightweight Host control state after a grace period so a
                 # lost terminal event cannot leave a Tool-complete turn busy.
@@ -3254,6 +3274,7 @@ class PiRuntimeHostManager:
                     state.tool_blocks.clear()
                     state.last_agent_messages = []
                     state.final_error = ""
+                    state.final_failure_context.clear()
                     state.had_tool_activity = False
                     state.settle_extension_failed = False
                     state.abort_requested_turn_id = ""
@@ -3558,6 +3579,7 @@ class PiRuntimeHostManager:
                 return
             messages = list(state.last_agent_messages)
             final_error = state.final_error
+            final_failure_context = dict(state.final_failure_context)
             had_tool_activity = state.had_tool_activity
             aborted = state.abort_requested_turn_id == turn_id
             if state.abort_timer is not None:
@@ -3575,6 +3597,7 @@ class PiRuntimeHostManager:
             state.tool_blocks.clear()
             state.last_agent_messages = []
             state.final_error = ""
+            state.final_failure_context.clear()
             state.had_tool_activity = False
             state.settle_extension_failed = False
             state.abort_requested_turn_id = ""
@@ -3601,6 +3624,7 @@ class PiRuntimeHostManager:
                 {
                     "error": message,
                     **classification.event_payload(),
+                    **final_failure_context,
                     "terminalEvent": "idle_control_reconciliation",
                 },
                 turn_id=turn_id,
@@ -3665,6 +3689,7 @@ class PiRuntimeHostManager:
                 error,
                 had_tool_activity=state.had_tool_activity,
             )
+            final_failure_context = dict(state.final_failure_context)
             if state.abort_timer is not None:
                 state.abort_timer.cancel()
                 state.abort_timer = None
@@ -3677,6 +3702,7 @@ class PiRuntimeHostManager:
             state.tool_blocks.clear()
             state.last_agent_messages = []
             state.final_error = ""
+            state.final_failure_context.clear()
             state.had_tool_activity = False
             state.settle_extension_failed = False
             state.abort_requested_turn_id = ""
@@ -3714,6 +3740,7 @@ class PiRuntimeHostManager:
             {
                 "error": message,
                 **classification.event_payload(),
+                **final_failure_context,
             },
             turn_id=turn_id,
         )
@@ -3778,6 +3805,7 @@ class PiRuntimeHostManager:
                 state.tool_blocks.clear()
                 state.last_agent_messages = []
                 state.final_error = ""
+                state.final_failure_context.clear()
                 state.abort_requested_turn_id = ""
                 state.pending_approvals.clear()
                 state.pending_reviews.clear()

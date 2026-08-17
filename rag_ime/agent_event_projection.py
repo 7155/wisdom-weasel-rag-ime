@@ -372,11 +372,41 @@ def _public_turn_failure(
     *,
     dispatch_id: str = "",
 ) -> dict[str, object]:
+    reason = bounded_text(
+        str(event.payload.get("reason") or ""),
+        maximum=120,
+    )
+    next_step = bounded_text(
+        str(event.payload.get("nextStep") or ""),
+        maximum=300,
+    )
+    tool_names = [
+        bounded_text(str(name), maximum=80)
+        for name in (
+            event.payload.get("toolNames")
+            if isinstance(event.payload.get("toolNames"), list)
+            else []
+        )
+        if isinstance(name, str)
+    ][:16]
     runtime_host_exit = (
         str(event.payload.get("failureKind") or "")
         == "runtime_host_exit"
     )
+    no_progress = reason in {
+        "all_error_recovery_timeout",
+        "consecutive_all_error_turns",
+        "repeated_failure_signature",
+        "no_progress",
+    }
     kind = "runtime" if runtime_host_exit else "provider"
+    summary = (
+        "工具连续失败，已停止本轮以避免继续空转"
+        if no_progress
+        else "Agent 运行时中断，任务已暂停等待恢复"
+        if runtime_host_exit
+        else "模型响应失败，任务已暂停等待恢复"
+    )
     return {
         "status": (
             "runtime_error"
@@ -387,11 +417,11 @@ def _public_turn_failure(
                 else "failed"
             )
         ),
-        "summary": (
-            "Agent 运行时中断，任务已暂停等待恢复"
-            if runtime_host_exit
-            else "模型响应失败，任务已暂停等待恢复"
-        ),
+        "summary": summary,
+        "error": summary,
+        **({"reason": reason} if reason else {}),
+        **({"nextStep": next_step} if next_step else {}),
+        **({"toolNames": tool_names} if tool_names else {}),
         **(
             {"requestId": f"{dispatch_id}:{kind}"}
             if dispatch_id
