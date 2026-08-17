@@ -1812,6 +1812,22 @@ describe('Agent experience', () => {
     await waitFor(() => expect(
       useAgentLiveStore.getState().projections['session-preview']?.messageOrder.length,
     ).toBeGreaterThan(0));
+
+    // Seed B before Stop starts so the ownership assertion does not spend the
+    // product's real 1.45s reconciliation budget waiting for a Session switch
+    // or synthetic typing while the full suite is under load.
+    fireEvent.click(screen.getByRole('button', { name: '记忆整理' }));
+    await waitFor(() => expect(
+      screen.getByRole('button', { name: '记忆整理' }),
+    ).toHaveAttribute('aria-current', 'true'));
+    fireEvent.change(screen.getByRole('textbox', { name: '消息' }), {
+      target: { value: 'B 不应被 A 的停止请求锁住' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '控制中心迁移' }));
+    await waitFor(() => expect(
+      screen.getByRole('button', { name: '控制中心迁移' }),
+    ).toHaveAttribute('aria-current', 'true'));
+
     act(() => useAgentLiveStore.getState().appendOptimistic('session-preview', {
       clientMessageId: 'stop-source-active',
       text: 'A 正在处理',
@@ -1823,20 +1839,17 @@ describe('Agent experience', () => {
       transport.requests.filter((call) => call.request.pathId === 'agent.session.abort'),
     ).toHaveLength(1));
 
-    await user.click(screen.getByRole('button', { name: '记忆整理' }));
-    const composerB = await screen.findByRole('textbox', { name: '消息' });
-    // Keep the rejection deliberately inside the product's 1.45s Stop
-    // reconciliation budget. Per-character userEvent typing becomes slower
-    // under the full parallel suite and can accidentally exercise the timeout
-    // branch instead of the late-rejection ownership branch named by this test.
-    fireEvent.change(composerB, { target: { value: 'B 不应被 A 的停止请求锁住' } });
-    expect(screen.getByRole('button', { name: '发送' })).toBeEnabled();
-
+    fireEvent.click(screen.getByRole('button', { name: '记忆整理' }));
     await act(async () => pendingAbort.reject(new Error('A 的停止请求失败')));
+    await waitFor(() => expect(
+      screen.getByRole('button', { name: '记忆整理' }),
+    ).toHaveAttribute('aria-current', 'true'));
+    const composerB = screen.getByRole('textbox', { name: '消息' });
     expect(composerB).toHaveValue('B 不应被 A 的停止请求锁住');
+    expect(screen.getByRole('button', { name: '发送' })).toBeEnabled();
     expect(screen.queryByText('A 的停止请求失败')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '控制中心迁移' }));
+    fireEvent.click(screen.getByRole('button', { name: '控制中心迁移' }));
     expect(await screen.findByText('A 的停止请求失败')).toBeInTheDocument();
   });
 
