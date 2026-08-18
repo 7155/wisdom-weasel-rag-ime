@@ -32,6 +32,14 @@ class AgentToolMatrixScriptTests(unittest.TestCase):
                     self.assertTrue(str(args.get("op") or ""))
 
     def test_workspace_mutations_form_one_verifiable_isolated_chain(self) -> None:
+        self.assertEqual(
+            TOOL_CALLS["session_search"],
+            {
+                "op": "search",
+                "query": "Agent Tool execution matrix",
+                "limit": 1,
+            },
+        )
         self.assertEqual(TOOL_CALLS["workspace_patch"]["oldText"], "hello")
         self.assertEqual(TOOL_CALLS["workspace_patch"]["newText"], "patched")
         self.assertEqual(
