@@ -41,7 +41,6 @@ import {
   roomCollaborationRoleLabel,
 } from './room-copy';
 import {
-  participantName,
   pathName,
   recommendedCreateRole,
   roomAvatarIcon,
@@ -202,6 +201,39 @@ function RoomHistoryControl({
 
 function RoomTimelineScrollFooter() {
   return <div aria-hidden="true" className="room-timeline__footer-space" />;
+}
+
+function RoomAssignmentBar({
+  onOpen,
+  room,
+  workItems,
+}: {
+  onOpen: () => void;
+  room: RoomSummary;
+  workItems: RoomWorkItem[];
+}) {
+  const visible = workItems.slice(0, 4);
+  return <div aria-label="当前任务分配" className="room-assignment-bar">
+    <span className="room-assignment-bar__label"><GitBranch size={13} /><strong>当前分工</strong><em>{workItems.length}</em></span>
+    {visible.map((workItem) => {
+      const participant = room.participants.find((item) => item.id === workItem.currentOwnerParticipantId);
+      return <button
+        aria-label={`打开任务总览：${participant?.displayName ?? '未分配'}负责${workItem.objective}`}
+        data-room-role={participant?.collaborationRole ?? 'partner'}
+        data-state={workItem.state}
+        key={workItem.id}
+        onClick={onOpen}
+        title={`${roomCollaborationRoleLabel(participant?.collaborationRole)} · @ ${participant?.displayName ?? '未分配'} · ${workItem.objective}`}
+        type="button"
+      >
+        <i className="room-role-chip">{roomCollaborationRoleLabel(participant?.collaborationRole)}</i>
+        <b>@ {participant?.displayName ?? '未分配'}</b>
+        <span>{workItem.objective}</span>
+        <em>{roomWorkStateLabel(workItem.state)}</em>
+      </button>;
+    })}
+    {workItems.length > visible.length ? <button className="room-assignment-bar__more" onClick={onOpen} type="button">+{workItems.length - visible.length}</button> : null}
+  </div>;
 }
 
 function roomTimelineScrollerIsAtBottom(scroller: HTMLElement): boolean {
@@ -1281,7 +1313,7 @@ export function RoomsFeature() {
             <IconButton label="管理话题" icon={<Plus size={14} />} disabled={topicSaving} onClick={() => { setTopicError(''); setTopicsOpen(true); }} tooltip />
           </div>
           <div className="room-context-actions">
-            {activeWork ? <span className="room-work-summary" data-state={activeWork.state} title={activeWork.objective}><GitBranch size={13} />{roomWorkStateLabel(activeWork.state)} · {participantName(room, activeWork.currentOwnerParticipantId)} · {activeWork.objective}</span> : <span>{room.description || (room.roomKind === 'roleplay' ? '让几位伙伴一起聊聊' : '先聊清楚，再一起把事情做完')}</span>}
+            {unresolvedWork.length ? <RoomAssignmentBar onOpen={() => setWorkspaceView('execution')} room={room} workItems={unresolvedWork} /> : <span>{room.description || (room.roomKind === 'roleplay' ? '让几位伙伴一起聊聊' : '先聊清楚，再一起把事情做完')}</span>}
             {room.roomKind !== 'roleplay' ? <IconButton label="分享工作文件" icon={artifactPicking ? <LoaderCircle className="ui-spin" size={15} /> : <FilePlus2 size={15} />} disabled={artifactPicking || room.status !== 'active'} onClick={() => void addRoomArtifact()} tooltip /> : null}
           </div>
         </div> : <div aria-hidden="true" className="room-context-bar room-context-bar--empty" />}

@@ -38,7 +38,13 @@ import {
   selectRoomTurnExecution,
   type RoomExecutionLane,
 } from './runtime/room-execution-lanes';
-import type { RoomArtifact, RoomSummary, RoomWorkItem, RoomWorkState } from './room-types';
+import type {
+  RoomArtifact,
+  RoomCollaborationRole,
+  RoomSummary,
+  RoomWorkItem,
+  RoomWorkState,
+} from './room-types';
 import {
   type RoomTaskSessionFact,
   useRoomTaskSessionFacts,
@@ -63,6 +69,7 @@ interface PartnerProjection {
   participantId: string;
   name: string;
   sessionId: string;
+  collaborationRole?: RoomCollaborationRole;
   assignment: string;
   state: CockpitState;
   activities: RoomActivityProjection[];
@@ -326,30 +333,55 @@ function AssignmentOverview({ partners, room }: { partners: PartnerProjection[];
     <GitBranch size={18} />
     <span><strong>还没有实际分工</strong><small>发送目标后，真实的 dispatch / WorkItem 会出现在这里。</small></span>
   </div>;
+  const assignments = partners.flatMap((partner) => partner.workItems.map((workItem) => ({ partner, workItem })));
+  const unassigned = partners.filter((partner) => !partner.workItems.length);
   return <div className="room-cockpit__assignment-list">
-    {partners.map((partner) => <article data-state={partner.state} key={`${partner.participantId}:${partner.sessionId}`}>
+    {assignments.map(({ partner, workItem }) => <article
+      data-room-role={partner.collaborationRole ?? 'partner'}
+      data-state={workItemState(workItem.state)}
+      key={`${partner.participantId}:${workItem.id}`}
+    >
       <header>
         <span className="room-cockpit__partner-avatar">{partnerInitial(partner.name)}</span>
-        <span><small>@ {partner.name}</small><strong>{partner.assignment}</strong></span>
-        <StatePill state={partner.state} />
+        <span className="room-cockpit__assignment-owner">
+          <i className="room-role-chip">{roomCollaborationRoleLabel(partner.collaborationRole)}</i>
+          <small>@ {partner.name}</small>
+        </span>
+        <StatePill state={workItemState(workItem.state)} />
       </header>
-      {partner.workItems.map((workItem) => <details className="room-cockpit__work-facts" key={workItem.id}>
-        <summary><span>查看分工依据与验收条件</span><ChevronDown className="room-cockpit__chevron" size={14} /></summary>
-        <dl>
-          <div><dt>执行人</dt><dd>@ {roomParticipantName(room, workItem.currentOwnerParticipantId)}</dd></div>
-          {workItem.accountableParticipantId && workItem.accountableParticipantId !== workItem.currentOwnerParticipantId
-            ? <div><dt>复核人</dt><dd>@ {roomParticipantName(room, workItem.accountableParticipantId)}</dd></div>
-            : null}
-          {workItem.expectedOutput ? <div><dt>预期交付</dt><dd>{workItem.expectedOutput}</dd></div> : null}
-          <div><dt>修订</dt><dd>第 {workItem.revision} 次修订</dd></div>
-          {room.workspaceRoots?.length ? <div><dt>工作目录</dt><dd>{room.workspaceRoots.join(' · ')}</dd></div> : null}
-        </dl>
+      <section className="room-cockpit__assignment-goal">
+        <small>任务目标 · WorkItem r{workItem.revision}</small>
+        <strong>{workItem.objective}</strong>
+        {workItem.expectedOutput ? <p><b>预期交付</b>{workItem.expectedOutput}</p> : null}
+      </section>
+      <dl className="room-cockpit__assignment-facts">
+        <div><dt>执行人</dt><dd>@ {roomParticipantName(room, workItem.currentOwnerParticipantId)}</dd></div>
+        <div><dt>复核人</dt><dd>@ {roomParticipantName(room, workItem.accountableParticipantId)}</dd></div>
+        <div><dt>修订</dt><dd>第 {workItem.revision} 次修订</dd></div>
+        {workItem.parentWorkId ? <div><dt>依赖</dt><dd>{workItem.parentWorkId}</dd></div> : null}
+      </dl>
+      <WorkRecovery workItem={workItem} />
+      <details className="room-cockpit__work-facts">
+        <summary><span>验收条件、证据与工作边界</span><ChevronDown className="room-cockpit__chevron" size={14} /></summary>
+        {room.workspaceRoots?.length ? <dl><div><dt>工作目录</dt><dd>{room.workspaceRoots.join(' · ')}</dd></div></dl> : null}
         {workItem.acceptanceCriteria.length ? <section><strong>验收条件</strong><ul>{workItem.acceptanceCriteria.map((item) => <li key={item}>{item}</li>)}</ul></section> : null}
         {workItem.resultSummary ? <p><b>当前交付：</b>{workItem.resultSummary}</p> : null}
         {[...workItem.evidenceRefs, ...workItem.artifactRefs].length ? <p><b>证据与产物：</b>{[...workItem.evidenceRefs, ...workItem.artifactRefs].join(' · ')}</p> : null}
-        <WorkRecovery workItem={workItem} />
-      </details>)}
+      </details>
       {partner.sessionId ? <a href={`#/agent?session=${encodeURIComponent(partner.sessionId)}`}>打开{partner.name}的对话 <ExternalLink size={12} /></a> : null}
+    </article>)}
+    {unassigned.map((partner) => <article
+      className="room-cockpit__assignment-empty"
+      data-room-role={partner.collaborationRole ?? 'partner'}
+      data-state={partner.state}
+      key={`${partner.participantId}:${partner.sessionId}:unassigned`}
+    >
+      <header>
+        <span className="room-cockpit__partner-avatar">{partnerInitial(partner.name)}</span>
+        <span className="room-cockpit__assignment-owner"><i className="room-role-chip">{roomCollaborationRoleLabel(partner.collaborationRole)}</i><small>@ {partner.name}</small></span>
+        <StatePill state={partner.state} />
+      </header>
+      <p>未分配正式 WorkItem；当前只显示运行事实，不会把伙伴人数当成任务。</p>
     </article>)}
   </div>;
 }
@@ -472,16 +504,17 @@ function TaskFlow({
     <span><strong>还没有实际流转</strong><small>只有产生真实 dispatch / WorkItem 后，Room 才会绘制节点与关系。</small></span>
   </div>;
   const stages = taskFlowStages(partners, coordinatorParticipantId);
+  const visibleRoles = Array.from(new Set(partners.map((partner) => partner.collaborationRole)));
   const flowItems = stages.flatMap((stage) => stage.items.map((item) => ({ item, stage })));
   const selected = flowItems.find(({ item }) => item.id === selectedBranch)
     ?? flowItems.find(({ item }) => item.state === 'active')
     ?? flowItems[0];
   return <div className="room-cockpit__flow-board">
     <div className="room-cockpit__flow-legend">
-      <span><i data-state="active" />执行中</span>
-      <span><i data-state="complete" />已完成</span>
-      <span><i data-state="review" />复核中</span>
-      <span><i data-state="contract" />合同待修复</span>
+      <strong>职责</strong>
+      {visibleRoles.map((role) => <span className="room-role-chip" data-room-role={role ?? 'partner'} key={role ?? 'partner'}>{roomCollaborationRoleLabel(role)}</span>)}
+      <strong>状态</strong>
+      <span><i data-state="active" />执行中</span><span><i data-state="complete" />已完成</span><span><i data-state="review" />复核中</span><span><i data-state="contract" />合同待修复</span>
       <small>只有同一真实 waveId 的节点标记并行；其他分工按依赖与事件事实展示。</small>
       <details className="room-cockpit__flow-policy">
         <summary><ShieldCheck size={12} />恢复策略<ChevronDown className="room-cockpit__chevron" size={12} /></summary>
@@ -532,6 +565,7 @@ function TaskFlow({
                 aria-current={selected?.item.id === item.id ? 'step' : undefined}
                 aria-label={`查看 @ ${item.partner.name} 的执行节点：${item.objective}`}
                 className="room-cockpit__flow-branch"
+                data-room-role={item.partner.collaborationRole ?? 'partner'}
                 data-selected={selected?.item.id === item.id || undefined}
                 data-state={item.state}
                 key={item.id}
@@ -540,7 +574,7 @@ function TaskFlow({
               >
                 <span className="room-cockpit__partner-avatar">{partnerInitial(item.partner.name)}</span>
                 <span className="room-cockpit__flow-branch-copy">
-                  <small>@ {item.partner.name}{item.workItem?.parentWorkId ? ' · 接续节点' : ''}</small>
+                  <small><i className="room-role-chip">{roomCollaborationRoleLabel(item.partner.collaborationRole)}</i>@ {item.partner.name}{item.workItem?.parentWorkId ? ' · 接续节点' : ''}</small>
                   <strong>{item.objective}</strong>
                 </span>
                 <span className="room-cockpit__flow-branch-meta">
@@ -581,9 +615,9 @@ function FlowBranchInspector({ item, stage }: { item: FlowTaskItem; stage: FlowS
     : workItem?.acceptanceCriteria ?? [];
   const resultSummary = item.resultSummary || workItem?.resultSummary || '';
   const hasContract = Boolean(expectedOutput || acceptanceCriteria.length || resultSummary || workItem);
-  return <section aria-label={`@ ${item.partner.name} 的节点详情`} className="room-cockpit__flow-inspector">
+  return <section aria-label={`@ ${item.partner.name} 的节点详情`} className="room-cockpit__flow-inspector" data-room-role={item.partner.collaborationRole ?? 'partner'}>
     <header>
-      <span><small>{stage.label} · 选中支线</small><h3>@ {item.partner.name}</h3></span>
+      <span><small>{roomCollaborationRoleLabel(item.partner.collaborationRole)} · {stage.label} · 选中支线</small><h3>@ {item.partner.name}</h3></span>
       <StatePill state={item.state} />
     </header>
     <p>{item.objective}</p>
@@ -635,12 +669,13 @@ function PartnerSection({
   const replies = partner.messages.filter((message) => message.id !== rootReplyId && message.text.trim());
   return <article
     className="room-cockpit__partner"
+    data-room-role={partner.collaborationRole ?? 'partner'}
     data-state={partner.state}
     id={`room-partner-${safeId(partner.participantId || partner.sessionId)}`}
   >
     <header>
       <span className="room-cockpit__partner-avatar">{partnerInitial(partner.name)}</span>
-      <span><small>@ {partner.name}</small><strong>{partner.assignment}</strong></span>
+      <span><small><i className="room-role-chip">{roomCollaborationRoleLabel(partner.collaborationRole)}</i>@ {partner.name}</small><strong>{partner.assignment}</strong></span>
       <StatePill state={partner.state} />
     </header>
     <details className="room-cockpit__thinking" onToggle={(event) => setThinkingOpen(event.currentTarget.open)} open={thinkingOpen}>
@@ -783,6 +818,7 @@ function buildPartnerProjections(
       participantId: participant.id,
       name: participant.displayName,
       sessionId: participant.sessionId || lane.sourceSessionId,
+      collaborationRole: participant.collaborationRole,
       assignment: existing?.assignment || partnerAssignment(workItems, lane.activities, runtime?.objective),
       state: partnerState(workItems, activities, combinedMessages, runtime?.status),
       activities,
@@ -812,6 +848,7 @@ function buildPartnerProjections(
       participantId,
       name: participant.displayName,
       sessionId: participant.sessionId,
+      collaborationRole: participant.collaborationRole,
       assignment: workItem.objective,
       state: workItemState(workItem.state),
       activities: [],

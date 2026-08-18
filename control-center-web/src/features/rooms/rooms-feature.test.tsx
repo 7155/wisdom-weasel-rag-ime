@@ -539,7 +539,7 @@ describe('Rooms experience', () => {
       },
     } });
     const user = userEvent.setup();
-    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+    const { container } = render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     await user.click(await screen.findByRole('radio', { name: '任务' }));
     const cockpit = screen.getByRole('region', { name: '任务流转与验收' });
@@ -553,6 +553,10 @@ describe('Rooms experience', () => {
     expect(cockpit).toHaveTextContent('复核并行结果');
     expect(cockpit).toHaveTextContent('复核已返回');
     expect(within(cockpit).getAllByRole('button', { name: /执行节点/ })).toHaveLength(3);
+    expect(container.querySelector('[data-room-role="coordinator"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-room-role="researcher"]')).toBeInTheDocument();
+    expect(within(cockpit).getAllByText('主持整合与回复').length).toBeGreaterThan(0);
+    expect(within(cockpit).getAllByText('调研与证据').length).toBeGreaterThan(0);
     await user.click(within(cockpit).getByRole('button', { name: /接续复核两路交付/ }));
     expect(within(cockpit).getByRole('region', { name: '@ 澄 的节点详情' })).toHaveTextContent('接续复核两路交付');
   });
@@ -871,9 +875,16 @@ describe('Rooms experience', () => {
       },
     } });
     const user = userEvent.setup();
-    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+    const { container } = render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await user.click(await screen.findByRole('radio', { name: '任务' }));
+    const assignmentBar = await screen.findByLabelText('当前任务分配');
+    const assignmentShortcut = within(assignmentBar).getByRole('button', {
+      name: '打开任务总览：澄·初负责恢复任务图的真实详情',
+    });
+    expect(assignmentShortcut).toHaveAttribute('data-room-role', 'researcher');
+    expect(assignmentShortcut).toHaveTextContent('调研与证据');
+    expect(assignmentShortcut).toHaveTextContent('执行中');
+    await user.click(assignmentShortcut);
 
     const details = screen.getByRole('region', { name: '任务流转与验收' });
     expect(details).toHaveTextContent('0/1 位伙伴完成当前分工');
@@ -881,6 +892,7 @@ describe('Rooms experience', () => {
     expect(details).toHaveTextContent('进行中');
     expect(details).toHaveTextContent('执行人');
     expect(details).toHaveTextContent('澄·初');
+    expect(details).toHaveTextContent('调研与证据');
     expect(details).toHaveTextContent('复核人');
     expect(details).toHaveTextContent('澄');
     expect(details).toHaveTextContent('可展开核对的任务详情');
@@ -895,6 +907,8 @@ describe('Rooms experience', () => {
     expect(details).toHaveTextContent('验证 HTML 报告');
     expect(details).toHaveTextContent('evidence:task-view');
     expect(details).toHaveTextContent('artifact:task-view');
+    expect(container.querySelector('.room-cockpit__assignment-list > article[data-room-role="researcher"]')).toBeInTheDocument();
+    expect(container.querySelector('.room-cockpit__flow-branch[data-room-role="researcher"]')).toBeInTheDocument();
     expect(within(details).getByRole('link', { name: '打开澄·初的对话' })).toHaveAttribute(
       'href',
       '#/agent?session=room-a%3As2',
@@ -952,7 +966,9 @@ describe('Rooms experience', () => {
 
     expect(await screen.findByText('learnA · 已阻塞')).toBeInTheDocument();
     expect(screen.queryByText(/正在完成任务/)).not.toBeInTheDocument();
-    expect(screen.getByText(/已阻塞 · 澄·初 · 核对失败证据/)).toBeInTheDocument();
+    const blockedAssignment = screen.getByRole('button', { name: '打开任务总览：澄·初负责核对失败证据' });
+    expect(blockedAssignment).toHaveAttribute('data-state', 'blocked');
+    expect(blockedAssignment).toHaveTextContent('已阻塞');
     const composer = screen.getByRole('textbox', { name: '协作消息' });
     expect(composer).toBeEnabled();
     await userEvent.type(composer, '请按阻塞证据继续');
