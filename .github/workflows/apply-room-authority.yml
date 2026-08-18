@@ -1,0 +1,66 @@
+name: Apply Room authority patch
+
+on:
+  push:
+    branches: [codex/room-workitem-acceptance-20260818]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Sync locked Python dependencies
+        run: |
+          python -m pip install "uv==0.11.1"
+          uv sync --locked --python python
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Enable pinned pnpm
+        run: corepack enable && corepack prepare pnpm@11.9.0 --activate
+      - name: Apply authoritative Room workflow patch
+        run: python scripts/codex_apply_room_workitem_authority.py
+      - name: Compile and run focused backend contracts
+        env:
+          PYTHONWARNINGS: "error::ResourceWarning"
+        run: |
+          python -m compileall -q rag_ime scripts tests
+          python -m unittest discover -s tests -p 'test_agent_room_partner_workflow.py'
+          python -m unittest discover -s tests -p 'test_agent_room_partner_application.py'
+          python scripts/check_import_boundaries.py
+          python scripts/check_route_ownership.py
+          ruff check \
+            rag_ime/agent_room_partner_workflow.py \
+            rag_ime/agent_room_partner_application.py \
+            rag_ime/agent_room_work.py \
+            rag_ime/agent_service.py \
+            tests/test_agent_room_partner_workflow.py \
+            tests/test_agent_room_partner_application.py
+      - name: Install and verify the Room frontend
+        working-directory: control-center-web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm test
+          pnpm build
+      - name: Commit only the verified source change
+        run: |
+          git diff --check
+          rm .github/workflows/apply-room-authority.yml
+          rm scripts/codex_apply_room_workitem_authority.py
+          git add -A
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix(room): make Partner WorkItems authoritative"
+          git push origin HEAD:${GITHUB_REF_NAME}
