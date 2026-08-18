@@ -2228,6 +2228,61 @@ class PiRuntimeV2Tests(unittest.TestCase):
             json.dumps(statuses[-1].payload, ensure_ascii=False),
         )
 
+    def test_exhausted_provider_retries_are_reported_on_terminal_failure(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-provider-retry-exhausted"
+        with self.runtime._lock:
+            self.runtime._states[session_id].turn_id = turn_id
+
+        def host_event(payload: dict[str, object]) -> None:
+            self.runtime._handle_host_event({
+                "protocolVersion": "2",
+                "event": "agent.event",
+                "sessionId": session_id,
+                "turnId": turn_id,
+                "payload": payload,
+            })
+
+        host_event({
+            "type": "auto_retry_start",
+            "attempt": 6,
+            "maxAttempts": 6,
+            "delayMs": 64_000,
+            "errorMessage": "private upstream diagnostic",
+        })
+        host_event({
+            "type": "agent_end",
+            "willRetry": False,
+            "messages": [{
+                "role": "assistant",
+                "stopReason": "error",
+                "errorMessage": "fetch failed",
+                "content": [],
+            }],
+        })
+        host_event({
+            "type": "auto_retry_end",
+            "attempt": 6,
+            "success": False,
+            "finalError": "private upstream diagnostic",
+        })
+        host_event({"type": "agent_settled"})
+
+        failed = [
+            event for event in self.events.replay(session_id)[0]
+            if event.event_type == "turn_failed" and event.turn_id == turn_id
+        ]
+        self.assertEqual(len(failed), 1)
+        self.assertTrue(failed[0].payload["retryExhausted"])
+        self.assertEqual(failed[0].payload["providerRetryAttempts"], 6)
+        self.assertEqual(failed[0].payload["providerRetryMaxAttempts"], 6)
+        self.assertIn("自动重试", failed[0].payload["nextStep"])
+        self.assertNotIn(
+            "private upstream diagnostic",
+            json.dumps(failed[0].payload, ensure_ascii=False),
+        )
+
     def test_nonfatal_extension_error_does_not_terminalize_active_turn(self) -> None:
         session_id = str(self.first["id"])
         self.runtime.ensure(session_id)

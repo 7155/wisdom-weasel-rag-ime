@@ -109,6 +109,7 @@ export function createPreviewTransport(): MockControlTransport {
     runtimeCharacteristics: { ...persona.runtimeCharacteristics },
   }));
   let companionConfigurationRevision = 1;
+  let modelRouting = previewDefaultModelRouting();
   let capabilityGlobalPreferences: Record<string, string> = {};
   let capabilityProjectPreferences: Record<string, Record<string, string>> = {};
   const capabilitySessionPreferences = new Map<string, Record<string, string>>();
@@ -502,6 +503,7 @@ export function createPreviewTransport(): MockControlTransport {
   routes['agent.configuration.get'] = () => previewCompanionConfiguration(
     companionConfigurationRevision,
     defaultCompanion,
+    modelRouting,
     capabilityGlobalPreferences,
     capabilityProjectPreferences,
   );
@@ -509,7 +511,19 @@ export function createPreviewTransport(): MockControlTransport {
     const body = record(request.body);
     if (Number(body.expectedRevision) !== companionConfigurationRevision) throw new Error('Preview companion configuration changed.');
     const changes = record(body.changes);
-    if (Object.hasOwn(changes, 'sessionDefaults.capabilityDisclosurePreferences')) {
+    const modelRouteChange = Object.entries(changes).find(([key]) => key.startsWith('modelRouting.'));
+    if (modelRouteChange) {
+      const routeId = modelRouteChange[0].slice('modelRouting.'.length);
+      if (!Object.hasOwn(modelRouting, routeId)) throw new Error('Preview model route is invalid.');
+      const route = record(modelRouteChange[1]);
+      const modelProfile = stringValue(route.modelProfile);
+      const thinkingLevel = stringValue(route.thinkingLevel);
+      if (!modelProfile || !thinkingLevel) throw new Error('Preview model route is incomplete.');
+      modelRouting = {
+        ...modelRouting,
+        [routeId]: { modelProfile, thinkingLevel },
+      };
+    } else if (Object.hasOwn(changes, 'sessionDefaults.capabilityDisclosurePreferences')) {
       capabilityGlobalPreferences = previewCapabilityPreferences(changes['sessionDefaults.capabilityDisclosurePreferences']);
     } else if (Object.hasOwn(changes, 'capabilityDisclosure.projectPreferences')) {
       capabilityProjectPreferences = Object.fromEntries(
@@ -526,6 +540,7 @@ export function createPreviewTransport(): MockControlTransport {
     return previewCompanionConfiguration(
       companionConfigurationRevision,
       defaultCompanion,
+      modelRouting,
       capabilityGlobalPreferences,
       capabilityProjectPreferences,
     );
@@ -3175,6 +3190,7 @@ function previewThinkingLevel(value: unknown): NonNullable<AgentPersonaV1['defau
 function previewCompanionConfiguration(
   revision: number,
   defaults: { roleId: string; roleVersion: string },
+  modelRouting: Record<string, { modelProfile: string; thinkingLevel: string }>,
   capabilityGlobalPreferences: Record<string, string>,
   capabilityProjectPreferences: Record<string, Record<string, string>>,
 ): Record<string, unknown> {
@@ -3188,12 +3204,25 @@ function previewCompanionConfiguration(
           roleVersion: defaults.roleVersion,
           capabilityDisclosurePreferences: capabilityGlobalPreferences,
         },
+        modelRouting,
         capabilityDisclosure: {
           projectPreferences: capabilityProjectPreferences,
         },
       },
     },
   };
+}
+
+function previewDefaultModelRouting(): Record<string, { modelProfile: string; thinkingLevel: string }> {
+  return Object.fromEntries([
+    'primary',
+    'toolAgent',
+    'subagent',
+    'roomCoordinator',
+  ].map((routeId) => [routeId, {
+    modelProfile: 'inherit',
+    thinkingLevel: 'inherit',
+  }]));
 }
 
 function previewCreatedRoomSnapshot(

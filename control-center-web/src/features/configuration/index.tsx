@@ -623,6 +623,6 @@ const settingDestinations = [
   { path: '/knowledge', label: '知识库', detail: '材料、检索与图谱', icon: Library },
   { path: '/plugins', label: '插件管理', detail: '技能、工具、扩展与安装状态', icon: PlugZap },
   { path: '/configuration?section=subagents', label: '子 Agent', detail: '模板、上下文、工具与权限边界', icon: UsersRound },
-  { path: '/roles', label: '伙伴', detail: '身份、表达方式和默认模型', icon: Bot },
+  { path: '/roles', label: '模型与扩展', detail: '主 Agent、Tool Agent、协作模型与兼容伙伴资料', icon: Bot },
   { path: '/rooms', label: '多人协作', detail: '伙伴、任务和交接', icon: UsersRound },
 ] as const;

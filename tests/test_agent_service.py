@@ -2168,6 +2168,47 @@ class AgentServiceTests(unittest.TestCase):
         self.assertTrue(self.service.runtime_status()["enabled"])
         self.assertEqual(self.service.runtime_status()["idleTimeoutSeconds"], 321)
 
+    def test_model_routing_overrides_legacy_persona_defaults_by_runtime_role(self) -> None:
+        initial = self.service.configuration()["configuration"]
+        self.service.update_configuration(
+            {
+                "expectedRevision": initial["revision"],
+                "changes": {
+                    "modelRouting.primary": {
+                        "modelProfile": "openai-codex/gpt-5.6-terra",
+                        "thinkingLevel": "high",
+                    },
+                    "modelRouting.roomCoordinator": {
+                        "modelProfile": "openai-codex/gpt-5.6-sol",
+                        "thinkingLevel": "xhigh",
+                    },
+                },
+                "updatedBy": "models-ui",
+            }
+        )
+
+        primary = self.service.create_session(
+            {
+                "title": "默认主 Agent",
+                "roleId": "companion-firstlight-v1",
+                "roleVersion": "1",
+            }
+        )["session"]
+        room = self.service.create_session(
+            {
+                "title": "Room 协调",
+                "mode": "coordinator",
+                "roleId": "companion-future-v1",
+                "roleVersion": "1",
+                "_modelRoute": "roomCoordinator",
+            }
+        )["session"]
+
+        self.assertEqual(primary["modelProfile"], "openai-codex/gpt-5.6-terra")
+        self.assertEqual(primary["thinkingLevel"], "high")
+        self.assertEqual(room["modelProfile"], "openai-codex/gpt-5.6-sol")
+        self.assertEqual(room["thinkingLevel"], "xhigh")
+
     def test_service_depends_on_runtime_driver_contract_not_pi_manager(self) -> None:
         factory = _GatewayRuntimeFactory(self.root)
         service = AgentService(

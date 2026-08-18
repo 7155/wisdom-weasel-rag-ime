@@ -18,7 +18,7 @@
     "revisionToken": {"type": "string", "minLength": 1},
     "configuration": {
       "type": "object",
-      "required": ["runtime", "sessionDefaults", "coordination"],
+      "required": ["runtime", "sessionDefaults", "coordination", "modelRouting"],
       "properties": {
         "runtime": {
           "type": "object",
@@ -60,6 +60,17 @@
           "properties": {
             "enabled": {"type": "boolean"}
           }
+        },
+        "modelRouting": {
+          "type": "object",
+          "required": ["primary", "toolAgent", "subagent", "roomCoordinator"],
+          "properties": {
+            "primary": {"$ref": "#/$defs/modelRoute"},
+            "toolAgent": {"$ref": "#/$defs/modelRoute"},
+            "subagent": {"$ref": "#/$defs/modelRoute"},
+            "roomCoordinator": {"$ref": "#/$defs/modelRoute"}
+          },
+          "additionalProperties": false
         }
       }
     },
@@ -75,5 +86,19 @@
     "updatedAtMs": {"type": "integer", "minimum": 0},
     "updatedBy": {"type": "string", "minLength": 1},
     "lastEventId": {"type": "string"}
+  },
+  "$defs": {
+    "modelRoute": {
+      "type": "object",
+      "required": ["modelProfile", "thinkingLevel"],
+      "properties": {
+        "modelProfile": {"type": "string", "minLength": 1},
+        "thinkingLevel": {
+          "type": "string",
+          "enum": ["inherit", "off", "minimal", "low", "medium", "high", "xhigh", "max"]
+        }
+      },
+      "additionalProperties": false
+    }
   }
 }

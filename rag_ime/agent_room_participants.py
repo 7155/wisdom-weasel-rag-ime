@@ -542,6 +542,7 @@ def _session_payload(
             f"{getattr(role, 'display_name')}"
         ),
         "mode": mode,
+        "_modelRoute": "roomCoordinator",
         "roleId": getattr(role, "role_id"),
         "roleVersion": getattr(role, "version"),
         "toolProfileVersion": canonical_tool_profile(

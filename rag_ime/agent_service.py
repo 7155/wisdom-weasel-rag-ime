@@ -308,6 +308,7 @@ class AgentService:
             tool_manifest_provider=self._runtime_tool_manifest,
             compaction_observer=self._checkpoint_runtime_compaction,
             room_context_provider=self._room_delegation_context,
+            model_route_provider=self._configured_model_route,
         )
         self.session_application = AgentSessionApplicationService(
             sessions=self.sessions,
@@ -1588,6 +1589,15 @@ class AgentService:
 
     def delegate_tasks(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
         return self.delegation.delegate(session_id, payload)
+
+    def _configured_model_route(self, route_id: str) -> Mapping[str, object] | None:
+        routing = self.configuration_store.snapshot()["configuration"].get(
+            "modelRouting"
+        )
+        if not isinstance(routing, Mapping):
+            return None
+        route = routing.get(route_id)
+        return dict(route) if isinstance(route, Mapping) else None
 
     def delegation_status(
         self,

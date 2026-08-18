@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock3,
+  Cpu,
   History,
   MessageCircle,
   PackageCheck,
@@ -395,23 +396,24 @@ export function PluginsFeature() {
   return (
     <ManagementPage
       actions={<>
+        <Button leadingIcon={<Cpu size={15} />} onClick={() => navigate('/roles')} size="small" variant="quiet">模型分工</Button>
         <Button leadingIcon={<ShieldQuestion size={15} />} onClick={() => navigate('/approvals')} size="small" variant="quiet">审批中心</Button>
         <Button leadingIcon={<RefreshCw size={15} />} loading={refreshing} onClick={() => void refreshAll()} size="small">刷新</Button>
       </>}
-      description="管理技能、工具与 Pi 扩展的发现、安装、启用范围和版本回退。高风险执行仍进入独立审批中心。"
-      eyebrow="伙伴能力"
+      description="管理各类 Agent 可用的技能、工具与 Pi 扩展，包括发现、安装、启用范围和版本回退。高风险执行仍进入独立审批中心。"
+      eyebrow="模型与扩展"
       routeId="plugins"
       title="插件管理"
     >
       <QueryState error={asError(catalog.error)} isPending={catalog.isPending} onRetry={() => void catalog.refetch()}>
         <ManagementSection
-          description="在这里选择伙伴可以使用哪些能力。涉及文件、账户或其他敏感操作时，仍会在执行前征求你的同意。"
+          description="在这里选择各类 Agent 可以发现哪些能力。涉及文件、账户或其他敏感操作时，仍会在执行前征求你的同意。"
           title="能力概览"
         >
           <MetricStrip items={[
             { label: '可查看', value: items.length, detail: '技能、工具与扩展', icon: Wrench },
             { label: '当前可用', value: availableCount, detail: '连接正常', icon: ShieldCheck },
-            { label: '伙伴可见', value: disclosedCount, detail: hiddenCount ? `${hiddenCount} 项暂不显示` : '全部可见', icon: PackageCheck },
+            { label: 'Agent 可见', value: disclosedCount, detail: hiddenCount ? `${hiddenCount} 项暂不显示` : '全部可见', icon: PackageCheck },
           ]} />
           <details className="plugins-policy-disclosure">
             <summary>

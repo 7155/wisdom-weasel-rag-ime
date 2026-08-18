@@ -439,6 +439,32 @@ class _ResumeRuntime(_CompletingRuntime):
         return []
 
 
+class _RetryExhaustedRuntime(_CompletingRuntime):
+    """A child whose native Pi Provider retry window has already elapsed."""
+
+    def prompt(self, session_id, _message):
+        turn_id = "turn:provider-retry-exhausted"
+        self.events.publish(
+            session_id,
+            "turn_failed",
+            {
+                "error": "fetch failed",
+                "failureKind": "network",
+                "retryable": True,
+                "hadToolActivity": False,
+                "retryExhausted": True,
+                "providerRetryAttempts": 7,
+                "providerRetryMaxAttempts": 7,
+                "nextStep": "模型连接在约 5 分钟自动重试后仍未恢复。",
+            },
+            turn_id=turn_id,
+        )
+        return {"accepted": True, "turnId": turn_id}
+
+    def messages(self, _session_id):
+        return []
+
+
 class AgentDelegationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-agent-delegation-")
@@ -476,6 +502,7 @@ class AgentDelegationTests(unittest.TestCase):
         subagent_session_gc_interval_ms: int | None = None,
         room_context_provider=None,
         runtime_provider=None,
+        model_route_provider=None,
     ) -> AgentDelegationCoordinator:
         return AgentDelegationCoordinator(
             db_path=self.db_path,
@@ -489,6 +516,7 @@ class AgentDelegationTests(unittest.TestCase):
             subagent_session_retention_ms=subagent_session_retention_ms,
             subagent_session_gc_interval_ms=subagent_session_gc_interval_ms,
             room_context_provider=room_context_provider,
+            model_route_provider=model_route_provider,
         )
 
     def test_fixed_catalog_parallel_results_and_internal_sessions(self) -> None:
@@ -1152,6 +1180,144 @@ class AgentDelegationTests(unittest.TestCase):
             [],
         )
         restarted.close()
+
+    def test_retry_exhaustion_reports_upward_and_returns_control_to_parent(self) -> None:
+        coordinator = self.coordinator(_RetryExhaustedRuntime)
+        try:
+            response = coordinator.delegate(
+                str(self.parent["id"]),
+                {
+                    "agent": "researcher",
+                    "task": "等待模型连接后核对证据",
+                    **_TASK_CONTRACT,
+                    "wait": False,
+                },
+            )
+            run_id = str(response["batch"]["runs"][0]["id"])
+            _wait_until(
+                lambda: coordinator.store.get_run(run_id)[
+                    "resultContextScheduledAtMs"
+                ]
+                is not None
+            )
+
+            run = coordinator.store.get_run(run_id)
+            self.assertEqual(run["state"], "failed")
+            self.assertTrue(run["result"]["failureReport"]["retryExhausted"])
+            self.assertEqual(
+                run["result"]["failureReport"]["providerRetryAttempts"],
+                7,
+            )
+            self.assertFalse(run["result"]["retryPolicy"]["automaticScheduled"])
+            self.assertTrue(run["result"]["parentDecision"]["required"])
+            self.assertTrue(
+                run["result"]["parentDecision"]["parentSessionRemainsRunnable"]
+            )
+            self.assertEqual(
+                run["result"]["parentDecision"]["allowedActions"],
+                ["continue_parent", "retry", "resume", "switch_model", "redelegate"],
+            )
+
+            batches = coordinator.store.list_batches(limit=10)
+            self.assertEqual(len(batches), 1, "Pi exhaustion must not trigger a second kernel retry")
+            self.assertNotEqual(
+                self.sessions.get(str(self.parent["id"]))["status"],
+                "faulted",
+            )
+
+            materialized = self.context_runtime.materialize(str(self.parent["id"]))
+            payload = next(
+                item["payload"]
+                for item in materialized["items"]
+                if item["sourceId"] == run_id
+            )
+            self.assertEqual(payload["state"], "failed")
+            self.assertEqual(payload["deliveryStatus"], "not_returned")
+            self.assertTrue(payload["failureReport"]["retryExhausted"])
+            self.assertTrue(payload["parentDecision"]["required"])
+            self.assertIn("不要把父级标记为失败", payload["instruction"])
+
+            def failed_progress_events() -> list[object]:
+                events, _ = self.events.replay(str(self.parent["id"]))
+                return [
+                    event
+                    for event in events
+                    if event.event_type == "tool_progress"
+                    and event.payload.get("runId") == run_id
+                    and event.payload.get("state") == "failed"
+                ]
+
+            _wait_until(lambda: len(failed_progress_events()) == 1)
+            events, gap = self.events.replay(str(self.parent["id"]))
+            self.assertFalse(gap)
+            progress = next(
+                event.payload
+                for event in reversed(events)
+                if event.event_type == "tool_progress"
+                and event.payload.get("runId") == run_id
+                and event.payload.get("state") == "failed"
+            )
+            self.assertTrue(progress["parentDecisionRequired"])
+            self.assertIn("等待上级继续决策或恢复", progress["summary"])
+        finally:
+            coordinator.close()
+
+    def test_configured_model_routes_apply_by_delegated_runtime_role(self) -> None:
+        routes = {
+            "toolAgent": {
+                "modelProfile": "openai-codex/gpt-5.6-luna",
+                "thinkingLevel": "low",
+            },
+            "subagent": {
+                "modelProfile": "openai-codex/gpt-5.6-terra",
+                "thinkingLevel": "high",
+            },
+        }
+        coordinator = self.coordinator(
+            model_route_provider=lambda route_id: routes.get(route_id)
+        )
+        try:
+            read_only = coordinator.delegate(
+                str(self.parent["id"]),
+                {
+                    "agent": "researcher",
+                    "task": "只读研究",
+                    **_TASK_CONTRACT,
+                },
+            )["batch"]["runs"][0]
+            read_only_child = self.sessions.get(str(read_only["childSessionId"]))
+            self.assertEqual(
+                read_only_child["modelProfile"],
+                "openai-codex/gpt-5.6-terra",
+            )
+            self.assertEqual(read_only_child["thinkingLevel"], "high")
+
+            self.parent = self.sessions.set_runtime_policy(
+                str(self.parent["id"]),
+                mode="coordinator",
+                tool_profile_version="control-center-v1",
+                execution_mode="workspace_managed",
+                grant_workspace_scope=True,
+                allowed_tools=None,
+                workspace_roots=[str(self.root)],
+            )
+            writable = coordinator.delegate(
+                str(self.parent["id"]),
+                {
+                    "agent": "worker",
+                    "task": "有界实现",
+                    "access": "write",
+                    **_TASK_CONTRACT,
+                },
+            )["batch"]["runs"][0]
+            writable_child = self.sessions.get(str(writable["childSessionId"]))
+            self.assertEqual(
+                writable_child["modelProfile"],
+                "openai-codex/gpt-5.6-luna",
+            )
+            self.assertEqual(writable_child["thinkingLevel"], "low")
+        finally:
+            coordinator.close()
 
     def test_first_terminal_result_is_ingested_once_and_late_terminal_is_ignored(self) -> None:
         coordinator = self.coordinator(_DuplicateTerminalRuntime)

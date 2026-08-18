@@ -391,6 +391,57 @@ class PiRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(room_environment["RAG_IME_AGENT_ROOM_BOUND"], "1")
 
+    def test_managed_pi_config_extends_transient_provider_retry_window(self) -> None:
+        self.config.prepare_agent_config()
+
+        settings_path = self.config.agent_dir / "settings.json"
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            settings["retry"],
+            {
+                "enabled": True,
+                "maxRetries": 7,
+                "baseDelayMs": 2_500,
+            },
+        )
+        self.assertEqual(
+            sum(
+                settings["retry"]["baseDelayMs"] * (2 ** attempt)
+                for attempt in range(settings["retry"]["maxRetries"])
+            ),
+            317_500,
+        )
+        self.assertEqual(settings_path.stat().st_mode & 0o777, 0o600)
+
+    def test_managed_pi_retry_defaults_preserve_explicit_user_settings(self) -> None:
+        self.config.agent_dir.mkdir(parents=True)
+        settings_path = self.config.agent_dir / "settings.json"
+        settings_path.write_text(
+            json.dumps({
+                "theme": "paper",
+                "retry": {
+                    "enabled": False,
+                    "maxRetries": 4,
+                    "baseDelayMs": 5_000,
+                },
+            }),
+            encoding="utf-8",
+        )
+
+        self.config.prepare_agent_config()
+
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        self.assertEqual(settings["theme"], "paper")
+        self.assertEqual(
+            settings["retry"],
+            {
+                "enabled": False,
+                "maxRetries": 4,
+                "baseDelayMs": 5_000,
+            },
+        )
+        self.assertEqual(settings_path.stat().st_mode & 0o777, 0o600)
+
     def test_launch_resolves_persistent_user_persona_prompt_server_side(self) -> None:
         personas = AgentPersonaStore(self.root / "rag-ime.sqlite")
         personas.initialize()
@@ -1172,6 +1223,54 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertNotIn(
             "must not escape",
             json.dumps(statuses[-1].payload, ensure_ascii=False),
+        )
+
+    def test_v1_provider_retry_exhaustion_is_reported_on_terminal_failure(self) -> None:
+        session_id = str(self.session["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn:provider-retry-exhausted"
+        with self.runtime._lock:
+            client = self.runtime._client
+            self.runtime._active_turn_id = turn_id
+        assert client is not None
+
+        self.runtime._handle_pi_event(
+            client,
+            session_id,
+            {
+                "type": "auto_retry_start",
+                "attempt": 6,
+                "maxAttempts": 6,
+                "delayMs": 64_000,
+                "errorMessage": "private upstream diagnostic",
+            },
+        )
+        self.runtime._handle_pi_event(
+            client,
+            session_id,
+            {
+                "type": "agent_end",
+                "willRetry": False,
+                "messages": [{
+                    "role": "assistant",
+                    "stopReason": "error",
+                    "errorMessage": "fetch failed",
+                    "content": [],
+                }],
+            },
+        )
+
+        failed = [
+            event for event in self.events.replay(session_id)[0]
+            if event.event_type == "turn_failed" and event.turn_id == turn_id
+        ]
+        self.assertEqual(len(failed), 1)
+        self.assertTrue(failed[0].payload["retryExhausted"])
+        self.assertEqual(failed[0].payload["providerRetryAttempts"], 6)
+        self.assertEqual(failed[0].payload["providerRetryMaxAttempts"], 6)
+        self.assertNotIn(
+            "private upstream diagnostic",
+            json.dumps(failed[0].payload, ensure_ascii=False),
         )
 
     def test_nonfatal_extension_error_does_not_terminalize_active_turn(self) -> None:

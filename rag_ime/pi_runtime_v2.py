@@ -478,6 +478,8 @@ class _HostedSessionState:
     last_agent_messages: list[object] = field(default_factory=list)
     final_error: str = ""
     final_failure_context: dict[str, object] = field(default_factory=dict)
+    provider_retry_attempt: int = 0
+    provider_retry_max_attempts: int = 0
     had_tool_activity: bool = False
     pending_approvals: dict[str, str] = field(default_factory=dict)
     pending_reviews: dict[str, str] = field(default_factory=dict)
@@ -1183,6 +1185,8 @@ class PiRuntimeHostManager:
             state.last_agent_messages = []
             state.final_error = ""
             state.final_failure_context.clear()
+            state.provider_retry_attempt = 0
+            state.provider_retry_max_attempts = 0
             state.had_tool_activity = False
             state.settle_extension_failed = False
             state.abort_requested_turn_id = ""
@@ -2438,6 +2442,8 @@ class PiRuntimeHostManager:
                     state.last_agent_messages = []
                     state.final_error = ""
                     state.final_failure_context.clear()
+                    state.provider_retry_attempt = 0
+                    state.provider_retry_max_attempts = 0
                     state.had_tool_activity = False
                     state.settle_extension_failed = False
                     state.abort_requested_turn_id = ""
@@ -3040,6 +3046,35 @@ class PiRuntimeHostManager:
             )
             return
         if event_type in {"auto_retry_start", "auto_retry_end"}:
+            attempt = max(0, as_integer(raw.get("attempt")))
+            with self._lock:
+                if event_type == "auto_retry_start":
+                    state.provider_retry_attempt = max(
+                        state.provider_retry_attempt,
+                        attempt,
+                    )
+                    state.provider_retry_max_attempts = max(
+                        state.provider_retry_max_attempts,
+                        as_integer(raw.get("maxAttempts")),
+                    )
+                elif raw.get("success") is True:
+                    state.provider_retry_attempt = 0
+                    state.provider_retry_max_attempts = 0
+                else:
+                    state.provider_retry_attempt = max(
+                        state.provider_retry_attempt,
+                        attempt,
+                    )
+                    maximum = state.provider_retry_max_attempts
+                    if maximum > 0 and attempt >= maximum:
+                        state.final_failure_context.update({
+                            "retryExhausted": True,
+                            "providerRetryAttempts": attempt,
+                            "providerRetryMaxAttempts": maximum,
+                            "nextStep": (
+                                "模型连接在自动重试后仍未恢复，请稍后继续或切换模型。"
+                            ),
+                        })
             self.events.publish(
                 session_id,
                 "status_changed",
@@ -3275,6 +3310,8 @@ class PiRuntimeHostManager:
                     state.last_agent_messages = []
                     state.final_error = ""
                     state.final_failure_context.clear()
+                    state.provider_retry_attempt = 0
+                    state.provider_retry_max_attempts = 0
                     state.had_tool_activity = False
                     state.settle_extension_failed = False
                     state.abort_requested_turn_id = ""
@@ -3598,6 +3635,8 @@ class PiRuntimeHostManager:
             state.last_agent_messages = []
             state.final_error = ""
             state.final_failure_context.clear()
+            state.provider_retry_attempt = 0
+            state.provider_retry_max_attempts = 0
             state.had_tool_activity = False
             state.settle_extension_failed = False
             state.abort_requested_turn_id = ""
@@ -3703,6 +3742,8 @@ class PiRuntimeHostManager:
             state.last_agent_messages = []
             state.final_error = ""
             state.final_failure_context.clear()
+            state.provider_retry_attempt = 0
+            state.provider_retry_max_attempts = 0
             state.had_tool_activity = False
             state.settle_extension_failed = False
             state.abort_requested_turn_id = ""
@@ -3817,6 +3858,8 @@ class PiRuntimeHostManager:
                 state.last_agent_messages = []
                 state.final_error = ""
                 state.final_failure_context.clear()
+                state.provider_retry_attempt = 0
+                state.provider_retry_max_attempts = 0
                 state.abort_requested_turn_id = ""
                 state.pending_approvals.clear()
                 state.pending_reviews.clear()

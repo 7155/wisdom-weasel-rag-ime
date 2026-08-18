@@ -2,6 +2,38 @@ import { describe, expect, it } from 'vitest';
 import { createPreviewTransport } from './preview-control-transport';
 
 describe('preview control transport', () => {
+  it('persists role-based model routing with the same optimistic revision contract', async () => {
+    const transport = createPreviewTransport();
+    const initial = record(await transport.request({ pathId: 'agent.configuration.get' }));
+    const initialSnapshot = record(initial.configuration);
+    expect(record(record(initialSnapshot.configuration).modelRouting)).toMatchObject({
+      primary: { modelProfile: 'inherit', thinkingLevel: 'inherit' },
+      toolAgent: { modelProfile: 'inherit', thinkingLevel: 'inherit' },
+    });
+
+    const updated = record(await transport.request({
+      pathId: 'agent.configuration.update',
+      body: {
+        expectedRevision: Number(initialSnapshot.revision),
+        changes: {
+          'modelRouting.toolAgent': {
+            modelProfile: 'openai-codex/gpt-5.6-luna',
+            thinkingLevel: 'low',
+          },
+        },
+        updatedBy: 'models-ui',
+      },
+    }));
+    const updatedSnapshot = record(updated.configuration);
+    expect(updatedSnapshot.revision).toBe(Number(initialSnapshot.revision) + 1);
+    expect(record(record(updatedSnapshot.configuration).modelRouting)).toMatchObject({
+      toolAgent: {
+        modelProfile: 'openai-codex/gpt-5.6-luna',
+        thinkingLevel: 'low',
+      },
+    });
+  });
+
   it('keeps Memory preview labels product-facing without changing stable identifiers', async () => {
     const transport = createPreviewTransport();
     const graph = record(await transport.request({

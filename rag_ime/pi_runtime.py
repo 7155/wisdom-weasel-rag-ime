@@ -278,6 +278,11 @@ class PiRuntimeConfig:
     installation_error: str = ""
     protocol_version: str = "1"
     max_sessions: int = 8
+    provider_retry_enabled: bool = True
+    # Seven exponential delays starting at 2.5s total 317.5s. Pi owns this
+    # same-Session Provider retry window before control returns to the caller.
+    provider_retry_max_retries: int = 7
+    provider_retry_base_delay_ms: int = 2_500
     role_resolver: Callable[[object, object], PersonaManifest] = field(
         default=agent_role,
         repr=False,
@@ -397,6 +402,22 @@ class PiRuntimeConfig:
             installation_error=installation_error,
             protocol_version=protocol_version or "1",
             max_sessions=_env_int("RAG_IME_PI_MAX_SESSIONS", 8, minimum=1, maximum=32),
+            provider_retry_enabled=_env_bool(
+                "RAG_IME_PI_PROVIDER_RETRY_ENABLED",
+                True,
+            ),
+            provider_retry_max_retries=_env_int(
+                "RAG_IME_PI_PROVIDER_RETRY_MAX_RETRIES",
+                7,
+                minimum=1,
+                maximum=8,
+            ),
+            provider_retry_base_delay_ms=_env_int(
+                "RAG_IME_PI_PROVIDER_RETRY_BASE_DELAY_MS",
+                2_500,
+                minimum=250,
+                maximum=60_000,
+            ),
             provider_environment=provider_environment,
             model_providers=model_providers,
             model_base_url=model_base_url,
@@ -605,6 +626,7 @@ class PiRuntimeConfig:
         if self.agent_dir.is_symlink():
             raise PiRuntimeError("managed Pi agent directory must not be a symlink")
         os.chmod(self.agent_dir, 0o700)
+        self._prepare_retry_settings()
         target = self.agent_dir / "models.json"
         if target.is_symlink():
             raise PiRuntimeError("managed Pi models.json must not be a symlink")
@@ -626,6 +648,62 @@ class PiRuntimeConfig:
         temporary = self.agent_dir / f".models.json.tmp-{uuid.uuid4().hex}"
         try:
             descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, target)
+            os.chmod(target, 0o600)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+
+    def _prepare_retry_settings(self) -> None:
+        """Fill PAW defaults into Pi's native retry settings without overriding the user."""
+
+        target = self.agent_dir / "settings.json"
+        if target.is_symlink():
+            raise PiRuntimeError("managed Pi settings.json must not be a symlink")
+        settings: dict[str, object] = {}
+        if target.exists():
+            if not target.is_file():
+                raise PiRuntimeError("managed Pi settings.json must be a regular file")
+            try:
+                loaded = json.loads(target.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise PiRuntimeError("managed Pi settings.json is not valid JSON") from exc
+            if not isinstance(loaded, dict):
+                raise PiRuntimeError("managed Pi settings.json must contain an object")
+            settings = dict(loaded)
+
+        retry_value = settings.get("retry")
+        if retry_value is None:
+            retry: dict[str, object] = {}
+        elif isinstance(retry_value, Mapping):
+            retry = dict(retry_value)
+        else:
+            raise PiRuntimeError("managed Pi retry settings must contain an object")
+        retry.setdefault("enabled", bool(self.provider_retry_enabled))
+        retry.setdefault(
+            "maxRetries",
+            min(8, max(1, int(self.provider_retry_max_retries))),
+        )
+        retry.setdefault(
+            "baseDelayMs",
+            min(60_000, max(250, int(self.provider_retry_base_delay_ms))),
+        )
+        settings["retry"] = retry
+
+        encoded = (
+            json.dumps(settings, ensure_ascii=True, indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        temporary = self.agent_dir / f".settings.json.tmp-{uuid.uuid4().hex}"
+        try:
+            descriptor = os.open(
+                temporary,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
             with os.fdopen(descriptor, "wb") as handle:
                 handle.write(encoded)
                 handle.flush()
@@ -968,6 +1046,8 @@ class PiRuntimeManager:
         self._pending_review_requests: dict[str, str] = {}
         self._pending_ui_requests: dict[str, dict[str, object]] = {}
         self._last_pi_entry_id = ""
+        self._provider_retry_attempt = 0
+        self._provider_retry_max_attempts = 0
         # Pi emits one assistant message before every tool call. The product UI
         # presents those messages as one Agent turn, not as a stack of avatars.
         self._stream_pi_message_id = ""
@@ -1198,6 +1278,8 @@ class PiRuntimeManager:
             self._active_client_message_id = str(client_message_id).strip()
             self._stream_pi_message_id = ""
             self._tool_blocks.clear()
+            self._provider_retry_attempt = 0
+            self._provider_retry_max_attempts = 0
             self._status = "busy"
             self._cancel_idle_locked()
         self.sessions.set_status(session_id, "busy", last_message_preview=text)
@@ -1843,6 +1925,8 @@ class PiRuntimeManager:
             self._pending_review_requests.clear()
             self._pending_ui_requests.clear()
             self._last_pi_entry_id = ""
+            self._provider_retry_attempt = 0
+            self._provider_retry_max_attempts = 0
         if client is not None:
             client.stop()
         if session_id:
@@ -1923,6 +2007,19 @@ class PiRuntimeManager:
                     )
             return
         if event_type in {"auto_retry_start", "auto_retry_end"}:
+            with self._lock:
+                if turn_id and event_type == "auto_retry_start":
+                    self._provider_retry_attempt = max(
+                        self._provider_retry_attempt,
+                        as_integer(raw.get("attempt")),
+                    )
+                    self._provider_retry_max_attempts = max(
+                        self._provider_retry_max_attempts,
+                        as_integer(raw.get("maxAttempts")),
+                    )
+                elif turn_id and raw.get("success") is True:
+                    self._provider_retry_attempt = 0
+                    self._provider_retry_max_attempts = 0
             self.events.publish(
                 session_id,
                 "status_changed",
@@ -2180,7 +2277,28 @@ class PiRuntimeManager:
                 ):
                     return
                 if provider_error:
-                    self._turn_failed(session_id, turn_id, PiRuntimeError(provider_error))
+                    failure_context: dict[str, object] = {}
+                    if (
+                        self._provider_retry_max_attempts > 0
+                        and self._provider_retry_attempt
+                        >= self._provider_retry_max_attempts
+                    ):
+                        failure_context = {
+                            "retryExhausted": True,
+                            "providerRetryAttempts": self._provider_retry_attempt,
+                            "providerRetryMaxAttempts": (
+                                self._provider_retry_max_attempts
+                            ),
+                            "nextStep": (
+                                "模型连接在自动重试后仍未恢复，请稍后继续或切换模型。"
+                            ),
+                        }
+                    self._turn_failed(
+                        session_id,
+                        turn_id,
+                        PiRuntimeError(provider_error),
+                        failure_context=failure_context,
+                    )
                     return
                 # The real terminal event won the race; disarm the abort
                 # fallback before publishing so it cannot emit a second
@@ -2208,6 +2326,8 @@ class PiRuntimeManager:
                 self._active_client_message_id = ""
                 self._stream_pi_message_id = ""
                 self._tool_blocks.clear()
+                self._provider_retry_attempt = 0
+                self._provider_retry_max_attempts = 0
                 self._pending_approval_requests.clear()
                 self._pending_review_requests.clear()
                 self._pending_ui_requests.clear()
@@ -2505,7 +2625,14 @@ class PiRuntimeManager:
                 {"status": "stopped"} if intentional else {"error": self._last_error, "exitCode": exit_code},
             )
 
-    def _turn_failed(self, session_id: str, turn_id: str, error: BaseException) -> None:
+    def _turn_failed(
+        self,
+        session_id: str,
+        turn_id: str,
+        error: BaseException,
+        *,
+        failure_context: Mapping[str, object] | None = None,
+    ) -> None:
         safe_error = redact_runtime_text(str(error))
         self.sessions.set_status(session_id, "idle")
         with self._lock:
@@ -2515,12 +2642,19 @@ class PiRuntimeManager:
             self._active_client_message_id = ""
             self._stream_pi_message_id = ""
             self._tool_blocks.clear()
+            self._provider_retry_attempt = 0
+            self._provider_retry_max_attempts = 0
             self._last_error = safe_error
             self._pending_approval_requests.clear()
             self._pending_review_requests.clear()
             self._pending_ui_requests.clear()
             self._schedule_idle_locked()
-        self.events.publish(session_id, "turn_failed", {"error": safe_error}, turn_id=turn_id)
+        self.events.publish(
+            session_id,
+            "turn_failed",
+            {"error": safe_error, **dict(failure_context or {})},
+            turn_id=turn_id,
+        )
 
     def _require_client_locked(self, session_id: str) -> PiRpcClient:
         if self._active_session_id != session_id or self._client is None or not self._client.running:

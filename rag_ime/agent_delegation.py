@@ -1719,6 +1719,9 @@ class AgentDelegationCoordinator:
         room_context_provider: Callable[
             [str], Mapping[str, object] | None
         ] | None = None,
+        model_route_provider: Callable[
+            [str], Mapping[str, object] | None
+        ] | None = None,
     ) -> None:
         self.artifacts = AgentArtifactStore(db_path, root=artifact_root)
         self.store = AgentDelegationStore(db_path, artifacts=self.artifacts)
@@ -1744,6 +1747,7 @@ class AgentDelegationCoordinator:
         self._tool_manifest_provider = tool_manifest_provider
         self._compaction_observer = compaction_observer
         self._room_context_provider = room_context_provider
+        self._model_route_provider = model_route_provider
         self._cancellation_grace_ms = max(10, min(int(cancellation_grace_ms), 30_000))
         self._subagent_session_retention_ms = max(
             0,
@@ -1948,6 +1952,31 @@ class AgentDelegationCoordinator:
                     )
                     child_mode = "coordinator" if writable else "assistant"
                     child_execution_mode = parent_execution_mode if writable else None
+                    model_route_id = "toolAgent" if writable else "subagent"
+                    configured_model_route = (
+                        self._model_route_provider(model_route_id)
+                        if self._model_route_provider is not None
+                        else None
+                    )
+                    model_route = (
+                        dict(configured_model_route)
+                        if isinstance(configured_model_route, Mapping)
+                        else {}
+                    )
+                    routed_model_profile = str(
+                        model_route.get("modelProfile") or "inherit"
+                    ).strip()
+                    routed_thinking_level = str(
+                        model_route.get("thinkingLevel") or "inherit"
+                    ).strip()
+                    explicit_model_profile = str(
+                        task.get("modelProfile") or ""
+                    ).strip()
+                    explicit_thinking_level = (
+                        str(task.get("thinkingLevel") or "").strip()
+                        if task.get("thinkingLevel") is not None
+                        else ""
+                    )
                     child = self.sessions.create(
                         title=f"{template.display_name} · {_bounded_text(task['task'], maximum=72)}",
                         mode=child_mode,
@@ -1957,14 +1986,24 @@ class AgentDelegationCoordinator:
                             parent.get("roleBookRevisionId") or ""
                         ),
                         model_profile=str(
-                            task.get("modelProfile")
+                            explicit_model_profile
+                            or (
+                                routed_model_profile
+                                if routed_model_profile != "inherit"
+                                else ""
+                            )
                             or parent.get("modelProfile")
                             or "pi/default"
                         ),
                         thinking_level=str(
-                            task.get("thinkingLevel")
-                            if task.get("thinkingLevel") is not None
-                            else parent.get("thinkingLevel") or ""
+                            explicit_thinking_level
+                            or (
+                                routed_thinking_level
+                                if routed_thinking_level != "inherit"
+                                else ""
+                            )
+                            or parent.get("thinkingLevel")
+                            or ""
                         ),
                         tool_profile_version=child_profile,
                         execution_mode=child_execution_mode,
@@ -2089,6 +2128,14 @@ class AgentDelegationCoordinator:
                     launch_digest = {
                         "modelProfile": str(child.get("modelProfile") or "pi/default"),
                         "thinkingLevel": str(child.get("thinkingLevel") or ""),
+                        "modelRoute": model_route_id,
+                        "modelRouteSource": (
+                            "explicit"
+                            if explicit_model_profile
+                            else "configured"
+                            if routed_model_profile != "inherit"
+                            else "inherited"
+                        ),
                         "toolProfileVersion": str(
                             child.get("toolProfileVersion") or "subagent-readonly-v1"
                         ),
@@ -3017,6 +3064,7 @@ class AgentDelegationCoordinator:
         terminal = threading.Event()
         forced = threading.Event()
         terminal_error = ""
+        terminal_failure_context: dict[str, object] = {}
         completed = False
         budget_reason = ""
         last_message: dict[str, object] = {}
@@ -3133,6 +3181,7 @@ class AgentDelegationCoordinator:
         def observe(event: AgentEventEnvelope) -> None:
             nonlocal terminal_error, completed, last_message
             nonlocal turn_count, total_tokens, output_chars
+            nonlocal terminal_failure_context
             if event.session_id != child_session_id:
                 return
             with update_lock:
@@ -3259,6 +3308,19 @@ class AgentDelegationCoordinator:
                         event.payload.get("error") or "delegated Pi turn failed",
                         maximum=500,
                     )
+                    terminal_failure_context = {
+                        key: event.payload[key]
+                        for key in (
+                            "failureKind",
+                            "retryable",
+                            "hadToolActivity",
+                            "retryExhausted",
+                            "providerRetryAttempts",
+                            "providerRetryMaxAttempts",
+                            "nextStep",
+                        )
+                        if key in event.payload
+                    }
                     _, terminal_error = accept_runtime_terminal(
                         event,
                         state="failed",
@@ -3435,19 +3497,77 @@ class AgentDelegationCoordinator:
         failure_class = _subagent_failure_class(error) if state == "failed" else ""
         observed_tool_count = base_tool_count + len(tool_ids)
         retry_safe = failure_class == "transient_runtime" and observed_tool_count == 0
+        retry_exhausted = terminal_failure_context.get("retryExhausted") is True
+        automatic_retry_eligible = retry_safe and not retry_exhausted
         auto_retry = (
             state == "failed"
-            and retry_safe
+            and automatic_retry_eligible
             and int(run.get("attemptNumber") or 1) < 2
         )
         if state == "failed":
+            launch = (
+                dict(run.get("launchDigest"))
+                if isinstance(run.get("launchDigest"), Mapping)
+                else {}
+            )
+            failure_report = {
+                "schemaVersion": "rag-ime.agent-subagent-failure-report.v1",
+                "failureClass": failure_class,
+                "error": error,
+                "retryExhausted": retry_exhausted,
+                "providerRetryAttempts": _nonnegative_event_int(
+                    terminal_failure_context.get("providerRetryAttempts")
+                ),
+                "providerRetryMaxAttempts": _nonnegative_event_int(
+                    terminal_failure_context.get("providerRetryMaxAttempts")
+                ),
+                "toolCallCount": observed_tool_count,
+                "completedToolCallsMayHaveSideEffects": observed_tool_count > 0,
+                "modelRoute": str(launch.get("modelRoute") or "subagent"),
+                "modelProfile": str(launch.get("modelProfile") or ""),
+                "nextStep": _bounded_text(
+                    terminal_failure_context.get("nextStep")
+                    or (
+                        "由上级继续当前任务、切换该运行角色的模型、重试、恢复或改派；"
+                        "不要重放已有 Tool 回执不能证明安全的操作。"
+                    ),
+                    maximum=500,
+                ),
+            }
             result = {
                 **result,
                 "deliveryStatus": "not_returned",
                 "verificationStatus": "not_applicable",
                 "failureClass": failure_class,
+                "failureReport": failure_report,
+                "parentDecision": {
+                    "required": True,
+                    "parentSessionRemainsRunnable": True,
+                    "allowedActions": [
+                        "continue_parent",
+                        "retry",
+                        "resume",
+                        "switch_model",
+                        "redelegate",
+                    ],
+                    "recommendedAction": (
+                        "switch_model"
+                        if retry_exhausted
+                        else "resume"
+                        if observed_tool_count > 0
+                        else "retry"
+                    ),
+                },
+                "recovery": {
+                    "runId": run_id,
+                    "childSessionId": child_session_id,
+                    "retryControlAction": "retry",
+                    "resumeControlAction": "resume",
+                    "modelRoute": str(launch.get("modelRoute") or "subagent"),
+                    "completedToolsMustNotReplayBlindly": True,
+                },
                 "retryPolicy": {
-                    "automaticEligible": retry_safe,
+                    "automaticEligible": automatic_retry_eligible,
                     "automaticLimit": 1,
                     "automaticScheduled": auto_retry,
                     "requiresReceiptReview": observed_tool_count > 0,
@@ -3482,7 +3602,11 @@ class AgentDelegationCoordinator:
                     == "invalid"
                     else "子 Agent 已返回结果，待主持会话核验"
                     if state == "completed"
-                    else "子 Agent 已停止"
+                    else (
+                        "子 Agent 模型连接重试耗尽；失败报告已返回，等待上级继续决策或恢复"
+                        if retry_exhausted
+                        else "子 Agent 未完成；失败报告已返回，等待上级继续决策或恢复"
+                    )
                 ),
             )
             self._record_retained_child_session(run_id, child_session_id)
@@ -3712,6 +3836,22 @@ class AgentDelegationCoordinator:
         if isinstance(causal, Mapping) and bool(causal.get("roomBound")):
             if not self.store.room_delivery_allowed(str(run["id"])):
                 return
+        result = dict(run["result"]) if isinstance(run.get("result"), Mapping) else {}
+        parent_decision = (
+            dict(result["parentDecision"])
+            if isinstance(result.get("parentDecision"), Mapping)
+            else {}
+        )
+        failure_report = (
+            dict(result["failureReport"])
+            if isinstance(result.get("failureReport"), Mapping)
+            else {}
+        )
+        recovery = (
+            dict(result["recovery"])
+            if isinstance(result.get("recovery"), Mapping)
+            else {}
+        )
         self.events.publish(
             parent_session_id,
             "tool_progress",
@@ -3726,6 +3866,16 @@ class AgentDelegationCoordinator:
                 "todoTask": run["todoTask"],
                 "todoPhase": run["todoPhase"],
                 "requiresParentTodoUpdate": run["state"] not in {"queued", "running"},
+                **(
+                    {
+                        "parentDecisionRequired": bool(parent_decision.get("required")),
+                        "failureReport": failure_report,
+                        "recovery": recovery,
+                    }
+                    if isinstance(run.get("result"), Mapping)
+                    and str(run.get("state") or "") == "failed"
+                    else {}
+                ),
             },
         )
 
@@ -4686,6 +4836,13 @@ def _bounded_int(value: object, *, minimum: int, maximum: int) -> int:
     if not minimum <= number <= maximum:
         raise ValueError("delegation budget value is outside the managed range")
     return number
+
+
+def _nonnegative_event_int(value: object) -> int:
+    try:
+        return max(0, min(int(value or 0), 10_000))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _subagent_session_retention_from_environment() -> int:

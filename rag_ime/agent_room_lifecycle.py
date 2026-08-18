@@ -704,6 +704,7 @@ def _participant_session_payload(
             if plan.room_kind == "collaboration"
             else "assistant"
         ),
+        "_modelRoute": "roomCoordinator",
         "roleId": role.role_id,
         "roleVersion": role.version,
         # Room identity describes responsibility, not capability. Every member

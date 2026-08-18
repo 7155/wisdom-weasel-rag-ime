@@ -41,6 +41,47 @@ class AgentConfigurationTests(unittest.TestCase):
             default_agent_configuration(role_id="vcp-v1")["sessionDefaults"]["roleId"],
             "companion-future-v1",
         )
+        self.assertEqual(
+            configuration["modelRouting"],
+            {
+                route_id: {
+                    "modelProfile": "inherit",
+                    "thinkingLevel": "inherit",
+                }
+                for route_id in (
+                    "primary",
+                    "toolAgent",
+                    "subagent",
+                    "roomCoordinator",
+                )
+            },
+        )
+
+    def test_model_routes_are_revisioned_without_changing_legacy_session_defaults(self) -> None:
+        update = self.store.update(
+            {
+                "modelRouting.toolAgent": {
+                    "modelProfile": "openai-codex/gpt-5.6-luna",
+                    "thinkingLevel": "low",
+                },
+            },
+            expected_revision=1,
+            updated_by="models-ui",
+        )
+
+        configuration = update.snapshot["configuration"]
+        self.assertEqual(
+            configuration["modelRouting"]["toolAgent"],
+            {
+                "modelProfile": "openai-codex/gpt-5.6-luna",
+                "thinkingLevel": "low",
+            },
+        )
+        self.assertEqual(
+            configuration["sessionDefaults"]["modelProfile"],
+            "deepseek/deepseek-chat",
+        )
+        self.assertFalse(update.runtime_sync_required)
 
     def test_startup_rewrites_a_persisted_legacy_role_id_once(self) -> None:
         path = Path(self.tmp.name) / "legacy-agent.sqlite"

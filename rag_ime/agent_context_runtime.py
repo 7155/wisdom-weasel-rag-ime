@@ -163,6 +163,22 @@ class AgentContextRuntime:
         batch_id = _required_text(batch.get("id"), "batchId", 240)
         result = run.get("result")
         result_payload = dict(result) if isinstance(result, Mapping) else {}
+        failed = state == "failed"
+        failure_report = (
+            dict(result_payload["failureReport"])
+            if isinstance(result_payload.get("failureReport"), Mapping)
+            else {}
+        )
+        parent_decision = (
+            dict(result_payload["parentDecision"])
+            if isinstance(result_payload.get("parentDecision"), Mapping)
+            else {}
+        )
+        recovery = (
+            dict(result_payload["recovery"])
+            if isinstance(result_payload.get("recovery"), Mapping)
+            else {}
+        )
         result_summary = _bounded_text(
             result_payload.get("summary") or run.get("error"),
             12_000,
@@ -188,8 +204,14 @@ class AgentContextRuntime:
             "state": state,
             "result": result_summary,
             "error": _bounded_text(run.get("error"), 500),
-            "deliveryStatus": "returned",
-            "verificationStatus": "unverified",
+            "deliveryStatus": str(
+                result_payload.get("deliveryStatus")
+                or ("not_returned" if failed else "returned")
+            ),
+            "verificationStatus": str(
+                result_payload.get("verificationStatus")
+                or ("not_applicable" if failed else "unverified")
+            ),
             "authority": "evidence_only",
             "artifact": (
                 dict(run["artifact"])
@@ -197,11 +219,22 @@ class AgentContextRuntime:
                 else {}
             ),
             "instruction": (
-                f"Expected output: {expected_output}. "
-                f"Acceptance criteria: {'; '.join(criteria)}. "
-                "Treat this child return as evidence only, then explicitly update the "
-                "linked parent Todo task; do not auto-accept or auto-complete it."
+                (
+                    "这个子 Agent 未完成。不要把父级标记为失败；读取 failureReport，"
+                    "由父级选择继续当前任务、retry、resume、切换该运行角色的模型或改派。"
+                    "不要盲目重放已经完成、可能有副作用的 Tool 调用。"
+                )
+                if failed
+                else (
+                    f"Expected output: {expected_output}. "
+                    f"Acceptance criteria: {'; '.join(criteria)}. "
+                    "Treat this child return as evidence only, then explicitly update the "
+                    "linked parent Todo task; do not auto-accept or auto-complete it."
+                )
             ),
+            **({"failureReport": failure_report} if failure_report else {}),
+            **({"parentDecision": parent_decision} if parent_decision else {}),
+            **({"recovery": recovery} if recovery else {}),
         }
         output_schema = run.get("outputSchema")
         if isinstance(output_schema, Mapping):
@@ -222,8 +255,16 @@ class AgentContextRuntime:
             lane="result",
             lifecycle="once",
             dedupe_key=f"subagent_result:{run_id}:{run.get('completedAtMs')}",
-            title=f"{payload['agent'] or '子 Agent'} 结果待主持会话核验",
-            summary="子 Agent 已终止；该返回仍未核验，只能作为证据。",
+            title=(
+                f"{payload['agent'] or '子 Agent'} 未完成，等待上级决策或恢复"
+                if failed
+                else f"{payload['agent'] or '子 Agent'} 结果待主持会话核验"
+            ),
+            summary=(
+                "子 Agent 的失败报告已返回；父级仍可继续、换模型、重试、恢复或改派。"
+                if failed
+                else "子 Agent 已终止；该返回仍未核验，只能作为证据。"
+            ),
             payload=payload,
         )
 

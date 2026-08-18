@@ -11,7 +11,7 @@ import { RolesFeature } from './index';
 
 describe('Roles experience', () => {
   afterEach(cleanup);
-  it('keeps the partner page focused on identity instead of runtime task definitions', async () => {
+  it('makes model routing primary while keeping companion identity as migration compatibility', async () => {
     const transport = new MockControlTransport({ routes: {
       'agent.roles.list': { ok: true, items: previewPersonas },
       'agent.role.models': {
@@ -24,6 +24,14 @@ describe('Roles experience', () => {
       },
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
+    expect(await screen.findByRole('heading', { name: '模型与扩展', level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '按职责选择默认模型', level: 2 })).toBeInTheDocument();
+    expect(screen.getByText('默认主 Agent')).toBeInTheDocument();
+    expect(screen.getByText('Tool Agent')).toBeInTheDocument();
+    expect(screen.getByText('调研与复核 Agent')).toBeInTheDocument();
+    expect(screen.getByText('Room 协调 Agent')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '插件管理' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '兼容伙伴资料', level: 2 })).toBeInTheDocument();
     expect(await screen.findByText(previewPersonas[0]!.tagline)).toBeInTheDocument();
     expect(screen.getByText('适合交给她')).toBeInTheDocument();
     expect(screen.getByText('不建议交给她')).toBeInTheDocument();
@@ -42,13 +50,60 @@ describe('Roles experience', () => {
     expect(transport.requests.some((call) => call.request.pathId === 'agent.subagents.templates')).toBe(false);
   });
 
+  it('saves a Tool Agent model route without changing the companion default', async () => {
+    const user = userEvent.setup();
+    const initial = modelRoutingConfiguration(11);
+    const updated = modelRoutingConfiguration(12, {
+      modelProfile: 'openai-codex/gpt-5.6-terra',
+      thinkingLevel: 'high',
+    });
+    const transport = new MockControlTransport({ routes: {
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.role.models': {
+        ok: true,
+        providers: [{
+          id: 'openai-codex',
+          displayName: 'OpenAI Codex',
+          models: [
+            { provider: 'openai-codex', id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', api: 'responses', reasoning: true, thinkingLevels: ['off', 'low', 'medium'], supportsImages: true, contextWindow: 128000, maxTokens: 32000 },
+            { provider: 'openai-codex', id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', api: 'responses', reasoning: true, thinkingLevels: ['off', 'medium', 'high'], supportsImages: true, contextWindow: 128000, maxTokens: 32000 },
+          ],
+        }],
+      },
+      'agent.configuration.get': initial,
+      'agent.configuration.update': updated,
+    } });
+    render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
+
+    await screen.findByText('配置 #11');
+    await user.click(screen.getByLabelText('Tool Agent默认模型'));
+    await user.click(await screen.findByRole('option', { name: 'GPT-5.6 Terra · OpenAI Codex' }));
+    await user.click(screen.getByLabelText('Tool Agent默认推理强度'));
+    await user.click(await screen.findByRole('option', { name: '高' }));
+    await user.click(screen.getByRole('button', { name: '保存Tool Agent模型分工' }));
+
+    await waitFor(() => expect(transport.requests.find((call) => call.request.pathId === 'agent.configuration.update')?.request.body).toEqual({
+      expectedRevision: 11,
+      changes: {
+        'modelRouting.toolAgent': {
+          modelProfile: 'openai-codex/gpt-5.6-terra',
+          thinkingLevel: 'high',
+        },
+      },
+      updatedBy: 'models-ui',
+    }));
+    expect(await screen.findByText('配置 #12')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Tool Agent的默认模型已保存');
+  });
+
   it('makes Room membership a capability while keeping task jobs dynamic', async () => {
     const transport = new MockControlTransport({ routes: {
       'agent.roles.list': { ok: true, items: previewPersonas },
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
-    expect(await screen.findByText(/需要多人一起做事时，再邀请她参与协作/)).toBeInTheDocument();
+    expect(await screen.findByText('Room 协调 Agent')).toBeInTheDocument();
+    expect(screen.getByText(/主持多人协作、分派工作并组织验收/)).toBeInTheDocument();
     expect(screen.queryByText('协作配置')).not.toBeInTheDocument();
     expect(screen.queryByText('协作主持')).not.toBeInTheDocument();
     expect(screen.getByText('内置伙伴 · 复制后可以调整')).toBeInTheDocument();
@@ -703,4 +758,31 @@ function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => { resolve = done; });
   return { promise, resolve };
+}
+
+function modelRoutingConfiguration(
+  revision: number,
+  toolAgent: { modelProfile: string; thinkingLevel: string } = {
+    modelProfile: 'inherit',
+    thinkingLevel: 'inherit',
+  },
+) {
+  return {
+    ok: true,
+    configuration: {
+      revision,
+      configuration: {
+        sessionDefaults: {
+          roleId: previewPersonas[0]!.roleId,
+          roleVersion: previewPersonas[0]!.version,
+        },
+        modelRouting: {
+          primary: { modelProfile: 'inherit', thinkingLevel: 'inherit' },
+          toolAgent,
+          subagent: { modelProfile: 'inherit', thinkingLevel: 'inherit' },
+          roomCoordinator: { modelProfile: 'inherit', thinkingLevel: 'inherit' },
+        },
+      },
+    },
+  };
 }

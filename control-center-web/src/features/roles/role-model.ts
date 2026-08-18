@@ -60,6 +60,34 @@ export type AgentDefaultCompanion = {
   roleVersion: string;
 };
 
+export const modelRouteIds = [
+  'primary',
+  'toolAgent',
+  'subagent',
+  'roomCoordinator',
+] as const;
+
+export type ModelRouteId = typeof modelRouteIds[number];
+export type ModelRouteThinkingLevel =
+  | 'inherit'
+  | 'off'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max';
+
+export type AgentModelRoute = {
+  modelProfile: string;
+  thinkingLevel: ModelRouteThinkingLevel;
+};
+
+export type AgentModelRouting = {
+  revision: number;
+  routes: Record<ModelRouteId, AgentModelRoute>;
+};
+
 export const timelineOptions: ReadonlyArray<{
   value: TimelineModel;
   label: string;
@@ -83,6 +111,27 @@ export function agentDefaultCompanion(value: unknown): AgentDefaultCompanion | n
   const roleId = textValue(defaults.roleId);
   const roleVersion = textValue(defaults.roleVersion);
   return revision > 0 && roleId && roleVersion ? { revision, roleId, roleVersion } : null;
+}
+
+export function agentModelRouting(value: unknown): AgentModelRouting | null {
+  const snapshot = record(record(value).configuration);
+  const configuration = record(snapshot.configuration);
+  const routing = record(configuration.modelRouting);
+  const revision = numberValue(snapshot.revision);
+  if (revision <= 0) return null;
+  const routes = Object.fromEntries(modelRouteIds.map((routeId) => {
+    const route = record(routing[routeId]);
+    const thinkingLevel = textValue(route.thinkingLevel) || 'inherit';
+    return [routeId, {
+      modelProfile: textValue(route.modelProfile) || 'inherit',
+      thinkingLevel: isModelRouteThinkingLevel(thinkingLevel) ? thinkingLevel : 'inherit',
+    }];
+  })) as Record<ModelRouteId, AgentModelRoute>;
+  return { revision, routes };
+}
+
+function isModelRouteThinkingLevel(value: string): value is ModelRouteThinkingLevel {
+  return ['inherit', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(value);
 }
 
 export function record(value: unknown): Record<string, unknown> {

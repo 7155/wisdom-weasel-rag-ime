@@ -27,6 +27,15 @@ _RUNTIME_KEYS = frozenset(
         "runtime.idleTimeoutSeconds",
     }
 )
+_MODEL_ROUTE_IDS = (
+    "primary",
+    "toolAgent",
+    "subagent",
+    "roomCoordinator",
+)
+_MODEL_ROUTE_THINKING_LEVELS = frozenset(
+    {"inherit", "off", "minimal", "low", "medium", "high", "xhigh", "max"}
+)
 _STRING_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
@@ -85,6 +94,7 @@ def default_agent_configuration(
             "capabilityDisclosurePreferences": {},
         },
         "coordination": {"enabled": bool(coordinator_enabled)},
+        "modelRouting": _default_model_routing(),
         "capabilityDisclosure": {"projectPreferences": {}},
     }
     _validate_configuration(configuration)
@@ -122,6 +132,7 @@ class AgentConfigurationStore:
         defaults = configuration.get("sessionDefaults")
         if isinstance(defaults, dict):
             defaults.setdefault("capabilityDisclosurePreferences", {})
+        _ensure_model_routing(configuration)
         configuration.setdefault(
             "capabilityDisclosure",
             {"projectPreferences": {}},
@@ -602,6 +613,7 @@ def _configuration_from_row(
         "capabilityDisclosure",
         {"projectPreferences": {}},
     )
+    _ensure_model_routing(raw)
     _validate_configuration(raw)
     return raw
 
@@ -640,6 +652,11 @@ def _normalize_changes(changes: Mapping[str, object]) -> dict[str, object]:
             normalized[key] = _model_profile(value)
         elif key == "sessionDefaults.capabilityDisclosurePreferences":
             normalized[key] = _capability_disclosure_preferences(value)
+        elif key.startswith("modelRouting."):
+            route_id = key.removeprefix("modelRouting.")
+            if route_id not in _MODEL_ROUTE_IDS:
+                raise ValueError(f"unsupported Agent model route: {route_id}")
+            normalized[key] = _model_route(value, field=key)
         elif key == "capabilityDisclosure.projectPreferences":
             normalized[key] = _project_disclosure_preferences(value)
         else:
@@ -652,12 +669,14 @@ def _validate_configuration(configuration: Mapping[str, object]) -> None:
         "runtime",
         "sessionDefaults",
         "coordination",
+        "modelRouting",
         "capabilityDisclosure",
     }:
         raise ValueError("agent configuration sections are invalid")
     runtime = _mapping(configuration.get("runtime"), field="runtime")
     defaults = _mapping(configuration.get("sessionDefaults"), field="sessionDefaults")
     coordination = _mapping(configuration.get("coordination"), field="coordination")
+    model_routing = _mapping(configuration.get("modelRouting"), field="modelRouting")
     disclosure = _mapping(
         configuration.get("capabilityDisclosure"),
         field="capabilityDisclosure",
@@ -675,6 +694,8 @@ def _validate_configuration(configuration: Mapping[str, object]) -> None:
         raise ValueError("agent session default fields are invalid")
     if set(coordination) != {"enabled"}:
         raise ValueError("agent coordination configuration fields are invalid")
+    if set(model_routing) != set(_MODEL_ROUTE_IDS):
+        raise ValueError("agent model routing fields are invalid")
     if set(disclosure) != {"projectPreferences"}:
         raise ValueError("agent capability disclosure fields are invalid")
     runtime_policy_from_configuration(configuration)
@@ -692,6 +713,54 @@ def _validate_configuration(configuration: Mapping[str, object]) -> None:
     )
     _project_disclosure_preferences(disclosure.get("projectPreferences"))
     _boolean(coordination.get("enabled"), field="coordination.enabled")
+    for route_id in _MODEL_ROUTE_IDS:
+        _model_route(
+            model_routing.get(route_id),
+            field=f"modelRouting.{route_id}",
+        )
+
+
+def _default_model_routing() -> dict[str, dict[str, str]]:
+    return {
+        route_id: {
+            "modelProfile": "inherit",
+            "thinkingLevel": "inherit",
+        }
+        for route_id in _MODEL_ROUTE_IDS
+    }
+
+
+def _ensure_model_routing(configuration: dict[str, object]) -> None:
+    existing = configuration.get("modelRouting")
+    routing = dict(existing) if isinstance(existing, Mapping) else {}
+    defaults = _default_model_routing()
+    for route_id in _MODEL_ROUTE_IDS:
+        routing.setdefault(route_id, defaults[route_id])
+    configuration["modelRouting"] = routing
+
+
+def _model_route(value: object, *, field: str) -> dict[str, str]:
+    route = _mapping(value, field=field)
+    if set(route) != {"modelProfile", "thinkingLevel"}:
+        raise ValueError(f"{field} fields are invalid")
+    model_profile = _string(route.get("modelProfile"), field=f"{field}.modelProfile")
+    if model_profile != "inherit":
+        if (
+            len(model_profile) > 200
+            or any(character.isspace() for character in model_profile)
+            or "/" not in model_profile
+        ):
+            raise ValueError(f"{field}.modelProfile must be inherit or provider/model")
+    thinking_level = _string(
+        route.get("thinkingLevel"),
+        field=f"{field}.thinkingLevel",
+    )
+    if thinking_level not in _MODEL_ROUTE_THINKING_LEVELS:
+        raise ValueError(f"{field}.thinkingLevel is invalid")
+    return {
+        "modelProfile": model_profile,
+        "thinkingLevel": thinking_level,
+    }
 
 
 def _project_disclosure_preferences(value: object) -> dict[str, dict[str, str]]:

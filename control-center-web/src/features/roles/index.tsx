@@ -1,4 +1,5 @@
 import {
+  Boxes,
   BookOpen,
   BrainCircuit,
   Check,
@@ -38,6 +39,7 @@ import { publicErrorText } from '@/features/overview/management-ui';
 import {
   arrayValue,
   agentDefaultCompanion,
+  agentModelRouting,
   createdSessionId,
   ensureControlOk,
   normalizeTrait,
@@ -54,6 +56,10 @@ import {
   timelineOptions,
   toggleIndex,
   type AgentDefaultCompanion,
+  type AgentModelRoute,
+  type AgentModelRouting,
+  type ModelRouteId,
+  type ModelRouteThinkingLevel,
   type RoleBookActivationSelection,
   type RoleBookDailyDraft,
   type RoleBookProposal,
@@ -102,6 +108,8 @@ export function RolesFeature() {
   const [editingPersona, setEditingPersona] = useState<AgentPersonaV1 | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<AgentPersonaV1 | null>(null);
   const [archiveError, setArchiveError] = useState('');
+  const [modelRouting, setModelRouting] = useState<AgentModelRouting | null>(null);
+  const [routeSaving, setRouteSaving] = useState<ModelRouteId | ''>('');
   const [defaultCompanion, setDefaultCompanion] = useState<AgentDefaultCompanion | null>(() => {
     if (!(__CONTROL_PREVIEW__ && transport.kind === 'mock')) return null;
     const initial = previewPersonas.find((item) => item.runtimeCharacteristics.isDefault);
@@ -136,8 +144,9 @@ export function RolesFeature() {
       }
       if (configurationResult.status === 'fulfilled') {
         setDefaultCompanion(agentDefaultCompanion(configurationResult.value));
+        setModelRouting(agentModelRouting(configurationResult.value));
       } else {
-        errors.push('默认伙伴暂时未读取。');
+        errors.push('模型分工和默认伙伴暂时未读取。');
       }
       setCatalogNotice(errors.join(' '));
     });
@@ -337,11 +346,40 @@ export function RolesFeature() {
       const updated = agentDefaultCompanion(response);
       if (!updated) throw new Error('默认伙伴的保存结果暂时无法确认，请刷新后重试。');
       setDefaultCompanion(updated);
+      setModelRouting(agentModelRouting(response));
       setActionNotice(`${persona.displayName} 已设为新对话的默认伙伴。`);
     } catch (error) {
       setActionNotice(publicErrorText(error, '默认伙伴暂时无法保存。'));
     } finally {
       setDefaultSaving(false);
+    }
+  }
+
+  async function saveModelRoute(routeId: ModelRouteId, route: AgentModelRoute): Promise<void> {
+    if (!modelRouting || routeSaving) return;
+    setRouteSaving(routeId);
+    setActionNotice('');
+    try {
+      const response = await transport.request({
+        pathId: 'agent.configuration.update',
+        body: {
+          expectedRevision: modelRouting.revision,
+          changes: {
+            [`modelRouting.${routeId}`]: route,
+          },
+          updatedBy: 'models-ui',
+        },
+      });
+      const updated = agentModelRouting(response);
+      if (!updated) throw new Error('模型分工的保存结果暂时无法确认，请刷新后重试。');
+      setModelRouting(updated);
+      const updatedCompanion = agentDefaultCompanion(response);
+      if (updatedCompanion) setDefaultCompanion(updatedCompanion);
+      setActionNotice(`${modelRouteLabel(routeId)}的默认模型已保存，只影响之后创建的运行。`);
+    } catch (error) {
+      setActionNotice(publicErrorText(error, '模型分工暂时无法保存。'));
+    } finally {
+      setRouteSaving('');
     }
   }
 
@@ -375,17 +413,27 @@ export function RolesFeature() {
 
   return <>
     <main className="roles-feature" data-route-id="roles">
-      <header className="roles-header"><span><h1>伙伴</h1><p>挑一位更合适的伙伴开始聊；需要多人一起做事时，再邀请她参与协作。</p></span>{view === 'companions' ? <div className="roles-header-actions"><Button variant="quiet" size="small" leadingIcon={<UserRoundPlus size={15} />} onClick={beginRoleCreation}>添加伙伴</Button></div> : null}</header>
+      <header className="roles-header"><span><h1>模型与扩展</h1><p>按运行职责选择模型；插件独立管理，伙伴资料在迁移期继续负责身份与表达。</p></span><div className="roles-header-actions"><Button variant="quiet" size="small" leadingIcon={<Boxes size={15} />} onClick={() => navigate('/plugins')}>插件管理</Button></div></header>
       {actionNotice ? <p className="roles-notice" role="status">{actionNotice}</p> : null}
       {catalogNotice && (personas.length > 0 || roleCatalogState !== 'error') ? <div className="roles-catalog-notice">
-        <span><strong>部分伙伴信息没有读完</strong><small>{catalogNotice}</small></span>
-        <Button variant="quiet" size="small" leadingIcon={<RotateCcw size={14} />} onClick={() => setCatalogReload((current) => current + 1)}>重新读取伙伴信息</Button>
+        <span><strong>部分模型或兼容资料没有读完</strong><small>{catalogNotice}</small></span>
+        <Button variant="quiet" size="small" leadingIcon={<RotateCcw size={14} />} onClick={() => setCatalogReload((current) => current + 1)}>重新读取</Button>
       </div> : null}
-      <div className="roles-layout">
+      <ModelRoutingPanel
+        catalog={modelCatalog}
+        onOpenSettings={() => navigate('/configuration')}
+        onSave={saveModelRoute}
+        routing={modelRouting}
+        saving={routeSaving}
+      />
+      <section className="roles-compatibility" aria-labelledby="roles-compatibility-title">
+        <header><span><small>渐进迁移</small><h2 id="roles-compatibility-title">兼容伙伴资料</h2><p>伙伴暂时保留称呼、头像、表达方式和成长档案；运行时能力逐步改由上方的模型分工与插件配置决定。</p></span>{view === 'companions' ? <Button variant="quiet" size="small" leadingIcon={<UserRoundPlus size={15} />} onClick={beginRoleCreation}>添加伙伴</Button> : null}</header>
+        <div className="roles-layout">
           <section className="persona-grid" aria-label="伙伴目录">{personas.length ? personas.map((item) => { const builtin = item.defaults.modelPolicy === 'fixed'; const isDefault = item.roleId === defaultCompanion?.roleId && item.version === defaultCompanion.roleVersion; return <button type="button" key={`${item.roleId}:${item.version}`} data-accent={item.visualProfile.accentToken} aria-current={item.roleId === selectedPersona} onClick={() => { setSelectedPersona(item.roleId); setActionNotice(''); }}><PersonaAvatar persona={item} size="large" /><span className="persona-grid__copy"><strong>{item.displayName}</strong><small>{item.tagline}</small></span><div className="persona-grid__badges"><i className="persona-grid__kind" data-kind={builtin ? 'builtin' : 'custom'}>{builtin ? '内置伙伴' : '我的伙伴'}</i>{isDefault ? <em className="persona-grid__default">默认</em> : null}</div></button>; }) : roleCatalogState === 'loading' ? <div className="roles-catalog-state" aria-live="polite" aria-busy="true"><span className="roles-catalog-spinner" aria-hidden="true" /><span><strong>正在读取伙伴</strong><small>很快就会显示本机已有的伙伴。</small></span></div> : roleCatalogState === 'error' ? <div className="roles-catalog-state roles-catalog-state--error" role="alert"><span><strong>伙伴目录没有打开</strong><small>本机服务暂时没有返回伙伴信息。重新读取不会更改已有伙伴。</small></span><Button variant="quiet" size="small" leadingIcon={<RotateCcw size={14} />} onClick={() => setCatalogReload((current) => current + 1)}>重新读取伙伴</Button></div> : <div className="roles-catalog-state"><span><strong>还没有伙伴</strong><small>添加后，可以为不同类型的工作选择更合适的陪伴方式。</small></span></div>}</section>
           {persona && view === 'companions' ? <PersonaInspector canChangeDefault={Boolean(defaultCompanion && defaultCompanion.revision > 0)} catalog={modelCatalog} defaulted={personaIsDefault} defaultSaving={defaultSaving} persona={persona} saving={roleDefaultsSaving} onSave={saveRoleRuntimeDefaults} onOpenGrowth={() => setView('growth')} onOpenSettings={() => navigate('/configuration')} onEdit={() => beginRoleEdit(persona)} onCopy={() => beginRoleCopy(persona)} onSetDefault={() => void makeDefaultCompanion()} onArchive={() => { setArchiveError(''); setArchiveTarget(persona); }} onStart={() => void startPersonaSession()} starting={sessionCreating} /> : null}
           {persona && view === 'growth' ? <PersonaGrowthInspector persona={persona} onBack={() => setView('companions')} /> : null}
-      </div>
+        </div>
+      </section>
     </main>
     <Dialog open={createOpen} onOpenChange={(open) => { if (!roleCreating) { setCreateOpen(open); if (!open) setCreateError(''); } }}>
       <DialogContent
@@ -418,6 +466,164 @@ export function RolesFeature() {
       <DialogContent className="role-archive-dialog"><DialogHeader><DialogTitle>移除这个伙伴？</DialogTitle><DialogDescription>“{archiveTarget?.displayName}”会从新对话和协作空间的伙伴目录中移除；已有对话仍保留并可继续。</DialogDescription></DialogHeader>{archiveError ? <p className="role-create-error" role="alert">{archiveError}</p> : null}<DialogFooter><Button variant="quiet" disabled={roleArchiving} onClick={() => setArchiveTarget(null)}>取消</Button><Button variant="danger" leadingIcon={<Trash2 size={14} />} loading={roleArchiving} onClick={() => void archiveCompanion()}>移除伙伴</Button></DialogFooter></DialogContent>
     </Dialog>
   </>;
+}
+
+const modelRouteDefinitions: ReadonlyArray<{
+  id: ModelRouteId;
+  label: string;
+  caption: string;
+  inheritLabel: string;
+}> = [
+  {
+    id: 'primary',
+    label: '默认主 Agent',
+    caption: '新对话的主 Session，负责和你交流并决定后续分工。',
+    inheritLabel: '沿用默认伙伴模型',
+  },
+  {
+    id: 'toolAgent',
+    label: 'Tool Agent',
+    caption: '承担可写执行与工具循环；失败后把报告交回上级继续决策。',
+    inheritLabel: '继承父 Session 模型',
+  },
+  {
+    id: 'subagent',
+    label: '调研与复核 Agent',
+    caption: '承担只读调研、代码核对和独立复核。',
+    inheritLabel: '继承父 Session 模型',
+  },
+  {
+    id: 'roomCoordinator',
+    label: 'Room 协调 Agent',
+    caption: '主持多人协作、分派工作并组织验收。',
+    inheritLabel: '沿用 Room 伙伴模型',
+  },
+];
+
+function ModelRoutingPanel({
+  catalog,
+  onOpenSettings,
+  onSave,
+  routing,
+  saving,
+}: {
+  catalog: RoleModelCatalog;
+  onOpenSettings: () => void;
+  onSave: (routeId: ModelRouteId, route: AgentModelRoute) => Promise<void>;
+  routing: AgentModelRouting | null;
+  saving: ModelRouteId | '';
+}) {
+  const [drafts, setDrafts] = useState<Record<ModelRouteId, AgentModelRoute>>(
+    () => cloneModelRoutes(routing?.routes ?? emptyModelRoutes()),
+  );
+  const models = useMemo(
+    () => catalog.providers
+      .flatMap((provider) => provider.models)
+      .filter((model) => model.reasoning === true),
+    [catalog],
+  );
+  const providerNames = useMemo(
+    () => new Map(catalog.providers.map((provider) => [provider.id, provider.displayName])),
+    [catalog.providers],
+  );
+  useEffect(() => {
+    setDrafts(cloneModelRoutes(routing?.routes ?? emptyModelRoutes()));
+  }, [routing]);
+  return <section className="model-routing" aria-labelledby="model-routing-title">
+    <header className="model-routing__header">
+      <span><small>运行分工</small><h2 id="model-routing-title">按职责选择默认模型</h2><p>这是新运行的默认路由。单次对话仍可显式换模型；已有 Session 不会被静默改写。</p></span>
+      <em>{routing ? `配置 #${routing.revision}` : '等待读取配置'}</em>
+    </header>
+    {!models.length ? <div className="model-routing__empty"><span><BrainCircuit size={16} /><p><strong>还没有可分配的推理模型</strong><small>先配置 Provider 和模型，再为各类 Agent 选择默认值。</small></p></span><Button onClick={onOpenSettings} size="small" variant="quiet">打开模型设置</Button></div> : null}
+    <div className="model-routing__rows">
+      {modelRouteDefinitions.map((definition) => {
+        const draft = drafts[definition.id];
+        const saved = routing?.routes[definition.id];
+        const selectedModel = models.find((model) => `${model.provider}/${model.id}` === draft.modelProfile);
+        const modelOptions = [
+          { value: 'inherit', label: definition.inheritLabel },
+          ...models.map((model) => ({
+            value: `${model.provider}/${model.id}`,
+            label: `${model.name} · ${providerNames.get(model.provider) || model.provider}`,
+          })),
+        ];
+        if (draft.modelProfile !== 'inherit' && !selectedModel) {
+          modelOptions.push({ value: draft.modelProfile, label: `${draft.modelProfile} · 当前已保存` });
+        }
+        const supportedThinking = (selectedModel?.thinkingLevels ?? [])
+          .filter(isModelRouteThinkingLevel);
+        const thinkingOptions = draft.modelProfile === 'inherit'
+          ? [{ value: 'inherit' as const, label: '随模型来源一起继承' }]
+          : [
+              { value: 'inherit' as const, label: '沿用上级推理强度' },
+              ...supportedThinking.map((level) => ({ value: level, label: thinkingLabel(level) })),
+            ];
+        if (draft.thinkingLevel !== 'inherit' && !supportedThinking.includes(draft.thinkingLevel)) {
+          thinkingOptions.push({ value: draft.thinkingLevel, label: `${thinkingLabel(draft.thinkingLevel)} · 当前已保存` });
+        }
+        const changed = Boolean(saved) && (
+          saved?.modelProfile !== draft.modelProfile
+          || saved?.thinkingLevel !== draft.thinkingLevel
+        );
+        return <article className="model-routing__row" key={definition.id} data-route={definition.id}>
+          <span className="model-routing__identity"><strong>{definition.label}</strong><small>{definition.caption}</small></span>
+          <label><span>模型</span><Select aria-label={`${definition.label}默认模型`} disabled={!routing || !models.length} value={draft.modelProfile} options={modelOptions} onValueChange={(value) => {
+            const nextModel = models.find((model) => `${model.provider}/${model.id}` === value);
+            const levels = (nextModel?.thinkingLevels ?? []).filter(isModelRouteThinkingLevel);
+            setDrafts((current) => {
+              const currentThinking = current[definition.id].thinkingLevel;
+              return {
+                ...current,
+                [definition.id]: {
+                  modelProfile: value,
+                  thinkingLevel: value === 'inherit'
+                    ? 'inherit'
+                    : currentThinking !== 'inherit' && levels.includes(currentThinking)
+                      ? currentThinking
+                      : preferredThinkingLevel(levels),
+                },
+              };
+            });
+          }} /></label>
+          <label><span>推理</span><Select aria-label={`${definition.label}默认推理强度`} disabled={!routing || draft.modelProfile === 'inherit'} value={draft.thinkingLevel} options={thinkingOptions} onValueChange={(value) => {
+            if (!isModelRouteThinkingLevel(value)) return;
+            setDrafts((current) => ({
+              ...current,
+              [definition.id]: { ...current[definition.id], thinkingLevel: value },
+            }));
+          }} /></label>
+          <Button aria-label={`保存${definition.label}模型分工`} variant="quiet" size="small" leadingIcon={<Save size={14} />} loading={saving === definition.id} disabled={!routing || !changed || Boolean(saving)} onClick={() => void onSave(definition.id, draft)}>保存</Button>
+        </article>;
+      })}
+    </div>
+    <footer><Boxes size={15} /><span><strong>工具和技能不再绑在伙伴身上。</strong>插件管理决定 Agent 能发现哪些能力；权限和审批仍由运行时单独控制。</span></footer>
+  </section>;
+}
+
+function emptyModelRoutes(): Record<ModelRouteId, AgentModelRoute> {
+  return Object.fromEntries(modelRouteDefinitions.map(({ id }) => [id, {
+    modelProfile: 'inherit',
+    thinkingLevel: 'inherit',
+  }])) as Record<ModelRouteId, AgentModelRoute>;
+}
+
+function cloneModelRoutes(
+  routes: Record<ModelRouteId, AgentModelRoute>,
+): Record<ModelRouteId, AgentModelRoute> {
+  return Object.fromEntries(modelRouteDefinitions.map(({ id }) => [id, { ...routes[id] }])) as Record<ModelRouteId, AgentModelRoute>;
+}
+
+function isModelRouteThinkingLevel(value: string): value is ModelRouteThinkingLevel {
+  return ['inherit', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(value);
+}
+
+function preferredThinkingLevel(levels: ModelRouteThinkingLevel[]): ModelRouteThinkingLevel {
+  if (levels.includes('medium')) return 'medium';
+  return levels.find((level) => level !== 'off') ?? levels[0] ?? 'inherit';
+}
+
+function modelRouteLabel(routeId: ModelRouteId): string {
+  return modelRouteDefinitions.find(({ id }) => id === routeId)?.label ?? routeId;
 }
 
 function PersonaInspector({

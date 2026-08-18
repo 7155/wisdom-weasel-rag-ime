@@ -30,6 +30,12 @@ export interface AgentConfigurationV1 {
       enabled: boolean;
       [k: string]: unknown;
     };
+    modelRouting: {
+      primary: ModelRoute;
+      toolAgent: ModelRoute;
+      subagent: ModelRoute;
+      roomCoordinator: ModelRoute;
+    };
     [k: string]: unknown;
   };
   sync: {
@@ -42,4 +48,8 @@ export interface AgentConfigurationV1 {
   updatedBy: string;
   lastEventId: string;
   [k: string]: unknown;
+}
+export interface ModelRoute {
+  modelProfile: string;
+  thinkingLevel: 'inherit' | 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 }

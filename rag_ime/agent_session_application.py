@@ -123,6 +123,21 @@ class AgentSessionApplicationService:
         mode = str(payload.get("mode") or "assistant")
         configuration = self.configuration_store.snapshot()["configuration"]
         session_defaults = configuration["sessionDefaults"]
+        model_route_id = str(payload.get("_modelRoute") or "primary").strip()
+        model_routes = configuration.get("modelRouting")
+        if not isinstance(model_routes, Mapping) or model_route_id not in {
+            "primary",
+            "toolAgent",
+            "subagent",
+            "roomCoordinator",
+        }:
+            raise ValueError("agent model route is invalid")
+        configured_model_route = model_routes.get(model_route_id)
+        model_route = (
+            dict(configured_model_route)
+            if isinstance(configured_model_route, Mapping)
+            else {"modelProfile": "inherit", "thinkingLevel": "inherit"}
+        )
         role = self.personas.resolve_active(
             payload.get("roleId") or session_defaults["roleId"],
             payload.get("roleVersion") or session_defaults["roleVersion"],
@@ -206,6 +221,7 @@ class AgentSessionApplicationService:
             payload=payload,
             session_defaults=session_defaults,
             role_runtime_defaults=role_runtime_defaults,
+            model_route=model_route,
         )
         role_book_revision_id, role_book_status = self._seed_role_book(role)
         session = self.sessions.create(
@@ -285,10 +301,12 @@ class AgentSessionApplicationService:
         payload: Mapping[str, object],
         session_defaults: Mapping[str, object],
         role_runtime_defaults: Mapping[str, str] | None,
+        model_route: Mapping[str, object],
     ) -> tuple[str, str]:
         requested_model_profile = payload.get("modelProfile")
         if (
             role.defaults.model_policy == "fixed"
+            and requested_model_profile is not None
             and payload.get("_internalModelOverride") is not True
         ):
             effective = role_runtime_defaults or {
@@ -309,6 +327,33 @@ class AgentSessionApplicationService:
             )
         if requested_model_profile is not None:
             return str(requested_model_profile), ""
+        routed_model_profile = str(
+            model_route.get("modelProfile") or "inherit"
+        ).strip()
+        routed_thinking_level = str(
+            model_route.get("thinkingLevel") or "inherit"
+        ).strip()
+        if routed_model_profile != "inherit":
+            inherited_thinking = (
+                str(role_runtime_defaults.get("thinkingLevel") or "")
+                if role_runtime_defaults is not None
+                else ""
+            )
+            return (
+                routed_model_profile,
+                routed_thinking_level
+                if routed_thinking_level != "inherit"
+                else inherited_thinking,
+            )
+        if role.defaults.model_policy == "fixed":
+            effective = role_runtime_defaults or {
+                "modelProfile": role.defaults.model_profile,
+                "thinkingLevel": role.defaults.thinking_level,
+            }
+            return (
+                str(effective["modelProfile"]),
+                str(effective.get("thinkingLevel", "")),
+            )
         if role_runtime_defaults is not None:
             return (
                 str(role_runtime_defaults["modelProfile"]),

@@ -1462,7 +1462,8 @@ export const contractSchemas = {
         "required": [
           "runtime",
           "sessionDefaults",
-          "coordination"
+          "coordination",
+          "modelRouting"
         ],
         "properties": {
           "runtime": {
@@ -1539,6 +1540,30 @@ export const contractSchemas = {
                 "type": "boolean"
               }
             }
+          },
+          "modelRouting": {
+            "type": "object",
+            "required": [
+              "primary",
+              "toolAgent",
+              "subagent",
+              "roomCoordinator"
+            ],
+            "properties": {
+              "primary": {
+                "$ref": "#/$defs/modelRoute"
+              },
+              "toolAgent": {
+                "$ref": "#/$defs/modelRoute"
+              },
+              "subagent": {
+                "$ref": "#/$defs/modelRoute"
+              },
+              "roomCoordinator": {
+                "$ref": "#/$defs/modelRoute"
+              }
+            },
+            "additionalProperties": false
           }
         }
       },
@@ -1577,6 +1602,35 @@ export const contractSchemas = {
       },
       "lastEventId": {
         "type": "string"
+      }
+    },
+    "$defs": {
+      "modelRoute": {
+        "type": "object",
+        "required": [
+          "modelProfile",
+          "thinkingLevel"
+        ],
+        "properties": {
+          "modelProfile": {
+            "type": "string",
+            "minLength": 1
+          },
+          "thinkingLevel": {
+            "type": "string",
+            "enum": [
+              "inherit",
+              "off",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          }
+        },
+        "additionalProperties": false
       }
     }
   },
