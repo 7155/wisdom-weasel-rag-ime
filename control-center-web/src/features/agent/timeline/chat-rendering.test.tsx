@@ -532,6 +532,30 @@ describe('Agent chat rendering', () => {
     expect(screen.getByRole('region', { name: 'Runtime' })).toHaveTextContent('全部收束');
   });
 
+  it('merges repeated file receipts by logical file while preserving distinct versions', () => {
+    const blocks: UiAgentBlock[] = [
+      fileBlock('tui-v1', 'tui.py', 'media_tui_version_0001', '1'.repeat(64)),
+      fileBlock('tui-diff-v1', 'tui.py.diff', 'media_tui_diff_000001', '2'.repeat(64)),
+      fileBlock('tui-v2', 'tui.py', 'media_tui_version_0002', '3'.repeat(64)),
+      fileBlock('tui-v2-replayed', 'tui.py', 'media_tui_version_0002', '3'.repeat(64)),
+      fileBlock('tui-diff-v2', 'tui.py.diff', 'media_tui_diff_000002', '4'.repeat(64)),
+      fileBlock('test-v1', 'test_tui.py', 'media_test_version_001', '5'.repeat(64)),
+      fileBlock('test-diff-v1', 'test_tui.py.diff', 'media_test_diff_00001', '6'.repeat(64)),
+    ];
+
+    const { container } = render(
+      <TooltipProvider><AgentBlocks blocks={blocks} sessionId="session:file-results" /></TooltipProvider>,
+    );
+
+    const collection = screen.getByRole('region', { name: '结果文件' });
+    expect(collection).toHaveTextContent('2 个文件');
+    expect(collection).toHaveTextContent('已合并 1 条重复结果');
+    expect(container.querySelectorAll('.agent-file-collection__file')).toHaveLength(2);
+    expect(container.querySelectorAll('.agent-file-collection__version')).toHaveLength(6);
+    expect(container.querySelectorAll('.agent-file-collection__file > summary')[0]).toHaveTextContent('tui.py');
+    expect(container.querySelectorAll('.agent-file-collection__file > summary')[1]).toHaveTextContent('test_tui.py');
+  });
+
   it('keeps a structured Tool disclosure anchored and focused when opened', () => {
     const block: UiAgentBlock = {
       id: 'tool-result-anchor',
@@ -831,6 +855,54 @@ describe('Agent chat rendering', () => {
     expect(container.querySelectorAll('.agent-inline-notice[data-tone="danger"]')).toHaveLength(0);
   });
 
+  it('offers a safe continuation instead of replaying tools after a network interruption', () => {
+    const sessionId = 'session-network-interrupted';
+    const turnId = 'turn-network-interrupted';
+    const failedWithResult: UiAgentMessage = {
+      ...failedAssistantMessage(sessionId, turnId),
+      id: 'network-interrupted-assistant',
+      blocks: [
+        {
+          id: 'network-interrupted-error',
+          type: 'error',
+          status: 'failed',
+          presentationKind: 'error',
+          data: { message: 'WebSocket error' },
+        },
+        fileBlock('network-result', 'tui.py', 'media_network_result_01', '7'.repeat(64)),
+      ],
+    };
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId), failedWithResult],
+      liveEvents: [],
+      lastSequence: 9,
+      resumeToken: `${sessionId}:9`,
+      status: 'faulted',
+    });
+    const continueTurn = vi.fn(() => true);
+    const retryTurn = vi.fn(() => true);
+
+    render(
+      <TooltipProvider>
+        <AgentTurn
+          sessionId={sessionId}
+          turnId={turnId}
+          onApprovalDecision={() => {}}
+          onContinueTurn={continueTurn}
+          onRetryTurn={retryTurn}
+          onSwitchModel={() => {}}
+        />
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent('网络中断');
+    expect(screen.getByRole('alert')).toHaveTextContent('已完成的工具与文件结果已保留');
+    fireEvent.click(screen.getByRole('button', { name: '继续' }));
+    expect(continueTurn).toHaveBeenCalledWith(turnId);
+    expect(retryTurn).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: '重试本轮' })).not.toBeInTheDocument();
+  });
+
   it('does not render an empty assistant shell after a stopped turn', () => {
     const sessionId = 'session-1';
     const turnId = 'turn-stopped-empty';
@@ -1028,6 +1100,27 @@ function imageBlock(data: Record<string, unknown>): UiAgentBlock {
     status: 'completed',
     presentationKind: 'image',
     data,
+  };
+}
+
+function fileBlock(
+  id: string,
+  fileName: string,
+  mediaId: string,
+  sha256: string,
+): UiAgentBlock {
+  return {
+    id,
+    type: 'file',
+    status: 'completed',
+    presentationKind: 'file',
+    data: {
+      fileName,
+      mediaId,
+      sha256,
+      mimeType: fileName.endsWith('.diff') ? 'text/x-diff' : 'text/plain',
+      receiptUrl: `/api/agent/media/${mediaId}/content?sessionId=session:file-results`,
+    },
   };
 }
 

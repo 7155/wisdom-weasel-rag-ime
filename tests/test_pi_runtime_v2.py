@@ -3546,6 +3546,27 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertTrue(failed.payload["retryable"])
         self.assertFalse(failed.payload["hadToolActivity"])
 
+    def test_websocket_failure_is_classified_as_transport_interruption(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+
+        self.runtime._turn_failed(
+            session_id,
+            "turn-websocket-error",
+            RuntimeError("WebSocket error"),
+        )
+
+        failed = [
+            item
+            for item in self.events.replay(session_id)[0]
+            if item.event_type == "turn_failed"
+        ][-1]
+        self.assertEqual(
+            failed.payload["reasonCode"],
+            "provider_transport_failure",
+        )
+        self.assertTrue(failed.payload["retryable"])
+
     def test_transport_failure_after_tool_activity_is_not_retryable(
         self,
     ) -> None:

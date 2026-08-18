@@ -1673,6 +1673,30 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertIn("turn_failed", [event.event_type for event in events])
         self.assertNotIn("turn_completed", [event.event_type for event in events])
 
+    def test_provider_error_without_text_has_readable_terminal_message(self) -> None:
+        message = pi_message_payload(
+            {
+                "role": "assistant",
+                "content": [],
+                "stopReason": "error",
+                "errorMessage": "fetch failed",
+                "timestamp": 106,
+            },
+            session_id=str(self.session["id"]),
+            turn_id="turn:provider-error",
+        ).to_payload()
+
+        self.assertEqual(message["status"], "failed")
+        self.assertEqual(
+            [block["type"] for block in message["blocks"]],
+            ["text", "error"],
+        )
+        self.assertIn(
+            "模型服务未能生成最终回复",
+            message["blocks"][0]["data"]["text"],
+        )
+        self.assertEqual(message["blocks"][1]["data"]["message"], "fetch failed")
+
     def test_deep_search_transport_prompt_is_not_exposed_as_user_message(self) -> None:
         message = pi_message_payload(
             {

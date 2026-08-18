@@ -1,4 +1,4 @@
-import { ArrowUpRight, BrainCircuit, CircleDashed, GitBranch, PencilLine, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
+import { ArrowUpRight, BrainCircuit, CircleDashed, GitBranch, PencilLine, Play, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   Virtuoso,
@@ -22,7 +22,7 @@ import { AgentBlocks } from './BlockRenderer';
 import { PersonaAvatar, type PersonaPresence } from './PersonaAvatar';
 import { conversationMarkerIndexes } from './conversation-markers';
 import { useAgentLiveStore } from '../state/live-store';
-import { publicAgentErrorText } from '../public-error';
+import { isAgentNetworkInterruption, publicAgentErrorText } from '../public-error';
 
 export function isRoomPublicPostMessage(message: AgentMessageProjection): boolean {
   if (message.id.startsWith('room-post:')) return true;
@@ -166,6 +166,7 @@ export function AgentTimeline({
   turnRecoveryDisabled = false,
   onSuggestion,
   onRetryTurn,
+  onContinueTurn,
   onSwitchModel,
   onApprovalDecision,
   onOpenApproval,
@@ -189,6 +190,7 @@ export function AgentTimeline({
     turnId: string,
     onAdmissionRolledBack?: () => void,
   ) => boolean;
+  onContinueTurn?: (turnId: string) => boolean;
   onSwitchModel: () => void;
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
   onOpenApproval?: (activity: AgentActivityProjection) => void;
@@ -423,6 +425,7 @@ export function AgentTimeline({
             modelSelectionAvailable={modelSelectionAvailable}
             turnRecoveryDisabled={turnRecoveryDisabled}
             onRetryTurn={onRetryTurn}
+            onContinueTurn={onContinueTurn}
             onSwitchModel={onSwitchModel}
             onApprovalDecision={onApprovalDecision}
             onOpenApproval={onOpenApproval}
@@ -544,6 +547,7 @@ export function AgentTurn({
   modelSelectionAvailable = false,
   turnRecoveryDisabled = false,
   onRetryTurn,
+  onContinueTurn,
   onSwitchModel,
   onApprovalDecision,
   onOpenApproval,
@@ -564,6 +568,7 @@ export function AgentTurn({
     turnId: string,
     onAdmissionRolledBack?: () => void,
   ) => boolean;
+  onContinueTurn?: (turnId: string) => boolean;
   onSwitchModel?: () => void;
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
   onOpenApproval?: (activity: AgentActivityProjection) => void;
@@ -612,6 +617,9 @@ export function AgentTurn({
       ) ?? false
     );
   });
+  const latestTurnId = useAgentLiveStore((state) => (
+    state.projections[sessionId]?.turnOrder.at(-1) ?? ''
+  ));
   /* A terminal retry creates a linked attempt; an ambiguous admission reuses
      the same operation and optimistic turn. The control acknowledges only
      local submission, never a successful outcome. */
@@ -631,6 +639,16 @@ export function AgentTurn({
   if (!turn) return null;
   const rawFailure = turn.failure || blockFailure;
   const failure = turn.status === 'failed' ? publicAgentErrorText(rawFailure) : '';
+  const networkInterrupted = turn.status === 'failed' && isAgentNetworkInterruption(rawFailure);
+  const retainedResults = assistantMessages.some((message) => (
+    message.blocks.some((block) => block.type === 'file' || block.type === 'artifact' || block.type === 'diff')
+  ));
+  const failureTitle = networkInterrupted ? '网络中断' : '本轮未完成';
+  const failureDetail = networkInterrupted
+    ? retainedResults
+      ? '连接在最终回复生成前中断；已完成的工具与文件结果已保留。继续会基于当前 Session 接续，不重放原请求。'
+      : '连接在最终回复生成前中断；请继续当前对话，或切换模型后继续。'
+    : failure;
   const retryRequested = retryRequestedFor === `${turnId}:${turn.status}`;
   const showWorking = turn.status === 'queued' || turn.status === 'running';
   const turnSettled = turn.status === 'completed' || turn.status === 'failed' || turn.status === 'aborted';
@@ -674,22 +692,40 @@ export function AgentTurn({
             {failure ? (
               <div className="agent-turn__failure" role="alert">
                 <TriangleAlert size={17} />
-                <span><strong>本轮未完成</strong><small>{failure}</small></span>
-                {onRetryTurn && onSwitchModel && !nonRetryableAdmission ? (
+                <span><strong>{failureTitle}</strong><small>{failureDetail}</small></span>
+                {onSwitchModel && !nonRetryableAdmission ? (
                   <div className="agent-turn__failure-actions">
-                    <Button
-                      size="small"
-                      variant="primary"
-                      leadingIcon={<RefreshCcw size={14} />}
-                      disabled={turnRecoveryDisabled || retryRequested}
-                      onClick={() => {
-                        if (onRetryTurn(turnId, () => setRetryRequestedFor(''))) {
-                          setRetryRequestedFor(`${turnId}:${turn.status}`);
-                        }
-                      }}
-                    >
-                      {retryRequested ? '已提交重试' : '重试本轮'}
-                    </Button>
+                    {networkInterrupted ? (
+                      onContinueTurn && latestTurnId === turnId ? (
+                        <Button
+                          size="small"
+                          variant="primary"
+                          leadingIcon={<Play size={14} />}
+                          disabled={turnRecoveryDisabled || retryRequested}
+                          onClick={() => {
+                            if (onContinueTurn(turnId)) {
+                              setRetryRequestedFor(`${turnId}:${turn.status}`);
+                            }
+                          }}
+                        >
+                          {retryRequested ? '已提交继续' : '继续'}
+                        </Button>
+                      ) : null
+                    ) : onRetryTurn ? (
+                      <Button
+                        size="small"
+                        variant="primary"
+                        leadingIcon={<RefreshCcw size={14} />}
+                        disabled={turnRecoveryDisabled || retryRequested}
+                        onClick={() => {
+                          if (onRetryTurn(turnId, () => setRetryRequestedFor(''))) {
+                            setRetryRequestedFor(`${turnId}:${turn.status}`);
+                          }
+                        }}
+                      >
+                        {retryRequested ? '已提交重试' : '重试本轮'}
+                      </Button>
+                    ) : null}
                     <Button size="small" variant="quiet" leadingIcon={<BrainCircuit size={14} />} disabled={turnRecoveryDisabled || !modelSelectionAvailable} onClick={onSwitchModel}>切换模型</Button>
                   </div>
                 ) : null}

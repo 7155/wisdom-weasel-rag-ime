@@ -1340,6 +1340,33 @@ def pi_message_payload(
     error_message = redact_runtime_text(str(raw.get("errorMessage") or "").strip())
     failed = not aborted and (stop_reason == "error" or bool(error_message))
     if failed:
+        if role == "assistant" and not any(block.block_type == "text" for block in blocks):
+            retained_results = any(
+                block.block_type in {"artifact", "diff", "file"}
+                for block in blocks
+            )
+            blocks.insert(
+                0,
+                normalize_agent_block(
+                    {
+                        "id": f"{turn_id}:failure-text:0",
+                        "type": "text",
+                        "status": "failed",
+                        "presentationKind": "markdown",
+                        "data": {
+                            "text": (
+                                "模型服务未能生成最终回复。"
+                                + (
+                                    "已完成的工具与文件结果已保留；"
+                                    if retained_results
+                                    else ""
+                                )
+                                + "请继续当前对话，或切换模型后继续。"
+                            )
+                        },
+                    }
+                ),
+            )
         blocks.append(
             normalize_agent_block(
                 {
