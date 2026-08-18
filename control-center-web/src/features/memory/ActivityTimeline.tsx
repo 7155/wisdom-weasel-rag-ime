@@ -127,6 +127,7 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
   const {
     approve,
     build,
+    buildJob,
     buildJobError,
     buildJobProgress,
     buildJobState,
@@ -155,8 +156,22 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
   const timelineId = stringValue(item.timelineId);
   const status = stringValue(item.status);
   const buildRunning = Boolean(buildJobState) && buildJobState !== 'completed' && buildJobState !== 'failed';
-  const busy = build.isPending || buildRunning || approve.isPending || reject.isPending;
-  const error = timeline.error ?? build.error ?? buildJobError ?? approve.error ?? reject.error;
+  const buildAwaitingStatus = buildJob.isFetching && !buildJobState;
+  const buildActive = build.isPending || buildAwaitingStatus || buildRunning;
+  const busy = buildActive || approve.isPending || reject.isPending;
+  const buildError = build.error ?? buildJobError;
+  const error = timeline.error ?? approve.error ?? reject.error;
+  const buildProgressMessage = buildError
+    ? friendlyTimelineError(buildError)
+    : build.isPending
+      ? '正在提交整理任务…'
+      : buildAwaitingStatus
+        ? '整理任务已受理，正在读取进度…'
+        : buildRunning && stringValue(buildJobProgress.phase) === 'activity_timeline_catch_up'
+          ? catchUpProgressCopy(buildJobProgress)
+          : buildRunning
+            ? '整理任务已进入队列，等待开始…'
+            : '';
   const semanticReady = timelineId
     ? calendarDays.some((day) => (
       day.date === date && day.organized && day.modelOrganized
@@ -226,6 +241,9 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
         isLoading={capabilities.isPending || (canReadCalendar && calendar.isPending)}
         onMoveMonth={moveMonth}
         onOrganizeThroughToday={() => build.mutate({ targetDate: today, throughToday: true })}
+        organizeActive={buildActive}
+        organizeFailed={Boolean(buildError)}
+        organizeMessage={buildProgressMessage}
         onSelect={chooseDate}
         summary={calendarSummary}
         today={today}
@@ -256,13 +274,6 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
       {error ? (
         <InlineNotice title="时间线暂时不可用" tone="danger">
           {friendlyTimelineError(error)}
-        </InlineNotice>
-      ) : null}
-
-      {buildRunning && stringValue(buildJobProgress.phase) === 'activity_timeline_catch_up' ? (
-        <InlineNotice title="正在按日期整理历史日记" tone="info">
-          已完成 {numberValue(buildJobProgress.completedDayCount)} / {numberValue(buildJobProgress.totalDayCount)} 天
-          {stringValue(buildJobProgress.currentDate) ? `，当前 ${stringValue(buildJobProgress.currentDate)}` : ''}。
         </InlineNotice>
       ) : null}
 
@@ -565,6 +576,9 @@ function ActivityTimelineCalendar({
   isLoading,
   onMoveMonth,
   onOrganizeThroughToday,
+  organizeActive,
+  organizeFailed,
+  organizeMessage,
   onSelect,
   summary,
   today,
@@ -578,6 +592,9 @@ function ActivityTimelineCalendar({
   isLoading: boolean;
   onMoveMonth: (offset: number) => void;
   onOrganizeThroughToday: () => void;
+  organizeActive: boolean;
+  organizeFailed: boolean;
+  organizeMessage: string;
   onSelect: (date: string) => void;
   summary: Record<string, unknown>;
   today: string;
@@ -600,11 +617,12 @@ function ActivityTimelineCalendar({
           <Button
             disabled={busy || !canWrite}
             leadingIcon={<Sparkles size={15} />}
+            loading={organizeActive}
             onClick={onOrganizeThroughToday}
             size="small"
             variant="primary"
           >
-            整理到今天
+            {organizeActive ? '正在整理' : '整理到今天'}
           </Button>
           <IconButton
             icon={<ChevronLeft size={16} />}
@@ -631,6 +649,18 @@ function ActivityTimelineCalendar({
           />
         </div>
       </header>
+
+      {organizeMessage ? (
+        <div
+          aria-label="历史日记整理进度"
+          className="activity-calendar__organize-status"
+          data-tone={organizeFailed ? 'danger' : 'info'}
+          role={organizeFailed ? 'alert' : 'status'}
+        >
+          {organizeFailed ? <X aria-hidden="true" size={15} /> : <RefreshCw aria-hidden="true" size={15} />}
+          <span>{organizeMessage}</span>
+        </div>
+      ) : null}
 
       <div className="activity-calendar__summary" aria-live="polite">
         <span><strong>{numberValue(summary.activityDayCount)}</strong> 天有活动</span>
@@ -1425,6 +1455,14 @@ function shiftMonth(value: string, offset: number): string {
 function formatMonthHeading(value: string): string {
   const [year, month] = value.split('-').map(Number);
   return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long' }).format(new Date(year, month - 1, 1));
+}
+
+function catchUpProgressCopy(progress: Record<string, unknown>): string {
+  const completed = numberValue(progress.completedDayCount);
+  const total = numberValue(progress.totalDayCount);
+  const currentDate = stringValue(progress.currentDate);
+  const count = total ? `已完成 ${completed} / ${total} 天` : '正在计算待整理日期';
+  return `正在整理历史日记：${count}${currentDate ? `，当前 ${currentDate}` : ''}。`;
 }
 
 function formatDateHeading(value: string): string {

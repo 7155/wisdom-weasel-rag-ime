@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
@@ -102,6 +102,72 @@ describe('MemoryFeature relations', () => {
     expect(await screen.findAllByText('已驳回')).not.toHaveLength(0);
     expect(screen.getByText('本次整理未进入长期上下文')).toBeInTheDocument();
     expect(transport.requests.filter((call) => call.request.pathId === 'memory.activityTimeline.reject')).toHaveLength(1);
+  });
+
+  it('shows immediate in-place feedback while historical organization is being accepted', async () => {
+    const user = userEvent.setup();
+    const date = localCalendarDate();
+    let acceptBuild: ((payload: unknown) => void) | undefined;
+    const transport = new MockControlTransport({
+      routes: {
+        'memory.summary': { ok: true, memoryBookCount: 1, memoryAtomCount: 1 },
+        'memory.pages': { ok: true, items: [], nextCursor: '', limit: 50 },
+        'memory.activityTimeline.get': { ok: true, timeline: activityTimeline('approved', date) },
+        'memory.activityTimeline.calendar': {
+          ok: true,
+          month: date.slice(0, 7),
+          days: [{
+            date,
+            status: 'waiting',
+            organized: false,
+            modelOrganized: false,
+            needsRefresh: false,
+            sourceEventCount: 8,
+            segmentCount: 0,
+          }],
+          summary: {
+            activityDayCount: 1,
+            organizedDayCount: 0,
+            waitingDayCount: 1,
+            sourceEventCount: 8,
+          },
+        },
+        'memory.activityTimeline.build': (request: ControlRequest) => {
+          expect(request.body).toEqual({ date, throughToday: true });
+          return new Promise((resolve) => { acceptBuild = resolve; });
+        },
+        'agent.memoryMaintenance.run': {
+          ok: true,
+          jobId: 'memory-maintenance:timeline',
+          state: 'running',
+          progress: {
+            phase: 'activity_timeline_catch_up',
+            completedDayCount: 2,
+            totalDayCount: 19,
+            currentDate: '2026-07-13',
+          },
+        },
+      },
+    });
+    renderMemory(transport);
+
+    await user.click(await screen.findByRole('tab', { name: '时间线' }));
+    const organizeButton = await screen.findByRole('button', { name: '整理到今天' });
+    await user.click(organizeButton);
+
+    expect(transport.requests.filter((call) => call.request.pathId === 'memory.activityTimeline.build')).toHaveLength(1);
+    expect(organizeButton).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('status', { name: '历史日记整理进度' })).toHaveTextContent('正在提交整理任务');
+
+    await act(async () => acceptBuild?.({
+      ok: true,
+      jobId: 'memory-maintenance:timeline',
+      state: 'queued',
+    }));
+    expect(await screen.findByRole('button', { name: '正在整理' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('status', { name: '历史日记整理进度' })).toHaveTextContent(
+      '正在整理历史日记：已完成 2 / 19 天，当前 2026-07-13。',
+    );
   });
 
   it('fails closed without the activity timeline read capability', async () => {

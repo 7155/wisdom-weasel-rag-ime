@@ -130,17 +130,44 @@ class GovernedMemoryModelExecutor:
         *,
         frozen_input_sha256: object = "",
     ) -> dict[str, object]:
-        normalized_run_id = _identifier(run_id, field="runId", maximum=240)
+        requested_run_id = _identifier(run_id, field="runId", maximum=240)
         frozen_hash = _sha256_value(frozen_input_sha256, allow_empty=True)
         with self._lock:
+            normalized_run_id, row = self._resolve_run_attempt(
+                requested_run_id,
+                frozen_hash=frozen_hash,
+            )
+            assert row is not None
+            if (
+                str(row["state"]) == "running"
+                and self._active_run_id != normalized_run_id
+            ):
+                row = self._recover_interrupted_run(row)
+            self._active_run_id = normalized_run_id
+            self._active_session_id = str(row["session_id"] or "")
+            if not self._active_session_id:
+                raise MemoryModelUnavailable(
+                    "memory curation run has no resumable internal Session"
+                )
+            return _run_payload(row)
+
+    def _resolve_run_attempt(
+        self,
+        requested_run_id: str,
+        *,
+        frozen_hash: str,
+    ) -> tuple[str, sqlite3.Row]:
+        attempt = 1
+        while attempt <= 1_000:
+            candidate_run_id = _attempt_run_id(requested_run_id, attempt)
             with self._connect() as conn:
                 row = conn.execute(
                     "SELECT * FROM memory_curation_model_runs WHERE run_id = ?",
-                    (normalized_run_id,),
+                    (candidate_run_id,),
                 ).fetchone()
             if row is None:
                 session = self._create_internal_session(
-                    title=f"Memory curation · {_short_run_label(normalized_run_id)}",
+                    title=f"Memory curation · {_short_run_label(candidate_run_id)}",
                 )
                 timestamp = _now_ms()
                 with self._connect() as conn:
@@ -153,7 +180,7 @@ class GovernedMemoryModelExecutor:
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'prepared', ?, ?)
                         """,
                         (
-                            normalized_run_id,
+                            candidate_run_id,
                             str(session["id"]),
                             MEMORY_CURATION_PROFILE,
                             self.provider,
@@ -166,17 +193,52 @@ class GovernedMemoryModelExecutor:
                     )
                     row = conn.execute(
                         "SELECT * FROM memory_curation_model_runs WHERE run_id = ?",
-                        (normalized_run_id,),
+                        (candidate_run_id,),
                     ).fetchone()
-            assert row is not None
+                assert row is not None
+                return candidate_run_id, row
             self._validate_run_row(row, frozen_hash=frozen_hash)
-            self._active_run_id = normalized_run_id
-            self._active_session_id = str(row["session_id"] or "")
-            if not self._active_session_id:
-                raise MemoryModelUnavailable(
-                    "memory curation run has no resumable internal Session"
-                )
-            return _run_payload(row)
+            if str(row["state"]) not in {"failed", "cancelled"}:
+                return candidate_run_id, row
+            attempt += 1
+        raise MemoryModelUnavailable(
+            "Memory run exceeded the bounded successor-attempt limit"
+        )
+
+    def _recover_interrupted_run(self, row: sqlite3.Row) -> sqlite3.Row:
+        run_id = str(row["run_id"])
+        session_id = str(row["session_id"] or "")
+        error = "memory_curation_interrupted"
+        if session_id:
+            try:
+                self.runtime.abort(session_id)
+            except Exception as exc:
+                error = f"{error}: {_public_error(exc)}"
+        timestamp = _now_ms()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE memory_curation_model_requests
+                SET state = 'resumable', last_error = ?, updated_at_ms = ?
+                WHERE run_id = ? AND state = 'running'
+                """,
+                (error, timestamp, run_id),
+            )
+            conn.execute(
+                """
+                UPDATE memory_curation_model_runs
+                SET state = 'resumable', last_error = ?, updated_at_ms = ?
+                WHERE run_id = ? AND state = 'running'
+                """,
+                (error, timestamp, run_id),
+            )
+            recovered = conn.execute(
+                "SELECT * FROM memory_curation_model_runs WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        if recovered is None:
+            raise MemoryModelUnavailable("interrupted Memory run disappeared")
+        return recovered
 
     def complete(
         self,
@@ -766,10 +828,6 @@ class GovernedMemoryModelExecutor:
             raise MemoryModelUnavailable(
                 "existing Memory run input hash does not match the frozen batch"
             )
-        if str(row["state"]) in {"failed", "cancelled"}:
-            raise MemoryModelUnavailable(
-                f"Memory run is terminal: {str(row['state'])}"
-            )
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -1102,6 +1160,17 @@ def _sha256_value(value: object, *, allow_empty: bool) -> str:
 
 def _short_run_label(run_id: str) -> str:
     return hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:12]
+
+
+def _attempt_run_id(requested_run_id: str, attempt: int) -> str:
+    if attempt <= 1:
+        return requested_run_id
+    suffix = f":attempt:{attempt}"
+    candidate = f"{requested_run_id}{suffix}"
+    if len(candidate) <= 240:
+        return candidate
+    digest = hashlib.sha256(requested_run_id.encode("utf-8")).hexdigest()
+    return f"memory-run:{digest}{suffix}"
 
 
 def _now_ms() -> int:

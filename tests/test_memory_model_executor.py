@@ -330,6 +330,81 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
             1,
         )
 
+    def test_failed_run_keeps_receipt_and_retries_in_stable_successor_attempt(self) -> None:
+        frozen = hashlib.sha256(b"failed-batch").hexdigest()
+        messages = [{"role": "user", "content": '{"v":2,"e":[["e1"]]}'}]
+        first_runtime = FakeMemoryRuntime(self.sessions, self.events)
+        first = self._executor(first_runtime)
+        original = first.begin_run(
+            "memory_book_failed_retry",
+            frozen_input_sha256=frozen,
+        )
+        first.complete(messages=messages)
+        first.fail_run(RuntimeError("invalid delivery contract"))
+
+        second_runtime = FakeMemoryRuntime(self.sessions, self.events)
+        second = self._executor(second_runtime)
+        successor = second.begin_run(
+            "memory_book_failed_retry",
+            frozen_input_sha256=frozen,
+        )
+
+        self.assertEqual(successor["runId"], "memory_book_failed_retry:attempt:2")
+        self.assertEqual(successor["state"], "prepared")
+        self.assertNotEqual(successor["sessionId"], original["sessionId"])
+        self.assertEqual(
+            second.run_status("memory_book_failed_retry")["state"],
+            "failed",
+        )
+        second.complete(messages=messages)
+        second.finish_run(state="completed")
+        self.assertEqual(len(second_runtime.prompts), 1)
+
+        third_runtime = FakeMemoryRuntime(self.sessions, self.events)
+        third = self._executor(third_runtime)
+        resumed = third.begin_run(
+            "memory_book_failed_retry",
+            frozen_input_sha256=frozen,
+        )
+        third.complete(messages=messages)
+
+        self.assertEqual(resumed["runId"], successor["runId"])
+        self.assertEqual(resumed["state"], "completed")
+        self.assertEqual(third_runtime.prompts, [])
+
+    def test_interrupted_running_run_is_recovered_as_resumable(self) -> None:
+        frozen = hashlib.sha256(b"interrupted-batch").hexdigest()
+        first_runtime = FakeMemoryRuntime(self.sessions, self.events)
+        first = self._executor(first_runtime)
+        original = first.begin_run(
+            "memory_book_interrupted",
+            frozen_input_sha256=frozen,
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE memory_curation_model_runs
+                SET state = 'running', updated_at_ms = updated_at_ms - 60000
+                WHERE run_id = ?
+                """,
+                (original["runId"],),
+            )
+
+        second_runtime = FakeMemoryRuntime(self.sessions, self.events)
+        second = self._executor(second_runtime)
+        recovered = second.begin_run(
+            "memory_book_interrupted",
+            frozen_input_sha256=frozen,
+        )
+
+        self.assertEqual(recovered["runId"], original["runId"])
+        self.assertEqual(recovered["state"], "resumable")
+        self.assertEqual(second_runtime.aborted, [original["sessionId"]])
+        second.complete(
+            messages=[{"role": "user", "content": '{"v":2,"e":[]}'}]
+        )
+        self.assertEqual(len(second_runtime.prompts), 1)
+
     def test_timeout_aborts_turn_but_keeps_frozen_run_resumable(self) -> None:
         runtime = FakeMemoryRuntime(self.sessions, self.events, settle=False)
         executor = self._executor(runtime, timeout_seconds=0.01)

@@ -50,6 +50,32 @@
   gap: 5px;
 }
 
+.activity-calendar__organize-status {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-info) 24%, var(--color-border));
+  background: color-mix(in srgb, var(--color-info) 8%, var(--color-surface));
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.activity-calendar__organize-status svg {
+  flex: 0 0 auto;
+  color: var(--color-info);
+  animation: daily-journal-spin 1s linear infinite;
+}
+
+.activity-calendar__organize-status[data-tone='danger'] {
+  border-bottom-color: color-mix(in srgb, var(--color-danger) 28%, var(--color-border));
+  background: color-mix(in srgb, var(--color-danger) 8%, var(--color-surface));
+  color: var(--color-danger);
+}
+
+.activity-calendar__organize-status[data-tone='danger'] svg { animation: none; color: var(--color-danger); }
+
 .activity-calendar__summary {
   display: flex;
   min-height: 38px;
@@ -1186,6 +1212,7 @@
 @media (prefers-reduced-motion: reduce) {
   .daily-journal,
   .daily-journal__loading svg,
+  .activity-calendar__organize-status svg,
   .daily-journal__highlights button,
   .daily-journal__source svg:last-child,
   .activity-calendar__day,

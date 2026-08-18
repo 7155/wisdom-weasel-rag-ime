@@ -220,6 +220,11 @@ class ActivityTimelineCurationTests(unittest.TestCase):
         self.assertIn("final reference ledger", prompt)
         self.assertIn("remaining ref", prompt)
         self.assertIn(packet.private_payload_sha256, prompt)
+        self.assertIn(
+            f'"const":"{ACTIVITY_ORGANIZATION_OUTPUT_VERSION}"',
+            prompt,
+        )
+        self.assertIn('"required":["schemaVersion","activities","unclassified"]', prompt)
 
         def all_keys(value):
             if isinstance(value, dict):
@@ -293,6 +298,10 @@ class ActivityTimelineCurationTests(unittest.TestCase):
         self.assertFalse(schema["additionalProperties"])
         self.assertIn("independent", prompt.casefold())
         self.assertIn("interleavingSeparation", prompt)
+        self.assertIn(
+            f'"const":"{ACTIVITY_ORGANIZATION_VERDICT_VERSION}"',
+            prompt,
+        )
 
         invalid = {
             "schemaVersion": ACTIVITY_ORGANIZATION_VERDICT_VERSION,
@@ -363,6 +372,10 @@ class ActivityTimelineCurationTests(unittest.TestCase):
         self.assertIn("preserve", prompt.casefold())
         self.assertIn("final reference ledger", prompt)
         self.assertIn(packet.private_payload_sha256, prompt)
+        self.assertIn(
+            f'"const":"{ACTIVITY_ORGANIZATION_OUTPUT_VERSION}"',
+            prompt,
+        )
 
     def test_contract_repair_prompt_is_bounded_and_carries_exact_ref_ledger(self) -> None:
         packet = self._packet()
@@ -396,6 +409,10 @@ class ActivityTimelineCurationTests(unittest.TestCase):
         self.assertIn("Preserve", prompt)
         self.assertIn("one bounded", prompt)
         self.assertIn(packet.private_payload_sha256, prompt)
+        self.assertIn(
+            f'"const":"{ACTIVITY_ORGANIZATION_OUTPUT_VERSION}"',
+            prompt,
+        )
 
 
 if __name__ == "__main__":

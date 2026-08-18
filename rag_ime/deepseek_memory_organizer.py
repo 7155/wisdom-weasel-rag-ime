@@ -981,7 +981,7 @@ class ManagedPiMemoryOrganizer(DeepSeekMemoryOrganizer):
                     "role": "user",
                     "content": build_activity_organization_verifier_prompt(
                         packet,
-                        organizer_output=result.payload(),
+                        organizer_output=result.contract_payload(),
                     ),
                 },
             ],
@@ -1009,7 +1009,7 @@ class ManagedPiMemoryOrganizer(DeepSeekMemoryOrganizer):
                         "role": "user",
                         "content": build_activity_organization_repair_prompt(
                             packet,
-                            organizer_output=result.payload(),
+                            organizer_output=result.contract_payload(),
                             verdict_output=verdict.payload(),
                         ),
                     },
@@ -1039,7 +1039,7 @@ class ManagedPiMemoryOrganizer(DeepSeekMemoryOrganizer):
                         "role": "user",
                         "content": build_activity_organization_verifier_prompt(
                             packet,
-                            organizer_output=result.payload(),
+                            organizer_output=result.contract_payload(),
                         ),
                     },
                 ],
@@ -1058,7 +1058,7 @@ class ManagedPiMemoryOrganizer(DeepSeekMemoryOrganizer):
             )
 
         return {
-            "organization": result.payload(),
+            "organization": result.contract_payload(),
             "receipt": {
                 "organizerPromptVersion": ACTIVITY_ORGANIZATION_PROMPT_VERSION,
                 "verifierPromptVersion": ACTIVITY_ORGANIZATION_VERIFIER_PROMPT_VERSION,
@@ -1073,7 +1073,9 @@ class ManagedPiMemoryOrganizer(DeepSeekMemoryOrganizer):
                     else ""
                 ),
                 "membershipSha256": packet.membership_sha256,
-                "organizerOutputSha256": _mapping_sha256(result.payload()),
+                "organizerOutputSha256": _mapping_sha256(
+                    result.contract_payload()
+                ),
                 "verifierOutputSha256": _mapping_sha256(verdict_payload),
                 "verdict": verdict.verdict,
                 "scores": dict(verdict.scores),

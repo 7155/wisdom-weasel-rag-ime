@@ -117,6 +117,10 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
             result["organization"]["activities"][0]["title"],
             "修复日记语义整理",
         )
+        self.assertNotIn(
+            "activityId",
+            result["organization"]["activities"][0],
+        )
 
     def test_atom_first_binding_preserves_composite_reconstruction_evidence(self) -> None:
         result = _bind_atom_first_canonical_evidence(
