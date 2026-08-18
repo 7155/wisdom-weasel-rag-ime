@@ -27,6 +27,10 @@ class AgentRoomWorkAssignmentChanged(RuntimeError):
     """Raised when a formal Room assignment changes during dispatch."""
 
 
+class AgentRoomWorkAttemptChanged(RuntimeError):
+    """Raised when a late Partner result targets an obsolete attempt."""
+
+
 class AgentRoomWorkStore:
     """Durable Room responsibility ledger with append-only transition evidence."""
 
@@ -461,8 +465,11 @@ class AgentRoomWorkStore:
                 """,
                 (str(source["id"]),),
             ).fetchone()
+            # room_partner admits one real wave of up to three independent Pi
+            # Sessions. Keep the durable authority limit aligned with that
+            # public contract so the third lane cannot fail after validation.
             parallel_limit = (
-                2 if str(source["collaboration_role"]) == "coordinator" else 1
+                3 if str(source["collaboration_role"]) == "coordinator" else 1
             )
             if int(open_children[0] if open_children else 0) >= parallel_limit:
                 raise ValueError(
@@ -862,7 +869,7 @@ class AgentRoomWorkStore:
                 assignment = conn.execute(
                     """
                     SELECT payload_json FROM agent_room_work_events
-                    WHERE work_id = ? AND event_type = 'assigned'
+                    WHERE work_id = ? AND event_type IN ('assigned', 'reassigned')
                     ORDER BY sequence DESC LIMIT 1
                     """,
                     (work_id,),
@@ -898,8 +905,10 @@ class AgentRoomWorkStore:
         timestamp = _timestamp(updated_at_ms)
         with self._connect(immediate=True) as conn:
             row = self._row(conn, work_id)
-            if str(row["state"]) not in AUTHORITATIVE_WORK_STATES:
-                raise ValueError("only active or review work items can be reassigned")
+            if str(row["state"]) not in {"active", "review", "blocked"}:
+                raise ValueError(
+                    "only active, review, or blocked work items can be reassigned"
+                )
             room_id = str(row["room_id"])
             participant_rows = conn.execute(
                 """
@@ -919,8 +928,12 @@ class AgentRoomWorkStore:
             conn.execute(
                 """
                 UPDATE agent_room_work_items
-                SET current_owner_participant_id = ?, offered_to_participant_id = NULL,
-                    assignment_key = ?, accepted_turn_id = '', updated_at_ms = ?
+                SET state = 'active', current_owner_participant_id = ?,
+                    offered_to_participant_id = NULL, assignment_key = ?,
+                    accepted_turn_id = '', result_summary = '',
+                    artifact_refs_json = '[]', evidence_refs_json = '[]',
+                    blocker_json = '{}', completed_at_ms = NULL,
+                    updated_at_ms = ?
                 WHERE id = ?
                 """,
                 (
@@ -934,7 +947,7 @@ class AgentRoomWorkStore:
             self._append_event(
                 conn,
                 row,
-                event_type="assigned",
+                event_type="reassigned",
                 actor_participant_id=actor_id,
                 created_at_ms=timestamp,
                 payload={
@@ -954,9 +967,11 @@ class AgentRoomWorkStore:
         assignment_key: str,
         previous_accepted_turn_id: str,
         room_turn_id: str,
+        root_turn_id: str = "",
         claimed_at_ms: int | None = None,
     ) -> dict[str, object]:
         timestamp = _timestamp(claimed_at_ms)
+        public_root_id = _optional_text(root_turn_id, maximum=320)
         with self._connect(immediate=True) as conn:
             row = self._row(conn, work_id)
             if str(row["room_id"]) != str(room_id):
@@ -974,6 +989,7 @@ class AgentRoomWorkStore:
                 UPDATE agent_room_work_items
                 SET accepted_turn_id = ?,
                     root_turn_id = CASE
+                        WHEN ? != '' THEN ?
                         WHEN root_turn_id = '' THEN ?
                         ELSE root_turn_id
                     END,
@@ -983,6 +999,8 @@ class AgentRoomWorkStore:
                 """,
                 (
                     str(room_turn_id),
+                    public_root_id,
+                    public_root_id,
                     str(room_turn_id),
                     timestamp,
                     work_id,
@@ -1020,14 +1038,20 @@ class AgentRoomWorkStore:
             row = self._row(conn, work_id)
             if str(row["room_id"]) != str(room_id):
                 raise ValueError("work item does not belong to this room")
-            claim_is_current = str(row["accepted_turn_id"] or "") == str(room_turn_id)
-            if claim_is_current:
-                conn.execute(
-                    """
-                    UPDATE agent_room_work_items SET accepted_turn_id = ?, updated_at_ms = ?
-                    WHERE id = ? AND accepted_turn_id = ?
-                    """,
-                    (str(previous_accepted_turn_id or ""), timestamp, work_id, room_turn_id),
+            if str(row["accepted_turn_id"] or "") != str(room_turn_id):
+                raise AgentRoomWorkAssignmentChanged(
+                    "WorkItem attempt changed before dispatch failure settlement"
+                )
+            cursor = conn.execute(
+                """
+                UPDATE agent_room_work_items SET accepted_turn_id = ?, updated_at_ms = ?
+                WHERE id = ? AND accepted_turn_id = ?
+                """,
+                (str(previous_accepted_turn_id or ""), timestamp, work_id, room_turn_id),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRoomWorkAssignmentChanged(
+                    "WorkItem attempt changed before dispatch failure settlement"
                 )
             row = self._row(conn, work_id)
             self._append_event(
@@ -1036,8 +1060,322 @@ class AgentRoomWorkStore:
                 event_type="assignment_failed",
                 actor_participant_id=str(actor_participant_id),
                 created_at_ms=timestamp,
+                payload={"attemptId": str(room_turn_id)},
             )
         return work_item_payload(row)
+
+    def submit_attempt(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+        *,
+        attempt_id: str,
+        expected_revision: int,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Submit evidence only while the exact Partner attempt still owns it."""
+
+        timestamp = _timestamp(updated_at_ms)
+        work_id = _required_text(payload.get("workId"), "workId", maximum=240)
+        summary = _required_text(
+            payload.get("resultSummary"),
+            "resultSummary",
+            maximum=4_000,
+        )
+        artifact_refs = _text_list(
+            payload.get("artifactRefs"),
+            "artifactRefs",
+            maximum_items=16,
+            maximum_length=1_000,
+        )
+        evidence_refs = _text_list(
+            payload.get("evidenceRefs"),
+            "evidenceRefs",
+            maximum_items=24,
+            maximum_length=1_000,
+        )
+        if not artifact_refs and not evidence_refs:
+            raise ValueError(
+                "work submission requires at least one artifactRefs or evidenceRefs entry"
+            )
+        normalized_attempt_id = _required_text(
+            attempt_id,
+            "attempt_id",
+            maximum=320,
+        )
+        normalized_revision = int(expected_revision)
+        with self._connect(immediate=True) as conn:
+            actor = _participant_for_session(conn, session_id)
+            row = self._row(conn, work_id)
+            if str(row["room_id"]) != str(actor["room_id"]):
+                raise ValueError("WorkItem does not belong to the current Room")
+            self._require_attempt(
+                row,
+                attempt_id=normalized_attempt_id,
+                expected_revision=normalized_revision,
+            )
+            if str(row["current_owner_participant_id"]) != str(actor["id"]):
+                raise AgentRoomWorkAttemptChanged(
+                    "WorkItem owner changed before Partner result submission"
+                )
+            if str(row["state"]) != "active":
+                raise ValueError("only active work may be submitted by an attempt")
+            open_children = conn.execute(
+                """
+                SELECT COUNT(*) FROM agent_room_work_items
+                WHERE parent_work_id = ?
+                  AND state IN ('queued', 'active', 'review', 'blocked')
+                """,
+                (work_id,),
+            ).fetchone()
+            if int(open_children[0] if open_children else 0) > 0:
+                raise ValueError(
+                    "Room work cannot be submitted while child WorkItems are open"
+                )
+            cursor = conn.execute(
+                """
+                UPDATE agent_room_work_items
+                SET state = 'review', result_summary = ?, artifact_refs_json = ?,
+                    evidence_refs_json = ?, blocker_json = '{}', updated_at_ms = ?
+                WHERE id = ? AND revision = ? AND accepted_turn_id = ?
+                  AND state = 'active'
+                """,
+                (
+                    summary,
+                    json.dumps(artifact_refs, ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(evidence_refs, ensure_ascii=False, separators=(",", ":")),
+                    timestamp,
+                    work_id,
+                    normalized_revision,
+                    normalized_attempt_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRoomWorkAttemptChanged(
+                    "WorkItem attempt changed before Partner result submission"
+                )
+            row = self._row(conn, work_id)
+            self._append_event(
+                conn,
+                row,
+                event_type="submitted",
+                actor_participant_id=str(actor["id"]),
+                created_at_ms=timestamp,
+                payload={
+                    "attemptId": normalized_attempt_id,
+                    "workItemRevision": normalized_revision,
+                },
+            )
+        return work_item_payload(row)
+
+    def block_attempt(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+        *,
+        attempt_id: str,
+        expected_revision: int,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Record a recoverable Partner failure with the same attempt fence."""
+
+        timestamp = _timestamp(updated_at_ms)
+        work_id = _required_text(payload.get("workId"), "workId", maximum=240)
+        normalized_attempt_id = _required_text(
+            attempt_id,
+            "attempt_id",
+            maximum=320,
+        )
+        normalized_revision = int(expected_revision)
+        blocker = {
+            "reason": _required_text(payload.get("reason"), "reason", maximum=2_000),
+            "nextStep": _required_text(
+                payload.get("nextStep") or "resume, reassign, fail, or abandon",
+                "nextStep",
+                maximum=2_000,
+            ),
+            "wakeCondition": _wake_condition(payload.get("wakeCondition")),
+            "attemptId": normalized_attempt_id,
+            "workItemRevision": normalized_revision,
+        }
+        with self._connect(immediate=True) as conn:
+            actor = _participant_for_session(conn, session_id)
+            row = self._row(conn, work_id)
+            if str(row["room_id"]) != str(actor["room_id"]):
+                raise ValueError("WorkItem does not belong to the current Room")
+            self._require_attempt(
+                row,
+                attempt_id=normalized_attempt_id,
+                expected_revision=normalized_revision,
+            )
+            if str(row["current_owner_participant_id"]) != str(actor["id"]):
+                raise AgentRoomWorkAttemptChanged(
+                    "WorkItem owner changed before Partner failure settlement"
+                )
+            if str(row["state"]) != "active":
+                raise ValueError("only active work may be blocked by an attempt")
+            cursor = conn.execute(
+                """
+                UPDATE agent_room_work_items
+                SET state = 'blocked', blocker_json = ?, updated_at_ms = ?
+                WHERE id = ? AND revision = ? AND accepted_turn_id = ?
+                  AND state = 'active'
+                """,
+                (
+                    json.dumps(blocker, ensure_ascii=False, separators=(",", ":")),
+                    timestamp,
+                    work_id,
+                    normalized_revision,
+                    normalized_attempt_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRoomWorkAttemptChanged(
+                    "WorkItem attempt changed before Partner failure settlement"
+                )
+            row = self._row(conn, work_id)
+            self._append_event(
+                conn,
+                row,
+                event_type="blocked",
+                actor_participant_id=str(actor["id"]),
+                created_at_ms=timestamp,
+                payload={
+                    "attemptId": normalized_attempt_id,
+                    "workItemRevision": normalized_revision,
+                },
+            )
+        return work_item_payload(row)
+
+    def resume(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+        *,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Reopen the same blocked WorkItem for one new Pi attempt."""
+
+        timestamp = _timestamp(updated_at_ms)
+        work_id = _required_text(payload.get("workId"), "workId", maximum=240)
+        with self._connect(immediate=True) as conn:
+            actor = _participant_for_session(conn, session_id)
+            row = self._row(conn, work_id)
+            self._require_owner_or_accountable(row, str(actor["id"]))
+            if str(row["state"]) != "blocked":
+                raise ValueError("only blocked work may be resumed")
+            conn.execute(
+                """
+                UPDATE agent_room_work_items
+                SET state = 'active', blocker_json = '{}', accepted_turn_id = '',
+                    updated_at_ms = ?
+                WHERE id = ?
+                """,
+                (timestamp, work_id),
+            )
+            row = self._row(conn, work_id)
+            self._append_event(
+                conn,
+                row,
+                event_type="resumed",
+                actor_participant_id=str(actor["id"]),
+                created_at_ms=timestamp,
+            )
+        return work_item_payload(row)
+
+    def fail(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+        *,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Explicitly settle open Room work as failed."""
+
+        return self._terminate_open_work(
+            session_id,
+            payload,
+            state="failed",
+            event_type="failed",
+            updated_at_ms=updated_at_ms,
+        )
+
+    def abandon(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+        *,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Explicitly abandon optional work without accepting its evidence."""
+
+        return self._terminate_open_work(
+            session_id,
+            payload,
+            state="cancelled",
+            event_type="abandoned",
+            updated_at_ms=updated_at_ms,
+        )
+
+    def require_dependencies_done(
+        self,
+        room_id: str,
+        work_ids: Sequence[object],
+    ) -> list[dict[str, object]]:
+        """Return dependency evidence only when every exact item is accepted."""
+
+        normalized_room_id = _required_text(room_id, "room_id", maximum=320)
+        normalized_ids = _text_list(
+            work_ids,
+            "dependsOnWorkItemIds",
+            maximum_items=16,
+            maximum_length=320,
+        )
+        if not normalized_ids:
+            return []
+        if len(normalized_ids) != len(set(normalized_ids)):
+            raise ValueError("dependsOnWorkItemIds must be unique")
+        with self._connect() as conn:
+            rows = [self._row(conn, work_id) for work_id in normalized_ids]
+        values = [work_item_payload(row) for row in rows]
+        if any(str(item["roomId"]) != normalized_room_id for item in values):
+            raise ValueError("Room dependency belongs to a different Room")
+        incomplete = [
+            f"{item['id']}={item['state']}"
+            for item in values
+            if str(item["state"]) != "done"
+        ]
+        if incomplete:
+            raise ValueError(
+                "Room dependencies are not accepted: " + ", ".join(incomplete)
+            )
+        return values
+
+    def open_for_root(
+        self,
+        *,
+        room_id: str,
+        root_turn_id: str,
+    ) -> list[dict[str, object]]:
+        """List unresolved WorkItems attached to one public Root."""
+
+        normalized_room_id = _required_text(room_id, "room_id", maximum=320)
+        normalized_root_id = _required_text(
+            root_turn_id,
+            "root_turn_id",
+            maximum=320,
+        )
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM agent_room_work_items
+                WHERE room_id = ? AND root_turn_id = ?
+                  AND state IN ('queued', 'active', 'review', 'blocked')
+                ORDER BY updated_at_ms ASC, id ASC
+                """,
+                (normalized_room_id, normalized_root_id),
+            ).fetchall()
+        return [work_item_payload(row) for row in rows]
 
     def list_for_session(
         self,
@@ -1218,7 +1556,9 @@ class AgentRoomWorkStore:
                     """
                     UPDATE agent_room_work_items
                     SET state = 'active', revision = ?, blocker_json = ?,
-                        updated_at_ms = ?
+                        accepted_turn_id = '', result_summary = '',
+                        artifact_refs_json = '[]', evidence_refs_json = '[]',
+                        completed_at_ms = NULL, updated_at_ms = ?
                     WHERE id = ?
                     """,
                     (
@@ -1244,6 +1584,87 @@ class AgentRoomWorkStore:
         result = work_item_payload(row)
         self._notify_terminal(result)
         return result
+
+    def _terminate_open_work(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+        *,
+        state: str,
+        event_type: str,
+        updated_at_ms: int | None,
+    ) -> dict[str, object]:
+        timestamp = _timestamp(updated_at_ms)
+        work_id = _required_text(payload.get("workId"), "workId", maximum=240)
+        reason = _required_text(payload.get("reason"), "reason", maximum=2_000)
+        next_step = _optional_text(payload.get("nextStep"), maximum=2_000)
+        with self._connect(immediate=True) as conn:
+            actor = _participant_for_session(conn, session_id)
+            row = self._row(conn, work_id)
+            if str(row["room_id"]) != str(actor["room_id"]):
+                raise ValueError("WorkItem does not belong to the current Room")
+            self._require_owner_or_accountable(row, str(actor["id"]))
+            if str(row["state"]) not in OPEN_WORK_STATES:
+                raise ValueError("only open work may be terminated")
+            blocker = {
+                "reason": reason,
+                "nextStep": next_step,
+                "terminalDecision": event_type,
+            }
+            conn.execute(
+                """
+                UPDATE agent_room_work_items
+                SET state = ?, blocker_json = ?, accepted_turn_id = '',
+                    updated_at_ms = ?, completed_at_ms = ?
+                WHERE id = ?
+                """,
+                (
+                    state,
+                    json.dumps(blocker, ensure_ascii=False, separators=(",", ":")),
+                    timestamp,
+                    timestamp,
+                    work_id,
+                ),
+            )
+            row = self._row(conn, work_id)
+            self._append_event(
+                conn,
+                row,
+                event_type=event_type,
+                actor_participant_id=str(actor["id"]),
+                created_at_ms=timestamp,
+            )
+        result = work_item_payload(row)
+        self._notify_terminal(result)
+        return result
+
+    @staticmethod
+    def _require_attempt(
+        row: sqlite3.Row,
+        *,
+        attempt_id: str,
+        expected_revision: int,
+    ) -> None:
+        if (
+            int(row["revision"]) != int(expected_revision)
+            or str(row["accepted_turn_id"] or "") != str(attempt_id)
+        ):
+            raise AgentRoomWorkAttemptChanged(
+                "WorkItem revision or attempt changed before settlement"
+            )
+
+    @staticmethod
+    def _require_owner_or_accountable(
+        row: sqlite3.Row,
+        participant_id: str,
+    ) -> None:
+        if participant_id not in {
+            str(row["current_owner_participant_id"]),
+            str(row["accountable_participant_id"]),
+        }:
+            raise ValueError(
+                "only the current owner or accountable participant may change this WorkItem"
+            )
 
     def _notify_terminal(self, work: Mapping[str, object]) -> None:
         if str(work.get("state") or "") not in {"done", "failed", "cancelled"}:

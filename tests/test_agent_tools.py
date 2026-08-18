@@ -1313,7 +1313,18 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
         self.assertEqual(
             read_only_room_partner["parameters"]["properties"]["op"]["enum"],
-            ["list", "delegate", "delegate_batch", "post"],
+            [
+                "list",
+                "delegate",
+                "delegate_batch",
+                "accept",
+                "return",
+                "resume",
+                "reassign",
+                "fail",
+                "abandon",
+                "post",
+            ],
         )
         batch_schema = next(
             option

@@ -30,6 +30,11 @@ TOOL_CALLS: dict[str, dict[str, object]] = {
     "runtime": {"op": "health"},
     "configuration": {"op": "history"},
     "agents": {"op": "catalog"},
+    "session_search": {
+        "op": "search",
+        "query": "Agent Tool execution matrix",
+        "limit": 1,
+    },
     "room_partner": {"op": "list"},
     "browser": {"op": "status"},
     "todo": {"op": "view"},

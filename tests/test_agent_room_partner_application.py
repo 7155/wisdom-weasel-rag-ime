@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from collections.abc import Mapping
 from threading import Event, Lock
 from types import SimpleNamespace
 
@@ -15,6 +16,123 @@ class _RoomEvents:
     def publish(self, **values: object) -> dict[str, object]:
         self.published.append(dict(values))
         return dict(values)
+
+
+class _AuthorityWork:
+    def __init__(
+        self,
+        source: Mapping[str, object],
+        targets: list[Mapping[str, object]],
+    ) -> None:
+        self.source = dict(source)
+        self.targets = {str(item["id"]): dict(item) for item in targets}
+        self.items: dict[str, dict[str, object]] = {}
+        self.lock = Lock()
+
+    def require_dependencies_done(
+        self,
+        _room_id: str,
+        work_ids: tuple[str, ...],
+    ) -> list[dict[str, object]]:
+        if work_ids:
+            raise AssertionError("this fixture has no dependencies")
+        return []
+
+    def assign(
+        self,
+        _session_id: str,
+        payload: Mapping[str, object],
+        *,
+        root_turn_id: str,
+        topic_id: str,
+    ) -> tuple[dict[str, object], bool]:
+        with self.lock:
+            for item in self.items.values():
+                if item["clientMessageId"] == payload["clientMessageId"]:
+                    return dict(item), False
+            work_id = f"room-work:{len(self.items) + 1}"
+            item = {
+                "id": work_id,
+                "roomId": str(self.source["roomId"]),
+                "rootTurnId": root_turn_id,
+                "topicId": topic_id,
+                "clientMessageId": str(payload["clientMessageId"]),
+                "objective": str(payload["objective"]),
+                "expectedOutput": str(payload["expectedOutput"]),
+                "acceptanceCriteria": list(payload["acceptanceCriteria"]),
+                "currentOwnerParticipantId": str(self.source["id"]),
+                "offeredToParticipantId": str(payload["targetParticipantId"]),
+                "assignmentKey": f"assignment:{work_id}",
+                "acceptedTurnId": "",
+                "revision": 0,
+                "state": "queued",
+            }
+            self.items[work_id] = item
+            return dict(item), True
+
+    def get(self, work_id: str, *, room_id: str = "") -> dict[str, object]:
+        with self.lock:
+            item = dict(self.items[work_id])
+        if room_id and item["roomId"] != room_id:
+            raise ValueError("wrong Room")
+        return item
+
+    def list(self, *, room_id: str, limit: int = 100, **_kwargs: object) -> list[dict[str, object]]:
+        with self.lock:
+            return [
+                dict(item)
+                for item in self.items.values()
+                if item["roomId"] == room_id
+            ][:limit]
+
+    def accept_assignment(
+        self,
+        work_id: str,
+        *,
+        target_participant_id: str,
+        accepted_turn_id: str,
+    ) -> dict[str, object]:
+        with self.lock:
+            item = self.items[work_id]
+            item["state"] = "active"
+            item["currentOwnerParticipantId"] = target_participant_id
+            item["offeredToParticipantId"] = ""
+            item["acceptedTurnId"] = accepted_turn_id
+            return dict(item)
+
+    def submit_attempt(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+        *,
+        attempt_id: str,
+        expected_revision: int,
+    ) -> dict[str, object]:
+        with self.lock:
+            item = self.items[str(payload["workId"])]
+            target = self.targets[str(item["currentOwnerParticipantId"])]
+            if (
+                target["sessionId"] != session_id
+                or item["acceptedTurnId"] != attempt_id
+                or item["revision"] != expected_revision
+            ):
+                raise ValueError("stale attempt")
+            item["state"] = "review"
+            item["resultSummary"] = str(payload["resultSummary"])
+            return dict(item)
+
+    def open_for_root(
+        self,
+        *,
+        room_id: str,
+        root_turn_id: str,
+    ) -> list[dict[str, object]]:
+        return [
+            item
+            for item in self.list(room_id=room_id)
+            if item["rootTurnId"] == root_turn_id
+            and item["state"] in {"queued", "active", "review", "blocked"}
+        ]
 
 
 class RoomPartnerApplicationTest(unittest.TestCase):
@@ -90,6 +208,8 @@ class RoomPartnerApplicationTest(unittest.TestCase):
             list_events=lambda *_args, **_kwargs: [],
         )
         service = RoomPartnerApplicationService(
+            room_work=_AuthorityWork(source, targets),
+            publish_room_work_activity=lambda *_args, **_kwargs: None,
             rooms=rooms,
             room_turns=SimpleNamespace(
                 active_turn=lambda _session_id: ("root-a", "dispatch-a"),
@@ -202,6 +322,8 @@ class RoomPartnerApplicationTest(unittest.TestCase):
             list_events=lambda *_args, **_kwargs: [],
         )
         service = RoomPartnerApplicationService(
+            room_work=_AuthorityWork(source, [target]),
+            publish_room_work_activity=lambda *_args, **_kwargs: None,
             rooms=rooms,
             room_turns=SimpleNamespace(
                 active_turn=lambda _session_id: ("root-a", "dispatch-a"),
@@ -221,14 +343,20 @@ class RoomPartnerApplicationTest(unittest.TestCase):
             abort_session=lambda *_args, **_kwargs: {},
             room_topic_for_turn=lambda _root_id: "topic-a",
         )
-        service._wait_for_child = lambda **_kwargs: {"status": "completed"}  # type: ignore[method-assign]
+        service._wait_for_child = lambda **_kwargs: {  # type: ignore[method-assign]
+            "status": "completed",
+            "result": "done",
+        }
 
         service.execute(
             str(source["sessionId"]),
             {
                 "op": "delegate",
+                "phase": "调查",
                 "targetParticipantId": target["id"],
                 "task": "只读核对职责边界",
+                "expectedOutput": "职责边界证据",
+                "acceptanceCriteria": ["给出真实调用链"],
             },
             tool_call_id="tool:delegate",
         )
@@ -252,9 +380,12 @@ class RoomPartnerApplicationTest(unittest.TestCase):
             "id": "room-a",
             "status": "active",
             "activeTopicId": "topic-a",
+            "moderatorParticipantId": participant["id"],
         }
         events = _RoomEvents()
         service = RoomPartnerApplicationService(
+            room_work=_AuthorityWork(participant, []),
+            publish_room_work_activity=lambda *_args, **_kwargs: None,
             rooms=SimpleNamespace(
                 participant_for_session=lambda *_args, **_kwargs: participant,
                 get=lambda _room_id: room,

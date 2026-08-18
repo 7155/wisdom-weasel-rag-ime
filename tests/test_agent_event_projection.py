@@ -52,6 +52,15 @@ class _Turns:
     def dispatch_for_event(self, _event: object) -> str:
         return "room-child:1" if self.child else ""
 
+    def work_identity_for_event(self, _event: object) -> dict[str, object]:
+        if not self.child:
+            return {}
+        return {
+            "workItemId": "work:1",
+            "workItemRevision": 2,
+            "attemptId": "attempt:2",
+        }
+
     def child_for_event(self, _event: object) -> bool:
         return self.child
 
@@ -192,6 +201,9 @@ class AgentEventProjectionTests(unittest.TestCase):
         self.assertEqual(data["activityKind"], "child")
         self.assertEqual(data["phase"], "completed")
         self.assertEqual(data["dispatchId"], "room-child:1")
+        self.assertEqual(data["workItemId"], "work:1")
+        self.assertEqual(data["workItemRevision"], 2)
+        self.assertEqual(data["attemptId"], "attempt:2")
 
     def test_room_partner_public_tool_result_is_bounded(self) -> None:
         event_type, payload = room_event_projection(AgentEventEnvelope(

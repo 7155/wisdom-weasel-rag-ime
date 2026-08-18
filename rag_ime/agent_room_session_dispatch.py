@@ -175,6 +175,7 @@ class RoomSessionDispatchService:
             for decision in decisions:
                 decision["workItemId"] = work_item_id
                 decision["workItemState"] = str(work_item["state"])
+                decision["workItemRevision"] = int(work_item.get("revision") or 0)
 
         targets = [
             self.host.rooms.participant(str(decision["targetParticipantId"]))
@@ -235,6 +236,8 @@ class RoomSessionDispatchService:
             decision["rootId"] = room_turn_id
             decision["dispatchId"] = f"room-dispatch:{uuid.uuid4()}"
             decision["targetSessionId"] = str(target["sessionId"])
+            if work_item is not None:
+                decision["attemptId"] = room_turn_id
         try:
             user_event_payload: dict[str, object] = {
                 "text": message,
@@ -288,6 +291,17 @@ class RoomSessionDispatchService:
                     room_turn_id,
                     topic_id,
                     dispatch_id=str(decision["dispatchId"]),
+                    **(
+                        {
+                            "work_item_id": str(work_item["id"]),
+                            "work_item_revision": int(
+                                work_item.get("revision") or 0
+                            ),
+                            "attempt_id": room_turn_id,
+                        }
+                        if work_item is not None
+                        else {}
+                    ),
                 )
             unread_by_participant = {
                 str(target["id"]): self.host.rooms.unread_public_messages(
@@ -319,6 +333,7 @@ class RoomSessionDispatchService:
                     assignment_key=str(work_item["assignmentKey"]),
                     previous_accepted_turn_id=previous_accepted_turn_id,
                     room_turn_id=room_turn_id,
+                    root_turn_id=room_turn_id,
                 )
                 work_claimed = True
         except Exception as exc:

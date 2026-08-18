@@ -183,6 +183,41 @@ class RuntimeTurnBindingTests(unittest.TestCase):
             "dispatch:current",
         )
 
+    def test_work_identity_is_fenced_to_the_accepted_runtime_turn(self) -> None:
+        registry = RoomTurnRegistry()
+        current = self._event("runtime-turn:current", "tool_started")
+        registry.begin(
+            "session:target",
+            "room-root:current",
+            dispatch_id="dispatch:current",
+            child=True,
+            work_item_id="work:1",
+            work_item_revision=3,
+            attempt_id="attempt:3",
+        )
+
+        self.assertEqual(registry.work_identity_for_event(current), {})
+        registry.accept(
+            "session:target",
+            "runtime-turn:current",
+            "room-root:current",
+        )
+        self.assertEqual(
+            registry.work_identity_for_event(current),
+            {
+                "workItemId": "work:1",
+                "workItemRevision": 3,
+                "attemptId": "attempt:3",
+            },
+        )
+
+        registry.finish(
+            "session:target",
+            "runtime-turn:current",
+            "room-root:current",
+        )
+        self.assertEqual(registry.work_identity_for_event(current), {})
+
     def test_unregistered_participant_session_turn_is_not_a_room_event(
         self,
     ) -> None:

@@ -27,6 +27,7 @@ from .agent_execution_policy import (
 from .agent_background_jobs import AgentBackgroundJobService
 from .agent_memory_sources import AgentMemorySourceStore
 from .agent_role_book import AgentRoleBookStore
+from .agent_tool_artifacts import AgentToolArtifactProjector
 from .agent_tool_ids import (
     CONTROL_CENTER_TOOL_PROFILE,
     CONTROL_TOOL_IDS,
@@ -360,20 +361,44 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
     {
         "id": "room_partner",
         "domain": "agents",
-        "displayName": "Room 伙伴协作",
-        "description": "查看当前 Room 伙伴、委派一个有界子任务、在同一阶段并行委派 2–3 个独立任务，或发布公开进展与最终结果",
+        "displayName": "Room 伙伴工作流",
+        "description": (
+            "查看伙伴与正式 WorkItem；委派单任务或并行波次；"
+            "显式验收、返修、恢复、改派或终止；发布公开进展与最终结果"
+        ),
         "when": (
             "当前 Session 正在 Room 中主持任务，且需要另一位正式伙伴独立处理有界子任务",
             "同一阶段有 2–3 个无依赖、不重叠的工作轨道，需要真实并行启动",
+            "伙伴已回传证据，需要验收、返修、恢复、改派或作终止决定",
         ),
         "notFor": (
             "普通 Session 的临时微型子 Agent，或主伙伴自己即可完成的单步工作",
-            "存在前后依赖、写入范围重叠，或需要上一阶段交付才能开始的任务",
+            "写入范围重叠，或依赖 WorkItem 尚未通过验收的任务",
         ),
-        "input": "list；单个目标伙伴及交付合同；或阶段名称与 2–3 个独立任务；或带 kind 的公开进展/最终结果",
-        "output": "伙伴模型/状态、单子 Session 终态结果、带 waveId 的有序并行回执，或类型明确的公开回执",
-        "does": "把正式 Room Partner 作为普通 Pi Session 调用；delegate_batch 会一次保留并并发启动同阶段伙伴，子事件共用同一 waveId 并归入当前 Room turn。",
-        "operations": ("list", "delegate", "delegate_batch", "post"),
+        "input": (
+            "伙伴查询；带阶段、交付合同和依赖的委派；同阶段 2–3 个任务；"
+            "或 WorkItem 验收、返修、恢复、改派、终止与公开发布"
+        ),
+        "output": (
+            "带 workItemId/revision/attempt 的运行回执、待验收合同、"
+            "治理结论或类型明确的公开回执"
+        ),
+        "does": (
+            "PAW 创建和治理 WorkItem，Pi 仍执行普通 Partner Session；"
+            "回传只进入 review，Root 最终答复受未闭环 WorkItem 阻止。"
+        ),
+        "operations": (
+            "list",
+            "delegate",
+            "delegate_batch",
+            "accept",
+            "return",
+            "resume",
+            "reassign",
+            "fail",
+            "abandon",
+            "post",
+        ),
         # Availability is still Room-bound below. Once available, this is the
         # only formal Partner primitive and must be callable directly.
         "alwaysAvailable": True,
@@ -752,99 +777,97 @@ _KNOWLEDGE_RETRIEVAL_PARAMETER_SCHEMA: dict[str, object] = {
     },
 }
 
+_ROOM_PARTNER_WORK_ID_SCHEMA: dict[str, object] = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 240,
+}
+_ROOM_PARTNER_PHASE_SCHEMA: dict[str, object] = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 120,
+}
+_ROOM_PARTNER_TASK_PROPERTIES: dict[str, object] = {
+    "targetParticipantId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240,
+        "description": "必须原样使用 list 返回的 participantId。",
+    },
+    "task": {"type": "string", "minLength": 1, "maxLength": 8_000},
+    "expectedOutput": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1_200,
+    },
+    "acceptanceCriteria": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "items": {"type": "string", "minLength": 1, "maxLength": 320},
+    },
+    "dependsOnWorkItemIds": {
+        "type": "array",
+        "maxItems": 8,
+        "uniqueItems": True,
+        "items": _ROOM_PARTNER_WORK_ID_SCHEMA,
+    },
+    "parentWorkItemId": _ROOM_PARTNER_WORK_ID_SCHEMA,
+}
+_ROOM_PARTNER_TIMEOUT_SCHEMA: dict[str, object] = {
+    "type": "integer",
+    "minimum": 5,
+    "maximum": 300,
+}
+_ROOM_PARTNER_REASON_SCHEMA: dict[str, object] = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 2_000,
+}
+_ROOM_PARTNER_TASKS_SCHEMA: dict[str, object] = {
+    "type": "array",
+    "minItems": 2,
+    "maxItems": 3,
+    "description": "同阶段、目标不重复的并行任务。",
+    "items": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "targetParticipantId",
+            "task",
+            "expectedOutput",
+            "acceptanceCriteria",
+        ],
+        "properties": _ROOM_PARTNER_TASK_PROPERTIES,
+    },
+}
+_ROOM_PARTNER_OPERATIONS = (
+    "list",
+    "delegate",
+    "delegate_batch",
+    "accept",
+    "return",
+    "resume",
+    "reassign",
+    "fail",
+    "abandon",
+    "post",
+)
+
 _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
     "room_partner": {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "op": {
-                "type": "string",
-                "enum": ["list", "delegate", "delegate_batch", "post"],
-            },
-            "targetParticipantId": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240,
-                "description": "必须原样使用 list 返回的 participantId。",
-            },
-            "task": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 8_000,
-            },
-            "expectedOutput": {
-                "type": "string",
-                "maxLength": 1_200,
-            },
-            "acceptanceCriteria": {
-                "type": "array",
-                "maxItems": 8,
-                "items": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 320,
-                },
-            },
-            "timeoutSeconds": {
-                "type": "integer",
-                "minimum": 5,
-                "maximum": 300,
-            },
-            "phase": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 120,
-                "description": "同一并行波次的可读阶段名称。",
-            },
-            "tasks": {
-                "type": "array",
-                "minItems": 2,
-                "maxItems": 3,
-                "description": "必须互不依赖且目标伙伴不重复的同阶段任务。",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": [
-                        "targetParticipantId",
-                        "task",
-                        "expectedOutput",
-                        "acceptanceCriteria",
-                    ],
-                    "properties": {
-                        "targetParticipantId": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 240,
-                            "description": "必须原样使用 list 返回的 participantId。",
-                        },
-                        "task": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 8_000,
-                        },
-                        "expectedOutput": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 1_200,
-                        },
-                        "acceptanceCriteria": {
-                            "type": "array",
-                            "minItems": 1,
-                            "maxItems": 8,
-                            "items": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 320,
-                            },
-                        },
-                    },
-                },
-            },
-            "content": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 8_000,
-            },
+            "op": {"type": "string", "enum": list(_ROOM_PARTNER_OPERATIONS)},
+            "phase": _ROOM_PARTNER_PHASE_SCHEMA,
+            **_ROOM_PARTNER_TASK_PROPERTIES,
+            "timeoutSeconds": _ROOM_PARTNER_TIMEOUT_SCHEMA,
+            "tasks": _ROOM_PARTNER_TASKS_SCHEMA,
+            "workItemId": _ROOM_PARTNER_WORK_ID_SCHEMA,
+            "reason": _ROOM_PARTNER_REASON_SCHEMA,
+            "nextStep": {"type": "string", "maxLength": 2_000},
+            "content": {"type": "string", "minLength": 1, "maxLength": 8_000},
             "kind": {
                 "type": "string",
                 "enum": [
@@ -856,25 +879,136 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                     "wait",
                     "blocked",
                 ],
-                "description": "公开内容类型；省略时为 progress，最终答复使用 result。",
             },
         },
         "oneOf": [
             {
+                "type": "object",
+                "additionalProperties": False,
                 "required": ["op"],
                 "properties": {"op": {"const": "list"}},
             },
             {
-                "required": ["op", "targetParticipantId", "task"],
-                "properties": {"op": {"const": "delegate"}},
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "op",
+                    "phase",
+                    "targetParticipantId",
+                    "task",
+                    "expectedOutput",
+                    "acceptanceCriteria",
+                ],
+                "properties": {
+                    "op": {"const": "delegate"},
+                    "phase": _ROOM_PARTNER_PHASE_SCHEMA,
+                    **_ROOM_PARTNER_TASK_PROPERTIES,
+                    "timeoutSeconds": _ROOM_PARTNER_TIMEOUT_SCHEMA,
+                },
             },
             {
+                "type": "object",
+                "additionalProperties": False,
                 "required": ["op", "phase", "tasks"],
-                "properties": {"op": {"const": "delegate_batch"}},
+                "properties": {
+                    "op": {"const": "delegate_batch"},
+                    "phase": _ROOM_PARTNER_PHASE_SCHEMA,
+                    "timeoutSeconds": _ROOM_PARTNER_TIMEOUT_SCHEMA,
+                    "tasks": _ROOM_PARTNER_TASKS_SCHEMA,
+                },
             },
             {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op", "workItemId"],
+                "properties": {
+                    "op": {"const": "accept"},
+                    "workItemId": _ROOM_PARTNER_WORK_ID_SCHEMA,
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op", "workItemId", "reason"],
+                "properties": {
+                    "op": {"const": "return"},
+                    "workItemId": _ROOM_PARTNER_WORK_ID_SCHEMA,
+                    "reason": _ROOM_PARTNER_REASON_SCHEMA,
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op", "workItemId", "phase"],
+                "properties": {
+                    "op": {"const": "resume"},
+                    "workItemId": _ROOM_PARTNER_WORK_ID_SCHEMA,
+                    "phase": _ROOM_PARTNER_PHASE_SCHEMA,
+                    "timeoutSeconds": _ROOM_PARTNER_TIMEOUT_SCHEMA,
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "op",
+                    "workItemId",
+                    "targetParticipantId",
+                    "reason",
+                    "phase",
+                ],
+                "properties": {
+                    "op": {"const": "reassign"},
+                    "workItemId": _ROOM_PARTNER_WORK_ID_SCHEMA,
+                    "targetParticipantId": _ROOM_PARTNER_TASK_PROPERTIES[
+                        "targetParticipantId"
+                    ],
+                    "reason": _ROOM_PARTNER_REASON_SCHEMA,
+                    "phase": _ROOM_PARTNER_PHASE_SCHEMA,
+                    "timeoutSeconds": _ROOM_PARTNER_TIMEOUT_SCHEMA,
+                },
+            },
+            *[
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["op", "workItemId", "reason"],
+                    "properties": {
+                        "op": {"const": operation},
+                        "workItemId": _ROOM_PARTNER_WORK_ID_SCHEMA,
+                        "reason": _ROOM_PARTNER_REASON_SCHEMA,
+                        "nextStep": {
+                            "type": "string",
+                            "maxLength": 2_000,
+                        },
+                    },
+                }
+                for operation in ("fail", "abandon")
+            ],
+            {
+                "type": "object",
+                "additionalProperties": False,
                 "required": ["op", "content"],
-                "properties": {"op": {"const": "post"}},
+                "properties": {
+                    "op": {"const": "post"},
+                    "content": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 8_000,
+                    },
+                    "kind": {
+                        "type": "string",
+                        "enum": [
+                            "progress",
+                            "result",
+                            "work_result",
+                            "review_result",
+                            "handoff",
+                            "wait",
+                            "blocked",
+                        ],
+                    },
+                },
             },
         ],
     },
@@ -9481,7 +9615,18 @@ def _tool_profile_allows(
         # read-only execution mode. Public progress/result posts are Room
         # projection receipts, not source mutations.
         "room_partner": frozenset(
-            {"list", "delegate", "delegate_batch", "post"}
+            {
+                "list",
+                "delegate",
+                "delegate_batch",
+                "accept",
+                "return",
+                "resume",
+                "reassign",
+                "fail",
+                "abandon",
+                "post",
+            }
         ),
         "agent_schedule": frozenset({"list", "runs"}),
         "todo": frozenset(
@@ -9718,6 +9863,15 @@ def _runtime_tool_parameter_schema(
         # payload in place, and one mutation must not corrupt later Sessions.
         configured = copy.deepcopy(configured)
         allowed = {str(operation) for operation in operations}
+        properties = configured.get("properties")
+        if isinstance(properties, Mapping):
+            op_schema = properties.get("op")
+            if isinstance(op_schema, dict) and isinstance(op_schema.get("enum"), list):
+                op_schema["enum"] = [
+                    operation
+                    for operation in op_schema["enum"]
+                    if str(operation) in allowed
+                ]
         branches = configured.get("oneOf")
         if isinstance(branches, list):
             filtered = [

@@ -299,6 +299,9 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
 
         self.assertIn('"action": "steer_participant"', script)
         self.assertNotIn('"action": "steer",', script)
+        self.assertIn('"phase": "Staged verification"', script)
+        self.assertIn('"contractStatus") != "pending_review"', script)
+        self.assertIn('"op": "accept"', script)
 
     def test_product_owns_all_managed_skills(self) -> None:
         skills_root = ROOT / "integrations" / "pi" / "skills"

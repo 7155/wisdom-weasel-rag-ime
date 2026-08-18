@@ -5,7 +5,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rag_ime.agent_room_work import AgentRoomWorkStore
+from rag_ime.agent_room_work import (
+    AgentRoomWorkAttemptChanged,
+    AgentRoomWorkStore,
+)
 from rag_ime.agent_rooms import AgentRoomStore
 from rag_ime.agent_sessions import AgentSessionStore
 
@@ -248,6 +251,125 @@ class AgentRoomWorkTests(unittest.TestCase):
                     "evidenceRefs": ["test:parent"],
                 },
             )
+
+    def test_attempt_fence_rejects_late_results_after_resume_and_reassign(self) -> None:
+        assigned, _ = self.work.assign(
+            str(self.coordinator["id"]),
+            self._assignment("root-fence", self.worker_participant["id"]),
+            root_turn_id="room-turn:fence",
+        )
+        active = self.work.accept_assignment(
+            str(assigned["id"]),
+            target_participant_id=str(self.worker_participant["id"]),
+            accepted_turn_id="attempt:worker:0",
+        )
+        blocked = self.work.block_attempt(
+            str(self.worker["id"]),
+            {
+                "workId": active["id"],
+                "reason": "provider unavailable",
+                "nextStep": "resume after recovery",
+            },
+            attempt_id="attempt:worker:0",
+            expected_revision=0,
+        )
+        self.assertEqual(blocked["state"], "blocked")
+        resumed = self.work.resume(
+            str(self.coordinator["id"]),
+            {"workId": active["id"]},
+        )
+        claimed = self.work.claim_dispatch(
+            str(resumed["id"]),
+            room_id=str(self.room["id"]),
+            owner_participant_id=str(self.worker_participant["id"]),
+            assignment_key=str(resumed["assignmentKey"]),
+            previous_accepted_turn_id="",
+            room_turn_id="attempt:worker:1",
+            root_turn_id="room-turn:fence",
+        )
+        with self.assertRaises(AgentRoomWorkAttemptChanged):
+            self.work.submit_attempt(
+                str(self.worker["id"]),
+                {
+                    "workId": claimed["id"],
+                    "resultSummary": "late result",
+                    "evidenceRefs": ["attempt:worker:0"],
+                },
+                attempt_id="attempt:worker:0",
+                expected_revision=0,
+            )
+
+        reassigned = self.work.reassign(
+            str(claimed["id"]),
+            actor_participant_id=str(self.coordinator_participant["id"]),
+            current_owner_participant_id=str(self.researcher_participant["id"]),
+            reason="owner recovery",
+        )
+        self.assertEqual(reassigned["state"], "active")
+        self.assertEqual(reassigned["acceptedTurnId"], "")
+        with self.assertRaises(AgentRoomWorkAttemptChanged):
+            self.work.submit_attempt(
+                str(self.worker["id"]),
+                {
+                    "workId": claimed["id"],
+                    "resultSummary": "stale owner result",
+                    "evidenceRefs": ["attempt:worker:1"],
+                },
+                attempt_id="attempt:worker:1",
+                expected_revision=0,
+            )
+        owner, owner_id = self.work.authoritative_owner(
+            str(reassigned["id"]),
+            room_id=str(self.room["id"]),
+        )
+        self.assertEqual(owner_id, self.researcher_participant["id"])
+        self.assertEqual(owner["id"], reassigned["id"])
+
+    def test_explicit_fail_and_abandon_are_terminal_and_rebuildable(self) -> None:
+        failed_item, _ = self.work.assign(
+            str(self.coordinator["id"]),
+            self._assignment("root-fail", self.worker_participant["id"]),
+            root_turn_id="room-turn:terminal",
+        )
+        failed = self.work.fail(
+            str(self.coordinator["id"]),
+            {
+                "workId": failed_item["id"],
+                "reason": "cannot satisfy the delivery contract",
+                "nextStep": "publish the bounded failure",
+            },
+        )
+        self.assertEqual(failed["state"], "failed")
+
+        abandoned_item, _ = self.work.assign(
+            str(self.coordinator["id"]),
+            self._assignment("root-abandon", self.researcher_participant["id"]),
+            root_turn_id="room-turn:terminal",
+        )
+        abandoned = self.work.abandon(
+            str(self.coordinator["id"]),
+            {
+                "workId": abandoned_item["id"],
+                "reason": "optional investigation no longer needed",
+            },
+        )
+        self.assertEqual(abandoned["state"], "cancelled")
+        restarted = AgentRoomWorkStore(self.db_path)
+        self.assertEqual(
+            restarted.open_for_root(
+                room_id=str(self.room["id"]),
+                root_turn_id="room-turn:terminal",
+            ),
+            [],
+        )
+        self.assertEqual(
+            [event["eventType"] for event in restarted.list_events(failed["id"])][-1],
+            "failed",
+        )
+        self.assertEqual(
+            [event["eventType"] for event in restarted.list_events(abandoned["id"])][-1],
+            "abandoned",
+        )
 
     def _assignment(
         self,

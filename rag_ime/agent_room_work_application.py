@@ -515,6 +515,14 @@ class RoomWorkApplicationService:
             payload={
                 "activityKind": "work",
                 "phase": phase,
+                "workItemId": str(work.get("id") or ""),
+                "workItemRevision": int(work.get("revision") or 0),
+                "attemptId": str(work.get("acceptedTurnId") or ""),
+                **(
+                    {"dispatchId": str(work.get("acceptedTurnId") or "")}
+                    if str(work.get("acceptedTurnId") or "")
+                    else {}
+                ),
                 "work": dict(work),
             },
             turn_id=str(work.get("rootTurnId") or work.get("id") or ""),

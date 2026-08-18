@@ -71,6 +71,9 @@ export interface RoomActivityLaneIdentity {
   rootId: string;
   participantId: string;
   dispatchId: string;
+  workItemId: string;
+  workItemRevision?: number;
+  attemptId: string;
   key: string;
 }
 
@@ -457,11 +460,30 @@ export function roomActivityLaneIdentity(
     || activity.sourceSessionId
     || text(activity.payload.sourceEventId)
     || activity.id;
+  const workItemId = text(activity.payload.workItemId);
+  const revisionValue = activity.payload.workItemRevision;
+  const workItemRevision = (
+    typeof revisionValue === 'number'
+    && Number.isSafeInteger(revisionValue)
+    && revisionValue >= 0
+  ) ? revisionValue : undefined;
+  const attemptId = text(activity.payload.attemptId);
+  const key = workItemId
+    ? [
+        rootId,
+        `work:${workItemId}`,
+        `revision:${workItemRevision ?? 0}`,
+        `attempt:${attemptId || dispatchId}`,
+      ].join('\u001f')
+    : `${rootId}\u001f${participantId}\u001f${dispatchId}`;
   return {
     rootId,
     participantId,
     dispatchId,
-    key: `${rootId}\u001f${participantId}\u001f${dispatchId}`,
+    workItemId,
+    workItemRevision,
+    attemptId,
+    key,
   };
 }
 export function selectRoomParticipantPublicProgress(

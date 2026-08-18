@@ -767,9 +767,15 @@ function buildPartnerProjections(
     const participant = room.participants.find((item) => item.id === lane.participantId)
       ?? room.participants.find((item) => item.sessionId === lane.sourceSessionId);
     if (!participant) continue;
-    const workItems = relevantWorkItems.filter((item) => [item.currentOwnerParticipantId, item.accountableParticipantId, item.offeredToParticipantId].includes(participant.id));
+    const laneWorkItems = lane.workItemId
+      ? relevantWorkItems.filter((item) => item.id === lane.workItemId)
+      : relevantWorkItems.filter((item) => [item.currentOwnerParticipantId, item.accountableParticipantId, item.offeredToParticipantId].includes(participant.id));
     const messages = lane.messageIds.map((id) => projection?.messagesById[id]).filter((item): item is RoomMessageProjection => Boolean(item));
     const existing = result.get(participant.id);
+    const workItems = [...(existing?.workItems ?? [])];
+    for (const workItem of laneWorkItems) {
+      if (!workItems.some((item) => item.id === workItem.id)) workItems.push(workItem);
+    }
     const activities = [...(existing?.activities ?? []), ...lane.activities];
     const partnerLanes = [...(existing?.lanes ?? []), lane];
     const combinedMessages = [...(existing?.messages ?? []), ...messages];
@@ -871,7 +877,11 @@ function taskFlowStages(
     const items = entries.map(({ lane, partner }) => {
       usedLaneKeys.add(lane.key);
       const availableWorkItems = partner.workItems.filter((item) => !usedWorkItemIds.has(item.id));
-      const workItem = availableWorkItems.length === 1 ? availableWorkItems[0] : undefined;
+      const workItem = lane.workItemId
+        ? workById.get(lane.workItemId)?.workItem
+        : availableWorkItems.length === 1
+          ? availableWorkItems[0]
+          : undefined;
       if (workItem) usedWorkItemIds.add(workItem.id);
       const messages = partner.messages.filter((message) => lane.messageIds.includes(message.id));
       return {
