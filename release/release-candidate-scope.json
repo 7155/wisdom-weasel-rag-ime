@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-08-16T17:57:46Z",
+  "generatedAt": "2026-08-18T02:23:45Z",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -19,11 +19,11 @@
     },
     "control_center_release_ui": {
       "description": "User-visible Control Center release redesign, recovery paths, accessibility, and regression coverage.",
-      "pathCount": 199
+      "pathCount": 229
     },
     "session_room_skill_flow": {
       "description": "Pi-native Session/Room composition, compact Skills, routing cards, and installed-runtime synchronization.",
-      "pathCount": 71
+      "pathCount": 101
     },
     "desktop_semantic_accessibility": {
       "description": "Accessibility-only semantic desktop bridge, bounded find, metrics, smoke target, and foreground verifier.",
@@ -31,7 +31,7 @@
     },
     "memory_curation": {
       "description": "Owner-scoped memory curation and source/pagination correctness.",
-      "pathCount": 5
+      "pathCount": 11
     },
     "room_kernel_cleanup": {
       "description": "Removal of obsolete heavy-Kernel-specific test obligations without rewriting immutable migrations.",
@@ -47,17 +47,17 @@
     }
   },
   "summary": {
-    "pathCount": 306,
+    "pathCount": 372,
     "dispositionCounts": {
-      "keep_release": 286,
+      "keep_release": 352,
       "delete_old_implementation": 20
     },
     "groupCounts": {
       "project_harness": 11,
-      "control_center_release_ui": 199,
-      "session_room_skill_flow": 71,
+      "control_center_release_ui": 229,
+      "session_room_skill_flow": 101,
       "desktop_semantic_accessibility": 8,
-      "memory_curation": 5,
+      "memory_curation": 11,
       "release_scope": 3,
       "room_kernel_cleanup": 2,
       "installation_reliability": 7
@@ -81,18 +81,19 @@
     "projectHarness": "passed",
     "focusedSkillAndPromptTests": "38 passed",
     "pythonFullSuiteShards": "3245 tests across four shards; one shard exposed only 3 stale voice UI copy assertions, and its corrected voice module reran 8/8 passed",
-    "databaseMigrationsAfterChecksumRestore": "18 passed",
+    "databaseMigrationsAfterChecksumRestore": "20 passed",
     "frontendTypecheck": "passed with pnpm 11.9.0",
-    "frontendUnitTests": "931 passed",
+    "frontendUnitTests": "focused release set passed: 322 tests; Agent feature 122/122 and Room feature 97/97",
     "frontendBuild": "passed",
     "frontendBrowserAcceptance": "166 passed, 49 conditional skips, 0 failed",
     "agentToolMatrix": "29/29 Pi runtime Tools invoked successfully in a real Room Session",
     "installedPiPackageCanary": "active managed Pi Runtime created and prepared one isolated local Package with one Skill; no real package state was mutated",
     "installedLunaSessionCanary": "passed: first public activity 6.4 s, native Steer ordered, browser stopping projection 35 ms, Runtime Stop terminal 384 ms, Tool failure closed, refresh stable, 8/8 bounded Tool terminals with 660-byte maximum public event payload",
     "installedLunaRoomCanary": "passed: two ordinary Luna Pi Sessions, one successful room_partner child start/completion and result, exactly one Root final, live Room Tool turn aborted with one terminal, refresh stable",
-    "focusedSessionRoomBackendTests": "298 passed across Session/context/approval/cancel, delegation/Room work, and Room/service/event shards",
-    "releaseScopeCoverage": "306/306 base-to-HEAD paths classified; 286 retained and 20 old implementations deleted",
-    "repositoryPublicAudit": "run against the clean candidate head after committing this inventory",
+    "focusedSessionRoomBackendTests": "126 passed across Agent Tools, runtime contracts, and delegation; Room Partner application 3/3 passed",
+    "sourceRoomParallelCanary": "passed on isolated source Gateway port 8878 with gpt-5.4: one delegate_batch wave, two child starts before either completion, two distinct child dispatches, exact Partner markers, one published result, and one root terminal",
+    "releaseScopeCoverage": "372/372 base-to-HEAD paths classified; 352 retained and 20 old implementations deleted",
+    "repositoryPublicAudit": "repository-only audit found no required, tracked-forbidden, secret-shape, or machine-path violations; requestedScopeOk=false because excluded local node_modules and untracked design artifacts keep the worktree dirty",
     "localInstall": "Installation acceptance is external runtime evidence; source fixes cover installed migration checksum compatibility plus spaceful-Xcode Squirrel preinstall and SDK header resolution",
     "foregroundAcceptance": "not claimed by this source scope"
   },
@@ -2238,6 +2239,468 @@
       "disposition": "keep_release",
       "group": "release_scope",
       "reason": "Keep Session/Room installed evidence current without weakening whole-product distribution blockers."
+    },
+    {
+      "path": "control-center-web/src/app/preview-room-data.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/app/route-registry.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/components/layout/route-icons.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/agent-subagent-run.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/agent-template.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/agent-tool-call.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/contracts/room-reducer.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/contracts/room-reducer.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/AgentComposer.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/command-catalog.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/agent/sessions/SessionRail.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/agent/status/SubagentConsole.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/agent/status/SubagentConsole.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/agent/status/SubagentConsole.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/agent/status/subagent-presentation.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/agent/status/subagent-presentation.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/agent/types.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/test/stub-control-transport.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/agent/delegation/SessionSubagentPanel.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/agent/delegation/SubagentLaunchPanel.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/agent/delegation/SubagentLaunchPanel.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/agent/delegation/session-subagent.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/agent/delegation/subagent-launch.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/approvals/approvals-feature.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/approvals/approvals.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/approvals/index.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/configuration/SubagentSettingsPanel.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/RoomModulePanel.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/room-surface-modules.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/use-room-navigation-documents.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "integrations/pi/rag-ime-control.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "macos/RagImeControlWebHost/NativeRoutePolicy.swift",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "pyproject.toml",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/agent_approval_application.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/agent_definitions.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/agent_delegation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/agent_event_projection.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/agent_room_session_cancellation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/agent_room_turn_registry.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/agent_sessions.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/agent_tool_ids.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/contracts/json/agent-subagent-run.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/contracts/json/agent-template.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/contracts/json/agent-tool-call.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "tests/test_agent_delegation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "tests/test_agent_event_projection.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "tests/test_agent_room_turn_registry.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "tests/test_agent_sessions.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "tests/test_debug_management_api.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "tests/test_native_control_bridge_contract.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "integrations/pi/skills/project-maintainer/SKILL.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "integrations/pi/skills/project-maintainer/agents/openai.yaml",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/db/migrations/0153_project_field_membership.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/db/migrations/0154_room_kernel_receipt_lookup_index.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/db/migrations/0155_agent_subagent_fleet_queue.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/db/migrations/0156_agent_approval_runtime_delivery.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/db/migrations/0157_agent_connector_gateway.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/db/migrations/0158_subagent_run_identity_and_structured_output.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/tui.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "tests/test_tui.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/activity_timeline_curation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep owner-memory curation, provenance, and model-backed organization reliable."
+    },
+    {
+      "path": "rag_ime/deepseek_memory_organizer.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep owner-memory curation, provenance, and model-backed organization reliable."
+    },
+    {
+      "path": "rag_ime/memory_model_executor.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep owner-memory curation, provenance, and model-backed organization reliable."
+    },
+    {
+      "path": "tests/test_activity_timeline_curation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep owner-memory curation, provenance, and model-backed organization reliable."
+    },
+    {
+      "path": "tests/test_deepseek_memory_organizer.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep owner-memory curation, provenance, and model-backed organization reliable."
+    },
+    {
+      "path": "tests/test_memory_model_executor.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep owner-memory curation, provenance, and model-backed organization reliable."
     }
   ]
 }
