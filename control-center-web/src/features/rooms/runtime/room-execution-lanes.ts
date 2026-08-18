@@ -10,6 +10,9 @@ export interface RoomExecutionLane {
   key: string;
   rootId: string;
   dispatchId: string;
+  workItemId: string;
+  workItemRevision?: number;
+  attemptId: string;
   waveId: string;
   phaseName: string;
   parallelIndex?: number;
@@ -113,6 +116,7 @@ export function selectRoomTurnExecution(
     .filter(isUsefulRoomActivity);
   const lanes = new Map<string, RoomExecutionLane>();
   const participantLaneKeys = new Map<string, string[]>();
+  const dispatchLaneKeys = new Map<string, string[]>();
 
   for (const activity of activities) {
     const identity = roomActivityLaneIdentity(activity);
@@ -123,6 +127,9 @@ export function selectRoomTurnExecution(
       key: identity.key,
       rootId: identity.rootId,
       dispatchId: identity.dispatchId,
+      workItemId: identity.workItemId,
+      workItemRevision: identity.workItemRevision,
+      attemptId: identity.attemptId,
       waveId: textValue(activity.payload.waveId),
       phaseName: textValue(activity.payload.phaseName),
       parallelIndex: numberValue(activity.payload.parallelIndex),
@@ -143,6 +150,11 @@ export function selectRoomTurnExecution(
     }
     lanes.set(identity.key, lane);
     appendLaneKey(
+      dispatchLaneKeys,
+      dispatchKey(identity.rootId, identity.dispatchId),
+      identity.key,
+    );
+    appendLaneKey(
       participantLaneKeys,
       participantKey(participantId, activity.sourceSessionId),
       identity.key,
@@ -157,27 +169,25 @@ export function selectRoomTurnExecution(
     if (message.role === 'user') {
       continue;
     }
+    const rootId = message.rootId || turn.rootId || turnId;
     const exactKey = message.dispatchId
-      ? [
-          message.rootId || turn.rootId || turnId,
-          message.participantId || message.sourceSessionId || 'participant',
-          message.dispatchId,
-        ].join('\u001f')
-      : '';
-    const existingKey = exactKey && lanes.has(exactKey)
-      ? exactKey
-      : participantLaneKeys
+      ? dispatchLaneKeys.get(dispatchKey(rootId, message.dispatchId))?.at(-1)
+      : undefined;
+    const existingKey = exactKey
+      ?? participantLaneKeys
           .get(participantKey(message.participantId, message.sourceSessionId))
           ?.at(-1);
     const laneKey = existingKey ?? [
-      turn.rootId || turnId,
+      rootId,
       message.participantId || message.sourceSessionId || 'participant',
       message.dispatchId || message.id,
     ].join('\u001f');
     const lane = lanes.get(laneKey) ?? {
       key: laneKey,
-      rootId: message.rootId || turn.rootId || turnId,
+      rootId,
       dispatchId: message.dispatchId || '',
+      workItemId: '',
+      attemptId: '',
       waveId: '',
       phaseName: '',
       participantId: message.participantId,
@@ -194,6 +204,8 @@ export function selectRoomTurnExecution(
       key: `${turnId}\u001frouter\u001fpending`,
       rootId: turn.rootId || turnId,
       dispatchId: '',
+      workItemId: '',
+      attemptId: '',
       waveId: '',
       phaseName: '',
       participantId: null,
@@ -284,7 +296,8 @@ function coalesceInternalAttemptLanes(
     for (let offset = indexes.length - 1; offset >= 0; offset -= 1) {
       const index = indexes[offset]!;
       const lane = source[index]!;
-      const isVisibleStep = Boolean(lane.waveId)
+      const isVisibleStep = Boolean(lane.workItemId)
+        || Boolean(lane.waveId)
         || lane.messageIds.length > 0
         || nextVisibleIndex === undefined;
       if (isVisibleStep) {
@@ -376,6 +389,10 @@ function appendLaneKey(
 
 function participantKey(participantId: string | null, sessionId: string): string {
   return `${participantId ?? ''}\u001f${sessionId}`;
+}
+
+function dispatchKey(rootId: string, dispatchId: string): string {
+  return `${rootId}\u001f${dispatchId}`;
 }
 
 function isUsefulRoomActivity(activity: RoomActivityProjection): boolean {

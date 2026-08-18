@@ -114,6 +114,65 @@ describe('selectRoomTurnExecution', () => {
     expect(selected.lanes[0].activities.map((item) => item.id)).toEqual(['route-1']);
   });
 
+  it('keeps WorkItem retries separate and joins replies by exact dispatch', () => {
+    const projection = createRoomProjection('room-1');
+    projection.turnOrder.push('root-1');
+    projection.turnsById['root-1'] = {
+      id: 'root-1',
+      rootId: 'root-1',
+      status: 'running',
+      messageIds: ['reply-b'],
+      activityIds: ['attempt-a', 'attempt-b'],
+      participantIds: ['participant-1'],
+      dispatchIds: ['dispatch-a', 'dispatch-b'],
+      dispatchParticipantIds: {
+        'dispatch-a': 'participant-1',
+        'dispatch-b': 'participant-1',
+      },
+      createdAtMs: 1,
+      updatedAtMs: 3,
+    };
+    projection.activitiesById['attempt-a'] = {
+      id: 'attempt-a', turnId: 'root-1', participantId: 'participant-1',
+      sourceSessionId: 'session-1', kind: 'participant_activity', status: 'failed',
+      summary: '第一次失败',
+      payload: {
+        rootId: 'root-1', dispatchId: 'dispatch-a', workItemId: 'work-1',
+        workItemRevision: 1, attemptId: 'attempt-a', sourceEventType: 'turn_failed',
+      },
+      createdAtMs: 1,
+    };
+    projection.activitiesById['attempt-b'] = {
+      id: 'attempt-b', turnId: 'root-1', participantId: 'participant-1',
+      sourceSessionId: 'session-1', kind: 'participant_activity', status: 'running',
+      summary: '返修进行中',
+      payload: {
+        rootId: 'root-1', dispatchId: 'dispatch-b', workItemId: 'work-1',
+        workItemRevision: 2, attemptId: 'attempt-b', sourceEventType: 'tool_started',
+      },
+      createdAtMs: 2,
+    };
+    projection.messagesById['reply-b'] = {
+      id: 'reply-b', roomId: 'room-1', turnId: 'root-1',
+      participantId: 'participant-1', sourceSessionId: 'session-1', role: 'assistant',
+      status: 'streaming', text: '第二次尝试', projectionKind: 'execution',
+      rootId: 'root-1', dispatchId: 'dispatch-b', createdAtMs: 3,
+    };
+
+    const selected = selectRoomTurnExecution(projection, 'root-1');
+
+    expect(selected.lanes).toHaveLength(2);
+    expect(selected.lanes.map((lane) => ({
+      workItemId: lane.workItemId,
+      revision: lane.workItemRevision,
+      attemptId: lane.attemptId,
+      messageIds: lane.messageIds,
+    }))).toEqual([
+      { workItemId: 'work-1', revision: 1, attemptId: 'attempt-a', messageIds: [] },
+      { workItemId: 'work-1', revision: 2, attemptId: 'attempt-b', messageIds: ['reply-b'] },
+    ]);
+  });
+
   it('keeps an accepted answer in canonical message order after its question', () => {
     const projection = createRoomProjection('room-1');
     projection.turnOrder.push('root-1');

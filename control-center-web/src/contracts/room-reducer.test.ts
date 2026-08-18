@@ -10,6 +10,7 @@ import {
   replayRoomEventSnapshot,
   roomActivityLaneIdentity,
   selectRoomParticipantPublicProgress,
+  type RoomActivityProjection,
 } from './room-reducer';
 import { parseRoomEvent } from './validators';
 import { roomEventFixture as roomEvent } from '@/test/fixtures/events';
@@ -1290,6 +1291,36 @@ describe('RoomEventReducer', () => {
       'root-a\u001fparticipant-1\u001fdispatch-a',
       'root-a\u001fparticipant-2\u001fdispatch-b',
     ]);
+  });
+
+  it('uses the authoritative WorkItem attempt fence instead of participant position', () => {
+    const activity = {
+      id: 'activity-work-2',
+      turnId: 'root-a',
+      participantId: 'participant-2',
+      sourceSessionId: 'session-room-2',
+      kind: 'participant_activity',
+      status: 'running',
+      summary: '返修中',
+      payload: {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-b',
+        workItemId: 'work-7',
+        workItemRevision: 2,
+        attemptId: 'attempt-2',
+      },
+      createdAtMs: 20,
+    } satisfies RoomActivityProjection;
+
+    expect(roomActivityLaneIdentity(activity)).toEqual({
+      rootId: 'root-a',
+      participantId: 'participant-2',
+      dispatchId: 'dispatch-b',
+      workItemId: 'work-7',
+      workItemRevision: 2,
+      attemptId: 'attempt-2',
+      key: 'root-a\u001fwork:work-7\u001frevision:2\u001fattempt:attempt-2',
+    });
   });
 
   it('keeps lane failures scoped until all Room dispatches settle', () => {
