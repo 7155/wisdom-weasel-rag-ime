@@ -238,6 +238,7 @@ def main() -> int:
                     str(facilitator["sessionId"]),
                     {
                         "op": "delegate",
+                        "phase": "Staged verification",
                         "targetParticipantId": str(partner["id"]),
                         "task": "Return the exact marker ROOM-PARTNER-CHILD-OK.",
                         "expectedOutput": "One exact marker",
@@ -251,6 +252,24 @@ def main() -> int:
                 if child_result.get("status") != "completed":
                     raise RuntimeError(
                         f"Room Partner child did not complete: {child_result}"
+                    )
+                if child_result.get("contractStatus") != "pending_review":
+                    raise RuntimeError(
+                        "Room Partner child bypassed explicit review: "
+                        f"{child_result}"
+                    )
+                accepted_result = service.execute_room_partner_tool(
+                    str(facilitator["sessionId"]),
+                    {
+                        "op": "accept",
+                        "workItemId": str(child_result["workItemId"]),
+                    },
+                    tool_call_id="room-composition-partner-accept",
+                )
+                if accepted_result.get("contractStatus") != "accepted":
+                    raise RuntimeError(
+                        "Room Partner child was not explicitly accepted: "
+                        f"{accepted_result}"
                     )
                 partner_events = _turn_events(
                     service,
@@ -336,6 +355,8 @@ def main() -> int:
                             "leadSessionId": facilitator.get("sessionId"),
                             "partnerSessionId": partner.get("sessionId"),
                             "partnerChildStatus": child_result.get("status"),
+                            "partnerContractStatus": child_result.get("contractStatus"),
+                            "partnerAcceptedStatus": accepted_result.get("contractStatus"),
                             "partnerChildTerminalCount": len(child_terminals),
                             "steerDelivery": steered.get("delivery"),
                             "steerOrderedBeforeTerminal": steer_index < terminal_index,
